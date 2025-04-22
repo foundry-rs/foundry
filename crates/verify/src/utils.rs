@@ -343,7 +343,7 @@ pub async fn get_tracing_executor(
         TraceMode::Call,
         is_odyssey,
         create2_deployer,
-    );
+    )?;
 
     Ok((env, executor))
 }

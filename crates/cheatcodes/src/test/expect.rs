@@ -672,7 +672,7 @@ impl RevertParameters for ExpectedRevert {
 ///   `vm.expectCall(address(0xc4f3), abi.encodeWithSelector(0xd34db33f))` will expect the call to
 ///   address(0xc4f3) and selector `0xd34db33f` to be made at least once. If the amount of calls is
 ///   0, the test will fail. If the call is made more than once, the test will pass.
-#[allow(clippy::too_many_arguments)] // It is what it is
+#[expect(clippy::too_many_arguments)] // It is what it is
 fn expect_call(
     state: &mut Cheatcodes,
     target: &Address,
@@ -1010,7 +1010,7 @@ fn checks_topics_and_data(checks: [bool; 5], expected: &RawLog, log: &RawLog) ->
 
 fn expect_safe_memory(state: &mut Cheatcodes, start: u64, end: u64, depth: u64) -> Result {
     ensure!(start < end, "memory range start ({start}) is greater than end ({end})");
-    #[allow(clippy::single_range_in_vec_init)] // Wanted behaviour
+    #[expect(clippy::single_range_in_vec_init)] // Wanted behaviour
     let offsets = state.allowed_mem_writes.entry(depth).or_insert_with(|| vec![0..0x60]);
     offsets.push(start..end);
     Ok(Default::default())

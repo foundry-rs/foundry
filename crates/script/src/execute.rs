@@ -20,7 +20,7 @@ use foundry_common::{
     provider::get_http_provider,
     ContractsByArtifact,
 };
-use foundry_config::{Config, NamedChain};
+use foundry_config::NamedChain;
 use foundry_debugger::Debugger;
 use foundry_evm::{
     decode::decode_console_logs,
@@ -189,7 +189,7 @@ impl PreExecutionState {
             if self.build_data.predeploy_libraries.libraries_count() > 0 &&
                 self.args.evm.sender.is_none()
             {
-                for tx in txs.iter() {
+                for tx in txs {
                     if tx.transaction.to().is_none() {
                         let sender = tx.transaction.from().expect("no sender");
                         if let Some(ns) = new_sender {
@@ -328,9 +328,8 @@ impl ExecutedState {
             .with_labels(self.execution_result.labeled_addresses.clone())
             .with_verbosity(self.script_config.evm_opts.verbosity)
             .with_known_contracts(known_contracts)
-            .with_signature_identifier(SignaturesIdentifier::new(
-                Config::foundry_cache_dir(),
-                self.script_config.config.offline,
+            .with_signature_identifier(SignaturesIdentifier::from_config(
+                &self.script_config.config,
             )?)
             .build();
 
@@ -428,7 +427,7 @@ impl PreSimulationState {
 
                 if should_include {
                     let mut trace = trace.clone();
-                    decode_trace_arena(&mut trace, decoder).await?;
+                    decode_trace_arena(&mut trace, decoder).await;
                     sh_println!("{}", render_trace_arena(&trace))?;
                 }
             }

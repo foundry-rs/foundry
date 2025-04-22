@@ -7,7 +7,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use anvil::{spawn, NodeConfig};
-use foundry_test_utils::rpc::next_http_rpc_endpoint;
+use foundry_test_utils::rpc::next_http_archive_rpc_url;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_load_state() {
@@ -164,13 +164,13 @@ async fn can_preserve_historical_states_between_dump_and_load() {
 async fn test_fork_load_state() {
     let (api, handle) = spawn(
         NodeConfig::test()
-            .with_eth_rpc_url(Some(next_http_rpc_endpoint()))
+            .with_eth_rpc_url(Some(next_http_archive_rpc_url()))
             .with_fork_block_number(Some(21070682u64)),
     )
     .await;
 
-    let bob = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
-    let alice = address!("9276449EaC5b4f7Bc17cFC6700f7BeeB86F9bCd0");
+    let bob = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+    let alice = address!("0x9276449EaC5b4f7Bc17cFC6700f7BeeB86F9bCd0");
 
     let provider = handle.http_provider();
 
@@ -192,7 +192,7 @@ async fn test_fork_load_state() {
 
     let (api, handle) = spawn(
         NodeConfig::test()
-            .with_eth_rpc_url(Some(next_http_rpc_endpoint()))
+            .with_eth_rpc_url(Some(next_http_archive_rpc_url()))
             .with_fork_block_number(Some(21070686u64)) // Forked chain has moved forward
             .with_init_state(Some(serialized_state)),
     )
@@ -251,7 +251,7 @@ async fn test_fork_load_state() {
 async fn test_fork_load_state_with_greater_state_block() {
     let (api, _handle) = spawn(
         NodeConfig::test()
-            .with_eth_rpc_url(Some(next_http_rpc_endpoint()))
+            .with_eth_rpc_url(Some(next_http_archive_rpc_url()))
             .with_fork_block_number(Some(21070682u64)),
     )
     .await;
@@ -266,7 +266,7 @@ async fn test_fork_load_state_with_greater_state_block() {
 
     let (api, _handle) = spawn(
         NodeConfig::test()
-            .with_eth_rpc_url(Some(next_http_rpc_endpoint()))
+            .with_eth_rpc_url(Some(next_http_archive_rpc_url()))
             .with_fork_block_number(Some(21070682u64)) // Forked chain has moved forward
             .with_init_state(Some(serialized_state)),
     )

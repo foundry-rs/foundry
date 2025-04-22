@@ -100,7 +100,7 @@ impl<'a> TUI<'a> {
 }
 
 // TODO: Update once on 1.82
-#[allow(deprecated)]
+#[expect(deprecated)]
 type PanicHandler = Box<dyn Fn(&std::panic::PanicInfo<'_>) + 'static + Sync + Send>;
 
 /// Handles terminal state.

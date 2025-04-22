@@ -1,7 +1,10 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::Address;
 use eyre::{Result, WrapErr};
-use foundry_common::{compile::ProjectCompiler, fs, shell, ContractsByArtifact, TestFunctionExt};
+use foundry_common::{
+    compile::ProjectCompiler, fs, selectors::SelectorKind, shell, ContractsByArtifact,
+    TestFunctionExt,
+};
 use foundry_compilers::{
     artifacts::{CompactBytecode, Settings},
     cache::{CacheEntry, CompilerCache},
@@ -16,7 +19,7 @@ use foundry_evm::{
     traces::{
         debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena,
-        identifier::{CachedSignatures, SignaturesIdentifier, TraceIdentifiers},
+        identifier::{SignaturesCache, SignaturesIdentifier, TraceIdentifiers},
         render_trace_arena_inner, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
     },
 };
@@ -80,8 +83,8 @@ pub fn get_cached_entry_by_name(
     let mut cached_entry = None;
     let mut alternatives = Vec::new();
 
-    for (abs_path, entry) in cache.files.iter() {
-        for (artifact_name, _) in entry.artifacts.iter() {
+    for (abs_path, entry) in &cache.files {
+        for artifact_name in entry.artifacts.keys() {
             if artifact_name == name {
                 if cached_entry.is_some() {
                     eyre::bail!(
@@ -124,7 +127,7 @@ pub fn ensure_clean_constructor(abi: &JsonAbi) -> Result<()> {
 pub fn needs_setup(abi: &JsonAbi) -> bool {
     let setup_fns: Vec<_> = abi.functions().filter(|func| func.name.is_setup()).collect();
 
-    for setup_fn in setup_fns.iter() {
+    for setup_fn in &setup_fns {
         if setup_fn.name != "setUp" {
             let _ = sh_warn!(
                 "Found invalid setup function \"{}\" did you mean \"setUp()\"?",
@@ -364,10 +367,7 @@ pub async fn handle_traces(
 
     let mut builder = CallTraceDecoderBuilder::new()
         .with_labels(labels.chain(config_labels))
-        .with_signature_identifier(SignaturesIdentifier::new(
-            Config::foundry_cache_dir(),
-            config.offline,
-        )?);
+        .with_signature_identifier(SignaturesIdentifier::from_config(config)?);
     let mut identifier = TraceIdentifiers::new().with_etherscan(config, chain)?;
     if let Some(contracts) = &known_contracts {
         builder = builder.with_known_contracts(contracts);
@@ -416,7 +416,7 @@ pub async fn print_traces(
     }
 
     for (_, arena) in traces {
-        decode_trace_arena(arena, decoder).await?;
+        decode_trace_arena(arena, decoder).await;
         sh_println!("{}", render_trace_arena_inner(arena, verbose, state_changes))?;
     }
 
@@ -437,34 +437,21 @@ pub async fn print_traces(
 
 /// Traverse the artifacts in the project to generate local signatures and merge them into the cache
 /// file.
-pub fn cache_local_signatures(output: &ProjectCompileOutput, cache_path: PathBuf) -> Result<()> {
-    let path = cache_path.join("signatures");
-    let mut cached_signatures = CachedSignatures::load(cache_path);
-    output.artifacts().for_each(|(_, artifact)| {
+pub fn cache_local_signatures(output: &ProjectCompileOutput, cache_dir: &Path) -> Result<()> {
+    let path = cache_dir.join("signatures");
+    let mut signatures = SignaturesCache::load(&path);
+    for (_, artifact) in output.artifacts() {
         if let Some(abi) = &artifact.abi {
-            for func in abi.functions() {
-                cached_signatures.functions.insert(func.selector().to_string(), func.signature());
-            }
-            for event in abi.events() {
-                cached_signatures
-                    .events
-                    .insert(event.selector().to_string(), event.full_signature());
-            }
-            for error in abi.errors() {
-                cached_signatures.errors.insert(error.selector().to_string(), error.signature());
-            }
-            // External libraries doesn't have functions included in abi, but `methodIdentifiers`.
-            if let Some(method_identifiers) = &artifact.method_identifiers {
-                method_identifiers.iter().for_each(|(signature, selector)| {
-                    cached_signatures
-                        .functions
-                        .entry(format!("0x{selector}"))
-                        .or_insert(signature.to_string());
-                });
-            }
+            signatures.extend_from_abi(abi);
         }
-    });
 
-    fs::write_json_file(&path, &cached_signatures)?;
+        // External libraries don't have functions included in the ABI, but `methodIdentifiers`.
+        if let Some(method_identifiers) = &artifact.method_identifiers {
+            signatures.extend(method_identifiers.iter().filter_map(|(signature, selector)| {
+                Some((SelectorKind::Function(selector.parse().ok()?), signature.clone()))
+            }));
+        }
+    }
+    signatures.save(&path);
     Ok(())
 }

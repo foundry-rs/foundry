@@ -23,10 +23,13 @@ use crate::{
 };
 use alloy_primitives::{
     hex,
-    map::{AddressHashMap, HashMap},
+    map::{AddressHashMap, HashMap, HashSet},
     Address, Bytes, Log, TxKind, B256, U256,
 };
-use alloy_rpc_types::request::{TransactionInput, TransactionRequest};
+use alloy_rpc_types::{
+    request::{TransactionInput, TransactionRequest},
+    AccessList,
+};
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use foundry_common::{evm::Breakpoints, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_evm_core::{
@@ -43,7 +46,7 @@ use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
 use revm::{
     interpreter::{
-        opcode as op, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
+        opcode as op, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome,
         EOFCreateInputs, EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterAction,
         InterpreterResult,
     },
@@ -298,12 +301,19 @@ pub struct ArbitraryStorage {
     pub values: HashMap<Address, HashMap<U256, U256>>,
     /// Mapping of address with storage copied to arbitrary storage address source.
     pub copies: HashMap<Address, Address>,
+    /// Address with storage slots that should be overwritten even if previously set.
+    pub overwrites: HashSet<Address>,
 }
 
 impl ArbitraryStorage {
     /// Marks an address with arbitrary storage.
-    pub fn mark_arbitrary(&mut self, address: &Address) {
+    pub fn mark_arbitrary(&mut self, address: &Address, overwrite: bool) {
         self.values.insert(*address, HashMap::default());
+        if overwrite {
+            self.overwrites.insert(*address);
+        } else {
+            self.overwrites.remove(address);
+        }
     }
 
     /// Maps an address that copies storage with the arbitrary storage address.
@@ -443,6 +453,9 @@ pub struct Cheatcodes {
     /// Scripting based transactions
     pub broadcastable_transactions: BroadcastableTransactions,
 
+    /// Current EIP-2930 access lists.
+    pub access_list: Option<AccessList>,
+
     /// Additional, user configurable context this Inspector has access to when inspecting a call.
     pub config: Arc<CheatsConfig>,
 
@@ -475,6 +488,9 @@ pub struct Cheatcodes {
     /// Breakpoints supplied by the `breakpoint` cheatcode.
     /// `char -> (address, pc)`
     pub breakpoints: Breakpoints,
+
+    /// Whether the next contract creation should be intercepted to return its initcode.
+    pub intercept_next_create_call: bool,
 
     /// Optional cheatcodes `TestRunner`. Used for generating random values from uint and int
     /// strategies.
@@ -527,6 +543,7 @@ impl Cheatcodes {
             allowed_mem_writes: Default::default(),
             broadcast: Default::default(),
             broadcastable_transactions: Default::default(),
+            access_list: Default::default(),
             context: Default::default(),
             serialized_jsons: Default::default(),
             eth_deals: Default::default(),
@@ -535,6 +552,7 @@ impl Cheatcodes {
             mapping_slots: Default::default(),
             pc: Default::default(),
             breakpoints: Default::default(),
+            intercept_next_create_call: Default::default(),
             test_runner: Default::default(),
             ignored_traces: Default::default(),
             arbitrary_storage: Default::default(),
@@ -642,6 +660,25 @@ impl Cheatcodes {
     where
         Input: CommonCreateInput,
     {
+        // Check if we should intercept this create
+        if self.intercept_next_create_call {
+            // Reset the flag
+            self.intercept_next_create_call = false;
+
+            // Get initcode from the input
+            let output = input.init_code();
+
+            // Return a revert with the initcode as error data
+            return Some(CreateOutcome {
+                result: InterpreterResult {
+                    result: InstructionResult::Revert,
+                    output,
+                    gas: Gas::new(input.gas_limit()),
+                },
+                address: None,
+            });
+        }
+
         let ecx = &mut ecx.inner;
         let gas = Gas::new(input.gas_limit());
         let curr_depth = ecx.journaled_state.depth();
@@ -659,6 +696,11 @@ impl Cheatcodes {
                     ecx.env.tx.caller = new_origin;
                 }
             }
+        }
+
+        // Apply EIP-2930 access lists.
+        if let Some(access_list) = &self.access_list {
+            ecx.env.tx.access_list = access_list.to_vec();
         }
 
         // Apply our broadcast
@@ -1001,12 +1043,10 @@ where {
         // Apply our prank
         if let Some(prank) = &self.get_prank(curr_depth) {
             // Apply delegate call, `call.caller`` will not equal `prank.prank_caller`
-            if let CallScheme::DelegateCall | CallScheme::ExtDelegateCall = call.scheme {
-                if prank.delegate_call {
+            if prank.delegate_call && curr_depth == prank.depth {
+                if let CallScheme::DelegateCall | CallScheme::ExtDelegateCall = call.scheme {
                     call.target_address = prank.new_caller;
                     call.caller = prank.new_caller;
-                    let acc = ecx.journaled_state.account(prank.new_caller);
-                    call.value = CallValue::Apparent(acc.info.balance);
                     if let Some(new_origin) = prank.new_origin {
                         ecx.env.tx.caller = new_origin;
                     }
@@ -1035,6 +1075,11 @@ where {
                     }
                 }
             }
+        }
+
+        // Apply EIP-2930 access lists.
+        if let Some(access_list) = &self.access_list {
+            ecx.env.tx.access_list = access_list.to_vec();
         }
 
         // Apply our broadcast
@@ -1189,6 +1234,27 @@ where {
     pub fn has_arbitrary_storage(&self, address: &Address) -> bool {
         match &self.arbitrary_storage {
             Some(storage) => storage.values.contains_key(address),
+            None => false,
+        }
+    }
+
+    /// Whether the given slot of address with arbitrary storage should be overwritten.
+    /// True if address is marked as and overwrite and if no value was previously generated for
+    /// given slot.
+    pub fn should_overwrite_arbitrary_storage(
+        &self,
+        address: &Address,
+        storage_slot: U256,
+    ) -> bool {
+        match &self.arbitrary_storage {
+            Some(storage) => {
+                storage.overwrites.contains(address) &&
+                    storage
+                        .values
+                        .get(address)
+                        .and_then(|arbitrary_values| arbitrary_values.get(&storage_slot))
+                        .is_none()
+            }
             None => false,
         }
     }
@@ -1827,7 +1893,9 @@ impl Cheatcodes {
             return;
         };
 
-        if value.is_cold && value.data.is_zero() {
+        if (value.is_cold && value.data.is_zero()) ||
+            self.should_overwrite_arbitrary_storage(&target_address, key)
+        {
             if self.has_arbitrary_storage(&target_address) {
                 let arbitrary_value = self.rng().gen();
                 self.arbitrary_storage.as_mut().unwrap().save(

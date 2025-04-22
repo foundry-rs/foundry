@@ -15,12 +15,12 @@ workspace = true
 
 [[bin]]
 name = "anvil"
-path = "src/anvil.rs"
+path = "bin/main.rs"
 required-features = ["cli"]
 
 [dependencies]
 # foundry internal
-anvil-core = { path = "core", features = ["serde", "impersonated-tx"] }
+anvil-core = { path = "core" }
 anvil-rpc = { path = "rpc" }
 anvil-server = { path = "server" }
 foundry-cli.workspace = true
@@ -29,14 +29,13 @@ foundry-config.workspace = true
 foundry-evm.workspace = true
 
 # evm support
-bytes.workspace = true
-k256.workspace = true
 revm = { workspace = true, features = [
     "std",
     "serde",
     "memory_limit",
     "c-kzg",
 ] }
+revm-inspectors.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-contract = { workspace = true, features = ["pubsub"] }
@@ -65,7 +64,6 @@ op-alloy-consensus = { workspace = true, features = ["serde"] }
 # axum related
 axum.workspace = true
 hyper.workspace = true
-tower.workspace = true
 
 # tracing
 tracing.workspace = true
@@ -79,7 +77,6 @@ async-trait.workspace = true
 
 # misc
 flate2 = "1.0"
-serde_repr = "0.1"
 serde_json.workspace = true
 serde.workspace = true
 thiserror.workspace = true
@@ -105,23 +102,23 @@ clap_complete_fig = "4"
 tikv-jemallocator = { workspace = true, optional = true }
 
 [dev-dependencies]
-alloy-json-abi.workspace = true
-alloy-rpc-client = { workspace = true, features = ["pubsub"] }
-alloy-transport-ipc = { workspace = true, features = ["mock"] }
 alloy-provider = { workspace = true, features = ["txpool-api"] }
-alloy-transport-ws.workspace = true
-alloy-json-rpc.workspace = true
 alloy-pubsub.workspace = true
 foundry-test-utils.workspace = true
-similar-asserts.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
 op-alloy-rpc-types.workspace = true
 
-
 [features]
 default = ["cli", "jemalloc"]
-cmd = ["clap", "clap_complete", "ctrlc", "anvil-server/clap"]
-cli = ["tokio/full", "cmd", "fdlimit"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["dep:tikv-jemallocator"]
+cli = ["tokio/full", "cmd"]
+cmd = [
+    "clap",
+    "clap_complete",
+    "dep:fdlimit",
+    "dep:ctrlc",
+    "anvil-server/clap",
+    "tokio/signal",
+]

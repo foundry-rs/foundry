@@ -42,6 +42,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         out: "out-test".into(),
         libs: vec!["lib-test".into()],
         cache: true,
+        dynamic_test_linking: false,
         cache_path: "test-cache".into(),
         snapshots: "snapshots".into(),
         gas_snapshot_check: false,
@@ -485,6 +486,18 @@ forgetest!(can_set_optimizer_runs, |prj, cmd| {
 
     let config = prj.config_from_output(["--optimizer-runs", "300"]);
     assert_eq!(config.optimizer_runs, Some(300));
+});
+
+// test that use_literal_content works
+forgetest!(can_set_use_literal_content, |prj, cmd| {
+    // explicitly set use_literal_content
+    prj.update_config(|config| config.use_literal_content = false);
+
+    let config = cmd.config();
+    assert_eq!(config.use_literal_content, false);
+
+    let config = prj.config_from_output(["--use-literal-content"]);
+    assert_eq!(config.use_literal_content, true);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/9665>
@@ -959,6 +972,7 @@ remappings = ["forge-std/=lib/forge-std/src/"]
 auto_detect_remappings = true
 libraries = []
 cache = true
+dynamic_test_linking = false
 cache_path = "cache"
 snapshots = "snapshots"
 gas_snapshot_check = false
@@ -1116,6 +1130,7 @@ exclude = []
   "auto_detect_remappings": true,
   "libraries": [],
   "cache": true,
+  "dynamic_test_linking": false,
   "cache_path": "cache",
   "snapshots": "snapshots",
   "gas_snapshot_check": false,

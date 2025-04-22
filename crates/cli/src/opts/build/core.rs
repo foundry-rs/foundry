@@ -34,6 +34,11 @@ pub struct BuildOpts {
     #[serde(skip)]
     pub no_cache: bool,
 
+    /// Enable dynamic test linking.
+    #[arg(long, conflicts_with = "no_cache")]
+    #[serde(skip)]
+    pub dynamic_test_linking: bool,
+
     /// Set pre-linked libraries.
     #[arg(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -78,6 +83,11 @@ pub struct BuildOpts {
     #[serde(skip)]
     pub via_ir: bool,
 
+    /// Changes compilation to only use literal content and not URLs.
+    #[arg(long, help_heading = "Compiler options")]
+    #[serde(skip)]
+    pub use_literal_content: bool,
+
     /// Do not append any metadata to the bytecode.
     ///
     /// This is equivalent to setting `bytecode_hash` to `none` and `cbor_metadata` to `false`.
@@ -120,11 +130,7 @@ pub struct BuildOpts {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_info_path: Option<PathBuf>,
 
-    /// Use EOF-enabled solc binary. Enables via-ir and sets EVM version to Prague. Requires Docker
-    /// to be installed.
-    ///
-    /// Note that this is a temporary solution until the EOF support is merged into the main solc
-    /// release.
+    /// Whether to compile contracts to EOF bytecode.
     #[arg(long)]
     #[serde(skip)]
     pub eof: bool,
@@ -226,6 +232,10 @@ impl Provider for BuildOpts {
             dict.insert("via_ir".to_string(), true.into());
         }
 
+        if self.use_literal_content {
+            dict.insert("use_literal_content".to_string(), true.into());
+        }
+
         if self.no_metadata {
             dict.insert("bytecode_hash".to_string(), "none".into());
             dict.insert("cbor_metadata".to_string(), false.into());
@@ -238,6 +248,10 @@ impl Provider for BuildOpts {
         // we need to ensure no_cache set accordingly
         if self.no_cache {
             dict.insert("cache".to_string(), false.into());
+        }
+
+        if self.dynamic_test_linking {
+            dict.insert("dynamic_test_linking".to_string(), true.into());
         }
 
         if self.build_info {

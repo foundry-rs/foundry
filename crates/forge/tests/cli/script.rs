@@ -5,14 +5,14 @@ use alloy_primitives::{address, hex, Address, Bytes};
 use anvil::{spawn, NodeConfig};
 use forge_script_sequence::ScriptSequence;
 use foundry_test_utils::{
-    rpc::{self, next_http_rpc_endpoint},
+    rpc::{self, next_http_archive_rpc_url},
     snapbox::IntoData,
     util::{OTHER_SOLC_VERSION, SOLC_VERSION},
     ScriptOutcome, ScriptTester,
 };
 use regex::Regex;
 use serde_json::Value;
-use std::{env, fs, path::PathBuf, str::FromStr};
+use std::{env, fs, path::PathBuf};
 
 // Tests that fork cheat codes can be used in script
 forgetest_init!(
@@ -152,7 +152,7 @@ forgetest_async!(assert_exit_code_error_on_failure_script, |prj, cmd| {
 
     // run command and assert error exit code
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: script failed: revert: failed
+Error: script failed: failed
 
 "#]]);
 });
@@ -168,7 +168,7 @@ forgetest_async!(assert_exit_code_error_on_failure_script_with_json, |prj, cmd| 
 
     // run command and assert error exit code
     cmd.assert_failure().stderr_eq(str![[r#"
-Error: script failed: revert: failed
+Error: script failed: failed
 
 "#]]);
 });
@@ -702,13 +702,13 @@ forgetest_async!(can_deploy_script_private_key, |prj, cmd| {
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
-        .load_addresses(&[Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()])
+        .load_addresses(&[address!("0x90F79bf6EB2c4f870365E785982E1f101E93b906")])
         .await
         .add_sig("BroadcastTest", "deployPrivateKey()")
         .simulate(ScriptOutcome::OkSimulation)
         .broadcast(ScriptOutcome::OkBroadcast)
         .assert_nonce_increment_addresses(&[(
-            Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
+            address!("0x90F79bf6EB2c4f870365E785982E1f101E93b906"),
             3,
         )])
         .await;
@@ -731,13 +731,13 @@ forgetest_async!(can_deploy_script_remember_key, |prj, cmd| {
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
-        .load_addresses(&[Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()])
+        .load_addresses(&[address!("0x90F79bf6EB2c4f870365E785982E1f101E93b906")])
         .await
         .add_sig("BroadcastTest", "deployRememberKey()")
         .simulate(ScriptOutcome::OkSimulation)
         .broadcast(ScriptOutcome::OkBroadcast)
         .assert_nonce_increment_addresses(&[(
-            Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
+            address!("0x90F79bf6EB2c4f870365E785982E1f101E93b906"),
             2,
         )])
         .await;
@@ -749,7 +749,7 @@ forgetest_async!(can_deploy_script_remember_key_and_resume, |prj, cmd| {
 
     tester
         .add_deployer(0)
-        .load_addresses(&[Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap()])
+        .load_addresses(&[address!("0x90F79bf6EB2c4f870365E785982E1f101E93b906")])
         .await
         .add_sig("BroadcastTest", "deployRememberKeyResume()")
         .simulate(ScriptOutcome::OkSimulation)
@@ -759,7 +759,7 @@ forgetest_async!(can_deploy_script_remember_key_and_resume, |prj, cmd| {
         .await
         .run(ScriptOutcome::OkBroadcast)
         .assert_nonce_increment_addresses(&[(
-            Address::from_str("0x90F79bf6EB2c4f870365E785982E1f101E93b906").unwrap(),
+            address!("0x90F79bf6EB2c4f870365E785982E1f101E93b906"),
             1,
         )])
         .await
@@ -855,7 +855,7 @@ forgetest_async!(can_deploy_with_create2, |prj, cmd| {
 forgetest_async!(can_deploy_with_custom_create2, |prj, cmd| {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
-    let create2 = Address::from_str("0x0000000000000000000000000000000000b4956c").unwrap();
+    let create2 = address!("0x0000000000000000000000000000000000b4956c");
 
     // Prepare CREATE2 Deployer
     api.anvil_set_code(
@@ -881,7 +881,7 @@ forgetest_async!(can_deploy_with_custom_create2, |prj, cmd| {
 forgetest_async!(can_deploy_with_custom_create2_notmatched_bytecode, |prj, cmd| {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
-    let create2 = Address::from_str("0x0000000000000000000000000000000000b4956c").unwrap();
+    let create2 = address!("0x0000000000000000000000000000000000b4956c");
 
     // Prepare CREATE2 Deployer
     api.anvil_set_code(
@@ -904,7 +904,7 @@ forgetest_async!(can_deploy_with_custom_create2_notmatched_bytecode, |prj, cmd| 
 forgetest_async!(canot_deploy_with_nonexist_create2, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
-    let create2 = Address::from_str("0x0000000000000000000000000000000000b4956c").unwrap();
+    let create2 = address!("0x0000000000000000000000000000000000b4956c");
 
     tester
         .add_deployer(0)
@@ -974,7 +974,7 @@ forgetest_async!(check_broadcast_log, |prj, cmd| {
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     // Prepare CREATE2 Deployer
-    let addr = Address::from_str("0x4e59b44847b379578588920ca78fbf26c0b4956c").unwrap();
+    let addr = address!("0x4e59b44847b379578588920ca78fbf26c0b4956c");
     let code = hex::decode("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into();
     api.anvil_set_code(addr, code).await.unwrap();
 
@@ -1953,7 +1953,7 @@ contract SimpleScript is Script {
     .assert_success()
     .stdout_eq(str![[r#"
 {"logs":[],"returns":{"success":{"internal_type":"bool","value":"true"}},"success":true,"raw_logs":[],"traces":[["Deployment",{"arena":[{"parent":null,"children":[],"idx":0,"trace":{"depth":0,"success":true,"caller":"0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":false,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CREATE","value":"0x0","data":"[..]","output":"[..]","gas_used":"{...}","gas_limit":"{...}","status":"Return","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}],["Execution",{"arena":[{"parent":null,"children":[1,2],"idx":0,"trace":{"depth":0,"success":true,"caller":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","address":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0xc0406226","output":"0x0000000000000000000000000000000000000000000000000000000000000001","gas_used":"{...}","gas_limit":1073720760,"status":"Return","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[{"Call":0},{"Call":1}]},{"parent":0,"children":[],"idx":1,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x7109709ecfa91a80626ff3989d68f67f5b1dd12d","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x7fb5297f","output":"0x","gas_used":"{...}","gas_limit":1056940994,"status":"Return","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]},{"parent":0,"children":[],"idx":2,"trace":{"depth":1,"success":true,"caller":"0x5b73c5498c1e3b4dba84de0f1833c4a029d90519","address":"0x0000000000000000000000000000000000000000","maybe_precompile":null,"selfdestruct_address":null,"selfdestruct_refund_target":null,"selfdestruct_transferred_value":null,"kind":"CALL","value":"0x0","data":"0x","output":"0x","gas_used":"{...}","gas_limit":1056940645,"status":"Stop","steps":[],"decoded":{"label":null,"return_data":null,"call_data":null}},"logs":[],"ordering":[]}]}]],"gas_used":"{...}","labeled_addresses":{},"returned":"0x0000000000000000000000000000000000000000000000000000000000000001","address":null}
-{"chain":31337,"estimated_gas_price":"{...}","estimated_total_gas_used":"{...}","estimated_amount_required":"{...}"}
+{"chain":31337,"estimated_gas_price":"{...}","estimated_total_gas_used":"{...}","estimated_amount_required":"{...}","token_symbol":"ETH"}
 {"chain":"anvil-hardhat","status":"success","tx_hash":"0x4f78afe915fceb282c7625a68eb350bc0bf78acb59ad893e5c62b710a37f3156","contract_address":null,"block_number":1,"gas_used":"{...}","gas_price":"{...}"}
 {"status":"success","transactions":"[..]/broadcast/Foo.sol/31337/run-latest.json","sensitive":"[..]/cache/Foo.sol/31337/run-latest.json"}
 
@@ -2245,7 +2245,7 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 "#]]);
 
     assert!(!api
-        .get_code(address!("4e59b44847b379578588920cA78FbF26c0B4956C"), Default::default())
+        .get_code(address!("0x4e59b44847b379578588920cA78FbF26c0B4956C"), Default::default())
         .await
         .unwrap()
         .is_empty());
@@ -2457,7 +2457,7 @@ forgetest_async!(should_set_correct_sender_nonce_via_cli, |prj, cmd| {
     )
     .unwrap();
 
-    let rpc_url = next_http_rpc_endpoint();
+    let rpc_url = next_http_archive_rpc_url();
 
     let fork_bn = 21614115;
 

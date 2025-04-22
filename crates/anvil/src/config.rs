@@ -1,5 +1,4 @@
 use crate::{
-    cmd::StateFile,
     eth::{
         backend::{
             db::{Db, SerializableState},
@@ -50,7 +49,7 @@ use std::{
     fs::File,
     io,
     net::{IpAddr, Ipv4Addr},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
     time::Duration,
 };
@@ -106,6 +105,8 @@ pub struct NodeConfig {
     pub genesis_balance: U256,
     /// Genesis block timestamp
     pub genesis_timestamp: Option<u64>,
+    /// Genesis block number
+    pub genesis_block_number: Option<u64>,
     /// Signer accounts that can sign messages/transactions from the EVM node
     pub signer_accounts: Vec<PrivateKeySigner>,
     /// Configured block time for the EVM chain. Use `None` to mine a new block for every tx
@@ -156,6 +157,8 @@ pub struct NodeConfig {
     pub enable_steps_tracing: bool,
     /// Enable printing of `console.log` invocations.
     pub print_logs: bool,
+    /// Enable printing of traces.
+    pub print_traces: bool,
     /// Enable auto impersonation of accounts on startup
     pub enable_auto_impersonate: bool,
     /// Configure the code size limit
@@ -331,6 +334,17 @@ Genesis Timestamp
             self.get_genesis_timestamp().green()
         );
 
+        let _ = write!(
+            s,
+            r#"
+Genesis Number
+==================
+
+{}
+"#,
+            self.get_genesis_number().green()
+        );
+
         s
     }
 
@@ -408,7 +422,8 @@ impl NodeConfig {
 impl Default for NodeConfig {
     fn default() -> Self {
         // generate some random wallets
-        let genesis_accounts = AccountGenerator::new(10).phrase(DEFAULT_MNEMONIC).gen();
+        let genesis_accounts =
+            AccountGenerator::new(10).phrase(DEFAULT_MNEMONIC).gen().expect("Invalid mnemonic.");
         Self {
             chain_id: None,
             gas_limit: None,
@@ -417,6 +432,7 @@ impl Default for NodeConfig {
             hardfork: None,
             signer_accounts: genesis_accounts.clone(),
             genesis_timestamp: None,
+            genesis_block_number: None,
             genesis_accounts,
             // 100ETH default balance
             genesis_balance: Unit::ETHER.wei().saturating_mul(U256::from(100u64)),
@@ -435,6 +451,7 @@ impl Default for NodeConfig {
             enable_tracing: true,
             enable_steps_tracing: false,
             print_logs: true,
+            print_traces: false,
             enable_auto_impersonate: false,
             no_storage_caching: false,
             server_config: Default::default(),
@@ -536,8 +553,9 @@ impl NodeConfig {
 
     /// Loads the init state from a file if it exists
     #[must_use]
-    pub fn with_init_state_path(mut self, path: impl AsRef<Path>) -> Self {
-        self.init_state = StateFile::parse_path(path).ok().and_then(|file| file.state);
+    #[cfg(feature = "cmd")]
+    pub fn with_init_state_path(mut self, path: impl AsRef<std::path::Path>) -> Self {
+        self.init_state = crate::cmd::StateFile::parse_path(path).ok().and_then(|file| file.state);
         self
     }
 
@@ -654,6 +672,22 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the genesis number
+    #[must_use]
+    pub fn with_genesis_block_number<U: Into<u64>>(mut self, number: Option<U>) -> Self {
+        if let Some(number) = number {
+            self.genesis_block_number = Some(number.into());
+        }
+        self
+    }
+
+    /// Returns the genesis number
+    pub fn get_genesis_number(&self) -> u64 {
+        self.genesis_block_number
+            .or_else(|| self.genesis.as_ref().and_then(|g| g.number))
+            .unwrap_or(0)
+    }
+
     /// Sets the hardfork
     #[must_use]
     pub fn with_hardfork(mut self, hardfork: Option<ChainHardfork>) -> Self {
@@ -677,11 +711,10 @@ impl NodeConfig {
 
     /// Sets both the genesis accounts and the signer accounts
     /// so that `genesis_accounts == accounts`
-    #[must_use]
-    pub fn with_account_generator(mut self, generator: AccountGenerator) -> Self {
-        let accounts = generator.gen();
+    pub fn with_account_generator(mut self, generator: AccountGenerator) -> eyre::Result<Self> {
+        let accounts = generator.gen()?;
         self.account_generator = Some(generator);
-        self.with_signer_accounts(accounts.clone()).with_genesis_accounts(accounts)
+        Ok(self.with_signer_accounts(accounts.clone()).with_genesis_accounts(accounts))
     }
 
     /// Sets the balance of the genesis accounts in the genesis block
@@ -863,6 +896,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets whether to print traces to stdout.
+    #[must_use]
+    pub fn with_print_traces(mut self, print_traces: bool) -> Self {
+        self.print_traces = print_traces;
+        self
+    }
+
     /// Sets whether to enable autoImpersonate
     #[must_use]
     pub fn with_auto_impersonate(mut self, enable_auto_impersonate: bool) -> Self {
@@ -1021,7 +1061,11 @@ impl NodeConfig {
 
         // if provided use all settings of `genesis.json`
         if let Some(ref genesis) = self.genesis {
-            env.cfg.chain_id = genesis.config.chain_id;
+            // --chain-id flag gets precedence over the genesis.json chain id
+            // <https://github.com/foundry-rs/foundry/issues/10059>
+            if self.chain_id.is_none() {
+                env.cfg.chain_id = genesis.config.chain_id;
+            }
             env.block.timestamp = U256::from(genesis.timestamp);
             if let Some(base_fee) = genesis.base_fee_per_gas {
                 env.block.basefee = U256::from(base_fee);
@@ -1033,6 +1077,7 @@ impl NodeConfig {
         }
 
         let genesis = GenesisConfig {
+            number: self.get_genesis_number(),
             timestamp: self.get_genesis_timestamp(),
             balance: self.genesis_balance,
             accounts: self.genesis_accounts.iter().map(|acc| acc.address()).collect(),
@@ -1048,6 +1093,7 @@ impl NodeConfig {
             Arc::new(RwLock::new(fork)),
             self.enable_steps_tracing,
             self.print_logs,
+            self.print_traces,
             self.odyssey,
             self.prune_history,
             self.max_persisted_states,
@@ -1329,7 +1375,16 @@ async fn derive_block_and_transactions(
     provider: &Arc<RetryProvider>,
 ) -> eyre::Result<(BlockNumber, Option<Vec<PoolTransaction>>)> {
     match fork_choice {
-        ForkChoice::Block(block_number) => Ok((block_number.to_owned(), None)),
+        ForkChoice::Block(block_number) => {
+            let block_number = *block_number;
+            if block_number >= 0 {
+                return Ok((block_number as u64, None))
+            }
+            // subtract from latest block number
+            let latest = provider.get_block_number().await?;
+
+            Ok((block_number.saturating_add(latest as i128) as u64, None))
+        }
         ForkChoice::Transaction(transaction_hash) => {
             // Determine the block that this transaction was mined in
             let transaction = provider
@@ -1368,15 +1423,17 @@ async fn derive_block_and_transactions(
 /// Fork delimiter used to specify which block or transaction to fork from
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ForkChoice {
-    /// Block number to fork from
-    Block(BlockNumber),
+    /// Block number to fork from.
+    ///
+    /// f a negative the the given value is subtracted from the `latest` block number.
+    Block(i128),
     /// Transaction hash to fork from
     Transaction(TxHash),
 }
 
 impl ForkChoice {
     /// Returns the block number to fork from
-    pub fn block_number(&self) -> Option<BlockNumber> {
+    pub fn block_number(&self) -> Option<i128> {
         match self {
             Self::Block(block_number) => Some(*block_number),
             Self::Transaction(_) => None,
@@ -1402,7 +1459,7 @@ impl From<TxHash> for ForkChoice {
 /// Convert a decimal block number into a ForkChoice
 impl From<u64> for ForkChoice {
     fn from(block: u64) -> Self {
-        Self::Block(block)
+        Self::Block(block as i128)
     }
 }
 
@@ -1479,7 +1536,7 @@ impl AccountGenerator {
 }
 
 impl AccountGenerator {
-    pub fn gen(&self) -> Vec<PrivateKeySigner> {
+    pub fn gen(&self) -> eyre::Result<Vec<PrivateKeySigner>> {
         let builder = MnemonicBuilder::<English>::default().phrase(self.phrase.as_str());
 
         // use the derivation path
@@ -1489,10 +1546,10 @@ impl AccountGenerator {
         for idx in 0..self.amount {
             let builder =
                 builder.clone().derivation_path(format!("{derivation_path}{idx}")).unwrap();
-            let wallet = builder.build().unwrap().with_chain_id(Some(self.chain_id));
+            let wallet = builder.build()?.with_chain_id(Some(self.chain_id));
             wallets.push(wallet)
         }
-        wallets
+        Ok(wallets)
     }
 }
 
