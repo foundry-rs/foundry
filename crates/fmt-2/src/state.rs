@@ -385,11 +385,11 @@ impl<'ast> State<'_, 'ast> {
             ast::ItemKind::Import(ast::ImportDirective { path, items }) => {
                 self.word("import ");
                 match items {
-                    ast::ImportItems::Plain(ident) => {
+                    ast::ImportItems::Plain(_) | ast::ImportItems::Glob(_) => {
                         self.print_ast_str_lit(path);
-                        if let Some(ident) = ident {
+                        if let Some(ident) = items.source_alias() {
                             self.word(" as ");
-                            self.print_ident(*ident);
+                            self.print_ident(ident);
                         }
                     }
                     ast::ImportItems::Aliases(aliases) => {
@@ -411,12 +411,6 @@ impl<'ast> State<'_, 'ast> {
                         self.s.offset(-self.ind);
                         self.word("}");
                         self.end();
-                        self.word(" from ");
-                        self.print_ast_str_lit(path);
-                    }
-                    ast::ImportItems::Glob(ident) => {
-                        self.word("* as ");
-                        self.print_ident(*ident);
                         self.word(" from ");
                         self.print_ast_str_lit(path);
                     }
