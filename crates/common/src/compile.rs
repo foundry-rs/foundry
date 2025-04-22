@@ -148,23 +148,19 @@ impl ProjectCompiler {
     }
 
     /// Compiles the project.
-    pub fn compile<C: Compiler<CompilerContract = Contract>>(
+    pub fn compile<C: Compiler<CompilerContract = Contract> + Default>(
         mut self,
         project: &Project<C>,
     ) -> Result<ProjectCompileOutput<C>>
     where
+        <C as Compiler>::Language: Default,
         TestOptimizerPreprocessor: Preprocessor<C>,
     {
         self.project_root = project.root().to_path_buf();
 
         if !project.paths.has_input_files() && self.files.is_empty() {
             sh_println!("Nothing to compile")?;
-            return Ok(ProjectCompileOutput {
-                contracts: Default::default(),
-                errors: vec![],
-                sources: Default::default(),
-                compiler_version: None,
-            });
+            return Ok(ProjectCompileOutput::default());
         }
 
         // Taking is fine since we don't need these in `compile_with`.
