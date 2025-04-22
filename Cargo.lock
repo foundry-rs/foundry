@@ -3746,6 +3746,7 @@ dependencies = [
  "semver 1.0.26",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.12",
  "toml 0.8.20",
  "tracing",
