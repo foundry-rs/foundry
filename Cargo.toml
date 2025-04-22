@@ -260,6 +260,8 @@ thiserror = "2"
 
 # misc
 auto_impl = "1"
+aws-config = { version = "1", default-features = true }
+aws-sdk-kms = { version = "1", default-features = false }
 bytes = "1.8"
 walkdir = "2"
 prettyplease = "0.2"
@@ -294,6 +296,7 @@ reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
     "rustls-tls-native-roots",
 ] }
+rustls = "0.23"
 semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
