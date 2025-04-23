@@ -30,8 +30,8 @@ pub enum BlockchainError {
     NoSignerAvailable,
     #[error("Chain ID not available. Make sure you have properly configured the network.")]
     ChainIdNotAvailable,
-    #[error("Invalid transaction fee parameters: `max_priority_fee_per_gas` ({0}) is greater than `max_fee_per_gas` ({1}). The priority fee must be less than or equal to the max fee.")]
-    InvalidFeeInput(u128, u128),
+    #[error("Invalid transaction fee parameters: `max_priority_fee_per_gas` greater than `max_fee_per_gas`. The priority fee must be less than or equal to the max fee.")]
+    InvalidFeeInput,
     #[error("Transaction data is empty. Ensure your transaction contains valid data.")]
     EmptyRawTransactionData,
     #[error("Failed to decode signed transaction. The transaction format might be invalid or corrupted.")]
@@ -68,7 +68,9 @@ pub enum BlockchainError {
     BlockOutOfRange(u64, u64),
     #[error("Block not found. The requested block does not exist or has not been processed yet.")]
     BlockNotFound,
-    #[error("Required data unavailable. The requested information might be pruned or not synced yet.")]
+    #[error(
+        "Required data unavailable. The requested information might be pruned or not synced yet."
+    )]
     DataUnavailable,
     #[error("Trie error: {0}. This is likely an issue with the internal state storage.")]
     TrieError(String),
@@ -76,7 +78,9 @@ pub enum BlockchainError {
     UintConversion(&'static str),
     #[error("State override error: {0}. Check your state override parameters.")]
     StateOverrideError(String),
-    #[error("Timestamp error: {0}. Make sure the timestamp is valid and within acceptable bounds.")]
+    #[error(
+        "Timestamp error: {0}. Make sure the timestamp is valid and within acceptable bounds."
+    )]
     TimestampError(String),
     #[error(transparent)]
     DatabaseError(#[from] DatabaseError),
@@ -88,11 +92,13 @@ pub enum BlockchainError {
     EIP4844TransactionUnsupportedAtHardfork,
     #[error("EIP-7702 fields received but they are not supported by the current hardfork.\n\nYou can use them by running anvil with '--hardfork prague' or later, e.g.: anvil --hardfork prague")]
     EIP7702TransactionUnsupportedAtHardfork,
-    #[error("Optimism deposit transaction received but optimism mode is not enabled.\n\nYou can enable it by running anvil with '--optimism', e.g.: anvil --optimism")]
+    #[error("op-stack deposit tx received but is not supported.\n\nYou can enable it by running anvil with '--optimism', e.g.: anvil --optimism")]
     DepositTransactionUnsupported,
     #[error("Unknown transaction type not supported. Make sure you're using a transaction type supported by the current network configuration.")]
     UnknownTransactionType,
-    #[error("Excess blob gas not set. This is required for EIP-4844 transactions on Cancun hardfork.")]
+    #[error(
+        "Excess blob gas not set. This is required for EIP-4844 transactions on Cancun hardfork."
+    )]
     ExcessBlobGasNotSet,
     #[error("{0}")]
     Message(String),
@@ -195,24 +201,24 @@ pub enum InvalidTransactionError {
     #[error("Maximum initialization code size exceeded. Reduce the size of your contract's initialization code.")]
     MaxInitCodeSizeExceeded,
     /// Represents the inability to cover max cost + value (account balance too low).
-    #[error("Insufficient funds for gas * price + value. Ensure the account has enough balance to cover all costs.")]
+    #[error("Insufficient funds for gas * price + value")]
     InsufficientFunds,
     /// Thrown when calculating gas usage
     #[error("Gas uint64 overflow occurred during calculation. Try reducing the gas parameters.")]
     GasUintOverflow,
     /// returned if the transaction is specified to use less gas than required to start the
     /// invocation.
-    #[error("Intrinsic gas too low. The transaction requires more gas to execute the basic operations.")]
+    #[error("intrinsic gas too low")]
     GasTooLow,
     /// returned if the transaction gas exceeds the limit
     #[error("Intrinsic gas too high -- {}",.0.detail)]
     GasTooHigh(ErrDetail),
     /// Thrown to ensure no one is able to specify a transaction with a tip higher than the total
     /// fee cap.
-    #[error("Max priority fee per gas is higher than max fee per gas. The priority fee cannot exceed the total fee cap.")]
+    #[error("max priority fee per gas higher than max fee per gas")]
     TipAboveFeeCap,
     /// Thrown post London if the transaction's fee is less than the base fee of the block
-    #[error("Max fee per gas less than block base fee. Increase your max fee to at least the current base fee.")]
+    #[error("max fee per gas less than block base fee")]
     FeeCapTooLow,
     /// Thrown during estimate if caller has insufficient funds to cover the tx.
     #[error("Out of gas: gas required ({0:?}) exceeds allowance. Increase the gas limit for this transaction.")]
@@ -246,7 +252,7 @@ pub enum InvalidTransactionError {
     /// Thrown when there are no `blob_hashes` in the transaction, and it is an EIP-4844 tx.
     #[error("`blob_hashes` are required for EIP-4844 transactions. Ensure your transaction includes blob hashes.")]
     NoBlobHashes,
-    #[error("Too many blobs in one transaction, have: {0}. Reduce the number of blobs in your transaction.")]
+    #[error("too many blobs in one transaction, have: {0}")]
     TooManyBlobs(usize),
     /// Thrown when there's a blob validation error
     #[error(transparent)]
@@ -304,10 +310,10 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
             InvalidTransaction::AuthorizationListNotSupported => {
                 Self::AuthorizationListNotSupported
             }
-            InvalidTransaction::AuthorizationListInvalidFields |
-            InvalidTransaction::OptimismError(_) |
-            InvalidTransaction::EofCrateShouldHaveToAddress |
-            InvalidTransaction::EmptyAuthorizationList => Self::Revm(err),
+            InvalidTransaction::AuthorizationListInvalidFields
+            | InvalidTransaction::OptimismError(_)
+            | InvalidTransaction::EofCrateShouldHaveToAddress
+            | InvalidTransaction::EmptyAuthorizationList => Self::Revm(err),
         }
     }
 }
