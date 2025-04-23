@@ -13,9 +13,9 @@ CARGO_TARGET_DIR ?= target
 # List of features to use when building. Can be overridden via the environment.
 # No jemalloc on Windows
 ifeq ($(OS),Windows_NT)
-    FEATURES ?= aws-kms cli asm-keccak
+    FEATURES ?= aws-kms gcp-kms cli asm-keccak
 else
-    FEATURES ?= jemalloc aws-kms cli asm-keccak
+    FEATURES ?= jemalloc aws-kms gcp-kms cli asm-keccak
 endif
 
 ##@ Help
@@ -44,13 +44,13 @@ build-%:
 
 .PHONY: docker-build-push
 docker-build-push: docker-build-prepare ## Build and push a cross-arch Docker image tagged with DOCKER_IMAGE_NAME.
-	FEATURES="jemalloc aws-kms cli asm-keccak" $(MAKE) build-x86_64-unknown-linux-gnu
+	FEATURES="jemalloc aws-kms gcp-kms cli asm-keccak" $(MAKE) build-x86_64-unknown-linux-gnu
 	mkdir -p $(BIN_DIR)/amd64
 	for bin in anvil cast chisel forge; do \
 		cp $(CARGO_TARGET_DIR)/x86_64-unknown-linux-gnu/$(PROFILE)/$$bin $(BIN_DIR)/amd64/; \
 	done
 
-	FEATURES="aws-kms cli asm-keccak" $(MAKE) build-aarch64-unknown-linux-gnu
+	FEATURES="aws-kms gcp-kms cli asm-keccak" $(MAKE) build-aarch64-unknown-linux-gnu
 	mkdir -p $(BIN_DIR)/arm64
 	for bin in anvil cast chisel forge; do \
 		cp $(CARGO_TARGET_DIR)/aarch64-unknown-linux-gnu/$(PROFILE)/$$bin $(BIN_DIR)/arm64/; \
