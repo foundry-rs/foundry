@@ -8,10 +8,7 @@ contract IpfsCidV0Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
     function testIpfsCidV0() public {
-        string memory filePath = "./testdata/test.txt";
-        string memory fileContents = "---\ntitle: TestTitle\ndiscussions: TestDiscussion\nauthor: TestAuthor\n---";
-
-        vm.writeFile(filePath, fileContents);
+        string memory filePath = "testdata/fixtures/File/test.txt";
 
         bytes32 cid = vm.ipfsCidV0(filePath);
 
