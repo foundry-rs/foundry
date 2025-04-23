@@ -816,13 +816,13 @@ impl UIfmt for SignedAuthorization {
         let signed_authorization = serde_json::to_string(self).unwrap_or("<invalid>".to_string());
 
         match self.recover_authority() {
-            Ok(recover_authority) =>
+            Ok(authority) =>
                 format!(
-                    "{{recoverAuthority: {recover_authority}, signedAuthority: {signed_authorization}}}",
+                    "{{recoveredAuthority: {authority}, signedAuthority: {signed_authorization}}}",
                 ),
             Err(e) =>
                 format!(
-                    "{{recoverAuthority: <error: {e}>, signedAuthority: {signed_authorization}}}",
+                    "{{recoveredAuthority: <error: {e}>, signedAuthority: {signed_authorization}}}",
                 )
         }
     }
@@ -1507,7 +1507,7 @@ l1GasUsed            1600
 
         assert_eq!(
             signed_authorization.pretty(),
-            r#"{recoverAuthority: 0xf3eaBD0de6Ca1aE7fC4D81FfD6C9a40e5D5D7e30, signedAuthority: {"chainId":"0x1","address":"0x000000000000000000000000000000000000dead","nonce":"0x2a","yParity":"0x1","r":"0x14","s":"0x1e"}}"#
+            r#"{recoveredAuthority: 0xf3eaBD0de6Ca1aE7fC4D81FfD6C9a40e5D5D7e30, signedAuthority: {"chainId":"0x1","address":"0x000000000000000000000000000000000000dead","nonce":"0x2a","yParity":"0x1","r":"0x14","s":"0x1e"}}"#
         );
     }
 }
