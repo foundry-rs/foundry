@@ -2362,6 +2362,25 @@ Error: server returned an error response: error code 3: execution reverted, data
 8738
 
 "#]]);
+
+    // Calling `number1()` with overridden state should return new value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-code",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063c223a39e14602a575b5f5ffd5b60306044565b604051603b9190605f565b60405180910390f35b5f5481565b5f819050919050565b6059816049565b82525050565b5f60208201905060705f8301846052565b9291505056fea26469706673582212202a0acfb9083efed3e0e9f27177b090731d4392cf196d58e27e05088f59008d0964736f6c634300081d0033",
+            "--override-state-diff",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x2222",
+            "number1()(uint256)",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+8738
+
+"#]]);
 });
 
 // https://github.com/foundry-rs/foundry/issues/9541
