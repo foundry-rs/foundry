@@ -3596,7 +3596,7 @@
         "description": "Returns true if `search` is found in `subject`, false otherwise.",
         "declaration": "function contains(string calldata subject, string calldata search) external returns (bool result);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "pure",
         "signature": "contains(string,string)",
         "selector": "0x3fb18aec",
         "selectorBytes": [

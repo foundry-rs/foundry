@@ -32,7 +32,7 @@ From issue [#10027](https://github.com/foundry-rs/foundry/issues/10027):
 
 Mark `pure`:
 
-- [ ] `contains`: `contains(string,string)` _suggested: `pure`_
+- [x] `contains`: `contains(string,string)` _suggested: `pure`_
 
 ---
 
