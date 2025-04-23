@@ -56,6 +56,7 @@ static OVERRIDE_PATTERN: LazyLock<Regex> =
 ///   --override-nonce 0x123:1 \
 ///   --override-code 0x123:0x1234 \
 ///   --override-state 0x123:0x1:0x1234
+///   --override-state-diff 0x123:0x1:0x1234
 /// ```
 #[derive(Debug, Parser)]
 pub struct CallArgs {
