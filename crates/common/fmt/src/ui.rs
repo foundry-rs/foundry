@@ -816,14 +816,12 @@ impl UIfmt for SignedAuthorization {
         let signed_authorization = serde_json::to_string(self).unwrap_or("<invalid>".to_string());
 
         match self.recover_authority() {
-            Ok(authority) =>
-                format!(
-                    "{{recoveredAuthority: {authority}, signedAuthority: {signed_authorization}}}",
-                ),
-            Err(e) =>
-                format!(
-                    "{{recoveredAuthority: <error: {e}>, signedAuthority: {signed_authorization}}}",
-                )
+            Ok(authority) => format!(
+                "{{recoveredAuthority: {authority}, signedAuthority: {signed_authorization}}}",
+            ),
+            Err(e) => format!(
+                "{{recoveredAuthority: <error: {e}>, signedAuthority: {signed_authorization}}}",
+            ),
         }
     }
 }
@@ -887,7 +885,7 @@ pub fn get_pretty_block_attr(block: &AnyRpcBlock, attr: &str) -> Option<String> 
         other => {
             if let Some(value) = block.other.get(other) {
                 let val = EthValue::from(value.clone());
-                return Some(val.pretty())
+                return Some(val.pretty());
             }
             None
         }
