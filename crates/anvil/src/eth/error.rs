@@ -26,31 +26,31 @@ pub(crate) type Result<T> = std::result::Result<T, BlockchainError>;
 pub enum BlockchainError {
     #[error(transparent)]
     Pool(#[from] PoolError),
-    #[error("No signer available")]
+    #[error("No signer available. Make sure you have configured accounts properly in the node.")]
     NoSignerAvailable,
-    #[error("Chain Id not available")]
+    #[error("Chain ID not available. Make sure you have properly configured the network.")]
     ChainIdNotAvailable,
-    #[error("Invalid input: `max_priority_fee_per_gas` greater than `max_fee_per_gas`")]
-    InvalidFeeInput,
-    #[error("Transaction data is empty")]
+    #[error("Invalid transaction fee parameters: `max_priority_fee_per_gas` ({0}) is greater than `max_fee_per_gas` ({1}). The priority fee must be less than or equal to the max fee.")]
+    InvalidFeeInput(u128, u128),
+    #[error("Transaction data is empty. Ensure your transaction contains valid data.")]
     EmptyRawTransactionData,
-    #[error("Failed to decode signed transaction")]
+    #[error("Failed to decode signed transaction. The transaction format might be invalid or corrupted.")]
     FailedToDecodeSignedTransaction,
-    #[error("Failed to decode transaction")]
+    #[error("Failed to decode transaction. The transaction format might be invalid or corrupted.")]
     FailedToDecodeTransaction,
-    #[error("Failed to decode receipt")]
+    #[error("Failed to decode receipt. The receipt format might be invalid or corrupted.")]
     FailedToDecodeReceipt,
-    #[error("Failed to decode state")]
+    #[error("Failed to decode state. The state dump format might be invalid or corrupted.")]
     FailedToDecodeStateDump,
-    #[error("Prevrandao not in th EVM's environment after merge")]
+    #[error("Prevrandao not set in the EVM environment after merge. This is an internal issue with the post-merge configuration.")]
     PrevrandaoNotSet,
     #[error(transparent)]
     SignatureError(#[from] SignatureError),
     #[error(transparent)]
     SignerError(#[from] SignerError),
-    #[error("Rpc Endpoint not implemented")]
+    #[error("RPC Endpoint not implemented. This feature is not available in the current version.")]
     RpcUnimplemented,
-    #[error("Rpc error {0:?}")]
+    #[error("RPC error {0:?}")]
     RpcError(RpcError),
     #[error(transparent)]
     InvalidTransaction(#[from] InvalidTransactionError),
@@ -58,41 +58,41 @@ pub enum BlockchainError {
     FeeHistory(#[from] FeeHistoryError),
     #[error(transparent)]
     AlloyForkProvider(#[from] TransportError),
-    #[error("EVM error {0:?}")]
+    #[error("EVM execution error: {0:?}. Check your transaction parameters and contract code.")]
     EvmError(InstructionResult),
-    #[error("Invalid url {0:?}")]
+    #[error("Invalid URL format: '{0}'. Please provide a valid URL.")]
     InvalidUrl(String),
-    #[error("Internal error: {0:?}")]
+    #[error("Internal error: {0:?}. Please report this issue to the Anvil maintainers.")]
     Internal(String),
-    #[error("BlockOutOfRangeError: block height is {0} but requested was {1}")]
+    #[error("Block out of range error: current block height is {0} but requested block was {1}. Make sure you're requesting an existing block.")]
     BlockOutOfRange(u64, u64),
-    #[error("Resource not found")]
+    #[error("Block not found. The requested block does not exist or has not been processed yet.")]
     BlockNotFound,
-    #[error("Required data unavailable")]
+    #[error("Required data unavailable. The requested information might be pruned or not synced yet.")]
     DataUnavailable,
-    #[error("Trie error: {0}")]
+    #[error("Trie error: {0}. This is likely an issue with the internal state storage.")]
     TrieError(String),
     #[error("{0}")]
     UintConversion(&'static str),
-    #[error("State override error: {0}")]
+    #[error("State override error: {0}. Check your state override parameters.")]
     StateOverrideError(String),
-    #[error("Timestamp error: {0}")]
+    #[error("Timestamp error: {0}. Make sure the timestamp is valid and within acceptable bounds.")]
     TimestampError(String),
     #[error(transparent)]
     DatabaseError(#[from] DatabaseError),
-    #[error("EIP-1559 style fee params (maxFeePerGas or maxPriorityFeePerGas) received but they are not supported by the current hardfork.\n\nYou can use them by running anvil with '--hardfork london' or later.")]
+    #[error("EIP-1559 style fee params (maxFeePerGas or maxPriorityFeePerGas) received but they are not supported by the current hardfork.\n\nYou can use them by running anvil with '--hardfork london' or later, e.g.: anvil --hardfork london")]
     EIP1559TransactionUnsupportedAtHardfork,
-    #[error("Access list received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork berlin' or later.")]
+    #[error("Access list received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork berlin' or later, e.g.: anvil --hardfork berlin")]
     EIP2930TransactionUnsupportedAtHardfork,
-    #[error("EIP-4844 fields received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork cancun' or later.")]
+    #[error("EIP-4844 blob fields received but they are not supported by the current hardfork.\n\nYou can use them by running anvil with '--hardfork cancun' or later, e.g.: anvil --hardfork cancun")]
     EIP4844TransactionUnsupportedAtHardfork,
-    #[error("EIP-7702 fields received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork prague' or later.")]
+    #[error("EIP-7702 fields received but they are not supported by the current hardfork.\n\nYou can use them by running anvil with '--hardfork prague' or later, e.g.: anvil --hardfork prague")]
     EIP7702TransactionUnsupportedAtHardfork,
-    #[error("op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--optimism'.")]
+    #[error("Optimism deposit transaction received but optimism mode is not enabled.\n\nYou can enable it by running anvil with '--optimism', e.g.: anvil --optimism")]
     DepositTransactionUnsupported,
-    #[error("UnknownTransactionType not supported ")]
+    #[error("Unknown transaction type not supported. Make sure you're using a transaction type supported by the current network configuration.")]
     UnknownTransactionType,
-    #[error("Excess blob gas not set.")]
+    #[error("Excess blob gas not set. This is required for EIP-4844 transactions on Cancun hardfork.")]
     ExcessBlobGasNotSet,
     #[error("{0}")]
     Message(String),
@@ -151,21 +151,21 @@ impl From<WalletError> for BlockchainError {
 /// Errors that can occur in the transaction pool
 #[derive(Debug, thiserror::Error)]
 pub enum PoolError {
-    #[error("Transaction with cyclic dependent transactions")]
+    #[error("Transaction with cyclic dependent transactions detected. Ensure your transactions don't have circular dependencies.")]
     CyclicTransaction,
     /// Thrown if a replacement transaction's gas price is below the already imported transaction
-    #[error("Tx: [{0:?}] insufficient gas price to replace existing transaction")]
+    #[error("Transaction {0:?} has insufficient gas price to replace existing transaction. Increase the gas price to replace the pending transaction.")]
     ReplacementUnderpriced(Box<PoolTransaction>),
-    #[error("Tx: [{0:?}] already Imported")]
+    #[error("Transaction {0:?} has already been imported into the pool. No need to resubmit.")]
     AlreadyImported(Box<PoolTransaction>),
 }
 
 /// Errors that can occur with `eth_feeHistory`
 #[derive(Debug, thiserror::Error)]
 pub enum FeeHistoryError {
-    #[error("requested block range is out of bounds")]
+    #[error("Requested block range is out of bounds. Make sure you're requesting blocks within the available history.")]
     InvalidBlockRange,
-    #[error("could not find newest block number requested: {0}")]
+    #[error("Could not find the newest block requested: {0}. The block might not exist or hasn't been processed yet.")]
     BlockNotFound(BlockNumberOrTag),
 }
 
@@ -178,75 +178,75 @@ pub struct ErrDetail {
 #[derive(Debug, thiserror::Error)]
 pub enum InvalidTransactionError {
     /// returned if the nonce of a transaction is lower than the one present in the local chain.
-    #[error("nonce too low")]
+    #[error("Transaction nonce too low. The account's current nonce is higher than the transaction's nonce.")]
     NonceTooLow,
     /// returned if the nonce of a transaction is higher than the next one expected based on the
     /// local chain.
-    #[error("Nonce too high")]
+    #[error("Transaction nonce too high. Use a nonce that matches the account's current nonce.")]
     NonceTooHigh,
     /// Returned if the nonce of a transaction is too high
     /// Incrementing the nonce would lead to invalid state (overflow)
-    #[error("nonce has max value")]
+    #[error("Transaction nonce has reached the maximum value and cannot be incremented further.")]
     NonceMaxValue,
     /// thrown if the transaction sender doesn't have enough funds for a transfer
-    #[error("insufficient funds for transfer")]
+    #[error("Insufficient funds for transfer. The account doesn't have enough balance to complete this transaction.")]
     InsufficientFundsForTransfer,
     /// thrown if creation transaction provides the init code bigger than init code size limit.
-    #[error("max initcode size exceeded")]
+    #[error("Maximum initialization code size exceeded. Reduce the size of your contract's initialization code.")]
     MaxInitCodeSizeExceeded,
     /// Represents the inability to cover max cost + value (account balance too low).
-    #[error("Insufficient funds for gas * price + value")]
+    #[error("Insufficient funds for gas * price + value. Ensure the account has enough balance to cover all costs.")]
     InsufficientFunds,
     /// Thrown when calculating gas usage
-    #[error("gas uint64 overflow")]
+    #[error("Gas uint64 overflow occurred during calculation. Try reducing the gas parameters.")]
     GasUintOverflow,
     /// returned if the transaction is specified to use less gas than required to start the
     /// invocation.
-    #[error("intrinsic gas too low")]
+    #[error("Intrinsic gas too low. The transaction requires more gas to execute the basic operations.")]
     GasTooLow,
     /// returned if the transaction gas exceeds the limit
-    #[error("intrinsic gas too high -- {}",.0.detail)]
+    #[error("Intrinsic gas too high -- {}",.0.detail)]
     GasTooHigh(ErrDetail),
     /// Thrown to ensure no one is able to specify a transaction with a tip higher than the total
     /// fee cap.
-    #[error("max priority fee per gas higher than max fee per gas")]
+    #[error("Max priority fee per gas is higher than max fee per gas. The priority fee cannot exceed the total fee cap.")]
     TipAboveFeeCap,
     /// Thrown post London if the transaction's fee is less than the base fee of the block
-    #[error("max fee per gas less than block base fee")]
+    #[error("Max fee per gas less than block base fee. Increase your max fee to at least the current base fee.")]
     FeeCapTooLow,
     /// Thrown during estimate if caller has insufficient funds to cover the tx.
-    #[error("Out of gas: gas required exceeds allowance: {0:?}")]
+    #[error("Out of gas: gas required ({0:?}) exceeds allowance. Increase the gas limit for this transaction.")]
     BasicOutOfGas(u128),
     /// Thrown if executing a transaction failed during estimate/call
-    #[error("execution reverted: {0:?}")]
+    #[error("Execution reverted: {0:?}. Check your contract code and transaction parameters.")]
     Revert(Option<Bytes>),
     /// Thrown if the sender of a transaction is a contract.
-    #[error("sender not an eoa")]
+    #[error("Sender is not an externally owned account (EOA). Contracts cannot send transactions directly.")]
     SenderNoEOA,
     /// Thrown when a tx was signed with a different chain_id
-    #[error("invalid chain id for signer")]
+    #[error("Invalid chain ID for signer. Make sure you're signing the transaction for the correct network.")]
     InvalidChainId,
     /// Thrown when a legacy tx was signed for a different chain
-    #[error("Incompatible EIP-155 transaction, signed for another chain")]
+    #[error("Incompatible EIP-155 transaction, signed for another chain. Ensure you're using the correct network configuration.")]
     IncompatibleEIP155,
     /// Thrown when an access list is used before the berlin hard fork.
-    #[error("Access lists are not supported before the Berlin hardfork")]
+    #[error("Access lists are not supported before the Berlin hardfork. Use '--hardfork berlin' or later when running Anvil.")]
     AccessListNotSupported,
     /// Thrown when the block's `blob_gas_price` is greater than tx-specified
     /// `max_fee_per_blob_gas` after Cancun.
-    #[error("Block `blob_gas_price` is greater than tx-specified `max_fee_per_blob_gas`")]
+    #[error("Block `blob_gas_price` is greater than tx-specified `max_fee_per_blob_gas`. Increase your max fee per blob gas.")]
     BlobFeeCapTooLow,
     /// Thrown when we receive a tx with `blob_versioned_hashes` and we're not on the Cancun hard
     /// fork.
-    #[error("Block `blob_versioned_hashes` is not supported before the Cancun hardfork")]
+    #[error("Block `blob_versioned_hashes` is not supported before the Cancun hardfork. Use '--hardfork cancun' when running Anvil.")]
     BlobVersionedHashesNotSupported,
     /// Thrown when `max_fee_per_blob_gas` is not supported for blocks before the Cancun hardfork.
-    #[error("`max_fee_per_blob_gas` is not supported for blocks before the Cancun hardfork.")]
+    #[error("`max_fee_per_blob_gas` is not supported for blocks before the Cancun hardfork. Use '--hardfork cancun' when running Anvil.")]
     MaxFeePerBlobGasNotSupported,
     /// Thrown when there are no `blob_hashes` in the transaction, and it is an EIP-4844 tx.
-    #[error("`blob_hashes` are required for EIP-4844 transactions")]
+    #[error("`blob_hashes` are required for EIP-4844 transactions. Ensure your transaction includes blob hashes.")]
     NoBlobHashes,
-    #[error("too many blobs in one transaction, have: {0}")]
+    #[error("Too many blobs in one transaction, have: {0}. Reduce the number of blobs in your transaction.")]
     TooManyBlobs(usize),
     /// Thrown when there's a blob validation error
     #[error(transparent)]
