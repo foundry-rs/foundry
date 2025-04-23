@@ -261,8 +261,6 @@ impl VerifyBytecodeArgs {
                 gen_tx_req.gas_price = block.header.base_fee_per_gas.map(|g| g as u128);
             }
 
-            // configure_tx_rq_env(&mut env, &gen_tx);
-
             configure_tx_req_env(&mut env.as_env_mut(), &gen_tx_req, None)
                 .wrap_err("Failed to configure tx request env")?;
 

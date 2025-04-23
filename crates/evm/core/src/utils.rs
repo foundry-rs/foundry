@@ -9,7 +9,7 @@ use foundry_config::NamedChain;
 use revm::primitives::hardfork::SpecId;
 pub use revm::state::EvmState as StateChangeset;
 
-use crate::EnvMut;
+use crate::{Env, EnvMut};
 
 /// Depending on the configured chain id and block number this should apply any specific changes
 ///
@@ -18,7 +18,7 @@ use crate::EnvMut;
 ///
 /// Should be called with proper chain id (retrieved from provider if not provided).
 pub fn apply_chain_and_block_specific_env_changes<N: Network>(
-    env: &mut crate::Env,
+    env: &mut Env,
     block: &N::BlockResponse,
 ) {
     use NamedChain::*;
