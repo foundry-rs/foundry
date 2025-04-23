@@ -13,5 +13,8 @@ pub use chisel_state::ChiselState;
 mod logs;
 pub use logs::LogCollector;
 
+mod script;
+pub use script::ScriptExecutionInspector;
+
 mod stack;
 pub use stack::{InspectorData, InspectorStack, InspectorStackBuilder};

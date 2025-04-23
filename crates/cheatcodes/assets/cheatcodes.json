@@ -3232,6 +3232,26 @@
     },
     {
       "func": {
+        "id": "attachBlob",
+        "description": "Attach an EIP-4844 blob to the next call",
+        "declaration": "function attachBlob(bytes calldata blob) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "attachBlob(bytes)",
+        "selector": "0x10cb385c",
+        "selectorBytes": [
+          16,
+          203,
+          56,
+          92
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "attachDelegation",
         "description": "Designate the next call as an EIP-7702 transaction",
         "declaration": "function attachDelegation(SignedDelegation calldata signedDelegation) external;",
