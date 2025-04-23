@@ -228,8 +228,8 @@ impl Cheatcode for loadAllocsCall {
             }
         };
 
-        let (db, journal, _) = ccx.ecx.as_db_env_and_journal();
         // Then, load the allocs into the database.
+        let (db, journal, _) = ccx.ecx.as_db_env_and_journal();
         db.load_allocs(&allocs, journal)
             .map(|()| Vec::default())
             .map_err(|e| fmt_err!("failed to load allocs: {e}"))

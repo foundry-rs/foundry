@@ -11,7 +11,7 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{map::HashMap, utils::format_units, Address, Bytes, TxKind, U256};
+use alloy_primitives::{map::HashMap, utils::format_units, Address, Bytes, TxKind};
 use dialoguer::Confirm;
 use eyre::{Context, Result};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};

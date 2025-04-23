@@ -99,7 +99,7 @@ impl<'a> CowBackend<'a> {
             env.evm_env.cfg_env.spec = self.spec_id;
             backend.initialize(&env);
             self.is_initialized = true;
-            return backend;
+            return backend
         }
         self.backend.to_mut()
     }
