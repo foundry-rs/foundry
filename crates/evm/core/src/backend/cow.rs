@@ -75,7 +75,7 @@ impl<'a> CowBackend<'a> {
 
         let mut evm = crate::evm::new_evm_with_inspector(self, &env.as_env_mut(), inspector);
 
-        let res = evm.transact(env.as_env_mut().tx.to_owned()).wrap_err("EVM error")?;
+        let res = evm.replay().wrap_err("EVM error")?;
 
         *env = evm.as_env_mut().to_owned();
 
