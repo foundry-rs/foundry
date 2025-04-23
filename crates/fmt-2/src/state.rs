@@ -14,64 +14,6 @@ use std::borrow::Cow;
 
 // TODO(dani): bunch docs into `Comments` since misplaced docs get ignore
 
-/*
-- [x]
-/// Maximum line length where formatter will try to wrap the line
-pub line_length: usize,
-
-- [x]
-/// Number of spaces per indentation level
-pub tab_width: usize,
-
-- [x]
-/// Print spaces between brackets
-pub bracket_spacing: bool,
-
-- [x]
-/// Style of uint/int256 types
-pub int_types: IntTypes,
-
-- [ ]
-/// Style of multiline function header in case it doesn't fit
-pub multiline_func_header: MultilineFuncHeaderStyle,
-
-- [x]
-/// Style of quotation marks
-pub quote_style: QuoteStyle,
-
-- [x]
-/// Style of underscores in number literals
-pub number_underscore: NumberUnderscore,
-
-- [x]
-/// Style of underscores in hex literals
-pub hex_underscore: HexUnderscore,
-
-- [ ]
-/// Style of single line blocks in statements
-pub single_line_statement_blocks: SingleLineBlockStyle,
-
-- [x]
-/// Print space in state variable, function and modifier `override` attribute
-pub override_spacing: bool,
-
-- [ ]
-/// Wrap comments on `line_length` reached
-pub wrap_comments: bool,
-
-- [N/A]
-/// Globs to ignore
-pub ignore: Vec<String>,
-
-- [x]
-/// Add new line at start and end of contract declarations
-pub contract_new_lines: bool,
-
-- [ ]
-/// Sort import statements alphabetically in groups (a group is separated by a newline).
-pub sort_imports: bool,
-*/
-
 pub(super) struct State<'sess, 'ast> {
     pub(crate) s: pp::Printer,
     ind: isize,
@@ -430,9 +372,7 @@ impl<'ast> State<'_, 'ast> {
                             self.print_path(path);
                             if let Some(op) = op {
                                 self.word(" as ");
-                                // TODO(dani): op.to_str()
-                                let _ = op;
-                                self.word("?");
+                                self.word(op.to_str());
                             }
                             if !pos.is_last {
                                 self.word(",");
@@ -816,15 +756,14 @@ impl<'ast> State<'_, 'ast> {
                 }
                 self.s.offset(-self.ind);
                 self.end();
-                return;
             }
             ast::LitKind::Number(_) | ast::LitKind::Rational(_) => {
                 self.print_num_literal(symbol.as_str());
-                return;
             }
-            _ => {}
-        };
-        self.word(symbol.to_string());
+            ast::LitKind::Address(value) => self.word(value.to_string()),
+            ast::LitKind::Bool(value) => self.word(if value { "true" } else { "false" }),
+            ast::LitKind::Err(_) => self.word(symbol.to_string()),
+        }
     }
 
     fn print_num_literal(&mut self, source: &str) {
@@ -866,16 +805,19 @@ impl<'ast> State<'_, 'ast> {
         let (val, fract) = val.split_once('.').unwrap_or((val, ""));
 
         let strip_undescores = !config.is_preserve();
-        let val = &strip_underscores_if(strip_undescores, val)[..];
-        let exp = &strip_underscores_if(strip_undescores, exp)[..];
-        let fract = &strip_underscores_if(strip_undescores, fract)[..];
+        let mut val = &strip_underscores_if(strip_undescores, val)[..];
+        let mut exp = &strip_underscores_if(strip_undescores, exp)[..];
+        let mut fract = &strip_underscores_if(strip_undescores, fract)[..];
 
         // strip any padded 0's
-        let val = val.trim_start_matches('0');
-        let fract = fract.trim_end_matches('0');
-        let (exp_sign, exp) =
-            if let Some(exp) = exp.strip_prefix('-') { ("-", exp) } else { ("", exp) };
-        let exp = exp.trim_start_matches('0');
+        let mut exp_sign = "";
+        if !["0x", "0b", "0o"].iter().any(|prefix| source.starts_with(prefix)) {
+            val = val.trim_start_matches('0');
+            fract = fract.trim_end_matches('0');
+            (exp_sign, exp) =
+                if let Some(exp) = exp.strip_prefix('-') { ("-", exp) } else { ("", exp) };
+            exp = exp.trim_start_matches('0');
+        }
 
         let mut out = String::with_capacity(source.len() * 2);
         if val.is_empty() {
