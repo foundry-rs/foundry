@@ -146,7 +146,7 @@ impl Cheatcode for assertionExCall {
         executor.console_log(ccx, &assertion_gas_message);
 
         if !tx_validation.is_valid() {
-            let mut error_msg = format!("\n  {assertionContractLabel} Assertions Failed:\n");
+            let mut error_msg = format!("\n  {assertionContractLabel} Enforced Assertions:\n");
             // Collect failed assertions
             let reverted_assertions: HashMap<_, _> = assertion_contract
                 .assertion_fns_results
