@@ -26,7 +26,7 @@ impl From<ChainHardfork> for SpecId {
     fn from(fork: ChainHardfork) -> Self {
         match fork {
             ChainHardfork::Ethereum(hardfork) => hardfork.into(),
-            ChainHardfork::Optimism(hardfork) => hardfork.into(),
+            // ChainHardfork::Optimism(hardfork) => hardfork.into(),
         }
     }
 }

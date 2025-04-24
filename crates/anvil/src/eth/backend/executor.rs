@@ -327,6 +327,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
 
             trace!(target: "backend", "[{:?}] executing", transaction.hash());
             // transact and commit the transaction
+
             match evm.transact_commit() {
                 Ok(exec_result) => exec_result,
                 Err(err) => {
@@ -414,44 +415,46 @@ pub type AnvilEvm<'db, DB, I, P = FoundryPrecompiles> =
     Evm<AnvilEvmContext<'db, DB>, I, EthInstructions<EthInterpreter, AnvilEvmContext<'db, DB>>, P>;
 
 /// Creates a database with given database and inspector, optionally enabling odyssey features.
-pub fn new_evm_with_inspector<'db, DB>(
+pub fn new_evm_with_inspector<'db, CTX, DB>(
     db: DB,
     env: &Env,
-    inspector: &'db mut dyn Inspector<DB>,
-) -> AnvilEvm<'db, DB, &'db mut dyn Inspector<DB>>
+    inspector: &'db mut dyn Inspector<CTX>,
+) -> AnvilEvm<'db, DB, &'db mut dyn Inspector<CTX>>
 where
     DB: Database<Error = DatabaseError>,
 {
-    Evm {
-        data: EvmData {
-            ctx: AnvilEvmContext {
-                journaled_state: {
-                    let mut journal = Journal::new(db);
-                    journal.set_spec_id(env.evm_env.cfg_env.spec);
-                    journal
-                },
-                block: env.evm_env.block_env.clone(),
-                cfg: env.evm_env.cfg_env.clone(),
-                tx: env.tx.clone(),
-                chain: (),
-                error: Ok(()),
-            },
-            inspector,
+    let evm_context = AnvilEvmContext {
+        journaled_state: {
+            let mut journal = Journal::new(db);
+            journal.set_spec_id(env.evm_env.cfg_env.spec);
+            journal
         },
-        instruction: EthInstructions::default(),
-        precompiles: FoundryPrecompiles::new(),
-    }
+        block: env.evm_env.block_env.clone(),
+        cfg: env.evm_env.cfg_env.clone(),
+        tx: env.tx.clone(),
+        chain: (),
+        error: Ok(()),
+    };
+
+    let evm = Evm::new_with_inspector(
+        evm_context,
+        inspector,
+        EthInstructions::default(),
+        FoundryPrecompiles::new(),
+    );
+
+    evm
 }
 
 /// Creates a new EVM with the given inspector and wraps the database in a `WrapDatabaseRef`.
-pub fn new_evm_with_inspector_ref<'db, DB>(
-    db: &'db mut DB,
+pub fn new_evm_with_inspector_ref<'db, CTX, DB>(
+    db: &'db DB,
     env: &Env,
-    inspector: &'db mut dyn Inspector<WrapDatabaseRef<&'db mut DB>>,
-) -> AnvilEvm<'db, WrapDatabaseRef<&'db mut DB>, &'db mut dyn Inspector<WrapDatabaseRef<&'db mut DB>>>
+    inspector: &'db mut dyn Inspector<CTX>,
+) -> AnvilEvm<'db, WrapDatabaseRef<&'db DB>, &'db mut dyn Inspector<CTX>>
 where
-    DB: Database<Error = DatabaseError> + DatabaseRef + 'db,
-    WrapDatabaseRef<&'db mut DB>: Database<Error = DatabaseError>,
+    DB: DatabaseRef<Error = DatabaseError> + 'db + ?Sized,
+    WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
 {
     new_evm_with_inspector(WrapDatabaseRef(db), env, inspector)
 }

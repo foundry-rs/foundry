@@ -95,7 +95,7 @@ use futures::channel::mpsc::{unbounded, UnboundedSender};
 use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
 use parking_lot::{Mutex, RwLock};
 use revm::{
-    context::{Block as RevmBlock, BlockEnv, TxEnv},
+    context::{Block as RevmBlock, BlockEnv, ContextTr, TxEnv},
     context_interface::{
         block::BlobExcessGasAndPrice,
         result::{ExecutionResult, Output, ResultAndState},
@@ -104,7 +104,7 @@ use revm::{
     interpreter::InstructionResult,
     primitives::{hardfork::SpecId, KECCAK_EMPTY},
     state::AccountInfo,
-    DatabaseCommit, Inspector,
+    DatabaseCommit, ExecuteEvm, Inspector,
 };
 use revm_inspectors::transfer::TransferInspector;
 use std::{
@@ -1044,14 +1044,19 @@ impl Backend {
 
     /// Creates an EVM instance with optionally injected precompiles.
     #[expect(clippy::type_complexity)]
-    fn new_evm_with_inspector_ref<'i, 'db>(
+    fn new_evm_with_inspector_ref<'db, CTX>(
         &self,
-        db: &'db mut dyn DatabaseRef<Error = DatabaseError>,
+        db: &'db dyn DatabaseRef<Error = DatabaseError>,
         env: &Env,
-        inspector: &'i mut dyn Inspector<
-            WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>,
-        >,
-    ) -> AnvilEvm<'db, WrapDatabaseRef<&'db mut dyn DatabaseRef<Error = DatabaseError>>, &'db mut dyn Inspector<WrapDatabaseRef<&'db mut dyn DatabaseRef<Error = DatabaseError>>>> {
+        inspector: &'db mut dyn Inspector<CTX>,
+    ) -> AnvilEvm<
+        'db,
+        WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>,
+        &'db mut dyn Inspector<CTX>,
+    >
+    where
+        CTX: ContextTr<Db = WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>>,
+    {
         let mut evm = new_evm_with_inspector_ref(db, env, inspector);
         // if let Some(factory) = &self.precompile_factory {
         //     inject_precompiles(&mut evm, factory.precompiles());
@@ -1078,7 +1083,7 @@ impl Backend {
 
         let db = self.db.read().await;
         let mut inspector = self.build_inspector();
-        let mut evm = self.new_evm_with_inspector_ref(db.as_dyn(), env, &mut inspector);
+        let mut evm = self.new_evm_with_inspector_ref(db.as_dyn(), &env, &mut inspector);
         let ResultAndState { result, state } = evm.transact()?;
         let (exit_reason, gas_used, out, logs) = match result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
@@ -1558,16 +1563,41 @@ impl Backend {
                         // prepare inspector to capture transfer inside the evm so they are
                         // recorded and included in logs
                         let mut inspector = TransferInspector::new(false).with_logs(true);
-                        let mut evm =
-                            self.new_evm_with_inspector_ref(cache_db.as_dyn(), env, &mut inspector);
-                        trace!(target: "backend", env=?evm.context.env(), spec=?evm.spec_id(), "simulate evm env");
+                        let mut evm: revm::context::Evm<
+                            _,
+                            &mut dyn Inspector<
+                                revm::Context<
+                                    BlockEnv,
+                                    TxEnv,
+                                    revm::context::CfgEnv,
+                                    WrapDatabaseRef<&(dyn DatabaseRef<Error = DatabaseError>)>, // Cannot infer DB in the Inspector.
+                                >,
+                            >,
+                            _,
+                            _,
+                        > = self.new_evm_with_inspector_ref(
+                            cache_db.as_dyn(),
+                            &env,
+                            &mut inspector,
+                        );
+
+                        // TODO(yash) uncomment trace!(target: "backend", env=?evm.context.env(),
+                        // spec=?evm.spec_id(), "simulate evm env");
+
+                        todo!("@yash: evm transact in simulate");
                         evm.transact()?
                     } else {
                         let mut inspector = self.build_inspector();
-                        let mut evm =
-                            self.new_evm_with_inspector_ref(cache_db.as_dyn(), env, &mut inspector);
-                        trace!(target: "backend", env=?evm.context.env(),spec=?evm.spec_id(), "simulate evm env");
-                        evm.transact()?
+                        let mut evm = self.new_evm_with_inspector_ref(
+                            cache_db.as_dyn(),
+                            &env,
+                            &mut inspector,
+                        );
+                        // TODO(yash) uncomment trace!(target: "backend",
+                        // env=?evm.context.env(),spec=?evm.spec_id(), "simulate evm env");
+
+                        todo!("@yash: evm transact in simulate")
+                        // evm.transact()?
                     };
                     trace!(target: "backend", ?result, ?request, "simulate call");
 
@@ -1673,13 +1703,11 @@ impl Backend {
                 // update block env
                 block_env.number += 1;
                 block_env.timestamp += 12;
-                block_env.basefee = 
-                    simulated_block
-                        .inner
-                        .header
-                        .next_block_base_fee(BaseFeeParams::ethereum())
-                        .unwrap_or_default();
-              
+                block_env.basefee = simulated_block
+                    .inner
+                    .header
+                    .next_block_base_fee(BaseFeeParams::ethereum())
+                    .unwrap_or_default();
 
                 block_res.push(simulated_block);
             }
@@ -1699,7 +1727,7 @@ impl Backend {
         let mut inspector = self.build_inspector();
 
         let env = self.build_call_env(request, fee_details, block_env);
-        let mut evm = self.new_evm_with_inspector_ref(state, env, &mut inspector);
+        let mut evm = self.new_evm_with_inspector_ref(state, &env, &mut inspector);
         let ResultAndState { result, state } = evm.transact()?;
         let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
@@ -1755,8 +1783,8 @@ impl Backend {
 
                             let env = self.build_call_env(request, fee_details, block);
                             let mut evm = self.new_evm_with_inspector_ref(
-                                state.as_dyn(),
-                                env,
+                                state.as_mut_dyn(),
+                                &env,
                                 &mut inspector,
                             );
                             let ResultAndState { result, state: _ } = evm.transact()?;
@@ -1790,7 +1818,7 @@ impl Backend {
                 .with_tracing_config(TracingInspectorConfig::from_geth_config(&config));
 
             let env = self.build_call_env(request, fee_details, block);
-            let mut evm = self.new_evm_with_inspector_ref(state.as_dyn(), env, &mut inspector);
+            let mut evm = self.new_evm_with_inspector_ref(state.as_dyn(), &env, &mut inspector);
             let ResultAndState { result, state: _ } = evm.transact()?;
 
             let (exit_reason, gas_used, out) = match result {
@@ -1830,7 +1858,7 @@ impl Backend {
             AccessListInspector::new(request.access_list.clone().unwrap_or_default());
 
         let env = self.build_call_env(request, fee_details, block_env);
-        let mut evm = self.new_evm_with_inspector_ref(state, env, &mut inspector);
+        let mut evm = self.new_evm_with_inspector_ref(state, &env, &mut inspector);
         let ResultAndState { result, state: _ } = evm.transact()?;
         let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
@@ -2104,9 +2132,7 @@ impl Backend {
                     }
                     BlockNumber::Finalized => {
                         if storage.best_number > (slots_in_an_epoch * 2) {
-                            *storage
-                                .hashes
-                                .get(&(storage.best_number - (slots_in_an_epoch * 2)))?
+                            *storage.hashes.get(&(storage.best_number - (slots_in_an_epoch * 2)))?
                         } else {
                             storage.genesis_hash
                         }
@@ -3001,7 +3027,9 @@ impl TransactionValidator for Backend {
         }
 
         // Check gas limit, iff block gas limit is set.
-        if !env.evm_env.cfg_env.disable_block_gas_limit && tx.gas_limit() > env.evm_env.block_env.gas_limit {
+        if !env.evm_env.cfg_env.disable_block_gas_limit &&
+            tx.gas_limit() > env.evm_env.block_env.gas_limit
+        {
             warn!(target: "backend", "[{:?}] gas too high", tx.hash());
             return Err(InvalidTransactionError::GasTooHigh(ErrDetail {
                 detail: String::from("tx.gas_limit > env.block.gas_limit"),
@@ -3063,12 +3091,14 @@ impl TransactionValidator for Backend {
                 return Err(InvalidTransactionError::TooManyBlobs(blob_count, MAX_BLOBS_PER_BLOCK))
             }
 
+            todo!("@yash: get kzg_settings from env");
             // Check for any blob validation errors if not impersonating.
-            if !self.skip_blob_validation(Some(*pending.sender())) {
-                if let Err(err) = tx.validate(env.evm_env.cfg_env.kzg_settings.get()) {
-                    return Err(InvalidTransactionError::BlobTransactionValidationError(err))
-                }
-            }
+            // if !self.skip_blob_validation(Some(*pending.sender())) {
+            // TODO(yash): Get the KzgSettings from Env
+            //     if let Err(err) = tx.validate(env.evm_env.cfg_env.kzg_settings.get()) {
+            //         return Err(InvalidTransactionError::BlobTransactionValidationError(err))
+            //     }
+            // }
         }
 
         let max_cost = tx.max_cost();
