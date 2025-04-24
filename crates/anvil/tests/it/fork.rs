@@ -61,7 +61,7 @@ pub fn fork_config() -> NodeConfig {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_gas_limit_applied_from_config() {
-    let (api, _handle) = spawn(fork_config().with_gas_limit(Some(10_000_000_u128))).await;
+    let (api, _handle) = spawn(fork_config().with_gas_limit(Some(10_000_000))).await;
 
     assert_eq!(api.gas_limit(), uint!(10_000_000_U256));
 }
