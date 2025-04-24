@@ -1391,7 +1391,7 @@ impl Backend {
                     blob_versioned_hashes,
                     authorization_list,
                     // nonce is always ignored for calls
-                    nonce: _,
+                    nonce,
                     sidecar: _,
                     chain_id: _,
                     transaction_type,
@@ -1421,6 +1421,8 @@ impl Backend {
         // - tracing
         env.evm_env.cfg_env.disable_base_fee = true;
 
+        
+
         let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| {
             self.fees().raw_gas_price().saturating_add(MIN_SUGGESTED_PRIORITY_FEE)
         });
@@ -1449,8 +1451,6 @@ impl Backend {
             value: value.unwrap_or_default(),
             data: input.into_input().unwrap_or_default(),
             chain_id: None,
-            // set nonce to None so that the correct nonce is chosen by the EVM
-            // nonce: None, // TODO: this is no longer supported?
             access_list: access_list.unwrap_or_default().into(),
             blob_hashes,
             // optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default()
@@ -1458,6 +1458,13 @@ impl Backend {
             authorization_list: authorization_list.unwrap_or_default(),
             ..Default::default()
         };
+
+        if let Some(nonce) = nonce {
+            env.tx.nonce = nonce;
+        } else {
+            // Disable nonce check in revm
+            env.evm_env.cfg_env.disable_nonce_check = true;
+        }
 
         if env.evm_env.block_env.basefee == 0 {
             // this is an edge case because the evm fails if `tx.effective_gas_price < base_fee`
