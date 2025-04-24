@@ -157,10 +157,13 @@ impl ProjectCompiler {
     {
         self.project_root = project.root().to_path_buf();
 
-        // TODO: Avoid process::exit
+        // TODO: Avoid using std::process::exit(0).
+        // Replacing this with a return (e.g., Ok(ProjectCompileOutput::default())) would be more idiomatic,
+        // but it currently requires a `Default` bound on `C::Language`, which breaks compatibility
+        // with downstream crates like `foundry-cli`. This would need a broader refactor across the call chain.
+        // Leaving it as-is for now until a larger refactor is feasible.
         if !project.paths.has_input_files() && self.files.is_empty() {
             sh_println!("Nothing to compile")?;
-            // nothing to do here
             std::process::exit(0);
         }
 
@@ -319,8 +322,10 @@ impl ProjectCompiler {
 
             let _ = sh_println!("{size_report}");
 
-            // TODO: avoid process::exit
-            // exit with error if any contract exceeds the size limit, excluding test contracts.
+            // TODO: Avoid using std::process::exit(1).
+            // Returning an error would be more idiomatic in Rust, but doing so would require
+            // changing the signature of `handle_output` and propagating the error up to `compile`.
+            // For now, we keep this as a hard exit for CLI correctness when size limits are exceeded.
             if size_report.exceeds_runtime_size_limit() {
                 std::process::exit(1);
             }
