@@ -46,17 +46,14 @@ use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
 use revm::{
     self,
-    bytecode::{opcode as op, EOF_MAGIC_BYTES},
-    context::{result::ResultAndState, BlockEnv, JournalInner, JournalTr},
-    context_interface::{result::EVMError, transaction::SignedAuthorization, CreateScheme},
-    handler::{Handler, ItemOrResult},
+    bytecode::opcode as op,
+    context::{BlockEnv, JournalTr},
+    context_interface::{transaction::SignedAuthorization, CreateScheme},
     interpreter::{
         interpreter_types::{Jumps, LoopControl, MemoryTr},
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInputs, Gas,
-        Host, InitialAndFloorGas, InstructionResult, Interpreter, InterpreterAction,
-        InterpreterResult,
+        Host, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
     },
-    primitives::hardfork::SpecId,
     state::EvmStorageSlot,
     Inspector,
 };
@@ -1182,7 +1179,7 @@ impl Cheatcodes {
     }
 }
 
-impl<'a, 'db> Inspector<FoundryEvmContext<'db>> for Cheatcodes {
+impl Inspector<FoundryEvmContext<'_>> for Cheatcodes {
     #[inline]
     fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
@@ -1685,7 +1682,6 @@ impl<'a, 'db> Inspector<FoundryEvmContext<'db>> for Cheatcodes {
                 );
                 outcome.result.result = InstructionResult::Revert;
                 outcome.result.output = Error::encode(msg);
-                return;
             }
         }
     }

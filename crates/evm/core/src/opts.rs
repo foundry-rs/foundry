@@ -152,6 +152,7 @@ impl EvmOpts {
         // caller is a contract. So we disable the check by default.
         cfg.disable_eip3607 = true;
         cfg.disable_block_gas_limit = self.disable_block_gas_limit;
+        cfg.disable_nonce_check = true;
 
         crate::Env {
             evm_env: EvmEnv {

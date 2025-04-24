@@ -1006,10 +1006,6 @@ impl InspectorExt for InspectorStackRefMut<'_> {
         ));
     }
 
-    fn is_odyssey(&self) -> bool {
-        self.inner.odyssey
-    }
-
     fn create2_deployer(&self) -> Address {
         self.inner.create2_deployer
     }
@@ -1101,10 +1097,6 @@ impl InspectorExt for InspectorStack {
         inputs: &CreateInputs,
     ) -> bool {
         self.as_mut().should_use_create2_factory(ecx, inputs)
-    }
-
-    fn is_odyssey(&self) -> bool {
-        self.odyssey
     }
 
     fn create2_deployer(&self) -> Address {
