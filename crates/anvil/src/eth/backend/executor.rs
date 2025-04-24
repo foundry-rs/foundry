@@ -4,7 +4,7 @@ use crate::{
         error::InvalidTransactionError,
         pool::transactions::PoolTransaction,
     },
-    inject_precompiles,
+    // inject_precompiles,
     mem::inspector::AnvilInspector,
     PrecompileFactory,
 };

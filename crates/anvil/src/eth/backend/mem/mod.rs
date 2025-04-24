@@ -26,12 +26,14 @@ use crate::{
         sign::build_typed_transaction,
         util::get_precompiles_for,
     },
-    inject_precompiles,
+    // inject_precompiles,
     mem::{
         inspector::AnvilInspector,
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
     },
-    ForkChoice, NodeConfig, PrecompileFactory,
+    ForkChoice,
+    NodeConfig,
+    PrecompileFactory,
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{

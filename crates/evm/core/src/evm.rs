@@ -30,6 +30,8 @@ use revm::{
     Database, Journal,
 };
 
+// TODO: FoundryEvmContext should be generic over DB.
+// We cannot use the LogCollector inspector which works over FoundryEvmContext in anvil without it.
 pub type FoundryEvmContext<'db> = EthEvmContext<&'db mut dyn DatabaseExt>;
 
 pub type FoundryEvm<'db, I, P = FoundryPrecompiles> =

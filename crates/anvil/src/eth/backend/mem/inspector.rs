@@ -1,19 +1,23 @@
 //! Anvil specific [`revm::Inspector`] implementation
 
+use crate::foundry_common::ErrorExt;
 use alloy_primitives::{Address, Log, U256};
+use alloy_sol_types::SolInterface;
 use foundry_evm::{
     backend::DatabaseError,
     call_inspectors,
+    constants::HARDHAT_CONSOLE_ADDRESS,
     decode::decode_console_logs,
-    inspectors::{LogCollector, TracingInspector},
+    inspectors::{hh_to_ds, TracingInspector},
     traces::{
         render_trace_arena_inner, CallTraceDecoder, SparsedTraceArena, TracingInspectorConfig,
     },
 };
+use foundry_evm_core::abi::console;
 use revm::{
     interpreter::{
         interpreter::EthInterpreter, CallInputs, CallOutcome, CreateInputs, CreateOutcome,
-        EOFCreateInputs, Interpreter,
+        EOFCreateInputs, Gas, InstructionResult, Interpreter, InterpreterResult,
     },
     Database, Inspector,
 };
@@ -130,7 +134,8 @@ where
 
     fn log(&mut self, interp: &mut Interpreter, ecx: &mut AnvilEvmContext<'_, D>, log: Log) {
         call_inspectors!([&mut self.tracer, &mut self.log_collector], |inspector| {
-            inspector.log(interp, ecx, log);
+            // TODO: rm the log.clone
+            inspector.log(interp, ecx, log.clone());
         });
     }
 
@@ -218,5 +223,57 @@ where
 pub fn print_logs(logs: &[Log]) {
     for log in decode_console_logs(logs) {
         tracing::info!(target: crate::logging::EVM_CONSOLE_LOG_TARGET, "{}", log);
+    }
+}
+
+// DUPLICATION foundry_evm
+// Duplicated workaround due to the `FoundryEvmContext` database being hardcoded to `dyn
+// DatabaseExt` instead of being generic.
+/// An inspector that collects logs during execution.
+///
+/// The inspector collects logs from the `LOG` opcodes as well as Hardhat-style `console.sol` logs.
+#[derive(Clone, Debug, Default)]
+pub struct LogCollector {
+    /// The collected logs. Includes both `LOG` opcodes and Hardhat-style `console.sol` logs.
+    pub logs: Vec<Log>,
+}
+
+impl LogCollector {
+    #[cold]
+    fn do_hardhat_log(&mut self, inputs: &CallInputs) -> Option<CallOutcome> {
+        if let Err(err) = self.hardhat_log(&inputs.input) {
+            let result = InstructionResult::Revert;
+            let output = err.abi_encode_revert();
+            return Some(CallOutcome {
+                result: InterpreterResult { result, output, gas: Gas::new(inputs.gas_limit) },
+                memory_offset: inputs.return_memory_offset.clone(),
+            })
+        }
+        None
+    }
+
+    fn hardhat_log(&mut self, data: &[u8]) -> alloy_sol_types::Result<()> {
+        let decoded = console::hh::ConsoleCalls::abi_decode(data, false)?;
+        self.logs.push(hh_to_ds(&decoded));
+        Ok(())
+    }
+}
+
+impl<DB: Database<Error = DatabaseError>> Inspector<AnvilEvmContext<'_, DB>, EthInterpreter>
+    for LogCollector
+{
+    fn log(&mut self, _interp: &mut Interpreter, _context: &mut AnvilEvmContext<'_, DB>, log: Log) {
+        self.logs.push(log.clone());
+    }
+
+    fn call(
+        &mut self,
+        _context: &mut AnvilEvmContext<'_, DB>,
+        inputs: &mut CallInputs,
+    ) -> Option<CallOutcome> {
+        if inputs.target_address == HARDHAT_CONSOLE_ADDRESS {
+            return self.do_hardhat_log(inputs);
+        }
+        None
     }
 }
