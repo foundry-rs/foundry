@@ -37,8 +37,7 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    transaction::Recovered, Account, BlockHeader, Header, Receipt, ReceiptWithBloom, Signed,
-    Transaction as TransactionTrait, TxEnvelope,
+    transaction::Recovered, Account, BlockHeader, EnvKzgSettings, Header, Receipt, ReceiptWithBloom, Signed, Transaction as TransactionTrait, TxEnvelope
 };
 use alloy_eips::{eip1559::BaseFeeParams, eip4844::MAX_BLOBS_PER_BLOCK};
 use alloy_evm::Database;
@@ -1583,10 +1582,8 @@ impl Backend {
                             &mut inspector,
                         );
 
-                        // TODO(yash) uncomment trace!(target: "backend", env=?evm.context.env(),
-                        // spec=?evm.spec_id(), "simulate evm env");
-
-                        // todo!("@yash: evm transact in simulate");
+                        
+                        trace!(target: "backend", env=?env.evm_env, spec=?env.evm_env.spec_id(),"simulate evm env");
                         evm.transact(env.tx)?
                     } else {
                         let mut inspector = self.build_inspector();
@@ -1595,9 +1592,8 @@ impl Backend {
                             &env,
                             &mut inspector,
                         );
-                        // TODO(yash) uncomment trace!(target: "backend",
-                        // env=?evm.context.env(),spec=?evm.spec_id(), "simulate evm env");
 
+                        trace!(target: "backend", env=?env.evm_env, spec=?env.evm_env.spec_id(),"simulate evm env");
                         evm.transact(env.tx)?
                     };
                     trace!(target: "backend", ?result, ?request, "simulate call");
@@ -3104,14 +3100,12 @@ impl TransactionValidator for Backend {
                 return Err(InvalidTransactionError::TooManyBlobs(blob_count, MAX_BLOBS_PER_BLOCK))
             }
 
-            todo!("@yash: get kzg_settings from env");
             // Check for any blob validation errors if not impersonating.
-            // if !self.skip_blob_validation(Some(*pending.sender())) {
-            // TODO(yash): Get the KzgSettings from Env
-            //     if let Err(err) = tx.validate(env.evm_env.cfg_env.kzg_settings.get()) {
-            //         return Err(InvalidTransactionError::BlobTransactionValidationError(err))
-            //     }
-            // }
+            if !self.skip_blob_validation(Some(*pending.sender())) {
+                if let Err(err) = tx.validate(EnvKzgSettings::default().get()) {
+                    return Err(InvalidTransactionError::BlobTransactionValidationError(err))
+                }
+            }
         }
 
         let max_cost = tx.max_cost();
