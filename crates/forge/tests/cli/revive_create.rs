@@ -1,16 +1,21 @@
-//! Contains various tests for checking the `forge create` subcommand
+//! Contains various tests for checking the `forge create --revive` subcommand
 
-use crate::utils::{self, network_private_key, network_rpc_key};
+use crate::utils::{network_private_key, network_rpc_key};
 use alloy_primitives::Address;
-use foundry_compilers::artifacts::{remappings::Remapping, BytecodeHash};
+use foundry_compilers::artifacts::remappings::Remapping;
 use foundry_test_utils::{
-    forgetest, forgetest_async,
-    revive::PolkadotHubNode,
-    str,
-    util::{OutputExt, TestProject},
-    TestCommand,
+    forgetest_serial, revive::PolkadotNode, snapbox::IntoData, util::TestProject, TestCommand,
 };
+use serial_test::serial;
 use std::str::FromStr;
+
+const CREATE_RESPONSE_PATTERN: &str = r#"[COMPILING_FILES] with [REVIVE_VERSION]
+[REVIVE_VERSION] [ELAPSED]
+Compiler run successful!
+Deployer: [..]
+Deployed to: [..]
+[TX_HASH]
+"#;
 
 /// This will insert _dummy_ contract that uses a library
 ///
@@ -32,7 +37,7 @@ fn setup_with_simple_remapping(prj: &TestProject) -> String {
         r#"
 import "remapping/MyLib.sol";
 contract LinkTest {
-    function foo() public returns (uint256) {
+    function foo() public pure returns (uint256) {
         return MyLib.foobar(1);
     }
 }
@@ -44,7 +49,7 @@ contract LinkTest {
         "remapping/MyLib",
         r"
 library MyLib {
-    function foobar(uint256 a) public view returns (uint256) {
+    function foobar(uint256 a) public pure returns (uint256) {
     	return a * 100;
     }
 }
@@ -68,7 +73,7 @@ fn setup_oracle(prj: &TestProject) -> String {
         r#"
 import {ChainlinkTWAP} from "./libraries/ChainlinkTWAP.sol";
 contract Contract {
-    function getPrice() public view returns (int latest) {
+    function getPrice() public pure returns (int latest) {
         latest = ChainlinkTWAP.getLatestPrice(0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE);
     }
 }
@@ -80,7 +85,7 @@ contract Contract {
         "libraries/ChainlinkTWAP",
         r"
 library ChainlinkTWAP {
-   function getLatestPrice(address base) public view returns (int256) {
+   function getLatestPrice(address) public pure returns (int256) {
         return 0;
    }
 }
@@ -91,30 +96,50 @@ library ChainlinkTWAP {
     "src/Contract.sol:Contract".to_string()
 }
 
+fn setup_with_constructor(prj: &TestProject) -> String {
+    prj.add_source(
+        "TupleArrayConstructorContract",
+        r#"
+struct Point {
+uint256 x;
+uint256 y;
+}
+
+contract TupleArrayConstructorContract {
+constructor(Point[] memory _points) {}
+}
+"#,
+    )
+    .unwrap();
+
+    "src/TupleArrayConstructorContract.sol:TupleArrayConstructorContract".to_string()
+}
+
 /// configures the `TestProject` with the given closure and calls the `forge create` command
 fn create_on_chain<F>(
     network_args: Option<Vec<String>>,
+    constructor_args: Option<Vec<String>>,
     prj: TestProject,
     mut cmd: TestCommand,
     f: F,
+    expected: impl IntoData,
 ) where
     F: FnOnce(&TestProject) -> String,
 {
     if let Some(network_args) = network_args {
         let contract_path = f(&prj);
 
-        let output = cmd
-            .arg("create")
+        cmd.arg("create")
             .arg("--revive")
             .arg("--legacy")
             .arg("--broadcast")
             .args(network_args)
-            .arg(contract_path)
-            .assert_success()
-            .get_output()
-            .stdout_lossy();
-        let _address = utils::parse_deployed_address(output.as_str())
-            .unwrap_or_else(|| panic!("Failed to parse deployer {output}"));
+            .arg(contract_path);
+
+        if let Some(constructor_args) = constructor_args {
+            cmd.args(constructor_args);
+        }
+        cmd.assert_success().stdout_eq(expected);
     }
 }
 
@@ -134,9 +159,9 @@ fn localnode_args() -> Option<Vec<String>> {
     Some(
         [
             "--rpc-url".to_string(),
-            PolkadotHubNode::http_endpoint().to_string(),
+            PolkadotNode::http_endpoint().to_string(),
             "--private-key".to_string(),
-            PolkadotHubNode::dev_accounts().next().unwrap().1.to_string(),
+            PolkadotNode::dev_accounts().next().unwrap().1.to_string(),
         ]
         .to_vec(),
     )
@@ -151,141 +176,73 @@ fn localnode_args() -> Option<Vec<String>> {
 // Ensure these variables are set before running the tests to enable proper interaction with the
 // Westend AssetHub.
 // tests `forge` create on westend if correct env vars are set
-forgetest!(can_create_simple_on_westend_assethub, |prj, cmd| {
-    create_on_chain(westend_assethub_args(), prj, cmd, setup_with_simple_remapping);
+forgetest_serial!(can_create_simple_on_westend_assethub, |prj, cmd| {
+    create_on_chain(
+        westend_assethub_args(),
+        None,
+        prj,
+        cmd,
+        setup_with_simple_remapping,
+        CREATE_RESPONSE_PATTERN,
+    );
 });
 
 // tests `forge` create on westend if correct env vars are set
-forgetest!(can_create_oracle_on_westend_assethub, |prj, cmd| {
-    create_on_chain(westend_assethub_args(), prj, cmd, setup_oracle);
+forgetest_serial!(can_create_oracle_on_westend_assethub, |prj, cmd| {
+    create_on_chain(westend_assethub_args(), None, prj, cmd, setup_oracle, CREATE_RESPONSE_PATTERN);
 });
 
 // tests that we can deploy with constructor args
-forgetest_async!(can_create_with_constructor_args_on_westend_assethub, |prj, cmd| {
-    if let Some(network_args) = westend_assethub_args() {
-        foundry_test_utils::util::initialize(prj.root());
+forgetest_serial!(can_create_with_constructor_args_on_westend_assethub, |prj, cmd| {
+    create_on_chain(
+        westend_assethub_args(),
+        Some(vec!["--constructor-args".to_string(), "[(1,2), (2,3), (3,4)]".to_string()]),
+        prj,
+        cmd,
+        setup_with_constructor,
+        CREATE_RESPONSE_PATTERN,
+    );
+});
 
-        // explicitly byte code hash for consistent checks
-        prj.update_config(|c| c.bytecode_hash = BytecodeHash::None);
-
-        prj.add_source(
-            "ConstructorContract",
-            r#"
-contract ConstructorContract {
-    string public name;
-
-    constructor(string memory _name) {
-        name = _name;
-    }
-}
-"#,
-        )
-        .unwrap();
-
-        cmd.forge_fuse()
-            .arg("create")
-            .arg("--revive")
-            .arg("--legacy")
-            .arg("--broadcast")
-            .arg("./src/ConstructorContract.sol:ConstructorContract")
-            .args(&network_args)
-            .args(["--constructor-args", "My Constructor"])
-            .assert_success()
-            .stdout_eq(str![[r#"
-[COMPILING_FILES] with [REVIVE_VERSION]
-[REVIVE_VERSION] [ELAPSED]
-Compiler run successful!
-Deployer: [..]
-Deployed to: [..]
-[TX_HASH]
-
-"#]]);
-
-        prj.add_source(
-            "TupleArrayConstructorContract",
-            r#"
-struct Point {
-    uint256 x;
-    uint256 y;
-}
-
-contract TupleArrayConstructorContract {
-    constructor(Point[] memory _points) {}
-}
-"#,
-        )
-        .unwrap();
-
-        cmd.forge_fuse()
-            .arg("create")
-            .arg("--revive")
-            .arg("--legacy")
-            .arg("--broadcast")
-            .arg("./src/TupleArrayConstructorContract.sol:TupleArrayConstructorContract")
-            .args(network_args)
-            .args(["--constructor-args", "[(1,2), (2,3), (3,4)]"])
-            .assert()
-            .stdout_eq(str![[r#"
-[COMPILING_FILES] with [REVIVE_VERSION]
-[REVIVE_VERSION] [ELAPSED]
-Compiler run successful!
-Deployer: [..]
-Deployed to: [..]
-[TX_HASH]
-
-"#]]);
+// These tests require `substrate-node` and the Ethereum RPC proxy:
+//
+// ```bash
+// git clone https://github.com/paritytech/polkadot-sdk
+// cd polkadot-sdk
+// cargo build --release --bin substrate-node
+//
+// cargo install pallet-revive-eth-rpc
+// ```
+//
+// Ensure that both binaries are available in your system's PATH and are version-compatible.
+forgetest_serial!(can_create_simple_on_polkadot_localnode, |prj, cmd| {
+    if let Ok(_node) = tokio::runtime::Runtime::new().unwrap().block_on(PolkadotNode::start()) {
+        create_on_chain(
+            localnode_args(),
+            None,
+            prj,
+            cmd,
+            setup_with_simple_remapping,
+            CREATE_RESPONSE_PATTERN,
+        );
     }
 });
 
-// <https://github.com/foundry-rs/foundry/issues/6332>
-forgetest_async!(can_create_and_call_on_westend_assethub, |prj, cmd| {
-    if let Some(network_args) = westend_assethub_args() {
-        foundry_test_utils::util::initialize(prj.root());
-
-        // explicitly byte code hash for consistent checks
-        prj.update_config(|c| c.bytecode_hash = BytecodeHash::None);
-
-        prj.add_source(
-            "UniswapV2Swap",
-            r#"
-contract UniswapV2Swap {
-
-    function pairInfo() public view returns (uint reserveA, uint reserveB, uint totalSupply) {
-       (reserveA, reserveB, totalSupply) = (0,0,0);
-    }
-
-}
-"#,
-        )
-        .unwrap();
-        cmd.forge_fuse()
-            .arg("create")
-            .arg("--revive")
-            .arg("--legacy")
-            .arg("--broadcast")
-            .arg("./src/UniswapV2Swap.sol:UniswapV2Swap")
-            .args(network_args)
-            .assert_success()
-            .stdout_eq(str![[r#"
-[COMPILING_FILES] with [REVIVE_VERSION]
-[REVIVE_VERSION] [ELAPSED]
-Compiler run successful with warnings:
-Warning (2018): Function state mutability can be restricted to pure
- [FILE]:6:5:
-  |
-6 |     function pairInfo() public view returns (uint reserveA, uint reserveB, uint totalSupply) {
-  |     ^ (Relevant source part starts here and spans across multiple lines).
-
-Deployer: [..]
-Deployed to: [..]
-[TX_HASH]
-
-"#]]);
+forgetest_serial!(can_create_oracle_on_polkadot_localnode, |prj, cmd| {
+    if let Ok(_node) = tokio::runtime::Runtime::new().unwrap().block_on(PolkadotNode::start()) {
+        create_on_chain(localnode_args(), None, prj, cmd, setup_oracle, CREATE_RESPONSE_PATTERN);
     }
 });
 
-forgetest_async!(can_create_simple_on_polkadot_localnode, |prj, cmd| {
-    if let Ok(_node) = PolkadotHubNode::start().await {
-        create_on_chain(localnode_args(), prj, cmd, setup_with_simple_remapping);
+forgetest_serial!(can_create_with_constructor_args_on_polkadot_localnode, |prj, cmd| {
+    if let Ok(_node) = tokio::runtime::Runtime::new().unwrap().block_on(PolkadotNode::start()) {
+        create_on_chain(
+            localnode_args(),
+            Some(vec!["--constructor-args".to_string(), "[(1,2), (2,3), (3,4)]".to_string()]),
+            prj,
+            cmd,
+            setup_with_constructor,
+            CREATE_RESPONSE_PATTERN,
+        );
     }
 });

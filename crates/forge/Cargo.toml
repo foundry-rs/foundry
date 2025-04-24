@@ -101,6 +101,7 @@ tikv-jemallocator = { workspace = true, optional = true }
 anvil.workspace = true
 foundry-test-utils.workspace = true
 
+serial_test = "2"
 mockall = "0.13"
 globset = "0.4"
 paste = "1.0"

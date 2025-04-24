@@ -141,12 +141,12 @@ impl RpcProxyProcess {
 ///
 /// Ensure that both binaries are available in your system's PATH and are version-compatible.
 #[allow(dead_code)]
-pub struct PolkadotHubNode {
+pub struct PolkadotNode {
     node: ContractsNodeProcess,
     rpc_proxy: RpcProxyProcess,
 }
 
-impl PolkadotHubNode {
+impl PolkadotNode {
     pub async fn start() -> Result<Self> {
         let node = ContractsNodeProcess::start().await?;
         let rpc_proxy = RpcProxyProcess::start().await?;
