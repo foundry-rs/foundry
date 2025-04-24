@@ -1084,7 +1084,7 @@ impl Backend {
         let db = self.db.read().await;
         let mut inspector = self.build_inspector();
         let mut evm = self.new_evm_with_inspector_ref(db.as_dyn(), &env, &mut inspector);
-        let ResultAndState { result, state } = evm.transact()?;
+        let ResultAndState { result, state } = evm.transact(env.tx)?;
         let (exit_reason, gas_used, out, logs) = match result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
                 (reason.into(), gas_used, Some(output), Some(logs))
@@ -1584,8 +1584,8 @@ impl Backend {
                         // TODO(yash) uncomment trace!(target: "backend", env=?evm.context.env(),
                         // spec=?evm.spec_id(), "simulate evm env");
 
-                        todo!("@yash: evm transact in simulate");
-                        evm.transact()?
+                        // todo!("@yash: evm transact in simulate");
+                        evm.transact(env.tx)?
                     } else {
                         let mut inspector = self.build_inspector();
                         let mut evm = self.new_evm_with_inspector_ref(
@@ -1596,8 +1596,7 @@ impl Backend {
                         // TODO(yash) uncomment trace!(target: "backend",
                         // env=?evm.context.env(),spec=?evm.spec_id(), "simulate evm env");
 
-                        todo!("@yash: evm transact in simulate")
-                        // evm.transact()?
+                        evm.transact(env.tx)?
                     };
                     trace!(target: "backend", ?result, ?request, "simulate call");
 
@@ -1728,7 +1727,7 @@ impl Backend {
 
         let env = self.build_call_env(request, fee_details, block_env);
         let mut evm = self.new_evm_with_inspector_ref(state, &env, &mut inspector);
-        let ResultAndState { result, state } = evm.transact()?;
+        let ResultAndState { result, state } = evm.transact(env.tx)?;
         let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
                 (reason.into(), gas_used, Some(output))
@@ -1783,11 +1782,11 @@ impl Backend {
 
                             let env = self.build_call_env(request, fee_details, block);
                             let mut evm = self.new_evm_with_inspector_ref(
-                                state.as_mut_dyn(),
+                                state.as_dyn(),
                                 &env,
                                 &mut inspector,
                             );
-                            let ResultAndState { result, state: _ } = evm.transact()?;
+                            let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
 
                             drop(evm);
                             let tracing_inspector = inspector.tracer.expect("tracer disappeared");
@@ -1819,7 +1818,7 @@ impl Backend {
 
             let env = self.build_call_env(request, fee_details, block);
             let mut evm = self.new_evm_with_inspector_ref(state.as_dyn(), &env, &mut inspector);
-            let ResultAndState { result, state: _ } = evm.transact()?;
+            let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
 
             let (exit_reason, gas_used, out) = match result {
                 ExecutionResult::Success { reason, gas_used, output, .. } => {
@@ -1859,7 +1858,7 @@ impl Backend {
 
         let env = self.build_call_env(request, fee_details, block_env);
         let mut evm = self.new_evm_with_inspector_ref(state, &env, &mut inspector);
-        let ResultAndState { result, state: _ } = evm.transact()?;
+        let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
         let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
                 (reason.into(), gas_used, Some(output))

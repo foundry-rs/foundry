@@ -328,7 +328,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             trace!(target: "backend", "[{:?}] executing", transaction.hash());
             // transact and commit the transaction
 
-            match evm.transact_commit() {
+            match evm.transact_commit(env.tx) {
                 Ok(exec_result) => exec_result,
                 Err(err) => {
                     warn!(target: "backend", "[{:?}] failed to execute: {:?}", transaction.hash(), err);
