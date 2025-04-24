@@ -1857,7 +1857,19 @@ impl Backend {
             AccessListInspector::new(request.access_list.clone().unwrap_or_default());
 
         let env = self.build_call_env(request, fee_details, block_env);
-        let mut evm = self.new_evm_with_inspector_ref(state, &env, &mut inspector);
+        let mut evm: revm::context::Evm<
+            _,
+            &mut dyn Inspector<
+                revm::Context<
+                    BlockEnv,
+                    TxEnv,
+                    revm::context::CfgEnv,
+                    WrapDatabaseRef<&(dyn DatabaseRef<Error = DatabaseError>)>,
+                >,
+            >,
+            _,
+            _,
+        > = self.new_evm_with_inspector_ref(state, &env, &mut inspector);
         let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
         let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {

@@ -320,7 +320,14 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         }
 
         let exec_result = {
-            let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
+            let mut evm: Evm<
+                _,
+                &mut dyn Inspector<
+                    revm::Context<BlockEnv, revm::context::TxEnv, CfgEnv, WrapDatabaseRef<&DB>>,
+                >,
+                _,
+                _,
+            > = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
             // if let Some(factory) = &self.precompile_factory {
             //     inject_precompiles(&mut evm, factory.precompiles());
             // }
