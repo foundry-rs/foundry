@@ -249,6 +249,7 @@ impl Executor {
         let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
         account.nonce = nonce;
         self.backend_mut().insert_account_info(address, account);
+        self.env_mut().tx.nonce = nonce;
         Ok(())
     }
 

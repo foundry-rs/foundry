@@ -184,6 +184,7 @@ impl<'a> ContractRunner<'a> {
         self.executor.set_balance(self.sender, self.initial_balance())?;
         self.executor.set_balance(CALLER, self.initial_balance())?;
         self.executor.set_balance(LIBRARY_DEPLOYER, self.initial_balance())?;
+        self.executor.set_nonce(self.sender, 0)?;
 
         self.executor.deploy_create2_deployer()?;
 
@@ -194,6 +195,7 @@ impl<'a> ContractRunner<'a> {
             let (raw, reason) = RawCallResult::from_evm_result(res)?;
             result.extend(raw, TraceKind::Setup);
             result.reason = reason;
+            self.executor.set_nonce(self.sender, 1)?;
         }
 
         result.fuzz_fixtures = self.fuzz_fixtures(address);
