@@ -777,11 +777,11 @@ impl Backend {
         inspector: &mut I,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
-        let mut evm = crate::evm::new_evm_with_inspector(self, &env.as_env_mut(), inspector);
+        let mut evm = crate::evm::new_evm_with_inspector(self, *env, inspector);
 
-        let res = evm.replay().wrap_err("EVM error")?;
+        let res = evm.inner.replay().wrap_err("EVM error")?;
 
-        *env = evm.data.ctx.as_env_mut().to_owned();
+        *env = evm.inner.data.ctx.as_env_mut().to_owned();
 
         Ok(res)
     }
@@ -1297,12 +1297,11 @@ impl DatabaseExt for Backend {
 
         let res = {
             configure_tx_req_env(env, tx, None)?;
-            let mut env = self.env_with_handler_cfg(env);
-
+            let env = self.env_with_handler_cfg(env);
             let mut db = self.clone();
-            let mut evm = new_evm_with_inspector(&mut db, &env.as_env_mut(), inspector);
-            evm.data.ctx.journaled_state.depth = journaled_state.depth + 1;
-            evm.replay().wrap_err("EVM error")?
+            let mut evm = new_evm_with_inspector(&mut db, env, inspector);
+            evm.inner.data.ctx.journaled_state.depth = journaled_state.depth + 1;
+            evm.inner.replay().wrap_err("EVM error")?
         };
 
         self.commit(res.state);
@@ -1981,10 +1980,10 @@ fn commit_transaction(
         let depth = journaled_state.depth;
         let mut db = Backend::new_with_fork(fork_id, fork, journaled_state)?;
 
-        let mut evm = crate::evm::new_evm_with_inspector(&mut db as _, env, inspector);
+        let mut evm = crate::evm::new_evm_with_inspector(&mut db as _, env.to_owned(), inspector);
         // Adjust inner EVM depth to ensure that inspectors receive accurate data.
-        evm.data.ctx.journaled_state.depth = depth + 1;
-        evm.replay().wrap_err("EVM error")?
+        evm.inner.data.ctx.journaled_state.depth = depth + 1;
+        evm.inner.replay().wrap_err("EVM error")?
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 

@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, EnvMut, InspectorExt,
+    backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, Env, InspectorExt,
 };
 use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, U256};
@@ -13,7 +13,7 @@ use revm::{
     bytecode::EOF_MAGIC_BYTES,
     context::{
         result::{EVMError, HaltReason},
-        ContextTr, CreateScheme, Evm, EvmData, JournalTr,
+        ContextTr, CreateScheme, Evm, JournalTr,
     },
     handler::{
         instructions::{EthInstructions, InstructionProvider},
@@ -30,10 +30,10 @@ use revm::{
     Database, Journal,
 };
 
-pub type FoundryEvmContext<'db> = EthEvmContext<&'db mut dyn DatabaseExt>;
+pub type FoundryEvmContext<DB> = EthEvmContext<DB>;
 
-pub type FoundryEvm<'db, I, P = FoundryPrecompiles> =
-    Evm<FoundryEvmContext<'db>, I, EthInstructions<EthInterpreter, FoundryEvmContext<'db>>, P>;
+pub type FoundryEvm<DB, I, P = FoundryPrecompiles> =
+    Evm<FoundryEvmContext<DB>, I, EthInstructions<EthInterpreter, FoundryEvmContext<DB>>, P>;
 
 /// A list of features that can be enabled or disabled in the [`FoundryHandler`].
 /// This is used to conditionally override certain execution paths in the EVM.
@@ -48,8 +48,12 @@ pub enum Features {
     Create2Factory,
 }
 
-pub struct FoundryHandler<'db, I: InspectorExt> {
-    pub inner: FoundryEvm<'db, I>,
+pub struct FoundryHandler<DB, I>
+where
+    DB: DatabaseExt,
+    I: InspectorExt,
+{
+    pub inner: FoundryEvm<DB, I>,
 
     /// A map of enabled features.
     pub enabled: HashMap<Features, bool>,
@@ -58,12 +62,13 @@ pub struct FoundryHandler<'db, I: InspectorExt> {
     pub create2_overrides: Rc<RefCell<Vec<(usize, CallInputs)>>>,
 }
 
-impl<'db, I> FoundryHandler<'db, I>
+impl<DB, I> FoundryHandler<DB, I>
 where
+    DB: DatabaseExt,
     I: InspectorExt,
 {
     /// Creates a new [`FoundryHandler`] with the given EVM and inspector.
-    pub fn new(ctx: FoundryEvmContext<'db>, inspector: I) -> Self {
+    pub fn new(ctx: FoundryEvmContext<DB>, inspector: I) -> Self {
         // By default we enable the `CREATE2` handler.
         let mut enabled = HashMap::default();
         enabled.insert(Features::Create2Factory, true);
@@ -91,7 +96,7 @@ where
     }
 
     /// Returns a reference to the inner EVM instance.
-    pub fn evm(&self) -> &FoundryEvm<'db, I> {
+    pub fn evm(&self) -> &FoundryEvm<DB, I> {
         &self.inner
     }
 
@@ -102,18 +107,20 @@ where
     }
 }
 
-impl<'db, I> Deref for FoundryHandler<'db, I>
+impl<DB, I> Deref for FoundryHandler<DB, I>
 where
+    DB: DatabaseExt,
     I: InspectorExt,
 {
-    type Target = FoundryEvmContext<'db>;
+    type Target = FoundryEvmContext<DB>;
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-impl<I> DerefMut for FoundryHandler<'_, I>
+impl<DB, I> DerefMut for FoundryHandler<DB, I>
 where
+    DB: DatabaseExt,
     I: InspectorExt,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
@@ -121,20 +128,21 @@ where
     }
 }
 
-impl<'db, I> Handler for FoundryHandler<'db, I>
+impl<DB, I> Handler for FoundryHandler<DB, I>
 where
-    I: InspectorExt,
-    FoundryEvm<'db, I>: EvmTr<
-        Context = FoundryEvmContext<'db>,
-        Precompiles: PrecompileProvider<FoundryEvmContext<'db>, Output = InterpreterResult>,
+    DB: DatabaseExt,
+    FoundryEvm<DB, I>: EvmTr<
+        Context = FoundryEvmContext<DB>,
+        Precompiles: PrecompileProvider<FoundryEvmContext<DB>, Output = InterpreterResult>,
         Instructions: InstructionProvider<
-            Context = FoundryEvmContext<'db>,
+            Context = FoundryEvmContext<DB>,
             InterpreterTypes = EthInterpreter,
         >,
     >,
+    I: InspectorExt,
 {
-    type Evm = FoundryEvm<'db, I>;
-    type Error = EVMError<<<FoundryEvmContext<'db> as ContextTr>::Db as Database>::Error>;
+    type Evm = FoundryEvm<DB, I>;
+    type Error = EVMError<<<FoundryEvmContext<DB> as ContextTr>::Db as Database>::Error>;
     type Frame = EthFrame<
         Self::Evm,
         Self::Error,
@@ -308,14 +316,15 @@ fn get_create2_factory_call_inputs(
     }
 }
 
-impl<'db, I> InspectorHandler for FoundryHandler<'db, I>
+impl<DB, I> InspectorHandler for FoundryHandler<DB, I>
 where
-    I: InspectorExt,
-    FoundryEvm<'db, I>: EvmTr<
-        Context = FoundryEvmContext<'db>,
-        Precompiles: PrecompileProvider<FoundryEvmContext<'db>, Output = InterpreterResult>,
+    DB: DatabaseExt,
+    I: InspectorExt<DB>,
+    FoundryEvm<DB, I>: EvmTr<
+        Context = FoundryEvmContext<DB>,
+        Precompiles: PrecompileProvider<FoundryEvmContext<DB>, Output = InterpreterResult>,
         Instructions: InstructionProvider<
-            Context = FoundryEvmContext<'db>,
+            Context = FoundryEvmContext<DB>,
             InterpreterTypes = EthInterpreter,
         >,
     >,
@@ -370,40 +379,27 @@ impl<CTX: ContextTr> PrecompileProvider<CTX> for FoundryPrecompiles {
     }
 }
 
-pub fn new_evm_context<'db>(
-    db: &'db mut dyn DatabaseExt,
-    env: &EnvMut<'_>,
-) -> FoundryEvmContext<'db> {
-    FoundryEvmContext {
-        journaled_state: {
-            let mut journal = Journal::new(db);
-            journal.set_spec_id(env.cfg.spec);
-            journal
+pub fn new_evm_with_inspector<DB>(
+    db: DB,
+    env: Env,
+    inspector: &mut dyn InspectorExt,
+) -> FoundryHandler<DB, &mut dyn InspectorExt>
+where
+    DB: DatabaseExt,
+{
+    FoundryHandler::new(
+        FoundryEvmContext {
+            journaled_state: {
+                let mut journal = Journal::new(db);
+                journal.set_spec_id(env.evm_env.cfg_env.spec);
+                journal
+            },
+            block: env.evm_env.block_env().clone(),
+            cfg: env.evm_env.cfg_env().clone(),
+            tx: env.tx.clone(),
+            chain: (),
+            error: Ok(()),
         },
-        block: env.block.clone(),
-        cfg: env.cfg.clone(),
-        tx: env.tx.clone(),
-        chain: (),
-        error: Ok(()),
-    }
-}
-
-pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
-    db: &'db mut dyn DatabaseExt,
-    env: &EnvMut<'_>,
-    inspector: &'i mut I,
-) -> FoundryEvm<'db, &'i mut I> {
-    Evm {
-        data: EvmData { ctx: new_evm_context(db, env), inspector },
-        instruction: EthInstructions::default(),
-        precompiles: FoundryPrecompiles::new(),
-    }
-}
-
-pub fn new_handler_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
-    db: &'db mut dyn DatabaseExt,
-    env: &EnvMut<'_>,
-    inspector: &'i mut I,
-) -> FoundryHandler<'db, &'i mut I> {
-    FoundryHandler::new(new_evm_context(db, env), inspector)
+        inspector,
+    )
 }

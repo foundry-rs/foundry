@@ -464,6 +464,7 @@ impl Executor {
         let mut inspector = self.inspector().clone();
         let backend = self.backend_mut();
         let result = backend.inspect(&mut env, &mut inspector)?;
+
         let mut result =
             convert_executed_result(env, inspector, result, backend.has_state_snapshot_failure())?;
         self.commit(&mut result);
@@ -963,6 +964,8 @@ fn convert_executed_result(
 
     let InspectorData { mut logs, labels, traces, coverage, cheatcodes, chisel_state } =
         inspector.collect();
+
+    println!("inspector: traces: {traces:#?}");
 
     if logs.is_empty() {
         logs = exec_logs;
