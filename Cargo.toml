@@ -205,7 +205,7 @@ solar-sema = { version = "=0.1.2", default-features = false }
 ## revm
 revm = { version = "21.0.0", default-features = false }
 revm-inspectors = { version = "0.18.1", features = ["serde"] }
-op-revm = { version = "3.0.2", default-features = false }
+op-revm = { version = "2.0.0", default-features = false }
 
 ## alloy
 alloy-consensus = { version = "0.13.0", default-features = false }
