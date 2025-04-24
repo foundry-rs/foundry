@@ -41,7 +41,7 @@ Mark `pure`:
 Mark `view`:
 
 - [x] `accessList`: `accessList(address,bytes32[])` _resolved: not view, keep as is due to test coverage indicating stateful behavior_
-- [ ] `accesses`: `accesses(address)`
+- [x] `accesses`: `accesses(address)` _suggested: `view`_
 - [ ] `eth_getLogs`: `eth_getLogs(uint256,uint256,address,bytes32[])`
 - [ ] `getMappingKeyAndParentOf`: `getMappingKeyAndParentOf(address,bytes32)`
 - [ ] `getMappingLength`: `getMappingLength(address,bytes32)`

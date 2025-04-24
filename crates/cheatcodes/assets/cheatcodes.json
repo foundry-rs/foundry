@@ -754,9 +754,9 @@
       "func": {
         "id": "accesses",
         "description": "Gets all accessed reads and write slot from a `vm.record` session, for a given address.",
-        "declaration": "function accesses(address target) external returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);",
+        "declaration": "function accesses(address target) external view returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "accesses(address)",
         "selector": "0x65bc9481",
         "selectorBytes": [
@@ -3594,7 +3594,7 @@
       "func": {
         "id": "contains",
         "description": "Returns true if `search` is found in `subject`, false otherwise.",
-        "declaration": "function contains(string calldata subject, string calldata search) external returns (bool result);",
+        "declaration": "function contains(string calldata subject, string calldata search) external pure returns (bool result);",
         "visibility": "external",
         "mutability": "pure",
         "signature": "contains(string,string)",
