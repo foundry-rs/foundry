@@ -93,6 +93,10 @@ impl MaybeFullDatabase for ForkedDatabase {
         self
     }
 
+    fn as_mut_dyn(&mut self) -> &mut dyn DatabaseRef<Error = DatabaseError> {
+        self
+    }
+
     fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
         Some(&self.database().cache.accounts)
     }
@@ -129,6 +133,10 @@ impl MaybeFullDatabase for ForkedDatabase {
 
 impl MaybeFullDatabase for ForkDbStateSnapshot {
     fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
+        self
+    }
+
+    fn as_mut_dyn(&mut self) -> &mut dyn DatabaseRef<Error = DatabaseError> {
         self
     }
 

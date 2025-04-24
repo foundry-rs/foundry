@@ -2,7 +2,7 @@
 
 use crate::mem::storage::MinedTransaction;
 use alloy_consensus::Header;
-use alloy_primitives::{keccak256, map::HashMap, Address, Bytes, B256, U256, U64};
+use alloy_primitives::{keccak256, map::HashMap, Address, Bytes, B256, U256};
 use alloy_rpc_types::BlockId;
 use anvil_core::eth::{
     block::Block,
@@ -32,6 +32,8 @@ pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> {
     // TODO: Required until trait upcasting is stabilized: <https://github.com/rust-lang/rust/issues/65991>
     fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError>;
 
+    fn as_mut_dyn(&mut self) -> &mut dyn DatabaseRef<Error = DatabaseError>;
+
     fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
         None
     }
@@ -57,6 +59,10 @@ where
 {
     fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
         T::as_dyn(self)
+    }
+
+    fn as_mut_dyn(&mut self) -> &mut dyn DatabaseRef<Error = DatabaseError> {
+        todo!("@yash: implement as_mut_dyn for blanket T: DatabaseRef")
     }
 
     fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
@@ -247,6 +253,10 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
         self
     }
 
+    fn as_mut_dyn(&mut self) -> &mut dyn DatabaseRef<Error = DatabaseError> {
+        self
+    }
+
     fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
         Some(&self.cache.accounts)
     }
@@ -357,6 +367,10 @@ impl DatabaseRef for StateDb {
 impl MaybeFullDatabase for StateDb {
     fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
         self.0.as_dyn()
+    }
+
+    fn as_mut_dyn(&mut self) -> &mut dyn DatabaseRef<Error = DatabaseError> {
+        self.0.as_mut_dyn()
     }
 
     fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
