@@ -370,40 +370,24 @@ impl<CTX: ContextTr> PrecompileProvider<CTX> for FoundryPrecompiles {
     }
 }
 
-pub fn new_evm_context<'db>(
-    db: &'db mut dyn DatabaseExt,
-    env: &EnvMut<'_>,
-) -> FoundryEvmContext<'db> {
-    FoundryEvmContext {
-        journaled_state: {
-            let mut journal = Journal::new(db);
-            journal.set_spec_id(env.cfg.spec);
-            journal
-        },
-        block: env.block.clone(),
-        cfg: env.cfg.clone(),
-        tx: env.tx.clone(),
-        chain: (),
-        error: Ok(()),
-    }
-}
-
 pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
     db: &'db mut dyn DatabaseExt,
     env: &EnvMut<'_>,
     inspector: &'i mut I,
-) -> FoundryEvm<'db, &'i mut I> {
-    Evm {
-        data: EvmData { ctx: new_evm_context(db, env), inspector },
-        instruction: EthInstructions::default(),
-        precompiles: FoundryPrecompiles::new(),
-    }
-}
-
-pub fn new_handler_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
-    db: &'db mut dyn DatabaseExt,
-    env: &EnvMut<'_>,
-    inspector: &'i mut I,
 ) -> FoundryHandler<'db, &'i mut I> {
-    FoundryHandler::new(new_evm_context(db, env), inspector)
+    FoundryHandler::new(
+        FoundryEvmContext {
+            journaled_state: {
+                let mut journal = Journal::new(db);
+                journal.set_spec_id(env.cfg.spec);
+                journal
+            },
+            block: env.block.clone(),
+            cfg: env.cfg.clone(),
+            tx: env.tx.clone(),
+            chain: (),
+            error: Ok(()),
+        },
+        inspector,
+    )
 }

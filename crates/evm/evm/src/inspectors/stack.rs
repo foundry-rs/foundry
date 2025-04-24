@@ -589,7 +589,7 @@ impl InspectorStackRefMut<'_> {
             // set depth to 1 to make sure traces are collected correctly
             evm.journaled_state.depth = 1;
 
-            let res = evm.replay();
+            let res = evm.inner.replay();
 
             // need to reset the env in case it was modified via cheatcodes during execution
             ecx.cfg = cached_env.evm_env.cfg_env;
