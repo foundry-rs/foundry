@@ -24,7 +24,7 @@ use revm::{
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{hardfork::SpecId, HashMap as Map, Log, KECCAK_EMPTY},
     state::{Account, AccountInfo, EvmState, EvmStorageSlot},
-    Database, DatabaseCommit, ExecuteEvm, InspectEvm, JournalEntry,
+    Database, DatabaseCommit, InspectEvm, JournalEntry,
 };
 use std::{
     collections::{BTreeMap, HashMap, HashSet},

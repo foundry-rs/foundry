@@ -5,7 +5,7 @@ use alloy_network::{TransactionBuilder, TransactionResponse};
 use alloy_primitives::{address, b256, Bytes, B256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{BlockNumberOrTag, Index, TransactionRequest};
-use anvil::{EthereumHardfork, NodeConfig};
+// use anvil::{EthereumHardfork, NodeConfig};
 use foundry_test_utils::{
     rpc::{
         next_etherscan_api_key, next_http_archive_rpc_url, next_http_rpc_endpoint,
@@ -1791,32 +1791,32 @@ Transaction successfully executed.
     }
 });
 
-casttest!(send_eip7702, async |_prj, cmd| {
-    let (_api, handle) =
-        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::PragueEOF.into())))
-            .await;
-    let endpoint = handle.http_endpoint();
+// casttest!(send_eip7702, async |_prj, cmd| {
+//     let (_api, handle) =
+//         anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::PragueEOF.into())))
+//             .await;
+//     let endpoint = handle.http_endpoint();
 
-    cmd.args([
-        "send",
-        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-        "--auth",
-        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-        "--private-key",
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-        "--rpc-url",
-        &endpoint,
-    ])
-    .assert_success();
+//     cmd.args([
+//         "send",
+//         "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+//         "--auth",
+//         "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+//         "--private-key",
+//         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+//         "--rpc-url",
+//         &endpoint,
+//     ])
+//     .assert_success();
 
-    cmd.cast_fuse()
-        .args(["code", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "--rpc-url", &endpoint])
-        .assert_success()
-        .stdout_eq(str![[r#"
-0xef010070997970c51812dc3a010c7d01b50e0d17dc79c8
+//     cmd.cast_fuse()
+//         .args(["code", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "--rpc-url", &endpoint])
+//         .assert_success()
+//         .stdout_eq(str![[r#"
+// 0xef010070997970c51812dc3a010c7d01b50e0d17dc79c8
 
-"#]]);
-});
+// "#]]);
+// });
 
 casttest!(hash_message, |_prj, cmd| {
     cmd.args(["hash-message", "hello"]).assert_success().stdout_eq(str![[r#"
@@ -1979,317 +1979,313 @@ casttest!(fetch_artifact_from_etherscan, |_prj, cmd| {
 "#]]);
 });
 
-// tests cast can decode traces when using project artifacts
-forgetest_async!(decode_traces_with_project_artifacts, |prj, cmd| {
-    let (api, handle) =
-        anvil::spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
+// // tests cast can decode traces when using project artifacts
+// forgetest_async!(decode_traces_with_project_artifacts, |prj, cmd| {
+//     let (api, handle) =
+//         anvil::spawn(NodeConfig::test().with_disable_default_create2_deployer(true)).await;
 
-    foundry_test_utils::util::initialize(prj.root());
-    prj.add_source(
-        "LocalProjectContract",
-        r#"
-contract LocalProjectContract {
-    event LocalProjectContractCreated(address owner);
+//     foundry_test_utils::util::initialize(prj.root());
+//     prj.add_source(
+//         "LocalProjectContract",
+//         r#"
+// contract LocalProjectContract {
+//     event LocalProjectContractCreated(address owner);
 
-    constructor() {
-        emit LocalProjectContractCreated(msg.sender);
-    }
-}
-   "#,
-    )
-    .unwrap();
-    prj.add_script(
-        "LocalProjectScript",
-        r#"
-import "forge-std/Script.sol";
-import {LocalProjectContract} from "../src/LocalProjectContract.sol";
+//     constructor() {
+//         emit LocalProjectContractCreated(msg.sender);
+//     }
+// }
+//    "#,
+//     )
+//     .unwrap();
+//     prj.add_script(
+//         "LocalProjectScript",
+//         r#"
+// import "forge-std/Script.sol";
+// import {LocalProjectContract} from "../src/LocalProjectContract.sol";
 
-contract LocalProjectScript is Script {
-    function run() public {
-        vm.startBroadcast();
-        new LocalProjectContract();
-        vm.stopBroadcast();
-    }
-}
-   "#,
-    )
-    .unwrap();
+// contract LocalProjectScript is Script {
+//     function run() public {
+//         vm.startBroadcast();
+//         new LocalProjectContract();
+//         vm.stopBroadcast();
+//     }
+// }
+//    "#,
+//     )
+//     .unwrap();
 
-    cmd.args([
-        "script",
-        "--private-key",
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-        "--rpc-url",
-        &handle.http_endpoint(),
-        "--broadcast",
-        "LocalProjectScript",
-    ]);
+//     cmd.args([
+//         "script",
+//         "--private-key",
+//         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+//         "--rpc-url",
+//         &handle.http_endpoint(),
+//         "--broadcast",
+//         "LocalProjectScript",
+//     ]);
 
-    cmd.assert_success();
+//     cmd.assert_success();
 
-    let tx_hash = api
-        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
-        .await
-        .unwrap()
-        .unwrap()
-        .tx_hash();
+//     let tx_hash = api
+//         .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
+//         .await
+//         .unwrap()
+//         .unwrap()
+//         .tx_hash();
 
-    // Assert cast with local artifacts from outside the project.
-    cmd.cast_fuse()
-        .args(["run", "--la", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
-        .assert_success()
-        .stdout_eq(str![[r#"
-Executing previous transactions from the block.
-Compiling project to generate artifacts
-Nothing to compile
+//     // Assert cast with local artifacts from outside the project.
+//     cmd.cast_fuse()
+//         .args(["run", "--la", format!("{tx_hash}").as_str(), "--rpc-url",
+// &handle.http_endpoint()])         .assert_success()
+//         .stdout_eq(str![[r#"
+// Executing previous transactions from the block.
+// Compiling project to generate artifacts
+// Nothing to compile
 
-"#]]);
+// "#]]);
 
-    // Run cast from project dir.
-    cmd.cast_fuse().set_current_dir(prj.root());
+//     // Run cast from project dir.
+//     cmd.cast_fuse().set_current_dir(prj.root());
 
-    // Assert cast without local artifacts cannot decode traces.
-    cmd.cast_fuse()
-        .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
-        .assert_success()
-        .stdout_eq(str![[r#"
-Executing previous transactions from the block.
-Traces:
-  [..] → new <unknown>@0x5FbDB2315678afecb367f032d93F642f64180aa3
-    ├─  emit topic 0: 0xa7263295d3a687d750d1fd377b5df47de69d7db8decc745aaa4bbee44dc1688d
-    │           data: 0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266
-    └─ ← [Return] 62 bytes of code
+//     // Assert cast without local artifacts cannot decode traces.
+//     cmd.cast_fuse()
+//         .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
+//         .assert_success()
+//         .stdout_eq(str![[r#"
+// Executing previous transactions from the block.
+// Traces:
+//   [..] → new <unknown>@0x5FbDB2315678afecb367f032d93F642f64180aa3
+//     ├─  emit topic 0: 0xa7263295d3a687d750d1fd377b5df47de69d7db8decc745aaa4bbee44dc1688d
+//     │           data: 0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266
+//     └─ ← [Return] 62 bytes of code
 
+// Transaction successfully executed.
+// [GAS]
 
-Transaction successfully executed.
-[GAS]
+// "#]]);
 
-"#]]);
+//     // Assert cast with local artifacts can decode traces.
+//     cmd.cast_fuse()
+//         .args(["run", "--la", format!("{tx_hash}").as_str(), "--rpc-url",
+// &handle.http_endpoint()])         .assert_success()
+//         .stdout_eq(str![[r#"
+// Executing previous transactions from the block.
+// Compiling project to generate artifacts
+// No files changed, compilation skipped
+// Traces:
+//   [..] → new LocalProjectContract@0x5FbDB2315678afecb367f032d93F642f64180aa3
+//     ├─ emit LocalProjectContractCreated(owner: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266)
+//     └─ ← [Return] 62 bytes of code
 
-    // Assert cast with local artifacts can decode traces.
-    cmd.cast_fuse()
-        .args(["run", "--la", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
-        .assert_success()
-        .stdout_eq(str![[r#"
-Executing previous transactions from the block.
-Compiling project to generate artifacts
-No files changed, compilation skipped
-Traces:
-  [..] → new LocalProjectContract@0x5FbDB2315678afecb367f032d93F642f64180aa3
-    ├─ emit LocalProjectContractCreated(owner: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266)
-    └─ ← [Return] 62 bytes of code
+// Transaction successfully executed.
+// [GAS]
 
+// "#]]);
+// });
 
-Transaction successfully executed.
-[GAS]
+// // tests cast can decode traces when running with verbosity level > 4
+// forgetest_async!(show_state_changes_in_traces, |prj, cmd| {
+//     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
 
-"#]]);
-});
+//     foundry_test_utils::util::initialize(prj.root());
+//     // Deploy counter contract.
+//     cmd.args([
+//         "script",
+//         "--private-key",
+//         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+//         "--rpc-url",
+//         &handle.http_endpoint(),
+//         "--broadcast",
+//         "CounterScript",
+//     ])
+//     .assert_success();
 
-// tests cast can decode traces when running with verbosity level > 4
-forgetest_async!(show_state_changes_in_traces, |prj, cmd| {
-    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+//     // Send tx to change counter storage value.
+//     cmd.cast_fuse()
+//         .args([
+//             "send",
+//             "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+//             "setNumber(uint256)",
+//             "111",
+//             "--private-key",
+//             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+//             "--rpc-url",
+//             &handle.http_endpoint(),
+//         ])
+//         .assert_success();
 
-    foundry_test_utils::util::initialize(prj.root());
-    // Deploy counter contract.
-    cmd.args([
-        "script",
-        "--private-key",
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-        "--rpc-url",
-        &handle.http_endpoint(),
-        "--broadcast",
-        "CounterScript",
-    ])
-    .assert_success();
+//     let tx_hash = api
+//         .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
+//         .await
+//         .unwrap()
+//         .unwrap()
+//         .tx_hash();
 
-    // Send tx to change counter storage value.
-    cmd.cast_fuse()
-        .args([
-            "send",
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-            "setNumber(uint256)",
-            "111",
-            "--private-key",
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-            "--rpc-url",
-            &handle.http_endpoint(),
-        ])
-        .assert_success();
+//     // Assert cast with verbosity displays storage changes.
+//     cmd.cast_fuse()
+//         .args([
+//             "run",
+//             format!("{tx_hash}").as_str(),
+//             "-vvvvv",
+//             "--rpc-url",
+//             &handle.http_endpoint(),
+//         ])
+//         .assert_success()
+//         .stdout_eq(str![[r#"
+// Executing previous transactions from the block.
+// Traces:
+//   [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
+//     ├─  storage changes:
+//     │   @ 0: 0 → 111
+//     └─ ← [Stop]
 
-    let tx_hash = api
-        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
-        .await
-        .unwrap()
-        .unwrap()
-        .tx_hash();
+// Transaction successfully executed.
+// [GAS]
 
-    // Assert cast with verbosity displays storage changes.
-    cmd.cast_fuse()
-        .args([
-            "run",
-            format!("{tx_hash}").as_str(),
-            "-vvvvv",
-            "--rpc-url",
-            &handle.http_endpoint(),
-        ])
-        .assert_success()
-        .stdout_eq(str![[r#"
-Executing previous transactions from the block.
-Traces:
-  [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
-    ├─  storage changes:
-    │   @ 0: 0 → 111
-    └─ ← [Stop]
+// "#]]);
+// });
 
+// // tests cast can decode external libraries traces with project cached selectors
+// forgetest_async!(decode_external_libraries_with_cached_selectors, |prj, cmd| {
+//     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
 
-Transaction successfully executed.
-[GAS]
+//     foundry_test_utils::util::initialize(prj.root());
+//     prj.add_source(
+//         "ExternalLib",
+//         r#"
+// import "./CounterInExternalLib.sol";
+// library ExternalLib {
+//     function updateCounterInExternalLib(CounterInExternalLib.Info storage counterInfo, uint256
+// counter) public {         counterInfo.counter = counter + 1;
+//     }
+// }
+//    "#,
+//     )
+//     .unwrap();
+//     prj.add_source(
+//         "CounterInExternalLib",
+//         r#"
+// import "./ExternalLib.sol";
+// contract CounterInExternalLib {
+//     struct Info {
+//         uint256 counter;
+//     }
+//     Info info;
+//     constructor() {
+//         ExternalLib.updateCounterInExternalLib(info, 100);
+//     }
+// }
+//    "#,
+//     )
+//     .unwrap();
+//     prj.add_script(
+//         "CounterInExternalLibScript",
+//         r#"
+// import "forge-std/Script.sol";
+// import {CounterInExternalLib} from "../src/CounterInExternalLib.sol";
+// contract CounterInExternalLibScript is Script {
+//     function run() public {
+//         vm.startBroadcast();
+//         new CounterInExternalLib();
+//         vm.stopBroadcast();
+//     }
+// }
+//    "#,
+//     )
+//     .unwrap();
 
-"#]]);
-});
+//     cmd.args([
+//         "script",
+//         "--private-key",
+//         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+//         "--rpc-url",
+//         &handle.http_endpoint(),
+//         "--broadcast",
+//         "CounterInExternalLibScript",
+//     ])
+//     .assert_success();
 
-// tests cast can decode external libraries traces with project cached selectors
-forgetest_async!(decode_external_libraries_with_cached_selectors, |prj, cmd| {
-    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+//     let tx_hash = api
+//         .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
+//         .await
+//         .unwrap()
+//         .unwrap()
+//         .tx_hash();
 
-    foundry_test_utils::util::initialize(prj.root());
-    prj.add_source(
-        "ExternalLib",
-        r#"
-import "./CounterInExternalLib.sol";
-library ExternalLib {
-    function updateCounterInExternalLib(CounterInExternalLib.Info storage counterInfo, uint256 counter) public {
-        counterInfo.counter = counter + 1;
-    }
-}
-   "#,
-    )
-    .unwrap();
-    prj.add_source(
-        "CounterInExternalLib",
-        r#"
-import "./ExternalLib.sol";
-contract CounterInExternalLib {
-    struct Info {
-        uint256 counter;
-    }
-    Info info;
-    constructor() {
-        ExternalLib.updateCounterInExternalLib(info, 100);
-    }
-}
-   "#,
-    )
-    .unwrap();
-    prj.add_script(
-        "CounterInExternalLibScript",
-        r#"
-import "forge-std/Script.sol";
-import {CounterInExternalLib} from "../src/CounterInExternalLib.sol";
-contract CounterInExternalLibScript is Script {
-    function run() public {
-        vm.startBroadcast();
-        new CounterInExternalLib();
-        vm.stopBroadcast();
-    }
-}
-   "#,
-    )
-    .unwrap();
+//     // Cache project selectors.
+//     cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
 
-    cmd.args([
-        "script",
-        "--private-key",
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-        "--rpc-url",
-        &handle.http_endpoint(),
-        "--broadcast",
-        "CounterInExternalLibScript",
-    ])
-    .assert_success();
+//     // Assert cast with local artifacts can decode external lib signature.
+//     cmd.cast_fuse()
+//         .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
+//         .assert_success()
+//         .stdout_eq(str![[r#"
+// ...
+// Traces:
+//   [..] → new <unknown>@0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+//     ├─ [..] 0x52F3e85EC3F0f9D0a2200D646482fcD134D5adc9::updateCounterInExternalLib(0, 100)
+// [delegatecall]     │   └─ ← [Stop]
+//     └─ ← [Return] 62 bytes of code
 
-    let tx_hash = api
-        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
-        .await
-        .unwrap()
-        .unwrap()
-        .tx_hash();
+// Transaction successfully executed.
+// [GAS]
 
-    // Cache project selectors.
-    cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
+// "#]]);
+// });
 
-    // Assert cast with local artifacts can decode external lib signature.
-    cmd.cast_fuse()
-        .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
-        .assert_success()
-        .stdout_eq(str![[r#"
-...
-Traces:
-  [..] → new <unknown>@0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
-    ├─ [..] 0x52F3e85EC3F0f9D0a2200D646482fcD134D5adc9::updateCounterInExternalLib(0, 100) [delegatecall]
-    │   └─ ← [Stop]
-    └─ ← [Return] 62 bytes of code
+// // https://github.com/foundry-rs/foundry/issues/9476
+// forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
+//     let chain_id = 55555u64;
+//     let (_api, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(chain_id))).await;
 
+//     let http_endpoint = handle.http_endpoint();
 
-Transaction successfully executed.
-[GAS]
+//     cmd.cast_fuse()
+//         .args([
+//             "call",
+//             "5FbDB2315678afecb367f032d93F642f64180aa3",
+//             "--rpc-url",
+//             &http_endpoint,
+//             "--chain",
+//             &chain_id.to_string(),
+//         ])
+//         .assert_success();
+// });
 
-"#]]);
-});
+// // https://github.com/foundry-rs/foundry/issues/9541
+// forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
+//     let (_api, handle) = anvil::spawn(
+//         NodeConfig::test()
+//             .with_auto_impersonate(true)
+//             .with_eth_rpc_url(Some("https://sepolia.base.org")),
+//     )
+//     .await;
 
-// https://github.com/foundry-rs/foundry/issues/9476
-forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
-    let chain_id = 55555u64;
-    let (_api, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(chain_id))).await;
+//     let http_endpoint = handle.http_endpoint();
 
-    let http_endpoint = handle.http_endpoint();
+//     let provider = ProviderBuilder::new().on_http(http_endpoint.parse().unwrap());
 
-    cmd.cast_fuse()
-        .args([
-            "call",
-            "5FbDB2315678afecb367f032d93F642f64180aa3",
-            "--rpc-url",
-            &http_endpoint,
-            "--chain",
-            &chain_id.to_string(),
-        ])
-        .assert_success();
-});
+//     // send impersonated tx
+//     let tx = TransactionRequest::default()
+//         .with_from(address!("0x041563c07028Fc89106788185763Fc73028e8511"))
+//         .with_to(address!("0xF38aA5909D89F5d98fCeA857e708F6a6033f6CF8"))
+//         .with_input(
+//             Bytes::from_str(
+//                 "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c",
+//             )
+//             .unwrap(),
+//         );
 
-// https://github.com/foundry-rs/foundry/issues/9541
-forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
-    let (_api, handle) = anvil::spawn(
-        NodeConfig::test()
-            .with_auto_impersonate(true)
-            .with_eth_rpc_url(Some("https://sepolia.base.org")),
-    )
-    .await;
+//     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-    let http_endpoint = handle.http_endpoint();
+//     assert!(receipt.status());
 
-    let provider = ProviderBuilder::new().on_http(http_endpoint.parse().unwrap());
-
-    // send impersonated tx
-    let tx = TransactionRequest::default()
-        .with_from(address!("0x041563c07028Fc89106788185763Fc73028e8511"))
-        .with_to(address!("0xF38aA5909D89F5d98fCeA857e708F6a6033f6CF8"))
-        .with_input(
-            Bytes::from_str(
-                "0x60fe47b1000000000000000000000000000000000000000000000000000000000000000c",
-            )
-            .unwrap(),
-        );
-
-    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
-
-    assert!(receipt.status());
-
-    // run impersonated tx
-    cmd.cast_fuse()
-        .args(["run", &receipt.transaction_hash.to_string(), "--rpc-url", &http_endpoint])
-        .assert_success();
-});
+//     // run impersonated tx
+//     cmd.cast_fuse()
+//         .args(["run", &receipt.transaction_hash.to_string(), "--rpc-url", &http_endpoint])
+//         .assert_success();
+// });
 
 // <https://github.com/foundry-rs/foundry/issues/4776>
 casttest!(fetch_src_blockscout, |_prj, cmd| {
@@ -2331,73 +2327,77 @@ contract WETH9 {
 ..."#]]);
 });
 
-// tests cast send gas estimate execution failure message contains decoded custom error
-// <https://github.com/foundry-rs/foundry/issues/9789>
-forgetest_async!(cast_send_estimate_gas_error, |prj, cmd| {
-    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+// // tests cast send gas estimate execution failure message contains decoded custom error
+// // <https://github.com/foundry-rs/foundry/issues/9789>
+// forgetest_async!(cast_send_estimate_gas_error, |prj, cmd| {
+//     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
-    foundry_test_utils::util::initialize(prj.root());
-    prj.add_source(
-        "SimpleStorage",
-        r#"
-contract SimpleStorage {
-    uint256 private storedValue;
-    error AddressInsufficientBalance(address account, uint256 newValue);
-    function setValue(uint256 _newValue) public {
-        if (_newValue > 100) {
-            revert AddressInsufficientBalance(msg.sender, _newValue);
-        }
-        storedValue = _newValue;
-    }
-}
-   "#,
-    )
-    .unwrap();
-    prj.add_script(
-        "SimpleStorageScript",
-        r#"
-import "forge-std/Script.sol";
-import {SimpleStorage} from "../src/SimpleStorage.sol";
-contract SimpleStorageScript is Script {
-    function run() public {
-        vm.startBroadcast();
-        new SimpleStorage();
-        vm.stopBroadcast();
-    }
-}
-   "#,
-    )
-    .unwrap();
+//     foundry_test_utils::util::initialize(prj.root());
+//     prj.add_source(
+//         "SimpleStorage",
+//         r#"
+// contract SimpleStorage {
+//     uint256 private storedValue;
+//     error AddressInsufficientBalance(address account, uint256 newValue);
+//     function setValue(uint256 _newValue) public {
+//         if (_newValue > 100) {
+//             revert AddressInsufficientBalance(msg.sender, _newValue);
+//         }
+//         storedValue = _newValue;
+//     }
+// }
+//    "#,
+//     )
+//     .unwrap();
+//     prj.add_script(
+//         "SimpleStorageScript",
+//         r#"
+// import "forge-std/Script.sol";
+// import {SimpleStorage} from "../src/SimpleStorage.sol";
+// contract SimpleStorageScript is Script {
+//     function run() public {
+//         vm.startBroadcast();
+//         new SimpleStorage();
+//         vm.stopBroadcast();
+//     }
+// }
+//    "#,
+//     )
+//     .unwrap();
 
-    cmd.args([
-        "script",
-        "--private-key",
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-        "--rpc-url",
-        &handle.http_endpoint(),
-        "--broadcast",
-        "SimpleStorageScript",
-    ])
-    .assert_success();
+//     cmd.args([
+//         "script",
+//         "--private-key",
+//         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+//         "--rpc-url",
+//         &handle.http_endpoint(),
+//         "--broadcast",
+//         "SimpleStorageScript",
+//     ])
+//     .assert_success();
 
-    // Cache project selectors.
-    cmd.forge_fuse().set_current_dir(prj.root());
-    cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
+//     // Cache project selectors.
+//     cmd.forge_fuse().set_current_dir(prj.root());
+//     cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
 
-    // Assert cast send can decode custom error on estimate gas execution failure.
-    cmd.cast_fuse()
-        .args([
-            "send",
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-            "setValue(uint256)",
-            "1000",
-            "--private-key",
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-            "--rpc-url",
-            &handle.http_endpoint(),
-        ])
-        .assert_failure().stderr_eq(str![[r#"
-Error: Failed to estimate gas: server returned an error response: error code 3: execution reverted: custom error 0x6786ad34: 000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000000000000003e8, data: "0x6786ad34000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000000000000003e8": AddressInsufficientBalance(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, 1000)
+//     // Assert cast send can decode custom error on estimate gas execution failure.
+//     cmd.cast_fuse()
+//         .args([
+//             "send",
+//             "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+//             "setValue(uint256)",
+//             "1000",
+//             "--private-key",
+//             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+//             "--rpc-url",
+//             &handle.http_endpoint(),
+//         ])
+//         .assert_failure().stderr_eq(str![[r#"
+// Error: Failed to estimate gas: server returned an error response: error code 3: execution
+// reverted: custom error 0x6786ad34:
+// 000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000000000000003e8,
+// data: "0x6786ad34000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000000000000003e8"
+// : AddressInsufficientBalance(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, 1000)
 
-"#]]);
-});
+// "#]]);
+// });

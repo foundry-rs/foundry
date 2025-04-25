@@ -234,7 +234,7 @@ impl InspectorStackBuilder {
 macro_rules! call_inspectors {
     ([$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $call:expr $(,)?) => {
         $(
-            if let Some(mut $id) = $inspector.as_mut() {
+            if let Some($id) = $inspector {
                 ({ #[inline(always)] #[cold] || $call })();
             }
         )+
@@ -585,6 +585,9 @@ impl InspectorStackRefMut<'_> {
 
                 state
             };
+
+            // set depth to 1 to make sure traces are collected correctly
+            // evm.journaled_state.depth = 1;
 
             let res = evm.inspect_replay();
 

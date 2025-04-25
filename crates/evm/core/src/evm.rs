@@ -24,7 +24,7 @@ use revm::{
     interpreter::{
         interpreter::EthInterpreter, return_ok, CallInputs, CallOutcome, CallScheme, CallValue,
         CreateInputs, CreateOutcome, EOFCreateInputs, EOFCreateKind, FrameInput, Gas, Host,
-        InputsImpl, InstructionResult, InterpreterResult, EMPTY_SHARED_MEMORY,
+        InputsImpl, InstructionResult, InterpreterResult, SharedMemory, EMPTY_SHARED_MEMORY,
     },
     primitives::{hardfork::SpecId, HashMap, KECCAK_EMPTY},
     Database, Journal,
@@ -229,7 +229,7 @@ where
                 let mut frame_or_result = Self::Frame::make_call_frame(
                     evm,
                     evm.journaled_state.depth,
-                    Rc::new(RefCell::new(EMPTY_SHARED_MEMORY)), // TODO: this seems wrong
+                    Rc::new(RefCell::new(SharedMemory::new())),
                     Box::new(call_inputs),
                 );
 
