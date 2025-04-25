@@ -44,7 +44,7 @@ impl LogCollector {
 
 impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for LogCollector {
     fn log(&mut self, _interp: &mut Interpreter, _context: &mut FoundryEvmContext<'_>, log: Log) {
-        self.logs.push(log.clone());
+        self.logs.push(log);
     }
 
     fn call(

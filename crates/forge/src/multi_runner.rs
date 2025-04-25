@@ -250,10 +250,11 @@ impl MultiContractRunner {
 
         debug!("start executing all tests in contract");
 
+        let executor = self.tcfg.executor(self.known_contracts.clone(), artifact_id, db.clone());
         let runner = ContractRunner::new(
             &identifier,
             contract,
-            self.tcfg.executor(self.known_contracts.clone(), artifact_id, db.clone()),
+            executor,
             progress,
             tokio_handle,
             span,

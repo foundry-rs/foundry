@@ -2347,7 +2347,6 @@ dependencies = [
  "alloy-signer-local",
  "alloy-sol-types",
  "alloy-transport",
- "anvil",
  "aws-sdk-kms",
  "chrono",
  "clap",

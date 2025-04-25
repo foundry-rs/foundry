@@ -25,7 +25,7 @@ use revm::{
         EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterResult,
     },
     state::{Account, AccountStatus},
-    ExecuteEvm, Inspector,
+    ExecuteEvm, InspectEvm, Inspector,
 };
 use std::{
     ops::{Deref, DerefMut},
@@ -234,7 +234,7 @@ impl InspectorStackBuilder {
 macro_rules! call_inspectors {
     ([$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $call:expr $(,)?) => {
         $(
-            if let Some(mut $id) = $inspector.as_mut() {
+            if let Some($id) = $inspector {
                 ({ #[inline(always)] #[cold] || $call })();
             }
         )+
@@ -587,9 +587,9 @@ impl InspectorStackRefMut<'_> {
             };
 
             // set depth to 1 to make sure traces are collected correctly
-            evm.journaled_state.depth = 1;
+            // evm.journaled_state.depth = 1;
 
-            let res = evm.replay();
+            let res = evm.inspect_replay();
 
             // need to reset the env in case it was modified via cheatcodes during execution
             ecx.cfg = cached_env.evm_env.cfg_env;

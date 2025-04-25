@@ -89,7 +89,7 @@ evmole.workspace = true
 tikv-jemallocator = { workspace = true, optional = true }
 
 [dev-dependencies]
-anvil.workspace = true
+# anvil.workspace = true
 foundry-test-utils.workspace = true
 
 [features]
