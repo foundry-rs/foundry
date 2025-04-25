@@ -48,7 +48,7 @@ pub use config::{
 };
 
 mod hardfork;
-pub use hardfork::EthereumHardfork;
+pub use hardfork::{EthereumHardfork, OptimismHardfork};
 
 /// ethereum related implementations
 pub mod eth;
