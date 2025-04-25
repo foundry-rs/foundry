@@ -26,7 +26,7 @@ impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for ScriptExecutionInspect
         if interpreter.bytecode.opcode() == ADDRESS &&
             interpreter.input.target_address == self.script_address
         // TODO: Find REVM 20 equivalent
-        // && interpreter.input.bytecode_address == self.script_address
+        // && interpreter.contract.bytecode_address == self.script_address
         {
             // Log the reason for revert
             let _ = sh_err!(
