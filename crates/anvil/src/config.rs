@@ -1048,6 +1048,8 @@ impl NodeConfig {
             TxEnv { chain_id: Some(self.get_chain_id()), ..Default::default() },
         );
 
+        env.is_optimism = self.enable_optimism;
+
         let fees = FeeManager::new(
             spec_id,
             self.get_base_fee(),

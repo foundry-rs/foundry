@@ -747,11 +747,9 @@ impl Backend {
         (self.spec_id() as u8) >= (SpecId::PRAGUE as u8)
     }
 
-    // TODO: support Optimism
     /// Returns true if op-stack deposits are active
     pub fn is_optimism(&self) -> bool {
-        // self.env.read().handler_cfg.is_optimism
-        false
+        self.env.read().is_optimism
     }
 
     /// Returns an error if EIP1559 is not active (pre Berlin)
