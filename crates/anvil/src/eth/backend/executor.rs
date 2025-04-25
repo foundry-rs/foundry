@@ -19,16 +19,16 @@ use anvil_core::eth::{
     },
     trie,
 };
-use foundry_evm::{backend::DatabaseError, traces::CallTraceNode, Env, EnvMut};
-use foundry_evm_core::evm::{FoundryEvm, FoundryEvmContext, FoundryPrecompiles};
+use foundry_evm::{backend::DatabaseError, traces::CallTraceNode, Env};
+use foundry_evm_core::evm::FoundryPrecompiles;
 use revm::{
-    context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm, EvmData, JournalTr},
+    context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm, JournalTr},
     context_interface::result::{EVMError, ExecutionResult, Output},
     database::WrapDatabaseRef,
     handler::instructions::EthInstructions,
     interpreter::{interpreter::EthInterpreter, InstructionResult},
     primitives::hardfork::SpecId,
-    Database, DatabaseRef, ExecuteCommitEvm, Inspector, Journal, JournalEntry,
+    Database, DatabaseRef, ExecuteCommitEvm, InspectCommitEvm, Inspector, Journal, MainBuilder,
 };
 use std::sync::Arc;
 
@@ -307,35 +307,26 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
 
         let nonce = account.nonce;
 
-        // records all call and step traces
-        let mut inspector = AnvilInspector::default().with_tracing();
-        if self.enable_steps_tracing {
-            inspector = inspector.with_steps_tracing();
-        }
-        if self.print_logs {
-            inspector = inspector.with_log_collector();
-        }
-        if self.print_traces {
-            inspector = inspector.with_trace_printer();
-        }
+        let (exec_result, inspector) = {
+            let mut inspector = AnvilInspector::default().with_tracing();
+            if self.enable_steps_tracing {
+                inspector = inspector.with_steps_tracing();
+            }
+            if self.print_logs {
+                inspector = inspector.with_log_collector();
+            }
+            if self.print_traces {
+                inspector = inspector.with_trace_printer();
+            }
 
-        let exec_result = {
-            let mut evm: Evm<
-                _,
-                &mut dyn Inspector<
-                    revm::Context<BlockEnv, revm::context::TxEnv, CfgEnv, WrapDatabaseRef<&DB>>,
-                >,
-                _,
-                _,
-            > = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
-            // if let Some(factory) = &self.precompile_factory {
-            //     inject_precompiles(&mut evm, factory.precompiles());
-            // }
-
+            // TODO: Remove inspector cloning?
+            // We are cloning the inspector here because setting up the EVM with an inspector
+            // requires &mut / owned access to the inspector. And evm.inspect_commit also
+            // requires the same level of access to the inspector that the EVM was setup with.
+            let mut cloned_inspector = inspector.clone();
+            let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut cloned_inspector);
             trace!(target: "backend", "[{:?}] executing", transaction.hash());
-            // transact and commit the transaction
-
-            match evm.transact_commit(env.tx) {
+            let exec_result = match evm.inspect_commit(env.tx, &mut inspector) {
                 Ok(exec_result) => exec_result,
                 Err(err) => {
                     warn!(target: "backend", "[{:?}] failed to execute: {:?}", transaction.hash(), err);
@@ -352,12 +343,11 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
                                 err.into(),
                             ))
                         }
-                        // This will correspond to prevrandao not set, and it should never happen.
-                        // If it does, it's a bug.
                         e => panic!("failed to execute transaction: {e}"),
                     }
                 }
-            }
+            };
+            (exec_result, inspector)
         };
 
         if self.print_traces {
@@ -451,6 +441,25 @@ where
     );
 
     evm
+}
+
+/// Creates a new [`AnvilEvmContext`] with the given database and environment.
+pub fn new_evm_context<DB>(db: DB, env: &Env) -> AnvilEvmContext<'_, DB>
+where
+    DB: Database<Error = DatabaseError>,
+{
+    AnvilEvmContext {
+        journaled_state: {
+            let mut journal = Journal::new(db);
+            journal.set_spec_id(env.evm_env.cfg_env.spec);
+            journal
+        },
+        block: env.evm_env.block_env.clone(),
+        cfg: env.evm_env.cfg_env.clone(),
+        tx: env.tx.clone(),
+        chain: (),
+        error: Ok(()),
+    }
 }
 
 /// Creates a new EVM with the given inspector and wraps the database in a `WrapDatabaseRef`.
