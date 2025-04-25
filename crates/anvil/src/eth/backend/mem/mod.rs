@@ -1079,7 +1079,7 @@ impl Backend {
         let db = self.db.read().await;
         let mut inspector = self.build_inspector();
         let mut evm = self.new_evm_with_inspector_ref(db.as_dyn(), &env, &mut inspector);
-        let ResultAndState { result, state } = evm.transact(env.tx)?;
+        let ResultAndState { result, state } = evm.inspect_with_tx(env.tx)?;
         let (exit_reason, gas_used, out, logs) = match result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
                 (reason.into(), gas_used, Some(output), Some(logs))
@@ -1584,7 +1584,7 @@ impl Backend {
 
                         
                         trace!(target: "backend", env=?env.evm_env, spec=?env.evm_env.spec_id(),"simulate evm env");
-                        evm.transact(env.tx)?
+                        evm.inspect_with_tx(env.tx)?
                     } else {
                         let mut inspector = self.build_inspector();
                         let mut evm = self.new_evm_with_inspector_ref(
@@ -1594,7 +1594,7 @@ impl Backend {
                         );
 
                         trace!(target: "backend", env=?env.evm_env, spec=?env.evm_env.spec_id(),"simulate evm env");
-                        evm.transact(env.tx)?
+                        evm.inspect_with_tx(env.tx)?
                     };
                     trace!(target: "backend", ?result, ?request, "simulate call");
 
@@ -1725,7 +1725,7 @@ impl Backend {
 
         let env = self.build_call_env(request, fee_details, block_env);
         let mut evm = self.new_evm_with_inspector_ref(state, &env, &mut inspector);
-        let ResultAndState { result, state } = evm.transact(env.tx)?;
+        let ResultAndState { result, state } = evm.inspect_with_tx(env.tx)?;
         let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
                 (reason.into(), gas_used, Some(output))
@@ -1784,7 +1784,7 @@ impl Backend {
                                 &env,
                                 &mut inspector,
                             );
-                            let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
+                            let ResultAndState { result, state: _ } = evm.inspect_with_tx(env.tx)?;
 
                             drop(evm);
                             let tracing_inspector = inspector.tracer.expect("tracer disappeared");
@@ -1816,7 +1816,7 @@ impl Backend {
 
             let env = self.build_call_env(request, fee_details, block);
             let mut evm = self.new_evm_with_inspector_ref(state.as_dyn(), &env, &mut inspector);
-            let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
+            let ResultAndState { result, state: _ } = evm.inspect_with_tx(env.tx)?;
 
             let (exit_reason, gas_used, out) = match result {
                 ExecutionResult::Success { reason, gas_used, output, .. } => {
