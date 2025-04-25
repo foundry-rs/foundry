@@ -4898,9 +4898,9 @@
       "func": {
         "id": "eth_getLogs",
         "description": "Gets all the logs according to specified filter.",
-        "declaration": "function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] calldata topics) external returns (EthGetLogs[] memory logs);",
+        "declaration": "function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] calldata topics) external view returns (EthGetLogs[] memory logs);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "eth_getLogs(uint256,uint256,address,bytes32[])",
         "selector": "0x35e1349b",
         "selectorBytes": [
@@ -6158,9 +6158,9 @@
       "func": {
         "id": "getMappingKeyAndParentOf",
         "description": "Gets the map key and parent of a mapping at a given slot, for a given address.",
-        "declaration": "function getMappingKeyAndParentOf(address target, bytes32 elementSlot) external returns (bool found, bytes32 key, bytes32 parent);",
+        "declaration": "function getMappingKeyAndParentOf(address target, bytes32 elementSlot) external view returns (bool found, bytes32 key, bytes32 parent);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "getMappingKeyAndParentOf(address,bytes32)",
         "selector": "0x876e24e6",
         "selectorBytes": [
@@ -6178,9 +6178,9 @@
       "func": {
         "id": "getMappingLength",
         "description": "Gets the number of elements in the mapping at the given slot, for a given address.",
-        "declaration": "function getMappingLength(address target, bytes32 mappingSlot) external returns (uint256 length);",
+        "declaration": "function getMappingLength(address target, bytes32 mappingSlot) external view returns (uint256 length);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "getMappingLength(address,bytes32)",
         "selector": "0x2f2fd63f",
         "selectorBytes": [
@@ -6198,9 +6198,9 @@
       "func": {
         "id": "getMappingSlotAt",
         "description": "Gets the elements at index idx of the mapping at the given slot, for a given address. The\nindex must be less than the length of the mapping (i.e. the number of keys in the mapping).",
-        "declaration": "function getMappingSlotAt(address target, bytes32 mappingSlot, uint256 idx) external returns (bytes32 value);",
+        "declaration": "function getMappingSlotAt(address target, bytes32 mappingSlot, uint256 idx) external view returns (bytes32 value);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "getMappingSlotAt(address,bytes32,uint256)",
         "selector": "0xebc73ab4",
         "selectorBytes": [

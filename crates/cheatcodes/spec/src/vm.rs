@@ -441,17 +441,18 @@ interface Vm {
 
     /// Gets the number of elements in the mapping at the given slot, for a given address.
     #[cheatcode(group = Evm, safety = Safe)]
-    function getMappingLength(address target, bytes32 mappingSlot) external returns (uint256 length);
+    function getMappingLength(address target, bytes32 mappingSlot) external view returns (uint256 length);
 
     /// Gets the elements at index idx of the mapping at the given slot, for a given address. The
     /// index must be less than the length of the mapping (i.e. the number of keys in the mapping).
     #[cheatcode(group = Evm, safety = Safe)]
-    function getMappingSlotAt(address target, bytes32 mappingSlot, uint256 idx) external returns (bytes32 value);
+    function getMappingSlotAt(address target, bytes32 mappingSlot, uint256 idx) external view returns (bytes32 value);
 
     /// Gets the map key and parent of a mapping at a given slot, for a given address.
     #[cheatcode(group = Evm, safety = Safe)]
     function getMappingKeyAndParentOf(address target, bytes32 elementSlot)
         external
+        view
         returns (bool found, bytes32 key, bytes32 parent);
 
     // -------- Block and Transaction Properties --------
@@ -871,6 +872,7 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] calldata topics)
         external
+        view
         returns (EthGetLogs[] memory logs);
 
     // --- Behavior ---
