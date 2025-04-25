@@ -96,16 +96,10 @@ use futures::channel::mpsc::{unbounded, UnboundedSender};
 use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
 use parking_lot::{Mutex, RwLock};
 use revm::{
-    context::{Block as RevmBlock, BlockEnv, ContextTr, TxEnv},
-    context_interface::{
+    context::{Block as RevmBlock, BlockEnv, ContextTr, TxEnv}, context_interface::{
         block::BlobExcessGasAndPrice,
         result::{ExecutionResult, Output, ResultAndState},
-    },
-    database::{CacheDB, DatabaseRef, WrapDatabaseRef},
-    interpreter::InstructionResult,
-    primitives::{hardfork::SpecId, KECCAK_EMPTY},
-    state::AccountInfo,
-    DatabaseCommit, ExecuteEvm, Inspector,
+    }, database::{CacheDB, DatabaseRef, WrapDatabaseRef}, interpreter::InstructionResult, primitives::{hardfork::SpecId, KECCAK_EMPTY}, state::AccountInfo, DatabaseCommit, ExecuteEvm, InspectEvm, Inspector
 };
 use revm_inspectors::transfer::TransferInspector;
 use std::{
@@ -1372,7 +1366,7 @@ impl Backend {
     ///
     ///  - `disable_eip3607` is set to `true`
     ///  - `disable_base_fee` is set to `true`
-    ///  - `nonce` is set to `None`
+    ///  - `nonce` check is skipped if `request.nonce` is None
     fn build_call_env(
         &self,
         request: WithOtherFields<TransactionRequest>,
@@ -1390,7 +1384,6 @@ impl Backend {
                     access_list,
                     blob_versioned_hashes,
                     authorization_list,
-                    // nonce is always ignored for calls
                     nonce,
                     sidecar: _,
                     chain_id: _,
@@ -1875,7 +1868,7 @@ impl Backend {
             _,
             _,
         > = self.new_evm_with_inspector_ref(state, &env, &mut inspector);
-        let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
+        let ResultAndState { result, state: _ } = evm.inspect_with_tx(env.tx)?;
         let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
                 (reason.into(), gas_used, Some(output))
