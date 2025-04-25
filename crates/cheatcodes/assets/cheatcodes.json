@@ -10424,6 +10424,26 @@
     },
     {
       "func": {
+        "id": "stopRecord",
+        "description": "Stops recording storage reads and writes.",
+        "declaration": "function stopRecord() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "stopRecord()",
+        "selector": "0x996be76d",
+        "selectorBytes": [
+          153,
+          107,
+          231,
+          109
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "stopSnapshotGas_0",
         "description": "Stop the snapshot capture of the current gas by latest snapshot name, capturing the gas used since the start.",
         "declaration": "function stopSnapshotGas() external returns (uint256 gasUsed);",
