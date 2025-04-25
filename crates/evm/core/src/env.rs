@@ -10,6 +10,7 @@ use revm::{
 pub struct Env {
     pub evm_env: EvmEnv,
     pub tx: TxEnv,
+    pub is_optimism: bool,
 }
 
 /// Helper container type for [`EvmEnv`] and [`TxEnv`].
@@ -22,7 +23,7 @@ impl Env {
     }
 
     pub fn from(cfg: CfgEnv, block: BlockEnv, tx: TxEnv) -> Self {
-        Self { evm_env: EvmEnv { cfg_env: cfg, block_env: block }, tx }
+        Self { evm_env: EvmEnv { cfg_env: cfg, block_env: block }, tx, is_optimism: false }
     }
 
     pub fn from_with_spec_id(cfg: CfgEnv, block: BlockEnv, tx: TxEnv, spec_id: SpecId) -> Self {
@@ -46,6 +47,7 @@ impl EnvMut<'_> {
         Env {
             evm_env: EvmEnv { cfg_env: self.cfg.to_owned(), block_env: self.block.to_owned() },
             tx: self.tx.to_owned(),
+            is_optimism: false,
         }
     }
 }
