@@ -24,7 +24,7 @@ use revm::{
     interpreter::{
         interpreter::EthInterpreter, return_ok, CallInputs, CallOutcome, CallScheme, CallValue,
         CreateInputs, CreateOutcome, EOFCreateInputs, EOFCreateKind, FrameInput, Gas, Host,
-        InputsImpl, InstructionResult, InterpreterResult, SharedMemory, EMPTY_SHARED_MEMORY,
+        InputsImpl, InstructionResult, InterpreterResult, SharedMemory,
     },
     primitives::{hardfork::SpecId, HashMap, KECCAK_EMPTY},
     Database, Journal,

@@ -25,7 +25,7 @@ use revm::{
         EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterResult,
     },
     state::{Account, AccountStatus},
-    ExecuteEvm, InspectEvm, Inspector,
+    InspectEvm, Inspector,
 };
 use std::{
     ops::{Deref, DerefMut},
@@ -587,7 +587,7 @@ impl InspectorStackRefMut<'_> {
             };
 
             // set depth to 1 to make sure traces are collected correctly
-            // evm.journaled_state.depth = 1;
+            evm.journaled_state.depth = 1;
 
             let res = evm.inspect_replay();
 
