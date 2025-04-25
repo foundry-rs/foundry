@@ -239,7 +239,7 @@ macro_rules! call_inspectors {
             }
         )+
     };
-    (#[ret] [$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $call:expr $(,)?) => {
+    (#[ret] [$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $call:expr $(,)?) => {{
         $(
             if let Some($id) = $inspector {
                 if let Some(result) = ({ #[inline(always)] #[cold] || $call })() {
@@ -247,7 +247,7 @@ macro_rules! call_inspectors {
                 }
             }
         )+
-    };
+    }};
 }
 
 /// The collected results of [`InspectorStack`].
