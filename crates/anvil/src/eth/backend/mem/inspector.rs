@@ -15,6 +15,8 @@ use foundry_evm::{
 };
 use foundry_evm_core::abi::console;
 use revm::{
+    context::ContextTr,
+    inspector::JournalExt,
     interpreter::{
         interpreter::EthInterpreter, CallInputs, CallOutcome, CreateInputs, CreateOutcome,
         EOFCreateInputs, Gas, InstructionResult, Interpreter, InterpreterResult,
@@ -110,62 +112,51 @@ fn print_traces(tracer: TracingInspector) {
     node_info!("{}", render_trace_arena_inner(&traces, false, true));
 }
 
-impl<D> Inspector<AnvilEvmContext<'_, D>, EthInterpreter> for AnvilInspector
+impl<CTX, D> Inspector<CTX, EthInterpreter> for AnvilInspector
 where
     D: Database<Error = DatabaseError>,
+    CTX: ContextTr<Db = D>,
+    CTX::Journal: JournalExt,
 {
-    fn initialize_interp(&mut self, interp: &mut Interpreter, ecx: &mut AnvilEvmContext<'_, D>) {
+    fn initialize_interp(&mut self, interp: &mut Interpreter, ecx: &mut CTX) {
         call_inspectors!([&mut self.tracer], |inspector| {
             inspector.initialize_interp(interp, ecx);
         });
     }
 
-    fn step(&mut self, interp: &mut Interpreter, ecx: &mut AnvilEvmContext<'_, D>) {
+    fn step(&mut self, interp: &mut Interpreter, ecx: &mut CTX) {
         call_inspectors!([&mut self.tracer], |inspector| {
             inspector.step(interp, ecx);
         });
     }
 
-    fn step_end(&mut self, interp: &mut Interpreter, ecx: &mut AnvilEvmContext<'_, D>) {
+    fn step_end(&mut self, interp: &mut Interpreter, ecx: &mut CTX) {
         call_inspectors!([&mut self.tracer], |inspector| {
             inspector.step_end(interp, ecx);
         });
     }
 
-    fn log(&mut self, interp: &mut Interpreter, ecx: &mut AnvilEvmContext<'_, D>, log: Log) {
+    fn log(&mut self, interp: &mut Interpreter, ecx: &mut CTX, log: Log) {
         call_inspectors!([&mut self.tracer, &mut self.log_collector], |inspector| {
             // TODO: rm the log.clone
             inspector.log(interp, ecx, log.clone());
         });
     }
 
-    fn call(
-        &mut self,
-        ecx: &mut AnvilEvmContext<'_, D>,
-        inputs: &mut CallInputs,
-    ) -> Option<CallOutcome> {
+    fn call(&mut self, ecx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         call_inspectors!([&mut self.tracer, &mut self.log_collector], |inspector| inspector
             .call(ecx, inputs)
             .map(Some),);
         None
     }
 
-    fn call_end(
-        &mut self,
-        ecx: &mut AnvilEvmContext<'_, D>,
-        inputs: &CallInputs,
-        outcome: &mut CallOutcome,
-    ) {
+    fn call_end(&mut self, ecx: &mut CTX, inputs: &CallInputs, outcome: &mut CallOutcome) {
         if let Some(tracer) = &mut self.tracer {
             tracer.call_end(ecx, inputs, outcome);
         }
     }
 
-    fn create(
-        &mut self,
-        ecx: &mut AnvilEvmContext<'_, D>,
-        inputs: &mut CreateInputs,
-    ) -> Option<CreateOutcome> {
+    fn create(&mut self, ecx: &mut CTX, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
         if let Some(tracer) = &mut self.tracer {
             if let Some(out) = tracer.create(ecx, inputs) {
                 return Some(out);
@@ -174,23 +165,14 @@ where
         None
     }
 
-    fn create_end(
-        &mut self,
-        ecx: &mut AnvilEvmContext<'_, D>,
-        inputs: &CreateInputs,
-        outcome: &mut CreateOutcome,
-    ) {
+    fn create_end(&mut self, ecx: &mut CTX, inputs: &CreateInputs, outcome: &mut CreateOutcome) {
         if let Some(tracer) = &mut self.tracer {
             tracer.create_end(ecx, inputs, outcome);
         }
     }
 
     #[inline]
-    fn eofcreate(
-        &mut self,
-        ecx: &mut AnvilEvmContext<'_, D>,
-        inputs: &mut EOFCreateInputs,
-    ) -> Option<CreateOutcome> {
+    fn eofcreate(&mut self, ecx: &mut CTX, inputs: &mut EOFCreateInputs) -> Option<CreateOutcome> {
         if let Some(tracer) = &mut self.tracer {
             if let Some(out) = tracer.eofcreate(ecx, inputs) {
                 return Some(out);
@@ -202,7 +184,7 @@ where
     #[inline]
     fn eofcreate_end(
         &mut self,
-        ecx: &mut AnvilEvmContext<'_, D>,
+        ecx: &mut CTX,
         inputs: &EOFCreateInputs,
         outcome: &mut CreateOutcome,
     ) {
@@ -259,18 +241,16 @@ impl LogCollector {
     }
 }
 
-impl<DB: Database<Error = DatabaseError>> Inspector<AnvilEvmContext<'_, DB>, EthInterpreter>
-    for LogCollector
+impl<CTX, DB: Database<Error = DatabaseError>> Inspector<CTX, EthInterpreter> for LogCollector
+where
+    CTX: ContextTr<Db = DB>,
+    CTX::Journal: JournalExt,
 {
-    fn log(&mut self, _interp: &mut Interpreter, _context: &mut AnvilEvmContext<'_, DB>, log: Log) {
+    fn log(&mut self, _interp: &mut Interpreter, _context: &mut CTX, log: Log) {
         self.logs.push(log.clone());
     }
 
-    fn call(
-        &mut self,
-        _context: &mut AnvilEvmContext<'_, DB>,
-        inputs: &mut CallInputs,
-    ) -> Option<CallOutcome> {
+    fn call(&mut self, _context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         if inputs.target_address == HARDHAT_CONSOLE_ADDRESS {
             return self.do_hardhat_log(inputs);
         }
