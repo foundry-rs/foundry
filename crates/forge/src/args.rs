@@ -108,9 +108,9 @@ pub fn run_command(args: Forge) -> Result<()> {
             let project = config.project()?;
             config.cleanup(&project)?;
 
-            config.revive.revive_compile = true;
-            let revive_project = config.project()?;
-            config.cleanup(&revive_project)?;
+            config.resolc.resolc_compile = true;
+            let resolc_project = config.project()?;
+            config.cleanup(&resolc_project)?;
 
             Ok(())
         }

@@ -1,4 +1,4 @@
-//! Contains various tests for checking the `forge create --revive` subcommand
+//! Contains various tests for checking the `forge create --resolc` subcommand
 
 use crate::utils::{network_private_key, network_rpc_key};
 use alloy_primitives::Address;
@@ -9,8 +9,8 @@ use foundry_test_utils::{
 use serial_test::serial;
 use std::str::FromStr;
 
-const CREATE_RESPONSE_PATTERN: &str = r#"[COMPILING_FILES] with [REVIVE_VERSION]
-[REVIVE_VERSION] [ELAPSED]
+const CREATE_RESPONSE_PATTERN: &str = r#"[COMPILING_FILES] with [RESOLC_VERSION]
+[RESOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Deployer: [..]
 Deployed to: [..]
@@ -130,7 +130,7 @@ fn create_on_chain<F>(
         let contract_path = f(&prj);
 
         cmd.arg("create")
-            .arg("--revive")
+            .arg("--resolc")
             .arg("--legacy")
             .arg("--broadcast")
             .args(network_args)

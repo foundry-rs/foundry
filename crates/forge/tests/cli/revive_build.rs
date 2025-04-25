@@ -1,29 +1,29 @@
 use foundry_test_utils::snapbox::IntoData;
 
 use crate::utils::generate_large_init_contract;
-pub const OTHER_REVIVE_VERSION: &str = "revive:0.1.0-dev.13";
+pub const OTHER_RESOLC_VERSION: &str = "resolc:0.1.0-dev.13";
 
-forgetest_init!(can_build_with_revive, |prj, cmd| {
-    cmd.args(["build", "--revive-compile"]).assert_success();
+forgetest_init!(can_build_with_resolc, |prj, cmd| {
+    cmd.args(["build", "--resolc-compile"]).assert_success();
 });
 
-forgetest_init!(force_buid_with_revive, |prj, cmd| {
-    cmd.args(["build", "--revive-compile", "--force"]).assert_success();
+forgetest_init!(force_buid_with_resolc, |prj, cmd| {
+    cmd.args(["build", "--resolc-compile", "--force"]).assert_success();
 });
 
-forgetest!(code_size_exceeds_limit_with_revive, |prj, cmd| {
+forgetest!(code_size_exceeds_limit_with_resolc, |prj, cmd| {
     prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str()).unwrap();
     cmd.args([
         "build",
-        "--revive-compile",
+        "--resolc-compile",
         "--sizes",
-        "--use-revive",
-        &format!("revive:{OTHER_REVIVE_VERSION}"),
+        "--use-resolc",
+        &format!("resolc:{OTHER_RESOLC_VERSION}"),
     ])
     .assert_failure()
     .stdout_eq(str![[r#"
-[COMPILING_FILES] with [REVIVE_VERSION]
-[REVIVE_VERSION] [ELAPSED]
+[COMPILING_FILES] with [RESOLC_VERSION]
+[RESOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
 ╭---------------+------------------+-------------------+--------------------+---------------------╮
@@ -38,9 +38,9 @@ Compiler run successful!
     cmd.forge_fuse()
         .args([
             "build",
-            "--revive-compile",
-            "--use-revive",
-            &format!("revive:{OTHER_REVIVE_VERSION}"),
+            "--resolc-compile",
+            "--use-resolc",
+            &format!("resolc:{OTHER_RESOLC_VERSION}"),
             "--sizes",
             "--json",
         ])

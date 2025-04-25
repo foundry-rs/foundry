@@ -124,7 +124,7 @@ mod compilation;
 pub use compilation::{CompilationRestrictions, SettingsOverrides};
 
 pub mod revive;
-use revive::ReviveConfig;
+use revive::ResolcConfig;
 
 /// Foundry configuration
 ///
@@ -538,8 +538,8 @@ pub struct Config {
     #[doc(hidden)]
     #[serde(skip)]
     pub _non_exhaustive: (),
-    /// Revive Config/Settings
-    pub revive: ReviveConfig,
+    /// Resolc Config/Settings
+    pub resolc: ResolcConfig,
 }
 
 /// Mapping of fallback standalone sections. See [`FallbackProfileProvider`].
@@ -1029,8 +1029,8 @@ impl Config {
     /// Prefer using [`Self::project`] or [`Self::ephemeral_project`] instead.
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
         let settings = self.compiler_settings()?;
-        let paths = if self.revive.revive_compile {
-            ReviveConfig::project_paths(self)
+        let paths = if self.resolc.resolc_compile {
+            ResolcConfig::project_paths(self)
         } else {
             self.project_paths()
         };
@@ -1215,14 +1215,14 @@ impl Config {
         Ok(vyper)
     }
 
-    /// Returns the Revive [Resolc] compiler.
-    pub fn revive_compiler(&self) -> Result<Resolc, SolcError> {
+    /// Returns the [Resolc] compiler.
+    pub fn resolc_compiler(&self) -> Result<Resolc, SolcError> {
         let solc_compiler = self.solc_compiler()?;
-        match &self.revive.revive {
+        match &self.resolc.resolc {
             Some(SolcReq::Local(path)) => {
                 if !path.is_file() {
                     return Err(SolcError::msg(format!(
-                        "`revive` {} does not exist",
+                        "`resolc` {} does not exist",
                         path.display()
                     )));
                 }
@@ -1254,8 +1254,8 @@ impl Config {
     /// Returns configuration for a compiler to use when setting up a [Project].
     pub fn compiler(&self) -> Result<MultiCompiler, SolcError> {
         Ok(MultiCompiler {
-            solidity: if self.revive.revive_compile {
-                SolidityCompiler::Resolc(self.revive_compiler()?)
+            solidity: if self.resolc.resolc_compile {
+                SolidityCompiler::Resolc(self.resolc_compiler()?)
             } else {
                 SolidityCompiler::Solc(self.solc_compiler()?)
             },
@@ -1564,7 +1564,7 @@ impl Config {
             evm_version: Some(self.evm_version),
             metadata: Some(SettingsMetadata {
                 use_literal_content: Some(self.use_literal_content),
-                bytecode_hash: if self.revive.revive_compile {
+                bytecode_hash: if self.resolc.resolc_compile {
                     // Workaround for BytecodeHash issue https://github.com/paritytech/revive/issues/219
                     Some(BytecodeHash::None)
                 } else {
@@ -2449,7 +2449,7 @@ impl Default for Config {
             compilation_restrictions: Default::default(),
             eof: false,
             _non_exhaustive: (),
-            revive: Default::default(),
+            resolc: Default::default(),
         }
     }
 }

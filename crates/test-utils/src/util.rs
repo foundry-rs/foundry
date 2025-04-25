@@ -1024,7 +1024,7 @@ fn test_redactions() -> snapbox::Redactions {
                 r"Estimated amount required:\s*(\d+(\.\d+)?)\s*[A-Z]{3}",
             ),
             (
-                "[REVIVE_VERSION]",
+                "[RESOLC_VERSION]",
                 r"Resolc (v)?\d+\.\d+\.\d+(-[a-zA-Z0-9\.]+)?, Solc (v)?\d+.\d+.\d+",
             ),
         ];

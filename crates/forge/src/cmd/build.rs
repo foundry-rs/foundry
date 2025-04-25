@@ -98,7 +98,7 @@ impl BuildArgs {
             .ignore_eip_3860(self.ignore_eip_3860)
             .bail(!format_json);
 
-        if config.revive.revive_compile {
+        if config.resolc.resolc_compile {
             compiler =
                 compiler.size_limits(revive::CONTRACT_SIZE_LIMIT, revive::CONTRACT_SIZE_LIMIT);
         }

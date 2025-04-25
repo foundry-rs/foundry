@@ -170,7 +170,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         compilation_restrictions: Default::default(),
         eof: false,
         _non_exhaustive: (),
-        revive: Default::default(),
+        resolc: Default::default(),
     };
     prj.write_config(input.clone());
     let config = cmd.config();
@@ -1051,8 +1051,8 @@ path = "out"
 chains = "all"
 endpoints = "all"
 
-[profile.default.revive]
-revive_compile = false
+[profile.default.resolc]
+resolc_compile = false
 
 [fmt]
 line_length = 120
@@ -1303,9 +1303,9 @@ exclude = []
   "eof": false,
   "additional_compiler_profiles": [],
   "compilation_restrictions": [],
-  "revive": {
-    "revive_compile": false,
-    "revive": null
+  "resolc": {
+    "resolc_compile": false,
+    "resolc": null
   }
 }
 
