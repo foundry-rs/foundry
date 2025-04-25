@@ -2,7 +2,7 @@
 
 use foundry_test_utils::util::OTHER_SOLC_VERSION;
 
-pub const OTHER_REVIVE_VERSION: &str = "revive:0.1.0-dev.12";
+pub const OTHER_REVIVE_VERSION: &str = "revive:0.1.0-dev.13";
 
 // tests that `--use-revive <revive>` works
 forgetest!(can_use_revive, |prj, cmd| {
@@ -31,8 +31,10 @@ Compiler run successful!
         "--use-revive",
         &format!("revive:{OTHER_REVIVE_VERSION}"),
     ]);
-    cmd.assert_failure().stderr_eq(str![[r#"
-Error: `revive` selecting by versions is not supported
+    cmd.assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [REVIVE_VERSION]
+[REVIVE_VERSION] [ELAPSED]
+Compiler run successful!
 
 "#]]);
 

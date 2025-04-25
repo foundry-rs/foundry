@@ -12,7 +12,7 @@ ignore = [
     # https://rustsec.org/advisories/RUSTSEC-2024-0437 protobuf! Crash due to uncontrolled recursion in protobuf crate.
     "RUSTSEC-2024-0437",
     # https://rustsec.org/advisories/RUSTSEC-2025-0021 gitoxide uses SHA-1 hash implementations without any collision detection, leaving it vulnerable to hash collision attacks.
-    "RUSTSEC-2025-0021"
+    "RUSTSEC-2025-0021",
 ]
 
 # This section is considered when running `cargo deny check bans`.
@@ -25,7 +25,7 @@ multiple-versions = "allow"
 wildcards = "allow"
 highlight = "all"
 # List of crates to deny
-deny = [{ name = "openssl" }]
+# deny = [{ name = "openssl" }] TODO: remove openssl from rvm-rs
 # Certain crates/versions that will be skipped when doing duplicate detection.
 skip = []
 # Similarly to `skip` allows you to skip certain crates during duplicate

@@ -1217,6 +1217,7 @@ impl Config {
 
     /// Returns the Revive [Resolc] compiler.
     pub fn revive_compiler(&self) -> Result<Resolc, SolcError> {
+        let solc_compiler = self.solc_compiler()?;
         match &self.revive.revive {
             Some(SolcReq::Local(path)) => {
                 if !path.is_file() {
@@ -1225,12 +1226,28 @@ impl Config {
                         path.display()
                     )));
                 }
-                Resolc::new(path, self.solc_compiler()?)
+                Resolc::new(path, solc_compiler)
             }
-            Some(_) => {
-                Err(SolcError::msg("`revive` selecting by versions is not supported".to_string()))
+
+            Some(SolcReq::Version(v)) => {
+                if let Some(resolc) = Resolc::find_installed(v, solc_compiler.clone())? {
+                    Ok(resolc)
+                } else {
+                    if self.offline {
+                        return Err(SolcError::msg(format!(
+                            "can't install missing resolc with version requirement {v} in offline mode"
+                        )));
+                    }
+                    Resolc::find_or_install(v, solc_compiler)
+                }
             }
-            None => Resolc::new("resolc", self.solc_compiler()?),
+            None => {
+                if self.offline {
+                    Resolc::new("resolc", solc_compiler)
+                } else {
+                    Resolc::install(None, solc_compiler)
+                }
+            }
         }
     }
 
