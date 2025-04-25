@@ -515,6 +515,9 @@ impl InspectorStackRefMut<'_> {
                 let previous_outcome = outcome.clone();
                 inspector.call_end(ecx, inputs, outcome);
 
+                println!("do_call_end: {:?}", outcome.result.result);
+                println!("do_call_end: {:?}", outcome.output());
+
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
                 let different = outcome.result.result != result ||
@@ -540,6 +543,9 @@ impl InspectorStackRefMut<'_> {
             |inspector| {
                 let previous_outcome = outcome.clone();
                 inspector.create_end(ecx, call, outcome);
+
+                println!("do_create_end: {:?}", outcome.result.result);
+                println!("do_create_end: {:?}", outcome.output());
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
