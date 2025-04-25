@@ -43,7 +43,7 @@ Mark `view`:
 - [x] `accessList`: `accessList(address,bytes32[])` _resolved: not view, keep as is due to test coverage indicating stateful behavior_
 - [x] `accesses`: `accesses(address)` _suggested: `view`_
 - [x] `eth_getLogs`: `eth_getLogs(uint256,uint256,address,bytes32[])` _suggested: `view`_
-- [ ] `getMappingKeyAndParentOf`: `getMappingKeyAndParentOf(address,bytes32)`
+- [x] `getMappingKeyAndParentOf`: `getMappingKeyAndParentOf(address,bytes32)` _suggested: `view`_
 - [x] `getMappingLength`: `getMappingLength(address,bytes32)` _suggested: `view`_
 - [x] `getMappingSlotAt`: `getMappingSlotAt(address,bytes32,uint256)` _suggested: `view`_
 - [ ] `getNonce_1`: `getNonce(address,uint256,uint256,uint256)`
