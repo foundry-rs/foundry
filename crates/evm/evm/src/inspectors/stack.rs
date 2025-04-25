@@ -239,6 +239,15 @@ macro_rules! call_inspectors {
             }
         )+
     };
+    (#[ret] [$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $call:expr $(,)?) => {
+        $(
+            if let Some($id) = $inspector {
+                if let Some(result) = ({ #[inline(always)] #[cold] || $call })() {
+                    return result;
+                }
+            }
+        )+
+    };
 }
 
 /// The collected results of [`InspectorStack`].
@@ -497,13 +506,25 @@ impl InspectorStackRefMut<'_> {
         ecx: &mut FoundryEvmContext<'_>,
         inputs: &CallInputs,
         outcome: &mut CallOutcome,
-    ) {
+    ) -> CallOutcome {
+        let result = outcome.result.result;
         call_inspectors!(
+            #[ret]
             [&mut self.fuzzer, &mut self.tracer, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
+                let previous_outcome = outcome.clone();
                 inspector.call_end(ecx, inputs, outcome);
+
+                // If the inspector returns a different status or a revert with a non-empty message,
+                // we assume it wants to tell us something
+                let different = outcome.result.result != result ||
+                    (outcome.result.result == InstructionResult::Revert &&
+                        outcome.output() != previous_outcome.output());
+                different.then_some(outcome.clone())
             },
         );
+
+        outcome.clone()
     }
 
     fn do_create_end(
@@ -511,13 +532,25 @@ impl InspectorStackRefMut<'_> {
         ecx: &mut FoundryEvmContext<'_>,
         call: &CreateInputs,
         outcome: &mut CreateOutcome,
-    ) {
+    ) -> CreateOutcome {
+        let result = outcome.result.result;
         call_inspectors!(
+            #[ret]
             [&mut self.tracer, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
+                let previous_outcome = outcome.clone();
                 inspector.create_end(ecx, call, outcome);
+
+                // If the inspector returns a different status or a revert with a non-empty message,
+                // we assume it wants to tell us something
+                let different = outcome.result.result != result ||
+                    (outcome.result.result == InstructionResult::Revert &&
+                        outcome.output() != previous_outcome.output());
+                different.then_some(outcome.clone())
             },
         );
+
+        outcome.clone()
     }
 
     fn do_eofcreate_end(
@@ -525,13 +558,25 @@ impl InspectorStackRefMut<'_> {
         ecx: &mut FoundryEvmContext<'_>,
         call: &EOFCreateInputs,
         outcome: &mut CreateOutcome,
-    ) {
+    ) -> CreateOutcome {
+        let result = outcome.result.result;
         call_inspectors!(
+            #[ret]
             [&mut self.tracer, &mut self.cheatcodes, &mut self.printer],
             |inspector| {
+                let previous_outcome = outcome.clone();
                 inspector.eofcreate_end(ecx, call, outcome);
+
+                // If the inspector returns a different status or a revert with a non-empty message,
+                // we assume it wants to tell us something
+                let different = outcome.result.result != result ||
+                    (outcome.result.result == InstructionResult::Revert &&
+                        outcome.output() != previous_outcome.output());
+                different.then_some(outcome.clone())
             },
         );
+
+        outcome.clone()
     }
 
     fn transact_inner(
@@ -764,6 +809,7 @@ impl Inspector<FoundryEvmContext<'_>> for InspectorStackRefMut<'_> {
         }
 
         call_inspectors!(
+            #[ret]
             [&mut self.fuzzer, &mut self.tracer, &mut self.log_collector, &mut self.printer],
             |inspector| {
                 let mut out = None;
@@ -876,6 +922,7 @@ impl Inspector<FoundryEvmContext<'_>> for InspectorStackRefMut<'_> {
         }
 
         call_inspectors!(
+            #[ret]
             [&mut self.tracer, &mut self.coverage, &mut self.cheatcodes],
             |inspector| inspector.create(ecx, create).map(Some),
         );
@@ -933,6 +980,7 @@ impl Inspector<FoundryEvmContext<'_>> for InspectorStackRefMut<'_> {
         }
 
         call_inspectors!(
+            #[ret]
             [&mut self.tracer, &mut self.coverage, &mut self.cheatcodes],
             |inspector| inspector.eofcreate(ecx, create).map(Some),
         );
@@ -993,9 +1041,11 @@ impl InspectorExt for InspectorStackRefMut<'_> {
         ecx: &mut FoundryEvmContext<'_>,
         inputs: &CreateInputs,
     ) -> bool {
-        call_inspectors!([&mut self.cheatcodes], |inspector| {
-            inspector.should_use_create2_factory(ecx, inputs).then_some(true)
-        },);
+        call_inspectors!(
+            #[ret]
+            [&mut self.cheatcodes],
+            |inspector| { inspector.should_use_create2_factory(ecx, inputs).then_some(true) },
+        );
 
         false
     }
