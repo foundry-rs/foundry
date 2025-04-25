@@ -403,7 +403,7 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function record() external;
 
-    /// Stops recording storage reads and writes.
+    /// Stops recording storage reads and writes, and returns all accessed reads and write slot from a `vm.record` session, for a given address.
     #[cheatcode(group = Evm, safety = Safe)]
     function stopRecordAndReturnAccesses(address target) external returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);
 

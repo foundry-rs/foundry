@@ -287,7 +287,7 @@ impl Cheatcode for recordCall {
 
 impl Cheatcode for stopRecordAndReturnAccessesCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self { target} = *self;
+        let Self { target } = *self;
         let mut accesses = state.accesses.take();
         if accesses.is_none() {
             return Ok(Default::default());
