@@ -20,7 +20,8 @@ use anvil_core::eth::{
     trie,
 };
 use foundry_evm::{backend::DatabaseError, traces::CallTraceNode, Env};
-use foundry_evm_core::evm::FoundryPrecompiles;
+use foundry_evm_core::{evm::FoundryPrecompiles, OpEnv};
+use op_revm::{L1BlockInfo, OpContext, OpTransaction};
 use revm::{
     context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm, JournalTr},
     context_interface::result::{EVMError, ExecutionResult, Output},
@@ -396,6 +397,46 @@ fn build_logs_bloom(logs: Vec<Log>, bloom: &mut Bloom) {
 }
 
 pub type AnvilEvmContext<'db, DB> = EthEvmContext<DB>;
+
+pub enum EvmContext<DB: Database> {
+    Eth(EthEvmContext<DB>),
+    Op(OpContext<DB>),
+}
+
+impl<DB: Database> EvmContext<DB> {
+    pub fn new_eth(db: DB, env: &Env) -> Self {
+        let evm_context = EthEvmContext {
+            journaled_state: {
+                let mut journal = Journal::new(db);
+                journal.set_spec_id(env.evm_env.cfg_env.spec);
+                journal
+            },
+            block: env.evm_env.block_env.clone(),
+            cfg: env.evm_env.cfg_env.clone(),
+            tx: env.tx.clone(),
+            chain: (),
+            error: Ok(()),
+        };
+        EvmContext::Eth(evm_context)
+    }
+
+    pub fn new_op(db: DB, env: &OpEnv) -> Self {
+        let op_context = OpContext {
+            journaled_state: {
+                let mut journal = Journal::new(db);
+                // Converting SpecId into OpSpecId
+                journal.set_spec_id(env.evm_env.cfg_env.spec.into());
+                journal
+            },
+            block: env.evm_env.block_env.clone(),
+            cfg: env.evm_env.cfg_env.clone(),
+            tx: OpTransaction::new(env.tx.clone()),
+            chain: L1BlockInfo::default(),
+            error: Ok(()),
+        };
+        EvmContext::Op(op_context)
+    }
+}
 
 pub type AnvilEvm<'db, DB, I, P = FoundryPrecompiles> =
     Evm<AnvilEvmContext<'db, DB>, I, EthInstructions<EthInterpreter, AnvilEvmContext<'db, DB>>, P>;

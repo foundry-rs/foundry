@@ -4380,6 +4380,7 @@ dependencies = [
  "foundry-test-utils",
  "futures",
  "itertools 0.14.0",
+ "op-revm",
  "parking_lot",
  "revm",
  "revm-inspectors",

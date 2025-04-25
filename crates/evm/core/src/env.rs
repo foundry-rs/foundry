@@ -1,4 +1,5 @@
 pub use alloy_evm::EvmEnv;
+use op_revm::OpSpecId;
 use revm::{
     context::{BlockEnv, CfgEnv, JournalInner, JournalTr, TxEnv},
     primitives::hardfork::SpecId,
@@ -11,6 +12,12 @@ pub struct Env {
     pub evm_env: EvmEnv,
     pub tx: TxEnv,
     pub is_optimism: bool,
+}
+
+// TODO: [`OpEnv`] and [`Env`] should be merged as an enum.
+pub struct OpEnv {
+    pub evm_env: EvmEnv<OpSpecId>,
+    pub tx: TxEnv,
 }
 
 /// Helper container type for [`EvmEnv`] and [`TxEnv`].
