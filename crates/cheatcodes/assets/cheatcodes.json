@@ -10424,18 +10424,18 @@
     },
     {
       "func": {
-        "id": "stopRecord",
+        "id": "stopRecordAndReturnAccesses",
         "description": "Stops recording storage reads and writes.",
-        "declaration": "function stopRecord() external;",
+        "declaration": "function stopRecordAndReturnAccesses(address target) external returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);",
         "visibility": "external",
         "mutability": "",
-        "signature": "stopRecord()",
-        "selector": "0x996be76d",
+        "signature": "stopRecordAndReturnAccesses(address)",
+        "selector": "0x87de3768",
         "selectorBytes": [
-          153,
-          107,
-          231,
-          109
+          135,
+          222,
+          55,
+          104
         ]
       },
       "group": "evm",

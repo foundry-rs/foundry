@@ -285,11 +285,24 @@ impl Cheatcode for recordCall {
     }
 }
 
-impl Cheatcode for stopRecordCall {
+impl Cheatcode for stopRecordAndReturnAccessesCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self {} = self;
-        state.accesses = None;
-        Ok(Default::default())
+        let Self { target} = *self;
+        let mut accesses = state.accesses.take();
+        if accesses.is_none() {
+            return Ok(Default::default());
+        }
+        let result = accesses
+            .as_mut()
+            .map(|accesses| {
+                (
+                    &accesses.reads.entry(target).or_default()[..],
+                    &accesses.writes.entry(target).or_default()[..],
+                )
+            })
+            .unwrap_or_default();
+
+        Ok(result.abi_encode_params())
     }
 }
 

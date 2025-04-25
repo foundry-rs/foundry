@@ -62,17 +62,20 @@ contract RecordTest is DSTest {
         target.record();
 
         // Stop recording
-        vm.stopRecord();
+        (bytes32[] memory recordedReads, bytes32[] memory recordedWrites) = vm.stopRecordAndReturnAccesses(address(target));
+
+        assertEq(recordedReads.length, 2, "number of reads is incorrect");
+        assertEq(recordedReads[0], bytes32(uint256(1)), "key for read 0 is incorrect");
+        assertEq(recordedReads[1], bytes32(uint256(1)), "key for read 1 is incorrect");
+
+        assertEq(recordedWrites.length, 1, "number of writes is incorrect");
+        assertEq(recordedWrites[0], bytes32(uint256(1)), "key for write is incorrect");
 
         // Verify no more records are captured
         target.record();
         (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(target));
 
-        assertEq(reads.length, 2, "number of reads is incorrect");
-        assertEq(reads[0], bytes32(uint256(1)), "key for read 0 is incorrect");
-        assertEq(reads[1], bytes32(uint256(1)), "key for read 1 is incorrect");
-
-        assertEq(writes.length, 1, "number of writes is incorrect");
-        assertEq(writes[0], bytes32(uint256(1)), "key for write is incorrect");
+        assertEq(reads.length, 0, "number of reads is incorrect");
+        assertEq(writes.length, 0, "number of writes is incorrect");
     }
 }
