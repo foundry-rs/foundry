@@ -20,7 +20,7 @@ use revm::{
     database::DatabaseRef,
     primitives::{hardfork::SpecId, HashMap as Map},
     state::{Account, AccountInfo},
-    Database, DatabaseCommit, ExecuteEvm, InspectEvm,
+    Database, DatabaseCommit, InspectEvm,
 };
 use std::{borrow::Cow, collections::BTreeMap};
 

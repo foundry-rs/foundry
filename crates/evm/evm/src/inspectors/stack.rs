@@ -1,6 +1,6 @@
 use super::{
     Cheatcodes, CheatsConfig, ChiselState, CoverageCollector, CustomPrintTracer, Fuzzer,
-    LogCollector, TracingInspector,
+    LogCollector, ScriptExecutionInspector, TracingInspector,
 };
 use alloy_primitives::{
     map::{AddressHashMap, HashMap},
@@ -207,6 +207,7 @@ impl InspectorStackBuilder {
         if let Some(chisel_state) = chisel_state {
             stack.set_chisel(chisel_state);
         }
+
         stack.collect_coverage(coverage.unwrap_or(false));
         stack.collect_logs(logs.unwrap_or(true));
         stack.print(print.unwrap_or(false));
@@ -298,6 +299,7 @@ pub struct InspectorStackInner {
     pub log_collector: Option<LogCollector>,
     pub printer: Option<CustomPrintTracer>,
     pub tracer: Option<TracingInspector>,
+    pub script_execution_inspector: Option<ScriptExecutionInspector>,
     pub enable_isolation: bool,
     pub odyssey: bool,
     pub create2_deployer: Address,
@@ -443,6 +445,13 @@ impl InspectorStack {
         } else {
             self.tracer = None;
         }
+    }
+
+    /// Set whether to enable script execution inspector.
+    #[inline]
+    pub fn script(&mut self, script_address: Address) {
+        self.script_execution_inspector.get_or_insert_with(Default::default).script_address =
+            script_address;
     }
 
     /// Collects all the data gathered during inspection into a single struct.
@@ -762,7 +771,13 @@ impl Inspector<FoundryEvmContext<'_>> for InspectorStackRefMut<'_> {
         ecx: &mut FoundryEvmContext<'_>,
     ) {
         call_inspectors!(
-            [&mut self.coverage, &mut self.tracer, &mut self.cheatcodes, &mut self.printer],
+            [
+                &mut self.coverage,
+                &mut self.tracer,
+                &mut self.cheatcodes,
+                &mut self.script_execution_inspector,
+                &mut self.printer
+            ],
             |inspector| inspector.initialize_interp(interpreter, ecx),
         );
     }
@@ -774,7 +789,8 @@ impl Inspector<FoundryEvmContext<'_>> for InspectorStackRefMut<'_> {
                 &mut self.tracer,
                 &mut self.coverage,
                 &mut self.cheatcodes,
-                &mut self.printer,
+                &mut self.script_execution_inspector,
+                &mut self.printer
             ],
             |inspector| inspector.step(interpreter, ecx),
         );

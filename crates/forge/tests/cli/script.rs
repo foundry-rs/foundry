@@ -2635,3 +2635,28 @@
 
 // "#]]);
 // });
+
+// // Tests that script reverts if it uses `address(this)`.
+// forgetest_init!(should_revert_on_address_opcode, |prj, cmd| {
+//     prj.add_script(
+//         "ScriptWithAddress.s.sol",
+//         r#"
+//         import {Script, console} from "forge-std/Script.sol";
+
+//     contract ScriptWithAddress is Script {
+//         function run() public view {
+//             console.log("script address", address(this));
+//         }
+//     }
+//     "#,
+//     )
+//     .unwrap();
+
+//     cmd.arg("script").arg("ScriptWithAddress").assert_failure().stderr_eq(str![[r#"
+// ...
+// Error: Usage of `address(this)` detected in script contract. Script contracts are ephemeral and
+// their addresses should not be relied upon. Error: script failed: <empty revert data>
+// ...
+
+// "#]]);
+// });
