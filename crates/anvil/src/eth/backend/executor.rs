@@ -28,7 +28,8 @@ use revm::{
     handler::instructions::EthInstructions,
     interpreter::{interpreter::EthInterpreter, InstructionResult},
     primitives::hardfork::SpecId,
-    Database, DatabaseRef, ExecuteCommitEvm, InspectCommitEvm, Inspector, Journal, MainBuilder,
+    Database, DatabaseRef, ExecuteCommitEvm, ExecuteEvm, InspectCommitEvm, InspectEvm, Inspector,
+    Journal, MainBuilder,
 };
 use std::sync::Arc;
 
@@ -307,47 +308,35 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
 
         let nonce = account.nonce;
 
-        let (exec_result, inspector) = {
-            let mut inspector = AnvilInspector::default().with_tracing();
-            if self.enable_steps_tracing {
-                inspector = inspector.with_steps_tracing();
-            }
-            if self.print_logs {
-                inspector = inspector.with_log_collector();
-            }
-            if self.print_traces {
-                inspector = inspector.with_trace_printer();
-            }
+        let mut inspector = AnvilInspector::default().with_tracing();
+        if self.enable_steps_tracing {
+            inspector = inspector.with_steps_tracing();
+        }
+        if self.print_logs {
+            inspector = inspector.with_log_collector();
+        }
+        if self.print_traces {
+            inspector = inspector.with_trace_printer();
+        }
 
-            // TODO: Remove inspector cloning?
-            // We are cloning the inspector here because setting up the EVM with an inspector
-            // requires &mut / owned access to the inspector. And evm.inspect_commit also
-            // requires the same level of access to the inspector that the EVM was setup with.
-            let mut cloned_inspector = inspector.clone();
-            let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut cloned_inspector);
-            trace!(target: "backend", "[{:?}] executing", transaction.hash());
-            let exec_result = match evm.inspect_commit(env.tx, &mut inspector) {
-                Ok(exec_result) => exec_result,
-                Err(err) => {
-                    warn!(target: "backend", "[{:?}] failed to execute: {:?}", transaction.hash(), err);
-                    match err {
-                        EVMError::Database(err) => {
-                            return Some(TransactionExecutionOutcome::DatabaseError(
-                                transaction,
-                                err,
-                            ))
-                        }
-                        EVMError::Transaction(err) => {
-                            return Some(TransactionExecutionOutcome::Invalid(
-                                transaction,
-                                err.into(),
-                            ))
-                        }
-                        e => panic!("failed to execute transaction: {e}"),
+        let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
+        // Set the tx
+        evm.set_tx(env.tx);
+        trace!(target: "backend", "[{:?}] executing", transaction.hash());
+        let exec_result = match evm.inspect_replay_commit() {
+            Ok(exec_result) => exec_result,
+            Err(err) => {
+                warn!(target: "backend", "[{:?}] failed to execute: {:?}", transaction.hash(), err);
+                match err {
+                    EVMError::Database(err) => {
+                        return Some(TransactionExecutionOutcome::DatabaseError(transaction, err))
                     }
+                    EVMError::Transaction(err) => {
+                        return Some(TransactionExecutionOutcome::Invalid(transaction, err.into()))
+                    }
+                    e => panic!("failed to execute transaction: {e}"),
                 }
-            };
-            (exec_result, inspector)
+            }
         };
 
         if self.print_traces {
