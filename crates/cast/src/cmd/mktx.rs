@@ -90,7 +90,8 @@ pub enum MakeTxSubcommands {
 
 impl MakeTxArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { mut to, mut sig, mut args, command, tx, path, eth, raw_unsigned, v, r, s } = self;
+        let Self { mut to, mut sig, mut args, command, tx, path, eth, raw_unsigned, v, r, s } =
+            self;
 
         if !raw_unsigned && to.is_none() && !args.is_empty() {
             let to_str = args.remove(0);
