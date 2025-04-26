@@ -576,7 +576,7 @@ interface Vm {
 
     /// Utility cheatcode to remove any EIP-2930 access list set by `accessList` cheatcode.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function noAccessList() external;
+    function noAccessList() external view;
 
     /// Utility cheatcode to mark specific storage slot as warm, simulating a prior read.
     #[cheatcode(group = Evm, safety = Unsafe)]
@@ -700,7 +700,7 @@ interface Vm {
 
     /// Reads the current `msg.sender` and `tx.origin` from state and reports if there is any active caller modification.
     #[cheatcode(group = Evm, safety = Unsafe)]
-    function readCallers() external returns (CallerMode callerMode, address msgSender, address txOrigin);
+    function readCallers() external view returns (CallerMode callerMode, address msgSender, address txOrigin);
 
     // ----- Arbitrary Snapshots -----
 

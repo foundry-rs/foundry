@@ -6900,9 +6900,9 @@
       "func": {
         "id": "noAccessList",
         "description": "Utility cheatcode to remove any EIP-2930 access list set by `accessList` cheatcode.",
-        "declaration": "function noAccessList() external;",
+        "declaration": "function noAccessList() external view;",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "noAccessList()",
         "selector": "0x238ad778",
         "selectorBytes": [
@@ -8340,9 +8340,9 @@
       "func": {
         "id": "readCallers",
         "description": "Reads the current `msg.sender` and `tx.origin` from state and reports if there is any active caller modification.",
-        "declaration": "function readCallers() external returns (CallerMode callerMode, address msgSender, address txOrigin);",
+        "declaration": "function readCallers() external view returns (CallerMode callerMode, address msgSender, address txOrigin);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "readCallers()",
         "selector": "0x4ad0bac9",
         "selectorBytes": [

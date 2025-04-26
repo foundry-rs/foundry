@@ -49,8 +49,8 @@ Mark `view`:
 - [ ] `getNonce_1`: `getNonce(address,uint256,uint256,uint256)`
 - [ ] `getRecordedLogs`: `getRecordedLogs()`
 - [ ] `getWallets`: `getWallets()`
-- [ ] `noAccessList`: `noAccessList()`
-- [ ] `readCallers`: `readCallers()`
+- [x] `noAccessList`: `noAccessList()` _suggested: `view`_
+- [x] `readCallers`: `readCallers()` _suggested: `view`_
 
 ---
 
