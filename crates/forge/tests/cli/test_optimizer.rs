@@ -1347,7 +1347,6 @@ Compiling 20 files with [..]
 });
 
 // Test preprocessed contracts with decode internal fns.
-#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(preprocess_contract_with_decode_internal, |prj, cmd| {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
