@@ -5,18 +5,20 @@
 use alloy_consensus::TxEnvelope;
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_json_abi::Function;
-use alloy_network::AnyNetwork;
+use alloy_network::{AnyNetwork, AnyRpcTransaction};
 use alloy_primitives::{
     hex,
     utils::{keccak256, ParseUnits, Unit},
-    Address, Keccak256, Selector, TxHash, TxKind, B256, I256, U256,
+    Address, Keccak256, Selector, TxHash, TxKind, B256, I256, U256, U64,
 };
 use alloy_provider::{
     network::eip2718::{Decodable2718, Encodable2718},
     PendingTransactionBuilder, Provider,
 };
 use alloy_rlp::Decodable;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, TransactionRequest};
+use alloy_rpc_types::{
+    state::StateOverride, BlockId, BlockNumberOrTag, Filter, TransactionRequest,
+};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
 use base::{Base, NumberWithBase, ToBase};
@@ -26,6 +28,7 @@ use foundry_block_explorers::Client;
 use foundry_common::{
     abi::{encode_function_args, get_func},
     compile::etherscan_project,
+    ens::NameOrAddress,
     fmt::*,
     fs, get_pretty_tx_receipt_attr, shell, TransactionReceiptWithRevertReason,
 };
@@ -106,11 +109,12 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::{Address, U256, Bytes};
-    /// use alloy_rpc_types::{TransactionRequest};
+    /// use alloy_rpc_types::{TransactionRequest, state::{StateOverride, AccountOverride}};
     /// use alloy_serde::WithOtherFields;
     /// use cast::Cast;
     /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
-    /// use std::str::FromStr;
+    /// use std::{str::FromStr, collections::HashMap};
+    /// use alloy_rpc_types::state::StateOverridesBuilder;
     /// use alloy_sol_types::{sol, SolCall};
     ///
     /// sol!(
@@ -118,14 +122,22 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// );
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let alloy_provider = ProviderBuilder::<_,_, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;;
+    /// let alloy_provider = ProviderBuilder::<_,_, AnyNetwork>::default().connect("http://localhost:8545").await?;;
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let greeting = greetingCall { i: U256::from(5) }.abi_encode();
     /// let bytes = Bytes::from_iter(greeting.iter());
     /// let tx = TransactionRequest::default().to(to).input(bytes.into());
     /// let tx = WithOtherFields::new(tx);
+    ///
+    /// // Create state overrides
+    /// let mut state_override = StateOverride::default();
+    /// let mut account_override = AccountOverride::default();
+    /// account_override.balance = Some(U256::from(1000));
+    /// state_override.insert(to, account_override);
+    /// let state_override_object = StateOverridesBuilder::default().build();
+    ///
     /// let cast = Cast::new(alloy_provider);
-    /// let data = cast.call(&tx, None, None).await?;
+    /// let data = cast.call(&tx, None, None, state_override_object).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
@@ -135,8 +147,14 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         req: &WithOtherFields<TransactionRequest>,
         func: Option<&Function>,
         block: Option<BlockId>,
+        state_override: StateOverride,
     ) -> Result<String> {
-        let res = self.provider.call(req.clone()).block(block.unwrap_or_default()).await?;
+        let res = self
+            .provider
+            .call(req.clone())
+            .block(block.unwrap_or_default())
+            .overrides(state_override)
+            .await?;
 
         let mut decoded = vec![];
 
@@ -731,26 +749,45 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let tx = cast.transaction(tx_hash.to_string(), None, false).await?;
+    /// let tx = cast.transaction(Some(tx_hash.to_string()), None, None, None, false).await?;
     /// println!("{}", tx);
     /// # Ok(())
     /// # }
     /// ```
     pub async fn transaction(
         &self,
-        tx_hash: String,
+        tx_hash: Option<String>,
+        from: Option<NameOrAddress>,
+        nonce: Option<u64>,
         field: Option<String>,
         raw: bool,
     ) -> Result<String> {
-        let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
-        let tx = self
-            .provider
-            .get_transaction_by_hash(tx_hash)
-            .await?
-            .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
+        let tx = if let Some(tx_hash) = tx_hash {
+            let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
+            self.provider
+                .get_transaction_by_hash(tx_hash)
+                .await?
+                .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?
+        } else if let Some(from) = from {
+            // If nonce is not provided, uses 0.
+            let nonce = U64::from(nonce.unwrap_or_default());
+            let from = from.resolve(self.provider.root()).await?;
+
+            self.provider
+                .raw_request::<_, Option<AnyRpcTransaction>>(
+                    "eth_getTransactionBySenderAndNonce".into(),
+                    (from, nonce),
+                )
+                .await?
+                .ok_or_else(|| {
+                    eyre::eyre!("tx not found for sender {from} and nonce {:?}", nonce.to::<u64>())
+                })?
+        } else {
+            eyre::bail!("tx hash or from address is required")
+        };
 
         Ok(if raw {
             format!("0x{}", hex::encode(tx.inner.inner.encoded_2718()))
