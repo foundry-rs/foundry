@@ -92,7 +92,7 @@ impl MakeTxArgs {
     pub async fn run(self) -> Result<()> {
         let Self { to, mut sig, mut args, command, tx, path, eth, raw_unsigned, v, r, s } = self;
 
-        if !raw_unsigned{
+        if !raw_unsigned {
             if to.is_none() && !args.is_empty() {
                 let to_str = args.remove(0);
                 to = Some(NameOrAddress::from_str(&to_str)?);
