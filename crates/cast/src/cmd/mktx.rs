@@ -161,8 +161,8 @@ impl MakeTxArgs {
                 sh_println!("{}", raw_unsigned_hex)?;
             }
 
-                return Ok(());
-            }
+            return Ok(());
+        }
 
         let signer = eth.wallet.signer().await?;
         let from = signer.address();
