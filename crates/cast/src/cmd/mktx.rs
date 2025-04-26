@@ -92,11 +92,9 @@ impl MakeTxArgs {
     pub async fn run(self) -> Result<()> {
         let Self { mut to, mut sig, mut args, command, tx, path, eth, raw_unsigned, v, r, s } = self;
 
-        if !raw_unsigned {
-            if to.is_none() && !args.is_empty() {
-                let to_str = args.remove(0);
-                to = Some(NameOrAddress::from_str(&to_str)?);
-            }
+        if !raw_unsigned && to.is_none() && !args.is_empty() {
+            let to_str = args.remove(0);
+            to = Some(NameOrAddress::from_str(&to_str)?);
         }
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
