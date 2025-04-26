@@ -128,12 +128,12 @@ impl MakeTxArgs {
         if raw_unsigned {
             let from = eth.wallet.from.ok_or_eyre("missing `--from` address")?;
             let raw_unsigned_hex = tx_builder.build_unsigned_raw(from).await?;
-            let raw_unsigned_bytes = hex::decode(raw_unsigned_hex.trim_start_matches("0x"))?;
-
-            let mut buf = raw_unsigned_bytes.as_slice();
-            let unsigned_tx: UnsignedTransaction = UnsignedTransaction::decode(&mut buf)?;
 
             if let (Some(v), Some(r_hex), Some(s_hex)) = (v, r.as_ref(), s.as_ref()) {
+                let raw_unsigned_bytes = hex::decode(raw_unsigned_hex.trim_start_matches("0x"))?;
+                let mut buf = raw_unsigned_bytes.as_slice();
+                let unsigned_tx: UnsignedTransaction = UnsignedTransaction::decode(&mut buf)?;
+
                 let r_bytes = hex::decode(r_hex.trim_start_matches("0x"))?;
                 let s_bytes = hex::decode(s_hex.trim_start_matches("0x"))?;
 
