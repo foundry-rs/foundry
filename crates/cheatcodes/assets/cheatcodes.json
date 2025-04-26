@@ -6258,9 +6258,9 @@
       "func": {
         "id": "getRecordedLogs",
         "description": "Gets all the recorded logs.",
-        "declaration": "function getRecordedLogs() external returns (Log[] memory logs);",
+        "declaration": "function getRecordedLogs() external view returns (Log[] memory logs);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "getRecordedLogs()",
         "selector": "0x191553a4",
         "selectorBytes": [
@@ -6318,9 +6318,9 @@
       "func": {
         "id": "getWallets",
         "description": "Returns addresses of available unlocked wallets in the script environment.",
-        "declaration": "function getWallets() external returns (address[] memory wallets);",
+        "declaration": "function getWallets() external view returns (address[] memory wallets);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "getWallets()",
         "selector": "0xdb7a4605",
         "selectorBytes": [

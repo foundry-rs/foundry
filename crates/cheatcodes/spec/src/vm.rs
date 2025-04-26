@@ -914,7 +914,7 @@ interface Vm {
 
     /// Gets all the recorded logs.
     #[cheatcode(group = Evm, safety = Safe)]
-    function getRecordedLogs() external returns (Log[] memory logs);
+    function getRecordedLogs() external view returns (Log[] memory logs);
 
     // -------- Gas Metering --------
 
@@ -2249,7 +2249,7 @@ interface Vm {
 
     /// Returns addresses of available unlocked wallets in the script environment.
     #[cheatcode(group = Scripting)]
-    function getWallets() external returns (address[] memory wallets);
+    function getWallets() external view returns (address[] memory wallets);
 
     // ======== Utilities ========
 

@@ -47,8 +47,8 @@ Mark `view`:
 - [x] `getMappingLength`: `getMappingLength(address,bytes32)` _suggested: `view`_
 - [x] `getMappingSlotAt`: `getMappingSlotAt(address,bytes32,uint256)` _suggested: `view`_
 - [ ] `getNonce_1`: `getNonce(address,uint256,uint256,uint256)`
-- [ ] `getRecordedLogs`: `getRecordedLogs()`
-- [ ] `getWallets`: `getWallets()`
+- [x] `getRecordedLogs`: `getRecordedLogs()` _suggested: `view`_
+- [x] `getWallets`: `getWallets()` _suggested: `view`_
 - [x] `noAccessList`: `noAccessList()` _suggested: `view`_
 - [x] `readCallers`: `readCallers()` _suggested: `view`_
 
