@@ -372,7 +372,7 @@ interface Vm {
 
     /// Get the nonce of a `Wallet`.
     #[cheatcode(group = Evm, safety = Safe)]
-    function getNonce(Wallet calldata wallet) external returns (uint64 nonce);
+    function getNonce(Wallet calldata wallet) external view returns (uint64 nonce);
 
     /// Loads a storage slot from an address.
     #[cheatcode(group = Evm, safety = Safe)]

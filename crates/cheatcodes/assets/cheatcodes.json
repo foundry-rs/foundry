@@ -6238,9 +6238,9 @@
       "func": {
         "id": "getNonce_1",
         "description": "Get the nonce of a `Wallet`.",
-        "declaration": "function getNonce(Wallet calldata wallet) external returns (uint64 nonce);",
+        "declaration": "function getNonce(Wallet calldata wallet) external view returns (uint64 nonce);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "getNonce((address,uint256,uint256,uint256))",
         "selector": "0xa5748aad",
         "selectorBytes": [
