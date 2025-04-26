@@ -1225,7 +1225,6 @@ casttest!(mktx_raw_unsigned, |_prj, cmd| {
         "10000000000",
         "--priority-gas-price",
         "1000000000",
-        "--to",
         "0x0000000000000000000000000000000000000001",
         "--raw-unsigned",
     ])
