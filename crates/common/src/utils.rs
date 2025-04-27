@@ -37,3 +37,30 @@ pub fn erc7201(id: &str) -> B256 {
     let x = U256::from_be_bytes(keccak256(id).0) - U256::from(1);
     keccak256(x.to_be_bytes::<32>()) & B256::from(!U256::from(0xff))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::b256;
+
+    #[test]
+    fn test_erc7201_known_value() {
+        let id = "example.main";
+        let expected = b256!("0x183a6125c38840424c4a85fa12bab2ab606c4b6d0e7cc73c0c06ba5300eab500");
+        assert_eq!(erc7201(id), expected);
+    }
+
+    #[test]
+    fn test_erc7201_different_inputs() {
+        let a = erc7201("foo.bar");
+        let b = erc7201("baz.bat");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_erc7201_format() {
+        let id = "my.storage.slot";
+        let slot = erc7201(id);
+        assert_eq!(slot.len(), 32);
+    }
+}
