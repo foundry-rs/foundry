@@ -100,7 +100,7 @@ fn handle_revert(
         Ok(())
     } else {
         let (actual, expected) = if let Some(contracts) = known_contracts {
-            let decoder = RevertDecoder::new().with_abis(contracts.iter().map(|(_, c)| &c.abi));
+            let decoder = RevertDecoder::new().with_abis(contracts.values().map(|c| &c.abi));
             (
                 &decoder.decode(actual_revert.as_slice(), Some(status)),
                 &decoder.decode(expected_reason, Some(status)),
