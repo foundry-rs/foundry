@@ -55,7 +55,7 @@ static COMMENT_RE: LazyLock<Regex> =
 
 /// Matches Ethereum addresses that are not strings
 static ADDRESS_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?m)(([^"']\s*)|^)(?P<address>0x[a-fA-F0-9]{40})((\s*[^"'\w])|$)"#).unwrap()
+    Regex::new(r#"(?<!\w)(?P<address>0x[a-fA-F0-9]{40})(?!\w)"#).unwrap()
 });
 
 /// Chisel input dispatcher
