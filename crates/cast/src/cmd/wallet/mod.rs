@@ -3,7 +3,10 @@ use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
 use alloy_primitives::{hex, Address, PrimitiveSignature as Signature, B256, U256};
 use alloy_provider::Provider;
-use alloy_signer::Signer;
+use alloy_signer::{
+    k256::{elliptic_curve::sec1::ToEncodedPoint, SecretKey},
+    Signer,
+};
 use alloy_signer_local::{
     coins_bip39::{English, Entropy, Mnemonic},
     MnemonicBuilder, PrivateKeySigner,
@@ -210,7 +213,16 @@ pub enum WalletSubcommands {
         #[command(flatten)]
         wallet: WalletOpts,
     },
+    /// Get the public key for the given private key.
+    #[command(visible_aliases = &["pubkey"])]
+    PublicKey {
+        /// If provided, the public key will be derived from the specified private key.
+        #[arg(long = "raw-private-key", value_name = "PRIVATE_KEY")]
+        private_key_override: Option<String>,
 
+        #[command(flatten)]
+        wallet: WalletOpts,
+    },
     /// Decrypt a keystore file to get the private key
     #[command(name = "decrypt-keystore", visible_alias = "dk")]
     DecryptKeystore {
@@ -397,6 +409,34 @@ impl WalletSubcommands {
                     .await?;
                 let addr = wallet.address();
                 sh_println!("{}", addr.to_checksum(None))?;
+            }
+            Self::PublicKey { wallet, private_key_override } => {
+                let wallet = private_key_override
+                    .map(|pk| WalletOpts {
+                        raw: RawWalletOpts { private_key: Some(pk), ..Default::default() },
+                        ..Default::default()
+                    })
+                    .unwrap_or(wallet)
+                    .signer()
+                    .await?;
+
+                let private_key_bytes = match wallet {
+                    WalletSigner::Local(wallet) => wallet.credential().to_bytes(),
+                    _ => eyre::bail!("Only local wallets are supported by this command"),
+                };
+
+                let secret_key = SecretKey::from_slice(&private_key_bytes)
+                    .map_err(|e| eyre::eyre!("Invalid private key: {}", e))?;
+
+                // Get the public key from the private key
+                let public_key = secret_key.public_key();
+
+                // Serialize it as uncompressed (65 bytes: 0x04 || X (32 bytes) || Y (32 bytes))
+                let pubkey_bytes = public_key.to_encoded_point(false);
+                // Strip the 1-byte prefix (0x04) to get 64 bytes for Ethereum use
+                let ethereum_pubkey = &pubkey_bytes.as_bytes()[1..];
+
+                sh_println!("0x{}", hex::encode(ethereum_pubkey))?;
             }
             Self::Sign { message, data, from_file, no_hash, wallet } => {
                 let wallet = wallet.signer().await?;
@@ -722,7 +762,7 @@ mod tests {
     fn can_verify_signed_hex_message() {
         let message = "hello";
         let signature = Signature::from_str("f2dd00eac33840c04b6fc8a5ec8c4a47eff63575c2bc7312ecb269383de0c668045309c423484c8d097df306e690c653f8e1ec92f7f6f45d1f517027771c3e801c").unwrap();
-        let address = address!("28A4F420a619974a2393365BCe5a7b560078Cc13");
+        let address = address!("0x28A4F420a619974a2393365BCe5a7b560078Cc13");
         let recovered_address =
             WalletSubcommands::recover_address_from_message(message, &signature);
         assert!(recovered_address.is_ok());

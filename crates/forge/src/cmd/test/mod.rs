@@ -305,8 +305,10 @@ impl TestArgs {
 
         let sources_to_compile = self.get_sources_to_compile(&config, &filter)?;
 
-        let compiler =
-            ProjectCompiler::new().quiet(shell::is_json() || self.junit).files(sources_to_compile);
+        let compiler = ProjectCompiler::new()
+            .dynamic_test_linking(config.dynamic_test_linking)
+            .quiet(shell::is_json() || self.junit)
+            .files(sources_to_compile);
 
         let output = compiler.compile(&project)?;
 
@@ -366,7 +368,7 @@ impl TestArgs {
 
             // Decode traces.
             let decoder = outcome.last_run_decoder.as_ref().unwrap();
-            decode_trace_arena(arena, decoder).await?;
+            decode_trace_arena(arena, decoder).await;
             let mut fst = folded_stack_trace::build(arena);
 
             let label = if self.flamegraph { "flamegraph" } else { "flamechart" };
@@ -471,7 +473,7 @@ impl TestArgs {
 
         // Run tests in a non-streaming fashion and collect results for serialization.
         if !self.gas_report && !self.summary && shell::is_json() {
-            let mut results = runner.test_collect(filter);
+            let mut results = runner.test_collect(filter)?;
             results.values_mut().for_each(|suite_result| {
                 for test_result in suite_result.test_results.values_mut() {
                     if verbosity >= 2 {
@@ -488,7 +490,7 @@ impl TestArgs {
         }
 
         if self.junit {
-            let results = runner.test_collect(filter);
+            let results = runner.test_collect(filter)?;
             sh_println!("{}", junit_xml_report(&results, verbosity).to_string()?)?;
             return Ok(TestOutcome::new(results, self.allow_failure));
         }
@@ -522,10 +524,8 @@ impl TestArgs {
             .with_verbosity(verbosity);
         // Signatures are of no value for gas reports.
         if !self.gas_report {
-            builder = builder.with_signature_identifier(SignaturesIdentifier::new(
-                Config::foundry_cache_dir(),
-                config.offline,
-            )?);
+            builder =
+                builder.with_signature_identifier(SignaturesIdentifier::from_config(&config)?);
         }
 
         if self.decode_internal {
@@ -635,7 +635,7 @@ impl TestArgs {
                     };
 
                     if should_include {
-                        decode_trace_arena(arena, &decoder).await?;
+                        decode_trace_arena(arena, &decoder).await;
                         decoded_traces.push(render_trace_arena_inner(arena, false, verbosity > 4));
                     }
                 }

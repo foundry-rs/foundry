@@ -29,7 +29,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 # Remember to update clippy.toml as well
 rust-version = "1.83"
@@ -191,13 +191,14 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.11.0", default-features = false }
-foundry-compilers = { version = "0.13.5", default-features = false }
+foundry-block-explorers = { version = "0.13.0", default-features = false }
+foundry-compilers = { version = "0.14.0", default-features = false }
 foundry-fork-db = "0.12"
 solang-parser = "=0.3.3"
-solar-ast = { version = "=0.1.1", default-features = false }
-solar-parse = { version = "=0.1.1", default-features = false }
-solar-interface = { version = "=0.1.1", default-features = false }
+solar-ast = { version = "=0.1.2", default-features = false }
+solar-parse = { version = "=0.1.2", default-features = false }
+solar-interface = { version = "=0.1.2", default-features = false }
+solar-sema = { version = "=0.1.2", default-features = false }
 
 ## revm
 revm = { version = "19.4.0", default-features = false }
@@ -263,6 +264,8 @@ thiserror = "2"
 
 # misc
 auto_impl = "1"
+aws-config = { version = "1", default-features = true }
+aws-sdk-kms = { version = "1", default-features = false }
 bytes = "1.8"
 walkdir = "2"
 prettyplease = "0.2"
@@ -297,6 +300,7 @@ reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
     "rustls-tls-native-roots",
 ] }
+rustls = "0.23"
 semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
@@ -314,6 +318,7 @@ tracing-subscriber = "0.3"
 url = "2"
 vergen = { version = "8", default-features = false }
 yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
+path-slash = "0.2"
 
 [patch.crates-io]
 ## alloy-core

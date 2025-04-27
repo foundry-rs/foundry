@@ -229,7 +229,7 @@ impl PreprocessedState {
             args,
             script_config,
             script_wallets,
-            build_data: BuildData { output, target, project_root: project.root().clone() },
+            build_data: BuildData { output, target, project_root: project.root().to_path_buf() },
         })
     }
 }
