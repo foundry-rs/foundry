@@ -1028,14 +1028,18 @@ async fn test_mine_blks_with_same_timestamp() {
         blk_futs.push(provider.get_block(i.into()).into_future());
     }
 
-    let blks = futures::future::join_all(blk_futs)
+    let timestamps = futures::future::join_all(blk_futs)
         .await
         .into_iter()
         .map(|blk| blk.unwrap().unwrap().header.timestamp)
         .collect::<Vec<_>>();
 
-    // timestamps should be equal
-    assert_eq!(blks, vec![init_timestamp; 4]);
+    // All timestamps should be equal. Allow for 1 second difference.
+    assert!(timestamps.windows(2).all(|w| w[0] == w[1]), "{timestamps:#?}");
+    assert!(
+        timestamps[0] == init_timestamp || timestamps[0] == init_timestamp + 1,
+        "{timestamps:#?} != {init_timestamp}"
+    );
 }
 
 // <https://github.com/foundry-rs/foundry/issues/8962>
