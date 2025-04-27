@@ -4024,6 +4024,7 @@ dependencies = [
  "serde_json",
  "similar-asserts",
  "solar-parse",
+ "soldeer-core",
  "tempfile",
  "thiserror 2.0.12",
  "toml 0.8.21",
