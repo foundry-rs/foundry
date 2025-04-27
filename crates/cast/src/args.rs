@@ -195,7 +195,14 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let tokens = SimpleCast::calldata_decode(&sig, &calldata, true)?;
             print_tokens(&tokens);
         }
-        CastSubcommand::CalldataEncode { sig, args } => {
+        CastSubcommand::CalldataEncode { sig, args, file } => {
+            let final_args = if let Some(file_path) = file {
+                let contents = fs::read_to_string(file_path)?;
+                let contents = contents.trim();
+                vec![contents.to_string()]
+            } else {
+                args
+            };
             sh_println!("{}", SimpleCast::calldata_encode(sig, &args)?)?;
         }
         CastSubcommand::DecodeString { data } => {
