@@ -203,7 +203,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             } else {
                 args
             };
-            sh_println!("{}", SimpleCast::calldata_encode(sig, &args)?)?;
+            sh_println!("{}", SimpleCast::calldata_encode(sig, &final_args)?)?;
         }
         CastSubcommand::DecodeString { data } => {
             let tokens = SimpleCast::calldata_decode("Any(string)", &data, true)?;
