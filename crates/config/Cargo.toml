@@ -37,7 +37,6 @@ regex.workspace = true
 reqwest.workspace = true
 semver = { workspace = true, features = ["serde"] }
 serde_json.workspace = true
-serde_regex = "1"
 serde.workspace = true
 thiserror.workspace = true
 toml = { workspace = true, features = ["preserve_order"] }
