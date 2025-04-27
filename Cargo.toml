@@ -315,6 +315,11 @@ vergen = { version = "8", default-features = false }
 yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 path-slash = "0.2"
 
+# Use unicode-rs which has a smaller binary size than the default ICU4X as the IDNA backend, used
+# by the `url` crate.
+# See the `idna_adapter` README.md for more details: https://docs.rs/crate/idna_adapter/latest
+idna_adapter = "=1.1.0"
+
 [patch.crates-io]
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
