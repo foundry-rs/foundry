@@ -5,7 +5,7 @@ jobs:
       - image: ubuntu:23.04
 
       - image: mongo:6.0.14
-        command: [mongod, --smallfiles]
+        command: [mongod --dbpath /path/to/data]
 
       - image: postgres:14.12
         # some containers require setting environment variables
