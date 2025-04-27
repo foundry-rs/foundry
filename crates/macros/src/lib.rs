@@ -6,10 +6,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 #[macro_use]
-extern crate proc_macro_error;
+extern crate proc_macro_error2;
 
 use proc_macro::TokenStream;
-use proc_macro_error::proc_macro_error;
 use syn::{parse_macro_input, DeriveInput, Error};
 
 mod cheatcodes;
