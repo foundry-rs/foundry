@@ -391,6 +391,10 @@ pub enum CastSubcommand {
         /// The arguments to encode.
         #[arg(allow_hyphen_values = true)]
         args: Vec<String>,
+
+        //calldata arguments from file
+        #[arg(long, value_name = "PATH")]
+        file: Option<PathBuf>,
     },
 
     /// Get the symbolic name of the current chain.
