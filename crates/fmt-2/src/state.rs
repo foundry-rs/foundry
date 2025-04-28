@@ -13,8 +13,6 @@ use solar_parse::{
 };
 use std::borrow::Cow;
 
-// TODO(dani): bunch docs into `Comments` since misplaced docs get ignore
-
 pub(super) struct State<'sess, 'ast> {
     pub(crate) s: pp::Printer,
     ind: isize,
@@ -1177,13 +1175,13 @@ impl<'ast> State<'_, 'ast> {
         // TODO(dani): might need to adjust span for `single_line_block` to include the if condition
         // TODO(dani): attempt_omit_braces
         let _ = attempt_omit_braces;
-        self.word("{");
         if attempt_single_line && self.single_line_block(block, span) {
             self.space();
             self.print_stmt(&block[0]);
             self.print_comments(span.hi());
             self.space();
         } else {
+            self.word("{");
             self.s.cbox(self.ind);
             self.hardbreak_if_nonempty();
             for stmt in block {
@@ -1193,8 +1191,8 @@ impl<'ast> State<'_, 'ast> {
             self.print_comments_skip_ws(span.hi());
             self.s.offset(-self.ind);
             self.end();
+            self.word("}");
         }
-        self.word("}");
         self.hardbreak();
     }
 
