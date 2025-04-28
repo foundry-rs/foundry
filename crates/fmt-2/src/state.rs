@@ -9,6 +9,7 @@ use itertools::{Either, Itertools};
 use solar_parse::{
     ast::{self, token, Span},
     interface::{BytePos, SourceMap},
+    Cursor,
 };
 use std::borrow::Cow;
 
@@ -734,6 +735,7 @@ impl<'ast> State<'_, 'ast> {
         }
     }
 
+    // TODO: Yul literals are slightly different than normal solidity ones
     fn print_lit(&mut self, lit: &'ast ast::Lit) {
         let &ast::Lit { span, symbol, ref kind } = lit;
         if self.handle_span(span) {
@@ -742,19 +744,19 @@ impl<'ast> State<'_, 'ast> {
 
         match *kind {
             ast::LitKind::Str(kind, ..) => {
-                self.s.cbox(self.ind);
+                self.s.cbox(0);
                 for (pos, (span, symbol)) in lit.literals().delimited() {
                     if !self.handle_span(span) {
                         let quote_pos = span.lo() + kind.prefix().len() as u32;
                         self.print_str_lit(kind, quote_pos, symbol.as_str());
                     }
                     if !pos.is_last {
-                        self.space();
+                        self.space_if_not_bol();
+                        self.maybe_print_trailing_comment(span, None);
                     } else {
                         self.neverbreak();
                     }
                 }
-                self.s.offset(-self.ind);
                 self.end();
             }
             ast::LitKind::Number(_) | ast::LitKind::Rational(_) => {
@@ -888,7 +890,20 @@ impl<'ast> State<'_, 'ast> {
             }
             f.write_str(s)
         });
-        format!("{prefix}{quote}{s}{quote}")
+        let mut s = format!("{prefix}{quote}{s}{quote}");
+
+        // If the output is not a single token then revert to the original quote.
+        if Cursor::new(&s).exactly_one().is_err() {
+            let other_quote = if quote == '\"' { '\'' } else { '\"' };
+            {
+                let s = unsafe { s.as_bytes_mut() };
+                s[prefix.len()] = other_quote as u8;
+                s[s.len() - 1] = other_quote as u8;
+            }
+            debug_assert!(Cursor::new(&s).exactly_one().map(|_| true).unwrap());
+        }
+
+        s
     }
 
     fn print_ty(&mut self, ty: &'ast ast::Type<'ast>) {
@@ -1131,6 +1146,7 @@ impl<'ast> State<'_, 'ast> {
         if stmt_needs_semi(kind) {
             self.word(";");
         }
+        self.maybe_print_trailing_comment(stmt.span, None);
     }
 
     fn print_block(&mut self, block: &'ast [ast::Stmt<'ast>], span: Span) {
@@ -1148,7 +1164,7 @@ impl<'ast> State<'_, 'ast> {
             self.hardbreak();
             for stmt in block {
                 self.print_stmt(stmt);
-                self.hardbreak();
+                self.hardbreak_if_not_bol();
             }
             self.s.offset(-self.ind);
             self.end();

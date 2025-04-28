@@ -101,7 +101,7 @@ fn test_formatter(
     comments_end: usize,
 ) {
     let path = &*expected_path.with_file_name("original.sol");
-    let expected_data = Data::read_from(expected_path, None);
+    let expected_data = Data::read_from(expected_path, None).raw();
 
     let mut source_formatted = format(source, path, config.clone());
     // Inject `expected`'s comments, if any, so we can use the expected file as a snapshot.
