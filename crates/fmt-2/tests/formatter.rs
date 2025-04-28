@@ -1,12 +1,10 @@
 use forge_fmt_2::FormatterConfig;
-use itertools::Itertools;
+use snapbox::{assert_data_eq, Data};
 use std::{
-    fmt, fs,
+    fs,
     path::{Path, PathBuf},
 };
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
-
-// TODO(dani): add snapshot infra to automatically update the expected output
 
 #[track_caller]
 fn format(source: &str, path: &Path, config: FormatterConfig) -> String {
@@ -20,21 +18,6 @@ fn format(source: &str, path: &Path, config: FormatterConfig) -> String {
 fn assert_eof(content: &str) {
     assert!(content.ends_with('\n'), "missing trailing newline");
     assert!(!content.ends_with("\n\n"), "extra trailing newline");
-}
-
-#[derive(Eq)]
-struct PrettyString<'a>(&'a str);
-
-impl PartialEq for PrettyString<'_> {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.lines().eq(other.0.lines())
-    }
-}
-
-impl fmt::Debug for PrettyString<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self.0, f)
-    }
 }
 
 fn enable_tracing() {
@@ -54,6 +37,7 @@ fn test_directory(base_name: &str) {
     enable_tracing();
     let dir = tests_dir().join(base_name);
     let original = fs::read_to_string(dir.join("original.sol")).unwrap();
+    let mut handles = vec![];
     for res in dir.read_dir().unwrap() {
         let entry = res.unwrap();
         let path = entry.path();
@@ -65,7 +49,7 @@ fn test_directory(base_name: &str) {
         assert!(path.is_file(), "expected file: {path:?}");
         assert!(filename.ends_with("fmt.sol"), "unknown file: {path:?}");
 
-        let source = fs::read_to_string(&path).unwrap();
+        let expected = fs::read_to_string(&path).unwrap();
 
         // The majority of the tests were written with the assumption that the default value for max
         // line length is `80`. Preserve that to avoid rewriting test logic.
@@ -73,9 +57,9 @@ fn test_directory(base_name: &str) {
 
         let mut config = toml::Value::try_from(default_config).unwrap();
         let config_table = config.as_table_mut().unwrap();
-        let mut lines = source.split('\n').peekable();
-        let mut line_num = 1;
-        while let Some(&line) = lines.peek() {
+        let mut comments_end = 0;
+        for (i, line) in expected.lines().enumerate() {
+            let line_num = i + 1;
             let Some(entry) = line
                 .strip_prefix("//")
                 .and_then(|line| line.trim().strip_prefix("config:"))
@@ -90,40 +74,45 @@ fn test_directory(base_name: &str) {
             };
             config_table.extend(values);
 
-            line_num += 1;
-            lines.next();
+            comments_end += line.len() + 1;
         }
         let config = config
             .try_into()
             .unwrap_or_else(|err| panic!("invalid test config for {filename}: {err}"));
 
-        test_formatter(&path, filename, config, &original, &lines.join("\n"));
+        let original = original.clone();
+        let tname = format!("{base_name}/{filename}");
+        let spawn = move || {
+            test_formatter(&path, config, &original, &expected, comments_end);
+        };
+        handles.push(std::thread::Builder::new().name(tname).spawn(spawn).unwrap());
+    }
+    let results = handles.into_iter().map(|h| h.join()).collect::<Vec<_>>();
+    for result in results {
+        result.unwrap();
     }
 }
 
 fn test_formatter(
-    path: &Path,
-    filename: &str,
+    expected_path: &Path,
     config: FormatterConfig,
     source: &str,
     expected_source: &str,
+    comments_end: usize,
 ) {
-    assert_eof(expected_source);
+    let path = &*expected_path.with_file_name("original.sol");
+    let expected_data = Data::read_from(expected_path, None);
 
-    let source_formatted = format(source, &path.with_file_name("original.sol"), config.clone());
+    let mut source_formatted = format(source, path, config.clone());
+    // Inject `expected`'s comments, if any, so we can use the expected file as a snapshot.
+    source_formatted.insert_str(0, &expected_source[..comments_end]);
+    assert_data_eq!(&source_formatted, &expected_data);
     assert_eof(&source_formatted);
-    similar_asserts::assert_eq!(
-        PrettyString(&source_formatted),
-        PrettyString(expected_source),
-        "{filename}: formatted source does not match expected source"
-    );
 
-    let expected_formatted = format(expected_source, path, config);
-    similar_asserts::assert_eq!(
-        PrettyString(&expected_formatted),
-        PrettyString(expected_source),
-        "{filename}: expected source is not formatted"
-    );
+    let expected_formatted = format(expected_source, expected_path, config);
+    assert_data_eq!(&expected_formatted, expected_data);
+    assert_eof(expected_source);
+    assert_eof(&expected_formatted);
 }
 
 fn test_all_dirs_are_declared(dirs: &[&str]) {
