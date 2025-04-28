@@ -1153,13 +1153,7 @@ mod tests {
 
     #[test]
     fn parse_call_data_with_file() {
-        let args: Cast = Cast::parse_from([
-            "foundry-cli",
-            "calldata",
-            "f()",
-            "--file",
-            "test.txt",
-        ]);
+        let args: Cast = Cast::parse_from(["foundry-cli", "calldata", "f()", "--file", "test.txt"]);
         match args.cmd {
             CastSubcommand::CalldataEncode { sig, file, args } => {
                 assert_eq!(sig, "f()".to_string());
