@@ -218,7 +218,7 @@ impl<'sess> State<'sess, '_> {
             self.break_offset(n, off)
         } else if off != 0 {
             if let Some(last_token) = self.last_token_still_buffered() {
-                if last_token.is_hardbreak_tok() {
+                if last_token.is_hardbreak() {
                     // We do something pretty sketchy here: tuck the nonzero
                     // offset-adjustment we were going to deposit along with the
                     // break into the previous hardbreak.

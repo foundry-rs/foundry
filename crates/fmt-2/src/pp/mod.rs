@@ -368,7 +368,7 @@ impl Printer {
             }
             self.out.push('\n');
             let indent = self.indent as isize + token.offset;
-            self.pending_indentation = usize::try_from(indent).unwrap();
+            self.pending_indentation = usize::try_from(indent).expect("negative indentation");
             self.space = cmp::max(self.margin - indent, MIN_SPACE);
             if let Some(post_break) = token.post_break {
                 self.print_indent();

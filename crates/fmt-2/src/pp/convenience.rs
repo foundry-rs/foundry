@@ -56,7 +56,7 @@ impl Printer {
 
     pub fn is_beginning_of_line(&self) -> bool {
         match self.last_token() {
-            Some(last_token) => last_token.is_hardbreak_tok(),
+            Some(last_token) => last_token.is_hardbreak(),
             None => true,
         }
     }
@@ -111,7 +111,7 @@ impl Printer {
 }
 
 impl Token {
-    pub(crate) fn is_hardbreak_tok(&self) -> bool {
+    pub(crate) fn is_hardbreak(&self) -> bool {
         if let Token::Break(BreakToken {
             offset,
             blank_space,
