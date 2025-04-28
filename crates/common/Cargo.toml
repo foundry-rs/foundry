@@ -72,6 +72,7 @@ path-slash.workspace = true
 anstream.workspace = true
 anstyle.workspace = true
 terminal_size.workspace = true
+ciborium.workspace = true
 
 [build-dependencies]
 chrono.workspace = true
