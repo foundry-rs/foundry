@@ -116,6 +116,7 @@ impl Token {
             offset,
             blank_space,
             pre_break: _,
+            post_break: _,
             if_nonempty: _,
             never_break,
         }) = *self

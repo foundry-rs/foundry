@@ -41,11 +41,12 @@ enum IndentStyle {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct BreakToken {
-    offset: isize,
-    blank_space: usize,
-    pre_break: Option<char>,
-    if_nonempty: bool,
-    never_break: bool,
+    pub(crate) offset: isize,
+    pub(crate) blank_space: usize,
+    pub(crate) pre_break: Option<char>,
+    pub(crate) post_break: Option<char>,
+    pub(crate) if_nonempty: bool,
+    pub(crate) never_break: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -191,7 +192,7 @@ impl Printer {
         }
     }
 
-    fn scan_break(&mut self, token: BreakToken) {
+    pub(crate) fn scan_break(&mut self, token: BreakToken) {
         if self.scan_stack.is_empty() {
             self.left_total = 1;
             self.right_total = 1;
@@ -369,6 +370,11 @@ impl Printer {
             let indent = self.indent as isize + token.offset;
             self.pending_indentation = usize::try_from(indent).unwrap();
             self.space = cmp::max(self.margin - indent, MIN_SPACE);
+            if let Some(post_break) = token.post_break {
+                self.print_indent();
+                self.out.push(post_break);
+                self.space -= post_break.len_utf8() as isize;
+            }
         }
     }
 
