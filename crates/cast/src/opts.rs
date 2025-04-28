@@ -392,7 +392,7 @@ pub enum CastSubcommand {
         #[arg(allow_hyphen_values = true)]
         args: Vec<String>,
 
-        //calldata arguments from file
+        // Path to file containing arguments to encode.
         #[arg(long, value_name = "PATH")]
         file: Option<PathBuf>,
     },
