@@ -125,8 +125,4 @@ impl Token {
             false
         }
     }
-
-    pub(crate) fn is_if_nonempty(&self) -> bool {
-        matches!(self, Token::Break(b) if b.if_nonempty)
-    }
 }

@@ -462,9 +462,9 @@ impl<'ast> State<'_, 'ast> {
                 for var in fields.iter() {
                     self.print_var_def(var);
                 }
+                self.maybe_print_comments(span.hi());
                 self.s.offset(-self.ind);
                 self.end();
-                self.maybe_print_comments(span.hi());
                 self.word("}");
                 self.hardbreak();
             }
@@ -476,11 +476,15 @@ impl<'ast> State<'_, 'ast> {
                 self.hardbreak_if_nonempty();
                 for (pos, ident) in variants.iter().delimited() {
                     self.print_ident(*ident);
-                    self.trailing_comma(pos.is_last);
+                    if !pos.is_last {
+                        self.word(",");
+                    }
+                    self.maybe_print_trailing_comment(ident.span, None);
+                    self.hardbreak_if_not_bol();
                 }
+                self.maybe_print_comments(span.hi());
                 self.s.offset(-self.ind);
                 self.end();
-                self.maybe_print_comments(span.hi());
                 self.word("}");
                 self.hardbreak();
             }
@@ -619,7 +623,7 @@ impl<'ast> State<'_, 'ast> {
         self.print_var(var);
         self.word(";");
         self.maybe_print_trailing_comment(var.span, None);
-        self.hardbreak();
+        self.hardbreak_if_not_bol();
     }
 
     fn print_var(&mut self, var: &'ast ast::VariableDefinition<'ast>) {
@@ -1109,16 +1113,16 @@ impl<'ast> State<'_, 'ast> {
     #[expect(unused_variables)]
     fn print_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) {
         // TODO(dani)
-        let ast::Stmt { docs, span, kind } = stmt;
+        let &ast::Stmt { ref docs, span, ref kind } = stmt;
         self.print_docs(docs);
-        if self.handle_span(*span) {
+        if self.handle_span(span) {
             return;
         }
         match kind {
             ast::StmtKind::Assembly(stmt_assembly) => todo!(),
             ast::StmtKind::DeclSingle(variable_definition) => todo!(),
             ast::StmtKind::DeclMulti(variable_definitions, expr) => todo!(),
-            ast::StmtKind::Block(stmts) => todo!(),
+            ast::StmtKind::Block(stmts) => self.print_block(stmts, span),
             ast::StmtKind::Break => self.word("break"),
             ast::StmtKind::Continue => self.word("continue"),
             ast::StmtKind::DoWhile(stmt, expr) => todo!(),
@@ -1149,26 +1153,45 @@ impl<'ast> State<'_, 'ast> {
         self.maybe_print_trailing_comment(stmt.span, None);
     }
 
+    // Body of a if/loop.
+    fn print_stmt_as_block(&mut self, stmt: &'ast ast::Stmt<'ast>, attempt_single_line: bool) {
+        if let ast::StmtKind::Block(stmts) = &stmt.kind {
+            self.print_block_inner(stmts, stmt.span, attempt_single_line, true)
+        } else {
+            self.print_block_inner(std::slice::from_ref(stmt), stmt.span, attempt_single_line, true)
+        }
+    }
+
     fn print_block(&mut self, block: &'ast [ast::Stmt<'ast>], span: Span) {
-        // TODO: attempt_single_line, attempt_omit_braces
+        self.print_block_inner(block, span, false, false);
+    }
+
+    fn print_block_inner(
+        &mut self,
+        block: &'ast [ast::Stmt<'ast>],
+        span: Span,
+        attempt_single_line: bool,
+        attempt_omit_braces: bool,
+    ) {
+        // TODO(dani): might need to adjust span for `single_line_block` to include the if condition
+        // TODO(dani): attempt_omit_braces
+        let _ = attempt_omit_braces;
         self.word("{");
-        if block.is_empty() {
-            self.maybe_print_comments(span.hi());
-        } else if self.single_line_block(block, span) {
+        if attempt_single_line && self.single_line_block(block, span) {
             self.space();
             self.print_stmt(&block[0]);
             self.maybe_print_comments(span.hi());
             self.space();
         } else {
             self.s.cbox(self.ind);
-            self.hardbreak();
+            self.hardbreak_if_nonempty();
             for stmt in block {
                 self.print_stmt(stmt);
                 self.hardbreak_if_not_bol();
             }
+            self.maybe_print_comments(span.hi());
             self.s.offset(-self.ind);
             self.end();
-            self.maybe_print_comments(span.hi());
         }
         self.word("}");
         self.hardbreak();
