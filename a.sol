@@ -1,5 +1,2 @@
-function f() {
-    "\
-a"; // c
-    "";
+enum A {A, B, C
 }

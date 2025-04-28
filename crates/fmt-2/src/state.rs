@@ -457,7 +457,7 @@ impl<'ast> State<'_, 'ast> {
                 self.s.cbox(self.ind);
                 self.word("struct ");
                 self.print_ident(*name);
-                self.word("{");
+                self.word(" {");
                 self.hardbreak_if_nonempty();
                 for var in fields.iter() {
                     self.print_var_def(var);
@@ -475,12 +475,8 @@ impl<'ast> State<'_, 'ast> {
                 self.hardbreak_if_nonempty();
                 for (pos, ident) in variants.iter().delimited() {
                     self.print_ident(*ident);
-                    if !pos.is_last {
-                        self.word(",");
-                        self.space();
-                    }
+                    self.trailing_comma(pos.is_last);
                 }
-                self.zerobreak();
                 self.s.offset(-self.ind);
                 self.end();
                 self.word("}");
@@ -620,6 +616,7 @@ impl<'ast> State<'_, 'ast> {
     fn print_var_def(&mut self, var: &'ast ast::VariableDefinition<'ast>) {
         self.print_var(var);
         self.word(";");
+        self.maybe_print_trailing_comment(var.span, None);
         self.hardbreak();
     }
 
@@ -1146,6 +1143,7 @@ impl<'ast> State<'_, 'ast> {
         if stmt_needs_semi(kind) {
             self.word(";");
         }
+        self.maybe_print_comments(stmt.span.hi());
         self.maybe_print_trailing_comment(stmt.span, None);
     }
 

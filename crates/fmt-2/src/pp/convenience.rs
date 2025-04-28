@@ -61,11 +61,6 @@ impl Printer {
         }
     }
 
-    pub fn is_exactly_one_empty_line(&self) -> bool {
-        // TODO(dani)
-        self.is_beginning_of_line()
-    }
-
     pub(crate) fn hardbreak_tok_offset(offset: isize) -> Token {
         Token::Break(BreakToken {
             offset,
@@ -117,6 +112,21 @@ impl Printer {
 
 impl Token {
     pub(crate) fn is_hardbreak_tok(&self) -> bool {
-        *self == Printer::hardbreak_tok_offset(0)
+        if let Token::Break(BreakToken {
+            offset,
+            blank_space,
+            pre_break: _,
+            if_nonempty: _,
+            never_break,
+        }) = *self
+        {
+            offset == 0 && blank_space == SIZE_INFINITY as usize && !never_break
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn is_if_nonempty(&self) -> bool {
+        matches!(self, Token::Break(b) if b.if_nonempty)
     }
 }

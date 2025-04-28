@@ -65,7 +65,7 @@ pub(crate) enum Token {
     End,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 enum PrintFrame {
     Fits(Breaks),
     Broken(usize, Breaks),
@@ -73,6 +73,7 @@ enum PrintFrame {
 
 const SIZE_INFINITY: isize = 0xffff;
 
+#[derive(Debug)]
 pub struct Printer {
     out: String,
     /// Number of spaces left on line

@@ -4,10 +4,17 @@ use solar_parse::{
     interface::{source_map::SourceFile, BytePos, CharPos, SourceMap},
     lexer::token::RawTokenKind as TokenKind,
 };
+use std::fmt;
 
 pub struct Comments {
-    // Stored in reverse order so we can consume them by popping.
-    reversed_comments: Vec<Comment>,
+    comments: std::vec::IntoIter<Comment>,
+}
+
+impl fmt::Debug for Comments {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Comments")?;
+        f.debug_list().entries(self.iter()).finish()
+    }
 }
 
 /// Returns `None` if the first `col` chars of `s` contain a non-whitespace char.
@@ -148,22 +155,20 @@ fn gather_comments(sf: &SourceFile) -> Vec<Comment> {
 
 impl Comments {
     pub fn new(sf: &SourceFile) -> Self {
-        let mut comments = gather_comments(sf);
-        comments.reverse();
-        Self { reversed_comments: comments }
+        Self { comments: gather_comments(sf).into_iter() }
     }
 
     pub fn peek(&self) -> Option<&Comment> {
-        self.reversed_comments.last()
+        self.comments.as_slice().first()
     }
 
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<Comment> {
-        self.reversed_comments.pop()
+        self.comments.next()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Comment> {
-        self.reversed_comments.iter().rev()
+        self.comments.as_slice().iter()
     }
 
     pub fn trailing_comment(
