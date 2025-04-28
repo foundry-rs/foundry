@@ -2,7 +2,7 @@ use clap::{Parser, ValueHint};
 use eyre::Result;
 use forge_lint::{
     linter::{Linter, Severity},
-    sol::SolidityLinter,
+    sol::{SolLint, SolLintError, SolidityLinter},
 };
 use foundry_cli::utils::LoadConfig;
 use foundry_config::impl_figment_convert_basic;
@@ -31,6 +31,18 @@ pub struct LintArgs {
     /// Supported values: `high`, `med`, `low`, `info`, `gas`.
     #[arg(long, value_name = "SEVERITY", num_args(1..))]
     severity: Option<Vec<Severity>>,
+
+    /// Specifies which lints to run based on their ID (e.g., "incorrect-shift").
+    ///
+    /// Cannot be used with --deny-lint.
+    #[arg(long = "only-lint", value_name = "LINT_ID", num_args(1..), conflicts_with = "exclude_lint")]
+    include_lint: Option<Vec<String>>,
+
+    /// Deny specific lints based on their ID (e.g., "function-mixed-case").
+    ///
+    /// Cannot be used with --only-lint.
+    #[arg(long = "deny-lint", value_name = "LINT_ID", num_args(1..), conflicts_with = "include_lint")]
+    exclude_lint: Option<Vec<String>>,
 }
 
 impl_figment_convert_basic!(LintArgs);
@@ -63,7 +75,27 @@ impl LintArgs {
         }
 
         if project.compiler.solc.is_some() {
-            SolidityLinter::new().with_severity(self.severity).lint(&sources);
+            let mut linter = SolidityLinter::new().with_severity(self.severity);
+
+            // Resolve and apply included lints if provided
+            if let Some(ref include_ids) = self.include_lint {
+                let included_lints = include_ids 
+                    .iter()
+                    .map(|id_str| SolLint::try_from(id_str.as_str()))
+                    .collect::<Result<Vec<SolLint>, SolLintError>>()?;
+                linter = linter.with_lints(Some(included_lints));
+            }
+
+            // Resolve and apply excluded lints if provided
+            if let Some(ref exclude_ids) = self.exclude_lint {
+                let excluded_lints = exclude_ids
+                    .iter()
+                    .map(|id_str| SolLint::try_from(id_str.as_str()))
+                    .collect::<Result<Vec<SolLint>, SolLintError>>()?;
+                linter = linter.without_lints(Some(excluded_lints));
+            }
+
+            linter.lint(&sources);
         } else {
             todo!("Linting not supported for this language");
         };

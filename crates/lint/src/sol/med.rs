@@ -1,20 +1,16 @@
 use std::ops::ControlFlow;
+use solar_ast::{BinOp, BinOpKind, Expr, ExprKind};
 
-use solar_ast::{visit::Visit, BinOp, BinOpKind, Expr, ExprKind};
+use super::{DivideBeforeMultiply, DIVIDE_BEFORE_MULTIPLY};
+use crate::linter::{EarlyLintPass, LintContext};
 
-use super::DivideBeforeMultiply;
-
-impl<'ast> Visit<'ast> for DivideBeforeMultiply {
-    type BreakValue = ();
-
-    fn visit_expr(&mut self, expr: &'ast Expr<'ast>) -> ControlFlow<Self::BreakValue> {
+impl<'ast> EarlyLintPass<'ast> for DivideBeforeMultiply {
+    fn check_expr(&mut self, ctx: &LintContext<'_>, expr: &'ast Expr<'ast>) -> ControlFlow<()> {
         if let ExprKind::Binary(left_expr, BinOp { kind: BinOpKind::Mul, .. }, _) = &expr.kind {
             if contains_division(left_expr) {
-                self.results.push(expr.span);
+                ctx.emit(&DIVIDE_BEFORE_MULTIPLY, expr.span);
             }
         }
-
-        self.walk_expr(expr);
         ControlFlow::Continue(())
     }
 }
@@ -35,35 +31,25 @@ fn contains_division<'ast>(expr: &'ast Expr<'ast>) -> bool {
 
 #[cfg(test)]
 mod test {
-    use solar_ast::{visit::Visit, Arena};
-    use solar_interface::{ColorChoice, Session};
     use std::path::Path;
 
-    use super::DivideBeforeMultiply;
+    use super::*;
+    use crate::{linter::Lint, sol::SolidityLinter};
 
     #[test]
     fn test_divide_before_multiply() -> eyre::Result<()> {
-        let sess = Session::builder().with_buffer_emitter(ColorChoice::Auto).build();
+        let linter = SolidityLinter::new()
+            .with_lints(Some(vec![DIVIDE_BEFORE_MULTIPLY]))
+            .with_buffer_emitter(true);
 
-        let _ = sess.enter(|| -> solar_interface::Result<()> {
-            let arena = Arena::new();
+        let emitted =
+            linter.lint_file(Path::new("testdata/DivideBeforeMultiply.sol")).unwrap().to_string();
+        let warnings =
+            emitted.matches(&format!("warning: {}", DIVIDE_BEFORE_MULTIPLY.id())).count();
+        let notes = emitted.matches(&format!("note: {}", DIVIDE_BEFORE_MULTIPLY.id())).count();
 
-            let mut parser = solar_parse::Parser::from_file(
-                &sess,
-                &arena,
-                Path::new("testdata/DivideBeforeMultiply.sol"),
-            )?;
-
-            // Parse the file.
-            let ast = parser.parse_file().map_err(|e| e.emit())?;
-
-            let mut pattern = DivideBeforeMultiply::default();
-            pattern.visit_source_unit(&ast);
-
-            assert_eq!(pattern.results.len(), 6);
-
-            Ok(())
-        });
+        assert_eq!(warnings, 6, "Expected 6 warnings");
+        assert_eq!(notes, 0, "Expected 0 notes");
 
         Ok(())
     }

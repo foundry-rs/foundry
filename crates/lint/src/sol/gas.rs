@@ -1,53 +1,46 @@
 use std::ops::ControlFlow;
+use solar_ast::{Expr, ExprKind};
 
-use solar_ast::{visit::Visit, Expr, ExprKind};
+use crate::linter::EarlyLintPass;
+use super::{AsmKeccak256, ASM_KECCACK256};
 
-use super::AsmKeccak256;
-
-impl<'ast> Visit<'ast> for AsmKeccak256 {
-    type BreakValue = ();
-
-    fn visit_expr(&mut self, expr: &'ast Expr<'ast>) -> ControlFlow<Self::BreakValue> {
+impl<'ast> EarlyLintPass<'ast> for AsmKeccak256 {
+    fn check_expr(
+            &mut self,
+            ctx: &crate::linter::LintContext<'_>,
+            expr: &'ast Expr<'ast>,
+        ) -> ControlFlow<()> {
         if let ExprKind::Call(expr, _) = &expr.kind {
             if let ExprKind::Ident(ident) = &expr.kind {
                 if ident.name.as_str() == "keccak256" {
-                    self.results.push(expr.span);
+                    ctx.emit(&ASM_KECCACK256, expr.span);
                 }
             }
         }
-        self.walk_expr(expr);
         ControlFlow::Continue(())
     }
 }
 
 #[cfg(test)]
 mod test {
-    use solar_ast::{visit::Visit, Arena};
-    use solar_interface::{ColorChoice, Session};
     use std::path::Path;
 
-    use super::AsmKeccak256;
+    use super::*;
+    use crate::{linter::Lint, sol::SolidityLinter};
 
     #[test]
     fn test_keccak256() -> eyre::Result<()> {
-        let sess = Session::builder().with_buffer_emitter(ColorChoice::Auto).build();
+        let linter = SolidityLinter::new()
+            .with_lints(Some(vec![ASM_KECCACK256]))
+            .with_buffer_emitter(true);
 
-        let _ = sess.enter(|| -> solar_interface::Result<()> {
-            let arena = Arena::new();
+        let emitted =
+            linter.lint_file(Path::new("testdata/Keccak256.sol")).unwrap().to_string();
+        let warnings = emitted.matches(&format!("warning: {}", ASM_KECCACK256.id())).count();
+        let notes = emitted.matches(&format!("note: {}", ASM_KECCACK256.id())).count();
 
-            let mut parser =
-                solar_parse::Parser::from_file(&sess, &arena, Path::new("testdata/Keccak256.sol"))?;
-
-            // Parse the file.
-            let ast = parser.parse_file().map_err(|e| e.emit())?;
-
-            let mut pattern = AsmKeccak256::default();
-            pattern.visit_source_unit(&ast);
-
-            assert_eq!(pattern.results.len(), 2);
-
-            Ok(())
-        });
+        assert_eq!(warnings, 0, "Expected 0 warnings");
+        assert_eq!(notes, 2, "Expected 2 notes");
 
         Ok(())
     }

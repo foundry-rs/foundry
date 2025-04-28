@@ -1,9 +1,12 @@
 use clap::ValueEnum;
-use solar_ast::{Expr, ItemStruct, Span, VariableDefinition};
-use solar_interface::{diagnostics::Level, Session};
 use core::fmt;
-use foundry_compilers::{artifacts::SourceUnit, Language};
-use std::{hash::Hash, marker::PhantomData, ops::ControlFlow, path::PathBuf};
+use foundry_compilers::Language;
+use solar_ast::{visit::Visit, Expr, ItemFunction, ItemStruct, Span, VariableDefinition};
+use solar_interface::{
+    diagnostics::{DiagBuilder, Level},
+    Session,
+};
+use std::{ops::ControlFlow, path::PathBuf};
 use yansi::Paint;
 
 /// Trait representing a generic linter for analyzing and reporting issues in smart contract source
@@ -18,13 +21,20 @@ use yansi::Paint;
 /// # Required Methods
 ///
 /// - `lint`: Scans the provided source files emitting a daignostic for lints found.
+pub trait Linter: Send + Sync + Clone {
+    type Language: Language;
+    type Lint: Lint;
 
-#[derive(Debug, Clone, Copy)]
-pub struct Lint {
-    pub id: &'static str,
-    pub description: &'static str,
-    pub help: Option<&'static str>,
-    pub severity: Severity,
+    fn lint(&self, input: &[PathBuf]);
+}
+
+pub trait Lint {
+    fn id(&self) -> &'static str;
+    fn severity(&self) -> Severity;
+    fn description(&self) -> &'static str;
+    fn help(&self) -> Option<&'static str> {
+        None
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -48,6 +58,15 @@ impl Severity {
     }
 }
 
+impl From<Severity> for Level {
+    fn from(severity: Severity) -> Self {
+        match severity {
+            Severity::High | Severity::Med | Severity::Low => Self::Warning,
+            Severity::Info | Severity::Gas => Self::Note,
+        }
+    }
+}
+
 impl fmt::Display for Severity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let colored = match self {
@@ -61,30 +80,115 @@ impl fmt::Display for Severity {
     }
 }
 
-pub struct LintContext<'s, 'ast> {
+pub struct LintContext<'s> {
     pub sess: &'s Session,
-    _phantom: PhantomData<&'ast ()>,
 }
 
-impl<'s, 'ast> LintContext<'s, 'ast> {
+impl<'s> LintContext<'s> {
     pub fn new(sess: &'s Session) -> Self {
-        Self { sess, _phantom: PhantomData }
+        Self { sess }
     }
 
     // Helper method to emit diagnostics easily from passes
-    pub fn emit(&self, lint: &'static Lint, span: Span) {
-         let mut diag = self.sess.dcx.diag(lint.severity, format!("{}: {}", lint.id, lint.description));
-         diag.span(span);
-         if let Some(help) = lint.help {
-             diag.help(help);
-         }
-         diag.emit();
+    pub fn emit<L: Lint>(&self, lint: &'static L, span: Span) {
+        let msg = format!("{}: {}", lint.id(), lint.description());
+        let diag: DiagBuilder<'_, ()> = match lint.help() {
+            Some(help) => self.sess.dcx.diag(lint.severity().into(), msg).span(span).help(help),
+            None => self.sess.dcx.diag(lint.severity().into(), msg).span(span),
+        };
+
+        diag.emit();
     }
 }
 
-pub trait EarlyLintPass<'ast>: fmt::Debug + Send + Sync + Clone {
-    // TODO: Add methods for each required AST node type, mirroring `solar_ast::visit::Visit` method sigs + adding `LintContext`
-    fn check_expr(&mut self, _cx: &LintContext<'_, 'ast>, _expr: &'ast Expr<'ast>) -> ControlFlow<()> { ControlFlow::Continue(()) }
-    fn check_variable_definition(&mut self, _cx: &LintContext<'_, 'ast>, _var: &'ast VariableDefinition<'ast>) -> ControlFlow<()> { ControlFlow::Continue(()) }
-    fn check_item_struct(&mut self, _cx: &LintContext<'_, 'ast>, _struct: &'ast ItemStruct<'ast>) -> ControlFlow<()> { ControlFlow::Continue(()) }
+/// Trait for lints that operate directly on the AST.
+/// Its methods mirror `solar_ast::visit::Visit`, with the addition of `LintCotext`.
+pub trait EarlyLintPass<'ast>: Send + Sync {
+    fn check_expr(&mut self, _ctx: &LintContext<'_>, _expr: &'ast Expr<'ast>) -> ControlFlow<()> {
+        ControlFlow::Continue(())
+    }
+    fn check_variable_definition(
+        &mut self,
+        _ctx: &LintContext<'_>,
+        _var: &'ast VariableDefinition<'ast>,
+    ) -> ControlFlow<()> {
+        ControlFlow::Continue(())
+    }
+    fn check_item_struct(
+        &mut self,
+        _ctx: &LintContext<'_>,
+        _struct: &'ast ItemStruct<'ast>,
+    ) -> ControlFlow<()> {
+        ControlFlow::Continue(())
+    }
+    fn check_item_function(
+        &mut self,
+        _ctx: &LintContext<'_>,
+        _func: &'ast ItemFunction<'ast>,
+    ) -> ControlFlow<()> {
+        ControlFlow::Continue(())
+    }
+
+    // TODO: Add methods for each required AST node type
+}
+
+/// Visitor struct for `EarlyLintPass`es
+pub struct EarlyLintVisitor<'a, 's, 'ast> {
+    pub ctx: &'a LintContext<'s>,
+    pub passes: &'a mut [Box<dyn EarlyLintPass<'ast> + 's>],
+}
+
+impl<'a, 's, 'ast> Visit<'ast> for EarlyLintVisitor<'a, 's, 'ast>
+where
+    's: 'ast,
+{
+    type BreakValue = ();
+
+    fn visit_expr(&mut self, expr: &'ast Expr<'ast>) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            if let ControlFlow::Break(_) = pass.check_expr(self.ctx, expr) {
+                return ControlFlow::Break(());
+            }
+        }
+        self.walk_expr(expr)
+    }
+
+    fn visit_variable_definition(
+        &mut self,
+        var: &'ast VariableDefinition<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            if let ControlFlow::Break(_) = pass.check_variable_definition(self.ctx, var) {
+                return ControlFlow::Break(());
+            }
+        }
+        self.walk_variable_definition(var)
+    }
+
+    fn visit_item_struct(
+        &mut self,
+        strukt: &'ast ItemStruct<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            if let ControlFlow::Break(_) = pass.check_item_struct(self.ctx, strukt) {
+                return ControlFlow::Break(());
+            }
+        }
+        self.walk_item_struct(strukt)
+    }
+
+    fn visit_item_function(
+        &mut self,
+        func: &'ast ItemFunction<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            if let ControlFlow::Break(_) = pass.check_item_function(self.ctx, func) {
+                return ControlFlow::Break(());
+            }
+        }
+        self.walk_item_function(func)
+    }
+
+    // TODO: Add methods for each required AST node type, mirroring `solar_ast::visit::Visit` method
+    // sigs + adding `LintContext`
 }

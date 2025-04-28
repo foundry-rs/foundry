@@ -1,68 +1,79 @@
+use regex::Regex;
+use solar_ast::{ItemFunction, ItemStruct, VariableDefinition};
 use std::ops::ControlFlow;
 
-use regex::Regex;
+use crate::{
+    linter::{EarlyLintPass, LintContext},
+    sol::{
+        FunctionMixedCase, ScreamingSnakeCase, StructPascalCase, VariableMixedCase,
+        FUNCTION_MIXED_CASE, SCREAMING_SNAKE_CASE, STRUCT_PASCAL_CASE, VARIABLE_MIXED_CASE,
+    },
+};
 
-use solar_ast::{visit::Visit, ItemStruct, VariableDefinition};
-
-use super::{ScreamingSnakeCase, StructPascalCase, VariableMixedCase};
-
-impl<'ast> Visit<'ast> for VariableMixedCase {
-    type BreakValue = ();
-
-    fn visit_variable_definition(
+impl<'ast> EarlyLintPass<'ast> for VariableMixedCase {
+    fn check_variable_definition(
         &mut self,
+        ctx: &LintContext<'_>,
         var: &'ast VariableDefinition<'ast>,
-    ) -> ControlFlow<Self::BreakValue> {
+    ) -> ControlFlow<()> {
         if var.mutability.is_none() {
             if let Some(name) = var.name {
                 let name = name.as_str();
                 if !is_mixed_case(name) && name.len() > 1 {
-                    self.results.push(var.span);
+                    ctx.emit(&VARIABLE_MIXED_CASE, var.span);
                 }
             }
         }
-
-        self.walk_variable_definition(var);
         ControlFlow::Continue(())
     }
 }
 
-impl<'ast> Visit<'ast> for ScreamingSnakeCase {
-    type BreakValue = ();
-
-    fn visit_variable_definition(
+impl<'ast> EarlyLintPass<'ast> for FunctionMixedCase {
+    fn check_item_function(
         &mut self,
+        ctx: &LintContext<'_>,
+        func: &'ast ItemFunction<'ast>,
+    ) -> ControlFlow<()> {
+        if let Some(name) = func.header.name {
+            let name = name.as_str();
+            if !is_mixed_case(name) && name.len() > 1 {
+                ctx.emit(&FUNCTION_MIXED_CASE, func.body_span);
+            }
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+impl<'ast> EarlyLintPass<'ast> for ScreamingSnakeCase {
+    fn check_variable_definition(
+        &mut self,
+        ctx: &LintContext<'_>,
         var: &'ast VariableDefinition<'ast>,
-    ) -> ControlFlow<Self::BreakValue> {
+    ) -> ControlFlow<()> {
         if let Some(mutability) = var.mutability {
             if mutability.is_constant() || mutability.is_immutable() {
                 if let Some(name) = var.name {
                     let name = name.as_str();
                     if !is_screaming_snake_case(name) && name.len() > 1 {
-                        self.results.push(var.span);
+                        ctx.emit(&SCREAMING_SNAKE_CASE, var.span);
                     }
                 }
             }
         }
-        self.walk_variable_definition(var);
         ControlFlow::Continue(())
     }
 }
 
-impl<'ast> Visit<'ast> for StructPascalCase {
-    type BreakValue = ();
-
-    fn visit_item_struct(
+impl<'ast> EarlyLintPass<'ast> for StructPascalCase {
+    fn check_item_struct(
         &mut self,
+        ctx: &LintContext<'_>,
         strukt: &'ast ItemStruct<'ast>,
-    ) -> ControlFlow<Self::BreakValue> {
+    ) -> ControlFlow<()> {
         let name = strukt.name.as_str();
-
         if !is_pascal_case(name) && name.len() > 1 {
-            self.results.push(strukt.name.span);
+            ctx.emit(&STRUCT_PASCAL_CASE, strukt.name.span);
         }
-
-        self.walk_item_struct(strukt);
         ControlFlow::Continue(())
     }
 }
@@ -87,88 +98,78 @@ pub fn is_screaming_snake_case(s: &str) -> bool {
 
 #[cfg(test)]
 mod test {
-    use solar_ast::{visit::Visit, Arena};
-    use solar_interface::{ColorChoice, Session};
     use std::path::Path;
 
-    use crate::sol::StructPascalCase;
-
-    use super::{ScreamingSnakeCase, VariableMixedCase};
+    use super::*;
+    use crate::{
+        linter::Lint,
+        sol::{SolidityLinter, FUNCTION_MIXED_CASE},
+    };
 
     #[test]
     fn test_variable_mixed_case() -> eyre::Result<()> {
-        let sess = Session::builder().with_buffer_emitter(ColorChoice::Auto).build();
+        let linter = SolidityLinter::new()
+            .with_lints(Some(vec![VARIABLE_MIXED_CASE]))
+            .with_buffer_emitter(true);
 
-        let _ = sess.enter(|| -> solar_interface::Result<()> {
-            let arena = Arena::new();
+        let emitted =
+            linter.lint_file(Path::new("testdata/VariableMixedCase.sol")).unwrap().to_string();
+        let warnings = emitted.matches(&format!("warning: {}", VARIABLE_MIXED_CASE.id())).count();
+        let notes = emitted.matches(&format!("note: {}", VARIABLE_MIXED_CASE.id())).count();
 
-            let mut parser = solar_parse::Parser::from_file(
-                &sess,
-                &arena,
-                Path::new("testdata/VariableMixedCase.sol"),
-            )?;
-
-            let ast = parser.parse_file().map_err(|e| e.emit())?;
-
-            let mut pattern = VariableMixedCase::default();
-            pattern.visit_source_unit(&ast);
-
-            assert_eq!(pattern.results.len(), 6);
-
-            Ok(())
-        });
+        assert_eq!(warnings, 0, "Expected 0 warnings");
+        assert_eq!(notes, 6, "Expected 6 notes");
 
         Ok(())
     }
 
     #[test]
     fn test_screaming_snake_case() -> eyre::Result<()> {
-        let sess = Session::builder().with_buffer_emitter(ColorChoice::Auto).build();
+        let linter = SolidityLinter::new()
+            .with_lints(Some(vec![SCREAMING_SNAKE_CASE]))
+            .with_buffer_emitter(true);
 
-        let _ = sess.enter(|| -> solar_interface::Result<()> {
-            let arena = Arena::new();
+        let emitted =
+            linter.lint_file(Path::new("testdata/ScreamingSnakeCase.sol")).unwrap().to_string();
+        let warnings = emitted.matches(&format!("warning: {}", SCREAMING_SNAKE_CASE.id())).count();
+        let notes = emitted.matches(&format!("note: {}", SCREAMING_SNAKE_CASE.id())).count();
 
-            let mut parser = solar_parse::Parser::from_file(
-                &sess,
-                &arena,
-                Path::new("testdata/ScreamingSnakeCase.sol"),
-            )?;
-
-            let ast = parser.parse_file().map_err(|e| e.emit())?;
-
-            let mut pattern = ScreamingSnakeCase::default();
-            pattern.visit_source_unit(&ast);
-
-            assert_eq!(pattern.results.len(), 10);
-
-            Ok(())
-        });
+        assert_eq!(warnings, 0, "Expected 0 warnings");
+        assert_eq!(notes, 10, "Expected 10 notes");
 
         Ok(())
     }
 
     #[test]
     fn test_struct_pascal_case() -> eyre::Result<()> {
-        let sess = Session::builder().with_buffer_emitter(ColorChoice::Auto).build();
+        let linter = SolidityLinter::new()
+            .with_lints(Some(vec![STRUCT_PASCAL_CASE]))
+            .with_buffer_emitter(true);
 
-        let _ = sess.enter(|| -> solar_interface::Result<()> {
-            let arena = Arena::new();
+        let emitted =
+            linter.lint_file(Path::new("testdata/StructPascalCase.sol")).unwrap().to_string();
+        let warnings = emitted.matches(&format!("warning: {}", STRUCT_PASCAL_CASE.id())).count();
+        let notes = emitted.matches(&format!("note: {}", STRUCT_PASCAL_CASE.id())).count();
 
-            let mut parser = solar_parse::Parser::from_file(
-                &sess,
-                &arena,
-                Path::new("testdata/StructPascalCase.sol"),
-            )?;
+        assert_eq!(warnings, 0, "Expected 0 warnings");
+        assert_eq!(notes, 7, "Expected 7 notes");
 
-            let ast = parser.parse_file().map_err(|e| e.emit())?;
+        Ok(())
+    }
 
-            let mut pattern = StructPascalCase::default();
-            pattern.visit_source_unit(&ast);
+    #[test]
+    fn test_function_mixed_case() -> eyre::Result<()> {
+        let linter = SolidityLinter::new()
+            .with_lints(Some(vec![FUNCTION_MIXED_CASE]))
+            .with_buffer_emitter(true);
 
-            assert_eq!(pattern.results.len(), 5);
+        let emitted =
+            linter.lint_file(Path::new("testdata/FunctionMixedCase.sol")).unwrap().to_string();
+        let warnings = emitted.matches(&format!("warning: {}", FUNCTION_MIXED_CASE.id())).count();
+        let notes = emitted.matches(&format!("note: {}", FUNCTION_MIXED_CASE.id())).count();
 
-            Ok(())
-        });
+        assert_eq!(warnings, 0, "Expected 0 warnings");
+        assert_eq!(notes, 4, "Expected 4 notes");
 
         Ok(())
     }
