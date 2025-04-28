@@ -280,7 +280,7 @@ impl ScriptArgs {
                 .is_none_or(|txs| txs.is_empty())
             {
                 if pre_simulation.args.broadcast {
-                    warn!("No transactions to broadcast.");
+                    sh_warn!("No transactions to broadcast.")?;
                 }
 
                 return Ok(());
