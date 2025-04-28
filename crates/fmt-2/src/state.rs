@@ -464,6 +464,7 @@ impl<'ast> State<'_, 'ast> {
                 }
                 self.s.offset(-self.ind);
                 self.end();
+                self.maybe_print_comments(span.hi());
                 self.word("}");
                 self.hardbreak();
             }

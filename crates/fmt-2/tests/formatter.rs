@@ -101,16 +101,17 @@ fn test_formatter(
     comments_end: usize,
 ) {
     let path = &*expected_path.with_file_name("original.sol");
-    let expected_data = Data::read_from(expected_path, None).raw();
+    let expected_data = || Data::read_from(expected_path, None).raw();
 
     let mut source_formatted = format(source, path, config.clone());
     // Inject `expected`'s comments, if any, so we can use the expected file as a snapshot.
     source_formatted.insert_str(0, &expected_source[..comments_end]);
-    assert_data_eq!(&source_formatted, &expected_data);
+    assert_data_eq!(&source_formatted, expected_data());
     assert_eof(&source_formatted);
 
-    let expected_formatted = format(expected_source, expected_path, config);
-    assert_data_eq!(&expected_formatted, expected_data);
+    let expected_formatted =
+        format(&std::fs::read_to_string(expected_path).unwrap(), expected_path, config);
+    assert_data_eq!(&expected_formatted, expected_data());
     assert_eof(expected_source);
     assert_eof(&expected_formatted);
 }
