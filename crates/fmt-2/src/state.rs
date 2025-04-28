@@ -74,13 +74,24 @@ impl<'sess> State<'sess, '_> {
     ///
     /// Returns `Some` with the style of the last comment printed, or `None` if no comment was
     /// printed.
-    fn maybe_print_comments(&mut self, pos: BytePos) -> Option<CommentStyle> {
+    fn print_comments(&mut self, pos: BytePos) -> Option<CommentStyle> {
+        self.print_comments_inner(pos, false)
+    }
+
+    fn print_comments_skip_ws(&mut self, pos: BytePos) -> Option<CommentStyle> {
+        self.print_comments_inner(pos, true)
+    }
+
+    fn print_comments_inner(&mut self, pos: BytePos, skip_ws: bool) -> Option<CommentStyle> {
         let mut has_comment = None;
         while let Some(cmnt) = self.peek_comment() {
             if cmnt.pos() >= pos {
                 break;
             }
             let cmnt = self.next_comment().unwrap();
+            if skip_ws && cmnt.style == CommentStyle::BlankLine {
+                continue;
+            }
             has_comment = Some(cmnt.style);
             self.print_comment(cmnt);
         }
@@ -189,7 +200,7 @@ impl<'sess> State<'sess, '_> {
     }
 
     fn bclose_maybe_open(&mut self, span: Span, empty: bool, close_box: bool) {
-        let comment = self.maybe_print_comments(span.hi());
+        let comment = self.print_comments(span.hi());
         if !empty || comment.is_some() {
             self.break_offset_if_not_bol(1, -self.ind);
         }
@@ -238,7 +249,7 @@ impl State<'_, '_> {
     /// Returns `true` if the span is disabled and has been printed as-is.
     #[must_use]
     fn handle_span(&mut self, span: Span) -> bool {
-        self.maybe_print_comments(span.lo());
+        self.print_comments(span.lo());
         self.print_span_if_disabled(span)
     }
 
@@ -301,7 +312,7 @@ impl<'ast> State<'_, 'ast> {
     fn print_item(&mut self, item: &'ast ast::Item<'ast>) {
         let ast::Item { docs, span, kind } = item;
         self.print_docs(docs);
-        self.maybe_print_comments(span.lo());
+        self.print_comments(span.lo());
         match kind {
             ast::ItemKind::Pragma(ast::PragmaDirective { tokens }) => {
                 self.word("pragma ");
@@ -429,19 +440,19 @@ impl<'ast> State<'_, 'ast> {
                 self.word("{");
                 if !body.is_empty() {
                     self.hardbreak();
-                    let comment = self.maybe_print_comments(body[0].span.lo());
+                    let comment = self.print_comments(body[0].span.lo());
                     if self.config.contract_new_lines && comment != Some(CommentStyle::BlankLine) {
                         self.hardbreak();
                     }
                     for item in body.iter() {
                         self.print_item(item);
                     }
-                    let comment = self.maybe_print_comments(span.hi());
+                    let comment = self.print_comments(span.hi());
                     if self.config.contract_new_lines && comment != Some(CommentStyle::BlankLine) {
                         self.hardbreak();
                     }
                 } else {
-                    self.maybe_print_comments(span.hi());
+                    self.print_comments(span.hi());
                     self.zerobreak();
                 }
                 self.s.offset(-self.ind);
@@ -462,7 +473,7 @@ impl<'ast> State<'_, 'ast> {
                 for var in fields.iter() {
                     self.print_var_def(var);
                 }
-                self.maybe_print_comments(span.hi());
+                self.print_comments_skip_ws(span.hi());
                 self.s.offset(-self.ind);
                 self.end();
                 self.word("}");
@@ -482,7 +493,7 @@ impl<'ast> State<'_, 'ast> {
                     self.maybe_print_trailing_comment(ident.span, None);
                     self.hardbreak_if_not_bol();
                 }
-                self.maybe_print_comments(span.hi());
+                self.print_comments_skip_ws(span.hi());
                 self.s.offset(-self.ind);
                 self.end();
                 self.word("}");
@@ -697,18 +708,8 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn print_docs(&mut self, docs: &'ast ast::DocComments<'ast>) {
-        for &ast::DocComment { kind, span, symbol } in docs.iter() {
-            self.maybe_print_comments(span.lo());
-            self.word(match kind {
-                ast::CommentKind::Line => {
-                    format!("///{symbol}")
-                }
-                ast::CommentKind::Block => {
-                    format!("/**{symbol}*/")
-                }
-            });
-            self.hardbreak();
-        }
+        // Handled with `self.comments`.
+        let _ = docs;
     }
 
     fn print_ident_or_strlit(&mut self, value: &'ast ast::IdentOrStrLit) {
@@ -725,7 +726,7 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn print_ident(&mut self, ident: ast::Ident) {
-        self.maybe_print_comments(ident.span.lo());
+        self.print_comments(ident.span.lo());
         self.word(ident.to_string());
     }
 
@@ -863,7 +864,7 @@ impl<'ast> State<'_, 'ast> {
 
     /// `s` should be the *unescaped contents of the string literal*.
     fn print_str_lit(&mut self, kind: ast::StrKind, quote_pos: BytePos, s: &str) {
-        self.maybe_print_comments(quote_pos);
+        self.print_comments(quote_pos);
         let s = self.str_lit_to_string(kind, quote_pos, s);
         self.word(s);
     }
@@ -1149,8 +1150,12 @@ impl<'ast> State<'_, 'ast> {
         if stmt_needs_semi(kind) {
             self.word(";");
         }
-        self.maybe_print_comments(stmt.span.hi());
+        self.print_comments(stmt.span.hi());
         self.maybe_print_trailing_comment(stmt.span, None);
+    }
+
+    fn print_block(&mut self, block: &'ast [ast::Stmt<'ast>], span: Span) {
+        self.print_block_inner(block, span, false, false);
     }
 
     // Body of a if/loop.
@@ -1160,10 +1165,6 @@ impl<'ast> State<'_, 'ast> {
         } else {
             self.print_block_inner(std::slice::from_ref(stmt), stmt.span, attempt_single_line, true)
         }
-    }
-
-    fn print_block(&mut self, block: &'ast [ast::Stmt<'ast>], span: Span) {
-        self.print_block_inner(block, span, false, false);
     }
 
     fn print_block_inner(
@@ -1180,7 +1181,7 @@ impl<'ast> State<'_, 'ast> {
         if attempt_single_line && self.single_line_block(block, span) {
             self.space();
             self.print_stmt(&block[0]);
-            self.maybe_print_comments(span.hi());
+            self.print_comments(span.hi());
             self.space();
         } else {
             self.s.cbox(self.ind);
@@ -1189,7 +1190,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_stmt(stmt);
                 self.hardbreak_if_not_bol();
             }
-            self.maybe_print_comments(span.hi());
+            self.print_comments_skip_ws(span.hi());
             self.s.offset(-self.ind);
             self.end();
         }

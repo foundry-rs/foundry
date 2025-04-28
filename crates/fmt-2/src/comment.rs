@@ -19,6 +19,7 @@ pub enum CommentStyle {
 
 #[derive(Clone, Debug)]
 pub struct Comment {
+    pub is_doc: bool,
     pub style: CommentStyle,
     pub lines: Vec<String>,
     pub span: Span,

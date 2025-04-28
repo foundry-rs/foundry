@@ -101,6 +101,7 @@ fn gather_comments(sf: &SourceFile) -> Vec<Comment> {
                         idx += 1 + next_newline;
                         let pos = pos + idx;
                         comments.push(Comment {
+                            is_doc: false,
                             style: CommentStyle::BlankLine,
                             lines: vec![],
                             span: make_span(pos..pos),
@@ -109,39 +110,34 @@ fn gather_comments(sf: &SourceFile) -> Vec<Comment> {
                 }
             }
             TokenKind::BlockComment { is_doc, .. } => {
-                if !is_doc {
-                    let code_to_the_right = !matches!(
-                        text[pos + token.len as usize..].chars().next(),
-                        Some('\r' | '\n')
-                    );
-                    let style = match (code_to_the_left, code_to_the_right) {
-                        (_, true) => CommentStyle::Mixed,
-                        (false, false) => CommentStyle::Isolated,
-                        (true, false) => CommentStyle::Trailing,
-                    };
+                let code_to_the_right =
+                    !matches!(text[pos + token.len as usize..].chars().next(), Some('\r' | '\n'));
+                let style = match (code_to_the_left, code_to_the_right) {
+                    (_, true) => CommentStyle::Mixed,
+                    (false, false) => CommentStyle::Isolated,
+                    (true, false) => CommentStyle::Trailing,
+                };
 
-                    // Count the number of chars since the start of the line by rescanning.
-                    let pos_in_file = start_bpos + BytePos(pos as u32);
-                    let line_begin_in_file = line_begin_pos(sf, pos_in_file);
-                    let line_begin_pos = (line_begin_in_file - start_bpos).to_usize();
-                    let col = CharPos(text[line_begin_pos..pos].chars().count());
+                // Count the number of chars since the start of the line by rescanning.
+                let pos_in_file = start_bpos + BytePos(pos as u32);
+                let line_begin_in_file = line_begin_pos(sf, pos_in_file);
+                let line_begin_pos = (line_begin_in_file - start_bpos).to_usize();
+                let col = CharPos(text[line_begin_pos..pos].chars().count());
 
-                    let lines = split_block_comment_into_lines(token_text, col);
-                    comments.push(Comment { style, lines, span })
-                }
+                let lines = split_block_comment_into_lines(token_text, col);
+                comments.push(Comment { is_doc, style, lines, span })
             }
             TokenKind::LineComment { is_doc } => {
-                if !is_doc {
-                    comments.push(Comment {
-                        style: if code_to_the_left {
-                            CommentStyle::Trailing
-                        } else {
-                            CommentStyle::Isolated
-                        },
-                        lines: vec![token_text.to_string()],
-                        span,
-                    })
-                }
+                comments.push(Comment {
+                    is_doc,
+                    style: if code_to_the_left {
+                        CommentStyle::Trailing
+                    } else {
+                        CommentStyle::Isolated
+                    },
+                    lines: vec![token_text.to_string()],
+                    span,
+                });
             }
             _ => {
                 code_to_the_left = true;
