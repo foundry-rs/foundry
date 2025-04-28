@@ -110,6 +110,8 @@ similar-asserts.workspace = true
 svm = { package = "svm-rs", version = "0.5", default-features = false, features = [
     "rustls",
 ] }
+rvm = { package = "rvm-rs", version = "0.0.1" }
+lazy_static = "1.5"
 tempfile.workspace = true
 
 alloy-signer-local.workspace = true

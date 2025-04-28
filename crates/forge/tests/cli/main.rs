@@ -25,6 +25,7 @@ mod revive_build;
 mod revive_config;
 mod revive_create;
 mod revive_inspect;
+mod rvm;
 mod script;
 mod soldeer;
 mod svm;

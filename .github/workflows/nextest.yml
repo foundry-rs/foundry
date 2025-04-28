@@ -16,7 +16,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: full
-  REVIVE_RELEASE_VERSION: v0.1.0-dev.12
+  RESOLC_VERSION: 0.1.0-dev.13
   DLRP_API_KEY: ${{ secrets.DLRP_API_KEY }}
   ETH_RPC_VERSION: 0.4.0
   SUBSTRATE_NODE_COMMIT_SHA: 6ce6110199a429ce449841fe7222a5ba96eafb5c
@@ -78,41 +78,11 @@ jobs:
           python-version: 3.11
       - name: Install Vyper
         run: pip --version && pip install vyper==0.4.0
-      - name: Install Revive (Linux)
-        if: contains(matrix.runner_label, 'ubuntu')
+      - name: Install Resolc
         run: |
-          ASSET_NAME="resolc-x86_64-unknown-linux-musl.tar.gz"
-          DOWNLOAD_URL="https://github.com/paritytech/revive/releases/download/${{ env.REVIVE_RELEASE_VERSION }}/$ASSET_NAME"
-          curl -L -o $ASSET_NAME $DOWNLOAD_URL
-          tar -xzf $ASSET_NAME
-          chmod +x resolc-x86_64-unknown-linux-musl
-          sudo mv resolc-x86_64-unknown-linux-musl /usr/local/bin/resolc
-      - name: Install Revive (Windows)
-        if: contains(matrix.runner_label, 'windows')
-        shell: powershell
-        run: |
-          $AssetName="resolc-x86_64-pc-windows-msvc.zip"
-          $DownloadUrl="https://github.com/paritytech/revive/releases/download/${{ env.REVIVE_RELEASE_VERSION }}/$AssetName"
-          Invoke-WebRequest -Uri $DownloadUrl -OutFile $AssetName
-          Expand-Archive -Path $AssetName -DestinationPath .
-          $InstallDir = "C:\Program Files\resolc"
-          if (!(Test-Path $InstallDir)) {
-              New-Item -ItemType Directory -Path $InstallDir | Out-Null
-          }
-
-          Move-Item -Path .\resolc-x86_64-pc-windows-msvc.exe -Destination "$InstallDir\resolc.exe" -Force
-          Unblock-File -Path "$InstallDir\resolc.exe"
-          echo "$InstallDir" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
-      - name: Install Revive (macOS)
-        if: contains(matrix.runner_label, 'macos')
-        run: |
-          ASSET_NAME="resolc-universal-apple-darwin.tar.gz"
-          DOWNLOAD_URL="https://github.com/paritytech/revive/releases/download/${{ env.REVIVE_RELEASE_VERSION }}/$ASSET_NAME"
-          curl -L -o $ASSET_NAME $DOWNLOAD_URL
-          tar -xzf $ASSET_NAME
-          chmod +x resolc-universal-apple-darwin
-          xattr -d com.apple.quarantine resolc-universal-apple-darwin || true
-          sudo mv resolc-universal-apple-darwin /usr/local/bin/resolc
+          cargo install rvm-rs
+          rvm install ${{ env.RESOLC_VERSION }}
+          rvm use ${{ env.RESOLC_VERSION }}
 
       - name: Cache substrate-node binary
         id: cache-substrate
@@ -176,7 +146,7 @@ jobs:
           make
           sudo make install
 
-      - name: Check Revive Version
+      - name: Check Resolc Version
         run: |
           resolc --version
       - name: Forge RPC cache

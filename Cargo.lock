@@ -3923,6 +3923,7 @@ dependencies = [
  "indicatif",
  "inferno",
  "itertools 0.14.0",
+ "lazy_static",
  "mockall",
  "opener",
  "parking_lot",
@@ -3933,6 +3934,7 @@ dependencies = [
  "rayon",
  "regex",
  "reqwest",
+ "rvm-rs",
  "semver 1.0.26",
  "serde",
  "serde_json",
@@ -8768,9 +8770,12 @@ version = "0.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "adae46b7af5dc10bcefc33cf9480b5893e1a3e02186bbb354bb9d5ed3ae880ff"
 dependencies = [
+ "anyhow",
+ "clap",
  "const-hex",
  "dirs",
  "fs4",
+ "indicatif",
  "reqwest",
  "semver 1.0.26",
  "serde",
