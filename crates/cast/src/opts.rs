@@ -1151,6 +1151,25 @@ mod tests {
         };
     }
 
+    #[test]
+    fn parse_call_data_with_file() {
+        let args: Cast = Cast::parse_from([
+            "foundry-cli",
+            "calldata",
+            "f()",
+            "--file",
+            "test.txt",
+        ]);
+        match args.cmd {
+            CastSubcommand::CalldataEncode { sig, file, args } => {
+                assert_eq!(sig, "f()".to_string());
+                assert_eq!(file, Some(PathBuf::from("test.txt")));
+                assert!(args.is_empty());
+            }
+            _ => unreachable!(),
+        };
+    }
+
     // <https://github.com/foundry-rs/book/issues/1019>
     #[test]
     fn parse_signature() {
