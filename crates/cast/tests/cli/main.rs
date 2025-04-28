@@ -2544,7 +2544,8 @@ contract NoTxScript is Script {
     }
 }
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 
     cmd.forge_fuse()
         .args([
