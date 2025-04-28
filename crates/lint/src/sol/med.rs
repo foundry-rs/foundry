@@ -1,5 +1,5 @@
-use std::ops::ControlFlow;
 use solar_ast::{BinOp, BinOpKind, Expr, ExprKind};
+use std::ops::ControlFlow;
 
 use super::{DivideBeforeMultiply, DIVIDE_BEFORE_MULTIPLY};
 use crate::linter::{EarlyLintPass, LintContext};

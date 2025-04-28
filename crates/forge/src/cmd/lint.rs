@@ -79,7 +79,7 @@ impl LintArgs {
 
             // Resolve and apply included lints if provided
             if let Some(ref include_ids) = self.include_lint {
-                let included_lints = include_ids 
+                let included_lints = include_ids
                     .iter()
                     .map(|id_str| SolLint::try_from(id_str.as_str()))
                     .collect::<Result<Vec<SolLint>, SolLintError>>()?;

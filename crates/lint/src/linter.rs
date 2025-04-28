@@ -81,17 +81,23 @@ impl fmt::Display for Severity {
 }
 
 pub struct LintContext<'s> {
-    pub sess: &'s Session,
+    sess: &'s Session,
+    desc: bool,
 }
 
 impl<'s> LintContext<'s> {
-    pub fn new(sess: &'s Session) -> Self {
-        Self { sess }
+    pub fn new(sess: &'s Session, with_description: bool) -> Self {
+        Self { sess, desc: with_description }
     }
 
     // Helper method to emit diagnostics easily from passes
     pub fn emit<L: Lint>(&self, lint: &'static L, span: Span) {
-        let msg = format!("{}: {}", lint.id(), lint.description());
+        let msg = if self.desc {
+            format!("{}: {}", lint.id(), lint.description())
+        } else {
+            lint.id().into()
+        };
+
         let diag: DiagBuilder<'_, ()> = match lint.help() {
             Some(help) => self.sess.dcx.diag(lint.severity().into(), msg).span(span).help(help),
             None => self.sess.dcx.diag(lint.severity().into(), msg).span(span),
@@ -138,7 +144,7 @@ pub struct EarlyLintVisitor<'a, 's, 'ast> {
     pub passes: &'a mut [Box<dyn EarlyLintPass<'ast> + 's>],
 }
 
-impl<'a, 's, 'ast> Visit<'ast> for EarlyLintVisitor<'a, 's, 'ast>
+impl<'s, 'ast> Visit<'ast> for EarlyLintVisitor<'_, 's, 'ast>
 where
     's: 'ast,
 {

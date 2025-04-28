@@ -18,10 +18,10 @@ use thiserror::Error;
 /// vulnerabilities gas optimizations, and best practices.
 #[derive(Debug, Clone, Default)]
 pub struct SolidityLinter {
-    description: bool,
     severity: Option<Vec<Severity>>,
     lints_included: Option<Vec<SolLint>>,
     lints_excluded: Option<Vec<SolLint>>,
+    with_description: bool,
     // This field is only used for testing purposes, in production it will always be false.
     with_buffer_emitter: bool,
 }
@@ -30,9 +30,9 @@ impl SolidityLinter {
     pub fn new() -> Self {
         Self {
             severity: None,
-            description: false,
             lints_included: None,
             lints_excluded: None,
+            with_description: false,
             with_buffer_emitter: false,
         }
     }
@@ -49,6 +49,11 @@ impl SolidityLinter {
 
     pub fn without_lints(mut self, lints: Option<Vec<SolLint>>) -> Self {
         self.lints_excluded = lints;
+        self
+    }
+
+    pub fn with_description(mut self, description: bool) -> Self {
+        self.with_description = description;
         self
     }
 
@@ -111,7 +116,7 @@ impl SolidityLinter {
             let ast = parser.parse_file().map_err(|e| e.emit())?;
 
             // Initialize and run the visitor
-            let ctx = LintContext::new(&sess);
+            let ctx = LintContext::new(&sess, self.with_description);
             let mut visitor = EarlyLintVisitor { ctx: &ctx, passes: &mut passes };
             visitor.visit_source_unit(&ast);
 
@@ -136,7 +141,7 @@ impl Linter for SolidityLinter {
 #[derive(Error, Debug)]
 pub enum SolLintError {
     #[error("Unknown lint ID: {0}")]
-    InvalidId(String)
+    InvalidId(String),
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -174,17 +179,15 @@ macro_rules! declare_forge_lints {
             };
         )*
 
-        // Implement TryFrom<&str> for SolLint
+        // Implement TryFrom<&str> for `SolLint`
         impl<'a> TryFrom<&'a str> for SolLint {
             type Error = SolLintError;
 
             fn try_from(value: &'a str) -> Result<Self, Self::Error> {
                 match value {
                     $(
-                        // Match the input string against the static string ID
-                        $str_id => Ok($lint_id), // Return the corresponding static SolLint instance
+                        $str_id => Ok($lint_id),
                     )*
-                    // If no match is found, return an error
                     _ => Err(SolLintError::InvalidId(value.to_string())),
                 }
             }
