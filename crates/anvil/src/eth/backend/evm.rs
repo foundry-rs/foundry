@@ -8,8 +8,7 @@ use op_revm::{
 };
 use revm::{
     context::{
-        result::{EVMError, ExecutionResult, HaltReason, HaltReasonTr, ResultAndState},
-        transaction::TransactionError,
+        result::{EVMError, ExecutionResult, HaltReason, ResultAndState},
         BlockEnv, TxEnv,
     },
     handler::PrecompileProvider,
@@ -18,11 +17,11 @@ use revm::{
     DatabaseCommit, Inspector,
 };
 
-/// Alias for result type returned by [`OpEvm::transact`] methods.
+/// Alias for result type returned by [`Evm::transact`] methods.
 type AnvilEvmResult<DBError, HaltReason, TxError> =
     Result<ResultAndState<HaltReason>, EVMError<DBError, TxError>>;
 
-/// Alias for result type returned by [`OpEvm::transact_commit`] methods.
+/// Alias for result type returned by [`Evm::transact_commit`] methods.
 type AnvilExecResult<DBError, HaltReason, TxError> =
     Result<ExecutionResult<HaltReason>, EVMError<DBError, TxError>>;
 
