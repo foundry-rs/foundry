@@ -5,6 +5,7 @@ use alloy_primitives::{
     map::{AddressIndexSet, B256IndexSet, HashMap},
     Address, Bytes, Log, B256, U256,
 };
+use foundry_common::ignore_metadata_hash;
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::utils::StateChangeset;
 use parking_lot::{lock_api::RwLockReadGuard, RawRwLock, RwLock};
@@ -248,7 +249,7 @@ impl FuzzDictionary {
             // Insert push bytes
             if let Some(code) = &account_info.code {
                 self.insert_address(*address);
-                self.collect_push_bytes(code.bytes_slice());
+                self.collect_push_bytes(ignore_metadata_hash(code.original_byte_slice()));
             }
         }
     }
