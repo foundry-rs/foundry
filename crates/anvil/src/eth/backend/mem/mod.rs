@@ -37,7 +37,8 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    transaction::Recovered, Account, BlockHeader, EnvKzgSettings, Header, Receipt, ReceiptWithBloom, Signed, Transaction as TransactionTrait, TxEnvelope
+    transaction::Recovered, Account, BlockHeader, EnvKzgSettings, Header, Receipt,
+    ReceiptWithBloom, Signed, Transaction as TransactionTrait, TxEnvelope,
 };
 use alloy_eips::{eip1559::BaseFeeParams, eip4844::MAX_BLOBS_PER_BLOCK};
 use alloy_evm::{eth::EthEvmContext, Database, Evm};
@@ -98,16 +99,16 @@ use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
 use op_revm::{OpContext, OpHaltReason};
 use parking_lot::{Mutex, RwLock};
 use revm::{
-    context::{Block as RevmBlock, BlockEnv,  TxEnv}, context_interface::{
+    context::{Block as RevmBlock, BlockEnv, TxEnv},
+    context_interface::{
         block::BlobExcessGasAndPrice,
         result::{ExecutionResult, Output, ResultAndState},
-    }, 
-    database::{CacheDB, DatabaseRef, WrapDatabaseRef}, 
-    interpreter::InstructionResult, 
-    primitives::{hardfork::SpecId, KECCAK_EMPTY}, 
+    },
+    database::{CacheDB, DatabaseRef, WrapDatabaseRef},
+    interpreter::InstructionResult,
+    primitives::{hardfork::SpecId, KECCAK_EMPTY},
     state::AccountInfo,
-    DatabaseCommit,
-    Inspector
+    DatabaseCommit, Inspector,
 };
 use revm_inspectors::transfer::TransferInspector;
 use std::{
@@ -1056,8 +1057,10 @@ impl Backend {
         FoundryPrecompiles,
     >
     where
-        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>>> + Inspector<OpContext<WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>>>,
-        WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>: Database<Error = DatabaseError>,
+        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>>>
+            + Inspector<OpContext<WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>>>,
+        WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>:
+            Database<Error = DatabaseError>,
     {
         evm_with_inspector_ref(db, env, inspector, self.is_optimism())
         // TODO(yash): inject precompiles
@@ -1096,7 +1099,7 @@ impl Backend {
             ExecutionResult::Halt { reason, gas_used } => {
                 let eth_reason = op_haltreason_to_instruction_result(reason);
                 (eth_reason, gas_used, None, None)
-            },
+            }
         };
 
         drop(evm);
@@ -1423,8 +1426,6 @@ impl Backend {
         // - tracing
         env.evm_env.cfg_env.disable_base_fee = true;
 
-        
-
         let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| {
             self.fees().raw_gas_price().saturating_add(MIN_SUGGESTED_PRIORITY_FEE)
         });
@@ -1579,7 +1580,6 @@ impl Backend {
                             &mut inspector,
                         );
 
-                        
                         trace!(target: "backend", env=?env.evm_env, spec=?env.evm_env.spec_id(),"simulate evm env");
                         evm.transact(env.tx)?
                     } else {
@@ -1730,7 +1730,9 @@ impl Backend {
             ExecutionResult::Revert { gas_used, output } => {
                 (InstructionResult::Revert, gas_used, Some(Output::Call(output)))
             }
-            ExecutionResult::Halt { reason, gas_used } => (op_haltreason_to_instruction_result(reason), gas_used, None),
+            ExecutionResult::Halt { reason, gas_used } => {
+                (op_haltreason_to_instruction_result(reason), gas_used, None)
+            }
         };
         drop(evm);
         inspector.print_logs();
@@ -1822,7 +1824,9 @@ impl Backend {
                 ExecutionResult::Revert { gas_used, output } => {
                     (InstructionResult::Revert, gas_used, Some(Output::Call(output)))
                 }
-                ExecutionResult::Halt { reason, gas_used } => (op_haltreason_to_instruction_result(reason), gas_used, None),
+                ExecutionResult::Halt { reason, gas_used } => {
+                    (op_haltreason_to_instruction_result(reason), gas_used, None)
+                }
             };
 
             drop(evm);
@@ -1861,7 +1865,9 @@ impl Backend {
             ExecutionResult::Revert { gas_used, output } => {
                 (InstructionResult::Revert, gas_used, Some(Output::Call(output)))
             }
-            ExecutionResult::Halt { reason, gas_used } => (op_haltreason_to_instruction_result(reason), gas_used, None),
+            ExecutionResult::Halt { reason, gas_used } => {
+                (op_haltreason_to_instruction_result(reason), gas_used, None)
+            }
         };
         drop(evm);
         let access_list = inspector.access_list();
