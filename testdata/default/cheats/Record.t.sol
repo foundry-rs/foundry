@@ -71,7 +71,6 @@ contract RecordTest is DSTest {
         assertEq(writes.length, 1, "number of writes is incorrect");
         assertEq(writes[0], bytes32(uint256(1)), "key for write is incorrect");
 
-
         vm.stopRecord();
         NestedRecordAccess inner = target.record();
 
@@ -93,5 +92,4 @@ contract RecordTest is DSTest {
         assertEq(reads.length, 0, "number of reads is incorrect");
         assertEq(writes.length, 0, "number of writes is incorrect");
     }
-
 }
