@@ -644,8 +644,6 @@ impl InspectorStackRefMut<'_> {
             // set depth to 1 to make sure traces are collected correctly
             evm.journaled_state.depth = 1;
 
-            // let res = evm.inspect_replay();
-
             let res = evm.transact(env.tx.clone());
 
             // need to reset the env in case it was modified via cheatcodes during execution
