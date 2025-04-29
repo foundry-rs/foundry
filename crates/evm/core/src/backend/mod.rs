@@ -25,7 +25,7 @@ use revm::{
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{hardfork::SpecId, HashMap as Map, Log, KECCAK_EMPTY},
     state::{Account, AccountInfo, EvmState, EvmStorageSlot},
-    Database, DatabaseCommit, InspectEvm, JournalEntry,
+    Database, DatabaseCommit, JournalEntry,
 };
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -1238,8 +1238,10 @@ impl DatabaseExt for Backend {
 
         update_env_block(env, &block);
 
+        let mut env = env.to_owned();
+
         // replay all transactions that came before
-        self.replay_until(id, env, transaction, journaled_state)?;
+        self.replay_until(id, &mut env.as_env_mut(), transaction, journaled_state)?;
 
         Ok(())
     }

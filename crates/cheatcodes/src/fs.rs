@@ -360,6 +360,8 @@ fn deploy_code(
     value: Option<U256>,
     salt: Option<U256>,
 ) -> Result {
+    println!("in deploy_code");
+
     // TODO: implement exec_create
 
     // let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
