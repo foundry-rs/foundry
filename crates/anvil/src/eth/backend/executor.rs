@@ -1,3 +1,4 @@
+use crate::eth::backend::evm::EitherEvm;
 use crate::{
     eth::{
         backend::{
@@ -461,47 +462,6 @@ impl<DB: Database> EvmContext<DB> {
     }
 }
 
-pub type AnvilEvm<'db, DB, I, P = FoundryPrecompiles> = RevmEvm<
-    AnvilEvmContext<'db, DB>,
-    I,
-    EthInstructions<EthInterpreter, AnvilEvmContext<'db, DB>>,
-    P,
->;
-
-/// Creates a database with given database and inspector, optionally enabling odyssey features.
-pub fn new_evm_with_inspector<'db, CTX, DB>(
-    db: DB,
-    env: &Env,
-    inspector: &'db mut dyn Inspector<CTX>,
-) -> AnvilEvm<'db, DB, &'db mut dyn Inspector<CTX>>
-where
-    DB: Database<Error = DatabaseError>,
-{
-    let evm_context = AnvilEvmContext {
-        journaled_state: {
-            let mut journal = Journal::new(db);
-            journal.set_spec_id(env.evm_env.cfg_env.spec);
-            journal
-        },
-        block: env.evm_env.block_env.clone(),
-        cfg: env.evm_env.cfg_env.clone(),
-        tx: env.tx.clone(),
-        chain: (),
-        error: Ok(()),
-    };
-
-    let evm = RevmEvm::new_with_inspector(
-        evm_context,
-        inspector,
-        EthInstructions::default(),
-        FoundryPrecompiles::new(),
-    );
-
-    evm
-}
-
-use crate::eth::backend::evm::EitherEvm;
-
 /// Creates a database with given database and inspector, optionally enabling odyssey features.
 pub fn evm_with_inspector<DB, I>(
     db: DB,
@@ -565,6 +525,7 @@ where
     }
 }
 
+/// Creates a new EVM with the given inspector and wraps the database in a `WrapDatabaseRef`.
 pub fn evm_with_inspector_ref<'db, DB, I>(
     db: &'db DB,
     env: &Env,
@@ -578,36 +539,4 @@ where
     WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
 {
     evm_with_inspector(WrapDatabaseRef(db), env, inspector, is_optimism)
-}
-
-/// Creates a new [`AnvilEvmContext`] with the given database and environment.
-pub fn new_evm_context<DB>(db: DB, env: &Env) -> AnvilEvmContext<'_, DB>
-where
-    DB: Database<Error = DatabaseError>,
-{
-    AnvilEvmContext {
-        journaled_state: {
-            let mut journal = Journal::new(db);
-            journal.set_spec_id(env.evm_env.cfg_env.spec);
-            journal
-        },
-        block: env.evm_env.block_env.clone(),
-        cfg: env.evm_env.cfg_env.clone(),
-        tx: env.tx.clone(),
-        chain: (),
-        error: Ok(()),
-    }
-}
-
-/// Creates a new EVM with the given inspector and wraps the database in a `WrapDatabaseRef`.
-pub fn new_evm_with_inspector_ref<'db, CTX, DB>(
-    db: &'db DB,
-    env: &Env,
-    inspector: &'db mut dyn Inspector<CTX>,
-) -> AnvilEvm<'db, WrapDatabaseRef<&'db DB>, &'db mut dyn Inspector<CTX>>
-where
-    DB: DatabaseRef<Error = DatabaseError> + 'db + ?Sized,
-    WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
-{
-    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector)
 }

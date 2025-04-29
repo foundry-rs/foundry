@@ -1,7 +1,7 @@
 //! In-memory blockchain backend.
 
 use self::state::trie_storage;
-use super::{evm::EitherEvm, executor::{evm_with_inspector_ref, new_evm_with_inspector_ref, AnvilEvm}};
+use super::{evm::EitherEvm, executor::evm_with_inspector_ref};
 use crate::{
     config::PruneStateHistoryConfig,
     eth::{
