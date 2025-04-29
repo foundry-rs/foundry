@@ -84,7 +84,8 @@ contract RecordTest is DSTest {
         assertEq(writes.length, 1, "number of writes is incorrect");
         assertEq(writes[0], bytes32(uint256(1)), "key for write is incorrect");
 
-        vm.resetRecord();
+        vm.record();
+        vm.stopRecord();
 
         // verify reset all records
         (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(target));

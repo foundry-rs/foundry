@@ -8499,7 +8499,7 @@
     {
       "func": {
         "id": "record",
-        "description": "Records all storage reads and writes.",
+        "description": "Records all storage reads and writes. Use `accesses` to get the recorded data.\nSubsequent calls to `record` will clear the previous data.",
         "declaration": "function record() external;",
         "visibility": "external",
         "mutability": "",
@@ -8695,26 +8695,6 @@
       "group": "evm",
       "status": "stable",
       "safety": "unsafe"
-    },
-    {
-      "func": {
-        "id": "resetRecord",
-        "description": "Stops recording storage reads and writes, and returns all accessed reads and write slot from a `vm.record` session, for a given address.",
-        "declaration": "function resetRecord() external;",
-        "visibility": "external",
-        "mutability": "",
-        "signature": "resetRecord()",
-        "selector": "0x3f6d5273",
-        "selectorBytes": [
-          63,
-          109,
-          82,
-          115
-        ]
-      },
-      "group": "evm",
-      "status": "stable",
-      "safety": "safe"
     },
     {
       "func": {
@@ -10445,7 +10425,7 @@
     {
       "func": {
         "id": "stopRecord",
-        "description": "Stops recording storage reads and writes, and returns all accessed reads and write slot from a `vm.record` session, for a given address.",
+        "description": "Stops recording storage reads and writes.",
         "declaration": "function stopRecord() external;",
         "visibility": "external",
         "mutability": "",
