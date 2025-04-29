@@ -245,6 +245,7 @@ alloy-sol-types = "0.8.22"
 
 alloy-chains = "0.1"
 alloy-evm = "0.3.2"
+alloy-op-evm = "0.3.2"
 alloy-rlp = "0.3"
 alloy-trie = "0.7.0"
 

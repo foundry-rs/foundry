@@ -10,7 +10,8 @@ use crate::{
 };
 use alloy_consensus::{constants::EMPTY_WITHDRAWALS, Receipt, ReceiptWithBloom};
 use alloy_eips::{eip2718::Encodable2718, eip7685::EMPTY_REQUESTS_HASH};
-use alloy_evm::eth::EthEvmContext;
+use alloy_evm::{eth::EthEvmContext, EthEvm};
+use alloy_op_evm::OpEvm;
 use alloy_primitives::{Bloom, BloomInput, Log, B256};
 use anvil_core::eth::{
     block::{Block, BlockInfo, PartialHeader},
@@ -26,7 +27,7 @@ use revm::{
     context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm, JournalTr},
     context_interface::result::{EVMError, ExecutionResult, Output},
     database::WrapDatabaseRef,
-    handler::instructions::EthInstructions,
+    handler::{instructions::EthInstructions, EvmTr},
     interpreter::{interpreter::EthInterpreter, InstructionResult},
     primitives::hardfork::SpecId,
     Database, DatabaseRef, ExecuteCommitEvm, ExecuteEvm, InspectCommitEvm, InspectEvm, Inspector,
@@ -471,6 +472,86 @@ where
     );
 
     evm
+}
+
+use crate::eth::backend::evm::EitherEvm;
+
+/// Creates a database with given database and inspector, optionally enabling odyssey features.
+pub fn evm_with_inspector<DB, I>(
+    db: DB,
+    env: &Env,
+    inspector: I,
+    is_optimism: bool,
+) -> EitherEvm<DB, I, FoundryPrecompiles>
+where
+    DB: Database<Error = DatabaseError>,
+    I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
+{
+    if is_optimism {
+        let op_context = OpContext {
+            journaled_state: {
+                let mut journal = Journal::new(db);
+                // Converting SpecId into OpSpecId
+                journal.set_spec_id(env.evm_env.cfg_env.spec.into());
+                journal
+            },
+            block: env.evm_env.block_env.clone(),
+            cfg: env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::BEDROCK),
+            tx: OpTransaction::new(env.tx.clone()),
+            chain: L1BlockInfo::default(),
+            error: Ok(()),
+        };
+
+        let evm = op_revm::OpEvm(Evm::new_with_inspector(
+            op_context,
+            inspector,
+            EthInstructions::default(),
+            FoundryPrecompiles::default(),
+        ));
+
+        let op = OpEvm::new(evm, true);
+
+        EitherEvm::Op(op)
+    } else {
+        let evm_context = EthEvmContext {
+            journaled_state: {
+                let mut journal = Journal::new(db);
+                journal.set_spec_id(env.evm_env.cfg_env.spec);
+                journal
+            },
+            block: env.evm_env.block_env.clone(),
+            cfg: env.evm_env.cfg_env.clone(),
+            tx: env.tx.clone(),
+            chain: (),
+            error: Ok(()),
+        };
+
+        let evm = Evm::new_with_inspector(
+            evm_context,
+            inspector,
+            EthInstructions::default(),
+            FoundryPrecompiles::new(),
+        );
+
+        let eth = EthEvm::new(evm, true);
+
+        EitherEvm::Eth(eth)
+    }
+}
+
+pub fn evm_with_inspector_ref<'db, DB, I>(
+    db: &'db DB,
+    env: &Env,
+    inspector: &'db mut I,
+    is_optimism: bool,
+) -> EitherEvm<WrapDatabaseRef<&'db DB>, &'db mut I, FoundryPrecompiles>
+where
+    DB: DatabaseRef<Error = DatabaseError> + 'db + ?Sized,
+    I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>
+        + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>,
+    WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+{
+    evm_with_inspector(WrapDatabaseRef(db), env, inspector, is_optimism)
 }
 
 /// Creates a new [`AnvilEvmContext`] with the given database and environment.

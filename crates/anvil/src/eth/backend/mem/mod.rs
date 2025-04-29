@@ -1,7 +1,7 @@
 //! In-memory blockchain backend.
 
 use self::state::trie_storage;
-use super::executor::{new_evm_with_inspector_ref, AnvilEvm};
+use super::{evm::EitherEvm, executor::{evm_with_inspector_ref, new_evm_with_inspector_ref, AnvilEvm}};
 use crate::{
     config::PruneStateHistoryConfig,
     eth::{
@@ -40,7 +40,7 @@ use alloy_consensus::{
     transaction::Recovered, Account, BlockHeader, EnvKzgSettings, Header, Receipt, ReceiptWithBloom, Signed, Transaction as TransactionTrait, TxEnvelope
 };
 use alloy_eips::{eip1559::BaseFeeParams, eip4844::MAX_BLOBS_PER_BLOCK};
-use alloy_evm::Database;
+use alloy_evm::{eth::EthEvmContext, Database};
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
     EthereumWallet, UnknownTxEnvelope, UnknownTypedTransaction,
@@ -92,14 +92,16 @@ use foundry_evm::{
     traces::TracingInspectorConfig,
     Env,
 };
+use foundry_evm_core::evm::FoundryPrecompiles;
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
+use op_revm::OpContext;
 use parking_lot::{Mutex, RwLock};
 use revm::{
     context::{Block as RevmBlock, BlockEnv, ContextTr, TxEnv}, context_interface::{
         block::BlobExcessGasAndPrice,
         result::{ExecutionResult, Output, ResultAndState},
-    }, database::{CacheDB, DatabaseRef, WrapDatabaseRef}, interpreter::InstructionResult, primitives::{hardfork::SpecId, KECCAK_EMPTY}, state::AccountInfo, DatabaseCommit, ExecuteEvm, InspectEvm, Inspector
+    }, database::{CacheDB, DatabaseRef, WrapDatabaseRef}, interpreter::InstructionResult, primitives::{hardfork::SpecId, KECCAK_EMPTY}, state::AccountInfo, Database, DatabaseCommit, ExecuteEvm, InspectEvm, Inspector
 };
 use revm_inspectors::transfer::TransferInspector;
 use std::{
@@ -1037,24 +1039,25 @@ impl Backend {
 
     /// Creates an EVM instance with optionally injected precompiles.
     #[expect(clippy::type_complexity)]
-    fn new_evm_with_inspector_ref<'db, CTX>(
+    fn new_evm_with_inspector_ref<'db, DB, I>(
         &self,
         db: &'db dyn DatabaseRef<Error = DatabaseError>,
         env: &Env,
-        inspector: &'db mut dyn Inspector<CTX>,
-    ) -> AnvilEvm<
-        'db,
+        inspector: &'db mut I,
+    ) -> EitherEvm<
         WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>,
-        &'db mut dyn Inspector<CTX>,
+        &'db mut I,
+        FoundryPrecompiles,
     >
     where
-        CTX: ContextTr<Db = WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>>,
+        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>>> + Inspector<OpContext<WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>>>,
+        WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>: Database<Error = DatabaseError>,
     {
-        let mut evm = new_evm_with_inspector_ref(db, env, inspector);
+        evm_with_inspector_ref(db, env, inspector, self.is_optimism())
+        // TODO(yash): inject precompiles
         // if let Some(factory) = &self.precompile_factory {
         //     inject_precompiles(&mut evm, factory.precompiles());
         // }
-        evm
     }
 
     /// executes the transactions without writing to the underlying database
@@ -1562,19 +1565,7 @@ impl Backend {
                         // prepare inspector to capture transfer inside the evm so they are
                         // recorded and included in logs
                         let mut inspector = TransferInspector::new(false).with_logs(true);
-                        let mut evm: revm::context::Evm<
-                            _,
-                            &mut dyn Inspector<
-                                revm::Context<
-                                    BlockEnv,
-                                    TxEnv,
-                                    revm::context::CfgEnv,
-                                    WrapDatabaseRef<&(dyn DatabaseRef<Error = DatabaseError>)>, // Cannot infer DB in the Inspector.
-                                >,
-                            >,
-                            _,
-                            _,
-                        > = self.new_evm_with_inspector_ref(
+                        let mut evm= self.new_evm_with_inspector_ref(
                             cache_db.as_dyn(),
                             &env,
                             &mut inspector,
@@ -1853,19 +1844,7 @@ impl Backend {
             AccessListInspector::new(request.access_list.clone().unwrap_or_default());
 
         let env = self.build_call_env(request, fee_details, block_env);
-        let mut evm: revm::context::Evm<
-            _,
-            &mut dyn Inspector<
-                revm::Context<
-                    BlockEnv,
-                    TxEnv,
-                    revm::context::CfgEnv,
-                    WrapDatabaseRef<&(dyn DatabaseRef<Error = DatabaseError>)>,
-                >,
-            >,
-            _,
-            _,
-        > = self.new_evm_with_inspector_ref(state, &env, &mut inspector);
+        let mut evm = self.new_evm_with_inspector_ref(state, &env, &mut inspector);
         let ResultAndState { result, state: _ } = evm.inspect_with_tx(env.tx)?;
         let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
