@@ -52,8 +52,8 @@ impl SolidityLinter {
         self
     }
 
-    pub fn with_description(mut self, description: bool) -> Self {
-        self.with_description = description;
+    pub fn with_description(mut self, with: bool) -> Self {
+        self.with_description = with;
         self
     }
 
