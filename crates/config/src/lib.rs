@@ -523,6 +523,9 @@ pub struct Config {
     #[serde(default)]
     pub compilation_restrictions: Vec<CompilationRestrictions>,
 
+    /// Whether to disable the script execution protection.
+    pub script_execution_protection: bool,
+
     /// PRIVATE: This structure may grow, As such, constructing this structure should
     /// _always_ be done using a public constructor or update syntax:
     ///
@@ -2412,6 +2415,7 @@ impl Default for Config {
             additional_compiler_profiles: Default::default(),
             compilation_restrictions: Default::default(),
             eof: false,
+            script_execution_protection: true,
             _non_exhaustive: (),
         }
     }

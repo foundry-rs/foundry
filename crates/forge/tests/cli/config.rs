@@ -169,6 +169,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
         eof: false,
+        script_execution_protection: true,
         _non_exhaustive: (),
     };
     prj.write_config(input.clone());
@@ -1041,6 +1042,7 @@ transaction_timeout = 120
 eof = false
 additional_compiler_profiles = []
 compilation_restrictions = []
+script_execution_protection = true
 
 [profile.default.rpc_storage_caching]
 chains = "all"
@@ -1298,7 +1300,8 @@ exclude = []
   "transaction_timeout": 120,
   "eof": false,
   "additional_compiler_profiles": [],
-  "compilation_restrictions": []
+  "compilation_restrictions": [],
+  "script_execution_protection": true
 }
 
 "#]]);
