@@ -2519,7 +2519,7 @@ impl Backend {
     ) -> Result<Vec<LocalizedTransactionTrace>, BlockchainError> {
         let matcher = filter.matcher();
         let start = filter.from_block.unwrap_or(0);
-        let end = filter.to_block.unwrap_or(self.best_number());
+        let end = filter.to_block.unwrap_or_else(|| self.best_number());
 
         if start > end {
             return Err(BlockchainError::RpcError(RpcError::invalid_params(
