@@ -270,6 +270,7 @@ chrono = { version = "0.4", default-features = false, features = [
     "std",
 ] }
 axum = "0.7"
+ciborium = "0.2"
 color-eyre = "0.6"
 comfy-table = "7"
 dirs = "6"
@@ -300,7 +301,8 @@ semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 similar-asserts = "1.6"
-soldeer-commands = "=0.5.3"
+soldeer-commands = "=0.5.4"
+soldeer-core = { version = "=0.5.4", features = ["serde"] }
 strum = "0.27"
 tempfile = "3.13"
 tikv-jemallocator = "0.6"
@@ -314,6 +316,12 @@ url = "2"
 vergen = { version = "8", default-features = false }
 yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 path-slash = "0.2"
+jiff = "0.2"
+
+# Use unicode-rs which has a smaller binary size than the default ICU4X as the IDNA backend, used
+# by the `url` crate.
+# See the `idna_adapter` README.md for more details: https://docs.rs/crate/idna_adapter/latest
+idna_adapter = "=1.1.0"
 
 [patch.crates-io]
 ## alloy-core
