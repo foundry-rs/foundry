@@ -18,7 +18,9 @@ use alloy_signer_local::PrivateKeySigner;
 use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
-use foundry_test_utils::rpc::{self, next_http_rpc_endpoint, next_rpc_endpoint};
+use foundry_test_utils::rpc::{
+    self, next_http_archive_rpc_url, next_http_rpc_endpoint, next_rpc_endpoint,
+};
 use futures::StreamExt;
 use std::{sync::Arc, thread::sleep, time::Duration};
 
@@ -1328,6 +1330,7 @@ async fn test_immutable_fork_transaction_hash() {
     use std::str::FromStr;
 
     // Fork to a block with a specific transaction
+    // <https://explorer.immutable.com/tx/0x39d64ebf9eb3f07ede37f8681bc3b61928817276c4c4680b6ef9eac9f88b6786>
     let fork_tx_hash =
         TxHash::from_str("39d64ebf9eb3f07ede37f8681bc3b61928817276c4c4680b6ef9eac9f88b6786")
             .unwrap();
