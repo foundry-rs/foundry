@@ -997,7 +997,7 @@ Compiler run successful!
 Ran 1 test for test/Contract.t.sol:PrecompileLabelsTest
 [PASS] testPrecompileLabels() ([GAS])
 Traces:
-  [14048] PrecompileLabelsTest::testPrecompileLabels()
+  [..] PrecompileLabelsTest::testPrecompileLabels()
     ├─ [0] VM::deal(VM: [0x7109709ECfa91a80626fF3989D68f67F5b1DD12D], 1000000000000000000 [1e18])
     │   └─ ← [Return]
     ├─ [0] VM::deal(console: [0x000000000000000000636F6e736F6c652e6c6f67], 1000000000000000000 [1e18])
@@ -1451,10 +1451,10 @@ contract ATest is Test {
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-[PASS] testNormalGas() (gas: 3153)
-[PASS] testWeirdGas1() (gas: 2991)
-[PASS] testWeirdGas2() (gas: 3218)
-[PASS] testWithAssembly() (gas: 3034)
+[PASS] testNormalGas() (gas: 3148)
+[PASS] testWeirdGas1() (gas: 2986)
+[PASS] testWeirdGas2() (gas: 3213)
+[PASS] testWithAssembly() (gas: 3029)
 ...
 "#]]);
 });
@@ -1547,9 +1547,9 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-[PASS] test_GasMeter() (gas: 53102)
+[PASS] test_GasMeter() (gas: 53097)
 Traces:
-  [53102] ATest::test_GasMeter()
+  [53097] ATest::test_GasMeter()
     ├─ [0] VM::pauseGasMetering()
     │   └─ ← [Return]
     ├─ [0] VM::resumeGasMetering()
