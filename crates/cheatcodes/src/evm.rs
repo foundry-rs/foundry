@@ -280,29 +280,26 @@ impl Cheatcode for dumpStateCall {
 impl Cheatcode for recordCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        state.accesses = Some(Default::default());
+        state.recording_accesses = true;
+        if !state.accesses.is_some() {
+            state.accesses = Some(Default::default());
+        }
         Ok(Default::default())
     }
 }
 
-impl Cheatcode for stopRecordAndReturnAccessesCall {
+impl Cheatcode for stopRecordCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self { target } = *self;
-        let mut accesses = state.accesses.take();
-        if accesses.is_none() {
-            return Ok(Default::default());
-        }
-        let result = accesses
-            .as_mut()
-            .map(|accesses| {
-                (
-                    &accesses.reads.entry(target).or_default()[..],
-                    &accesses.writes.entry(target).or_default()[..],
-                )
-            })
-            .unwrap_or_default();
+        state.recording_accesses = false;
+        Ok(Default::default())
+    }
+}
 
-        Ok(result.abi_encode_params())
+impl Cheatcode for resetRecordCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        state.recording_accesses = false;
+        state.accesses = Some(Default::default());
+        Ok(Default::default())
     }
 }
 

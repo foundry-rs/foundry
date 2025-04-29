@@ -54,29 +54,44 @@ contract RecordTest is DSTest {
         assertEq(innerWrites[0], bytes32(uint256(2)), "key for nested write is incorrect");
     }
 
-    function testStopRecord() public {
+    function testStopRecordAccess() public {
         RecordAccess target = new RecordAccess();
 
         // Start recording
         vm.record();
-        target.record();
+        NestedRecordAccess inner = target.record();
 
-        // Stop recording
-        (bytes32[] memory recordedReads, bytes32[] memory recordedWrites) =
-            vm.stopRecordAndReturnAccesses(address(target));
+        // Verify Records
+        (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(target));
 
-        assertEq(recordedReads.length, 2, "number of reads is incorrect");
-        assertEq(recordedReads[0], bytes32(uint256(1)), "key for read 0 is incorrect");
-        assertEq(recordedReads[1], bytes32(uint256(1)), "key for read 1 is incorrect");
+        assertEq(reads.length, 2, "number of reads is incorrect");
+        assertEq(reads[0], bytes32(uint256(1)), "key for read 0 is incorrect");
+        assertEq(reads[1], bytes32(uint256(1)), "key for read 1 is incorrect");
 
-        assertEq(recordedWrites.length, 1, "number of writes is incorrect");
-        assertEq(recordedWrites[0], bytes32(uint256(1)), "key for write is incorrect");
+        assertEq(writes.length, 1, "number of writes is incorrect");
+        assertEq(writes[0], bytes32(uint256(1)), "key for write is incorrect");
 
-        // Verify no more records are captured
-        target.record();
+
+        vm.stopRecord();
+        NestedRecordAccess inner = target.record();
+
+        // Verify that there are no new Records
+        (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(target));
+
+        assertEq(reads.length, 2, "number of reads is incorrect");
+        assertEq(reads[0], bytes32(uint256(1)), "key for read 0 is incorrect");
+        assertEq(reads[1], bytes32(uint256(1)), "key for read 1 is incorrect");
+
+        assertEq(writes.length, 1, "number of writes is incorrect");
+        assertEq(writes[0], bytes32(uint256(1)), "key for write is incorrect");
+
+        vm.resetRecord();
+
+        // verify reset all records
         (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(target));
 
         assertEq(reads.length, 0, "number of reads is incorrect");
         assertEq(writes.length, 0, "number of writes is incorrect");
     }
+
 }

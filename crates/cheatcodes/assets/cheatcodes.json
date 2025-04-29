@@ -8698,6 +8698,26 @@
     },
     {
       "func": {
+        "id": "resetRecord",
+        "description": "Stops recording storage reads and writes, and returns all accessed reads and write slot from a `vm.record` session, for a given address.",
+        "declaration": "function resetRecord() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "resetRecord()",
+        "selector": "0x3f6d5273",
+        "selectorBytes": [
+          63,
+          109,
+          82,
+          115
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "resumeGasMetering",
         "description": "Resumes gas metering (i.e. gas usage is counted again). Noop if already on.",
         "declaration": "function resumeGasMetering() external;",
@@ -10424,18 +10444,18 @@
     },
     {
       "func": {
-        "id": "stopRecordAndReturnAccesses",
-        "description": "Stops recording storage reads and writes.",
-        "declaration": "function stopRecordAndReturnAccesses(address target) external returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);",
+        "id": "stopRecord",
+        "description": "Stops recording storage reads and writes, and returns all accessed reads and write slot from a `vm.record` session, for a given address.",
+        "declaration": "function stopRecord() external;",
         "visibility": "external",
         "mutability": "",
-        "signature": "stopRecordAndReturnAccesses(address)",
-        "selector": "0x87de3768",
+        "signature": "stopRecord()",
+        "selector": "0x996be76d",
         "selectorBytes": [
-          135,
-          222,
-          55,
-          104
+          153,
+          107,
+          231,
+          109
         ]
       },
       "group": "evm",

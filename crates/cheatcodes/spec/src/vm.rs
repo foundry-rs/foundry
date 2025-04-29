@@ -405,7 +405,11 @@ interface Vm {
 
     /// Stops recording storage reads and writes, and returns all accessed reads and write slot from a `vm.record` session, for a given address.
     #[cheatcode(group = Evm, safety = Safe)]
-    function stopRecordAndReturnAccesses(address target) external returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);
+    function stopRecord() external;
+
+    /// clears all previously recorded calls
+    #[cheatcode(group = Evm, safety = Safe)]
+    function resetRecord() external;
 
     /// Gets all accessed reads and write slot from a `vm.record` session, for a given address.
     #[cheatcode(group = Evm, safety = Safe)]

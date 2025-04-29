@@ -428,6 +428,7 @@ interface Vm {
     function replace(string calldata input, string calldata from, string calldata to) external pure returns (string memory output);
     function resetGasMetering() external;
     function resetNonce(address account) external;
+    function resetRecord() external;
     function resumeGasMetering() external;
     function resumeTracing() external view;
     function revertTo(uint256 snapshotId) external returns (bool success);
@@ -514,7 +515,7 @@ interface Vm {
     function stopExpectSafeMemory() external;
     function stopMappingRecording() external;
     function stopPrank() external;
-    function stopRecordAndReturnAccesses(address target) external returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);
+    function stopRecord() external;
     function stopSnapshotGas() external returns (uint256 gasUsed);
     function stopSnapshotGas(string calldata name) external returns (uint256 gasUsed);
     function stopSnapshotGas(string calldata group, string calldata name) external returns (uint256 gasUsed);
