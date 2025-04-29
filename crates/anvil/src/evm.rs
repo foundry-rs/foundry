@@ -1,4 +1,4 @@
-use std::{fmt::Debug, sync::Arc};
+use std::fmt::Debug;
 
 use alloy_primitives::Address;
 use revm::precompile::Precompiles;
@@ -10,75 +10,75 @@ pub trait PrecompileFactory: Send + Sync + Unpin + Debug {
     fn precompiles(&self) -> Vec<(Address, Precompiles)>;
 }
 
-/// Appends a handler register to `evm` that injects the given `precompiles`.
-///
-/// This will add an additional handler that extends the default precompiles with the given set of
-/// precompiles.
-pub fn inject_precompiles<DB: revm::Database, I>(
-    evm: &mut revm::Evm<'_, I, DB>,
-    precompiles: Precompiles,
-) {
-    evm.handler.append_handler_register_box(Box::new(move |handler| {
-        let precompiles = precompiles.clone();
-        let prev = handler.pre_execution.load_precompiles.clone();
-        handler.pre_execution.load_precompiles = Arc::new(move || {
-            let mut cx = prev();
-            cx.extend(precompiles.iter().cloned().map(|(a, b)| (a, b.into())));
-            cx
-        });
-    }));
-}
+// /// Appends a handler register to `evm` that injects the given `precompiles`.
+// ///
+// /// This will add an additional handler that extends the default precompiles with the given set
+// of /// precompiles.
+// pub fn inject_precompiles<DB: revm::Database, I>(
+//     evm: &mut revm::Evm<'_, I, DB>,
+//     precompiles: Precompiles,
+// ) {
+//     evm.handler.append_handler_register_box(Box::new(move |handler| {
+//         let precompiles = precompiles.clone();
+//         let prev = handler.pre_execution.load_precompiles.clone();
+//         handler.pre_execution.load_precompiles = Arc::new(move || {
+//             let mut cx = prev();
+//             cx.extend(precompiles.iter().cloned().map(|(a, b)| (a, b.into())));
+//             cx
+//         });
+//     }));
+// }
 
-#[cfg(test)]
-mod tests {
-    use crate::{evm::inject_precompiles, PrecompileFactory};
-    use alloy_primitives::{address, Address, Bytes};
-    use revm::{
-        precompile::{PrecompileOutput, PrecompileResult, Precompiles},
-        primitives::hardfork::SpecId,
-    };
+// #[cfg(test)]
+// mod tests {
+//     use crate::{evm::inject_precompiles, PrecompileFactory};
+//     use alloy_primitives::{address, Address, Bytes};
+//     use revm::{
+//         precompile::{PrecompileOutput, PrecompileResult, Precompiles},
+//         primitives::hardfork::SpecId,
+//     };
 
-    #[test]
-    fn build_evm_with_extra_precompiles() {
-        const PRECOMPILE_ADDR: Address = address!("0x0000000000000000000000000000000000000071");
+//     #[test]
+//     fn build_evm_with_extra_precompiles() {
+//         const PRECOMPILE_ADDR: Address = address!("0x0000000000000000000000000000000000000071");
 
-        fn my_precompile(_bytes: &Bytes, _gas_limit: u64) -> PrecompileResult {
-            Ok(PrecompileOutput { bytes: Bytes::new(), gas_used: 0 })
-        }
+//         fn my_precompile(_bytes: &Bytes, _gas_limit: u64) -> PrecompileResult {
+//             Ok(PrecompileOutput { bytes: Bytes::new(), gas_used: 0 })
+//         }
 
-        #[derive(Debug)]
-        struct CustomPrecompileFactory;
+//         #[derive(Debug)]
+//         struct CustomPrecompileFactory;
 
-        impl PrecompileFactory for CustomPrecompileFactory {
-            fn precompiles(&self) -> Vec<(Address, Precompile)> {
-                vec![(PRECOMPILE_ADDR, Precompile::Standard(my_precompile))]
-            }
-        }
+//         impl PrecompileFactory for CustomPrecompileFactory {
+//             fn precompiles(&self) -> Vec<(Address, Precompile)> {
+//                 vec![(PRECOMPILE_ADDR, Precompile::Standard(my_precompile))]
+//             }
+//         }
 
-        let db = revm::db::EmptyDB::default();
-        let env = Box::<revm::primitives::Env>::default();
-        let spec = SpecId::default();
-        let handler_cfg = revm::primitives::HandlerCfg::new(spec);
-        let inspector = revm::inspectors::NoOpInspector;
-        let context = revm::Context::new(revm::EvmContext::new_with_env(db, env), inspector);
-        let handler = revm::Handler::new(handler_cfg);
-        let mut evm = revm::Evm::new(context, handler);
-        assert!(!evm
-            .handler
-            .pre_execution()
-            .load_precompiles()
-            .addresses()
-            .any(|&addr| addr == PRECOMPILE_ADDR));
+//         let db = revm::db::EmptyDB::default();
+//         let env = Box::<revm::primitives::Env>::default();
+//         let spec = SpecId::default();
+//         let handler_cfg = revm::primitives::HandlerCfg::new(spec);
+//         let inspector = revm::inspectors::NoOpInspector;
+//         let context = revm::Context::new(revm::EvmContext::new_with_env(db, env), inspector);
+//         let handler = revm::Handler::new(handler_cfg);
+//         let mut evm = revm::Evm::new(context, handler);
+//         assert!(!evm
+//             .handler
+//             .pre_execution()
+//             .load_precompiles()
+//             .addresses()
+//             .any(|&addr| addr == PRECOMPILE_ADDR));
 
-        inject_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
-        assert!(evm
-            .handler
-            .pre_execution()
-            .load_precompiles()
-            .addresses()
-            .any(|&addr| addr == PRECOMPILE_ADDR));
+//         inject_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
+//         assert!(evm
+//             .handler
+//             .pre_execution()
+//             .load_precompiles()
+//             .addresses()
+//             .any(|&addr| addr == PRECOMPILE_ADDR));
 
-        let result = evm.transact().unwrap();
-        assert!(result.result.is_success());
-    }
-}
+//         let result = evm.transact().unwrap();
+//         assert!(result.result.is_success());
+//     }
+// }

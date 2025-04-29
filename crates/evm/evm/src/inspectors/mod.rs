@@ -14,7 +14,7 @@ mod chisel_state;
 pub use chisel_state::ChiselState;
 
 mod logs;
-pub use logs::LogCollector;
+pub use logs::{hh_to_ds, LogCollector};
 
 mod script;
 pub use script::ScriptExecutionInspector;

@@ -262,7 +262,7 @@ async fn test_fork_load_state_with_greater_state_block() {
 
     let serialized_state = api.serialized_state(false).await.unwrap();
 
-    assert_eq!(serialized_state.best_block_number, Some(block_number.to::<U64>()));
+    assert_eq!(serialized_state.best_block_number, Some(block_number.to::<u64>()));
 
     let (api, _handle) = spawn(
         NodeConfig::test()

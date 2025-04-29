@@ -48,13 +48,15 @@ pub use config::{
 };
 
 mod hardfork;
-pub use hardfork::EthereumHardfork;
+pub use hardfork::{EthereumHardfork, OptimismHardfork};
 
 /// ethereum related implementations
 pub mod eth;
 /// Evm related abstractions
 mod evm;
-pub use evm::{inject_precompiles, PrecompileFactory};
+// pub use evm::{inject_precompiles, PrecompileFactory};
+pub use evm::PrecompileFactory;
+
 /// support for polling filters
 pub mod filter;
 /// commandline output
