@@ -2660,3 +2660,42 @@
 
 // "#]]);
 // });
+
+// // Tests that script warns if no tx to broadcast.
+// // <https://github.com/foundry-rs/foundry/issues/10015>
+// forgetest_async!(warns_if_no_transactions_to_broadcast, |prj, cmd| {
+//     let (_api, handle) = spawn(NodeConfig::test()).await;
+//     foundry_test_utils::util::initialize(prj.root());
+//     prj.add_script(
+//         "NoTxScript.s.sol",
+//         r#"
+//         import {Script} from "forge-std/Script.sol";
+
+//     contract NoTxScript is Script {
+//         function run() public {
+//             vm.startBroadcast();
+//             // No real tx created
+//             vm.stopBroadcast();
+//         }
+//     }
+//     "#,
+//     )
+//     .unwrap();
+
+//     cmd.args([
+//         "script",
+//         "--private-key",
+//         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+//         "--rpc-url",
+//         &handle.http_endpoint(),
+//         "--broadcast",
+//         "NoTxScript",
+//     ])
+//     .assert_success()
+//     .stderr_eq(str![
+//         r#"
+// Warning: No transactions to broadcast.
+
+// "#
+//     ]);
+// });

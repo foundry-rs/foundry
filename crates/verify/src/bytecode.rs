@@ -290,7 +290,7 @@ impl VerifyBytecodeArgs {
             .await?;
 
             let match_type = crate::utils::match_bytecodes(
-                &deployed_bytecode.original_bytes(),
+                deployed_bytecode.original_byte_slice(),
                 &onchain_runtime_code,
                 &constructor_args,
                 true,
@@ -500,7 +500,7 @@ impl VerifyBytecodeArgs {
 
             // Compare the onchain runtime bytecode with the runtime code from the fork.
             let match_type = crate::utils::match_bytecodes(
-                &fork_runtime_code.original_bytes(),
+                fork_runtime_code.original_byte_slice(),
                 &onchain_runtime_code,
                 &constructor_args,
                 true,
