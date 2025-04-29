@@ -1,6 +1,7 @@
 //! Anvil specific [`revm::Inspector`] implementation
 
-use crate::foundry_common::ErrorExt;
+use crate::{eth::macros::node_info, foundry_common::ErrorExt};
+use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, Log, U256};
 use alloy_sol_types::SolInterface;
 use foundry_evm::{
@@ -23,8 +24,6 @@ use revm::{
     },
     Database, Inspector,
 };
-
-use crate::eth::{backend::executor::AnvilEvmContext, macros::node_info};
 
 /// The [`revm::Inspector`] used when transacting in the evm
 #[derive(Clone, Debug, Default)]
@@ -196,7 +195,7 @@ where
     #[inline]
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
         if let Some(tracer) = &mut self.tracer {
-            Inspector::<AnvilEvmContext<'_, D>>::selfdestruct(tracer, contract, target, value);
+            Inspector::<EthEvmContext<D>>::selfdestruct(tracer, contract, target, value);
         }
     }
 }

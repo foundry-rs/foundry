@@ -12,7 +12,7 @@ use crate::{
     },
     hardfork::ChainHardfork,
     mem::{self, in_memory_db::MemDb},
-    EthereumHardfork, FeeManager, PrecompileFactory,
+    EthereumHardfork, FeeManager, OptimismHardfork, PrecompileFactory,
 };
 use alloy_consensus::BlockHeader;
 use alloy_genesis::Genesis;
@@ -527,9 +527,9 @@ impl NodeConfig {
         if let Some(hardfork) = self.hardfork {
             return hardfork;
         }
-        // if self.enable_optimism {
-        //     return OptimismHardfork::default().into();
-        // }
+        if self.enable_optimism {
+            return OptimismHardfork::default().into();
+        }
         EthereumHardfork::default().into()
     }
 
@@ -1047,6 +1047,8 @@ impl NodeConfig {
             },
             TxEnv { chain_id: Some(self.get_chain_id()), ..Default::default() },
         );
+
+        env.is_optimism = self.enable_optimism;
 
         let fees = FeeManager::new(
             spec_id,

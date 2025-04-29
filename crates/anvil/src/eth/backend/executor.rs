@@ -1,6 +1,9 @@
+use crate::eth::backend::evm::EitherEvm;
 use crate::{
     eth::{
-        backend::{db::Db, validate::TransactionValidator},
+        backend::{
+            db::Db, mem::op_haltreason_to_instruction_result, validate::TransactionValidator,
+        },
         error::InvalidTransactionError,
         pool::transactions::PoolTransaction,
     },
@@ -10,7 +13,8 @@ use crate::{
 };
 use alloy_consensus::{constants::EMPTY_WITHDRAWALS, Receipt, ReceiptWithBloom};
 use alloy_eips::{eip2718::Encodable2718, eip7685::EMPTY_REQUESTS_HASH};
-use alloy_evm::eth::EthEvmContext;
+use alloy_evm::{eth::EthEvmContext, EthEvm, Evm};
+use alloy_op_evm::OpEvm;
 use alloy_primitives::{Bloom, BloomInput, Log, B256};
 use anvil_core::eth::{
     block::{Block, BlockInfo, PartialHeader},
@@ -21,15 +25,18 @@ use anvil_core::eth::{
 };
 use foundry_evm::{backend::DatabaseError, traces::CallTraceNode, Env};
 use foundry_evm_core::evm::FoundryPrecompiles;
+use op_revm::{
+    transaction::deposit::DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, OpContext, OpTransaction,
+    OpTransactionError,
+};
 use revm::{
-    context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm, JournalTr},
+    context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm as RevmEvm, JournalTr},
     context_interface::result::{EVMError, ExecutionResult, Output},
     database::WrapDatabaseRef,
     handler::instructions::EthInstructions,
-    interpreter::{interpreter::EthInterpreter, InstructionResult},
+    interpreter::InstructionResult,
     primitives::hardfork::SpecId,
-    Database, DatabaseRef, ExecuteCommitEvm, ExecuteEvm, InspectCommitEvm, InspectEvm, Inspector,
-    Journal, MainBuilder,
+    Database, DatabaseRef, Inspector, Journal,
 };
 use std::sync::Arc;
 
@@ -242,15 +249,14 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
     }
 
     fn env_for(&self, tx: &PendingTransaction) -> Env {
-        let mut tx_env = tx.to_revm_tx_env();
+        let op_tx_env = tx.to_revm_tx_env();
 
-        // TODO: support optimism
-        // if self.cfg_env.handler_cfg.is_optimism {
-        //     tx_env.optimism.enveloped_tx =
-        //         Some(alloy_rlp::encode(&tx.transaction.transaction).into());
-        // }
+        let mut env = Env::from(self.cfg_env.clone(), self.block_env.clone(), op_tx_env.base);
+        if env.tx.tx_type == DEPOSIT_TRANSACTION_TYPE {
+            env = env.with_deposit(op_tx_env.deposit);
+        }
 
-        Env::from(self.cfg_env.clone(), self.block_env.clone(), tx_env)
+        env
     }
 }
 
@@ -319,11 +325,21 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             inspector = inspector.with_trace_printer();
         }
 
-        let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
-        // Set the tx
-        evm.set_tx(env.tx);
+        let mut evm = evm_with_inspector(
+            &mut *self.db,
+            &env,
+            &mut inspector,
+            transaction.tx_type() == DEPOSIT_TRANSACTION_TYPE,
+        );
+
+        let tx_commit = if transaction.tx_type() == DEPOSIT_TRANSACTION_TYPE {
+            // Unwrap is safe. This should always be set if the transaction is a deposit
+            evm.transact_deposit_commit(env.tx, env.deposit.unwrap())
+        } else {
+            evm.transact_commit(env.tx)
+        };
         trace!(target: "backend", "[{:?}] executing", transaction.hash());
-        let exec_result = match evm.inspect_replay_commit() {
+        let exec_result = match tx_commit {
             Ok(exec_result) => exec_result,
             Err(err) => {
                 warn!(target: "backend", "[{:?}] failed to execute: {:?}", transaction.hash(), err);
@@ -332,7 +348,14 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
                         return Some(TransactionExecutionOutcome::DatabaseError(transaction, err))
                     }
                     EVMError::Transaction(err) => {
-                        return Some(TransactionExecutionOutcome::Invalid(transaction, err.into()))
+                        let err = match err {
+                            OpTransactionError::Base(err) => err.into(),
+                            OpTransactionError::HaltedDepositPostRegolith |
+                            OpTransactionError::DepositSystemTxPostRegolith => {
+                                InvalidTransactionError::DepositTxErrorPostRegolith
+                            }
+                        };
+                        return Some(TransactionExecutionOutcome::Invalid(transaction, err))
                     }
                     e => panic!("failed to execute transaction: {e}"),
                 }
@@ -351,7 +374,9 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             ExecutionResult::Revert { gas_used, output } => {
                 (InstructionResult::Revert, gas_used, Some(Output::Call(output)), None)
             }
-            ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None, None),
+            ExecutionResult::Halt { reason, gas_used } => {
+                (op_haltreason_to_instruction_result(reason), gas_used, None, None)
+            }
         };
 
         if exit_reason == InstructionResult::OutOfGas {
@@ -395,71 +420,81 @@ fn build_logs_bloom(logs: Vec<Log>, bloom: &mut Bloom) {
     }
 }
 
-pub type AnvilEvmContext<'db, DB> = EthEvmContext<DB>;
-
-pub type AnvilEvm<'db, DB, I, P = FoundryPrecompiles> =
-    Evm<AnvilEvmContext<'db, DB>, I, EthInstructions<EthInterpreter, AnvilEvmContext<'db, DB>>, P>;
-
 /// Creates a database with given database and inspector, optionally enabling odyssey features.
-pub fn new_evm_with_inspector<'db, CTX, DB>(
+pub fn evm_with_inspector<DB, I>(
     db: DB,
     env: &Env,
-    inspector: &'db mut dyn Inspector<CTX>,
-) -> AnvilEvm<'db, DB, &'db mut dyn Inspector<CTX>>
+    inspector: I,
+    is_optimism: bool,
+) -> EitherEvm<DB, I, FoundryPrecompiles>
 where
     DB: Database<Error = DatabaseError>,
+    I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
 {
-    let evm_context = AnvilEvmContext {
-        journaled_state: {
-            let mut journal = Journal::new(db);
-            journal.set_spec_id(env.evm_env.cfg_env.spec);
-            journal
-        },
-        block: env.evm_env.block_env.clone(),
-        cfg: env.evm_env.cfg_env.clone(),
-        tx: env.tx.clone(),
-        chain: (),
-        error: Ok(()),
-    };
+    if is_optimism {
+        let op_context = OpContext {
+            journaled_state: {
+                let mut journal = Journal::new(db);
+                // Converting SpecId into OpSpecId
+                journal.set_spec_id(env.evm_env.cfg_env.spec.into());
+                journal
+            },
+            block: env.evm_env.block_env.clone(),
+            cfg: env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::BEDROCK),
+            tx: OpTransaction::new(env.tx.clone()),
+            chain: L1BlockInfo::default(),
+            error: Ok(()),
+        };
 
-    let evm = Evm::new_with_inspector(
-        evm_context,
-        inspector,
-        EthInstructions::default(),
-        FoundryPrecompiles::new(),
-    );
+        let evm = op_revm::OpEvm(RevmEvm::new_with_inspector(
+            op_context,
+            inspector,
+            EthInstructions::default(),
+            FoundryPrecompiles::default(),
+        ));
 
-    evm
-}
+        let op = OpEvm::new(evm, true);
 
-/// Creates a new [`AnvilEvmContext`] with the given database and environment.
-pub fn new_evm_context<DB>(db: DB, env: &Env) -> AnvilEvmContext<'_, DB>
-where
-    DB: Database<Error = DatabaseError>,
-{
-    AnvilEvmContext {
-        journaled_state: {
-            let mut journal = Journal::new(db);
-            journal.set_spec_id(env.evm_env.cfg_env.spec);
-            journal
-        },
-        block: env.evm_env.block_env.clone(),
-        cfg: env.evm_env.cfg_env.clone(),
-        tx: env.tx.clone(),
-        chain: (),
-        error: Ok(()),
+        EitherEvm::Op(op)
+    } else {
+        let evm_context = EthEvmContext {
+            journaled_state: {
+                let mut journal = Journal::new(db);
+                journal.set_spec_id(env.evm_env.cfg_env.spec);
+                journal
+            },
+            block: env.evm_env.block_env.clone(),
+            cfg: env.evm_env.cfg_env.clone(),
+            tx: env.tx.clone(),
+            chain: (),
+            error: Ok(()),
+        };
+
+        let evm = RevmEvm::new_with_inspector(
+            evm_context,
+            inspector,
+            EthInstructions::default(),
+            FoundryPrecompiles::new(),
+        );
+
+        let eth = EthEvm::new(evm, true);
+
+        EitherEvm::Eth(eth)
     }
 }
 
 /// Creates a new EVM with the given inspector and wraps the database in a `WrapDatabaseRef`.
-pub fn new_evm_with_inspector_ref<'db, CTX, DB>(
+pub fn evm_with_inspector_ref<'db, DB, I>(
     db: &'db DB,
     env: &Env,
-    inspector: &'db mut dyn Inspector<CTX>,
-) -> AnvilEvm<'db, WrapDatabaseRef<&'db DB>, &'db mut dyn Inspector<CTX>>
+    inspector: &'db mut I,
+    is_optimism: bool,
+) -> EitherEvm<WrapDatabaseRef<&'db DB>, &'db mut I, FoundryPrecompiles>
 where
     DB: DatabaseRef<Error = DatabaseError> + 'db + ?Sized,
+    I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>
+        + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>,
     WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
 {
-    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector)
+    evm_with_inspector(WrapDatabaseRef(db), env, inspector, is_optimism)
 }
