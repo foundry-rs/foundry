@@ -7,7 +7,6 @@ use crate::{
     utils::{configure_tx_env, configure_tx_req_env, new_evm_with_inspector},
     InspectorExt,
 };
-use alloy_consensus::Transaction as TransactionTrait;
 use alloy_genesis::GenesisAccount;
 use alloy_network::{AnyRpcBlock, AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{keccak256, uint, Address, TxKind, B256, U256};
@@ -462,7 +461,7 @@ impl Backend {
     ///
     /// If `fork` is `Some` this will use a `fork` database, otherwise with an in-memory
     /// database.
-    pub fn spawn(fork: Option<CreateFork>) -> Self {
+    pub fn spawn(fork: Option<CreateFork>) -> eyre::Result<Self> {
         Self::new(MultiFork::spawn(), fork)
     }
 
@@ -472,7 +471,7 @@ impl Backend {
     /// database.
     ///
     /// Prefer using [`spawn`](Self::spawn) instead.
-    pub fn new(forks: MultiFork, fork: Option<CreateFork>) -> Self {
+    pub fn new(forks: MultiFork, fork: Option<CreateFork>) -> eyre::Result<Self> {
         trace!(target: "backend", forking_mode=?fork.is_some(), "creating executor backend");
         // Note: this will take of registering the `fork`
         let inner = BackendInner {
@@ -489,8 +488,7 @@ impl Backend {
         };
 
         if let Some(fork) = fork {
-            let (fork_id, fork, _) =
-                backend.forks.create_fork(fork).expect("Unable to create fork");
+            let (fork_id, fork, _) = backend.forks.create_fork(fork)?;
             let fork_db = ForkDB::new(fork);
             let fork_ids = backend.inner.insert_new_fork(
                 fork_id.clone(),
@@ -503,17 +501,21 @@ impl Backend {
 
         trace!(target: "backend", forking_mode=? backend.active_fork_ids.is_some(), "created executor backend");
 
-        backend
+        Ok(backend)
     }
 
     /// Creates a new instance of `Backend` with fork added to the fork database and sets the fork
     /// as active
-    pub(crate) fn new_with_fork(id: &ForkId, fork: Fork, journaled_state: JournaledState) -> Self {
-        let mut backend = Self::spawn(None);
+    pub(crate) fn new_with_fork(
+        id: &ForkId,
+        fork: Fork,
+        journaled_state: JournaledState,
+    ) -> eyre::Result<Self> {
+        let mut backend = Self::spawn(None)?;
         let fork_ids = backend.inner.insert_new_fork(id.clone(), fork.db, journaled_state);
         backend.inner.launched_with_fork = Some((id.clone(), fork_ids.0, fork_ids.1));
         backend.active_fork_ids = Some(fork_ids);
-        backend
+        Ok(backend)
     }
 
     /// Creates a new instance with a `BackendDatabase::InMemory` cache layer for the `CacheDB`
@@ -771,7 +773,7 @@ impl Backend {
         self.initialize(env);
         let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector);
 
-        let res = evm.transact().wrap_err("backend: failed while inspecting")?;
+        let res = evm.transact().wrap_err("EVM error")?;
 
         env.env = evm.context.evm.inner.env;
 
@@ -880,10 +882,10 @@ impl Backend {
         let fork = self.inner.get_fork_by_id_mut(id)?;
         let full_block = fork.db.db.get_full_block(env.block.number.to::<u64>())?;
 
-        for tx in full_block.inner.transactions.into_transactions() {
+        for tx in full_block.inner.transactions.txns() {
             // System transactions such as on L2s don't contain any pricing info so we skip them
             // otherwise this would cause reverts
-            if is_known_system_sender(tx.from) ||
+            if is_known_system_sender(tx.from()) ||
                 tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
             {
                 trace!(tx=?tx.tx_hash(), "skipping system transaction");
@@ -892,7 +894,7 @@ impl Backend {
 
             if tx.tx_hash() == tx_hash {
                 // found the target transaction
-                return Ok(Some(tx.inner))
+                return Ok(Some(tx.inner.clone()))
             }
             trace!(tx=?tx.tx_hash(), "committing transaction");
 
@@ -1100,6 +1102,14 @@ impl DatabaseExt for Backend {
             // update the shared state and track
             let mut fork = self.inner.take_fork(idx);
 
+            // Make sure all persistent accounts on the newly selected fork starts from the init
+            // state (from setup).
+            for addr in &self.inner.persistent_accounts {
+                if let Some(account) = self.fork_init_journaled_state.state.get(addr) {
+                    fork.journaled_state.state.insert(*addr, account.clone());
+                }
+            }
+
             // since all forks handle their state separately, the depth can drift
             // this is a handover where the target fork starts at the same depth where it was
             // selected. This ensures that there are no gaps in depth which would
@@ -1183,7 +1193,7 @@ impl DatabaseExt for Backend {
                 // Special case for accounts that are not created: we don't merge their state but
                 // load it in order to reflect their state at the new block (they should explicitly
                 // be marked as persistent if it is desired to keep state between fork rolls).
-                for (addr, acc) in journaled_state.state.iter() {
+                for (addr, acc) in &journaled_state.state {
                     if acc.is_created() {
                         if acc.is_touched() {
                             merge_journaled_state_data(
@@ -1282,7 +1292,7 @@ impl DatabaseExt for Backend {
         self.commit(journaled_state.state.clone());
 
         let res = {
-            configure_tx_req_env(&mut env, tx)?;
+            configure_tx_req_env(&mut env, tx, None)?;
             let env = self.env_with_handler_cfg(env);
 
             let mut db = self.clone();
@@ -1376,7 +1386,7 @@ impl DatabaseExt for Backend {
         journaled_state: &mut JournaledState,
     ) -> Result<(), BackendError> {
         // Loop through all of the allocs defined in the map and commit them to the journal.
-        for (addr, acc) in allocs.iter() {
+        for (addr, acc) in allocs {
             self.clone_account(acc, addr, journaled_state)?;
         }
 
@@ -1922,7 +1932,8 @@ fn update_env_block(env: &mut Env, block: &AnyRpcBlock) {
     env.block.gas_limit = U256::from(block.header.gas_limit);
     env.block.number = U256::from(block.header.number);
     if let Some(excess_blob_gas) = block.header.excess_blob_gas {
-        env.block.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(excess_blob_gas));
+        env.block.blob_excess_gas_and_price =
+            Some(BlobExcessGasAndPrice::new(excess_blob_gas, false));
     }
 }
 
@@ -1937,12 +1948,6 @@ fn commit_transaction(
     persistent_accounts: &HashSet<Address>,
     inspector: &mut dyn InspectorExt,
 ) -> eyre::Result<()> {
-    // TODO: Remove after https://github.com/foundry-rs/foundry/pull/9131
-    // if the tx has the blob_versioned_hashes field, we assume it's a Cancun block
-    if tx.blob_versioned_hashes().is_some() {
-        env.handler_cfg.spec_id = SpecId::CANCUN;
-    }
-
     configure_tx_env(&mut env.env, tx);
 
     let now = Instant::now();
@@ -1950,7 +1955,7 @@ fn commit_transaction(
         let fork = fork.clone();
         let journaled_state = journaled_state.clone();
         let depth = journaled_state.depth;
-        let mut db = Backend::new_with_fork(fork_id, fork, journaled_state);
+        let mut db = Backend::new_with_fork(fork_id, fork, journaled_state)?;
 
         let mut evm = crate::utils::new_evm_with_inspector(&mut db as _, env, inspector);
         // Adjust inner EVM depth to ensure that inspectors receive accurate data.
@@ -1973,7 +1978,7 @@ pub fn update_state<DB: Database>(
     for (addr, acc) in state.iter_mut() {
         if !persistent_accounts.is_some_and(|accounts| accounts.contains(addr)) {
             acc.info = db.basic(*addr)?.unwrap_or_default();
-            for (key, val) in acc.storage.iter_mut() {
+            for (key, val) in &mut acc.storage {
                 val.present_value = db.storage(*addr, *key)?;
             }
         }
@@ -2000,7 +2005,6 @@ fn apply_state_changeset(
 }
 
 #[cfg(test)]
-#[allow(clippy::needless_return)]
 mod tests {
     use crate::{backend::Backend, fork::CreateFork, opts::EvmOpts};
     use alloy_primitives::{Address, U256};
@@ -2033,7 +2037,7 @@ mod tests {
             evm_opts,
         };
 
-        let backend = Backend::spawn(Some(fork));
+        let backend = Backend::spawn(Some(fork)).unwrap();
 
         // some rng contract from etherscan
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();

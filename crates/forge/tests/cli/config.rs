@@ -8,8 +8,10 @@ use foundry_compilers::{
 };
 use foundry_config::{
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
+    filter::GlobMatcher,
     fs_permissions::{FsAccessPermission, PathPermission},
-    Config, FsPermissions, FuzzConfig, InvariantConfig, SolcReq,
+    CompilationRestrictions, Config, FsPermissions, FuzzConfig, InvariantConfig, SettingsOverrides,
+    SolcReq,
 };
 use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
@@ -17,6 +19,8 @@ use foundry_test_utils::{
     util::{pretty_err, OutputExt, TestCommand, OTHER_SOLC_VERSION},
 };
 use path_slash::PathBufExt;
+use semver::VersionReq;
+use serde_json::Value;
 use similar_asserts::assert_eq;
 use std::{
     fs,
@@ -38,8 +42,11 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         out: "out-test".into(),
         libs: vec!["lib-test".into()],
         cache: true,
+        dynamic_test_linking: false,
         cache_path: "test-cache".into(),
         snapshots: "snapshots".into(),
+        gas_snapshot_check: false,
+        gas_snapshot_emit: true,
         broadcast: "broadcast".into(),
         force: true,
         evm_version: EvmVersion::Byzantium,
@@ -50,8 +57,8 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         auto_detect_solc: false,
         auto_detect_remappings: true,
         offline: true,
-        optimizer: false,
-        optimizer_runs: 1000,
+        optimizer: Some(false),
+        optimizer_runs: Some(1000),
         optimizer_details: Some(OptimizerDetails {
             yul: Some(false),
             yul_details: Some(YulDetails { stack_allocation: Some(true), ..Default::default() }),
@@ -87,6 +94,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             ..Default::default()
         },
         ffi: true,
+        allow_internal_expect_revert: false,
         always_use_create_2_factory: false,
         prompt_timeout: 0,
         sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),
@@ -156,7 +164,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         legacy_assertions: false,
         extra_args: vec![],
         eof_version: None,
-        alphanet: false,
+        odyssey: false,
         transaction_timeout: 120,
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
@@ -171,7 +179,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
 // tests config gets printed to std out
 forgetest!(can_show_config, |prj, cmd| {
     let expected =
-        Config::load_with_root(prj.root()).to_string_pretty().unwrap().trim().to_string();
+        Config::load_with_root(prj.root()).unwrap().to_string_pretty().unwrap().trim().to_string();
     let output = cmd.arg("config").assert_success().get_output().stdout_lossy().trim().to_string();
     assert_eq!(expected, output);
 });
@@ -185,7 +193,7 @@ forgetest_init!(can_override_config, |prj, cmd| {
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(foundry_toml.exists());
 
-    let profile = Config::load_with_root(prj.root());
+    let profile = Config::load_with_root(prj.root()).unwrap();
     // ensure that the auto-generated internal remapping for forge-std's ds-test exists
     assert_eq!(profile.remappings.len(), 1);
     assert_eq!("forge-std/=lib/forge-std/src/", profile.remappings[0].to_string());
@@ -205,7 +213,7 @@ forgetest_init!(can_override_config, |prj, cmd| {
     // remappings work
     let remappings_txt =
         prj.create_file("remappings.txt", "ds-test/=lib/forge-std/lib/ds-test/from-file/");
-    let config = forge_utils::load_config_with_root(Some(prj.root()));
+    let config = forge_utils::load_config_with_root(Some(prj.root())).unwrap();
     assert_eq!(
         format!(
             "ds-test/={}/",
@@ -251,7 +259,7 @@ forgetest_init!(can_parse_remappings_correctly, |prj, cmd| {
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(foundry_toml.exists());
 
-    let profile = Config::load_with_root(prj.root());
+    let profile = Config::load_with_root(prj.root()).unwrap();
     // ensure that the auto-generated internal remapping for forge-std's ds-test exists
     assert_eq!(profile.remappings.len(), 1);
     let r = &profile.remappings[0];
@@ -265,23 +273,21 @@ forgetest_init!(can_parse_remappings_correctly, |prj, cmd| {
     assert_eq!(expected, output);
 
     let install = |cmd: &mut TestCommand, dep: &str| {
-        cmd.forge_fuse().args(["install", dep, "--no-commit"]).assert_success().stdout_eq(str![[
-            r#"
+        cmd.forge_fuse().args(["install", dep]).assert_success().stdout_eq(str![[r#"
 Installing solmate in [..] (url: Some("https://github.com/transmissions11/solmate"), tag: None)
     Installed solmate[..]
 
-"#
-        ]]);
+"#]]);
     };
 
     install(&mut cmd, "transmissions11/solmate");
-    let profile = Config::load_with_root(prj.root());
+    let profile = Config::load_with_root(prj.root()).unwrap();
     // remappings work
     let remappings_txt = prj.create_file(
         "remappings.txt",
         "solmate/=lib/solmate/src/\nsolmate-contracts/=lib/solmate/src/",
     );
-    let config = forge_utils::load_config_with_root(Some(prj.root()));
+    let config = forge_utils::load_config_with_root(Some(prj.root())).unwrap();
     // trailing slashes are removed on windows `to_slash_lossy`
     let path = prj.root().join("lib/solmate/src/").to_slash_lossy().into_owned();
     #[cfg(windows)]
@@ -316,7 +322,7 @@ forgetest_init!(can_detect_config_vals, |prj, _cmd| {
     assert!(!config.auto_detect_solc);
     assert_eq!(config.eth_rpc_url, Some(url.to_string()));
 
-    let mut config = Config::load_with_root(prj.root());
+    let mut config = Config::load_with_root(prj.root()).unwrap();
     config.eth_rpc_url = Some("http://127.0.0.1:8545".to_string());
     config.auto_detect_solc = false;
     // write to `foundry.toml`
@@ -362,8 +368,9 @@ contract Greeter {}
     )
     .unwrap();
 
-    let config = Config { solc: Some(OTHER_SOLC_VERSION.into()), ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.solc = Some(OTHER_SOLC_VERSION.into());
+    });
 
     cmd.arg("build").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -426,6 +433,7 @@ Compiler run successful!
 
 // test to ensure yul optimizer can be set as intended
 forgetest!(can_set_yul_optimizer, |prj, cmd| {
+    prj.update_config(|config| config.optimizer = Some(true));
     prj.add_source(
         "foo.sol",
         r"
@@ -448,15 +456,10 @@ Error (6553): The msize instruction cannot be used when the Yul optimizer is act
 6 |        assembly {
   |        ^ (Relevant source part starts here and spans across multiple lines).
 
-
 "#]]);
 
     // disable yul optimizer explicitly
-    let config = Config {
-        optimizer_details: Some(OptimizerDetails { yul: Some(false), ..Default::default() }),
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| config.optimizer_details.get_or_insert_default().yul = Some(false));
     cmd.assert_success();
 });
 
@@ -476,21 +479,49 @@ forgetest_init!(can_parse_dapp_libraries, |_prj, cmd| {
 // test that optimizer runs works
 forgetest!(can_set_optimizer_runs, |prj, cmd| {
     // explicitly set optimizer runs
-    let config = Config { optimizer_runs: 1337, ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| config.optimizer_runs = Some(1337));
 
     let config = cmd.config();
-    assert_eq!(config.optimizer_runs, 1337);
+    assert_eq!(config.optimizer_runs, Some(1337));
 
     let config = prj.config_from_output(["--optimizer-runs", "300"]);
-    assert_eq!(config.optimizer_runs, 300);
+    assert_eq!(config.optimizer_runs, Some(300));
+});
+
+// test that use_literal_content works
+forgetest!(can_set_use_literal_content, |prj, cmd| {
+    // explicitly set use_literal_content
+    prj.update_config(|config| config.use_literal_content = false);
+
+    let config = cmd.config();
+    assert_eq!(config.use_literal_content, false);
+
+    let config = prj.config_from_output(["--use-literal-content"]);
+    assert_eq!(config.use_literal_content, true);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/9665>
+forgetest!(enable_optimizer_when_runs_set, |prj, cmd| {
+    // explicitly set optimizer runs
+    prj.update_config(|config| config.optimizer_runs = Some(1337));
+
+    let config = cmd.config();
+    assert!(config.optimizer.unwrap());
+});
+
+// test `optimizer_runs` set to 200 by default if optimizer enabled
+forgetest!(optimizer_runs_default, |prj, cmd| {
+    // explicitly set optimizer
+    prj.update_config(|config| config.optimizer = Some(true));
+
+    let config = cmd.config();
+    assert_eq!(config.optimizer_runs, Some(200));
 });
 
 // test that gas_price can be set
 forgetest!(can_set_gas_price, |prj, cmd| {
     // explicitly set gas_price
-    let config = Config { gas_price: Some(1337), ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| config.gas_price = Some(1337));
 
     let config = cmd.config();
     assert_eq!(config.gas_price, Some(1337));
@@ -620,21 +651,69 @@ forgetest_init!(can_prioritise_closer_lib_remappings, |prj, cmd| {
     );
 });
 
+// Test that remappings within root of the project have priority over remappings of sub-projects.
+// E.g. `@utils/libraries` mapping from library shouldn't be added if project already has `@utils`
+// remapping.
+// See <https://github.com/foundry-rs/foundry/issues/9146>
+// Test that
+// - project defined `@openzeppelin/contracts` remapping is added
+// - library defined `@openzeppelin/contracts-upgradeable` remapping is added
+// - library defined `@openzeppelin/contracts/upgradeable` remapping is not added as it conflicts
+// with project defined `@openzeppelin/contracts` remapping
+// See <https://github.com/foundry-rs/foundry/issues/9271>
+forgetest_init!(can_prioritise_project_remappings, |prj, cmd| {
+    let mut config = cmd.config();
+    // Add `@utils/` remapping in project config.
+    config.remappings = vec![
+        Remapping::from_str("@utils/=src/").unwrap().into(),
+        Remapping::from_str("@openzeppelin/contracts=lib/openzeppelin-contracts/").unwrap().into(),
+    ];
+    let proj_toml_file = prj.paths().root.join("foundry.toml");
+    pretty_err(&proj_toml_file, fs::write(&proj_toml_file, config.to_string_pretty().unwrap()));
+
+    // Create a new lib in the `lib` folder with conflicting `@utils/libraries` remapping.
+    // This should be filtered out from final remappings as root project already has `@utils/`.
+    let nested = prj.paths().libraries[0].join("dep1");
+    pretty_err(&nested, fs::create_dir_all(&nested));
+    let mut lib_config = Config::load_with_root(&nested).unwrap();
+    lib_config.remappings = vec![
+        Remapping::from_str("@utils/libraries/=src/").unwrap().into(),
+        Remapping::from_str("@openzeppelin/contracts-upgradeable/=lib/openzeppelin-upgradeable/")
+            .unwrap()
+            .into(),
+        Remapping::from_str(
+            "@openzeppelin/contracts/upgradeable/=lib/openzeppelin-contracts/upgradeable/",
+        )
+        .unwrap()
+        .into(),
+    ];
+    let lib_toml_file = nested.join("foundry.toml");
+    pretty_err(&lib_toml_file, fs::write(&lib_toml_file, lib_config.to_string_pretty().unwrap()));
+
+    cmd.args(["remappings", "--pretty"]).assert_success().stdout_eq(str![[r#"
+Global:
+- @utils/=src/
+- @openzeppelin/contracts/=lib/openzeppelin-contracts/
+- @openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
+- dep1/=lib/dep1/src/
+- forge-std/=lib/forge-std/src/
+
+
+"#]]);
+});
+
 // test to check that foundry.toml libs section updates on install
 forgetest!(can_update_libs_section, |prj, cmd| {
     cmd.git_init();
 
     // explicitly set gas_price
-    let init = Config { libs: vec!["node_modules".into()], ..Default::default() };
-    prj.write_config(init);
+    prj.update_config(|config| config.libs = vec!["node_modules".into()]);
 
-    cmd.args(["install", "foundry-rs/forge-std", "--no-commit"]).assert_success().stdout_eq(str![
-        [r#"
+    cmd.args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(str![[r#"
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
 
-"#]
-    ]);
+"#]]);
 
     let config = cmd.forge_fuse().config();
     // `lib` was added automatically
@@ -642,10 +721,7 @@ Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std
     assert_eq!(config.libs, expected);
 
     // additional install don't edit `libs`
-    cmd.forge_fuse()
-        .args(["install", "dapphub/ds-test", "--no-commit"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+    cmd.forge_fuse().args(["install", "dapphub/ds-test"]).assert_success().stdout_eq(str![[r#"
 Installing ds-test in [..] (url: Some("https://github.com/dapphub/ds-test"), tag: None)
     Installed ds-test
 
@@ -660,13 +736,11 @@ Installing ds-test in [..] (url: Some("https://github.com/dapphub/ds-test"), tag
 forgetest!(config_emit_warnings, |prj, cmd| {
     cmd.git_init();
 
-    cmd.args(["install", "foundry-rs/forge-std", "--no-commit"]).assert_success().stdout_eq(str![
-        [r#"
+    cmd.args(["install", "foundry-rs/forge-std"]).assert_success().stdout_eq(str![[r#"
 Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
     Installed forge-std[..]
 
-"#]
-    ]);
+"#]]);
 
     let faulty_toml = r"[default]
     src = 'src'
@@ -686,12 +760,10 @@ Please use [profile.default] instead or run `forge config --fix`.
 
 forgetest_init!(can_skip_remappings_auto_detection, |prj, cmd| {
     // explicitly set remapping and libraries
-    let config = Config {
-        remappings: vec![Remapping::from_str("remapping/=lib/remapping/").unwrap().into()],
-        auto_detect_remappings: false,
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("remapping/=lib/remapping/").unwrap().into()];
+        config.auto_detect_remappings = false;
+    });
 
     let config = cmd.config();
 
@@ -711,14 +783,13 @@ forgetest_init!(can_parse_default_fs_permissions, |_prj, cmd| {
 
 forgetest_init!(can_parse_custom_fs_permissions, |prj, cmd| {
     // explicitly set fs permissions
-    let custom_permissions = FsPermissions::new(vec![
-        PathPermission::read("./read"),
-        PathPermission::write("./write"),
-        PathPermission::read_write("./write/contracts"),
-    ]);
-
-    let config = Config { fs_permissions: custom_permissions, ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.fs_permissions = FsPermissions::new(vec![
+            PathPermission::read("./read"),
+            PathPermission::write("./write"),
+            PathPermission::read_write("./write/contracts"),
+        ]);
+    });
 
     let config = cmd.config();
 
@@ -758,10 +829,10 @@ forgetest_init!(can_resolve_symlink_fs_permissions, |prj, cmd| {
     .unwrap();
 
     // write config, give read access to links/ symlink to packages/files/
-    let permissions =
-        FsPermissions::new(vec![PathPermission::read(Path::new("./links/config.json"))]);
-    let config = Config { fs_permissions: permissions, ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.fs_permissions =
+            FsPermissions::new(vec![PathPermission::read(Path::new("./links/config.json"))]);
+    });
 
     let config = cmd.config();
     let mut fs_permissions = config.fs_permissions;
@@ -847,7 +918,7 @@ contract MyScript is BaseScript {
 
     let nested = prj.paths().libraries[0].join("another-dep");
     pretty_err(&nested, fs::create_dir_all(&nested));
-    let mut lib_config = Config::load_with_root(&nested);
+    let mut lib_config = Config::load_with_root(&nested).unwrap();
     lib_config.remappings = vec![
         Remapping::from_str("test/=test/").unwrap().into(),
         Remapping::from_str("script/=script/").unwrap().into(),
@@ -855,4 +926,885 @@ contract MyScript is BaseScript {
     let lib_toml_file = nested.join("foundry.toml");
     pretty_err(&lib_toml_file, fs::write(&lib_toml_file, lib_config.to_string_pretty().unwrap()));
     cmd.forge_fuse().args(["build"]).assert_success();
+});
+
+// Tests that project remappings use config paths.
+// For `src=src/contracts` config, remapping should be `src/contracts/ = src/contracts/`.
+// For `src=src` config, remapping should be `src/ = src/`.
+// <https://github.com/foundry-rs/foundry/issues/9454>
+forgetest_init!(test_project_remappings, |prj, cmd| {
+    prj.update_config(|config| {
+        config.src = "src/contracts".into();
+        config.remappings = vec![Remapping::from_str("contracts/=src/contracts/").unwrap().into()];
+    });
+
+    // Add Counter.sol in `src/contracts` project dir.
+    let src_dir = &prj.root().join("src/contracts");
+    pretty_err(src_dir, fs::create_dir_all(src_dir));
+    pretty_err(
+        src_dir.join("Counter.sol"),
+        fs::write(src_dir.join("Counter.sol"), "contract Counter{}"),
+    );
+    prj.add_test(
+        "CounterTest.sol",
+        r#"
+import "contracts/Counter.sol";
+
+contract CounterTest {
+}
+   "#,
+    )
+    .unwrap();
+    cmd.forge_fuse().args(["build"]).assert_success();
+});
+
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(test_default_config, |prj, cmd| {
+    prj.write_config(Config::default());
+    cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
+[profile.default]
+src = "src"
+test = "test"
+script = "script"
+out = "out"
+libs = ["lib"]
+remappings = ["forge-std/=lib/forge-std/src/"]
+auto_detect_remappings = true
+libraries = []
+cache = true
+dynamic_test_linking = false
+cache_path = "cache"
+snapshots = "snapshots"
+gas_snapshot_check = false
+gas_snapshot_emit = true
+broadcast = "broadcast"
+allow_paths = []
+include_paths = []
+skip = []
+force = false
+evm_version = "cancun"
+gas_reports = ["*"]
+gas_reports_ignore = []
+gas_reports_include_tests = false
+auto_detect_solc = true
+offline = false
+optimizer = false
+optimizer_runs = 200
+verbosity = 0
+ignored_error_codes = [
+    "license",
+    "code-size",
+    "init-code-size",
+    "transient-storage",
+]
+ignored_warnings_from = []
+deny_warnings = false
+test_failures_file = "cache/test-failures"
+show_progress = false
+ffi = false
+allow_internal_expect_revert = false
+always_use_create_2_factory = false
+prompt_timeout = 120
+sender = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
+tx_origin = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
+initial_balance = "0xffffffffffffffffffffffff"
+block_number = 1
+gas_limit = 1073741824
+block_base_fee_per_gas = 0
+block_coinbase = "0x0000000000000000000000000000000000000000"
+block_timestamp = 1
+block_difficulty = 0
+block_prevrandao = "0x0000000000000000000000000000000000000000000000000000000000000000"
+memory_limit = 134217728
+extra_output = []
+extra_output_files = []
+names = false
+sizes = false
+via_ir = false
+ast = false
+no_storage_caching = false
+no_rpc_rate_limit = false
+use_literal_content = false
+bytecode_hash = "ipfs"
+cbor_metadata = true
+sparse_mode = false
+build_info = false
+isolate = false
+disable_block_gas_limit = false
+unchecked_cheatcode_artifacts = false
+create2_library_salt = "0x0000000000000000000000000000000000000000000000000000000000000000"
+create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
+assertions_revert = true
+legacy_assertions = false
+odyssey = false
+transaction_timeout = 120
+eof = false
+additional_compiler_profiles = []
+compilation_restrictions = []
+
+[profile.default.rpc_storage_caching]
+chains = "all"
+endpoints = "all"
+
+[[profile.default.fs_permissions]]
+access = "read"
+path = "out"
+
+[fmt]
+line_length = 120
+tab_width = 4
+bracket_spacing = false
+int_types = "long"
+multiline_func_header = "attributes_first"
+quote_style = "double"
+number_underscore = "preserve"
+hex_underscore = "remove"
+single_line_statement_blocks = "preserve"
+override_spacing = false
+wrap_comments = false
+ignore = []
+contract_new_lines = false
+sort_imports = false
+
+[doc]
+out = "docs"
+title = ""
+book = "book.toml"
+homepage = "README.md"
+ignore = []
+
+[fuzz]
+runs = 256
+max_test_rejects = 65536
+dictionary_weight = 40
+include_storage = true
+include_push_bytes = true
+max_fuzz_dictionary_addresses = 15728640
+max_fuzz_dictionary_values = 6553600
+gas_report_samples = 256
+failure_persist_dir = "cache/fuzz"
+failure_persist_file = "failures"
+show_logs = false
+
+[invariant]
+runs = 256
+depth = 500
+fail_on_revert = false
+call_override = false
+dictionary_weight = 80
+include_storage = true
+include_push_bytes = true
+max_fuzz_dictionary_addresses = 15728640
+max_fuzz_dictionary_values = 6553600
+shrink_run_limit = 5000
+max_assume_rejects = 65536
+gas_report_samples = 256
+failure_persist_dir = "cache/invariant"
+show_metrics = false
+show_solidity = false
+
+[labels]
+
+[vyper]
+
+[bind_json]
+out = "utils/JsonBindings.sol"
+include = []
+exclude = []
+
+
+"#]]);
+
+    cmd.forge_fuse().args(["config", "--json"]).assert_success().stdout_eq(str![[r#"
+{
+  "src": "src",
+  "test": "test",
+  "script": "script",
+  "out": "out",
+  "libs": [
+    "lib"
+  ],
+  "remappings": [
+    "forge-std/=lib/forge-std/src/"
+  ],
+  "auto_detect_remappings": true,
+  "libraries": [],
+  "cache": true,
+  "dynamic_test_linking": false,
+  "cache_path": "cache",
+  "snapshots": "snapshots",
+  "gas_snapshot_check": false,
+  "gas_snapshot_emit": true,
+  "broadcast": "broadcast",
+  "allow_paths": [],
+  "include_paths": [],
+  "skip": [],
+  "force": false,
+  "evm_version": "cancun",
+  "gas_reports": [
+    "*"
+  ],
+  "gas_reports_ignore": [],
+  "gas_reports_include_tests": false,
+  "solc": null,
+  "auto_detect_solc": true,
+  "offline": false,
+  "optimizer": false,
+  "optimizer_runs": 200,
+  "optimizer_details": null,
+  "model_checker": null,
+  "verbosity": 0,
+  "eth_rpc_url": null,
+  "eth_rpc_jwt": null,
+  "eth_rpc_timeout": null,
+  "eth_rpc_headers": null,
+  "etherscan_api_key": null,
+  "ignored_error_codes": [
+    "license",
+    "code-size",
+    "init-code-size",
+    "transient-storage"
+  ],
+  "ignored_warnings_from": [],
+  "deny_warnings": false,
+  "match_test": null,
+  "no_match_test": null,
+  "match_contract": null,
+  "no_match_contract": null,
+  "match_path": null,
+  "no_match_path": null,
+  "no_match_coverage": null,
+  "test_failures_file": "cache/test-failures",
+  "threads": null,
+  "show_progress": false,
+  "fuzz": {
+    "runs": 256,
+    "max_test_rejects": 65536,
+    "seed": null,
+    "dictionary_weight": 40,
+    "include_storage": true,
+    "include_push_bytes": true,
+    "max_fuzz_dictionary_addresses": 15728640,
+    "max_fuzz_dictionary_values": 6553600,
+    "gas_report_samples": 256,
+    "failure_persist_dir": "cache/fuzz",
+    "failure_persist_file": "failures",
+    "show_logs": false,
+    "timeout": null
+  },
+  "invariant": {
+    "runs": 256,
+    "depth": 500,
+    "fail_on_revert": false,
+    "call_override": false,
+    "dictionary_weight": 80,
+    "include_storage": true,
+    "include_push_bytes": true,
+    "max_fuzz_dictionary_addresses": 15728640,
+    "max_fuzz_dictionary_values": 6553600,
+    "shrink_run_limit": 5000,
+    "max_assume_rejects": 65536,
+    "gas_report_samples": 256,
+    "failure_persist_dir": "cache/invariant",
+    "show_metrics": false,
+    "timeout": null,
+    "show_solidity": false
+  },
+  "ffi": false,
+  "allow_internal_expect_revert": false,
+  "always_use_create_2_factory": false,
+  "prompt_timeout": 120,
+  "sender": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
+  "tx_origin": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
+  "initial_balance": "0xffffffffffffffffffffffff",
+  "block_number": 1,
+  "fork_block_number": null,
+  "chain_id": null,
+  "gas_limit": 1073741824,
+  "code_size_limit": null,
+  "gas_price": null,
+  "block_base_fee_per_gas": 0,
+  "block_coinbase": "0x0000000000000000000000000000000000000000",
+  "block_timestamp": 1,
+  "block_difficulty": 0,
+  "block_prevrandao": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "block_gas_limit": null,
+  "memory_limit": 134217728,
+  "extra_output": [],
+  "extra_output_files": [],
+  "names": false,
+  "sizes": false,
+  "via_ir": false,
+  "ast": false,
+  "rpc_storage_caching": {
+    "chains": "all",
+    "endpoints": "all"
+  },
+  "no_storage_caching": false,
+  "no_rpc_rate_limit": false,
+  "use_literal_content": false,
+  "bytecode_hash": "ipfs",
+  "cbor_metadata": true,
+  "revert_strings": null,
+  "sparse_mode": false,
+  "build_info": false,
+  "build_info_path": null,
+  "fmt": {
+    "line_length": 120,
+    "tab_width": 4,
+    "bracket_spacing": false,
+    "int_types": "long",
+    "multiline_func_header": "attributes_first",
+    "quote_style": "double",
+    "number_underscore": "preserve",
+    "hex_underscore": "remove",
+    "single_line_statement_blocks": "preserve",
+    "override_spacing": false,
+    "wrap_comments": false,
+    "ignore": [],
+    "contract_new_lines": false,
+    "sort_imports": false
+  },
+  "doc": {
+    "out": "docs",
+    "title": "",
+    "book": "book.toml",
+    "homepage": "README.md",
+    "ignore": []
+  },
+  "bind_json": {
+    "out": "utils/JsonBindings.sol",
+    "include": [],
+    "exclude": []
+  },
+  "fs_permissions": [
+    {
+      "access": "read",
+      "path": "out"
+    }
+  ],
+  "isolate": false,
+  "disable_block_gas_limit": false,
+  "labels": {},
+  "unchecked_cheatcode_artifacts": false,
+  "create2_library_salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "create2_deployer": "0x4e59b44847b379578588920ca78fbf26c0b4956c",
+  "vyper": {},
+  "dependencies": null,
+  "soldeer": null,
+  "assertions_revert": true,
+  "legacy_assertions": false,
+  "odyssey": false,
+  "transaction_timeout": 120,
+  "eof": false,
+  "additional_compiler_profiles": [],
+  "compilation_restrictions": []
+}
+
+"#]]);
+});
+
+forgetest_init!(test_optimizer_config, |prj, cmd| {
+    // Default settings: optimizer disabled, optimizer runs 200.
+    cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
+...
+optimizer = false
+optimizer_runs = 200
+...
+
+"#]]);
+
+    // Optimizer set to true: optimizer runs set to default value of 200.
+    prj.update_config(|config| config.optimizer = Some(true));
+    cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
+...
+optimizer = true
+optimizer_runs = 200
+...
+
+"#]]);
+
+    // Optimizer runs set to 0: optimizer should be disabled, runs set to 0.
+    prj.update_config(|config| {
+        config.optimizer = None;
+        config.optimizer_runs = Some(0);
+    });
+    cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
+...
+optimizer = false
+optimizer_runs = 0
+...
+
+"#]]);
+
+    // Optimizer runs set to 500: optimizer should be enabled, runs set to 500.
+    prj.update_config(|config| {
+        config.optimizer = None;
+        config.optimizer_runs = Some(500);
+    });
+    cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
+...
+optimizer = true
+optimizer_runs = 500
+...
+
+"#]]);
+
+    // Optimizer disabled and runs set to 500: optimizer should be disabled, runs set to 500.
+    prj.update_config(|config| {
+        config.optimizer = Some(false);
+        config.optimizer_runs = Some(500);
+    });
+    cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
+...
+optimizer = false
+optimizer_runs = 500
+...
+
+"#]]);
+
+    // Optimizer enabled and runs set to 0: optimizer should be enabled, runs set to 0.
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+        config.optimizer_runs = Some(0);
+    });
+    cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
+...
+optimizer = true
+optimizer_runs = 0
+...
+
+"#]]);
+});
+
+forgetest_init!(test_gas_snapshot_check_config, |prj, cmd| {
+    // Default settings: gas_snapshot_check disabled.
+    cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
+...
+gas_snapshot_check = false
+...
+
+"#]]);
+
+    prj.insert_ds_test();
+
+    prj.add_source(
+        "Flare.sol",
+        r#"
+contract Flare {
+    bytes32[] public data;
+
+    function run(uint256 n_) public {
+        for (uint256 i = 0; i < n_; i++) {
+            data.push(keccak256(abi.encodePacked(i)));
+        }
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    let test_contract = |n: u32| {
+        format!(
+            r#"
+import "./test.sol";
+import "./Flare.sol";
+
+interface Vm {{
+    function startSnapshotGas(string memory name) external;
+    function stopSnapshotGas() external returns (uint256);
+}}
+
+contract GasSnapshotCheckTest is DSTest {{
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    Flare public flare;
+
+    function setUp() public {{
+        flare = new Flare();
+    }}
+
+    function testSnapshotGasSectionExternal() public {{
+        vm.startSnapshotGas("testAssertGasExternal");
+        flare.run({n});
+        vm.stopSnapshotGas();
+    }}
+}}
+        "#
+        )
+    };
+
+    // Assert that gas_snapshot_check is disabled by default.
+    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(1)).unwrap();
+    cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for src/GasSnapshotCheckTest.sol:GasSnapshotCheckTest
+[PASS] testSnapshotGasSectionExternal() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // Enable gas_snapshot_check.
+    prj.update_config(|config| config.gas_snapshot_check = true);
+    cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
+...
+gas_snapshot_check = true
+...
+
+"#]]);
+
+    // Replace the test contract with a new one that will fail the gas snapshot check.
+    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(2)).unwrap();
+    cmd.forge_fuse().args(["test"]).assert_failure().stderr_eq(str![[r#"
+...
+[GasSnapshotCheckTest] Failed to match snapshots:
+- [testAssertGasExternal] [..] → [..]
+
+Error: Snapshots differ from previous run
+...
+"#]]);
+
+    // Disable gas_snapshot_check, assert that running the test will pass.
+    prj.update_config(|config| config.gas_snapshot_check = false);
+    cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for src/GasSnapshotCheckTest.sol:GasSnapshotCheckTest
+[PASS] testSnapshotGasSectionExternal() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // Re-enable gas_snapshot_check
+    // Assert that the new value has been stored from the previous run and re-run the test.
+    prj.update_config(|config| config.gas_snapshot_check = true);
+    cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for src/GasSnapshotCheckTest.sol:GasSnapshotCheckTest
+[PASS] testSnapshotGasSectionExternal() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+
+    // Replace the test contract with a new one that will fail the gas_snapshot_check.
+    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(3)).unwrap();
+    cmd.forge_fuse().args(["test"]).assert_failure().stderr_eq(str![[r#"
+...
+[GasSnapshotCheckTest] Failed to match snapshots:
+- [testAssertGasExternal] [..] → [..]
+
+Error: Snapshots differ from previous run
+...
+"#]]);
+
+    // Test that `--gas-snapshot-check=false` flag can be used to disable the gas_snapshot_check.
+    cmd.forge_fuse().args(["test", "--gas-snapshot-check=false"]).assert_success().stdout_eq(str![
+        [r#"
+...
+Ran 1 test for src/GasSnapshotCheckTest.sol:GasSnapshotCheckTest
+[PASS] testSnapshotGasSectionExternal() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]
+    ]);
+
+    // Disable gas_snapshot_check in the config file.
+    // Enable using `FORGE_SNAPSHOT_CHECK` environment variable.
+    // Assert that this will override the config file value.
+    prj.update_config(|config| config.gas_snapshot_check = false);
+    prj.add_source("GasSnapshotCheckTest.sol", &test_contract(4)).unwrap();
+    cmd.forge_fuse();
+    cmd.env("FORGE_SNAPSHOT_CHECK", "true");
+    cmd.args(["test"]).assert_failure().stderr_eq(str![[r#"
+...
+[GasSnapshotCheckTest] Failed to match snapshots:
+- [testAssertGasExternal] [..] → [..]
+
+Error: Snapshots differ from previous run
+...
+"#]]);
+
+    // Assert that `--gas-snapshot-check=true` flag can be used to enable the gas_snapshot_check
+    // even when `FORGE_SNAPSHOT_CHECK` is set to false in the environment variable.
+    cmd.forge_fuse();
+    cmd.env("FORGE_SNAPSHOT_CHECK", "false");
+    cmd.args(["test", "--gas-snapshot-check=true"]).assert_failure().stderr_eq(str![[r#"
+...
+[GasSnapshotCheckTest] Failed to match snapshots:
+- [testAssertGasExternal] [..] → [..]
+
+Error: Snapshots differ from previous run
+...
+"#]]);
+
+    // Finally assert that `--gas-snapshot-check=false` flag can be used to disable the
+    // gas_snapshot_check even when `FORGE_SNAPSHOT_CHECK` is set to true
+    cmd.forge_fuse();
+    cmd.env("FORGE_SNAPSHOT_CHECK", "true");
+    cmd.args(["test", "--gas-snapshot-check=false"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for src/GasSnapshotCheckTest.sol:GasSnapshotCheckTest
+[PASS] testSnapshotGasSectionExternal() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});
+
+forgetest_init!(test_gas_snapshot_emit_config, |prj, cmd| {
+    // Default settings: gas_snapshot_emit enabled.
+    cmd.forge_fuse().args(["config"]).assert_success().stdout_eq(str![[r#"
+...
+gas_snapshot_emit = true
+...
+"#]]);
+
+    prj.insert_ds_test();
+
+    prj.add_source(
+        "GasSnapshotEmitTest.sol",
+        r#"
+import "./test.sol";
+
+interface Vm {
+    function startSnapshotGas(string memory name) external;
+    function stopSnapshotGas() external returns (uint256);
+}
+
+contract GasSnapshotEmitTest is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function testSnapshotGasSection() public {
+        vm.startSnapshotGas("testSection");
+        int n = 1;
+        vm.stopSnapshotGas();
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    // Assert that gas_snapshot_emit is enabled by default.
+    cmd.forge_fuse().args(["test"]).assert_success();
+    // Assert that snapshots were emitted to disk.
+    assert!(prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
+
+    // Remove the snapshot file.
+    fs::remove_file(prj.root().join("snapshots/GasSnapshotEmitTest.json")).unwrap();
+
+    // Test that `--gas-snapshot-emit=false` flag can be used to disable writing snapshots.
+    cmd.forge_fuse().args(["test", "--gas-snapshot-emit=false"]).assert_success();
+    // Assert that snapshots were not emitted to disk.
+    assert!(!prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
+
+    // Test that environment variable `FORGE_SNAPSHOT_EMIT` can be used to disable writing
+    // snapshots.
+    cmd.forge_fuse();
+    cmd.env("FORGE_SNAPSHOT_EMIT", "false");
+    cmd.args(["test"]).assert_success();
+    // Assert that snapshots were not emitted to disk.
+    assert!(!prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
+
+    // Test that `--gas-snapshot-emit=true` flag can be used to enable writing snapshots, even when
+    // `FORGE_SNAPSHOT_EMIT` is set to false.
+    cmd.forge_fuse();
+    cmd.env("FORGE_SNAPSHOT_EMIT", "false");
+    cmd.args(["test", "--gas-snapshot-emit=true"]).assert_success();
+    // Assert that snapshots were emitted to disk.
+    assert!(prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
+
+    // Remove the snapshot file.
+    fs::remove_file(prj.root().join("snapshots/GasSnapshotEmitTest.json")).unwrap();
+
+    // Disable gas_snapshot_emit in the config file.
+    prj.update_config(|config| config.gas_snapshot_emit = false);
+    cmd.forge_fuse().args(["config"]).assert_success();
+
+    // Test that snapshots are not emitted to disk, when disabled by config.
+    cmd.forge_fuse().args(["test"]).assert_success();
+    // Assert that snapshots were not emitted to disk.
+    assert!(!prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
+
+    // Test that `--gas-snapshot-emit=true` flag can be used to enable writing snapshots, when
+    // disabled by config.
+    cmd.forge_fuse();
+    cmd.args(["test", "--gas-snapshot-emit=true"]).assert_success();
+    // Assert that snapshots were emitted to disk.
+    assert!(prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
+
+    // Remove the snapshot file.
+    fs::remove_file(prj.root().join("snapshots/GasSnapshotEmitTest.json")).unwrap();
+
+    // Test that environment variable `FORGE_SNAPSHOT_EMIT` can be used to enable writing snapshots.
+    cmd.forge_fuse();
+    cmd.env("FORGE_SNAPSHOT_EMIT", "true");
+    cmd.args(["test"]).assert_success();
+    // Assert that snapshots were emitted to disk.
+    assert!(prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
+
+    // Remove the snapshot file.
+    fs::remove_file(prj.root().join("snapshots/GasSnapshotEmitTest.json")).unwrap();
+
+    // Test that `--gas-snapshot-emit=false` flag can be used to disable writing snapshots,
+    // even when `FORGE_SNAPSHOT_EMIT` is set to true.
+    cmd.forge_fuse().args(["test", "--gas-snapshot-emit=false"]).assert_success();
+
+    // Assert that snapshots were not emitted to disk.
+    assert!(!prj.root().join("snapshots/GasSnapshotEmitTest.json").exists());
+});
+
+// Tests compilation restrictions enables optimizer if optimizer runs set to a value higher than 0.
+forgetest_init!(test_additional_compiler_profiles, |prj, cmd| {
+    prj.add_source(
+        "v1/Counter.sol",
+        r#"
+contract Counter {
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "v2/Counter.sol",
+        r#"
+contract Counter {
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "v3/Counter.sol",
+        r#"
+contract Counter {
+}
+    "#,
+    )
+    .unwrap();
+
+    // Additional profiles are defined with optimizer runs but without explicitly enabling
+    // optimizer
+    //
+    // additional_compiler_profiles = [
+    //   { name = "v1", optimizer_runs = 44444444, via_ir = true, evm_version = "cancun" },
+    //   { name = "v2", optimizer_runs = 111, via_ir = true },
+    //   { name = "v3", optimizer_runs = 800, evm_version = "istanbul", via_ir = false },
+    // ]
+    //
+    // compilation_restrictions = [
+    //   # v1
+    //   { paths = "src/v1/[!i]*.sol", version = "0.8.16", optimizer_runs = 44444444 },
+    //   # v2
+    //   { paths = "src/v2/{Counter}.sol", optimizer_runs = 111 },
+    //   # v3
+    //   { paths = "src/v3/*", optimizer_runs = 800 },
+    // ]
+    let v1_profile = SettingsOverrides {
+        name: "v1".to_string(),
+        via_ir: Some(true),
+        evm_version: Some(EvmVersion::Cancun),
+        optimizer: None,
+        optimizer_runs: Some(44444444),
+        bytecode_hash: None,
+    };
+    let v1_restrictions = CompilationRestrictions {
+        paths: GlobMatcher::from_str("src/v1/[!i]*.sol").unwrap(),
+        version: Some(VersionReq::from_str("0.8.16").unwrap()),
+        via_ir: None,
+        bytecode_hash: None,
+        min_optimizer_runs: None,
+        optimizer_runs: Some(44444444),
+        max_optimizer_runs: None,
+        min_evm_version: None,
+        evm_version: None,
+        max_evm_version: None,
+    };
+    let v2_profile = SettingsOverrides {
+        name: "v2".to_string(),
+        via_ir: Some(true),
+        evm_version: None,
+        optimizer: None,
+        optimizer_runs: Some(111),
+        bytecode_hash: None,
+    };
+    let v2_restrictions = CompilationRestrictions {
+        paths: GlobMatcher::from_str("src/v2/{Counter}.sol").unwrap(),
+        version: None,
+        via_ir: None,
+        bytecode_hash: None,
+        min_optimizer_runs: None,
+        optimizer_runs: Some(111),
+        max_optimizer_runs: None,
+        min_evm_version: None,
+        evm_version: None,
+        max_evm_version: None,
+    };
+    let v3_profile = SettingsOverrides {
+        name: "v3".to_string(),
+        via_ir: Some(false),
+        evm_version: Some(EvmVersion::Istanbul),
+        optimizer: None,
+        optimizer_runs: Some(800),
+        bytecode_hash: None,
+    };
+    let v3_restrictions = CompilationRestrictions {
+        paths: GlobMatcher::from_str("src/v3/*").unwrap(),
+        version: None,
+        via_ir: None,
+        bytecode_hash: None,
+        min_optimizer_runs: None,
+        optimizer_runs: Some(800),
+        max_optimizer_runs: None,
+        min_evm_version: None,
+        evm_version: None,
+        max_evm_version: None,
+    };
+    let additional_compiler_profiles = vec![v1_profile, v2_profile, v3_profile];
+    let compilation_restrictions = vec![v1_restrictions, v2_restrictions, v3_restrictions];
+    prj.update_config(|config| {
+        config.additional_compiler_profiles = additional_compiler_profiles;
+        config.compilation_restrictions = compilation_restrictions;
+    });
+    // Should find and build all profiles satisfying settings restrictions.
+    cmd.forge_fuse().args(["build"]).assert_success();
+    prj.assert_artifacts_dir_exists();
+
+    let artifact_settings =
+        |artifact| -> (Option<Value>, Option<Value>, Option<Value>, Option<Value>) {
+            let artifact: serde_json::Value = serde_json::from_reader(
+                fs::File::open(prj.artifacts().join(artifact)).expect("no artifact"),
+            )
+            .expect("invalid artifact");
+            let settings =
+                artifact.get("metadata").unwrap().get("settings").unwrap().as_object().unwrap();
+            let optimizer = settings.get("optimizer").unwrap();
+            (
+                settings.get("viaIR").cloned(),
+                settings.get("evmVersion").cloned(),
+                optimizer.get("enabled").cloned(),
+                optimizer.get("runs").cloned(),
+            )
+        };
+
+    let (via_ir, evm_version, enabled, runs) = artifact_settings("Counter.sol/Counter.json");
+    assert_eq!(None, via_ir);
+    assert_eq!("\"cancun\"", evm_version.unwrap().to_string());
+    assert_eq!("false", enabled.unwrap().to_string());
+    assert_eq!("200", runs.unwrap().to_string());
+
+    let (via_ir, evm_version, enabled, runs) = artifact_settings("v1/Counter.sol/Counter.json");
+    assert_eq!("true", via_ir.unwrap().to_string());
+    assert_eq!("\"cancun\"", evm_version.unwrap().to_string());
+    assert_eq!("true", enabled.unwrap().to_string());
+    assert_eq!("44444444", runs.unwrap().to_string());
+
+    let (via_ir, evm_version, enabled, runs) = artifact_settings("v2/Counter.sol/Counter.json");
+    assert_eq!("true", via_ir.unwrap().to_string());
+    assert_eq!("\"cancun\"", evm_version.unwrap().to_string());
+    assert_eq!("true", enabled.unwrap().to_string());
+    assert_eq!("111", runs.unwrap().to_string());
+
+    let (via_ir, evm_version, enabled, runs) = artifact_settings("v3/Counter.sol/Counter.json");
+    assert_eq!(None, via_ir);
+    assert_eq!("\"istanbul\"", evm_version.unwrap().to_string());
+    assert_eq!("true", enabled.unwrap().to_string());
+    assert_eq!("800", runs.unwrap().to_string());
 });

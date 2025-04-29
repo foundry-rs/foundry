@@ -14,6 +14,7 @@ use alloy_provider::{
 };
 use alloy_rpc_types::{
     request::TransactionRequest,
+    simulate::{SimulatePayload, SimulatedBlock},
     trace::{
         geth::{GethDebugTracingOptions, GethTrace},
         parity::LocalizedTransactionTrace as Trace,
@@ -82,10 +83,8 @@ impl ClientFork {
         }
 
         let provider = self.provider();
-        let block = provider
-            .get_block(block_number, false.into())
-            .await?
-            .ok_or(BlockchainError::BlockNotFound)?;
+        let block =
+            provider.get_block(block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
         let block_hash = block.header.hash;
         let timestamp = block.header.timestamp;
         let base_fee = block.header.base_fee_per_gas;
@@ -194,19 +193,35 @@ impl ClientFork {
         block: Option<BlockNumber>,
     ) -> Result<Bytes, TransportError> {
         let block = block.unwrap_or(BlockNumber::Latest);
-        let res = self.provider().call(request).block(block.into()).await?;
+        let res = self.provider().call(request.clone()).block(block.into()).await?;
 
         Ok(res)
     }
 
-    /// Sends `eth_call`
+    /// Sends `eth_simulateV1`
+    pub async fn simulate_v1(
+        &self,
+        request: &SimulatePayload,
+        block: Option<BlockNumber>,
+    ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>, TransportError> {
+        let mut simulate_call = self.provider().simulate(request);
+        if let Some(n) = block {
+            simulate_call = simulate_call.number(n.as_number().unwrap());
+        }
+
+        let res = simulate_call.await?;
+
+        Ok(res)
+    }
+
+    /// Sends `eth_estimateGas`
     pub async fn estimate_gas(
         &self,
         request: &WithOtherFields<TransactionRequest>,
         block: Option<BlockNumber>,
     ) -> Result<u128, TransportError> {
         let block = block.unwrap_or_default();
-        let res = self.provider().estimate_gas(request).block(block.into()).await?;
+        let res = self.provider().estimate_gas(request.clone()).block(block.into()).await?;
 
         Ok(res as u128)
     }
@@ -514,7 +529,7 @@ impl ClientFork {
         &self,
         block_id: impl Into<BlockId>,
     ) -> Result<Option<AnyRpcBlock>, TransportError> {
-        if let Some(block) = self.provider().get_block(block_id.into(), true.into()).await? {
+        if let Some(block) = self.provider().get_block(block_id.into()).full().await? {
             let hash = block.header.hash;
             let block_number = block.header.number;
             let mut storage = self.storage_write();

@@ -121,7 +121,7 @@ impl VerifyBytecodeArgs {
     /// bytecode.
     pub async fn run(mut self) -> Result<()> {
         // Setup
-        let config = self.load_config_emit_warnings();
+        let config = self.load_config()?;
         let provider = utils::get_provider(&config)?;
 
         // If chain is not set, we try to get it from the RPC.
@@ -138,6 +138,7 @@ impl VerifyBytecodeArgs {
         // Etherscan client
         let etherscan = EtherscanVerificationProvider.client(
             self.etherscan.chain.unwrap_or_default(),
+            &self.verifier.verifier,
             self.verifier.verifier_url.as_deref(),
             self.etherscan.key().as_deref(),
             &config,
@@ -243,7 +244,7 @@ impl VerifyBytecodeArgs {
             .await?;
 
             env.block.number = U256::ZERO; // Genesis block
-            let genesis_block = provider.get_block(gen_blk_num.into(), true.into()).await?;
+            let genesis_block = provider.get_block(gen_blk_num.into()).full().await?;
 
             // Setup genesis tx and env.
             let deployer = Address::with_last_byte(0x1);
@@ -261,7 +262,7 @@ impl VerifyBytecodeArgs {
 
             // configure_tx_rq_env(&mut env, &gen_tx);
 
-            configure_tx_req_env(&mut env, &gen_tx_req)
+            configure_tx_req_env(&mut env, &gen_tx_req, None)
                 .wrap_err("Failed to configure tx request env")?;
 
             // Seed deployer account with funds
@@ -290,7 +291,7 @@ impl VerifyBytecodeArgs {
             .await?;
 
             let match_type = crate::utils::match_bytecodes(
-                &deployed_bytecode.original_bytes(),
+                deployed_bytecode.original_byte_slice(),
                 &onchain_runtime_code,
                 &constructor_args,
                 true,
@@ -336,8 +337,8 @@ impl VerifyBytecodeArgs {
             );
         };
 
-        let mut transaction: TransactionRequest = match transaction.inner.inner {
-            AnyTxEnvelope::Ethereum(tx) => tx.into(),
+        let mut transaction: TransactionRequest = match transaction.inner.inner.inner() {
+            AnyTxEnvelope::Ethereum(tx) => tx.clone().into(),
             AnyTxEnvelope::Unknown(_) => unreachable!("Unknown transaction type"),
         };
 
@@ -445,7 +446,7 @@ impl VerifyBytecodeArgs {
             )
             .await?;
             env.block.number = U256::from(simulation_block);
-            let block = provider.get_block(simulation_block.into(), true.into()).await?;
+            let block = provider.get_block(simulation_block.into()).full().await?;
 
             // Workaround for the NonceTooHigh issue as we're not simulating prior txs of the same
             // block.
@@ -478,7 +479,7 @@ impl VerifyBytecodeArgs {
             }
 
             // configure_req__env(&mut env, &transaction.inner);
-            configure_tx_req_env(&mut env, &transaction)
+            configure_tx_req_env(&mut env, &transaction, None)
                 .wrap_err("Failed to configure tx request env")?;
 
             let fork_address = crate::utils::deploy_contract(
@@ -500,7 +501,7 @@ impl VerifyBytecodeArgs {
 
             // Compare the onchain runtime bytecode with the runtime code from the fork.
             let match_type = crate::utils::match_bytecodes(
-                &fork_runtime_code.original_bytes(),
+                fork_runtime_code.original_byte_slice(),
                 &onchain_runtime_code,
                 &constructor_args,
                 true,

@@ -73,11 +73,10 @@ contract Verify is Unique {
     .unwrap();
 }
 
-#[allow(clippy::disallowed_macros)]
+#[expect(clippy::disallowed_macros)]
 fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Result<()> {
-    // give etherscan some time to verify the contract
-    let retry = Retry::new(retries, Some(Duration::from_secs(30)));
-    retry.run(|| -> eyre::Result<()> {
+    // Give Etherscan some time to verify the contract.
+    Retry::new(retries, Duration::from_secs(30)).run(|| -> eyre::Result<()> {
         let output = cmd.execute();
         let out = String::from_utf8_lossy(&output.stdout);
         println!("{out}");
@@ -92,11 +91,33 @@ fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Resul
     })
 }
 
+fn verify_check(
+    guid: String,
+    chain: String,
+    etherscan_api_key: Option<String>,
+    verifier: Option<String>,
+    mut cmd: TestCommand,
+) {
+    let mut args = vec!["verify-check", &guid, "--chain-id", &chain];
+
+    if let Some(etherscan_api_key) = &etherscan_api_key {
+        args.push("--etherscan-api-key");
+        args.push(etherscan_api_key);
+    }
+
+    if let Some(verifier) = &verifier {
+        args.push("--verifier");
+        args.push(verifier);
+    }
+    cmd.forge_fuse().args(args);
+
+    parse_verification_result(&mut cmd, 6).expect("Failed to verify check")
+}
+
 fn await_verification_response(info: EnvExternalities, mut cmd: TestCommand) {
     let guid = {
-        // give etherscan some time to detect the transaction
-        let retry = Retry::new(5, Some(Duration::from_secs(60)));
-        retry
+        // Give Etherscan some time to detect the transaction.
+        Retry::new(5, Duration::from_secs(60))
             .run(|| -> eyre::Result<String> {
                 let output = cmd.execute();
                 let out = String::from_utf8_lossy(&output.stdout);
@@ -112,54 +133,63 @@ fn await_verification_response(info: EnvExternalities, mut cmd: TestCommand) {
     };
 
     // verify-check
-    cmd.forge_fuse()
-        .arg("verify-check")
-        .arg(guid)
-        .arg("--chain-id")
-        .arg(info.chain.to_string())
-        .arg("--etherscan-api-key")
-        .arg(info.etherscan)
-        .arg("--verifier")
-        .arg(info.verifier);
-
-    parse_verification_result(&mut cmd, 6).expect("Failed to verify check")
+    let etherscan = (!info.etherscan.is_empty()).then_some(info.etherscan.clone());
+    let verifier = (!info.verifier.is_empty()).then_some(info.verifier.clone());
+    verify_check(guid, info.chain.to_string(), etherscan, verifier, cmd);
 }
 
-#[allow(clippy::disallowed_macros)]
+fn deploy_contract(
+    info: &EnvExternalities,
+    contract_path: &str,
+    prj: TestProject,
+    cmd: &mut TestCommand,
+) -> String {
+    add_unique(&prj);
+    add_verify_target(&prj);
+    let output = cmd
+        .forge_fuse()
+        .arg("create")
+        .args(info.create_args())
+        .arg(contract_path)
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    utils::parse_deployed_address(output.as_str())
+        .unwrap_or_else(|| panic!("Failed to parse deployer {output}"))
+}
+
+#[expect(clippy::disallowed_macros)]
 fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand) {
     // only execute if keys present
     if let Some(info) = info {
         println!("verifying on {}", info.chain);
-        add_unique(&prj);
-        add_verify_target(&prj);
 
         let contract_path = "src/Verify.sol:Verify";
-        let output = cmd
-            .arg("create")
-            .args(info.create_args())
-            .arg(contract_path)
-            .assert_success()
-            .get_output()
-            .stdout_lossy();
-        let address = utils::parse_deployed_address(output.as_str())
-            .unwrap_or_else(|| panic!("Failed to parse deployer {output}"));
+        let address = deploy_contract(&info, contract_path, prj, &mut cmd);
 
-        cmd.forge_fuse().arg("verify-contract").root_arg().args([
+        let mut args = vec![
             "--chain-id".to_string(),
             info.chain.to_string(),
             address,
             contract_path.to_string(),
-            "--etherscan-api-key".to_string(),
-            info.etherscan.to_string(),
-            "--verifier".to_string(),
-            info.verifier.to_string(),
-        ]);
+        ];
+
+        if !info.etherscan.is_empty() {
+            args.push("--etherscan-api-key".to_string());
+            args.push(info.etherscan.clone());
+        }
+
+        if !info.verifier.is_empty() {
+            args.push("--verifier".to_string());
+            args.push(info.verifier.clone());
+        }
+        cmd.forge_fuse().arg("verify-contract").root_arg().args(args);
 
         await_verification_response(info, cmd)
     }
 }
 
-#[allow(clippy::disallowed_macros)]
+#[expect(clippy::disallowed_macros)]
 fn guess_constructor_args(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand) {
     // only execute if keys present
     if let Some(info) = info {
@@ -200,7 +230,7 @@ fn guess_constructor_args(info: Option<EnvExternalities>, prj: TestProject, mut 
     }
 }
 
-#[allow(clippy::disallowed_macros)]
+#[expect(clippy::disallowed_macros)]
 /// Executes create --verify on the given chain
 fn create_verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand) {
     // only execute if keys present
@@ -233,19 +263,57 @@ forgetest!(can_verify_random_contract_optimism_kovan, |prj, cmd| {
 
 // tests `create && contract-verify && verify-check` on Sepolia testnet if correct env vars are set
 forgetest!(can_verify_random_contract_sepolia, |prj, cmd| {
-    verify_on_chain(EnvExternalities::sepolia(), prj, cmd);
+    // Implicitly tests `--verifier etherscan` on Sepolia testnet
+    verify_on_chain(EnvExternalities::sepolia_etherscan(), prj, cmd);
 });
 
 // tests `create --verify on Sepolia testnet if correct env vars are set
 // SEPOLIA_RPC_URL=https://rpc.sepolia.org
 // TEST_PRIVATE_KEY=0x...
-// ETHERSCAN_API_KEY=
-forgetest!(can_create_verify_random_contract_sepolia, |prj, cmd| {
-    create_verify_on_chain(EnvExternalities::sepolia(), prj, cmd);
+// ETHERSCAN_API_KEY=<API_KEY>
+forgetest!(can_create_verify_random_contract_sepolia_etherscan, |prj, cmd| {
+    // Implicitly tests `--verifier etherscan` on Sepolia testnet
+    create_verify_on_chain(EnvExternalities::sepolia_etherscan(), prj, cmd);
 });
+
+// tests `create --verify --verifier sourcify` on Sepolia testnet
+forgetest!(can_create_verify_random_contract_sepolia_sourcify, |prj, cmd| {
+    verify_on_chain(EnvExternalities::sepolia_sourcify(), prj, cmd);
+});
+
+// tests `create --verify --verifier sourcify` with etherscan api key set
+// <https://github.com/foundry-rs/foundry/issues/10000>
+forgetest!(
+    can_create_verify_random_contract_sepolia_sourcify_with_etherscan_api_key_set,
+    |prj, cmd| {
+        verify_on_chain(EnvExternalities::sepolia_sourcify_with_etherscan_api_key_set(), prj, cmd);
+    }
+);
+
+// tests `create --verify --verifier blockscout` on Sepolia testnet
+forgetest!(can_create_verify_random_contract_sepolia_blockscout, |prj, cmd| {
+    verify_on_chain(EnvExternalities::sepolia_blockscout(), prj, cmd);
+});
+
+// tests `create --verify --verifier blockscout` on Sepolia testnet with etherscan api key set
+forgetest!(
+    can_create_verify_random_contract_sepolia_blockscout_with_etherscan_api_key_set,
+    |prj, cmd| {
+        verify_on_chain(
+            EnvExternalities::sepolia_blockscout_with_etherscan_api_key_set(),
+            prj,
+            cmd,
+        );
+    }
+);
 
 // tests `create && contract-verify --guess-constructor-args && verify-check` on Goerli testnet if
 // correct env vars are set
 forgetest!(can_guess_constructor_args, |prj, cmd| {
     guess_constructor_args(EnvExternalities::goerli(), prj, cmd);
+});
+
+// tests `create && verify-contract && verify-check` on sepolia with default sourcify verifier
+forgetest!(can_verify_random_contract_sepolia_default_sourcify, |prj, cmd| {
+    verify_on_chain(EnvExternalities::sepolia_empty_verifier(), prj, cmd);
 });

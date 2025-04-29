@@ -1,5 +1,4 @@
 use crate::{
-    cmd::StateFile,
     eth::{
         backend::{
             db::{Db, SerializableState},
@@ -26,9 +25,9 @@ use alloy_signer_local::{
     coins_bip39::{English, Mnemonic},
     MnemonicBuilder, PrivateKeySigner,
 };
-use alloy_transport::{Transport, TransportError};
+use alloy_transport::TransportError;
 use anvil_server::ServerConfig;
-use eyre::Result;
+use eyre::{Context, Result};
 use foundry_common::{
     provider::{ProviderBuilder, RetryProvider},
     ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
@@ -44,16 +43,20 @@ use itertools::Itertools;
 use parking_lot::RwLock;
 use rand::thread_rng;
 use revm::primitives::BlobExcessGasAndPrice;
-use serde_json::{json, to_writer, Value};
+use serde_json::{json, Value};
 use std::{
     fmt::Write as FmtWrite,
     fs::File,
+    io,
     net::{IpAddr, Ipv4Addr},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
     time::Duration,
 };
+use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
+
+pub use foundry_common::version::SHORT_VERSION as VERSION_MESSAGE;
 
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
@@ -67,15 +70,6 @@ pub const DEFAULT_MNEMONIC: &str = "test test test test test test test test test
 /// The default IPC endpoint
 pub const DEFAULT_IPC_ENDPOINT: &str =
     if cfg!(unix) { "/tmp/anvil.ipc" } else { r"\\.\pipe\anvil.ipc" };
-/// `anvil 0.1.0 (f01b232bc 2022-04-13T23:28:39.493201+00:00)`
-pub const VERSION_MESSAGE: &str = concat!(
-    env!("CARGO_PKG_VERSION"),
-    " (",
-    env!("VERGEN_GIT_SHA"),
-    " ",
-    env!("VERGEN_BUILD_TIMESTAMP"),
-    ")"
-);
 
 const BANNER: &str = r"
                              _   _
@@ -111,6 +105,8 @@ pub struct NodeConfig {
     pub genesis_balance: U256,
     /// Genesis block timestamp
     pub genesis_timestamp: Option<u64>,
+    /// Genesis block number
+    pub genesis_block_number: Option<u64>,
     /// Signer accounts that can sign messages/transactions from the EVM node
     pub signer_accounts: Vec<PrivateKeySigner>,
     /// Configured block time for the EVM chain. Use `None` to mine a new block for every tx
@@ -144,7 +140,7 @@ pub struct NodeConfig {
     /// How transactions are sorted in the mempool
     pub transaction_order: TransactionOrder,
     /// Filename to write anvil output as json
-    pub config_out: Option<String>,
+    pub config_out: Option<PathBuf>,
     /// The genesis to use to initialize the node
     pub genesis: Option<Genesis>,
     /// Timeout in for requests sent to remote JSON-RPC server in forking mode
@@ -161,6 +157,8 @@ pub struct NodeConfig {
     pub enable_steps_tracing: bool,
     /// Enable printing of `console.log` invocations.
     pub print_logs: bool,
+    /// Enable printing of traces.
+    pub print_traces: bool,
     /// Enable auto impersonation of accounts on startup
     pub enable_auto_impersonate: bool,
     /// Configure the code size limit
@@ -185,8 +183,8 @@ pub struct NodeConfig {
     pub memory_limit: Option<u64>,
     /// Factory used by `anvil` to extend the EVM's precompiles.
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
-    /// Enable Alphanet features.
-    pub alphanet: bool,
+    /// Enable Odyssey features.
+    pub odyssey: bool,
     /// Do not print log messages.
     pub silent: bool,
     /// The path where states are cached.
@@ -195,13 +193,13 @@ pub struct NodeConfig {
 
 impl NodeConfig {
     fn as_string(&self, fork: Option<&ClientFork>) -> String {
-        let mut config_string: String = String::new();
-        let _ = write!(config_string, "\n{}", BANNER.green());
-        let _ = write!(config_string, "\n    {VERSION_MESSAGE}");
-        let _ = write!(config_string, "\n    {}", "https://github.com/foundry-rs/foundry".green());
+        let mut s: String = String::new();
+        let _ = write!(s, "\n{}", BANNER.green());
+        let _ = write!(s, "\n    {VERSION_MESSAGE}");
+        let _ = write!(s, "\n    {}", "https://github.com/foundry-rs/foundry".green());
 
         let _ = write!(
-            config_string,
+            s,
             r#"
 
 Available Accounts
@@ -210,11 +208,11 @@ Available Accounts
         );
         let balance = alloy_primitives::utils::format_ether(self.genesis_balance);
         for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
-            write!(config_string, "\n({idx}) {} ({balance} ETH)", wallet.address()).unwrap();
+            write!(s, "\n({idx}) {} ({balance} ETH)", wallet.address()).unwrap();
         }
 
         let _ = write!(
-            config_string,
+            s,
             r#"
 
 Private Keys
@@ -224,12 +222,12 @@ Private Keys
 
         for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
             let hex = hex::encode(wallet.credential().to_bytes());
-            let _ = write!(config_string, "\n({idx}) 0x{hex}");
+            let _ = write!(s, "\n({idx}) 0x{hex}");
         }
 
         if let Some(ref gen) = self.account_generator {
             let _ = write!(
-                config_string,
+                s,
                 r#"
 
 Wallet
@@ -244,7 +242,7 @@ Derivation path:   {}
 
         if let Some(fork) = fork {
             let _ = write!(
-                config_string,
+                s,
                 r#"
 
 Fork
@@ -261,11 +259,11 @@ Chain ID:       {}
             );
 
             if let Some(tx_hash) = fork.transaction_hash() {
-                let _ = writeln!(config_string, "Transaction hash: {tx_hash}");
+                let _ = writeln!(s, "Transaction hash: {tx_hash}");
             }
         } else {
             let _ = write!(
-                config_string,
+                s,
                 r#"
 
 Chain ID
@@ -279,7 +277,7 @@ Chain ID
 
         if (SpecId::from(self.get_hardfork()) as u8) < (SpecId::LONDON as u8) {
             let _ = write!(
-                config_string,
+                s,
                 r#"
 Gas Price
 ==================
@@ -290,7 +288,7 @@ Gas Price
             );
         } else {
             let _ = write!(
-                config_string,
+                s,
                 r#"
 Base Fee
 ==================
@@ -302,7 +300,7 @@ Base Fee
         }
 
         let _ = write!(
-            config_string,
+            s,
             r#"
 Gas Limit
 ==================
@@ -326,7 +324,7 @@ Gas Limit
         );
 
         let _ = write!(
-            config_string,
+            s,
             r#"
 Genesis Timestamp
 ==================
@@ -336,7 +334,18 @@ Genesis Timestamp
             self.get_genesis_timestamp().green()
         );
 
-        config_string
+        let _ = write!(
+            s,
+            r#"
+Genesis Number
+==================
+
+{}
+"#,
+            self.get_genesis_number().green()
+        );
+
+        s
     }
 
     fn as_json(&self, fork: Option<&ClientFork>) -> Value {
@@ -413,7 +422,8 @@ impl NodeConfig {
 impl Default for NodeConfig {
     fn default() -> Self {
         // generate some random wallets
-        let genesis_accounts = AccountGenerator::new(10).phrase(DEFAULT_MNEMONIC).gen();
+        let genesis_accounts =
+            AccountGenerator::new(10).phrase(DEFAULT_MNEMONIC).gen().expect("Invalid mnemonic.");
         Self {
             chain_id: None,
             gas_limit: None,
@@ -422,6 +432,7 @@ impl Default for NodeConfig {
             hardfork: None,
             signer_accounts: genesis_accounts.clone(),
             genesis_timestamp: None,
+            genesis_block_number: None,
             genesis_accounts,
             // 100ETH default balance
             genesis_balance: Unit::ETHER.wei().saturating_mul(U256::from(100u64)),
@@ -440,6 +451,7 @@ impl Default for NodeConfig {
             enable_tracing: true,
             enable_steps_tracing: false,
             print_logs: true,
+            print_traces: false,
             enable_auto_impersonate: false,
             no_storage_caching: false,
             server_config: Default::default(),
@@ -465,7 +477,7 @@ impl Default for NodeConfig {
             slots_in_an_epoch: 32,
             memory_limit: None,
             precompile_factory: None,
-            alphanet: false,
+            odyssey: false,
             silent: false,
             cache_path: None,
         }
@@ -496,16 +508,16 @@ impl NodeConfig {
             blob_excess_gas_and_price.clone()
         } else if let Some(excess_blob_gas) = self.genesis.as_ref().and_then(|g| g.excess_blob_gas)
         {
-            BlobExcessGasAndPrice::new(excess_blob_gas as u64)
+            BlobExcessGasAndPrice::new(excess_blob_gas, false)
         } else {
             // If no excess blob gas is configured, default to 0
-            BlobExcessGasAndPrice::new(0)
+            BlobExcessGasAndPrice::new(0, false)
         }
     }
 
     /// Returns the hardfork to use
     pub fn get_hardfork(&self) -> ChainHardfork {
-        if self.alphanet {
+        if self.odyssey {
             return ChainHardfork::Ethereum(EthereumHardfork::PragueEOF);
         }
         if let Some(hardfork) = self.hardfork {
@@ -541,8 +553,9 @@ impl NodeConfig {
 
     /// Loads the init state from a file if it exists
     #[must_use]
-    pub fn with_init_state_path(mut self, path: impl AsRef<Path>) -> Self {
-        self.init_state = StateFile::parse_path(path).ok().and_then(|file| file.state);
+    #[cfg(feature = "cmd")]
+    pub fn with_init_state_path(mut self, path: impl AsRef<std::path::Path>) -> Self {
+        self.init_state = crate::cmd::StateFile::parse_path(path).ok().and_then(|file| file.state);
         self
     }
 
@@ -659,6 +672,22 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the genesis number
+    #[must_use]
+    pub fn with_genesis_block_number<U: Into<u64>>(mut self, number: Option<U>) -> Self {
+        if let Some(number) = number {
+            self.genesis_block_number = Some(number.into());
+        }
+        self
+    }
+
+    /// Returns the genesis number
+    pub fn get_genesis_number(&self) -> u64 {
+        self.genesis_block_number
+            .or_else(|| self.genesis.as_ref().and_then(|g| g.number))
+            .unwrap_or(0)
+    }
+
     /// Sets the hardfork
     #[must_use]
     pub fn with_hardfork(mut self, hardfork: Option<ChainHardfork>) -> Self {
@@ -682,11 +711,10 @@ impl NodeConfig {
 
     /// Sets both the genesis accounts and the signer accounts
     /// so that `genesis_accounts == accounts`
-    #[must_use]
-    pub fn with_account_generator(mut self, generator: AccountGenerator) -> Self {
-        let accounts = generator.gen();
+    pub fn with_account_generator(mut self, generator: AccountGenerator) -> eyre::Result<Self> {
+        let accounts = generator.gen()?;
         self.account_generator = Some(generator);
-        self.with_signer_accounts(accounts.clone()).with_genesis_accounts(accounts)
+        Ok(self.with_signer_accounts(accounts.clone()).with_genesis_accounts(accounts))
     }
 
     /// Sets the balance of the genesis accounts in the genesis block
@@ -749,7 +777,7 @@ impl NodeConfig {
 
     /// Sets the file path to write the Anvil node's config info to.
     #[must_use]
-    pub fn set_config_out(mut self, config_out: Option<String>) -> Self {
+    pub fn set_config_out(mut self, config_out: Option<PathBuf>) -> Self {
         self.config_out = config_out;
         self
     }
@@ -798,7 +826,7 @@ impl NodeConfig {
     /// Sets the `fork_chain_id` to use to fork off local cache from
     #[must_use]
     pub fn with_fork_chain_id(mut self, fork_chain_id: Option<U256>) -> Self {
-        self.fork_chain_id = fork_chain_id.map(Into::into);
+        self.fork_chain_id = fork_chain_id;
         self
     }
 
@@ -868,6 +896,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets whether to print traces to stdout.
+    #[must_use]
+    pub fn with_print_traces(mut self, print_traces: bool) -> Self {
+        self.print_traces = print_traces;
+        self
+    }
+
     /// Sets whether to enable autoImpersonate
     #[must_use]
     pub fn with_auto_impersonate(mut self, enable_auto_impersonate: bool) -> Self {
@@ -903,21 +938,18 @@ impl NodeConfig {
     }
 
     /// Prints the config info
-    pub fn print(&self, fork: Option<&ClientFork>) {
-        if self.config_out.is_some() {
-            let config_out = self.config_out.as_deref().unwrap();
-            to_writer(
-                &File::create(config_out).expect("Unable to create anvil config description file"),
-                &self.as_json(fork),
-            )
-            .expect("Failed writing json");
+    pub fn print(&self, fork: Option<&ClientFork>) -> Result<()> {
+        if let Some(path) = &self.config_out {
+            let file = io::BufWriter::new(
+                File::create(path).wrap_err("unable to create anvil config description file")?,
+            );
+            let value = self.as_json(fork);
+            serde_json::to_writer(file, &value).wrap_err("failed writing JSON")?;
         }
-
-        if self.silent {
-            return;
+        if !self.silent {
+            sh_println!("{}", self.as_string(fork))?;
         }
-
-        let _ = sh_println!("{}", self.as_string(fork));
+        Ok(())
     }
 
     /// Returns the path where the cache file should be stored
@@ -953,10 +985,10 @@ impl NodeConfig {
         self
     }
 
-    /// Sets whether to enable Alphanet support
+    /// Sets whether to enable Odyssey support
     #[must_use]
-    pub fn with_alphanet(mut self, alphanet: bool) -> Self {
-        self.alphanet = alphanet;
+    pub fn with_odyssey(mut self, odyssey: bool) -> Self {
+        self.odyssey = odyssey;
         self
     }
 
@@ -983,7 +1015,7 @@ impl NodeConfig {
     /// [Backend](mem::Backend)
     ///
     /// *Note*: only memory based backend for now
-    pub(crate) async fn setup(&mut self) -> mem::Backend {
+    pub(crate) async fn setup(&mut self) -> Result<mem::Backend> {
         // configure the revm environment
 
         let mut cfg =
@@ -1020,16 +1052,20 @@ impl NodeConfig {
             self.get_blob_excess_gas_and_price(),
         );
 
-        let (db, fork): (Arc<tokio::sync::RwLock<Box<dyn Db>>>, Option<ClientFork>) =
+        let (db, fork): (Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>) =
             if let Some(eth_rpc_url) = self.eth_rpc_url.clone() {
-                self.setup_fork_db(eth_rpc_url, &mut env, &fees).await
+                self.setup_fork_db(eth_rpc_url, &mut env, &fees).await?
             } else {
-                (Arc::new(tokio::sync::RwLock::new(Box::<MemDb>::default())), None)
+                (Arc::new(TokioRwLock::new(Box::<MemDb>::default())), None)
             };
 
         // if provided use all settings of `genesis.json`
         if let Some(ref genesis) = self.genesis {
-            env.cfg.chain_id = genesis.config.chain_id;
+            // --chain-id flag gets precedence over the genesis.json chain id
+            // <https://github.com/foundry-rs/foundry/issues/10059>
+            if self.chain_id.is_none() {
+                env.cfg.chain_id = genesis.config.chain_id;
+            }
             env.block.timestamp = U256::from(genesis.timestamp);
             if let Some(base_fee) = genesis.base_fee_per_gas {
                 env.block.basefee = U256::from(base_fee);
@@ -1041,6 +1077,7 @@ impl NodeConfig {
         }
 
         let genesis = GenesisConfig {
+            number: self.get_genesis_number(),
             timestamp: self.get_genesis_timestamp(),
             balance: self.genesis_balance,
             accounts: self.genesis_accounts.iter().map(|acc| acc.address()).collect(),
@@ -1056,15 +1093,16 @@ impl NodeConfig {
             Arc::new(RwLock::new(fork)),
             self.enable_steps_tracing,
             self.print_logs,
-            self.alphanet,
+            self.print_traces,
+            self.odyssey,
             self.prune_history,
             self.max_persisted_states,
             self.transaction_block_keeper,
             self.block_time,
             self.cache_path.clone(),
-            Arc::new(tokio::sync::RwLock::new(self.clone())),
+            Arc::new(TokioRwLock::new(self.clone())),
         )
-        .await;
+        .await?;
 
         // Writes the default create2 deployer to the backend,
         // if the option is not disabled and we are not forking.
@@ -1072,19 +1110,19 @@ impl NodeConfig {
             backend
                 .set_create2_deployer(DEFAULT_CREATE2_DEPLOYER)
                 .await
-                .expect("Failed to create default create2 deployer");
+                .wrap_err("failed to create default create2 deployer")?;
         }
 
         if let Some(state) = self.init_state.clone() {
-            backend.load_state(state).await.expect("Failed to load init state");
+            backend.load_state(state).await.wrap_err("failed to load init state")?;
         }
 
-        backend
+        Ok(backend)
     }
 
     /// Configures everything related to forking based on the passed `eth_rpc_url`:
-    ///  - returning a tuple of a [ForkedDatabase] wrapped in an [Arc] [RwLock](tokio::sync::RwLock)
-    ///    and [ClientFork] wrapped in an [Option] which can be used in a [Backend](mem::Backend) to
+    ///  - returning a tuple of a [ForkedDatabase] wrapped in an [Arc] [RwLock](TokioRwLock) and
+    ///    [ClientFork] wrapped in an [Option] which can be used in a [Backend](mem::Backend) to
     ///    fork from.
     ///  - modifying some parameters of the passed `env`
     ///  - mutating some members of `self`
@@ -1093,15 +1131,11 @@ impl NodeConfig {
         eth_rpc_url: String,
         env: &mut EnvWithHandlerCfg,
         fees: &FeeManager,
-    ) -> (Arc<tokio::sync::RwLock<Box<dyn Db>>>, Option<ClientFork>) {
-        let (db, config) = self.setup_fork_db_config(eth_rpc_url, env, fees).await;
-
-        let db: Arc<tokio::sync::RwLock<Box<dyn Db>>> =
-            Arc::new(tokio::sync::RwLock::new(Box::new(db)));
-
+    ) -> Result<(Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>)> {
+        let (db, config) = self.setup_fork_db_config(eth_rpc_url, env, fees).await?;
+        let db: Arc<TokioRwLock<Box<dyn Db>>> = Arc::new(TokioRwLock::new(Box::new(db)));
         let fork = ClientFork::new(config, Arc::clone(&db));
-
-        (db, Some(fork))
+        Ok((db, Some(fork)))
     }
 
     /// Configures everything related to forking based on the passed `eth_rpc_url`:
@@ -1114,7 +1148,7 @@ impl NodeConfig {
         eth_rpc_url: String,
         env: &mut EnvWithHandlerCfg,
         fees: &FeeManager,
-    ) -> (ForkedDatabase, ClientForkConfig) {
+    ) -> Result<(ForkedDatabase, ClientForkConfig)> {
         // TODO make provider agnostic
         let provider = Arc::new(
             ProviderBuilder::new(&eth_rpc_url)
@@ -1125,23 +1159,22 @@ impl NodeConfig {
                 .initial_backoff(1000)
                 .headers(self.fork_headers.clone())
                 .build()
-                .expect("Failed to establish provider to fork url"),
+                .wrap_err("failed to establish provider to fork url")?,
         );
 
         let (fork_block_number, fork_chain_id, force_transactions) = if let Some(fork_choice) =
             &self.fork_choice
         {
             let (fork_block_number, force_transactions) =
-                derive_block_and_transactions(fork_choice, &provider).await.expect(
-                    "Failed to derive fork block number and force transactions from fork choice",
-                );
+                derive_block_and_transactions(fork_choice, &provider).await.wrap_err(
+                    "failed to derive fork block number and force transactions from fork choice",
+                )?;
             let chain_id = if let Some(chain_id) = self.fork_chain_id {
                 Some(chain_id)
             } else if self.hardfork.is_none() {
-                // auto adjust hardfork if not specified
-                // but only if we're forking mainnet
+                // Auto-adjust hardfork if not specified, but only if we're forking mainnet.
                 let chain_id =
-                    provider.get_chain_id().await.expect("Failed to fetch network chain ID");
+                    provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?;
                 if alloy_chains::NamedChain::Mainnet == chain_id {
                     let hardfork: EthereumHardfork = fork_block_number.into();
                     env.handler_cfg.spec_id = hardfork.into();
@@ -1155,15 +1188,16 @@ impl NodeConfig {
             (fork_block_number, chain_id, force_transactions)
         } else {
             // pick the last block number but also ensure it's not pending anymore
-            let bn =
-                find_latest_fork_block(&provider).await.expect("Failed to get fork block number");
+            let bn = find_latest_fork_block(&provider)
+                .await
+                .wrap_err("failed to get fork block number")?;
             (bn, None, None)
         };
 
         let block = provider
-            .get_block(BlockNumberOrTag::Number(fork_block_number).into(), false.into())
+            .get_block(BlockNumberOrTag::Number(fork_block_number).into())
             .await
-            .expect("Failed to get fork block");
+            .wrap_err("failed to get fork block")?;
 
         let block = if let Some(block) = block {
             block
@@ -1179,12 +1213,14 @@ latest block number: {latest_block}"
                 if fork_block_number <= latest_block {
                     message.push_str(&format!("\n{NON_ARCHIVE_NODE_WARNING}"));
                 }
-                panic!("{}", message);
+                eyre::bail!("{message}");
             }
-            panic!("Failed to get block for block number: {fork_block_number}")
+            eyre::bail!("failed to get block for block number: {fork_block_number}")
         };
 
         let gas_limit = self.fork_gas_limit(&block);
+        self.gas_limit = Some(gas_limit);
+
         env.block = BlockEnv {
             number: U256::from(fork_block_number),
             timestamp: U256::from(block.header.timestamp),
@@ -1218,11 +1254,12 @@ latest block number: {latest_block}"
                 (block.header.excess_blob_gas, block.header.blob_gas_used)
             {
                 env.block.blob_excess_gas_and_price =
-                    Some(BlobExcessGasAndPrice::new(blob_excess_gas));
+                    Some(BlobExcessGasAndPrice::new(blob_excess_gas, false));
                 let next_block_blob_excess_gas = fees
                     .get_next_block_blob_excess_gas(blob_excess_gas as u128, blob_gas_used as u128);
                 fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
                     next_block_blob_excess_gas,
+                    false,
                 ));
             }
         }
@@ -1243,7 +1280,7 @@ latest block number: {latest_block}"
             let chain_id = if let Some(fork_chain_id) = fork_chain_id {
                 fork_chain_id.to()
             } else {
-                provider.get_chain_id().await.unwrap()
+                provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?
             };
 
             // need to update the dev signers and env with the chain id
@@ -1296,7 +1333,7 @@ latest block number: {latest_block}"
         // need to insert the forked block's hash
         db.insert_block_hash(U256::from(config.block_number), config.block_hash);
 
-        (db, config)
+        Ok((db, config))
     }
 
     /// we only use the gas limit value of the block if it is non-zero and the block gas
@@ -1338,29 +1375,36 @@ async fn derive_block_and_transactions(
     provider: &Arc<RetryProvider>,
 ) -> eyre::Result<(BlockNumber, Option<Vec<PoolTransaction>>)> {
     match fork_choice {
-        ForkChoice::Block(block_number) => Ok((block_number.to_owned(), None)),
+        ForkChoice::Block(block_number) => {
+            let block_number = *block_number;
+            if block_number >= 0 {
+                return Ok((block_number as u64, None))
+            }
+            // subtract from latest block number
+            let latest = provider.get_block_number().await?;
+
+            Ok((block_number.saturating_add(latest as i128) as u64, None))
+        }
         ForkChoice::Transaction(transaction_hash) => {
             // Determine the block that this transaction was mined in
             let transaction = provider
                 .get_transaction_by_hash(transaction_hash.0.into())
                 .await?
-                .ok_or(eyre::eyre!("Failed to get fork transaction by hash"))?;
+                .ok_or_else(|| eyre::eyre!("failed to get fork transaction by hash"))?;
             let transaction_block_number = transaction.block_number.unwrap();
 
             // Get the block pertaining to the fork transaction
             let transaction_block = provider
-                .get_block_by_number(
-                    transaction_block_number.into(),
-                    alloy_rpc_types::BlockTransactionsKind::Full,
-                )
+                .get_block_by_number(transaction_block_number.into())
+                .full()
                 .await?
-                .ok_or(eyre::eyre!("Failed to get fork block by number"))?;
+                .ok_or_else(|| eyre::eyre!("failed to get fork block by number"))?;
 
             // Filter out transactions that are after the fork transaction
             let filtered_transactions = transaction_block
                 .transactions
                 .as_transactions()
-                .ok_or(eyre::eyre!("Failed to get transactions from full fork block"))?
+                .ok_or_else(|| eyre::eyre!("failed to get transactions from full fork block"))?
                 .iter()
                 .take_while_inclusive(|&transaction| transaction.tx_hash() != transaction_hash.0)
                 .collect::<Vec<_>>();
@@ -1379,15 +1423,17 @@ async fn derive_block_and_transactions(
 /// Fork delimiter used to specify which block or transaction to fork from
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ForkChoice {
-    /// Block number to fork from
-    Block(BlockNumber),
+    /// Block number to fork from.
+    ///
+    /// f a negative the the given value is subtracted from the `latest` block number.
+    Block(i128),
     /// Transaction hash to fork from
     Transaction(TxHash),
 }
 
 impl ForkChoice {
     /// Returns the block number to fork from
-    pub fn block_number(&self) -> Option<BlockNumber> {
+    pub fn block_number(&self) -> Option<i128> {
         match self {
             Self::Block(block_number) => Some(*block_number),
             Self::Transaction(_) => None,
@@ -1413,7 +1459,7 @@ impl From<TxHash> for ForkChoice {
 /// Convert a decimal block number into a ForkChoice
 impl From<u64> for ForkChoice {
     fn from(block: u64) -> Self {
-        Self::Block(block)
+        Self::Block(block as i128)
     }
 }
 
@@ -1490,7 +1536,7 @@ impl AccountGenerator {
 }
 
 impl AccountGenerator {
-    pub fn gen(&self) -> Vec<PrivateKeySigner> {
+    pub fn gen(&self) -> eyre::Result<Vec<PrivateKeySigner>> {
         let builder = MnemonicBuilder::<English>::default().phrase(self.phrase.as_str());
 
         // use the derivation path
@@ -1500,10 +1546,10 @@ impl AccountGenerator {
         for idx in 0..self.amount {
             let builder =
                 builder.clone().derivation_path(format!("{derivation_path}{idx}")).unwrap();
-            let wallet = builder.build().unwrap().with_chain_id(Some(self.chain_id));
+            let wallet = builder.build()?.with_chain_id(Some(self.chain_id));
             wallets.push(wallet)
         }
-        wallets
+        Ok(wallets)
     }
 }
 
@@ -1521,7 +1567,7 @@ pub fn anvil_tmp_dir() -> Option<PathBuf> {
 ///
 /// This fetches the "latest" block and checks whether the `Block` is fully populated (`hash` field
 /// is present). This prevents edge cases where anvil forks the "latest" block but `eth_getBlockByNumber` still returns a pending block, <https://github.com/foundry-rs/foundry/issues/2036>
-async fn find_latest_fork_block<P: Provider<T, AnyNetwork>, T: Transport + Clone>(
+async fn find_latest_fork_block<P: Provider<AnyNetwork>>(
     provider: P,
 ) -> Result<u64, TransportError> {
     let mut num = provider.get_block_number().await?;
@@ -1529,7 +1575,7 @@ async fn find_latest_fork_block<P: Provider<T, AnyNetwork>, T: Transport + Clone
     // walk back from the head of the chain, but at most 2 blocks, which should be more than enough
     // leeway
     for _ in 0..2 {
-        if let Some(block) = provider.get_block(num.into(), false.into()).await? {
+        if let Some(block) = provider.get_block(num.into()).await? {
             if !block.header.hash.is_zero() {
                 break;
             }

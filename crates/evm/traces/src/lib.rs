@@ -42,7 +42,7 @@ pub use revm_inspectors::tracing::{
 ///
 /// Identifiers figure out what ABIs and labels belong to all the addresses of the trace.
 pub mod identifier;
-use identifier::{LocalTraceIdentifier, TraceIdentifier};
+use identifier::LocalTraceIdentifier;
 
 mod decoder;
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
@@ -174,14 +174,9 @@ impl DerefMut for SparsedTraceArena {
 /// Decode a collection of call traces.
 ///
 /// The traces will be decoded using the given decoder, if possible.
-pub async fn decode_trace_arena(
-    arena: &mut CallTraceArena,
-    decoder: &CallTraceDecoder,
-) -> Result<(), std::fmt::Error> {
+pub async fn decode_trace_arena(arena: &mut CallTraceArena, decoder: &CallTraceDecoder) {
     decoder.prefetch_signatures(arena.nodes()).await;
     decoder.populate_traces(arena.nodes_mut()).await;
-
-    Ok(())
 }
 
 /// Render a collection of call traces to a string.
@@ -201,10 +196,20 @@ pub fn render_trace_arena_inner(
     }
 
     let mut w = TraceWriter::new(Vec::<u8>::new())
+        .color_cheatcodes(true)
+        .use_colors(convert_color_choice(shell::color_choice()))
         .write_bytecodes(with_bytecodes)
         .with_storage_changes(with_storage_changes);
     w.write_arena(&arena.resolve_arena()).expect("Failed to write traces");
     String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8")
+}
+
+fn convert_color_choice(choice: shell::ColorChoice) -> revm_inspectors::ColorChoice {
+    match choice {
+        shell::ColorChoice::Auto => revm_inspectors::ColorChoice::Auto,
+        shell::ColorChoice::Always => revm_inspectors::ColorChoice::Always,
+        shell::ColorChoice::Never => revm_inspectors::ColorChoice::Never,
+    }
 }
 
 /// Specifies the kind of trace.
@@ -250,7 +255,7 @@ pub fn load_contracts<'a>(
     let decoder = CallTraceDecoder::new();
     let mut contracts = ContractsByAddress::new();
     for trace in traces {
-        for address in local_identifier.identify_addresses(decoder.trace_addresses(trace)) {
+        for address in decoder.identify_addresses(trace, &mut local_identifier) {
             if let (Some(contract), Some(abi)) = (address.contract, address.abi) {
                 contracts.insert(address.address, (contract, abi.into_owned()));
             }

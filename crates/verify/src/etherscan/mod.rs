@@ -1,5 +1,5 @@
 use crate::{
-    provider::{VerificationContext, VerificationProvider},
+    provider::{VerificationContext, VerificationProvider, VerificationProviderType},
     retry::RETRY_CHECK_ON_VERIFY,
     verify::{VerifyArgs, VerifyCheckArgs},
 };
@@ -15,14 +15,10 @@ use foundry_block_explorers::{
     Client,
 };
 use foundry_cli::utils::{get_provider, read_constructor_args_file, LoadConfig};
-use foundry_common::{
-    abi::encode_function_args,
-    retry::{Retry, RetryError},
-};
+use foundry_common::{abi::encode_function_args, retry::RetryError};
 use foundry_compilers::{artifacts::BytecodeObject, Artifact};
 use foundry_config::{Chain, Config};
 use foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER;
-use futures::FutureExt;
 use regex::Regex;
 use semver::{BuildMetadata, Version};
 use std::{fmt::Debug, sync::LazyLock};
@@ -77,8 +73,9 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
         trace!(?verify_args, "submitting verification request");
 
-        let retry: Retry = args.retry.into();
-        let resp = retry
+        let resp = args
+            .retry
+            .into_retry()
             .run_async(|| async {
                 sh_println!(
                     "\nSubmitting verification for [{}] {}.",
@@ -105,9 +102,11 @@ impl VerificationProvider for EtherscanVerificationProvider {
                         return Ok(None)
                     }
 
-                    if resp.result.starts_with("Unable to locate ContractCode at") {
+                    if resp.result.starts_with("Unable to locate ContractCode at") ||
+                        resp.result.starts_with("The address is not a smart contract")
+                    {
                         warn!("{}", resp.result);
-                        return Err(eyre!("Etherscan could not detect the deployment."))
+                        return Err(eyre!("Could not detect the deployment."))
                     }
 
                     warn!("Failed verify submission: {:?}", resp);
@@ -150,55 +149,53 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
     /// Executes the command to check verification status on Etherscan
     async fn check(&self, args: VerifyCheckArgs) -> Result<()> {
-        let config = args.try_load_config_emit_warnings()?;
+        let config = args.load_config()?;
         let etherscan = self.client(
             args.etherscan.chain.unwrap_or_default(),
+            &args.verifier.verifier,
             args.verifier.verifier_url.as_deref(),
             args.etherscan.key().as_deref(),
             &config,
         )?;
-        let retry: Retry = args.retry.into();
-        retry
-            .run_async_until_break(|| {
-                async {
-                    let resp = etherscan
-                        .check_contract_verification_status(args.id.clone())
-                        .await
-                        .wrap_err("Failed to request verification status")
-                        .map_err(RetryError::Retry)?;
+        args.retry
+            .into_retry()
+            .run_async_until_break(|| async {
+                let resp = etherscan
+                    .check_contract_verification_status(args.id.clone())
+                    .await
+                    .wrap_err("Failed to request verification status")
+                    .map_err(RetryError::Retry)?;
 
-                    trace!(?resp, "Received verification response");
+                trace!(?resp, "Received verification response");
 
-                    let _ = sh_println!(
-                        "Contract verification status:\nResponse: `{}`\nDetails: `{}`",
-                        resp.message,
-                        resp.result
-                    );
+                let _ = sh_println!(
+                    "Contract verification status:\nResponse: `{}`\nDetails: `{}`",
+                    resp.message,
+                    resp.result
+                );
 
-                    if resp.result == "Pending in queue" {
-                        return Err(RetryError::Retry(eyre!("Verification is still pending...",)))
-                    }
-
-                    if resp.result == "Unable to verify" {
-                        return Err(RetryError::Retry(eyre!("Unable to verify.",)))
-                    }
-
-                    if resp.result == "Already Verified" {
-                        let _ = sh_println!("Contract source code already verified");
-                        return Ok(())
-                    }
-
-                    if resp.status == "0" {
-                        return Err(RetryError::Break(eyre!("Contract failed to verify.",)))
-                    }
-
-                    if resp.result == "Pass - Verified" {
-                        let _ = sh_println!("Contract successfully verified");
-                    }
-
-                    Ok(())
+                if resp.result == "Pending in queue" {
+                    return Err(RetryError::Retry(eyre!("Verification is still pending...")))
                 }
-                .boxed()
+
+                if resp.result == "Unable to verify" {
+                    return Err(RetryError::Retry(eyre!("Unable to verify.")))
+                }
+
+                if resp.result == "Already Verified" {
+                    let _ = sh_println!("Contract source code already verified");
+                    return Ok(())
+                }
+
+                if resp.status == "0" {
+                    return Err(RetryError::Break(eyre!("Contract failed to verify.")))
+                }
+
+                if resp.result == "Pass - Verified" {
+                    let _ = sh_println!("Contract successfully verified");
+                }
+
+                Ok(())
             })
             .await
             .wrap_err("Checking verification result failed")
@@ -221,9 +218,10 @@ impl EtherscanVerificationProvider {
         args: &VerifyArgs,
         context: &VerificationContext,
     ) -> Result<(Client, VerifyContract)> {
-        let config = args.try_load_config_emit_warnings()?;
+        let config = args.load_config()?;
         let etherscan = self.client(
             args.etherscan.chain.unwrap_or_default(),
+            &args.verifier.verifier,
             args.verifier.verifier_url.as_deref(),
             args.etherscan.key().as_deref(),
             &config,
@@ -255,6 +253,7 @@ impl EtherscanVerificationProvider {
     pub(crate) fn client(
         &self,
         chain: Chain,
+        verifier_type: &VerificationProviderType,
         verifier_url: Option<&str>,
         etherscan_key: Option<&str>,
         config: &Config,
@@ -279,10 +278,18 @@ impl EtherscanVerificationProvider {
         builder = if let Some(api_url) = api_url {
             // we don't want any trailing slashes because this can cause cloudflare issues: <https://github.com/foundry-rs/foundry/pull/6079>
             let api_url = api_url.trim_end_matches('/');
-            builder
-                .with_chain_id(chain)
-                .with_api_url(api_url)?
-                .with_url(base_url.unwrap_or(api_url))?
+
+            // Verifier is etherscan if explicitly set or if no verifier set (default sourcify) but
+            // API key passed.
+            let is_etherscan = verifier_type.is_etherscan() ||
+                (verifier_type.is_sourcify() && etherscan_key.is_some());
+            let base_url = if !is_etherscan {
+                // If verifier is not Etherscan then set base url as api url without /api suffix.
+                api_url.strip_prefix("/api").unwrap_or(api_url)
+            } else {
+                base_url.unwrap_or(api_url)
+            };
+            builder.with_chain_id(chain).with_api_url(api_url)?.with_url(base_url)?
         } else {
             builder.chain(chain)?
         };
@@ -330,8 +337,10 @@ impl EtherscanVerificationProvider {
         if code_format == CodeFormat::SingleFile {
             verify_args = if let Some(optimizations) = args.num_of_optimizations {
                 verify_args.optimized().runs(optimizations as u32)
-            } else if context.config.optimizer {
-                verify_args.optimized().runs(context.config.optimizer_runs.try_into()?)
+            } else if context.config.optimizer == Some(true) {
+                verify_args
+                    .optimized()
+                    .runs(context.config.optimizer_runs.unwrap_or(200).try_into()?)
             } else {
                 verify_args.not_optimized()
             };
@@ -353,7 +362,6 @@ impl EtherscanVerificationProvider {
             let constructor = abi
                 .constructor()
                 .ok_or_else(|| eyre!("Can't retrieve constructor info from artifact ABI."))?;
-            #[allow(deprecated)]
             let func = Function {
                 name: "constructor".to_string(),
                 inputs: constructor.inputs.clone(),
@@ -386,6 +394,7 @@ impl EtherscanVerificationProvider {
         let provider = get_provider(&context.config)?;
         let client = self.client(
             args.etherscan.chain.unwrap_or_default(),
+            &args.verifier.verifier,
             args.verifier.verifier_url.as_deref(),
             args.etherscan.key.as_deref(),
             &context.config,
@@ -454,7 +463,6 @@ async fn ensure_solc_build_metadata(version: Version) -> Result<Version> {
 }
 
 #[cfg(test)]
-#[allow(clippy::needless_return)]
 mod tests {
     use super::*;
     use clap::Parser;
@@ -487,12 +495,13 @@ mod tests {
             root.as_os_str().to_str().unwrap(),
         ]);
 
-        let config = args.load_config();
+        let config = args.load_config().unwrap();
 
         let etherscan = EtherscanVerificationProvider::default();
         let client = etherscan
             .client(
                 args.etherscan.chain.unwrap_or_default(),
+                &args.verifier.verifier,
                 args.verifier.verifier_url.as_deref(),
                 args.etherscan.key().as_deref(),
                 &config,
@@ -514,12 +523,13 @@ mod tests {
             root.as_os_str().to_str().unwrap(),
         ]);
 
-        let config = args.load_config();
+        let config = args.load_config().unwrap();
 
         let etherscan = EtherscanVerificationProvider::default();
         let client = etherscan
             .client(
                 args.etherscan.chain.unwrap_or_default(),
+                &args.verifier.verifier,
                 args.verifier.verifier_url.as_deref(),
                 args.etherscan.key().as_deref(),
                 &config,

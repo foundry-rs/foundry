@@ -6,7 +6,6 @@ use self::EnsResolver::EnsResolverInstance;
 use alloy_primitives::{address, Address, Keccak256, B256};
 use alloy_provider::{Network, Provider};
 use alloy_sol_types::sol;
-use alloy_transport::Transport;
 use async_trait::async_trait;
 use std::{borrow::Cow, str::FromStr};
 
@@ -31,7 +30,7 @@ sol! {
 }
 
 /// ENS registry address (`0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e`)
-pub const ENS_ADDRESS: Address = address!("00000000000C2E074eC69A0dFb2997BA6C7d2e1e");
+pub const ENS_ADDRESS: Address = address!("0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e");
 
 pub const ENS_REVERSE_REGISTRAR_DOMAIN: &str = "addr.reverse";
 
@@ -63,7 +62,7 @@ pub enum NameOrAddress {
 
 impl NameOrAddress {
     /// Resolves the name to an Ethereum Address.
-    pub async fn resolve<N: Network, T: Transport + Clone, P: Provider<T, N>>(
+    pub async fn resolve<N: Network, P: Provider<N>>(
         &self,
         provider: &P,
     ) -> Result<Address, EnsError> {
@@ -96,23 +95,28 @@ impl FromStr for NameOrAddress {
     type Err = <Address as FromStr>::Err;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Ok(addr) = Address::from_str(s) {
-            Ok(Self::Address(addr))
-        } else {
-            Ok(Self::Name(s.to_string()))
+        match Address::from_str(s) {
+            Ok(addr) => Ok(Self::Address(addr)),
+            Err(err) => {
+                if s.contains('.') {
+                    Ok(Self::Name(s.to_string()))
+                } else {
+                    Err(err)
+                }
+            }
         }
     }
 }
 
 /// Extension trait for ENS contract calls.
 #[async_trait]
-pub trait ProviderEnsExt<T: Transport + Clone, N: Network, P: Provider<T, N>> {
+pub trait ProviderEnsExt<N: Network, P: Provider<N>> {
     /// Returns the resolver for the specified node. The `&str` is only used for error messages.
     async fn get_resolver(
         &self,
         node: B256,
         error_name: &str,
-    ) -> Result<EnsResolverInstance<T, &P, N>, EnsError>;
+    ) -> Result<EnsResolverInstance<(), &P, N>, EnsError>;
 
     /// Performs a forward lookup of an ENS name to an address.
     async fn resolve_name(&self, name: &str) -> Result<Address, EnsError> {
@@ -141,17 +145,16 @@ pub trait ProviderEnsExt<T: Transport + Clone, N: Network, P: Provider<T, N>> {
 }
 
 #[async_trait]
-impl<T, N, P> ProviderEnsExt<T, N, P> for P
+impl<N, P> ProviderEnsExt<N, P> for P
 where
-    P: Provider<T, N>,
+    P: Provider<N>,
     N: Network,
-    T: Transport + Clone,
 {
     async fn get_resolver(
         &self,
         node: B256,
         error_name: &str,
-    ) -> Result<EnsResolverInstance<T, &P, N>, EnsError> {
+    ) -> Result<EnsResolverInstance<(), &P, N>, EnsError> {
         let registry = EnsRegistry::new(ENS_ADDRESS, self);
         let address = registry.resolver(node).call().await.map_err(EnsError::Resolver)?._0;
         if address == Address::ZERO {
@@ -234,6 +237,18 @@ mod test {
             ),
         ] {
             assert_eq!(reverse_address(&addr.parse().unwrap()), expected, "{addr}");
+        }
+    }
+
+    #[test]
+    fn test_invalid_address() {
+        for addr in [
+            "0x314618",
+            "0x000000000000000000000000000000000000000", // 41
+            "0x00000000000000000000000000000000000000000", // 43
+            "0x28679A1a632125fbBf7A68d850E50623194A709E123", // 44
+        ] {
+            assert!(NameOrAddress::from_str(addr).is_err());
         }
     }
 }

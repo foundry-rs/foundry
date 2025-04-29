@@ -35,7 +35,6 @@ clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 semver.workspace = true
 futures.workspace = true
 tokio.workspace = true
-async-recursion = "1.1"
 
 itertools.workspace = true
 parking_lot.workspace = true
@@ -44,7 +43,7 @@ revm-inspectors.workspace = true
 alloy-rpc-types.workspace = true
 alloy-json-abi.workspace = true
 dialoguer = { version = "0.11", default-features = false }
-indicatif = "0.17"
+indicatif.workspace = true
 
 alloy-signer.workspace = true
 alloy-serde.workspace = true
@@ -54,7 +53,6 @@ alloy-chains.workspace = true
 alloy-dyn-abi.workspace = true
 alloy-primitives.workspace = true
 alloy-eips.workspace = true
-alloy-transport.workspace = true
 alloy-consensus.workspace = true
 
 [dev-dependencies]

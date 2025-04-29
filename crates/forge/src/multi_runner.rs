@@ -8,7 +8,11 @@ use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_common::{get_contract_name, shell::verbosity, ContractsByArtifact, TestFunctionExt};
-use foundry_compilers::{artifacts::Libraries, Artifact, ArtifactId, ProjectCompileOutput};
+use foundry_compilers::{
+    artifacts::{Contract, Libraries},
+    compilers::Compiler,
+    Artifact, ArtifactId, ProjectCompileOutput,
+};
 use foundry_config::{Config, InlineConfig};
 use foundry_evm::{
     backend::Backend,
@@ -132,8 +136,11 @@ impl MultiContractRunner {
     /// The same as [`test`](Self::test), but returns the results instead of streaming them.
     ///
     /// Note that this method returns only when all tests have been executed.
-    pub fn test_collect(&mut self, filter: &dyn TestFilter) -> BTreeMap<String, SuiteResult> {
-        self.test_iter(filter).collect()
+    pub fn test_collect(
+        &mut self,
+        filter: &dyn TestFilter,
+    ) -> Result<BTreeMap<String, SuiteResult>> {
+        Ok(self.test_iter(filter)?.collect())
     }
 
     /// Executes _all_ tests that match the given `filter`.
@@ -144,10 +151,10 @@ impl MultiContractRunner {
     pub fn test_iter(
         &mut self,
         filter: &dyn TestFilter,
-    ) -> impl Iterator<Item = (String, SuiteResult)> {
+    ) -> Result<impl Iterator<Item = (String, SuiteResult)>> {
         let (tx, rx) = mpsc::channel();
-        self.test(filter, tx, false);
-        rx.into_iter()
+        self.test(filter, tx, false)?;
+        Ok(rx.into_iter())
     }
 
     /// Executes _all_ tests that match the given `filter`.
@@ -161,12 +168,12 @@ impl MultiContractRunner {
         filter: &dyn TestFilter,
         tx: mpsc::Sender<(String, SuiteResult)>,
         show_progress: bool,
-    ) {
+    ) -> Result<()> {
         let tokio_handle = tokio::runtime::Handle::current();
         trace!("running all tests");
 
         // The DB backend that serves all the data.
-        let db = Backend::spawn(self.fork.take());
+        let db = Backend::spawn(self.fork.take())?;
 
         let find_timer = Instant::now();
         let contracts = self.matching_contracts(filter).collect::<Vec<_>>();
@@ -217,6 +224,8 @@ impl MultiContractRunner {
                 let _ = tx.send((id.identifier(), result));
             })
         }
+
+        Ok(())
     }
 
     fn run_test_suite(
@@ -284,24 +293,27 @@ pub struct TestRunnerConfig {
     pub decode_internal: InternalTraceMode,
     /// Whether to enable call isolation.
     pub isolation: bool,
-    /// Whether to enable Alphanet features.
-    pub alphanet: bool,
+    /// Whether to enable Odyssey features.
+    pub odyssey: bool,
 }
 
 impl TestRunnerConfig {
     /// Reconfigures all fields using the given `config`.
+    /// This is for example used to override the configuration with inline config.
     pub fn reconfigure_with(&mut self, config: Arc<Config>) {
         debug_assert!(!Arc::ptr_eq(&self.config, &config));
 
-        // TODO: self.evm_opts
-        // TODO: self.env
         self.spec_id = config.evm_spec_id();
         self.sender = config.sender;
+        self.odyssey = config.odyssey;
+        self.isolation = config.isolate;
+
+        // Specific to Forge, not present in config.
+        // TODO: self.evm_opts
+        // TODO: self.env
         // self.coverage = N/A;
         // self.debug = N/A;
         // self.decode_internal = N/A;
-        // self.isolation = N/A;
-        self.alphanet = config.alphanet;
 
         self.config = config;
     }
@@ -319,7 +331,7 @@ impl TestRunnerConfig {
         inspector.tracing(self.trace_mode());
         inspector.collect_coverage(self.coverage);
         inspector.enable_isolation(self.isolation);
-        inspector.alphanet(self.alphanet);
+        inspector.odyssey(self.odyssey);
         // inspector.set_create2_deployer(self.evm_opts.create2_deployer);
 
         // executor.env_mut().clone_from(&self.env);
@@ -339,8 +351,7 @@ impl TestRunnerConfig {
             &self.config,
             self.evm_opts.clone(),
             Some(known_contracts),
-            Some(artifact_id.name.clone()),
-            Some(artifact_id.version.clone()),
+            Some(artifact_id.clone()),
         ));
         ExecutorBuilder::new()
             .inspectors(|stack| {
@@ -349,7 +360,7 @@ impl TestRunnerConfig {
                     .trace_mode(self.trace_mode())
                     .coverage(self.coverage)
                     .enable_isolation(self.isolation)
-                    .alphanet(self.alphanet)
+                    .odyssey(self.odyssey)
                     .create2_deployer(self.evm_opts.create2_deployer)
             })
             .spec_id(self.spec_id)
@@ -390,8 +401,8 @@ pub struct MultiContractRunnerBuilder {
     pub decode_internal: InternalTraceMode,
     /// Whether to enable call isolation
     pub isolation: bool,
-    /// Whether to enable Alphanet features.
-    pub alphanet: bool,
+    /// Whether to enable Odyssey features.
+    pub odyssey: bool,
 }
 
 impl MultiContractRunnerBuilder {
@@ -406,7 +417,7 @@ impl MultiContractRunnerBuilder {
             debug: Default::default(),
             isolation: Default::default(),
             decode_internal: Default::default(),
-            alphanet: Default::default(),
+            odyssey: Default::default(),
         }
     }
 
@@ -450,14 +461,14 @@ impl MultiContractRunnerBuilder {
         self
     }
 
-    pub fn alphanet(mut self, enable: bool) -> Self {
-        self.alphanet = enable;
+    pub fn odyssey(mut self, enable: bool) -> Self {
+        self.odyssey = enable;
         self
     }
 
     /// Given an EVM, proceeds to return a runner which is able to execute all tests
     /// against that evm
-    pub fn build(
+    pub fn build<C: Compiler<CompilerContract = Contract>>(
         self,
         root: &Path,
         output: &ProjectCompileOutput,
@@ -529,7 +540,7 @@ impl MultiContractRunnerBuilder {
                 decode_internal: self.decode_internal,
                 inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
                 isolation: self.isolation,
-                alphanet: self.alphanet,
+                odyssey: self.odyssey,
 
                 config: self.config,
             },

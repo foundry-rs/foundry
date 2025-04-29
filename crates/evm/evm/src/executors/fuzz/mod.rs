@@ -81,14 +81,14 @@ impl FuzzedExecutor {
         &self,
         func: &Function,
         fuzz_fixtures: &FuzzFixtures,
+        deployed_libs: &[Address],
         address: Address,
-        should_fail: bool,
         rd: &RevertDecoder,
         progress: Option<&ProgressBar>,
     ) -> FuzzTestResult {
         // Stores the fuzz test execution data.
         let execution_data = RefCell::new(FuzzTestData::default());
-        let state = self.build_fuzz_state();
+        let state = self.build_fuzz_state(deployed_libs);
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
         let strategy = proptest::prop_oneof![
             100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
@@ -107,7 +107,7 @@ impl FuzzedExecutor {
                 return Err(TestCaseError::fail(TEST_TIMEOUT));
             }
 
-            let fuzz_res = self.single_fuzz(address, should_fail, calldata)?;
+            let fuzz_res = self.single_fuzz(address, calldata)?;
 
             // If running with progress then increment current run.
             if let Some(progress) = progress {
@@ -236,7 +236,6 @@ impl FuzzedExecutor {
     pub fn single_fuzz(
         &self,
         address: Address,
-        should_fail: bool,
         calldata: alloy_primitives::Bytes,
     ) -> Result<FuzzOutcome, TestCaseError> {
         let mut call = self
@@ -254,7 +253,7 @@ impl FuzzedExecutor {
                 (cheats.breakpoints.clone(), cheats.deprecated.clone())
             });
 
-        let success = self.executor.is_raw_call_mut_success(address, &mut call, should_fail);
+        let success = self.executor.is_raw_call_mut_success(address, &mut call, false);
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {
                 case: FuzzCase { calldata, gas: call.gas_used, stipend: call.stipend },
@@ -274,11 +273,15 @@ impl FuzzedExecutor {
     }
 
     /// Stores fuzz state for use with [fuzz_calldata_from_state]
-    pub fn build_fuzz_state(&self) -> EvmFuzzState {
+    pub fn build_fuzz_state(&self, deployed_libs: &[Address]) -> EvmFuzzState {
         if let Some(fork_db) = self.executor.backend().active_fork_db() {
-            EvmFuzzState::new(fork_db, self.config.dictionary)
+            EvmFuzzState::new(fork_db, self.config.dictionary, deployed_libs)
         } else {
-            EvmFuzzState::new(self.executor.backend().mem_db(), self.config.dictionary)
+            EvmFuzzState::new(
+                self.executor.backend().mem_db(),
+                self.config.dictionary,
+                deployed_libs,
+            )
         }
     }
 }

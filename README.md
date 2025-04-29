@@ -1,112 +1,312 @@
-<img src=".github/logo.png" alt="Foundry logo" align="right" width="120" />
+<div align="center">
+  <img src=".github/assets/banner.png" alt="Foundry banner" />
 
-## Foundry
+&nbsp;
 
-![Github Actions][gha-badge] [![Telegram Chat][tg-badge]][tg-url] [![Telegram Support][tg-support-badge]][tg-support-url]
+[![Github Actions][gha-badge]][gha-url] [![Telegram Chat][tg-badge]][tg-url] [![Telegram Support][tg-support-badge]][tg-support-url]
 ![Foundry](https://img.shields.io/badge/Foundry-grey?style=flat&logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAElElEQVR4nH1VUUhUaRg9984YdzBpkqR0Z210rIESIXSabEbcHgydrpNRRj00kWaztj0U1MOW0MOIbD300IvLMqBpMTGYxdoqyoRNDUESBDWwUuPugCSSsTM7u0Oj1/+efdiMcmnP2/fDd77D4f/OB6xCa2urQZbllVICYGtqanK1tLS4AdgAyAAgyzJaW1sNq/ulT4twOGw4fPiwAGDp7Ow8VV1d7bVarRWxWCw/k8mgsbExm0wmZ+Lx+M/Xr1//CcAsSVmSJH01McLhsAEAnE5nx+Tk5B/xeJxOp5N9fX2sqqqixWLhnTt36HA4GIvFGI1GU3V1df5Pe/9D1t7eHkgkEuzo6GBPT49WWloq7Ha7fujQITocDu7atUs3m83i6tWr2okTJ/jixQuePn265zPScDhskGUZe/fubXv8+DFv3rypbdiwQaxbt46RSIT79u3j0NAQb926RVVVOT4+TqvVyvz8fD0YDC5NTk6ysbHxlCRJ/5KSlAAURyKRTFNTkwAg7t69S5/Px76+Pq7GyMgI9+/fz9HRUQIQO3bsEKOjo38DsJCUJADw+/0BVVW7otHo8ps3b4yvXr3CxMQETCYTTCYTNE0DAOTl5SGXy0FRFOzZswdmsxkVFRXLNTU1xmg0+kNvb+/3AGAcGBiI7969Wwcg6urq+OTJE967d49btmzh9PT0R3WJRIKBQIDBYJBTU1NsaGggAGGz2fTe3t5fAeQZAWwuLi4uP3nypOT1emEwGFBeXo7a2losLCygoaEB/f39MJlMCIVCkCQJBw8ehNVqhcfjQXNzs1RSUiKtX7++DEAZqqqq3KFQiABYUFDAM2fOkCQXFxdJkvfv32dhYSG9Xi+vXbvG2dnZj4oDgQCLioqoKAqHhobodDq/Mc7NzUklJSUIBoOw2WzYtm0blpeXsWbNGkxMTODp06doa2vD4OAgNm7cCIvFApLQdR3nzp3Dzp078fLlSxQVFeHdu3cAgIpHjx69/zBUX5k+MDBAt9vNY8eOsbu7m6lUigcOHKDL5WImkyHJz9TGYrEcALsMIPn69esZTdMIgM+ePUNXVxdu376NsrIyuN1uXLp0CWazGcPDw3C5XFBVFWfPnkVNTQ18Pp+ezWY5MzPzO4DfAABHjhzpJslUKqVdvHiR4+PjbG9vZy6XI0kuLS0xmUxSCEGS9Pv9LC0tpdFoZGVlpSaEoM/nuwIAKx/7q5GRkb9CoZBQVVWcP3+ez58/J0mm02kODg7ywoULjMViTKfTtNvtXLt2LTdt2qTncrnlsbGxLICvSUqfrl5HJBLh1NTUkhBCJ8mFhQX29/dTVVUWFBTwwYMH1HWdly9fpqIoeiKRWJqfn2d1dXWnLMuf7zMAHD16tGd+fn7FZy2bzYrKykodAAFQVVV9cXFRkNTevn3Lubk5trS0XPnfxHE4HN8ODw+nV/yanp6mx+Ohx+P5aIMQgmNjY3/W1tZ+t5rsSwG7+fjx4/76+vrm7du32woLC00AkE6n38fj8ZmHDx/+cuPGjR8BJL8YsCtYdQIMALYqilKvKEo9APuHty+egH8A3GfFDJXmxmMAAAAASUVORK5CYII%3D&link=https%3A%2F%2Fbook.getfoundry.sh%2F)
 
 [gha-badge]: https://img.shields.io/github/actions/workflow/status/foundry-rs/foundry/test.yml?branch=master
+[gha-url]: https://github.com/foundry-rs/foundry/actions
 [tg-badge]: https://img.shields.io/endpoint?color=neon&logo=telegram&label=chat&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Ffoundry_rs
 [tg-url]: https://t.me/foundry_rs
 [tg-support-badge]: https://img.shields.io/endpoint?color=neon&logo=telegram&label=support&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Ffoundry_support
 [tg-support-url]: https://t.me/foundry_support
 
 **[Install](https://book.getfoundry.sh/getting-started/installation)**
-| [User Book](https://book.getfoundry.sh)
-| [Developer Docs](./docs/dev/)
-| [Crate Docs](https://foundry-rs.github.io/foundry)
+| [User Book][foundry-book]
+| [Developer Docs](./docs/dev/README.md)
+| [Contributing](./CONTRIBUTING.md)
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+</div>
+
+---
+
+### Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.
 
 Foundry consists of:
 
--   [**Forge**](./crates/forge): Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   [**Cast**](./crates/cast): Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   [**Anvil**](./crates/anvil): Local Ethereum node, akin to Ganache, Hardhat Network.
--   [**Chisel**](./crates/chisel): Fast, utilitarian, and verbose solidity REPL.
+- [**Forge**](#forge): Build, test, fuzz, debug and deploy [Solidity][solidity] contracts, like Hardhat, Brownie, Ape.
+- [**Cast**](#cast): A Swiss Army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
+- [**Anvil**](#anvil): Fast local Ethereum development node, akin to Hardhat Network, Tenderly.
+- [**Chisel**](#chisel): Fast, utilitarian, and verbose Solidity REPL.
 
-**Need help getting started with Foundry? Read the [📖 Foundry Book][foundry-book] (WIP)!**
+**Need help getting started with Foundry? Read the [📖 Foundry Book][foundry-book]!**
 
-![Demo](.github/demo.gif)
+![Demo](.github/assets/demo.gif)
+
+## Features
+
+- **High-Performance Compilation**
+
+  - **Fast and Flexible**: Automatically detects and installs the required Solidity compiler version.
+  - **Solidity and Vyper Support**: Fully supports both Solidity and Vyper out-of-the-box.
+  - **Incremental Compilation**: Re-compiles only changed files, saving time.
+  - **Parallelized Pipeline**: Leverages multi-core systems for ultra-fast builds.
+  - **Broad Compatibility**: Supports non-standard directory structures, including [Hardhat repos](https://twitter.com/gakonst/status/1461289225337421829).
+
+- **Advanced Testing**
+
+  - **No Context Switching**: Write tests directly in Solidity.
+  - **Fuzz Testing**: Quickly identify edge cases with input shrinking and counter-example generation.
+  - **Invariant Testing**: Ensure complex system properties hold across a wide range of inputs.
+  - **Debugging Made Easy**: Use [forge-std](https://github.com/foundry-rs/forge-std)'s `console.sol` for flexible debug logging.
+  - **Interactive Debugger**: Step through your Solidity code with Foundry's interactive debugger, making it easy to pinpoint issues.
+
+- **Powerful Runtime Features**
+
+  - **RPC Forking**: Fast and efficient remote RPC forking backed by [Alloy][alloy].
+  - **Lightweight & Portable**: No dependency on Nix or other package managers for installation.
+
+- **Streamlined CI/CD**
+
+  - **Optimized CI**: Accelerate builds, run tests and execute scripts using [Foundry's GitHub action][foundry-gha].
 
 ## Installation
 
-See the [installation guide](https://book.getfoundry.sh/getting-started/installation) in the book.
+Getting started is very easy:
+
+Install `foundryup`:
+
+```
+curl -L https://foundry.paradigm.xyz | bash
+```
+
+Next, run `foundryup`.
+
+It will automatically install the latest version of the precompiled binaries: [`forge`](#forge), [`cast`](#cast), [`anvil`](#anvil), and [`chisel`](#chisel).
+
+```
+foundryup
+```
+
+**Done!**
+
+For additional details see the [installation guide](https://book.getfoundry.sh/getting-started/installation) in the [Foundry Book][foundry-book].
 
 If you're experiencing any issues while installing, check out [Getting Help](#getting-help) and the [FAQ](https://book.getfoundry.sh/faq).
 
+## How Fast?
+
+Forge is quite fast at both compiling (leveraging `solc` with [foundry-compilers]) and testing.
+
+See the benchmarks below. Older benchmarks against [DappTools][dapptools] can be found in the [v0.2.0 announcement post][benchmark-post] and in the [Convex Shutdown Simulation][convex] repository.
+
+### Testing Benchmarks
+
+| Project                                       | Type                 | [Forge 1.0][foundry-1.0] | [Forge 0.2][foundry-0.2] | DappTools | Speedup        |
+| --------------------------------------------- | -------------------- | ------------------------ | ------------------------ | --------- | -------------- |
+| [vectorized/solady][solady]                   | Unit / Fuzz          | 0.9s                     | 2.3s                     | -         | 2.6x           |
+| [morpho-org/morpho-blue][morpho-blue]         | Invariant            | 0.7s                     | 1m43s                    | -         | 147.1x         |
+| [morpho-org/morpho-blue-oracles][morpho-blue] | Integration (Cold)   | 6.1s                     | 6.3s                     | -         | 1.04x          |
+| [morpho-org/morpho-blue-oracles][morpho-blue] | Integration (Cached) | 0.6s                     | 0.9s                     | -         | 1.50x          |
+| [transmissions11/solmate][solmate]            | Unit / Fuzz          | 2.7s                     | 2.8s                     | 6m34s     | 1.03x / 140.0x |
+| [reflexer-labs/geb][geb]                      | Unit / Fuzz          | 0.2s                     | 0.4s                     | 23s       | 2.0x / 57.5x   |
+
+_In the above benchmarks, compilation was always skipped_
+
+**Takeaway: Forge dramatically outperforms the competition, delivering blazing-fast execution speeds while continuously expanding its robust feature set.**
+
+### Compilation Benchmarks
+
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/build_benchmark_solady_dark.png" width="600px">
+    <img src=".github/assets/build_benchmark_solady_light.png" width="600px">
+  </picture>
+
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/build_benchmark_openzeppelin_dark.png" width="600px">
+    <img src=".github/assets/build_benchmark_openzeppelin_light.png" width="600px">
+  </picture>
+
+&nbsp;
+
+</div>
+
+**Takeaway: Forge compilation is consistently faster than Hardhat by a factor of `2.1x` to `5.2x`, depending on the amount of caching involved.**
+
 ## Forge
 
-### Features
+Forge helps you build, test, fuzz, debug and deploy Solidity contracts.
 
--   **Fast & flexible compilation pipeline**
-    -   Automatic Solidity compiler version detection & installation
-    -   **Incremental compilation & caching**: Only changed files are re-compiled
-    -   Parallel compilation
-    -   Non-standard directory structures support (e.g. [Hardhat repos](https://twitter.com/gakonst/status/1461289225337421829))
--   **Tests are written in Solidity** (like in DappTools)
--   **Fast fuzz testing** with shrinking of inputs & printing of counter-examples
--   **Fast remote RPC forking mode**, leveraging Rust's async infrastructure like tokio
--   **Flexible debug logging**
-    -   DappTools-style, using `DsTest`'s emitted logs
-    -   Hardhat-style, using the popular `console.sol` contract
--   **Portable (5-10MB) & easy to install** without requiring Nix or any other package manager
--   **Fast CI** with the [Foundry GitHub action][foundry-gha].
+The best way to understand Forge is to simply try it (in less than 30 seconds!).
 
-### How Fast?
+First, let's initialize a new `counter` example repository:
 
-Forge is quite fast at both compiling (leveraging [ethers-solc]) and testing.
+```sh
+forge init counter
+```
 
-See the benchmarks below. More benchmarks can be found in the [v0.2.0 announcement post][benchmark-post] and in the [Convex Shutdown Simulation][convex] repository.
+Next `cd` into `counter` and build :
 
-**Testing Benchmarks**
+```sh
+forge build
+```
 
-| Project                            | Forge | DappTools | Speedup |
-| ---------------------------------- | ----- | --------- | ------- |
-| [transmissions11/solmate][solmate] | 2.8s  | 6m34s     | 140x    |
-| [reflexer-labs/geb][geb]           | 0.4s  | 23s       | 57.5x   |
-| [Rari-Capital/vaults][vaults]      | 0.28s | 6.5s      | 23x     |
+```console
+[⠊] Compiling...
+[⠔] Compiling 27 files with Solc 0.8.28
+[⠒] Solc 0.8.28 finished in 452.13ms
+Compiler run successful!
+```
 
-_Note: In the above benchmarks, compilation was always skipped_
+Let's [test](https://book.getfoundry.sh/forge/tests#tests) our contracts:
 
-**Compilation Benchmarks**
+```sh
+forge test
+```
 
-<img alt="Compilation benchmarks" src=".github/compilation-benchmark.png" width="693px" />
+```console
+[⠊] Compiling...
+No files changed, compilation skipped
 
-**Takeaway: Forge compilation is consistently faster by a factor of 1.7-11.3x, depending on the amount of caching involved.**
+Ran 2 tests for test/Counter.t.sol:CounterTest
+[PASS] testFuzz_SetNumber(uint256) (runs: 256, μ: 31121, ~: 31277)
+[PASS] test_Increment() (gas: 31293)
+Suite result: ok. 2 passed; 0 failed; 0 skipped; finished in 5.35ms (4.86ms CPU time)
+
+Ran 1 test suite in 5.91ms (5.35ms CPU time): 2 tests passed, 0 failed, 0 skipped (2 total tests)
+```
+
+Finally, let's run our deployment script:
+
+```sh
+forge script script/Counter.s.sol
+```
+
+```console
+[⠊] Compiling...
+No files changed, compilation skipped
+Script ran successfully.
+Gas used: 109037
+
+If you wish to simulate on-chain transactions pass a RPC URL.
+```
+
+Run `forge --help` to explore the full list of available subcommands and their usage.
+
+More documentation can be found in the [forge][foundry-book-forge] section of the Foundry Book.
 
 ## Cast
 
-Cast is a swiss army knife for interacting with Ethereum applications from the command line.
+Cast is a Swiss Army knife for interacting with Ethereum applications from the command line.
 
-More documentation can be found in the [cast package](./crates/cast).
+Here are a few examples of what you can do:
+
+**Check the latest block on Ethereum Mainnet**:
+
+```sh
+cast block-number --rpc-url https://eth.merkle.io
+```
+
+**Check the Ether balance of `vitalik.eth`**
+
+```sh
+cast balance vitalik.eth --ether --rpc-url https://eth.merkle.io
+```
+
+**Replay and trace a transaction**
+
+```sh
+cast run 0x9c32042f5e997e27e67f82583839548eb19dc78c4769ad6218657c17f2a5ed31 --rpc-url https://eth.merkle.io
+```
+
+Optionally, pass `--etherscan-api-key <API_KEY>` to decode transaction traces using verified source maps, providing more detailed and human-readable information.
+
+---
+
+Run `cast --help` to explore the full list of available subcommands and their usage.
+
+More documentation can be found in the [cast][foundry-book-cast] section of the Foundry Book.
+
+## Anvil
+
+Anvil is a fast local Ethereum development node.
+
+Let's fork Ethereum mainnet at the latest block:
+
+```sh
+anvil --fork-url https://eth.merkle.io
+```
+
+You can use those same `cast` subcommands against your `anvil` instance:
+
+```sh
+cast block-number
+```
+
+---
+
+Run `anvil --help` to explore the full list of available features and their usage.
+
+More documentation can be found in the [anvil][foundry-book-anvil] section of the Foundry Book.
+
+## Chisel
+
+Chisel is a fast, utilitarian, and verbose Solidity REPL.
+
+To use Chisel, simply type `chisel`.
+
+```sh
+chisel
+```
+
+From here, start writing Solidity code! Chisel will offer verbose feedback on each input.
+
+Create a variable `a` and query it:
+
+```console
+➜ uint256 a = 123;
+➜ a
+Type: uint256
+├ Hex: 0x7b
+├ Hex (full word): 0x000000000000000000000000000000000000000000000000000000000000007b
+└ Decimal: 123
+```
+
+Finally, run `!source` to see `a` was applied:
+
+```solidity
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.28;
+
+import {Vm} from "forge-std/Vm.sol";
+
+contract REPL {
+    Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    /// @notice REPL contract entry point
+    function run() public {
+        uint256 a = 123;
+    }
+}
+```
+
+---
+
+Run `chisel --help` to explore the full list of available features and their usage.
+
+More documentation can be found in the [chisel][foundry-book-chisel] section of the Foundry Book.
 
 ## Configuration
 
-### Using `foundry.toml`
+Foundry is highly configurable, allowing you to tailor it to your needs. Configuration is managed via a file called [`foundry.toml`](./crates/config) located in the root of your project or any parent directory. For a full list of configuration options, refer to the [config package documentation](./crates/config/README.md#all-options).
 
-Foundry is designed to be very configurable. You can configure Foundry using a file called [`foundry.toml`](./crates/config) in the root of your project, or any other parent directory. See [config package](./crates/config/README.md#all-options) for all available options.
+**Profiles and Namespaces**
 
-Configuration can be arbitrarily namespaced by profiles. The default profile is named `default` (see ["Default Profile"](./crates/config/README.md#default-profile)).
+- Configuration can be organized into **profiles**, which are arbitrarily namespaced for flexibility.
+- The default profile is named `default`. Learn more in the [Default Profile section](./crates/config/README.md#default-profile).
+- To select a different profile, set the `FOUNDRY_PROFILE` environment variable.
+- Override specific settings using environment variables prefixed with `FOUNDRY_` (e.g., `FOUNDRY_SRC`).
 
-You can select another profile using the `FOUNDRY_PROFILE` environment variable. You can also override parts of your configuration using `FOUNDRY_` or `DAPP_` prefixed environment variables, like `FOUNDRY_SRC`.
+---
 
-`forge init` creates a basic, extendable `foundry.toml` file.
+You can find additional [setup and configurations guides][foundry-book-config] in the [Foundry Book][foundry-book] and in the [config crate](./crates/config/README.md):
 
-To see your current configuration, run `forge config`. To see only basic options (as set with `forge init`), run `forge config --basic`. This can be used to create a new `foundry.toml` file with `forge config --basic > foundry.toml`.
-
-By default `forge config` shows the currently selected foundry profile and its values. It also accepts the same arguments as `forge build`.
-
-### DappTools Compatibility
-
-You can reuse your `.dapprc` environment variables by running `source .dapprc` before using a Foundry tool.
-
-### Additional Configuration
-
-You can find additional setup and configurations guides in the [Foundry Book][foundry-book]:
-
--   [Setting up VSCode][vscode-setup]
--   [Shell autocompletions][shell-setup]
+- [Configuring with `foundry.toml`](https://book.getfoundry.sh/config/)
+- [Setting up VSCode][vscode-setup]
+- [Shell autocompletions][shell-setup]
 
 ## Contributing
 
@@ -114,31 +314,54 @@ See our [contributing guidelines](./CONTRIBUTING.md).
 
 ## Getting Help
 
-First, see if the answer to your question can be found in [book][foundry-book], or in the relevant crate.
+First, see if the answer to your question can be found in the [Foundy Book][foundry-book], or in the relevant crate.
 
 If the answer is not there:
 
--   Join the [support Telegram][tg-support-url] to get help, or
--   Open a [discussion](https://github.com/foundry-rs/foundry/discussions/new) with your question, or
--   Open an issue with [the bug](https://github.com/foundry-rs/foundry/issues/new)
+- Join the [support Telegram][tg-support-url] to get help, or
+- Open a [discussion](https://github.com/foundry-rs/foundry/discussions/new) with your question, or
+- Open an issue with [the bug](https://github.com/foundry-rs/foundry/issues/new)
 
 If you want to contribute, or follow along with contributor discussion, you can use our [main telegram](https://t.me/foundry_rs) to chat with us about the development of Foundry!
 
+## License
+
+Licensed under either of [Apache License](./LICENSE-APACHE), Version
+2.0 or [MIT License](./LICENSE-MIT) at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in these crates by you, as defined in the Apache-2.0 license,
+shall be dual licensed as above, without any additional terms or conditions.
+
 ## Acknowledgements
 
--   Foundry is a clean-room rewrite of the testing framework [DappTools](https://github.com/dapphub/dapptools). None of this would have been possible without the DappHub team's work over the years.
--   [Matthias Seitz](https://twitter.com/mattsse_): Created [ethers-solc] which is the backbone of our compilation pipeline, as well as countless contributions to ethers, in particular the `abigen` macros.
--   [Rohit Narurkar](https://twitter.com/rohitnarurkar): Created the Rust Solidity version manager [svm-rs](https://github.com/roynalnaruto/svm-rs) which we use to auto-detect and manage multiple Solidity versions.
--   [Brock Elmore](https://twitter.com/brockjelmore): For extending the VM's cheatcodes and implementing [structured call tracing](https://github.com/foundry-rs/foundry/pull/192), a critical feature for debugging smart contract calls.
--   All the other [contributors](https://github.com/foundry-rs/foundry/graphs/contributors) to the [ethers-rs](https://github.com/gakonst/ethers-rs) & [foundry](https://github.com/foundry-rs/foundry) repositories and chatrooms.
+- Foundry is a clean-room rewrite of the testing framework [DappTools][dapptools]. None of this would have been possible without the DappHub team's work over the years.
+- [Matthias Seitz](https://twitter.com/mattsse_): Created [ethers-solc] (now [foundry-compilers]) which is the backbone of our compilation pipeline, as well as countless contributions to ethers, in particular the `abigen` macros.
+- [Rohit Narurkar](https://twitter.com/rohitnarurkar): Created the Rust Solidity version manager [svm-rs](https://github.com/roynalnaruto/svm-rs) which we use to auto-detect and manage multiple Solidity versions.
+- [Brock Elmore](https://twitter.com/brockjelmore): For extending the VM's cheatcodes and implementing [structured call tracing](https://github.com/foundry-rs/foundry/pull/192), a critical feature for debugging smart contract calls.
+- All the other [contributors](https://github.com/foundry-rs/foundry/graphs/contributors) to the [ethers-rs](https://github.com/gakonst/ethers-rs), [alloy][alloy] & [foundry](https://github.com/foundry-rs/foundry) repositories and chatrooms.
 
+[solidity]: https://soliditylang.org/
 [foundry-book]: https://book.getfoundry.sh
+[foundry-book-config]: https://book.getfoundry.sh/config/
+[foundry-book-forge]: https://book.getfoundry.sh/reference/forge/
+[foundry-book-anvil]: https://book.getfoundry.sh/reference/anvil/
+[foundry-book-cast]: https://book.getfoundry.sh/reference/cast/
+[foundry-book-chisel]: https://book.getfoundry.sh/reference/chisel/
 [foundry-gha]: https://github.com/foundry-rs/foundry-toolchain
+[foundry-compilers]: https://github.com/foundry-rs/compilers
 [ethers-solc]: https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/
+[solady]: https://github.com/Vectorized/solady
+[openzeppelin]: https://github.com/OpenZeppelin/openzeppelin-contracts/tree/release-v5.1
+[morpho-blue]: https://github.com/morpho-org/morpho-blue
+[foundry-compilers]: https://github.com/foundry-rs/compilers
 [solmate]: https://github.com/transmissions11/solmate/
 [geb]: https://github.com/reflexer-labs/geb
-[vaults]: https://github.com/rari-capital/vaults
 [benchmark-post]: https://www.paradigm.xyz/2022/03/foundry-02#blazing-fast-compilation--testing
 [convex]: https://github.com/mds1/convex-shutdown-simulation
 [vscode-setup]: https://book.getfoundry.sh/config/vscode.html
 [shell-setup]: https://book.getfoundry.sh/config/shell-autocompletion.html
+[foundry-0.2]: https://github.com/foundry-rs/foundry/releases/tag/nightly-5b7e4cb3c882b28f3c32ba580de27ce7381f415a
+[foundry-1.0]: https://github.com/foundry-rs/foundry/releases/tag/nightly-59f354c179f4e7f6d7292acb3d068815c79286d1
+[dapptools]: https://github.com/dapphub/dapptools
+[alloy]: https://github.com/alloy-rs/alloy

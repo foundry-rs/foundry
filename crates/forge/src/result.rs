@@ -164,7 +164,7 @@ impl TestOutcome {
         }
 
         sh_println!("\nFailing tests:")?;
-        for (suite_name, suite) in outcome.results.iter() {
+        for (suite_name, suite) in &outcome.results {
             let failed = suite.failed();
             if failed == 0 {
                 continue;
@@ -205,7 +205,7 @@ impl TestOutcome {
 #[derive(Clone, Debug, Serialize)]
 pub struct SuiteResult {
     /// Wall clock time it took to execute all tests in this suite.
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "foundry_common::serde_helpers::duration")]
     pub duration: Duration,
     /// Individual test results: `test fn signature -> TestResult`.
     pub test_results: BTreeMap<String, TestResult>,
@@ -409,6 +409,7 @@ pub struct TestResult {
     /// Labeled addresses
     pub labeled_addresses: AddressHashMap<String>,
 
+    #[serde(with = "foundry_common::serde_helpers::duration")]
     pub duration: Duration,
 
     /// pc breakpoint char map
@@ -446,10 +447,16 @@ impl fmt::Display for TestResult {
                             CounterExample::Single(ex) => {
                                 write!(s, "; counterexample: {ex}]").unwrap();
                             }
-                            CounterExample::Sequence(sequence) => {
-                                s.push_str("]\n\t[Sequence]\n");
+                            CounterExample::Sequence(original, sequence) => {
+                                s.push_str(
+                                    format!(
+                                        "]\n\t[Sequence] (original: {original}, shrunk: {})\n",
+                                        sequence.len()
+                                    )
+                                    .as_str(),
+                                );
                                 for ex in sequence {
-                                    writeln!(s, "\t\t{ex}").unwrap();
+                                    writeln!(s, "{ex}").unwrap();
                                 }
                             }
                         }
@@ -482,10 +489,10 @@ impl TestResult {
         Self { status: TestStatus::Failure, reason: Some(reason), ..Default::default() }
     }
 
-    /// Creates a failed test setup result.
-    pub fn setup_fail(setup: TestSetup) -> Self {
+    /// Creates a test setup result.
+    pub fn setup_result(setup: TestSetup) -> Self {
         Self {
-            status: TestStatus::Failure,
+            status: if setup.skipped { TestStatus::Skipped } else { TestStatus::Failure },
             reason: setup.reason,
             logs: setup.logs,
             traces: setup.traces,
@@ -593,7 +600,7 @@ impl TestResult {
         } else {
             Some(format!("{invariant_name} persisted failure revert"))
         };
-        self.counterexample = Some(CounterExample::Sequence(call_sequence));
+        self.counterexample = Some(CounterExample::Sequence(call_sequence.len(), call_sequence));
     }
 
     /// Returns the fail result for invariant test setup.
@@ -605,7 +612,7 @@ impl TestResult {
     }
 
     /// Returns the invariant test result.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn invariant_result(
         &mut self,
         gas_report_traces: Vec<Vec<CallTraceArena>>,
@@ -752,14 +759,24 @@ pub struct TestSetup {
     pub traces: Traces,
     /// Coverage info during setup.
     pub coverage: Option<HitMaps>,
+    /// Addresses of external libraries deployed during setup.
+    pub deployed_libs: Vec<Address>,
 
     /// The reason the setup failed, if it did.
     pub reason: Option<String>,
+    /// Whether setup and entire test suite is skipped.
+    pub skipped: bool,
+    /// Whether the test failed to deploy.
+    pub deployment_failure: bool,
 }
 
 impl TestSetup {
     pub fn failed(reason: String) -> Self {
         Self { reason: Some(reason), ..Default::default() }
+    }
+
+    pub fn skipped(reason: String) -> Self {
+        Self { reason: Some(reason), skipped: true, ..Default::default() }
     }
 
     pub fn extend(&mut self, raw: RawCallResult, trace_kind: TraceKind) {

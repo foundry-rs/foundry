@@ -67,7 +67,7 @@ async fn test_can_set_genesis_timestamp() {
 
     assert_eq!(
         genesis_timestamp,
-        provider.get_block(0.into(), false.into()).await.unwrap().unwrap().header.timestamp
+        provider.get_block(0.into()).await.unwrap().unwrap().header.timestamp
     );
 }
 
@@ -76,10 +76,7 @@ async fn test_can_use_default_genesis_timestamp() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
-    assert_ne!(
-        0u64,
-        provider.get_block(0.into(), false.into()).await.unwrap().unwrap().header.timestamp
-    );
+    assert_ne!(0u64, provider.get_block(0.into()).await.unwrap().unwrap().header.timestamp);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -117,4 +114,23 @@ async fn test_cancun_fields() {
     assert_eq!(block.withdrawals, Some(Default::default()));
     assert!(block.header.blob_gas_used.is_some());
     assert!(block.header.excess_blob_gas.is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_can_set_genesis_block_number() {
+    let (_api, handle) = spawn(NodeConfig::test().with_genesis_block_number(Some(1337u64))).await;
+    let provider = handle.http_provider();
+
+    let block_number = provider.get_block_number().await.unwrap();
+    assert_eq!(block_number, 1337u64);
+
+    assert_eq!(1337, provider.get_block(1337.into()).await.unwrap().unwrap().header.number);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_can_use_default_genesis_block_number() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    assert_eq!(0, provider.get_block(0.into()).await.unwrap().unwrap().header.number);
 }

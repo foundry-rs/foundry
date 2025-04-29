@@ -32,30 +32,38 @@ mod inspector;
 pub use inspector::Fuzzer;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[expect(clippy::large_enum_variant)]
 pub enum CounterExample {
     /// Call used as a counter example for fuzz tests.
     Single(BaseCounterExample),
-    /// Sequence of calls used as a counter example for invariant tests.
-    Sequence(Vec<BaseCounterExample>),
+    /// Original sequence size and sequence of calls used as a counter example for invariant tests.
+    Sequence(usize, Vec<BaseCounterExample>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BaseCounterExample {
-    /// Address which makes the call
+    /// Address which makes the call.
     pub sender: Option<Address>,
-    /// Address to which to call to
+    /// Address to which to call to.
     pub addr: Option<Address>,
-    /// The data to provide
+    /// The data to provide.
     pub calldata: Bytes,
-    /// Contract name if it exists
+    /// Contract name if it exists.
     pub contract_name: Option<String>,
-    /// Function signature if it exists
+    /// Function name if it exists.
+    pub func_name: Option<String>,
+    /// Function signature if it exists.
     pub signature: Option<String>,
-    /// Args used to call the function
+    /// Pretty formatted args used to call the function.
     pub args: Option<String>,
-    /// Traces
+    /// Unformatted args used to call the function.
+    pub raw_args: Option<String>,
+    /// Counter example traces.
     #[serde(skip)]
     pub traces: Option<SparsedTraceArena>,
+    /// Whether to display sequence as solidity.
+    #[serde(skip)]
+    pub show_solidity: bool,
 }
 
 impl BaseCounterExample {
@@ -66,6 +74,7 @@ impl BaseCounterExample {
         bytes: &Bytes,
         contracts: &ContractsByAddress,
         traces: Option<SparsedTraceArena>,
+        show_solidity: bool,
     ) -> Self {
         if let Some((name, abi)) = &contracts.get(&addr) {
             if let Some(func) = abi.functions().find(|f| f.selector() == bytes[..4]) {
@@ -76,11 +85,16 @@ impl BaseCounterExample {
                         addr: Some(addr),
                         calldata: bytes.clone(),
                         contract_name: Some(name.clone()),
+                        func_name: Some(func.name.clone()),
                         signature: Some(func.signature()),
                         args: Some(
                             foundry_common::fmt::format_tokens(&args).format(", ").to_string(),
                         ),
+                        raw_args: Some(
+                            foundry_common::fmt::format_tokens_raw(&args).format(", ").to_string(),
+                        ),
                         traces,
+                        show_solidity,
                     };
                 }
             }
@@ -91,9 +105,12 @@ impl BaseCounterExample {
             addr: Some(addr),
             calldata: bytes.clone(),
             contract_name: None,
+            func_name: None,
             signature: None,
             args: None,
+            raw_args: None,
             traces,
+            show_solidity: false,
         }
     }
 
@@ -108,17 +125,40 @@ impl BaseCounterExample {
             addr: None,
             calldata: bytes,
             contract_name: None,
+            func_name: None,
             signature: None,
             args: Some(foundry_common::fmt::format_tokens(&args).format(", ").to_string()),
+            raw_args: Some(foundry_common::fmt::format_tokens_raw(&args).format(", ").to_string()),
             traces,
+            show_solidity: false,
         }
     }
 }
 
 impl fmt::Display for BaseCounterExample {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Display counterexample as solidity.
+        if self.show_solidity {
+            if let (Some(sender), Some(contract), Some(address), Some(func_name), Some(args)) =
+                (&self.sender, &self.contract_name, &self.addr, &self.func_name, &self.raw_args)
+            {
+                writeln!(f, "\t\tvm.prank({sender});")?;
+                write!(
+                    f,
+                    "\t\t{}({}).{}({});",
+                    contract.split_once(':').map_or(contract.as_str(), |(_, contract)| contract),
+                    address,
+                    func_name,
+                    args
+                )?;
+
+                return Ok(())
+            }
+        }
+
+        // Regular counterexample display.
         if let Some(sender) = self.sender {
-            write!(f, "sender={sender} addr=")?
+            write!(f, "\t\tsender={sender} addr=")?
         }
 
         if let Some(name) = &self.contract_name {

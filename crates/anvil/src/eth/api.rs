@@ -30,7 +30,10 @@ use crate::{
     revm::primitives::{BlobExcessGasAndPrice, Output},
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
-use alloy_consensus::{transaction::eip4844::TxEip4844Variant, Account};
+use alloy_consensus::{
+    transaction::{eip4844::TxEip4844Variant, Recovered},
+    Account,
+};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{
@@ -50,6 +53,7 @@ use alloy_rpc_types::{
         ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
     },
     request::TransactionRequest,
+    simulate::{SimulatePayload, SimulatedBlock},
     state::StateOverride,
     trace::{
         filter::TraceFilter,
@@ -130,7 +134,7 @@ pub struct EthApi {
 
 impl EthApi {
     /// Creates a new instance
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn new(
         pool: Arc<Pool>,
         backend: Arc<backend::mem::Backend>,
@@ -161,7 +165,7 @@ impl EthApi {
     /// Executes the [EthRequest] and returns an RPC [ResponseResult].
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
         trace!(target: "rpc::api", "executing eth request");
-        match request {
+        let response = match request.clone() {
             EthRequest::Web3ClientVersion(()) => self.client_version().to_rpc_result(),
             EthRequest::Web3Sha3(content) => self.sha3(content).to_rpc_result(),
             EthRequest::EthGetAccount(addr, block) => {
@@ -245,6 +249,9 @@ impl EthApi {
             }
             EthRequest::EthCall(call, block, overrides) => {
                 self.call(call, block, overrides).await.to_rpc_result()
+            }
+            EthRequest::EthSimulateV1(simulation, block) => {
+                self.simulate_v1(simulation, block).await.to_rpc_result()
             }
             EthRequest::EthCreateAccessList(call, block) => {
                 self.create_access_list(call, block).await.to_rpc_result()
@@ -456,6 +463,7 @@ impl EthApi {
             EthRequest::Reorg(reorg_options) => {
                 self.anvil_reorg(reorg_options).await.to_rpc_result()
             }
+            EthRequest::Rollback(depth) => self.anvil_rollback(depth).await.to_rpc_result(),
             EthRequest::WalletGetCapabilities(()) => self.get_capabilities().to_rpc_result(),
             EthRequest::WalletSendTransaction(tx) => {
                 self.wallet_send_transaction(*tx).await.to_rpc_result()
@@ -464,7 +472,15 @@ impl EthApi {
             EthRequest::AnvilSetExecutor(executor_pk) => {
                 self.anvil_set_executor(executor_pk).to_rpc_result()
             }
+        };
+
+        if let ResponseResult::Error(err) = &response {
+            node_info!("\nRPC request failed:");
+            node_info!("    Request: {:?}", request);
+            node_info!("    Error: {}\n", err);
         }
+
+        response
     }
 
     fn sign_request(
@@ -1091,6 +1107,33 @@ impl EthApi {
         .await
     }
 
+    pub async fn simulate_v1(
+        &self,
+        request: SimulatePayload,
+        block_number: Option<BlockId>,
+    ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>> {
+        node_info!("eth_simulateV1");
+        let block_request = self.block_request(block_number).await?;
+        // check if the number predates the fork, if in fork mode
+        if let BlockRequest::Number(number) = block_request {
+            if let Some(fork) = self.get_fork() {
+                if fork.predates_fork(number) {
+                    return Ok(fork.simulate_v1(&request, Some(number.into())).await?)
+                }
+            }
+        }
+
+        // this can be blocking for a bit, especially in forking mode
+        // <https://github.com/foundry-rs/foundry/issues/6036>
+        self.on_blocking_task(|this| async move {
+            let simulated_blocks = this.backend.simulate(request, Some(block_request)).await?;
+            trace!(target : "node", "Simulate status {:?}", simulated_blocks);
+
+            Ok(simulated_blocks)
+        })
+        .await
+    }
+
     /// This method creates an EIP2930 type accessList based on a given Transaction. The accessList
     /// contains all storage slots and addresses read and written by the transaction, except for the
     /// sender account and the precompiles.
@@ -1180,17 +1223,20 @@ impl EthApi {
         node_info!("eth_getTransactionByHash");
         let mut tx = self.pool.get_transaction(hash).map(|pending| {
             let from = *pending.sender();
-            let mut tx = transaction_build(
+            let tx = transaction_build(
                 Some(*pending.hash()),
                 pending.transaction,
                 None,
                 None,
                 Some(self.backend.base_fee()),
             );
+
+            let WithOtherFields { inner: mut tx, other } = tx.0;
             // we set the from field here explicitly to the set sender of the pending transaction,
             // in case the transaction is impersonated.
-            tx.from = from;
-            tx
+            tx.inner = Recovered::new_unchecked(tx.inner.into_inner(), from);
+
+            AnyRpcTransaction(WithOtherFields { inner: tx, other })
         });
         if tx.is_none() {
             tx = self.backend.transaction_by_hash(hash).await?
@@ -1902,10 +1948,10 @@ impl EthApi {
                 TransactionOrder::Fees => "fees".to_string(),
             },
             environment: NodeEnvironment {
-                base_fee: U256::from(self.backend.base_fee()),
+                base_fee: self.backend.base_fee() as u128,
                 chain_id: self.backend.chain_id().to::<u64>(),
-                gas_limit: U256::from(self.backend.gas_limit()),
-                gas_price: U256::from(self.gas_price()),
+                gas_limit: self.backend.gas_limit(),
+                gas_price: self.gas_price(),
             },
             fork_config: fork_config
                 .map(|fork| {
@@ -2064,6 +2110,36 @@ impl EthApi {
         };
 
         self.backend.reorg(depth, block_pool_txs, common_block).await?;
+        Ok(())
+    }
+
+    /// Rollback the chain to a specific depth.
+    ///
+    /// e.g depth = 3
+    ///     A  -> B  -> C  -> D  -> E
+    ///     A  -> B
+    ///
+    /// Depth specifies the height to rollback the chain back to. Depth must not exceed the current
+    /// chain height, i.e. can't rollback past the genesis block.
+    ///
+    /// Handler for RPC call: `anvil_rollback`
+    pub async fn anvil_rollback(&self, depth: Option<u64>) -> Result<()> {
+        node_info!("anvil_rollback");
+        let depth = depth.unwrap_or(1);
+
+        // Check reorg depth doesn't exceed current chain height
+        let current_height = self.backend.best_number();
+        let common_height = current_height.checked_sub(depth).ok_or(BlockchainError::RpcError(
+            RpcError::invalid_params(format!(
+                "Rollback depth must not exceed current chain height: current height {current_height}, depth {depth}"
+            )),
+        ))?;
+
+        // Get the common ancestor block
+        let common_block =
+            self.backend.get_block(common_height).ok_or(BlockchainError::BlockNotFound)?;
+
+        self.backend.rollback(common_block).await?;
         Ok(())
     }
 
@@ -2315,7 +2391,7 @@ impl EthApi {
             let to = tx.to();
             let gas_price = tx.gas_price();
             let value = tx.value();
-            let gas = tx.gas_limit() as u128;
+            let gas = tx.gas_limit();
             TxpoolInspectSummary { to, value, gas, gas_price }
         }
 
@@ -2349,7 +2425,7 @@ impl EthApi {
         let mut content = TxpoolContent::<AnyRpcTransaction>::default();
         fn convert(tx: Arc<PoolTransaction>) -> Result<AnyRpcTransaction> {
             let from = *tx.pending_transaction.sender();
-            let mut tx = transaction_build(
+            let tx = transaction_build(
                 Some(tx.hash()),
                 tx.pending_transaction.transaction.clone(),
                 None,
@@ -2357,9 +2433,13 @@ impl EthApi {
                 None,
             );
 
+            let WithOtherFields { inner: mut tx, other } = tx.0;
+
             // we set the from field here explicitly to the set sender of the pending transaction,
             // in case the transaction is impersonated.
-            tx.from = from;
+            tx.inner = Recovered::new_unchecked(tx.inner.into_inner(), from);
+
+            let tx = AnyRpcTransaction(WithOtherFields { inner: tx, other });
 
             Ok(tx)
         }
@@ -2579,17 +2659,22 @@ impl EthApi {
             }
         }
 
-        self.backend
-            .with_database_at(Some(block_request), |mut state, block| {
-                if let Some(overrides) = overrides {
-                    state = Box::new(state::apply_state_override(
-                        overrides.into_iter().collect(),
-                        state,
-                    )?);
-                }
-                self.do_estimate_gas_with_state(request, &state, block)
-            })
-            .await?
+        // this can be blocking for a bit, especially in forking mode
+        // <https://github.com/foundry-rs/foundry/issues/6036>
+        self.on_blocking_task(|this| async move {
+            this.backend
+                .with_database_at(Some(block_request), |mut state, block| {
+                    if let Some(overrides) = overrides {
+                        state = Box::new(state::apply_state_override(
+                            overrides.into_iter().collect(),
+                            state,
+                        )?);
+                    }
+                    this.do_estimate_gas_with_state(request, &state, block)
+                })
+                .await?
+        })
+        .await
     }
 
     /// Estimates the gas usage of the `request` with the state.
@@ -2754,7 +2839,7 @@ impl EthApi {
     }
 
     /// Returns the first signer that can sign for the given address
-    #[allow(clippy::borrowed_box)]
+    #[expect(clippy::borrowed_box)]
     pub fn get_signer(&self, address: Address) -> Option<&Box<dyn Signer>> {
         self.signers.iter().find(|signer| signer.is_signer_for(address))
     }
@@ -2834,7 +2919,8 @@ impl EthApi {
         let max_fee_per_blob_gas = request.max_fee_per_blob_gas;
         let gas_price = request.gas_price;
 
-        let gas_limit = request.gas.unwrap_or(self.backend.gas_limit() as u64);
+        let gas_limit = request.gas.unwrap_or_else(|| self.backend.gas_limit());
+        let from = request.from;
 
         let request = match transaction_request_to_typed(request) {
             Some(TypedTransactionRequest::Legacy(mut m)) => {
@@ -2882,10 +2968,26 @@ impl EthApi {
                         }
                         TxEip4844Variant::TxEip4844WithSidecar(m)
                     }
-                    // It is not valid to receive a TxEip4844 without a sidecar, therefore
-                    // we must reject it.
-                    TxEip4844Variant::TxEip4844(_) => {
-                        return Err(BlockchainError::FailedToDecodeTransaction)
+                    TxEip4844Variant::TxEip4844(mut tx) => {
+                        if !self.backend.skip_blob_validation(from) {
+                            return Err(BlockchainError::FailedToDecodeTransaction)
+                        }
+
+                        // Allows 4844 with no sidecar when impersonation is active.
+                        tx.nonce = nonce;
+                        tx.chain_id = chain_id;
+                        tx.gas_limit = gas_limit;
+                        if max_fee_per_gas.is_none() {
+                            tx.max_fee_per_gas = self.gas_price();
+                        }
+                        if max_fee_per_blob_gas.is_none() {
+                            tx.max_fee_per_blob_gas = self
+                                .excess_blob_gas_and_price()
+                                .unwrap_or_default()
+                                .map_or(0, |g| g.blob_gasprice)
+                        }
+
+                        TxEip4844Variant::TxEip4844(tx)
                     }
                 })
             }

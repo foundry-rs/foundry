@@ -258,6 +258,11 @@ impl Executor {
     }
 
     #[inline]
+    pub fn set_script(&mut self, script_address: Address) {
+        self.inspector_mut().script(script_address);
+    }
+
+    #[inline]
     pub fn set_trace_printer(&mut self, trace_printer: bool) -> &mut Self {
         self.inspector_mut().print(trace_printer);
         self
@@ -705,11 +710,15 @@ pub enum EvmError {
     #[error(transparent)]
     Abi(#[from] alloy_dyn_abi::Error),
     /// Error caused which occurred due to calling the `skip` cheatcode.
-    #[error("{_0}")]
+    #[error("{0}")]
     Skip(SkipReason),
     /// Any other error.
-    #[error(transparent)]
-    Eyre(eyre::Error),
+    #[error("{0}")]
+    Eyre(
+        #[from]
+        #[source]
+        eyre::Report,
+    ),
 }
 
 impl From<ExecutionErr> for EvmError {
@@ -721,16 +730,6 @@ impl From<ExecutionErr> for EvmError {
 impl From<alloy_sol_types::Error> for EvmError {
     fn from(err: alloy_sol_types::Error) -> Self {
         Self::Abi(err.into())
-    }
-}
-
-impl From<eyre::Error> for EvmError {
-    fn from(err: eyre::Report) -> Self {
-        let mut chained_cause = String::new();
-        for cause in err.chain() {
-            chained_cause.push_str(format!("{cause}; ").as_str());
-        }
-        Self::Eyre(eyre::format_err!("{chained_cause}"))
     }
 }
 
@@ -938,7 +937,7 @@ fn convert_executed_result(
             (reason.into(), 0_u64, gas_used, None, vec![])
         }
     };
-    let stipend = revm::interpreter::gas::validate_initial_tx_gas(
+    let gas = revm::interpreter::gas::calculate_initial_tx_gas(
         env.spec_id(),
         &env.tx.data,
         env.tx.transact_to.is_create(),
@@ -970,7 +969,7 @@ fn convert_executed_result(
         result,
         gas_used,
         gas_refunded,
-        stipend,
+        stipend: gas.initial_gas,
         logs,
         labels,
         traces,

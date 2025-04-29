@@ -12,7 +12,6 @@ use alloy_primitives::{
 };
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionInput;
-use async_recursion::async_recursion;
 use eyre::{OptionExt, Result};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
@@ -21,7 +20,7 @@ use foundry_common::{
     provider::get_http_provider,
     ContractsByArtifact,
 };
-use foundry_config::{Config, NamedChain};
+use foundry_config::NamedChain;
 use foundry_debugger::Debugger;
 use foundry_evm::{
     decode::decode_console_logs,
@@ -34,7 +33,7 @@ use foundry_evm::{
 };
 use futures::future::join_all;
 use itertools::Itertools;
-use std::path::PathBuf;
+use std::path::Path;
 use yansi::Paint;
 
 /// State after linking, contains the linked build data along with library addresses and optional
@@ -101,7 +100,6 @@ pub struct PreExecutionState {
 impl PreExecutionState {
     /// Executes the script and returns the state after execution.
     /// Might require executing script twice in cases when we determine sender from execution.
-    #[async_recursion]
     pub async fn execute(mut self) -> Result<ExecutedState> {
         let mut runner = self
             .script_config
@@ -127,7 +125,7 @@ impl PreExecutionState {
                 build_data: self.build_data.build_data,
             };
 
-            return state.link().await?.prepare_execution().await?.execute().await;
+            return Box::pin(state.link().await?.prepare_execution().await?.execute()).await;
         }
 
         Ok(ExecutedState {
@@ -189,9 +187,9 @@ impl PreExecutionState {
         if let Some(txs) = transactions {
             // If the user passed a `--sender` don't check anything.
             if self.build_data.predeploy_libraries.libraries_count() > 0 &&
-                self.args.evm_args.sender.is_none()
+                self.args.evm.sender.is_none()
             {
-                for tx in txs.iter() {
+                for tx in txs {
                     if tx.transaction.to().is_none() {
                         let sender = tx.transaction.from().expect("no sender");
                         if let Some(ns) = new_sender {
@@ -330,9 +328,8 @@ impl ExecutedState {
             .with_labels(self.execution_result.labeled_addresses.clone())
             .with_verbosity(self.script_config.evm_opts.verbosity)
             .with_known_contracts(known_contracts)
-            .with_signature_identifier(SignaturesIdentifier::new(
-                Config::foundry_cache_dir(),
-                self.script_config.config.offline,
+            .with_signature_identifier(SignaturesIdentifier::from_config(
+                &self.script_config.config,
             )?)
             .build();
 
@@ -430,7 +427,7 @@ impl PreSimulationState {
 
                 if should_include {
                     let mut trace = trace.clone();
-                    decode_trace_arena(&mut trace, decoder).await?;
+                    decode_trace_arena(&mut trace, decoder).await;
                     sh_println!("{}", render_trace_arena(&trace))?;
                 }
             }
@@ -497,7 +494,7 @@ impl PreSimulationState {
         Ok(())
     }
 
-    pub fn run_debug_file_dumper(self, path: &PathBuf) -> Result<()> {
+    pub fn dump_debugger(self, path: &Path) -> Result<()> {
         self.create_debugger().dump_to_file(path)?;
         Ok(())
     }

@@ -8,9 +8,6 @@ use alloy_primitives::{Address, Bloom, Bytes, B256, B64, U256};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
 
 // Type alias to optionally support impersonated transactions
-#[cfg(not(feature = "impersonated-tx"))]
-type Transaction = crate::eth::transaction::TypedTransaction;
-#[cfg(feature = "impersonated-tx")]
 type Transaction = crate::eth::transaction::MaybeImpersonatedTransaction;
 
 /// Container type that gathers all block data
@@ -65,7 +62,6 @@ impl Block {
                 nonce: partial_header.nonce,
                 base_fee_per_gas: partial_header.base_fee,
                 requests_hash: partial_header.requests_hash,
-                target_blobs_per_block: None,
             },
             transactions,
             ommers: vec![],
@@ -158,7 +154,6 @@ mod tests {
             parent_beacon_block_root: Default::default(),
             base_fee_per_gas: None,
             requests_hash: None,
-            target_blobs_per_block: None,
         };
 
         let encoded = alloy_rlp::encode(&header);
@@ -200,7 +195,6 @@ mod tests {
             nonce: B64::ZERO,
             base_fee_per_gas: None,
             requests_hash: None,
-            target_blobs_per_block: None,
         };
 
         header.encode(&mut data);
@@ -234,7 +228,6 @@ mod tests {
             parent_beacon_block_root: None,
             base_fee_per_gas: None,
             requests_hash: None,
-            target_blobs_per_block: None,
         };
         let header = Header::decode(&mut data.as_slice()).unwrap();
         assert_eq!(header, expected);
@@ -244,7 +237,7 @@ mod tests {
     // Test vector from: https://github.com/ethereum/tests/blob/f47bbef4da376a49c8fc3166f09ab8a6d182f765/BlockchainTests/ValidBlocks/bcEIP1559/baseFee.json#L15-L36
     fn test_eip1559_block_header_hash() {
         let expected_hash =
-            b256!("6a251c7c3c5dca7b42407a3752ff48f3bbca1fab7f9868371d9918daf1988d1f");
+            b256!("0x6a251c7c3c5dca7b42407a3752ff48f3bbca1fab7f9868371d9918daf1988d1f");
         let header = Header {
             parent_hash: B256::from_str("e0a94a7a3c9617401586b1a27025d2d9671332d22d540e0af72b069170380f2a").unwrap(),
             ommers_hash: B256::from_str("1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347").unwrap(),
@@ -267,7 +260,6 @@ mod tests {
             excess_blob_gas: None,
             parent_beacon_block_root: None,
             requests_hash: None,
-            target_blobs_per_block: None,
         };
         assert_eq!(header.hash_slow(), expected_hash);
     }

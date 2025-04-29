@@ -16,12 +16,18 @@ use foundry_evm_core::{
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
 };
 use foundry_evm_traces::StackSnapshotType;
+use itertools::Itertools;
 use rand::Rng;
 use revm::primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY};
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{btree_map::Entry, BTreeMap},
+    fmt::Display,
+    path::Path,
+};
 
 mod record_debug_step;
 use record_debug_step::{convert_call_trace_to_debug_step, flatten_call_trace};
+use serde::Serialize;
 
 mod fork;
 pub(crate) mod mapping;
@@ -74,6 +80,70 @@ pub struct DealRecord {
     pub old_balance: U256,
     /// Balance after deal was applied
     pub new_balance: U256,
+}
+
+/// Storage slot diff info.
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct SlotStateDiff {
+    /// Initial storage value.
+    previous_value: B256,
+    /// Current storage value.
+    new_value: B256,
+}
+
+/// Balance diff info.
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct BalanceDiff {
+    /// Initial storage value.
+    previous_value: U256,
+    /// Current storage value.
+    new_value: U256,
+}
+
+/// Account state diff info.
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct AccountStateDiffs {
+    /// Address label, if any set.
+    label: Option<String>,
+    /// Account balance changes.
+    balance_diff: Option<BalanceDiff>,
+    /// State changes, per slot.
+    state_diff: BTreeMap<B256, SlotStateDiff>,
+}
+
+impl Display for AccountStateDiffs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> eyre::Result<(), std::fmt::Error> {
+        // Print changed account.
+        if let Some(label) = &self.label {
+            writeln!(f, "label: {label}")?;
+        }
+        // Print balance diff if changed.
+        if let Some(balance_diff) = &self.balance_diff {
+            if balance_diff.previous_value != balance_diff.new_value {
+                writeln!(
+                    f,
+                    "- balance diff: {} → {}",
+                    balance_diff.previous_value, balance_diff.new_value
+                )?;
+            }
+        }
+        // Print state diff if any.
+        if !&self.state_diff.is_empty() {
+            writeln!(f, "- state diff:")?;
+            for (slot, slot_changes) in &self.state_diff {
+                writeln!(
+                    f,
+                    "@ {slot}: {} → {}",
+                    slot_changes.previous_value, slot_changes.new_value
+                )?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Cheatcode for addrCall {
@@ -416,7 +486,10 @@ impl Cheatcode for blobBaseFeeCall {
             "`blobBaseFee` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
-        ccx.ecx.env.block.set_blob_excess_gas_and_price((*newBlobBaseFee).to());
+        ccx.ecx.env.block.set_blob_excess_gas_and_price(
+            (*newBlobBaseFee).to(),
+            ccx.ecx.spec_id() >= SpecId::PRAGUE,
+        );
         Ok(Default::default())
     }
 }
@@ -444,7 +517,8 @@ impl Cheatcode for etchCall {
         let Self { target, newRuntimeBytecode } = self;
         ensure_not_precompile!(target, ccx);
         ccx.ecx.load_account(*target)?;
-        let bytecode = Bytecode::new_raw(Bytes::copy_from_slice(newRuntimeBytecode));
+        let bytecode = Bytecode::new_raw_checked(Bytes::copy_from_slice(newRuntimeBytecode))
+            .map_err(|e| fmt_err!("failed to create bytecode: {e}"))?;
         ccx.ecx.journaled_state.set_code(*target, bytecode);
         Ok(Default::default())
     }
@@ -512,10 +586,52 @@ impl Cheatcode for coolCall {
     }
 }
 
+impl Cheatcode for accessListCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { access } = self;
+        let access_list = access
+            .iter()
+            .map(|item| {
+                let keys = item.storageKeys.iter().map(|key| B256::from(*key)).collect_vec();
+                alloy_rpc_types::AccessListItem { address: item.target, storage_keys: keys }
+            })
+            .collect_vec();
+        state.access_list = Some(alloy_rpc_types::AccessList::from(access_list));
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for noAccessListCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        // Set to empty option in order to override previous applied access list.
+        if state.access_list.is_some() {
+            state.access_list = Some(alloy_rpc_types::AccessList::default());
+        }
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for warmSlotCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { target, slot } = *self;
+        set_cold_slot(ccx, target, slot.into(), false);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for coolSlotCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { target, slot } = *self;
+        set_cold_slot(ccx, target, slot.into(), true);
+        Ok(Default::default())
+    }
+}
+
 impl Cheatcode for readCallersCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        read_callers(ccx.state, &ccx.ecx.env.tx.caller)
+        read_callers(ccx.state, &ccx.ecx.env.tx.caller, ccx.ecx.journaled_state.depth())
     }
 }
 
@@ -683,6 +799,25 @@ impl Cheatcode for stopAndReturnStateDiffCall {
     }
 }
 
+impl Cheatcode for getStateDiffCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let mut diffs = String::new();
+        let state_diffs = get_recorded_state_diffs(state);
+        for (address, state_diffs) in state_diffs {
+            diffs.push_str(&format!("{address}\n"));
+            diffs.push_str(&format!("{state_diffs}\n"));
+        }
+        Ok(diffs.abi_encode())
+    }
+}
+
+impl Cheatcode for getStateDiffJsonCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let state_diffs = get_recorded_state_diffs(state);
+        Ok(serde_json::to_string(&state_diffs)?.abi_encode())
+    }
+}
+
 impl Cheatcode for broadcastRawTransactionCall {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
         let tx = TxEnvelope::decode(&mut self.data.as_ref())
@@ -767,11 +902,12 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
 
         let debug_steps: Vec<DebugStep> =
             steps.iter().map(|&step| convert_call_trace_to_debug_step(step)).collect();
-
         // Free up memory by clearing the steps if they are not recorded outside of cheatcode usage.
         if !record_info.original_tracer_config.record_steps {
             tracer.traces_mut().nodes_mut().iter_mut().for_each(|node| {
                 node.trace.steps = Vec::new();
+                node.logs = Vec::new();
+                node.ordering = Vec::new();
             });
         }
 
@@ -946,7 +1082,7 @@ fn derive_snapshot_name(
     name: Option<String>,
 ) -> (String, String) {
     let group = group.unwrap_or_else(|| {
-        ccx.state.config.running_contract.clone().expect("expected running contract")
+        ccx.state.config.running_artifact.clone().expect("expected running contract").name
     });
     let name = name.unwrap_or_else(|| "default".to_string());
     (group, name)
@@ -975,19 +1111,17 @@ fn derive_snapshot_name(
 /// - If no caller modification is active:
 ///     - caller_mode will be equal to [CallerMode::None],
 ///     - `msg.sender` and `tx.origin` will be equal to the default sender address.
-fn read_callers(state: &Cheatcodes, default_sender: &Address) -> Result {
-    let Cheatcodes { prank, broadcast, .. } = state;
-
+fn read_callers(state: &Cheatcodes, default_sender: &Address, call_depth: u64) -> Result {
     let mut mode = CallerMode::None;
     let mut new_caller = default_sender;
     let mut new_origin = default_sender;
-    if let Some(prank) = prank {
+    if let Some(prank) = state.get_prank(call_depth) {
         mode = if prank.single_call { CallerMode::Prank } else { CallerMode::RecurrentPrank };
         new_caller = &prank.new_caller;
         if let Some(new) = &prank.new_origin {
             new_origin = new;
         }
-    } else if let Some(broadcast) = broadcast {
+    } else if let Some(broadcast) = &state.broadcast {
         mode = if broadcast.single_call {
             CallerMode::Broadcast
         } else {
@@ -1042,5 +1176,74 @@ fn genesis_account(account: &Account) -> GenesisAccount {
                 .collect(),
         ),
         private_key: None,
+    }
+}
+
+/// Helper function to returns state diffs recorded for each changed account.
+fn get_recorded_state_diffs(state: &mut Cheatcodes) -> BTreeMap<Address, AccountStateDiffs> {
+    let mut state_diffs: BTreeMap<Address, AccountStateDiffs> = BTreeMap::default();
+    if let Some(records) = &state.recorded_account_diffs_stack {
+        records
+            .iter()
+            .flatten()
+            .filter(|account_access| {
+                !account_access.storageAccesses.is_empty() ||
+                    account_access.oldBalance != account_access.newBalance
+            })
+            .for_each(|account_access| {
+                // Record account balance diffs.
+                if account_access.oldBalance != account_access.newBalance {
+                    let account_diff =
+                        state_diffs.entry(account_access.account).or_insert_with(|| {
+                            AccountStateDiffs {
+                                label: state.labels.get(&account_access.account).cloned(),
+                                ..Default::default()
+                            }
+                        });
+                    // Update balance diff. Do not overwrite the initial balance if already set.
+                    if let Some(diff) = &mut account_diff.balance_diff {
+                        diff.new_value = account_access.newBalance;
+                    } else {
+                        account_diff.balance_diff = Some(BalanceDiff {
+                            previous_value: account_access.oldBalance,
+                            new_value: account_access.newBalance,
+                        });
+                    }
+                }
+
+                // Record account state diffs.
+                for storage_access in &account_access.storageAccesses {
+                    if storage_access.isWrite && !storage_access.reverted {
+                        let account_diff = state_diffs
+                            .entry(storage_access.account)
+                            .or_insert_with(|| AccountStateDiffs {
+                                label: state.labels.get(&storage_access.account).cloned(),
+                                ..Default::default()
+                            });
+                        // Update state diff. Do not overwrite the initial value if already set.
+                        match account_diff.state_diff.entry(storage_access.slot) {
+                            Entry::Vacant(slot_state_diff) => {
+                                slot_state_diff.insert(SlotStateDiff {
+                                    previous_value: storage_access.previousValue,
+                                    new_value: storage_access.newValue,
+                                });
+                            }
+                            Entry::Occupied(mut slot_state_diff) => {
+                                slot_state_diff.get_mut().new_value = storage_access.newValue;
+                            }
+                        }
+                    }
+                }
+            });
+    }
+    state_diffs
+}
+
+/// Helper function to set / unset cold storage slot of the target address.
+fn set_cold_slot(ccx: &mut CheatsCtxt, target: Address, slot: U256, cold: bool) {
+    if let Some(account) = ccx.ecx.journaled_state.state.get_mut(&target) {
+        if let Some(storage_slot) = account.storage.get_mut(&slot) {
+            storage_slot.is_cold = cold;
+        }
     }
 }

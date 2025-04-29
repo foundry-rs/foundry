@@ -7,7 +7,7 @@ use foundry_test_utils::{
     TestCommand, TestProject,
 };
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn test_verify_bytecode(
     prj: TestProject,
     mut cmd: TestCommand,
@@ -25,7 +25,7 @@ fn test_verify_bytecode(
     // fetch and flatten source code
     let source_code = cmd
         .cast_fuse()
-        .args(["etherscan-source", addr, "--flatten", "--etherscan-api-key", &etherscan_key])
+        .args(["source", addr, "--flatten", "--etherscan-api-key", &etherscan_key])
         .assert_success()
         .get_output()
         .stdout_lossy();
@@ -61,7 +61,7 @@ fn test_verify_bytecode(
         .contains(format!("Runtime code matched with status {}", expected_matches.1).as_str()));
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn test_verify_bytecode_with_ignore(
     prj: TestProject,
     mut cmd: TestCommand,
@@ -81,7 +81,7 @@ fn test_verify_bytecode_with_ignore(
     let source_code = cmd
         .cast_fuse()
         .args([
-            "etherscan-source",
+            "source",
             addr,
             "--flatten",
             "--etherscan-api-key",
@@ -144,8 +144,8 @@ forgetest_async!(can_verify_bytecode_no_metadata, |prj, cmd| {
         None,
         Config {
             evm_version: EvmVersion::London,
-            optimizer_runs: 999999,
-            optimizer: true,
+            optimizer_runs: Some(999999),
+            optimizer: Some(true),
             cbor_metadata: false,
             bytecode_hash: BytecodeHash::None,
             ..Default::default()
@@ -165,8 +165,8 @@ forgetest_async!(can_verify_bytecode_with_metadata, |prj, cmd| {
         None,
         Config {
             evm_version: EvmVersion::Paris,
-            optimizer_runs: 50000,
-            optimizer: true,
+            optimizer_runs: Some(50000),
+            optimizer: Some(true),
             ..Default::default()
         },
         "etherscan",
@@ -185,8 +185,8 @@ forgetest_async!(can_verify_bytecode_with_blockscout, |prj, cmd| {
         None,
         Config {
             evm_version: EvmVersion::London,
-            optimizer: true,
-            optimizer_runs: 200,
+            optimizer: Some(true),
+            optimizer_runs: Some(200),
             ..Default::default()
         },
         "blockscout",
@@ -205,8 +205,8 @@ forgetest_async!(can_vb_create2_with_blockscout, |prj, cmd| {
         None,
         Config {
             evm_version: EvmVersion::London,
-            optimizer_runs: 999999,
-            optimizer: true,
+            optimizer_runs: Some(999999),
+            optimizer: Some(true),
             cbor_metadata: false,
             bytecode_hash: BytecodeHash::None,
             ..Default::default()
@@ -232,8 +232,8 @@ forgetest_async!(can_verify_bytecode_with_constructor_args, |prj, cmd| {
         Some(constructor_args),
         Config {
             evm_version: EvmVersion::London,
-            optimizer: true,
-            optimizer_runs: 200,
+            optimizer: Some(true),
+            optimizer_runs: Some(200),
             ..Default::default()
         },
         "etherscan",
@@ -251,8 +251,8 @@ forgetest_async!(can_ignore_creation, |prj, cmd| {
         "SystemConfig",
         Config {
             evm_version: EvmVersion::London,
-            optimizer_runs: 999999,
-            optimizer: true,
+            optimizer_runs: Some(999999),
+            optimizer: Some(true),
             cbor_metadata: false,
             bytecode_hash: BytecodeHash::None,
             ..Default::default()
@@ -273,8 +273,8 @@ forgetest_async!(can_ignore_runtime, |prj, cmd| {
         "SystemConfig",
         Config {
             evm_version: EvmVersion::London,
-            optimizer_runs: 999999,
-            optimizer: true,
+            optimizer_runs: Some(999999),
+            optimizer: Some(true),
             cbor_metadata: false,
             bytecode_hash: BytecodeHash::None,
             ..Default::default()
@@ -298,7 +298,7 @@ forgetest_async!(can_ignore_runtime, |prj, cmd| {
 //         "WETH9",
 //         Config {
 //             evm_version: EvmVersion::default(),
-//             optimizer: true,
+//             optimizer: Some(true),
 //             optimizer_runs: 10000,
 //             cbor_metadata: true,
 //             bytecode_hash: BytecodeHash::Bzzr1,

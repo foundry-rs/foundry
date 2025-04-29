@@ -88,7 +88,7 @@ impl<W> FormatBuffer<W> {
 
     /// Indent the buffer by delta
     pub fn indent(&mut self, delta: usize) {
-        self.indents.extend(std::iter::repeat(IndentGroup::default()).take(delta));
+        self.indents.extend(std::iter::repeat_n(IndentGroup::default(), delta));
     }
 
     /// Dedent the buffer by delta
@@ -431,7 +431,7 @@ mod tests {
             /* comment2 */ ",
         ];
 
-        for content in contents.iter() {
+        for content in &contents {
             let mut buf = FormatBuffer::new(String::new(), TAB_WIDTH);
             write!(buf, "{content}")?;
             assert_eq!(&buf.w, content);

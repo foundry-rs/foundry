@@ -64,9 +64,9 @@ pub enum RuntimeTransportError {
 
 /// Runtime transport that only connects on first request.
 ///
-/// A runtime transport is a custom [alloy_transport::Transport] that only connects when the *first*
-/// request is made. When the first request is made, it will connect to the runtime using either an
-/// HTTP WebSocket, or IPC transport depending on the URL used.
+/// A runtime transport is a custom [`alloy_transport::Transport`] that only connects when the
+/// *first* request is made. When the first request is made, it will connect to the runtime using
+/// either an HTTP WebSocket, or IPC transport depending on the URL used.
 /// It also supports retries for rate-limiting and timeout-related errors.
 #[derive(Clone, Debug, Error)]
 pub struct RuntimeTransport {
@@ -138,15 +138,15 @@ impl RuntimeTransport {
     /// Connects the underlying transport, depending on the URL scheme.
     pub async fn connect(&self) -> Result<InnerTransport, RuntimeTransportError> {
         match self.url.scheme() {
-            "http" | "https" => self.connect_http().await,
+            "http" | "https" => self.connect_http(),
             "ws" | "wss" => self.connect_ws().await,
             "file" => self.connect_ipc().await,
             _ => Err(RuntimeTransportError::BadScheme(self.url.scheme().to_string())),
         }
     }
 
-    /// Connects to an HTTP [alloy_transport_http::Http] transport.
-    async fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
+    /// Creates a new reqwest client from this transport.
+    pub fn reqwest_client(&self) -> Result<reqwest::Client, RuntimeTransportError> {
         let mut client_builder = reqwest::Client::builder()
             .timeout(self.timeout)
             .tls_built_in_root_certs(self.url.scheme() == "https");
@@ -165,7 +165,7 @@ impl RuntimeTransport {
         };
 
         // Add any custom headers.
-        for header in self.headers.iter() {
+        for header in &self.headers {
             let make_err = || RuntimeTransportError::BadHeader(header.to_string());
 
             let (key, val) = header.split_once(':').ok_or_else(make_err)?;
@@ -176,7 +176,7 @@ impl RuntimeTransport {
             );
         }
 
-        if !headers.iter().any(|(k, _v)| k.as_str().starts_with("User-Agent:")) {
+        if !headers.contains_key(reqwest::header::USER_AGENT) {
             headers.insert(
                 reqwest::header::USER_AGENT,
                 HeaderValue::from_str(DEFAULT_USER_AGENT)
@@ -186,9 +186,12 @@ impl RuntimeTransport {
 
         client_builder = client_builder.default_headers(headers);
 
-        let client =
-            client_builder.build().map_err(RuntimeTransportError::HttpConstructionError)?;
+        Ok(client_builder.build()?)
+    }
 
+    /// Connects to an HTTP [alloy_transport_http::Http] transport.
+    fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
+        let client = self.reqwest_client()?;
         Ok(InnerTransport::Http(Http::with_client(client, self.url.clone())))
     }
 
@@ -237,19 +240,10 @@ impl RuntimeTransport {
             }
 
             // SAFETY: We just checked that the inner transport exists.
-            match inner.as_ref().expect("must've been initialized") {
-                InnerTransport::Http(http) => {
-                    let mut http = http;
-                    http.call(req)
-                }
-                InnerTransport::Ws(ws) => {
-                    let mut ws = ws;
-                    ws.call(req)
-                }
-                InnerTransport::Ipc(ipc) => {
-                    let mut ipc = ipc;
-                    ipc.call(req)
-                }
+            match inner.clone().expect("must've been initialized") {
+                InnerTransport::Http(mut http) => http.call(req),
+                InnerTransport::Ws(mut ws) => ws.call(req),
+                InnerTransport::Ipc(mut ipc) => ipc.call(req),
             }
             .await
         })
@@ -331,4 +325,43 @@ fn url_to_file_path(url: &Url) -> Result<PathBuf, ()> {
 #[cfg(not(windows))]
 fn url_to_file_path(url: &Url) -> Result<PathBuf, ()> {
     url.to_file_path()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reqwest::header::HeaderMap;
+
+    #[tokio::test]
+    async fn test_user_agent_header() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+
+        let http_handler = axum::routing::get(|actual_headers: HeaderMap| {
+            let user_agent = HeaderName::from_str("User-Agent").unwrap();
+            assert_eq!(actual_headers[user_agent], HeaderValue::from_str("test-agent").unwrap());
+
+            async { "" }
+        });
+
+        let server_task = tokio::spawn(async move {
+            axum::serve(listener, http_handler.into_make_service()).await.unwrap()
+        });
+
+        let transport = RuntimeTransportBuilder::new(url.clone())
+            .with_headers(vec!["User-Agent: test-agent".to_string()])
+            .build();
+        let inner = transport.connect_http().unwrap();
+
+        match inner {
+            InnerTransport::Http(http) => {
+                let _ = http.client().get(url).send().await.unwrap();
+
+                // assert inside http_handler
+            }
+            _ => unreachable!(),
+        }
+
+        server_task.abort();
+    }
 }

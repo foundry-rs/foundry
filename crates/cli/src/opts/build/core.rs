@@ -1,5 +1,5 @@
-use super::ProjectPathsArgs;
-use crate::{opts::CompilerArgs, utils::LoadConfig};
+use super::ProjectPathOpts;
+use crate::{opts::CompilerOpts, utils::LoadConfig};
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_compilers::{
@@ -23,7 +23,7 @@ use std::path::PathBuf;
 
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 #[command(next_help_heading = "Build options")]
-pub struct CoreBuildArgs {
+pub struct BuildOpts {
     /// Clear the cache and artifacts folder and recompile.
     #[arg(long, help_heading = "Cache options")]
     #[serde(skip)]
@@ -33,6 +33,11 @@ pub struct CoreBuildArgs {
     #[arg(long)]
     #[serde(skip)]
     pub no_cache: bool,
+
+    /// Enable dynamic test linking.
+    #[arg(long, conflicts_with = "no_cache")]
+    #[serde(skip)]
+    pub dynamic_test_linking: bool,
 
     /// Set pre-linked libraries.
     #[arg(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
@@ -78,6 +83,11 @@ pub struct CoreBuildArgs {
     #[serde(skip)]
     pub via_ir: bool,
 
+    /// Changes compilation to only use literal content and not URLs.
+    #[arg(long, help_heading = "Compiler options")]
+    #[serde(skip)]
+    pub use_literal_content: bool,
+
     /// Do not append any metadata to the bytecode.
     ///
     /// This is equivalent to setting `bytecode_hash` to `none` and `cbor_metadata` to `false`.
@@ -120,11 +130,7 @@ pub struct CoreBuildArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_info_path: Option<PathBuf>,
 
-    /// Use EOF-enabled solc binary. Enables via-ir and sets EVM version to Prague. Requires Docker
-    /// to be installed.
-    ///
-    /// Note that this is a temporary solution until the EOF support is merged into the main solc
-    /// release.
+    /// Whether to compile contracts to EOF bytecode.
     #[arg(long)]
     #[serde(skip)]
     pub eof: bool,
@@ -138,21 +144,21 @@ pub struct CoreBuildArgs {
 
     #[command(flatten)]
     #[serde(flatten)]
-    pub compiler: CompilerArgs,
+    pub compiler: CompilerOpts,
 
     #[command(flatten)]
     #[serde(flatten)]
-    pub project_paths: ProjectPathsArgs,
+    pub project_paths: ProjectPathOpts,
 }
 
-impl CoreBuildArgs {
+impl BuildOpts {
     /// Returns the `Project` for the current workspace
     ///
     /// This loads the `foundry_config::Config` for the current workspace (see
     /// `find_project_root` and merges the cli `BuildArgs` into it before returning
     /// [`foundry_config::Config::project()`]).
     pub fn project(&self) -> Result<Project<MultiCompiler>> {
-        let config = self.try_load_config_emit_warnings()?;
+        let config = self.load_config()?;
         Ok(config.project()?)
     }
 
@@ -164,8 +170,8 @@ impl CoreBuildArgs {
 }
 
 // Loads project's figment and merges the build cli arguments into it
-impl<'a> From<&'a CoreBuildArgs> for Figment {
-    fn from(args: &'a CoreBuildArgs) -> Self {
+impl<'a> From<&'a BuildOpts> for Figment {
+    fn from(args: &'a BuildOpts) -> Self {
         let mut figment = if let Some(ref config_path) = args.project_paths.config_path {
             if !config_path.exists() {
                 panic!("error: config-path `{}` does not exist", config_path.display())
@@ -196,20 +202,7 @@ impl<'a> From<&'a CoreBuildArgs> for Figment {
     }
 }
 
-impl<'a> From<&'a CoreBuildArgs> for Config {
-    fn from(args: &'a CoreBuildArgs) -> Self {
-        let figment: Figment = args.into();
-        let mut config = Self::from_provider(figment).sanitized();
-        // if `--config-path` is set we need to adjust the config's root path to the actual root
-        // path for the project, otherwise it will the parent dir of the `--config-path`
-        if args.project_paths.config_path.is_some() {
-            config.root = args.project_paths.project_root();
-        }
-        config
-    }
-}
-
-impl Provider for CoreBuildArgs {
+impl Provider for BuildOpts {
     fn metadata(&self) -> Metadata {
         Metadata::named("Core Build Args Provider")
     }
@@ -239,6 +232,10 @@ impl Provider for CoreBuildArgs {
             dict.insert("via_ir".to_string(), true.into());
         }
 
+        if self.use_literal_content {
+            dict.insert("use_literal_content".to_string(), true.into());
+        }
+
         if self.no_metadata {
             dict.insert("bytecode_hash".to_string(), "none".into());
             dict.insert("cbor_metadata".to_string(), false.into());
@@ -251,6 +248,10 @@ impl Provider for CoreBuildArgs {
         // we need to ensure no_cache set accordingly
         if self.no_cache {
             dict.insert("cache".to_string(), false.into());
+        }
+
+        if self.dynamic_test_linking {
+            dict.insert("dynamic_test_linking".to_string(), true.into());
         }
 
         if self.build_info {

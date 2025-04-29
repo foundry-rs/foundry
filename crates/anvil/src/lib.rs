@@ -1,4 +1,5 @@
-#![doc = include_str!("../README.md")]
+//! Anvil is a fast local Ethereum development node.
+
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 use crate::{
@@ -20,6 +21,7 @@ use crate::{
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
 use eth::backend::fork::ClientFork;
+use eyre::Result;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_evm::revm;
 use futures::{FutureExt, TryFutureExt};
@@ -27,7 +29,6 @@ use parking_lot::Mutex;
 use server::try_spawn_ipc;
 use std::{
     future::Future,
-    io,
     net::SocketAddr,
     pin::Pin,
     sync::Arc,
@@ -70,6 +71,12 @@ mod tasks;
 /// contains cli command
 #[cfg(feature = "cmd")]
 pub mod cmd;
+
+#[cfg(feature = "cmd")]
+pub mod args;
+
+#[cfg(feature = "cmd")]
+pub mod opts;
 
 #[macro_use]
 extern crate foundry_common;
@@ -126,11 +133,11 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
 /// # Ok(())
 /// # }
 /// ```
-pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle)> {
+pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
     let logger = if config.enable_tracing { init_tracing() } else { Default::default() };
     logger.set_enabled(!config.silent);
 
-    let backend = Arc::new(config.setup().await);
+    let backend = Arc::new(config.setup().await?);
 
     if config.enable_auto_impersonate {
         backend.auto_impersonate_account(true);
@@ -251,7 +258,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> io::Result<(EthApi, NodeHandle
         task_manager,
     };
 
-    handle.print(fork.as_ref());
+    handle.print(fork.as_ref())?;
 
     Ok((api, handle))
 }
@@ -281,7 +288,7 @@ impl Drop for NodeHandle {
     fn drop(&mut self) {
         // Fire shutdown signal to make sure anvil instance is terminated.
         if let Some(signal) = self._signal.take() {
-            signal.fire().unwrap()
+            let _ = signal.fire();
         }
     }
 }
@@ -293,21 +300,22 @@ impl NodeHandle {
     }
 
     /// Prints the launch info.
-    pub(crate) fn print(&self, fork: Option<&ClientFork>) {
-        self.config.print(fork);
+    pub(crate) fn print(&self, fork: Option<&ClientFork>) -> Result<()> {
+        self.config.print(fork)?;
         if !self.config.silent {
             if let Some(ipc_path) = self.ipc_path() {
-                let _ = sh_println!("IPC path: {ipc_path}");
+                sh_println!("IPC path: {ipc_path}")?;
             }
-            let _ = sh_println!(
+            sh_println!(
                 "Listening on {}",
                 self.addresses
                     .iter()
                     .map(|addr| { addr.to_string() })
                     .collect::<Vec<String>>()
                     .join(", ")
-            );
+            )?;
         }
+        Ok(())
     }
 
     /// The address of the launched server.
@@ -426,7 +434,7 @@ impl Future for NodeHandle {
         }
 
         // poll the axum server handles
-        for server in pin.servers.iter_mut() {
+        for server in &mut pin.servers {
             if let Poll::Ready(res) = server.poll_unpin(cx) {
                 return Poll::Ready(res);
             }

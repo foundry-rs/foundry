@@ -1,14 +1,15 @@
 //! Implementations of [`Scripting`](spec::Group::Scripting) cheatcodes.
 
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::{Address, PrimitiveSignature, B256, U256};
+use alloy_consensus::{SidecarBuilder, SimpleCoder};
+use alloy_primitives::{Address, Uint, B256, U256};
 use alloy_rpc_types::Authorization;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
 use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
 use parking_lot::Mutex;
-use revm::primitives::{Bytecode, SignedAuthorization};
+use revm::primitives::{Bytecode, SignedAuthorization, SpecId};
 use std::sync::Arc;
 
 impl Cheatcode for broadcast_0Call {
@@ -40,7 +41,7 @@ impl Cheatcode for attachDelegationCall {
         let auth = Authorization {
             address: *implementation,
             nonce: *nonce,
-            chain_id: ccx.ecx.env.cfg.chain_id,
+            chain_id: U256::from(ccx.ecx.env.cfg.chain_id),
         };
         let signed_auth = SignedAuthorization::new_unchecked(
             auth,
@@ -54,42 +55,71 @@ impl Cheatcode for attachDelegationCall {
     }
 }
 
-impl Cheatcode for signDelegationCall {
+impl Cheatcode for signDelegation_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        let Self { implementation, privateKey } = self;
-        let signer = PrivateKeySigner::from_bytes(&B256::from(*privateKey))?;
-        let authority = signer.address();
-        let (auth, nonce) = create_auth(ccx, *implementation, authority)?;
-        let sig = signer.sign_hash_sync(&auth.signature_hash())?;
-        Ok(sig_to_delegation(sig, nonce, *implementation).abi_encode())
+        let Self { implementation, privateKey } = *self;
+        sign_delegation(ccx, privateKey, implementation, None, false)
     }
 }
 
-impl Cheatcode for signAndAttachDelegationCall {
+impl Cheatcode for signDelegation_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        let Self { implementation, privateKey } = self;
-        let signer = PrivateKeySigner::from_bytes(&B256::from(*privateKey))?;
-        let authority = signer.address();
-        let (auth, nonce) = create_auth(ccx, *implementation, authority)?;
-        let sig = signer.sign_hash_sync(&auth.signature_hash())?;
-        let signed_auth = sig_to_auth(sig, auth);
+        let Self { implementation, privateKey, nonce } = *self;
+        sign_delegation(ccx, privateKey, implementation, Some(nonce), false)
+    }
+}
+
+impl Cheatcode for signAndAttachDelegation_0Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { implementation, privateKey } = *self;
+        sign_delegation(ccx, privateKey, implementation, None, true)
+    }
+}
+
+impl Cheatcode for signAndAttachDelegation_1Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { implementation, privateKey, nonce } = *self;
+        sign_delegation(ccx, privateKey, implementation, Some(nonce), true)
+    }
+}
+
+/// Helper function to sign and attach (if needed) an EIP-7702 delegation.
+/// Uses the provided nonce, otherwise retrieves and increments the nonce of the EOA.
+fn sign_delegation(
+    ccx: &mut CheatsCtxt,
+    private_key: Uint<256, 4>,
+    implementation: Address,
+    nonce: Option<u64>,
+    attach: bool,
+) -> Result<Vec<u8>> {
+    let signer = PrivateKeySigner::from_bytes(&B256::from(private_key))?;
+    let nonce = if let Some(nonce) = nonce {
+        nonce
+    } else {
+        let authority_acc =
+            ccx.ecx.journaled_state.load_account(signer.address(), &mut ccx.ecx.db)?;
+        authority_acc.data.info.nonce
+    };
+    let auth = Authorization {
+        address: implementation,
+        nonce,
+        chain_id: U256::from(ccx.ecx.env.cfg.chain_id),
+    };
+    let sig = signer.sign_hash_sync(&auth.signature_hash())?;
+    // Attach delegation.
+    if attach {
+        let signed_auth = SignedAuthorization::new_unchecked(auth, sig.v() as u8, sig.r(), sig.s());
         write_delegation(ccx, signed_auth.clone())?;
         ccx.state.active_delegation = Some(signed_auth);
-        Ok(sig_to_delegation(sig, nonce, *implementation).abi_encode())
     }
-}
-
-fn create_auth(
-    ccx: &mut CheatsCtxt,
-    implementation: Address,
-    authority: Address,
-) -> Result<(Authorization, u64)> {
-    let authority_acc = ccx.ecx.journaled_state.load_account(authority, &mut ccx.ecx.db)?;
-    let nonce = authority_acc.data.info.nonce;
-    Ok((
-        Authorization { address: implementation, nonce, chain_id: ccx.ecx.env.cfg.chain_id },
+    Ok(SignedDelegation {
+        v: sig.v() as u8,
+        r: sig.r().into(),
+        s: sig.s().into(),
         nonce,
-    ))
+        implementation,
+    }
+    .abi_encode())
 }
 
 fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<()> {
@@ -104,22 +134,19 @@ fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<(
     Ok(())
 }
 
-fn sig_to_delegation(
-    sig: PrimitiveSignature,
-    nonce: u64,
-    implementation: Address,
-) -> SignedDelegation {
-    SignedDelegation {
-        v: sig.v() as u8,
-        r: sig.r().into(),
-        s: sig.s().into(),
-        nonce,
-        implementation,
+impl Cheatcode for attachBlobCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { blob } = self;
+        ensure!(
+            ccx.ecx.spec_id() >= SpecId::CANCUN,
+            "`attachBlob` is not supported before the Cancun hard fork; \
+             see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
+        );
+        let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(blob);
+        let sidecar = sidecar.build().map_err(|e| format!("{e}"))?;
+        ccx.state.active_blob_sidecar = Some(sidecar);
+        Ok(Default::default())
     }
-}
-
-fn sig_to_auth(sig: PrimitiveSignature, auth: Authorization) -> SignedAuthorization {
-    SignedAuthorization::new_unchecked(auth, sig.v() as u8, sig.r(), sig.s())
 }
 
 impl Cheatcode for startBroadcast_0Call {
@@ -192,7 +219,7 @@ pub struct Wallets {
 }
 
 impl Wallets {
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub fn new(multi_wallet: MultiWallet, provided_sender: Option<Address>) -> Self {
         Self { inner: Arc::new(Mutex::new(WalletsInner { multi_wallet, provided_sender })) }
     }
@@ -240,8 +267,9 @@ impl Wallets {
 
 /// Sets up broadcasting from a script using `new_origin` as the sender.
 fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bool) -> Result {
+    let depth = ccx.ecx.journaled_state.depth();
     ensure!(
-        ccx.state.prank.is_none(),
+        ccx.state.get_prank(depth).is_none(),
         "you have an active prank; broadcasting and pranks are not compatible"
     );
     ensure!(ccx.state.broadcast.is_none(), "a broadcast is active already");
@@ -265,7 +293,7 @@ fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bo
         new_origin: new_origin.unwrap_or(ccx.ecx.env.tx.caller),
         original_caller: ccx.caller,
         original_origin: ccx.ecx.env.tx.caller,
-        depth: ccx.ecx.journaled_state.depth(),
+        depth,
         single_call,
     };
     debug!(target: "cheatcodes", ?broadcast, "started");

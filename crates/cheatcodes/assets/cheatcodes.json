@@ -370,6 +370,32 @@
       ]
     },
     {
+      "name": "Chain",
+      "description": "Information about a blockchain.",
+      "fields": [
+        {
+          "name": "name",
+          "ty": "string",
+          "description": "The chain name."
+        },
+        {
+          "name": "chainId",
+          "ty": "uint256",
+          "description": "The chain's Chain ID."
+        },
+        {
+          "name": "chainAlias",
+          "ty": "string",
+          "description": "The chain's alias. (i.e. what gets specified in `foundry.toml`)."
+        },
+        {
+          "name": "rpcUrl",
+          "ty": "string",
+          "description": "A default RPC endpoint for this chain."
+        }
+      ]
+    },
+    {
       "name": "AccountAccess",
       "description": "The result of a `stopAndReturnStateDiff` call.",
       "fields": [
@@ -604,6 +630,43 @@
           "description": "Address of the contract implementation that will be delegated to.\n Gets encoded into delegation code: 0xef0100 || implementation."
         }
       ]
+    },
+    {
+      "name": "PotentialRevert",
+      "description": "Represents a \"potential\" revert reason from a single subsequent call when using `vm.assumeNoReverts`.\n Reverts that match will result in a FOUNDRY::ASSUME rejection, whereas unmatched reverts will be surfaced\n as normal.",
+      "fields": [
+        {
+          "name": "reverter",
+          "ty": "address",
+          "description": "The allowed origin of the revert opcode; address(0) allows reverts from any address"
+        },
+        {
+          "name": "partialMatch",
+          "ty": "bool",
+          "description": "When true, only matches on the beginning of the revert data, otherwise, matches on entire revert data"
+        },
+        {
+          "name": "revertData",
+          "ty": "bytes",
+          "description": "The data to use to match encountered reverts"
+        }
+      ]
+    },
+    {
+      "name": "AccessListItem",
+      "description": "An EIP-2930 access list item.",
+      "fields": [
+        {
+          "name": "target",
+          "ty": "address",
+          "description": "The address to be added in access list."
+        },
+        {
+          "name": "storageKeys",
+          "ty": "bytes32[]",
+          "description": "The storage keys to be added in access list."
+        }
+      ]
     }
   ],
   "cheatcodes": [
@@ -665,6 +728,26 @@
       },
       "group": "testing",
       "status": "internal",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "accessList",
+        "description": "Utility cheatcode to set an EIP-2930 access list for all subsequent transactions.",
+        "declaration": "function accessList(AccessListItem[] calldata access) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "accessList((address,bytes32[])[])",
+        "selector": "0x743e4cb7",
+        "selectorBytes": [
+          116,
+          62,
+          76,
+          183
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
       "safety": "unsafe"
     },
     {
@@ -3089,7 +3172,7 @@
     },
     {
       "func": {
-        "id": "assumeNoRevert",
+        "id": "assumeNoRevert_0",
         "description": "Discard this run's fuzz inputs and generate new ones if next call reverted.",
         "declaration": "function assumeNoRevert() external pure;",
         "visibility": "external",
@@ -3104,6 +3187,66 @@
         ]
       },
       "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assumeNoRevert_1",
+        "description": "Discard this run's fuzz inputs and generate new ones if next call reverts with the potential revert parameters.",
+        "declaration": "function assumeNoRevert(PotentialRevert calldata potentialRevert) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assumeNoRevert((address,bool,bytes))",
+        "selector": "0xd8591eeb",
+        "selectorBytes": [
+          216,
+          89,
+          30,
+          235
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "assumeNoRevert_2",
+        "description": "Discard this run's fuzz inputs and generate new ones if next call reverts with the any of the potential revert parameters.",
+        "declaration": "function assumeNoRevert(PotentialRevert[] calldata potentialReverts) external pure;",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "assumeNoRevert((address,bool,bytes)[])",
+        "selector": "0x8a4592cc",
+        "selectorBytes": [
+          138,
+          69,
+          146,
+          204
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "attachBlob",
+        "description": "Attach an EIP-4844 blob to the next call",
+        "declaration": "function attachBlob(bytes calldata blob) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "attachBlob(bytes)",
+        "selector": "0x10cb385c",
+        "selectorBytes": [
+          16,
+          203,
+          56,
+          92
+        ]
+      },
+      "group": "scripting",
       "status": "stable",
       "safety": "safe"
     },
@@ -3484,7 +3627,27 @@
         ]
       },
       "group": "evm",
-      "status": "experimental",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "coolSlot",
+        "description": "Utility cheatcode to mark specific storage slot as cold, simulating no prior read.",
+        "declaration": "function coolSlot(address target, bytes32 slot) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "coolSlot(address,bytes32)",
+        "selector": "0x8c78e654",
+        "selectorBytes": [
+          140,
+          120,
+          230,
+          84
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
       "safety": "unsafe"
     },
     {
@@ -3865,6 +4028,126 @@
           206,
           157,
           222
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "deployCode_2",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts `msg.value`.",
+        "declaration": "function deployCode(string calldata artifactPath, uint256 value) external returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deployCode(string,uint256)",
+        "selector": "0x0af6a701",
+        "selectorBytes": [
+          10,
+          246,
+          167,
+          1
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "deployCode_3",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts abi-encoded constructor arguments and `msg.value`.",
+        "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value) external returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deployCode(string,bytes,uint256)",
+        "selector": "0xff5d64e4",
+        "selectorBytes": [
+          255,
+          93,
+          100,
+          228
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "deployCode_4",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
+        "declaration": "function deployCode(string calldata artifactPath, bytes32 salt) external returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deployCode(string,bytes32)",
+        "selector": "0x17ab1d79",
+        "selectorBytes": [
+          23,
+          171,
+          29,
+          121
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "deployCode_5",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts abi-encoded constructor arguments.",
+        "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs, bytes32 salt) external returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deployCode(string,bytes,bytes32)",
+        "selector": "0x016155bf",
+        "selectorBytes": [
+          1,
+          97,
+          85,
+          191
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "deployCode_6",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts `msg.value`.",
+        "declaration": "function deployCode(string calldata artifactPath, uint256 value, bytes32 salt) external returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deployCode(string,uint256,bytes32)",
+        "selector": "0x002cb687",
+        "selectorBytes": [
+          0,
+          44,
+          182,
+          135
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "deployCode_7",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts abi-encoded constructor arguments and `msg.value`.",
+        "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value, bytes32 salt) external returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deployCode(string,bytes,uint256,bytes32)",
+        "selector": "0x3aa773ea",
+        "selectorBytes": [
+          58,
+          167,
+          115,
+          234
         ]
       },
       "group": "filesystem",
@@ -4813,6 +5096,46 @@
     },
     {
       "func": {
+        "id": "expectCreate",
+        "description": "Expects the deployment of the specified bytecode by the specified address using the CREATE opcode",
+        "declaration": "function expectCreate(bytes calldata bytecode, address deployer) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectCreate(bytes,address)",
+        "selector": "0x73cdce36",
+        "selectorBytes": [
+          115,
+          205,
+          206,
+          54
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectCreate2",
+        "description": "Expects the deployment of the specified bytecode by the specified address using the CREATE2 opcode",
+        "declaration": "function expectCreate2(bytes calldata bytecode, address deployer) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectCreate2(bytes,address)",
+        "selector": "0xea54a472",
+        "selectorBytes": [
+          234,
+          84,
+          164,
+          114
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "expectEmitAnonymous_0",
         "description": "Prepare an expected anonymous log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData.).\nCall this function, then emit an anonymous event, then call a function. Internally after the call, we check if\nlogs were emitted in the expected order with the expected topics and data (as specified by the booleans).",
         "declaration": "function expectEmitAnonymous(bool checkTopic0, bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData) external;",
@@ -4973,6 +5296,86 @@
     },
     {
       "func": {
+        "id": "expectEmit_4",
+        "description": "Expect a given number of logs with the provided topics.",
+        "declaration": "function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, uint64 count) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectEmit(bool,bool,bool,bool,uint64)",
+        "selector": "0x5e1d1c33",
+        "selectorBytes": [
+          94,
+          29,
+          28,
+          51
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectEmit_5",
+        "description": "Expect a given number of logs from a specific emitter with the provided topics.",
+        "declaration": "function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData, address emitter, uint64 count) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectEmit(bool,bool,bool,bool,address,uint64)",
+        "selector": "0xc339d02c",
+        "selectorBytes": [
+          195,
+          57,
+          208,
+          44
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectEmit_6",
+        "description": "Expect a given number of logs with all topic and data checks enabled.",
+        "declaration": "function expectEmit(uint64 count) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectEmit(uint64)",
+        "selector": "0x4c74a335",
+        "selectorBytes": [
+          76,
+          116,
+          163,
+          53
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectEmit_7",
+        "description": "Expect a given number of logs from a specific emitter with all topic and data checks enabled.",
+        "declaration": "function expectEmit(address emitter, uint64 count) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectEmit(address,uint64)",
+        "selector": "0xb43aece3",
+        "selectorBytes": [
+          180,
+          58,
+          236,
+          227
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "expectPartialRevert_0",
         "description": "Expects an error on next call that starts with the revert data.",
         "declaration": "function expectPartialRevert(bytes4 revertData) external;",
@@ -5045,6 +5448,46 @@
           30,
           176,
           224
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectRevert_10",
+        "description": "Expects a `count` number of reverts from the upcoming calls from the reverter address that match the revert data.",
+        "declaration": "function expectRevert(bytes4 revertData, address reverter, uint64 count) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectRevert(bytes4,address,uint64)",
+        "selector": "0xb0762d73",
+        "selectorBytes": [
+          176,
+          118,
+          45,
+          115
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectRevert_11",
+        "description": "Expects a `count` number of reverts from the upcoming calls from the reverter address that exactly match the revert data.",
+        "declaration": "function expectRevert(bytes calldata revertData, address reverter, uint64 count) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectRevert(bytes,address,uint64)",
+        "selector": "0xd345fb1f",
+        "selectorBytes": [
+          211,
+          69,
+          251,
+          31
         ]
       },
       "group": "testing",
@@ -5133,6 +5576,86 @@
     },
     {
       "func": {
+        "id": "expectRevert_6",
+        "description": "Expects a `count` number of reverts from the upcoming calls with any revert data or reverter.",
+        "declaration": "function expectRevert(uint64 count) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectRevert(uint64)",
+        "selector": "0x4ee38244",
+        "selectorBytes": [
+          78,
+          227,
+          130,
+          68
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectRevert_7",
+        "description": "Expects a `count` number of reverts from the upcoming calls that match the revert data.",
+        "declaration": "function expectRevert(bytes4 revertData, uint64 count) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectRevert(bytes4,uint64)",
+        "selector": "0xe45ca72d",
+        "selectorBytes": [
+          228,
+          92,
+          167,
+          45
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectRevert_8",
+        "description": "Expects a `count` number of reverts from the upcoming calls that exactly match the revert data.",
+        "declaration": "function expectRevert(bytes calldata revertData, uint64 count) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectRevert(bytes,uint64)",
+        "selector": "0x4994c273",
+        "selectorBytes": [
+          73,
+          148,
+          194,
+          115
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectRevert_9",
+        "description": "Expects a `count` number of reverts from the upcoming calls from the reverter address.",
+        "declaration": "function expectRevert(address reverter, uint64 count) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectRevert(address,uint64)",
+        "selector": "0x1ff5f952",
+        "selectorBytes": [
+          31,
+          245,
+          249,
+          82
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "expectSafeMemory",
         "description": "Only allows memory writes to offsets [0x00, 0x60) ∪ [min, max) in the current subcontext. If any other\nmemory is written to, the test will fail. Can be called multiple times to add more ranges to the set.",
         "declaration": "function expectSafeMemory(uint64 min, uint64 max) external;",
@@ -5208,6 +5731,46 @@
         ]
       },
       "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "foundryVersionAtLeast",
+        "description": "Returns true if the current Foundry version is greater than or equal to the given version.\nThe given version string must be in the format `major.minor.patch`.\nThis is equivalent to `foundryVersionCmp(version) >= 0`.",
+        "declaration": "function foundryVersionAtLeast(string calldata version) external view returns (bool);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "foundryVersionAtLeast(string)",
+        "selector": "0x6248be1f",
+        "selectorBytes": [
+          98,
+          72,
+          190,
+          31
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "foundryVersionCmp",
+        "description": "Compares the current Foundry version with the given version string.\nThe given version string must be in the format `major.minor.patch`.\nReturns:\n-1 if current Foundry version is less than the given version\n0 if current Foundry version equals the given version\n1 if current Foundry version is greater than the given version\nThis result can then be used with a comparison operator against `0`.\nFor example, to check if the current Foundry version is greater than or equal to `1.0.0`:\n`if (foundryVersionCmp(\"1.0.0\") >= 0) { ... }`",
+        "declaration": "function foundryVersionCmp(string calldata version) external view returns (int256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "foundryVersionCmp(string)",
+        "selector": "0xca7b0a09",
+        "selectorBytes": [
+          202,
+          123,
+          10,
+          9
+        ]
+      },
+      "group": "testing",
       "status": "stable",
       "safety": "safe"
     },
@@ -5413,6 +5976,46 @@
     },
     {
       "func": {
+        "id": "getChain_0",
+        "description": "Returns a Chain struct for specific alias",
+        "declaration": "function getChain(string calldata chainAlias) external view returns (Chain memory chain);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getChain(string)",
+        "selector": "0x4cc1c2bb",
+        "selectorBytes": [
+          76,
+          193,
+          194,
+          187
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getChain_1",
+        "description": "Returns a Chain struct for specific chainId",
+        "declaration": "function getChain(uint256 chainId) external view returns (Chain memory chain);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getChain(uint256)",
+        "selector": "0xb6791ad4",
+        "selectorBytes": [
+          182,
+          121,
+          26,
+          212
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getCode",
         "description": "Gets the creation bytecode from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
         "declaration": "function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);",
@@ -5514,7 +6117,7 @@
     {
       "func": {
         "id": "getFoundryVersion",
-        "description": "Returns the Foundry version.\nFormat: <cargo_version>+<git_sha>+<build_timestamp>\nSample output: 0.2.0+faa94c384+202407110019\nNote: Build timestamps may vary slightly across platforms due to separate CI jobs.\nFor reliable version comparisons, use YYYYMMDD0000 format (e.g., >= 202407110000)\nto compare timestamps while ignoring minor time differences.",
+        "description": "Returns the Foundry version.\nFormat: <cargo_version>-<tag>+<git_sha_short>.<unix_build_timestamp>.<profile>\nSample output: 0.3.0-nightly+3cb96bde9b.1737036656.debug\nNote: Build timestamps may vary slightly across platforms due to separate CI jobs.\nFor reliable version comparisons, use UNIX format (e.g., >= 1700000000)\nto compare timestamps while ignoring minor time differences.",
         "declaration": "function getFoundryVersion() external view returns (string memory version);",
         "visibility": "external",
         "mutability": "view",
@@ -5673,6 +6276,46 @@
     },
     {
       "func": {
+        "id": "getStateDiff",
+        "description": "Returns state diffs from current `vm.startStateDiffRecording` session.",
+        "declaration": "function getStateDiff() external view returns (string memory diff);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getStateDiff()",
+        "selector": "0x80df01cc",
+        "selectorBytes": [
+          128,
+          223,
+          1,
+          204
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getStateDiffJson",
+        "description": "Returns state diffs from current `vm.startStateDiffRecording` session, in json format.",
+        "declaration": "function getStateDiffJson() external view returns (string memory diff);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getStateDiffJson()",
+        "selector": "0xf54fe009",
+        "selectorBytes": [
+          245,
+          79,
+          224,
+          9
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getWallets",
         "description": "Returns addresses of available unlocked wallets in the script environment.",
         "declaration": "function getWallets() external returns (address[] memory wallets);",
@@ -5710,6 +6353,26 @@
       "group": "string",
       "status": "stable",
       "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "interceptInitcode",
+        "description": "Causes the next contract creation (via new) to fail and return its initcode in the returndata buffer.\nThis allows type-safe access to the initcode payload that would be used for contract creation.\nExample usage:\nvm.interceptInitcode();\nbytes memory initcode;\ntry new MyContract(param1, param2) { assert(false); }\ncatch (bytes memory interceptedInitcode) { initcode = interceptedInitcode; }",
+        "declaration": "function interceptInitcode() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "interceptInitcode()",
+        "selector": "0x838653c7",
+        "selectorBytes": [
+          131,
+          134,
+          83,
+          199
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "unsafe"
     },
     {
       "func": {
@@ -6227,6 +6890,26 @@
           248,
           77,
           33
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "noAccessList",
+        "description": "Utility cheatcode to remove any EIP-2930 access list set by `accessList` cheatcode.",
+        "declaration": "function noAccessList() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "noAccessList()",
+        "selector": "0x238ad778",
+        "selectorBytes": [
+          35,
+          138,
+          215,
+          120
         ]
       },
       "group": "evm",
@@ -8759,7 +9442,7 @@
     },
     {
       "func": {
-        "id": "setArbitraryStorage",
+        "id": "setArbitraryStorage_0",
         "description": "Utility cheatcode to set arbitrary storage for given target address.",
         "declaration": "function setArbitraryStorage(address target) external;",
         "visibility": "external",
@@ -8771,6 +9454,26 @@
           99,
           24,
           55
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "setArbitraryStorage_1",
+        "description": "Utility cheatcode to set arbitrary storage for given target address and overwrite\nany storage slots that have been previously set.",
+        "declaration": "function setArbitraryStorage(address target, bool overwrite) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "setArbitraryStorage(address,bool)",
+        "selector": "0xd3ec2a0b",
+        "selectorBytes": [
+          211,
+          236,
+          42,
+          11
         ]
       },
       "group": "utilities",
@@ -8859,7 +9562,27 @@
     },
     {
       "func": {
-        "id": "signAndAttachDelegation",
+        "id": "shuffle",
+        "description": "Randomly shuffles an array.",
+        "declaration": "function shuffle(uint256[] calldata array) external returns (uint256[] memory);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "shuffle(uint256[])",
+        "selector": "0x54f1469c",
+        "selectorBytes": [
+          84,
+          241,
+          70,
+          156
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signAndAttachDelegation_0",
         "description": "Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction",
         "declaration": "function signAndAttachDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);",
         "visibility": "external",
@@ -8871,6 +9594,26 @@
           250,
           114,
           136
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signAndAttachDelegation_1",
+        "description": "Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction for specific nonce",
+        "declaration": "function signAndAttachDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "signAndAttachDelegation(address,uint256,uint64)",
+        "selector": "0xcde3e5be",
+        "selectorBytes": [
+          205,
+          227,
+          229,
+          190
         ]
       },
       "group": "scripting",
@@ -8959,7 +9702,7 @@
     },
     {
       "func": {
-        "id": "signDelegation",
+        "id": "signDelegation_0",
         "description": "Sign an EIP-7702 authorization for delegation",
         "declaration": "function signDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);",
         "visibility": "external",
@@ -8971,6 +9714,26 @@
           89,
           60,
           123
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signDelegation_1",
+        "description": "Sign an EIP-7702 authorization for delegation for specific nonce",
+        "declaration": "function signDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "signDelegation(address,uint256,uint64)",
+        "selector": "0xceba2ec3",
+        "selectorBytes": [
+          206,
+          186,
+          46,
+          195
         ]
       },
       "group": "scripting",
@@ -9258,6 +10021,26 @@
       "group": "evm",
       "status": "stable",
       "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "sort",
+        "description": "Sorts an array in ascending order.",
+        "declaration": "function sort(uint256[] calldata array) external returns (uint256[] memory);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "sort(uint256[])",
+        "selector": "0x9ec8b026",
+        "selectorBytes": [
+          158,
+          200,
+          176,
+          38
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
     },
     {
       "func": {
@@ -10078,6 +10861,26 @@
       "group": "filesystem",
       "status": "stable",
       "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "warmSlot",
+        "description": "Utility cheatcode to mark specific storage slot as warm, simulating a prior read.",
+        "declaration": "function warmSlot(address target, bytes32 slot) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "warmSlot(address,bytes32)",
+        "selector": "0xb23184cf",
+        "selectorBytes": [
+          178,
+          49,
+          132,
+          207
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
     },
     {
       "func": {

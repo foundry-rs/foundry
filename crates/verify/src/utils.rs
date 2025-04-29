@@ -9,7 +9,10 @@ use foundry_block_explorers::{
     contract::{ContractCreationData, ContractMetadata, Metadata},
     errors::EtherscanError,
 };
-use foundry_common::{abi::encode_args, compile::ProjectCompiler, provider::RetryProvider, shell};
+use foundry_common::{
+    abi::encode_args, compile::ProjectCompiler, ignore_metadata_hash, provider::RetryProvider,
+    shell,
+};
 use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
 use foundry_evm::{
@@ -197,32 +200,11 @@ fn is_partial_match(
 }
 
 fn try_extract_and_compare_bytecode(mut local_bytecode: &[u8], mut bytecode: &[u8]) -> bool {
-    local_bytecode = extract_metadata_hash(local_bytecode);
-    bytecode = extract_metadata_hash(bytecode);
+    local_bytecode = ignore_metadata_hash(local_bytecode);
+    bytecode = ignore_metadata_hash(bytecode);
 
     // Now compare the local code and bytecode
     local_bytecode == bytecode
-}
-
-/// @dev This assumes that the metadata is at the end of the bytecode
-fn extract_metadata_hash(bytecode: &[u8]) -> &[u8] {
-    // Get the last two bytes of the bytecode to find the length of CBOR metadata
-    let metadata_len = &bytecode[bytecode.len() - 2..];
-    let metadata_len = u16::from_be_bytes([metadata_len[0], metadata_len[1]]);
-
-    if metadata_len as usize <= bytecode.len() {
-        if ciborium::from_reader::<ciborium::Value, _>(
-            &bytecode[bytecode.len() - 2 - metadata_len as usize..bytecode.len() - 2],
-        )
-        .is_ok()
-        {
-            &bytecode[..bytecode.len() - 2 - metadata_len as usize]
-        } else {
-            bytecode
-        }
-    } else {
-        bytecode
-    }
 }
 
 fn find_mismatch_in_settings(
@@ -237,18 +219,22 @@ fn find_mismatch_in_settings(
         );
         mismatches.push(str);
     }
-    let local_optimizer: u64 = if local_settings.optimizer { 1 } else { 0 };
+    let local_optimizer: u64 = if local_settings.optimizer == Some(true) { 1 } else { 0 };
     if etherscan_settings.optimization_used != local_optimizer {
         let str = format!(
             "Optimizer mismatch: local={}, onchain={}",
-            local_settings.optimizer, etherscan_settings.optimization_used
+            local_settings.optimizer.unwrap_or(false),
+            etherscan_settings.optimization_used
         );
         mismatches.push(str);
     }
-    if etherscan_settings.runs != local_settings.optimizer_runs as u64 {
+    if local_settings.optimizer_runs.is_some_and(|runs| etherscan_settings.runs != runs as u64) ||
+        (local_settings.optimizer_runs.is_none() && etherscan_settings.runs > 0)
+    {
         let str = format!(
             "Optimizer runs mismatch: local={}, onchain={}",
-            local_settings.optimizer_runs, etherscan_settings.runs
+            local_settings.optimizer_runs.unwrap(),
+            etherscan_settings.runs
         );
         mismatches.push(str);
     }
@@ -309,7 +295,7 @@ pub fn check_args_len(
     args: &Bytes,
 ) -> Result<(), eyre::ErrReport> {
     if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) {
-        if !constructor.inputs.is_empty() && args.len() == 0 {
+        if !constructor.inputs.is_empty() && args.is_empty() {
             eyre::bail!(
                 "Contract expects {} constructor argument(s), but none were provided",
                 constructor.inputs.len()
@@ -329,7 +315,7 @@ pub async fn get_tracing_executor(
     fork_config.evm_version = evm_version;
 
     let create2_deployer = evm_opts.create2_deployer;
-    let (env, fork, _chain, is_alphanet) =
+    let (env, fork, _chain, is_odyssey) =
         TracingExecutor::get_fork_material(fork_config, evm_opts).await?;
 
     let executor = TracingExecutor::new(
@@ -337,9 +323,9 @@ pub async fn get_tracing_executor(
         fork,
         Some(fork_config.evm_version),
         TraceMode::Call,
-        is_alphanet,
+        is_odyssey,
         create2_deployer,
-    );
+    )?;
 
     Ok((env, executor))
 }

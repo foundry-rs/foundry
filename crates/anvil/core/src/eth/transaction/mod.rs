@@ -4,10 +4,10 @@ use crate::eth::transaction::optimism::DepositTransaction;
 use alloy_consensus::{
     transaction::{
         eip4844::{TxEip4844, TxEip4844Variant, TxEip4844WithSidecar},
-        TxEip7702,
+        Recovered, TxEip7702,
     },
-    Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, Transaction, TxEip1559, TxEip2930,
-    TxEnvelope, TxLegacy, TxReceipt,
+    Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, TxEip1559, TxEip2930, TxEnvelope, TxLegacy,
+    TxReceipt, Typed2718,
 };
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
 use alloy_network::{AnyReceiptEnvelope, AnyRpcTransaction, AnyTransactionReceipt, AnyTxEnvelope};
@@ -83,7 +83,7 @@ pub fn transaction_request_to_typed(
         access_list.as_ref(),
         max_fee_per_blob_gas,
         blob_versioned_hashes.as_ref(),
-        sidecar,
+        sidecar.as_ref(),
         to,
     ) {
         // legacy transaction
@@ -132,7 +132,7 @@ pub fn transaction_request_to_typed(
             }))
         }
         // EIP4844
-        (Some(3), None, _, _, _, _, Some(_), Some(sidecar), to) => {
+        (Some(3), None, _, _, _, _, Some(_), _, to) => {
             let tx = TxEip4844 {
                 nonce: nonce.unwrap_or_default(),
                 max_fee_per_gas: max_fee_per_gas.unwrap_or_default(),
@@ -149,9 +149,14 @@ pub fn transaction_request_to_typed(
                 access_list: access_list.unwrap_or_default(),
                 blob_versioned_hashes: blob_versioned_hashes.unwrap_or_default(),
             };
-            Some(TypedTransactionRequest::EIP4844(TxEip4844Variant::TxEip4844WithSidecar(
-                TxEip4844WithSidecar::from_tx_and_sidecar(tx, sidecar),
-            )))
+
+            if let Some(sidecar) = sidecar {
+                Some(TypedTransactionRequest::EIP4844(TxEip4844Variant::TxEip4844WithSidecar(
+                    TxEip4844WithSidecar::from_tx_and_sidecar(tx, sidecar),
+                )))
+            } else {
+                Some(TypedTransactionRequest::EIP4844(TxEip4844Variant::TxEip4844(tx)))
+            }
         }
         _ => None,
     }
@@ -194,10 +199,6 @@ impl MaybeImpersonatedTransaction {
     }
 
     /// Recovers the Ethereum address which was used to sign the transaction.
-    ///
-    /// Note: this is feature gated so it does not conflict with the `Deref`ed
-    /// [TypedTransaction::recover] function by default.
-    #[cfg(feature = "impersonated-tx")]
     pub fn recover(&self) -> Result<Address, alloy_primitives::SignatureError> {
         if let Some(sender) = self.impersonated_sender {
             return Ok(sender);
@@ -206,19 +207,11 @@ impl MaybeImpersonatedTransaction {
     }
 
     /// Returns whether the transaction is impersonated
-    ///
-    /// Note: this is feature gated so it does not conflict with the `Deref`ed
-    /// [TypedTransaction::hash] function by default.
-    #[cfg(feature = "impersonated-tx")]
     pub fn is_impersonated(&self) -> bool {
         self.impersonated_sender.is_some()
     }
 
     /// Returns the hash of the transaction
-    ///
-    /// Note: this is feature gated so it does not conflict with the `Deref`ed
-    /// [TypedTransaction::hash] function by default.
-    #[cfg(feature = "impersonated-tx")]
     pub fn hash(&self) -> B256 {
         if let Some(sender) = self.impersonated_sender {
             return self.transaction.impersonated_hash(sender)
@@ -285,9 +278,11 @@ pub fn to_alloy_transaction_with_hash_and_sender(
                 block_hash: None,
                 block_number: None,
                 transaction_index: None,
-                from,
                 effective_gas_price: None,
-                inner: TxEnvelope::Legacy(Signed::new_unchecked(tx, sig, hash)),
+                inner: Recovered::new_unchecked(
+                    TxEnvelope::Legacy(Signed::new_unchecked(tx, sig, hash)),
+                    from,
+                ),
             }
         }
         TypedTransaction::EIP2930(t) => {
@@ -296,9 +291,11 @@ pub fn to_alloy_transaction_with_hash_and_sender(
                 block_hash: None,
                 block_number: None,
                 transaction_index: None,
-                from,
                 effective_gas_price: None,
-                inner: TxEnvelope::Eip2930(Signed::new_unchecked(tx, sig, hash)),
+                inner: Recovered::new_unchecked(
+                    TxEnvelope::Eip2930(Signed::new_unchecked(tx, sig, hash)),
+                    from,
+                ),
             }
         }
         TypedTransaction::EIP1559(t) => {
@@ -307,9 +304,11 @@ pub fn to_alloy_transaction_with_hash_and_sender(
                 block_hash: None,
                 block_number: None,
                 transaction_index: None,
-                from,
                 effective_gas_price: None,
-                inner: TxEnvelope::Eip1559(Signed::new_unchecked(tx, sig, hash)),
+                inner: Recovered::new_unchecked(
+                    TxEnvelope::Eip1559(Signed::new_unchecked(tx, sig, hash)),
+                    from,
+                ),
             }
         }
         TypedTransaction::EIP4844(t) => {
@@ -318,9 +317,11 @@ pub fn to_alloy_transaction_with_hash_and_sender(
                 block_hash: None,
                 block_number: None,
                 transaction_index: None,
-                from,
                 effective_gas_price: None,
-                inner: TxEnvelope::Eip4844(Signed::new_unchecked(tx, sig, hash)),
+                inner: Recovered::new_unchecked(
+                    TxEnvelope::Eip4844(Signed::new_unchecked(tx, sig, hash)),
+                    from,
+                ),
             }
         }
         TypedTransaction::EIP7702(t) => {
@@ -329,9 +330,11 @@ pub fn to_alloy_transaction_with_hash_and_sender(
                 block_hash: None,
                 block_number: None,
                 transaction_index: None,
-                from,
                 effective_gas_price: None,
-                inner: TxEnvelope::Eip7702(Signed::new_unchecked(tx, sig, hash)),
+                inner: Recovered::new_unchecked(
+                    TxEnvelope::Eip7702(Signed::new_unchecked(tx, sig, hash)),
+                    from,
+                ),
             }
         }
         TypedTransaction::Deposit(_t) => {
@@ -358,7 +361,6 @@ impl PendingTransaction {
         Ok(Self { transaction: MaybeImpersonatedTransaction::new(transaction), sender, hash })
     }
 
-    #[cfg(feature = "impersonated-tx")]
     pub fn with_impersonated(transaction: TypedTransaction, sender: Address) -> Self {
         let hash = transaction.impersonated_hash(sender);
         Self {
@@ -610,16 +612,15 @@ impl TryFrom<AnyRpcTransaction> for TypedTransaction {
     type Error = ConversionError;
 
     fn try_from(value: AnyRpcTransaction) -> Result<Self, Self::Error> {
-        let AnyRpcTransaction { inner, .. } = value;
-        let from = inner.from;
-        match inner.inner {
+        let WithOtherFields { inner, .. } = value.0;
+        let from = inner.inner.signer();
+        match inner.inner.into_inner() {
             AnyTxEnvelope::Ethereum(tx) => match tx {
                 TxEnvelope::Legacy(tx) => Ok(Self::Legacy(tx)),
                 TxEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),
                 TxEnvelope::Eip1559(tx) => Ok(Self::EIP1559(tx)),
                 TxEnvelope::Eip4844(tx) => Ok(Self::EIP4844(tx)),
                 TxEnvelope::Eip7702(tx) => Ok(Self::EIP7702(tx)),
-                _ => Err(ConversionError::Custom("UnsupportedTxType".to_string())),
             },
             AnyTxEnvelope::Unknown(mut tx) => {
                 // Try to convert to deposit transaction
@@ -927,7 +928,6 @@ impl TypedTransaction {
     /// Returns the hash if the transaction is impersonated (using a fake signature)
     ///
     /// This appends the `address` before hashing it
-    #[cfg(feature = "impersonated-tx")]
     pub fn impersonated_hash(&self, sender: Address) -> B256 {
         let mut buffer = Vec::new();
         Encodable::encode(self, &mut buffer);
@@ -1012,11 +1012,13 @@ impl Decodable for TypedTransaction {
     }
 }
 
-impl Encodable2718 for TypedTransaction {
-    fn type_flag(&self) -> Option<u8> {
-        self.r#type()
+impl Typed2718 for TypedTransaction {
+    fn ty(&self) -> u8 {
+        self.r#type().unwrap_or(0)
     }
+}
 
+impl Encodable2718 for TypedTransaction {
     fn encode_2718_len(&self) -> usize {
         match self {
             Self::Legacy(tx) => TxEnvelope::from(tx.clone()).encode_2718_len(),
@@ -1260,7 +1262,7 @@ impl From<TypedReceipt<Receipt<alloy_rpc_types::Log>>> for OtsReceipt {
         } as u8;
         let receipt = ReceiptWithBloom::<Receipt<alloy_rpc_types::Log>>::from(value);
         let status = receipt.status();
-        let cumulative_gas_used = receipt.cumulative_gas_used() as u64;
+        let cumulative_gas_used = receipt.cumulative_gas_used();
         let logs = receipt.logs().to_vec();
         let logs_bloom = receipt.logs_bloom;
 
@@ -1269,7 +1271,7 @@ impl From<TypedReceipt<Receipt<alloy_rpc_types::Log>>> for OtsReceipt {
 }
 
 impl TypedReceipt {
-    pub fn cumulative_gas_used(&self) -> u128 {
+    pub fn cumulative_gas_used(&self) -> u64 {
         self.as_receipt_with_bloom().cumulative_gas_used()
     }
 
@@ -1380,18 +1382,20 @@ impl Decodable for TypedReceipt {
     }
 }
 
-impl Encodable2718 for TypedReceipt {
-    fn type_flag(&self) -> Option<u8> {
+impl Typed2718 for TypedReceipt {
+    fn ty(&self) -> u8 {
         match self {
-            Self::Legacy(_) => None,
-            Self::EIP2930(_) => Some(1),
-            Self::EIP1559(_) => Some(2),
-            Self::EIP4844(_) => Some(3),
-            Self::EIP7702(_) => Some(4),
-            Self::Deposit(_) => Some(0x7E),
+            Self::Legacy(_) => alloy_consensus::constants::LEGACY_TX_TYPE_ID,
+            Self::EIP2930(_) => alloy_consensus::constants::EIP2930_TX_TYPE_ID,
+            Self::EIP1559(_) => alloy_consensus::constants::EIP1559_TX_TYPE_ID,
+            Self::EIP4844(_) => alloy_consensus::constants::EIP4844_TX_TYPE_ID,
+            Self::EIP7702(_) => alloy_consensus::constants::EIP7702_TX_TYPE_ID,
+            Self::Deposit(_) => DEPOSIT_TX_TYPE_ID,
         }
     }
+}
 
+impl Encodable2718 for TypedReceipt {
     fn encode_2718_len(&self) -> usize {
         match self {
             Self::Legacy(r) => ReceiptEnvelope::Legacy(r.clone()).encode_2718_len(),
@@ -1457,7 +1461,6 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
                 blob_gas_price,
                 blob_gas_used,
                 inner: AnyReceiptEnvelope { inner: receipt_with_bloom, r#type },
-                authorization_list,
             },
         other,
     } = receipt;
@@ -1474,7 +1477,6 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
         to,
         blob_gas_price,
         blob_gas_used,
-        authorization_list,
         inner: match r#type {
             0x00 => TypedReceipt::Legacy(receipt_with_bloom),
             0x01 => TypedReceipt::EIP2930(receipt_with_bloom),
@@ -1527,7 +1529,7 @@ mod tests {
         let tx = TypedTransaction::Legacy(Signed::new_unchecked(
             tx,
             signature,
-            b256!("a517b206d2223278f860ea017d3626cacad4f52ff51030dc9a96b432f17f8d34"),
+            b256!("0xa517b206d2223278f860ea017d3626cacad4f52ff51030dc9a96b432f17f8d34"),
         ));
 
         assert_eq!(tx, decoded);
@@ -1579,21 +1581,21 @@ mod tests {
             _ => unreachable!(),
         };
 
-        assert_eq!(tx.tx().tx().to, address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064"));
+        assert_eq!(tx.tx().tx().to, address!("0x11E9CA82A3a762b4B5bd264d4173a242e7a77064"));
 
         assert_eq!(
             tx.tx().tx().blob_versioned_hashes,
             vec![
-                b256!("012ec3d6f66766bedb002a190126b3549fce0047de0d4c25cffce0dc1c57921a"),
-                b256!("0152d8e24762ff22b1cfd9f8c0683786a7ca63ba49973818b3d1e9512cd2cec4"),
-                b256!("013b98c6c83e066d5b14af2b85199e3d4fc7d1e778dd53130d180f5077e2d1c7"),
-                b256!("01148b495d6e859114e670ca54fb6e2657f0cbae5b08063605093a4b3dc9f8f1"),
-                b256!("011ac212f13c5dff2b2c6b600a79635103d6f580a4221079951181b25c7e6549")
+                b256!("0x012ec3d6f66766bedb002a190126b3549fce0047de0d4c25cffce0dc1c57921a"),
+                b256!("0x0152d8e24762ff22b1cfd9f8c0683786a7ca63ba49973818b3d1e9512cd2cec4"),
+                b256!("0x013b98c6c83e066d5b14af2b85199e3d4fc7d1e778dd53130d180f5077e2d1c7"),
+                b256!("0x01148b495d6e859114e670ca54fb6e2657f0cbae5b08063605093a4b3dc9f8f1"),
+                b256!("0x011ac212f13c5dff2b2c6b600a79635103d6f580a4221079951181b25c7e6549")
             ]
         );
 
         let from = tx.recover_signer().unwrap();
-        assert_eq!(from, address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2"));
+        assert_eq!(from, address!("0xA83C816D4f9b2783761a22BA6FADB0eB0606D7B2"));
     }
 
     #[test]
@@ -1653,7 +1655,7 @@ mod tests {
         let receipt = TypedReceipt::Legacy(ReceiptWithBloom {
             receipt: Receipt {
                 status: false.into(),
-                cumulative_gas_used: 0x1u128,
+                cumulative_gas_used: 0x1,
                 logs: vec![Log {
                     address: Address::from_str("0000000000000000000000000000000000000011").unwrap(),
                     data: LogData::new_unchecked(
@@ -1688,7 +1690,7 @@ mod tests {
         let expected = TypedReceipt::Legacy(ReceiptWithBloom {
             receipt: Receipt {
                 status: false.into(),
-                cumulative_gas_used: 0x1u128,
+                cumulative_gas_used: 0x1,
                 logs: vec![Log {
                     address: Address::from_str("0000000000000000000000000000000000000011").unwrap(),
                     data: LogData::new_unchecked(

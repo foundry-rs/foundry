@@ -9,7 +9,7 @@ use derive_builder::Builder;
 use eyre::Result;
 use foundry_config::Config;
 use serde::Serialize;
-use std::{iter::repeat, path::PathBuf};
+use std::path::PathBuf;
 
 /// Container for multiple wallets.
 #[derive(Debug, Default)]
@@ -221,6 +221,10 @@ pub struct MultiWalletOpts {
     /// Use AWS Key Management Service.
     #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "aws-kms"))]
     pub aws: bool,
+
+    /// Use Google Cloud Key Management Service.
+    #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "gcp-kms"))]
+    pub gcp: bool,
 }
 
 impl MultiWalletOpts {
@@ -238,6 +242,9 @@ impl MultiWalletOpts {
         if let Some(aws_signers) = self.aws_signers().await? {
             signers.extend(aws_signers);
         }
+        if let Some(gcp_signer) = self.gcp_signers().await? {
+            signers.extend(gcp_signer);
+        }
         if let Some((pending_keystores, unlocked)) = self.keystores()? {
             pending.extend(pending_keystores);
             signers.extend(unlocked);
@@ -249,7 +256,10 @@ impl MultiWalletOpts {
             signers.extend(mnemonics);
         }
         if self.interactives > 0 {
-            pending.extend(repeat(PendingSigner::Interactive).take(self.interactives as usize));
+            pending.extend(std::iter::repeat_n(
+                PendingSigner::Interactive,
+                self.interactives as usize,
+            ));
         }
 
         Ok(MultiWallet::new(pending, signers))
@@ -394,12 +404,50 @@ impl MultiWalletOpts {
 
         Ok(None)
     }
+
+    /// Returns a list of GCP signers if the GCP flag is set.
+    ///
+    /// The GCP signers are created from the following environment variables:
+    /// - GCP_PROJECT_ID: The GCP project ID. e.g. `my-project-123456`.
+    /// - GCP_LOCATION: The GCP location. e.g. `us-central1`.
+    /// - GCP_KEY_RING: The GCP key ring name. e.g. `my-key-ring`.
+    /// - GCP_KEY_NAME: The GCP key name. e.g. `my-key`.
+    /// - GCP_KEY_VERSION: The GCP key version. e.g. `1`.
+    ///
+    /// For more information on GCP KMS, see the [official documentation](https://cloud.google.com/kms/docs).
+    pub async fn gcp_signers(&self) -> Result<Option<Vec<WalletSigner>>> {
+        #[cfg(feature = "gcp-kms")]
+        if self.gcp {
+            let mut wallets = vec![];
+
+            let project_id = std::env::var("GCP_PROJECT_ID")?;
+            let location = std::env::var("GCP_LOCATION")?;
+            let key_ring = std::env::var("GCP_KEY_RING")?;
+            let key_names = std::env::var("GCP_KEY_NAME")?;
+            let key_version = std::env::var("GCP_KEY_VERSION")?;
+
+            let gcp_signer = WalletSigner::from_gcp(
+                project_id,
+                location,
+                key_ring,
+                key_names,
+                key_version.parse()?,
+            )
+            .await?;
+            wallets.push(gcp_signer);
+
+            return Ok(Some(wallets));
+        }
+
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{path::Path, str::FromStr};
+    use alloy_primitives::address;
+    use std::path::Path;
 
     #[test]
     fn parse_keystore_args() {
@@ -437,10 +485,7 @@ mod tests {
 
         let (_, unlocked) = args.keystores().unwrap().unwrap();
         assert_eq!(unlocked.len(), 1);
-        assert_eq!(
-            unlocked[0].address(),
-            Address::from_str("0xec554aeafe75601aaab43bd4621a22284db566c2").unwrap()
-        );
+        assert_eq!(unlocked[0].address(), address!("0xec554aeafe75601aaab43bd4621a22284db566c2"));
     }
 
     // https://github.com/foundry-rs/foundry/issues/5179

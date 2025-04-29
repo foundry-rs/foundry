@@ -12,6 +12,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
 
 jobs:
   nextest:
@@ -108,7 +109,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - run: cargo hack check
+      - run: cargo hack check --each-feature --exclude-features isolate-by-default
+
+  deny:
+    uses: ithacaxyz/ci/.github/workflows/deny.yml@main
 
   ci-success:
     runs-on: ubuntu-latest
@@ -122,6 +126,7 @@ jobs:
       - rustfmt
       - forge-fmt
       - crate-checks
+      - deny
     timeout-minutes: 30
     steps:
       - name: Decide whether the needed jobs succeeded or failed
