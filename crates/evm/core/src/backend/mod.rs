@@ -1300,12 +1300,12 @@ impl DatabaseExt for Backend {
 
         let res = {
             configure_tx_req_env(env, tx, None)?;
-            let mut env = self.env_with_handler_cfg(env);
+            let env = self.env_with_handler_cfg(env);
 
             let mut db = self.clone();
             let mut evm = new_evm_with_inspector(&mut db, env.to_owned(), inspector);
             evm.journaled_state.depth = journaled_state.depth + 1;
-            evm.transact(env.tx.clone()).wrap_err("EVM error")?
+            evm.transact(env.tx).wrap_err("EVM error")?
         };
 
         self.commit(res.state);

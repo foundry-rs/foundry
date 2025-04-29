@@ -137,7 +137,7 @@ pub struct CheatsCtxt<'cheats, 'evm, 'db> {
     /// The cheatcodes inspector state.
     pub(crate) state: &'cheats mut Cheatcodes,
     /// The EVM data.
-    pub(crate) ecx: &'evm mut FoundryEvmContext<'db>,
+    pub(crate) ecx: &'evm mut EthEvmContext<'db>,
     /// The original `msg.sender`.
     pub(crate) caller: Address,
     /// Gas limit of the current cheatcode call.
@@ -145,7 +145,7 @@ pub struct CheatsCtxt<'cheats, 'evm, 'db> {
 }
 
 impl<'db> std::ops::Deref for CheatsCtxt<'_, '_, 'db> {
-    type Target = FoundryEvmContext<'db>;
+    type Target = EthEvmContext<'db>;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {

@@ -23,18 +23,14 @@ pub struct CustomPrintTracer {
     gas_inspector: GasInspector,
 }
 
-impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for CustomPrintTracer {
-    fn initialize_interp(
-        &mut self,
-        interp: &mut Interpreter,
-        _context: &mut FoundryEvmContext<'_>,
-    ) {
+impl<DB: Database> Inspector<DB> for CustomPrintTracer {
+    fn initialize_interp(&mut self, interp: &mut Interpreter, _context: &mut EthEvmContext<DB>) {
         self.gas_inspector.initialize_interp(&interp.control.gas);
     }
 
     // get opcode by calling `interp.contract.opcode(interp.program_counter())`.
     // all other information can be obtained from interp.
-    fn step(&mut self, interp: &mut Interpreter, context: &mut FoundryEvmContext<'_>) {
+    fn step(&mut self, interp: &mut Interpreter, context: &mut EthEvmContext<DB>) {
         let opcode = interp.bytecode.opcode();
         let name = OpCode::name_by_op(opcode);
 
@@ -59,13 +55,13 @@ impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for CustomPrintTracer {
         self.gas_inspector.step(&interp.control.gas);
     }
 
-    fn step_end(&mut self, interp: &mut Interpreter, _context: &mut FoundryEvmContext<'_>) {
+    fn step_end(&mut self, interp: &mut Interpreter, _context: &mut EthEvmContext<DB>) {
         self.gas_inspector.step_end(interp.control.gas_mut());
     }
 
     fn call_end(
         &mut self,
-        _context: &mut FoundryEvmContext<'_>,
+        _context: &mut EthEvmContext<DB>,
         _inputs: &CallInputs,
         outcome: &mut CallOutcome,
     ) {
@@ -74,7 +70,7 @@ impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for CustomPrintTracer {
 
     fn create_end(
         &mut self,
-        _context: &mut FoundryEvmContext<'_>,
+        _context: &mut EthEvmContext<DB>,
         _inputs: &CreateInputs,
         outcome: &mut CreateOutcome,
     ) {
@@ -83,7 +79,7 @@ impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for CustomPrintTracer {
 
     fn call(
         &mut self,
-        _context: &mut FoundryEvmContext<'_>,
+        _context: &mut EthEvmContext<DB>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
         let _ = sh_println!(
@@ -100,7 +96,7 @@ impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for CustomPrintTracer {
 
     fn create(
         &mut self,
-        _context: &mut FoundryEvmContext<'_>,
+        _context: &mut EthEvmContext<DB>,
         inputs: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
         let _ = sh_println!(

@@ -1,3 +1,4 @@
+use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::Log;
 use alloy_sol_types::{SolEvent, SolInterface, SolValue};
 use foundry_common::{fmt::ConsoleFmt, ErrorExt};
@@ -42,14 +43,14 @@ impl LogCollector {
     }
 }
 
-impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for LogCollector {
-    fn log(&mut self, _interp: &mut Interpreter, _context: &mut FoundryEvmContext<'_>, log: Log) {
+impl<DB: Database> Inspector<DB> for LogCollector {
+    fn log(&mut self, _interp: &mut Interpreter, _context: &mut EthEvmContext<DB>, log: Log) {
         self.logs.push(log);
     }
 
     fn call(
         &mut self,
-        _context: &mut FoundryEvmContext<'_>,
+        _context: &mut EthEvmContext<DB>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
         if inputs.target_address == HARDHAT_CONSOLE_ADDRESS {

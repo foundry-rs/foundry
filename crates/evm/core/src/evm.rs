@@ -1,4 +1,4 @@
-use crate::{backend::DatabaseExt, Env, EnvMut, InspectorExt};
+use crate::{backend::DatabaseExt, Env, InspectorExt};
 use alloy_evm::{eth::EthEvmContext, EthEvm};
 use alloy_primitives::Address;
 use revm::{
@@ -8,9 +8,8 @@ use revm::{
     Journal,
 };
 
-pub type FoundryEvmContext<'db> = EthEvmContext<&'db mut dyn DatabaseExt>;
-
-pub type FoundryEvm<'db, I, P = FoundryPrecompiles> = EthEvm<FoundryEvmContext<'db>, I, P>;
+pub type FoundryEvm<'db, I, P = FoundryPrecompiles> =
+    EthEvm<EthEvmContext<&'db mut dyn DatabaseExt>, I, P>;
 
 pub struct FoundryPrecompiles {
     inner: EthPrecompiles,

@@ -72,7 +72,7 @@ use std::{
 
 mod utils;
 
-pub type Ecx<'a, 'db> = &'a mut FoundryEvmContext<'db>;
+pub type Ecx<'a, 'db> = &'a mut EthEvmContext<'db>;
 
 /// Helper trait for obtaining complete [revm::Inspector] instance from mutable reference to
 /// [Cheatcodes].
@@ -1205,7 +1205,7 @@ impl Cheatcodes {
     }
 }
 
-impl Inspector<FoundryEvmContext<'_>> for Cheatcodes {
+impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
     #[inline]
     fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
