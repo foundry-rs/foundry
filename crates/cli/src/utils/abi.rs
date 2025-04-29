@@ -46,6 +46,7 @@ pub async fn parse_function_args<P: Provider<AnyNetwork>>(
         // a regular function signature with parentheses
         get_func(sig)?
     } else {
+        info!("function signature does not contain parentheses, fetching function data from Etherscan");
         let etherscan_api_key = etherscan_api_key.ok_or_eyre(
             "Function signature does not contain parentheses. If you wish to fetch function data from Etherscan, please provide an API key.",
         )?;
