@@ -1451,10 +1451,10 @@ contract ATest is Test {
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-[PASS] testNormalGas() (gas: 3153)
-[PASS] testWeirdGas1() (gas: 2991)
-[PASS] testWeirdGas2() (gas: 3218)
-[PASS] testWithAssembly() (gas: 3034)
+[PASS] testNormalGas() (gas: 3148)
+[PASS] testWeirdGas1() (gas: 2986)
+[PASS] testWeirdGas2() (gas: 3213)
+[PASS] testWithAssembly() (gas: 3029)
 ...
 "#]]);
 });
@@ -1547,9 +1547,9 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-[PASS] test_GasMeter() (gas: 53102)
+[PASS] test_GasMeter() (gas: 53097)
 Traces:
-  [53102] ATest::test_GasMeter()
+  [53097] ATest::test_GasMeter()
     ├─ [0] VM::pauseGasMetering()
     │   └─ ← [Return]
     ├─ [0] VM::resumeGasMetering()
