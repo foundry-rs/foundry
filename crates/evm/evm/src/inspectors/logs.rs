@@ -69,7 +69,7 @@ impl InspectorExt for LogCollector {
 }
 
 /// Converts a Hardhat `console.log` call to a DSTest `log(string)` event.
-fn hh_to_ds(call: &console::hh::ConsoleCalls) -> Log {
+pub fn hh_to_ds(call: &console::hh::ConsoleCalls) -> Log {
     // Convert the parameters of the call to their string representation using `ConsoleFmt`.
     let msg = call.fmt(Default::default());
     new_console_log(&msg)

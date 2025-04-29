@@ -671,6 +671,8 @@ impl Executor {
                 chain_id: Some(self.env().evm_env.cfg_env.chain_id),
                 ..self.env().tx.clone()
             },
+            is_optimism: false,
+            deposit: None,
         }
     }
 

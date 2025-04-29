@@ -30,7 +30,7 @@ use anvil_core::{
     },
     types::{ReorgOptions, TransactionData},
 };
-use foundry_evm::revm::primitives::SpecId;
+use revm::primitives::hardfork::SpecId;
 use std::{
     future::IntoFuture,
     str::FromStr,
