@@ -17,11 +17,27 @@ use revm::{
     DatabaseCommit, Inspector,
 };
 
+/// Alias for result type returned by [`OpEvm::transact`] methods.
 type AnvilEvmResult<DBError> =
     Result<ResultAndState<OpHaltReason>, EVMError<DBError, OpTransactionError>>;
 
+/// Alias for result type returned by [`OpEvm::transact_commit`] methods.
 type AnvilExecResult<DBError> =
     Result<ExecutionResult<OpHaltReason>, EVMError<DBError, OpTransactionError>>;
+
+/// [`EitherEvm`] delegates its calls to one of the two evm implementations; either [`EthEvm`] or
+/// [`OpEvm`].
+///
+/// Calls are delegated to [`OpEvm`] only if the optimism is enabled.
+///
+/// The call delegation is handled via its own implementation of the [`Evm`] trait.
+///
+/// The [`Evm::transact`] and other such calls work over the [`TxEnv`] type. This is wrapped into
+/// [`OpTransaction`] type in case of [`OpEvm`] under the hood.
+///
+/// However, the [`Evm::HaltReason`] and [`Evm::Error`] leverage the optimism [`OpHaltReason`] and
+/// [`OpTransactionError`] as there are supersets of the eth types. This makes it easier to map eth
+/// types to op types and also prevents ignoring of any error that maybe thrown by [`OpEvm`].
 pub enum EitherEvm<DB, I, P>
 where
     DB: Database,
@@ -37,6 +53,11 @@ where
     P: PrecompileProvider<EthEvmContext<DB>, Output = InterpreterResult>
         + PrecompileProvider<OpContext<DB>, Output = InterpreterResult>,
 {
+    /// Transact a deposit transaction.
+    ///
+    /// This does not commit the transaction to the [`Database`].
+    ///
+    /// In order to transact and commit use [`EitherEvm::transact_deposit_commit`].
     pub fn transact_deposit(
         &mut self,
         tx: TxEnv,
@@ -55,6 +76,7 @@ where
         }
     }
 
+    /// Transact a deposit transaction and commits it to the [`Database`].
     pub fn transact_deposit_commit(
         &mut self,
         tx: TxEnv,
@@ -76,6 +98,7 @@ where
         }
     }
 
+    /// Converts the [`EthEvm::transact`] result to [`AnvilEvmResult`].
     fn map_eth_result(
         &self,
         result: Result<ResultAndState<HaltReason>, EVMError<DB::Error>>,
@@ -99,6 +122,7 @@ where
         }
     }
 
+    /// Converts the [`EthEvm::transact_commit`] result to [`AnvilExecResult`].
     fn map_exec_result(
         &self,
         result: Result<ExecutionResult, EVMError<DB::Error>>,
