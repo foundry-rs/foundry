@@ -34,7 +34,6 @@ impl Env {
 }
 
 /// Helper struct with mutable references to the block and cfg environments.
-#[derive(Debug)]
 pub struct EnvMut<'a> {
     pub block: &'a mut BlockEnv,
     pub cfg: &'a mut CfgEnv,
