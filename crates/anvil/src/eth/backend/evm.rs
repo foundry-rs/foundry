@@ -37,7 +37,7 @@ where
     P: PrecompileProvider<EthEvmContext<DB>, Output = InterpreterResult>
         + PrecompileProvider<OpContext<DB>, Output = InterpreterResult>,
 {
-    fn transact_deposit(
+    pub fn transact_deposit(
         &mut self,
         tx: TxEnv,
         deposit: DepositTransactionParts,
@@ -55,7 +55,7 @@ where
         }
     }
 
-    fn transact_deposit_commit(
+    pub fn transact_deposit_commit(
         &mut self,
         tx: TxEnv,
         deposit: DepositTransactionParts,

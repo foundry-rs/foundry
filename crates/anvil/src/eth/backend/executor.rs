@@ -1,6 +1,8 @@
 use crate::{
     eth::{
-        backend::{db::Db, validate::TransactionValidator},
+        backend::{
+            db::Db, mem::op_haltreason_to_instruction_result, validate::TransactionValidator,
+        },
         error::InvalidTransactionError,
         pool::transactions::PoolTransaction,
     },
@@ -10,7 +12,7 @@ use crate::{
 };
 use alloy_consensus::{constants::EMPTY_WITHDRAWALS, Receipt, ReceiptWithBloom};
 use alloy_eips::{eip2718::Encodable2718, eip7685::EMPTY_REQUESTS_HASH};
-use alloy_evm::{eth::EthEvmContext, EthEvm};
+use alloy_evm::{eth::EthEvmContext, EthEvm, Evm};
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{Bloom, BloomInput, Log, B256};
 use anvil_core::eth::{
@@ -22,16 +24,18 @@ use anvil_core::eth::{
 };
 use foundry_evm::{backend::DatabaseError, traces::CallTraceNode, Env};
 use foundry_evm_core::{evm::FoundryPrecompiles, OpEnv};
-use op_revm::{L1BlockInfo, OpContext, OpTransaction};
+use op_revm::{
+    transaction::deposit::{DepositTransactionParts, DEPOSIT_TRANSACTION_TYPE},
+    L1BlockInfo, OpContext, OpTransaction, OpTransactionError,
+};
 use revm::{
-    context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm, JournalTr},
+    context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm as RevmEvm, JournalTr},
     context_interface::result::{EVMError, ExecutionResult, Output},
     database::WrapDatabaseRef,
-    handler::{instructions::EthInstructions, EvmTr},
+    handler::instructions::EthInstructions,
     interpreter::{interpreter::EthInterpreter, InstructionResult},
     primitives::hardfork::SpecId,
-    Database, DatabaseRef, ExecuteCommitEvm, ExecuteEvm, InspectCommitEvm, InspectEvm, Inspector,
-    Journal, MainBuilder,
+    Database, DatabaseRef, Inspector, Journal,
 };
 use std::sync::Arc;
 
@@ -321,11 +325,20 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             inspector = inspector.with_trace_printer();
         }
 
-        let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
-        // Set the tx
-        evm.set_tx(env.tx);
+        let mut evm = evm_with_inspector(
+            &mut *self.db,
+            &env,
+            &mut inspector,
+            transaction.tx_type() == DEPOSIT_TRANSACTION_TYPE,
+        );
+
+        let tx_commit = if transaction.tx_type() == DEPOSIT_TRANSACTION_TYPE {
+            evm.transact_deposit_commit(env.tx, DepositTransactionParts::default())
+        } else {
+            evm.transact_commit(env.tx)
+        };
         trace!(target: "backend", "[{:?}] executing", transaction.hash());
-        let exec_result = match evm.inspect_replay_commit() {
+        let exec_result = match tx_commit {
             Ok(exec_result) => exec_result,
             Err(err) => {
                 warn!(target: "backend", "[{:?}] failed to execute: {:?}", transaction.hash(), err);
@@ -334,7 +347,14 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
                         return Some(TransactionExecutionOutcome::DatabaseError(transaction, err))
                     }
                     EVMError::Transaction(err) => {
-                        return Some(TransactionExecutionOutcome::Invalid(transaction, err.into()))
+                        let err = match err {
+                            OpTransactionError::Base(err) => err.into(),
+                            OpTransactionError::HaltedDepositPostRegolith |
+                            OpTransactionError::DepositSystemTxPostRegolith => {
+                                InvalidTransactionError::DepositTxErrorPostRegolith
+                            }
+                        };
+                        return Some(TransactionExecutionOutcome::Invalid(transaction, err))
                     }
                     e => panic!("failed to execute transaction: {e}"),
                 }
@@ -353,7 +373,9 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             ExecutionResult::Revert { gas_used, output } => {
                 (InstructionResult::Revert, gas_used, Some(Output::Call(output)), None)
             }
-            ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None, None),
+            ExecutionResult::Halt { reason, gas_used } => {
+                (op_haltreason_to_instruction_result(reason), gas_used, None, None)
+            }
         };
 
         if exit_reason == InstructionResult::OutOfGas {
@@ -439,8 +461,12 @@ impl<DB: Database> EvmContext<DB> {
     }
 }
 
-pub type AnvilEvm<'db, DB, I, P = FoundryPrecompiles> =
-    Evm<AnvilEvmContext<'db, DB>, I, EthInstructions<EthInterpreter, AnvilEvmContext<'db, DB>>, P>;
+pub type AnvilEvm<'db, DB, I, P = FoundryPrecompiles> = RevmEvm<
+    AnvilEvmContext<'db, DB>,
+    I,
+    EthInstructions<EthInterpreter, AnvilEvmContext<'db, DB>>,
+    P,
+>;
 
 /// Creates a database with given database and inspector, optionally enabling odyssey features.
 pub fn new_evm_with_inspector<'db, CTX, DB>(
@@ -464,7 +490,7 @@ where
         error: Ok(()),
     };
 
-    let evm = Evm::new_with_inspector(
+    let evm = RevmEvm::new_with_inspector(
         evm_context,
         inspector,
         EthInstructions::default(),
@@ -502,7 +528,7 @@ where
             error: Ok(()),
         };
 
-        let evm = op_revm::OpEvm(Evm::new_with_inspector(
+        let evm = op_revm::OpEvm(RevmEvm::new_with_inspector(
             op_context,
             inspector,
             EthInstructions::default(),
@@ -526,7 +552,7 @@ where
             error: Ok(()),
         };
 
-        let evm = Evm::new_with_inspector(
+        let evm = RevmEvm::new_with_inspector(
             evm_context,
             inspector,
             EthInstructions::default(),

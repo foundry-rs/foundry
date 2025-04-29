@@ -40,7 +40,7 @@ use alloy_consensus::{
     transaction::Recovered, Account, BlockHeader, EnvKzgSettings, Header, Receipt, ReceiptWithBloom, Signed, Transaction as TransactionTrait, TxEnvelope
 };
 use alloy_eips::{eip1559::BaseFeeParams, eip4844::MAX_BLOBS_PER_BLOCK};
-use alloy_evm::{eth::EthEvmContext, Database};
+use alloy_evm::{eth::EthEvmContext, Database, Evm};
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
     EthereumWallet, UnknownTxEnvelope, UnknownTypedTransaction,
@@ -95,13 +95,13 @@ use foundry_evm::{
 use foundry_evm_core::evm::FoundryPrecompiles;
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
-use op_revm::OpContext;
+use op_revm::{OpContext, OpHaltReason};
 use parking_lot::{Mutex, RwLock};
 use revm::{
-    context::{Block as RevmBlock, BlockEnv, ContextTr, TxEnv}, context_interface::{
+    context::{result::HaltReason, Block as RevmBlock, BlockEnv, ContextTr, TxEnv}, context_interface::{
         block::BlobExcessGasAndPrice,
         result::{ExecutionResult, Output, ResultAndState},
-    }, database::{CacheDB, DatabaseRef, WrapDatabaseRef}, interpreter::InstructionResult, primitives::{hardfork::SpecId, KECCAK_EMPTY}, state::AccountInfo, Database, DatabaseCommit, ExecuteEvm, InspectEvm, Inspector
+    }, database::{CacheDB, DatabaseRef, WrapDatabaseRef}, interpreter::InstructionResult, primitives::{hardfork::SpecId, KECCAK_EMPTY}, state::AccountInfo, DatabaseCommit, ExecuteEvm, InspectEvm, Inspector
 };
 use revm_inspectors::transfer::TransferInspector;
 use std::{
@@ -1039,7 +1039,7 @@ impl Backend {
 
     /// Creates an EVM instance with optionally injected precompiles.
     #[expect(clippy::type_complexity)]
-    fn new_evm_with_inspector_ref<'db, DB, I>(
+    fn new_evm_with_inspector_ref<'db, I>(
         &self,
         db: &'db dyn DatabaseRef<Error = DatabaseError>,
         env: &Env,
@@ -1080,7 +1080,7 @@ impl Backend {
         let db = self.db.read().await;
         let mut inspector = self.build_inspector();
         let mut evm = self.new_evm_with_inspector_ref(db.as_dyn(), &env, &mut inspector);
-        let ResultAndState { result, state } = evm.inspect_with_tx(env.tx)?;
+        let ResultAndState { result, state } = evm.transact(env.tx)?;
         let (exit_reason, gas_used, out, logs) = match result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
                 (reason.into(), gas_used, Some(output), Some(logs))
@@ -1088,7 +1088,10 @@ impl Backend {
             ExecutionResult::Revert { gas_used, output } => {
                 (InstructionResult::Revert, gas_used, Some(Output::Call(output)), None)
             }
-            ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None, None),
+            ExecutionResult::Halt { reason, gas_used } => {
+                let eth_reason = op_haltreason_to_instruction_result(reason);
+                (eth_reason, gas_used, None, None)
+            },
         };
 
         drop(evm);
@@ -1573,7 +1576,7 @@ impl Backend {
 
                         
                         trace!(target: "backend", env=?env.evm_env, spec=?env.evm_env.spec_id(),"simulate evm env");
-                        evm.inspect_with_tx(env.tx)?
+                        evm.transact(env.tx)?
                     } else {
                         let mut inspector = self.build_inspector();
                         let mut evm = self.new_evm_with_inspector_ref(
@@ -1583,7 +1586,7 @@ impl Backend {
                         );
 
                         trace!(target: "backend", env=?env.evm_env, spec=?env.evm_env.spec_id(),"simulate evm env");
-                        evm.inspect_with_tx(env.tx)?
+                        evm.transact(env.tx)?
                     };
                     trace!(target: "backend", ?result, ?request, "simulate call");
 
@@ -1714,7 +1717,7 @@ impl Backend {
 
         let env = self.build_call_env(request, fee_details, block_env);
         let mut evm = self.new_evm_with_inspector_ref(state, &env, &mut inspector);
-        let ResultAndState { result, state } = evm.inspect_with_tx(env.tx)?;
+        let ResultAndState { result, state } = evm.transact(env.tx)?;
         let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
                 (reason.into(), gas_used, Some(output))
@@ -1722,7 +1725,7 @@ impl Backend {
             ExecutionResult::Revert { gas_used, output } => {
                 (InstructionResult::Revert, gas_used, Some(Output::Call(output)))
             }
-            ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None),
+            ExecutionResult::Halt { reason, gas_used } => (op_haltreason_to_instruction_result(reason), gas_used, None),
         };
         drop(evm);
         inspector.print_logs();
@@ -1773,7 +1776,7 @@ impl Backend {
                                 &env,
                                 &mut inspector,
                             );
-                            let ResultAndState { result, state: _ } = evm.inspect_with_tx(env.tx)?;
+                            let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
 
                             drop(evm);
                             let tracing_inspector = inspector.tracer.expect("tracer disappeared");
@@ -1805,7 +1808,7 @@ impl Backend {
 
             let env = self.build_call_env(request, fee_details, block);
             let mut evm = self.new_evm_with_inspector_ref(state.as_dyn(), &env, &mut inspector);
-            let ResultAndState { result, state: _ } = evm.inspect_with_tx(env.tx)?;
+            let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
 
             let (exit_reason, gas_used, out) = match result {
                 ExecutionResult::Success { reason, gas_used, output, .. } => {
@@ -1814,7 +1817,7 @@ impl Backend {
                 ExecutionResult::Revert { gas_used, output } => {
                     (InstructionResult::Revert, gas_used, Some(Output::Call(output)))
                 }
-                ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None),
+                ExecutionResult::Halt { reason, gas_used } => (op_haltreason_to_instruction_result(reason), gas_used, None),
             };
 
             drop(evm);
@@ -1845,7 +1848,7 @@ impl Backend {
 
         let env = self.build_call_env(request, fee_details, block_env);
         let mut evm = self.new_evm_with_inspector_ref(state, &env, &mut inspector);
-        let ResultAndState { result, state: _ } = evm.inspect_with_tx(env.tx)?;
+        let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
         let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
                 (reason.into(), gas_used, Some(output))
@@ -1853,7 +1856,7 @@ impl Backend {
             ExecutionResult::Revert { gas_used, output } => {
                 (InstructionResult::Revert, gas_used, Some(Output::Call(output)))
             }
-            ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None),
+            ExecutionResult::Halt { reason, gas_used } => (op_haltreason_to_instruction_result(reason), gas_used, None),
         };
         drop(evm);
         let access_list = inspector.access_list();
@@ -3312,4 +3315,11 @@ pub fn is_arbitrum(chain_id: u64) -> bool {
         return chain.is_arbitrum()
     }
     false
+}
+
+pub fn op_haltreason_to_instruction_result(op_reason: OpHaltReason) -> InstructionResult {
+    match op_reason {
+        OpHaltReason::Base(eth_h) => eth_h.into(),
+        OpHaltReason::FailedDeposit => InstructionResult::Stop,
+    }
 }
