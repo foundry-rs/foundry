@@ -36,13 +36,15 @@ type AnvilExecResult<DBError> =
 /// [`OpTransaction`] type in case of [`OpEvm`] under the hood.
 ///
 /// However, the [`Evm::HaltReason`] and [`Evm::Error`] leverage the optimism [`OpHaltReason`] and
-/// [`OpTransactionError`] as there are supersets of the eth types. This makes it easier to map eth
+/// [`OpTransactionError`] as these are supersets of the eth types. This makes it easier to map eth
 /// types to op types and also prevents ignoring of any error that maybe thrown by [`OpEvm`].
 pub enum EitherEvm<DB, I, P>
 where
     DB: Database,
 {
+    /// [`EthEvm`] implementation.
     Eth(EthEvm<DB, I, P>),
+    /// [`OpEvm`] implementation.
     Op(OpEvm<DB, I, P>),
 }
 
