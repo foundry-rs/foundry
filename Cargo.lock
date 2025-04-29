@@ -4310,7 +4310,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#b988e153fb432e0239bbedfc51d2ca04ecf7377a"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#a12c814b4b876abb1aeb2d5733e8e9edbe937b45"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4323,7 +4323,7 @@ dependencies = [
  "fs_extra",
  "futures-util",
  "home",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "md-5",
  "path-slash",
  "rand 0.8.5",
@@ -4348,7 +4348,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#b988e153fb432e0239bbedfc51d2ca04ecf7377a"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#a12c814b4b876abb1aeb2d5733e8e9edbe937b45"
 dependencies = [
  "foundry-compilers-artifacts-resolc",
  "foundry-compilers-artifacts-solc",
@@ -4358,7 +4358,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-resolc"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#b988e153fb432e0239bbedfc51d2ca04ecf7377a"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#a12c814b4b876abb1aeb2d5733e8e9edbe937b45"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4379,7 +4379,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#b988e153fb432e0239bbedfc51d2ca04ecf7377a"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#a12c814b4b876abb1aeb2d5733e8e9edbe937b45"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4402,7 +4402,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#b988e153fb432e0239bbedfc51d2ca04ecf7377a"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#a12c814b4b876abb1aeb2d5733e8e9edbe937b45"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4416,7 +4416,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#b988e153fb432e0239bbedfc51d2ca04ecf7377a"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#a12c814b4b876abb1aeb2d5733e8e9edbe937b45"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -6417,7 +6417,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -11021,7 +11021,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69fff37da548239c3bf9e64a12193d261e8b22b660991c6fd2df057c168f435f"
 dependencies = [
  "cc",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -11731,7 +11731,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
