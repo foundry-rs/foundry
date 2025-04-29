@@ -78,6 +78,7 @@ pub async fn environment<N: Network, P: Provider<N>>(
             ..Default::default()
         },
         is_optimism: false,
+        deposit: None,
     };
 
     apply_chain_and_block_specific_env_changes::<N>(&mut env, &block);

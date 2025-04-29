@@ -1,5 +1,5 @@
 pub use alloy_evm::EvmEnv;
-use op_revm::OpSpecId;
+use op_revm::transaction::deposit::DepositTransactionParts;
 use revm::{
     context::{BlockEnv, CfgEnv, JournalInner, JournalTr, TxEnv},
     primitives::hardfork::SpecId,
@@ -12,12 +12,7 @@ pub struct Env {
     pub evm_env: EvmEnv,
     pub tx: TxEnv,
     pub is_optimism: bool,
-}
-
-// TODO: [`OpEnv`] and [`Env`] should be merged as an enum.
-pub struct OpEnv {
-    pub evm_env: EvmEnv<OpSpecId>,
-    pub tx: TxEnv,
+    pub deposit: Option<DepositTransactionParts>,
 }
 
 /// Helper container type for [`EvmEnv`] and [`TxEnv`].
@@ -30,7 +25,12 @@ impl Env {
     }
 
     pub fn from(cfg: CfgEnv, block: BlockEnv, tx: TxEnv) -> Self {
-        Self { evm_env: EvmEnv { cfg_env: cfg, block_env: block }, tx, is_optimism: false }
+        Self {
+            evm_env: EvmEnv { cfg_env: cfg, block_env: block },
+            tx,
+            is_optimism: false,
+            deposit: None,
+        }
     }
 
     pub fn from_with_spec_id(cfg: CfgEnv, block: BlockEnv, tx: TxEnv, spec_id: SpecId) -> Self {
@@ -55,6 +55,8 @@ impl EnvMut<'_> {
             evm_env: EvmEnv { cfg_env: self.cfg.to_owned(), block_env: self.block.to_owned() },
             tx: self.tx.to_owned(),
             is_optimism: false,
+            // TODO: DepositTransactionParts get lost here
+            deposit: None,
         }
     }
 }

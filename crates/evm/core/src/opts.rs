@@ -175,6 +175,7 @@ impl EvmOpts {
                 ..Default::default()
             },
             is_optimism: false,
+            deposit: None,
         }
     }
 

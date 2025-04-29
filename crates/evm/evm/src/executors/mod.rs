@@ -667,6 +667,7 @@ impl Executor {
                 ..self.env().tx.clone()
             },
             is_optimism: false,
+            deposit: None,
         }
     }
 
