@@ -67,9 +67,7 @@ where
     ) -> AnvilEvmResult<DB::Error> {
         match self {
             EitherEvm::Eth(_) => {
-                return Err(EVMError::Custom(
-                    BlockchainError::DepositTransactionUnsupported.to_string(),
-                ));
+                Err(EVMError::Custom(BlockchainError::DepositTransactionUnsupported.to_string()))
             }
             EitherEvm::Op(evm) => {
                 let op_tx = OpTransaction { base: tx, deposit, enveloped_tx: None };
@@ -89,9 +87,7 @@ where
     {
         match self {
             EitherEvm::Eth(_) => {
-                return Err(EVMError::Custom(
-                    BlockchainError::DepositTransactionUnsupported.to_string(),
-                ));
+                Err(EVMError::Custom(BlockchainError::DepositTransactionUnsupported.to_string()))
             }
             EitherEvm::Op(evm) => {
                 let op_tx = OpTransaction { base: tx, deposit, enveloped_tx: None };
@@ -110,17 +106,7 @@ where
                 // Map the halt reason
                 Ok(result.map_haltreason(|hr| OpHaltReason::Base(hr)))
             }
-            Err(e) => {
-                // Map the TransactionError
-                match e {
-                    EVMError::Transaction(invalid_tx) => {
-                        Err(EVMError::Transaction(OpTransactionError::Base(invalid_tx)))
-                    }
-                    EVMError::Database(e) => Err(EVMError::Database(e)),
-                    EVMError::Header(e) => Err(EVMError::Header(e)),
-                    EVMError::Custom(e) => Err(EVMError::Custom(e)),
-                }
-            }
+            Err(e) => Err(self.map_eth_err(e)),
         }
     }
 
@@ -134,17 +120,19 @@ where
                 // Map the halt reason
                 Ok(result.map_haltreason(|hr| OpHaltReason::Base(hr)))
             }
-            Err(e) => {
-                // Map the TransactionError
-                match e {
-                    EVMError::Transaction(invalid_tx) => {
-                        Err(EVMError::Transaction(OpTransactionError::Base(invalid_tx)))
-                    }
-                    EVMError::Database(e) => Err(EVMError::Database(e)),
-                    EVMError::Header(e) => Err(EVMError::Header(e)),
-                    EVMError::Custom(e) => Err(EVMError::Custom(e)),
-                }
+            Err(e) => Err(self.map_eth_err(e)),
+        }
+    }
+
+    /// Maps [`EVMError<DBError>`] to [`EVMError<DBError, OpTransactionError>`].
+    fn map_eth_err(&self, err: EVMError<DB::Error>) -> EVMError<DB::Error, OpTransactionError> {
+        match err {
+            EVMError::Transaction(invalid_tx) => {
+                EVMError::Transaction(OpTransactionError::Base(invalid_tx))
             }
+            EVMError::Database(e) => EVMError::Database(e),
+            EVMError::Header(e) => EVMError::Header(e),
+            EVMError::Custom(e) => EVMError::Custom(e),
         }
     }
 }
