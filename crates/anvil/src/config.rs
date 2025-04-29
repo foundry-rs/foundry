@@ -1420,14 +1420,14 @@ async fn derive_block_and_transactions(
     }
 }
 
-/// Fork delimiter used to specify which block or transaction to fork from
+/// Fork delimiter used to specify which block or transaction to fork from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ForkChoice {
     /// Block number to fork from.
     ///
-    /// f a negative the the given value is subtracted from the `latest` block number.
+    /// If negative, the given value is subtracted from the `latest` block number.
     Block(i128),
-    /// Transaction hash to fork from
+    /// Transaction hash to fork from.
     Transaction(TxHash),
 }
 
