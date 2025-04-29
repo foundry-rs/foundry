@@ -3502,7 +3502,6 @@ dependencies = [
  "foundry-wallets",
  "futures",
  "globset",
- "humantime-serde",
  "indicatif",
  "inferno",
  "itertools 0.14.0",
@@ -3664,7 +3663,6 @@ dependencies = [
  "alloy-provider",
  "alloy-rpc-types",
  "async-trait",
- "ciborium",
  "clap",
  "eyre",
  "foundry-block-explorers",
@@ -3841,6 +3839,7 @@ dependencies = [
  "async-trait",
  "axum",
  "chrono",
+ "ciborium",
  "clap",
  "comfy-table",
  "dunce",
@@ -3850,6 +3849,7 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "itertools 0.14.0",
+ "jiff",
  "num-format",
  "path-slash",
  "reqwest",
@@ -4024,6 +4024,7 @@ dependencies = [
  "serde_json",
  "similar-asserts",
  "solar-parse",
+ "soldeer-core",
  "tempfile",
  "thiserror 2.0.12",
  "toml 0.8.21",
@@ -5016,22 +5017,6 @@ name = "httpdate"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
-
-[[package]]
-name = "humantime"
-version = "2.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b112acc8b3adf4b107a8ec20977da0273a8c386765a3ec0229bd500a1443f9f"
-
-[[package]]
-name = "humantime-serde"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57a3db5ea5923d99402c94e9feb261dc5ee9b4efa158b0315f788cf549cc200c"
-dependencies = [
- "humantime",
- "serde",
-]
 
 [[package]]
 name = "hyper"
@@ -8419,9 +8404,9 @@ dependencies = [
 
 [[package]]
 name = "soldeer-commands"
-version = "0.5.3"
+version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f88020cde2fb2ace7acb636e7fe9cfc5b0ea26b3751533f574227ca01acff54"
+checksum = "7d5234cb6edcb3ac81b73c4554391e47c78d5493ac17c59115d2e72b87746816"
 dependencies = [
  "bon",
  "clap",
@@ -8438,9 +8423,9 @@ dependencies = [
 
 [[package]]
 name = "soldeer-core"
-version = "0.5.3"
+version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc58b150e6ab9407038329da2b904f795faa2a5eb1b5c2c61b016ca07ecd1b2c"
+checksum = "a67f45108aec81281be2c23000bde114d568ac3899026779f21656bbc3d85671"
 dependencies = [
  "bon",
  "chrono",
