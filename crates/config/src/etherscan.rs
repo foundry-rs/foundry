@@ -9,7 +9,7 @@ use figment::{
     value::{Dict, Map},
     Error, Metadata, Profile, Provider,
 };
-use inflector::Inflector;
+use heck::ToKebabCase;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     collections::BTreeMap,

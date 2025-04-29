@@ -33,6 +33,9 @@ rand.workspace = true
 snapbox = { version = "0.6", features = ["json", "regex", "term-svg"] }
 tempfile.workspace = true
 
+# See /Cargo.toml.
+idna_adapter.workspace = true
+
 [dev-dependencies]
 tokio.workspace = true
 foundry-block-explorers.workspace = true

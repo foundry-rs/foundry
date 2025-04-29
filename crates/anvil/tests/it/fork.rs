@@ -1336,7 +1336,7 @@ async fn test_immutable_fork_transaction_hash() {
         fork_config()
             .with_blocktime(Some(Duration::from_millis(500)))
             .with_fork_transaction_hash(Some(fork_tx_hash))
-            .with_eth_rpc_url(Some("https://rpc.immutable.com".to_string())),
+            .with_eth_rpc_url(Some("https://immutable-zkevm.drpc.org".to_string())),
     )
     .await;
 
