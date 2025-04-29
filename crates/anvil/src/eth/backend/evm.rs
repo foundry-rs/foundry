@@ -3,8 +3,8 @@ use alloy_evm::{eth::EthEvmContext, Database, EthEvm, Evm, EvmEnv};
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{Address, Bytes};
 use op_revm::{
-    transaction::deposit::DepositTransactionParts, OpContext, OpHaltReason, OpTransaction,
-    OpTransactionError,
+    transaction::deposit::DepositTransactionParts, OpContext, OpHaltReason, OpSpecId,
+    OpTransaction, OpTransactionError,
 };
 use revm::{
     context::{
@@ -182,11 +182,7 @@ where
             EitherEvm::Eth(evm) => evm.finish(),
             EitherEvm::Op(evm) => {
                 let (db, env) = evm.finish();
-                // Convert the OpSpecId to EthSpecId
-                let eth_spec_id = env.spec_id().into_eth_spec();
-                let cfg = env.cfg_env.with_spec(eth_spec_id);
-
-                (db, EvmEnv { cfg_env: cfg, block_env: env.block_env })
+                (db, map_env(env))
             }
         }
     }
@@ -218,12 +214,7 @@ where
     {
         match self {
             EitherEvm::Eth(evm) => evm.into_env(),
-            EitherEvm::Op(evm) => {
-                let env = evm.into_env();
-                let eth_spec_id = env.spec_id().into_eth_spec();
-                let cfg = env.cfg_env.with_spec(eth_spec_id);
-                EvmEnv { cfg_env: cfg, block_env: env.block_env }
-            }
+            EitherEvm::Op(evm) => map_env(evm.into_env()),
         }
     }
 
@@ -292,4 +283,11 @@ where
             EitherEvm::Op(evm) => evm.transact_system_call(caller, contract, data),
         }
     }
+}
+
+/// Maps [`EvmEnv<OpSpecId>`] to [`EvmEnv`].
+fn map_env(env: EvmEnv<OpSpecId>) -> EvmEnv {
+    let eth_spec_id = env.spec_id().into_eth_spec();
+    let cfg = env.cfg_env.with_spec(eth_spec_id);
+    EvmEnv { cfg_env: cfg, block_env: env.block_env }
 }
