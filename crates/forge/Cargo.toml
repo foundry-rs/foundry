@@ -101,7 +101,7 @@ quick-junit = "0.5.0"
 tikv-jemallocator = { workspace = true, optional = true }
 
 [dev-dependencies]
-# anvil.workspace = true
+anvil.workspace = true
 foundry-test-utils.workspace = true
 
 mockall = "0.13"
