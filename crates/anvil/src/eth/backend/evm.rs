@@ -1,22 +1,20 @@
 use crate::eth::error::BlockchainError;
-use alloy_evm::{eth::EthEvmContext, evm, Database, EthEvm, Evm, EvmEnv, EvmFactory};
+use alloy_evm::{eth::EthEvmContext, Database, EthEvm, Evm, EvmEnv};
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{Address, Bytes};
-use foundry_evm::{backend::DatabaseError, Env};
-use foundry_evm_core::evm::FoundryPrecompiles;
 use op_revm::{
-    precompiles::OpPrecompiles, transaction::deposit::DepositTransactionParts, L1BlockInfo,
-    OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
+    transaction::deposit::DepositTransactionParts, OpContext, OpHaltReason, OpTransaction,
+    OpTransactionError,
 };
 use revm::{
     context::{
-        result::{EVMError, ExecutionResult, HaltReason, HaltReasonTr, ResultAndState},
-        BlockEnv, Cfg, CfgEnv, ContextTr, Evm as RevmEvm, TxEnv,
+        result::{EVMError, ExecutionResult, HaltReason, ResultAndState},
+        BlockEnv, TxEnv,
     },
-    handler::{instructions::EthInstructions, PrecompileProvider},
+    handler::PrecompileProvider,
     interpreter::InterpreterResult,
     primitives::hardfork::SpecId,
-    DatabaseCommit, Inspector, Journal,
+    DatabaseCommit, Inspector,
 };
 
 type AnvilEvmResult<DBError> =
@@ -39,65 +37,40 @@ where
     P: PrecompileProvider<EthEvmContext<DB>, Output = InterpreterResult>
         + PrecompileProvider<OpContext<DB>, Output = InterpreterResult>,
 {
-    pub fn block(&self) -> &BlockEnv {
-        match self {
-            EitherEvm::Eth(evm) => evm.block(),
-            EitherEvm::Op(evm) => evm.block(),
-        }
-    }
-
-    pub fn transact_raw(
+    fn transact_deposit(
         &mut self,
         tx: TxEnv,
-        deposit: Option<DepositTransactionParts>,
+        deposit: DepositTransactionParts,
     ) -> AnvilEvmResult<DB::Error> {
         match self {
-            Self::Eth(evm) => {
-                if deposit.is_some() {
-                    return Err(EVMError::Custom(
-                        "Deposit transactions not supported via EthEvm".to_string(),
-                    ));
-                }
-                let res = evm.transact_raw(tx);
-                self.map_eth_result(res)
+            EitherEvm::Eth(_) => {
+                return Err(EVMError::Custom(
+                    BlockchainError::DepositTransactionUnsupported.to_string(),
+                ));
             }
-            Self::Op(evm) => {
-                let op_tx = OpTransaction {
-                    base: tx,
-                    deposit: deposit.unwrap_or_default(),
-                    // Used to compute L1 gas cost
-                    enveloped_tx: None,
-                };
+            EitherEvm::Op(evm) => {
+                let op_tx = OpTransaction { base: tx, deposit, enveloped_tx: None };
                 evm.transact_raw(op_tx)
             }
         }
     }
 
-    pub fn transact_commit(
+    fn transact_deposit_commit(
         &mut self,
         tx: TxEnv,
-        deposit: Option<DepositTransactionParts>,
+        deposit: DepositTransactionParts,
     ) -> AnvilExecResult<DB::Error>
     where
         DB: DatabaseCommit,
     {
         match self {
-            Self::Eth(evm) => {
-                if deposit.is_some() {
-                    return Err(EVMError::Custom(
-                        "Deposit transactions not supported via EthEvm".to_string(),
-                    ));
-                }
-                let res = evm.transact_commit(tx);
-                self.map_exec_result(res)
+            EitherEvm::Eth(_) => {
+                return Err(EVMError::Custom(
+                    BlockchainError::DepositTransactionUnsupported.to_string(),
+                ));
             }
-            Self::Op(evm) => {
-                let op_tx = OpTransaction {
-                    base: tx,
-                    deposit: deposit.unwrap_or_default(),
-                    // Used to compute L1 gas cost
-                    enveloped_tx: None,
-                };
+            EitherEvm::Op(evm) => {
+                let op_tx = OpTransaction { base: tx, deposit, enveloped_tx: None };
                 evm.transact_commit(op_tx)
             }
         }
@@ -146,6 +119,163 @@ where
                     EVMError::Custom(e) => Err(EVMError::Custom(e)),
                 }
             }
+        }
+    }
+}
+
+impl<DB, I, P> Evm for EitherEvm<DB, I, P>
+where
+    DB: Database,
+    I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
+    P: PrecompileProvider<EthEvmContext<DB>, Output = InterpreterResult>
+        + PrecompileProvider<OpContext<DB>, Output = InterpreterResult>,
+{
+    type DB = DB;
+    type Error = EVMError<DB::Error, OpTransactionError>;
+    type HaltReason = OpHaltReason;
+    type Tx = TxEnv;
+    type Spec = SpecId;
+
+    fn block(&self) -> &BlockEnv {
+        match self {
+            EitherEvm::Eth(evm) => evm.block(),
+            EitherEvm::Op(evm) => evm.block(),
+        }
+    }
+
+    fn db_mut(&mut self) -> &mut Self::DB {
+        match self {
+            EitherEvm::Eth(evm) => evm.db_mut(),
+            EitherEvm::Op(evm) => evm.db_mut(),
+        }
+    }
+
+    fn into_db(self) -> Self::DB
+    where
+        Self: Sized,
+    {
+        match self {
+            EitherEvm::Eth(evm) => evm.into_db(),
+            EitherEvm::Op(evm) => evm.into_db(),
+        }
+    }
+
+    fn finish(self) -> (Self::DB, EvmEnv<Self::Spec>)
+    where
+        Self: Sized,
+    {
+        match self {
+            EitherEvm::Eth(evm) => evm.finish(),
+            EitherEvm::Op(evm) => {
+                let (db, env) = evm.finish();
+                // Convert the OpSpecId to EthSpecId
+                let eth_spec_id = env.spec_id().into_eth_spec();
+                let cfg = env.cfg_env.with_spec(eth_spec_id);
+
+                (db, EvmEnv { cfg_env: cfg, block_env: env.block_env })
+            }
+        }
+    }
+
+    fn enable_inspector(&mut self) {
+        match self {
+            EitherEvm::Eth(evm) => evm.enable_inspector(),
+            EitherEvm::Op(evm) => evm.enable_inspector(),
+        }
+    }
+
+    fn disable_inspector(&mut self) {
+        match self {
+            EitherEvm::Eth(evm) => evm.disable_inspector(),
+            EitherEvm::Op(evm) => evm.disable_inspector(),
+        }
+    }
+
+    fn set_inspector_enabled(&mut self, enabled: bool) {
+        match self {
+            EitherEvm::Eth(evm) => evm.set_inspector_enabled(enabled),
+            EitherEvm::Op(evm) => evm.set_inspector_enabled(enabled),
+        }
+    }
+
+    fn into_env(self) -> EvmEnv<Self::Spec>
+    where
+        Self: Sized,
+    {
+        match self {
+            EitherEvm::Eth(evm) => evm.into_env(),
+            EitherEvm::Op(evm) => {
+                let env = evm.into_env();
+                let eth_spec_id = env.spec_id().into_eth_spec();
+                let cfg = env.cfg_env.with_spec(eth_spec_id);
+                EvmEnv { cfg_env: cfg, block_env: env.block_env }
+            }
+        }
+    }
+
+    fn transact(
+        &mut self,
+        tx: impl alloy_evm::IntoTxEnv<Self::Tx>,
+    ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
+        match self {
+            EitherEvm::Eth(evm) => {
+                let eth = evm.transact(tx);
+                self.map_eth_result(eth)
+            }
+            EitherEvm::Op(evm) => {
+                let op_tx = OpTransaction::new(tx.into_tx_env());
+                evm.transact(op_tx)
+            }
+        }
+    }
+
+    fn transact_commit(
+        &mut self,
+        tx: impl alloy_evm::IntoTxEnv<Self::Tx>,
+    ) -> Result<ExecutionResult<Self::HaltReason>, Self::Error>
+    where
+        Self::DB: DatabaseCommit,
+    {
+        match self {
+            EitherEvm::Eth(evm) => {
+                let eth = evm.transact_commit(tx);
+                self.map_exec_result(eth)
+            }
+            EitherEvm::Op(evm) => {
+                let op_tx = OpTransaction::new(tx.into_tx_env());
+                evm.transact_commit(op_tx)
+            }
+        }
+    }
+
+    fn transact_raw(
+        &mut self,
+        tx: Self::Tx,
+    ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
+        match self {
+            Self::Eth(evm) => {
+                let res = evm.transact_raw(tx);
+                self.map_eth_result(res)
+            }
+            Self::Op(evm) => {
+                let op_tx = OpTransaction::new(tx);
+                evm.transact_raw(op_tx)
+            }
+        }
+    }
+
+    fn transact_system_call(
+        &mut self,
+        caller: Address,
+        contract: Address,
+        data: Bytes,
+    ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
+        match self {
+            EitherEvm::Eth(evm) => {
+                let eth = evm.transact_system_call(caller, contract, data);
+                self.map_eth_result(eth)
+            }
+            EitherEvm::Op(evm) => evm.transact_system_call(caller, contract, data),
         }
     }
 }
