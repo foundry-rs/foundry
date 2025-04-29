@@ -2,6 +2,7 @@ use super::{
     Cheatcodes, CheatsConfig, ChiselState, CoverageCollector, CustomPrintTracer, Fuzzer,
     LogCollector, ScriptExecutionInspector, TracingInspector,
 };
+use alloy_evm::Evm;
 use alloy_primitives::{
     map::{AddressHashMap, HashMap},
     Address, Bytes, Log, TxKind, U256,
@@ -25,7 +26,7 @@ use revm::{
         EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterResult,
     },
     state::{Account, AccountStatus},
-    InspectEvm, Inspector,
+    Inspector,
 };
 use std::{
     ops::{Deref, DerefMut},
@@ -643,7 +644,9 @@ impl InspectorStackRefMut<'_> {
             // set depth to 1 to make sure traces are collected correctly
             evm.journaled_state.depth = 1;
 
-            let res = evm.inspect_replay();
+            // let res = evm.inspect_replay();
+
+            let res = evm.transact(env.tx.clone());
 
             // need to reset the env in case it was modified via cheatcodes during execution
             ecx.cfg = cached_env.evm_env.cfg_env;
