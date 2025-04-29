@@ -1205,7 +1205,7 @@ impl Cheatcodes {
     }
 }
 
-impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
+impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
     #[inline]
     fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
         // When the first interpreter is initialized we've circumvented the balance and gas checks,

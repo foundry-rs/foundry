@@ -25,12 +25,11 @@ pub mod abi {
 
 pub mod env;
 pub use env::*;
-pub mod evm;
-use evm::*;
 pub mod backend;
 pub mod buffer;
 pub mod constants;
 pub mod decode;
+pub mod evm;
 pub mod fork;
 pub mod ic;
 pub mod opcodes;
@@ -42,7 +41,7 @@ pub mod utils;
 /// An extension trait that allows us to add additional hooks to Inspector for later use in
 /// handlers.
 #[auto_impl(&mut, Box)]
-pub trait InspectorExt: for<'a> Inspector<&'a mut dyn DatabaseExt> {
+pub trait InspectorExt: for<'a> Inspector<EthEvmContext<&'a mut dyn DatabaseExt>> {
     /// Determines whether the `DEFAULT_CREATE2_DEPLOYER` should be used for a CREATE2 frame.
     ///
     /// If this function returns true, we'll replace CREATE2 frame with a CALL frame to CREATE2
@@ -73,4 +72,4 @@ pub trait InspectorExt: for<'a> Inspector<&'a mut dyn DatabaseExt> {
 
 impl InspectorExt for NoOpInspector {}
 
-// impl InspectorExt for AccessListInspector {}
+impl InspectorExt for AccessListInspector {}

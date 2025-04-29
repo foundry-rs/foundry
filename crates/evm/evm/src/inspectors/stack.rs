@@ -9,8 +9,8 @@ use alloy_primitives::{
 };
 use foundry_cheatcodes::{CheatcodesExecutor, Wallets};
 use foundry_evm_core::{
-    backend::{DatabaseExt, JournaledState},
-    evm::{new_evm_with_inspector, FoundryEvmContext},
+    backend::{DatabaseError, DatabaseExt, JournaledState},
+    evm::new_evm_with_inspector,
     ContextExt, Env, InspectorExt,
 };
 use foundry_evm_coverage::HitMaps;
@@ -18,15 +18,17 @@ use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     context::{
         result::{ExecutionResult, Output},
-        BlockEnv,
+        BlockEnv, ContextTr,
     },
     context_interface::CreateScheme,
+    inspector::JournalExt,
     interpreter::{
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInputs,
-        EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterResult,
+        interpreter::EthInterpreter, CallInputs, CallOutcome, CallScheme, CreateInputs,
+        CreateOutcome, EOFCreateInputs, EOFCreateKind, Gas, InstructionResult, Interpreter,
+        InterpreterResult,
     },
     state::{Account, AccountStatus},
-    Inspector,
+    Database, Inspector,
 };
 use std::{
     ops::{Deref, DerefMut},
@@ -769,12 +771,13 @@ impl InspectorStackRefMut<'_> {
     }
 }
 
-impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
-    fn initialize_interp(
-        &mut self,
-        interpreter: &mut Interpreter,
-        ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
-    ) {
+impl<CTX, D> Inspector<CTX, EthInterpreter> for InspectorStackRefMut<'_>
+where
+    D: Database<Error = DatabaseError>,
+    CTX: ContextTr<Db = D>,
+    CTX::Journal: JournalExt,
+{
+    fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
         call_inspectors!(
             [
                 &mut self.coverage,
@@ -787,11 +790,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
         );
     }
 
-    fn step(
-        &mut self,
-        interpreter: &mut Interpreter,
-        ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
-    ) {
+    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
         call_inspectors!(
             [
                 &mut self.fuzzer,
@@ -805,34 +804,21 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
         );
     }
 
-    fn step_end(
-        &mut self,
-        interpreter: &mut Interpreter,
-        ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
-    ) {
+    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
         call_inspectors!(
             [&mut self.tracer, &mut self.cheatcodes, &mut self.chisel_state, &mut self.printer],
             |inspector| inspector.step_end(interpreter, ecx),
         );
     }
 
-    fn log(
-        &mut self,
-        interpreter: &mut Interpreter,
-        ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
-        log: Log,
-    ) {
+    fn log(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX, log: Log) {
         call_inspectors!(
             [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
             |inspector| inspector.log(interpreter, ecx, log.clone()),
         );
     }
 
-    fn call(
-        &mut self,
-        ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
-        call: &mut CallInputs,
-    ) -> Option<CallOutcome> {
+    fn call(&mut self, ecx: &mut CTX, call: &mut CallInputs) -> Option<CallOutcome> {
         if self.in_inner_context && ecx.journaled_state.depth == 1 {
             self.adjust_evm_data_for_inner_context(ecx);
             return None;
@@ -922,12 +908,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
         None
     }
 
-    fn call_end(
-        &mut self,
-        ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
-        inputs: &CallInputs,
-        outcome: &mut CallOutcome,
-    ) {
+    fn call_end(&mut self, ecx: &mut CTX, inputs: &CallInputs, outcome: &mut CallOutcome) {
         // We are processing inner context outputs in the outer context, so need to avoid processing
         // twice.
         if self.in_inner_context && ecx.journaled_state.depth == 1 {
@@ -941,11 +922,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
         }
     }
 
-    fn create(
-        &mut self,
-        ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
-        create: &mut CreateInputs,
-    ) -> Option<CreateOutcome> {
+    fn create(&mut self, ecx: &mut CTX, create: &mut CreateInputs) -> Option<CreateOutcome> {
         if self.in_inner_context && ecx.journaled_state.depth == 1 {
             self.adjust_evm_data_for_inner_context(ecx);
             return None;
@@ -980,12 +957,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
         None
     }
 
-    fn create_end(
-        &mut self,
-        ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
-        call: &CreateInputs,
-        outcome: &mut CreateOutcome,
-    ) {
+    fn create_end(&mut self, ecx: &mut CTX, call: &CreateInputs, outcome: &mut CreateOutcome) {
         // We are processing inner context outputs in the outer context, so need to avoid processing
         // twice.
         if self.in_inner_context && ecx.journaled_state.depth == 1 {
@@ -999,11 +971,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
         }
     }
 
-    fn eofcreate(
-        &mut self,
-        ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
-        create: &mut EOFCreateInputs,
-    ) -> Option<CreateOutcome> {
+    fn eofcreate(&mut self, ecx: &mut CTX, create: &mut EOFCreateInputs) -> Option<CreateOutcome> {
         if self.in_inner_context && ecx.journaled_state.depth == 1 {
             self.adjust_evm_data_for_inner_context(ecx);
             return None;
@@ -1045,7 +1013,7 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
 
     fn eofcreate_end(
         &mut self,
-        ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
+        ecx: &mut CTX,
         call: &EOFCreateInputs,
         outcome: &mut CreateOutcome,
     ) {
@@ -1101,62 +1069,41 @@ impl InspectorExt for InspectorStackRefMut<'_> {
     }
 }
 
-impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStack {
+impl<CTX, D> Inspector<CTX, EthInterpreter> for InspectorStack
+where
+    D: Database<Error = DatabaseError>,
+    CTX: ContextTr<Db = D>,
+    CTX::Journal: JournalExt,
+{
     #[inline]
-    fn step(
-        &mut self,
-        interpreter: &mut Interpreter,
-        ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
-    ) {
+    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
         self.as_mut().step(interpreter, ecx)
     }
 
     #[inline]
-    fn step_end(
-        &mut self,
-        interpreter: &mut Interpreter,
-        ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
-    ) {
+    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
         self.as_mut().step_end(interpreter, ecx)
     }
 
-    fn call(
-        &mut self,
-        context: &mut EthEvmContext<&mut dyn DatabaseExt>,
-        inputs: &mut CallInputs,
-    ) -> Option<CallOutcome> {
+    fn call(&mut self, context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         self.as_mut().call(context, inputs)
     }
 
-    fn call_end(
-        &mut self,
-        context: &mut EthEvmContext<&mut dyn DatabaseExt>,
-        inputs: &CallInputs,
-        outcome: &mut CallOutcome,
-    ) {
+    fn call_end(&mut self, context: &mut CTX, inputs: &CallInputs, outcome: &mut CallOutcome) {
         self.as_mut().call_end(context, inputs, outcome)
     }
 
-    fn create(
-        &mut self,
-        context: &mut EthEvmContext<&mut dyn DatabaseExt>,
-        create: &mut CreateInputs,
-    ) -> Option<CreateOutcome> {
+    fn create(&mut self, context: &mut CTX, create: &mut CreateInputs) -> Option<CreateOutcome> {
         self.as_mut().create(context, create)
     }
 
-    fn create_end(
-        &mut self,
-        context: &mut EthEvmContext<&mut dyn DatabaseExt>,
-        call: &CreateInputs,
-        outcome: &mut CreateOutcome,
-    ) {
+    fn create_end(&mut self, context: &mut CTX, call: &CreateInputs, outcome: &mut CreateOutcome) {
         self.as_mut().create_end(context, call, outcome)
     }
 
     fn eofcreate(
         &mut self,
-        context: &mut EthEvmContext<&mut dyn DatabaseExt>,
+        context: &mut CTX,
         create: &mut EOFCreateInputs,
     ) -> Option<CreateOutcome> {
         self.as_mut().eofcreate(context, create)
@@ -1164,27 +1111,18 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStack {
 
     fn eofcreate_end(
         &mut self,
-        context: &mut EthEvmContext<&mut dyn DatabaseExt>,
+        context: &mut CTX,
         call: &EOFCreateInputs,
         outcome: &mut CreateOutcome,
     ) {
         self.as_mut().eofcreate_end(context, call, outcome)
     }
 
-    fn initialize_interp(
-        &mut self,
-        interpreter: &mut Interpreter,
-        ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
-    ) {
+    fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
         self.as_mut().initialize_interp(interpreter, ecx)
     }
 
-    fn log(
-        &mut self,
-        interpreter: &mut Interpreter,
-        ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
-        log: Log,
-    ) {
+    fn log(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX, log: Log) {
         self.as_mut().log(interpreter, ecx, log)
     }
 
