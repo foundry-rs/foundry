@@ -648,15 +648,14 @@ impl InspectorStackRefMut<'_> {
 
             // need to reset the env in case it was modified via cheatcodes during execution
             ecx.cfg = cached_env.evm_env.cfg_env;
+            ecx.block = cached_env.evm_env.block_env;
+            ecx.tx = cached_env.tx;
 
             res
         });
 
         self.in_inner_context = false;
         self.inner_context_data = None;
-
-        ecx.tx = cached_env.tx;
-        ecx.block.basefee = cached_env.evm_env.block_env.basefee;
 
         let mut gas = Gas::new(gas_limit);
 
