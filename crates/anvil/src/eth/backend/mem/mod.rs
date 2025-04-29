@@ -98,10 +98,16 @@ use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
 use op_revm::{OpContext, OpHaltReason};
 use parking_lot::{Mutex, RwLock};
 use revm::{
-    context::{result::HaltReason, Block as RevmBlock, BlockEnv, ContextTr, TxEnv}, context_interface::{
+    context::{Block as RevmBlock, BlockEnv,  TxEnv}, context_interface::{
         block::BlobExcessGasAndPrice,
         result::{ExecutionResult, Output, ResultAndState},
-    }, database::{CacheDB, DatabaseRef, WrapDatabaseRef}, interpreter::InstructionResult, primitives::{hardfork::SpecId, KECCAK_EMPTY}, state::AccountInfo, DatabaseCommit, ExecuteEvm, InspectEvm, Inspector
+    }, 
+    database::{CacheDB, DatabaseRef, WrapDatabaseRef}, 
+    interpreter::InstructionResult, 
+    primitives::{hardfork::SpecId, KECCAK_EMPTY}, 
+    state::AccountInfo,
+    DatabaseCommit,
+    Inspector
 };
 use revm_inspectors::transfer::TransferInspector;
 use std::{
@@ -656,7 +662,7 @@ impl Backend {
 
     /// Returns the current best number of the chain
     pub fn best_number(&self) -> u64 {
-        self.blockchain.storage.read().best_number.try_into().unwrap_or(u64::MAX)
+        self.blockchain.storage.read().best_number
     }
 
     /// Sets the block number
@@ -1447,7 +1453,7 @@ impl Backend {
             value: value.unwrap_or_default(),
             data: input.into_input().unwrap_or_default(),
             chain_id: None,
-            access_list: access_list.unwrap_or_default().into(),
+            access_list: access_list.unwrap_or_default(),
             blob_hashes,
             // optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default()
             // }, // TODO: support Optimism

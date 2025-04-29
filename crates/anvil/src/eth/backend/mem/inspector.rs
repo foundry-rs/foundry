@@ -246,7 +246,7 @@ where
     CTX::Journal: JournalExt,
 {
     fn log(&mut self, _interp: &mut Interpreter, _context: &mut CTX, log: Log) {
-        self.logs.push(log.clone());
+        self.logs.push(log);
     }
 
     fn call(&mut self, _context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {

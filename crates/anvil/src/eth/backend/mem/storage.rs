@@ -338,7 +338,7 @@ impl BlockchainStorage {
     /// The block identified by `block_number` and `block_hash` is __non-inclusive__, i.e. it will
     /// remain in the state.
     pub fn unwind_to(&mut self, block_number: u64, block_hash: B256) {
-        let best_num: u64 = self.best_number.try_into().unwrap_or(0);
+        let best_num: u64 = self.best_number;
         for i in (block_number + 1)..=best_num {
             if let Some(hash) = self.hashes.remove(&i) {
                 if let Some(block) = self.blocks.remove(&hash) {

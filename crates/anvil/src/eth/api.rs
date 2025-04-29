@@ -1937,7 +1937,7 @@ impl EthApi {
 
         Ok(NodeInfo {
             current_block_number: self.backend.best_number(),
-            current_block_timestamp: env.evm_env.block_env.timestamp.try_into().unwrap_or(u64::MAX),
+            current_block_timestamp: env.evm_env.block_env.timestamp,
             current_block_hash: self.backend.best_hash(),
             hard_fork: hard_fork.to_string(),
             transaction_order: match *tx_order {

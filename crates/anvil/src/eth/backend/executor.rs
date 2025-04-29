@@ -436,7 +436,7 @@ where
             journaled_state: {
                 let mut journal = Journal::new(db);
                 // Converting SpecId into OpSpecId
-                journal.set_spec_id(env.evm_env.cfg_env.spec.into());
+                journal.set_spec_id(env.evm_env.cfg_env.spec);
                 journal
             },
             block: env.evm_env.block_env.clone(),

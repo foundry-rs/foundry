@@ -2,7 +2,7 @@
 
 use crate::mem::storage::MinedTransaction;
 use alloy_consensus::Header;
-use alloy_primitives::{keccak256, map::HashMap, Address, Bytes, B256, U256, U64};
+use alloy_primitives::{keccak256, map::HashMap, Address, Bytes, B256, U256};
 use alloy_rpc_types::BlockId;
 use anvil_core::eth::{
     block::Block,

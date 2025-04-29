@@ -18,9 +18,7 @@ use alloy_signer_local::PrivateKeySigner;
 use anvil::{eth::EthApi, spawn, NodeConfig, NodeHandle};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
-use foundry_test_utils::rpc::{
-    self, next_http_archive_rpc_url, next_http_rpc_endpoint, next_rpc_endpoint,
-};
+use foundry_test_utils::rpc::{self, next_http_rpc_endpoint, next_rpc_endpoint};
 use futures::StreamExt;
 use std::{sync::Arc, thread::sleep, time::Duration};
 
