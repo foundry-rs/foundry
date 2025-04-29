@@ -37,3 +37,20 @@ pub fn erc7201(id: &str) -> B256 {
     let x = U256::from_be_bytes(keccak256(id).0) - U256::from(1);
     keccak256(x.to_be_bytes::<32>()) & B256::from(!U256::from(0xff))
 }
+
+/// Utility function to ignore metadata hash of the given bytecode.
+/// This assumes that the metadata is at the end of the bytecode.
+pub fn ignore_metadata_hash(bytecode: &[u8]) -> &[u8] {
+    // Get the last two bytes of the bytecode to find the length of CBOR metadata.
+    let Some((rest, metadata_len_bytes)) = bytecode.split_last_chunk() else { return bytecode };
+    let metadata_len = u16::from_be_bytes(*metadata_len_bytes) as usize;
+    if metadata_len > rest.len() {
+        return bytecode;
+    }
+    let (rest, metadata) = rest.split_at(rest.len() - metadata_len);
+    if ciborium::from_reader::<ciborium::Value, _>(metadata).is_ok() {
+        rest
+    } else {
+        bytecode
+    }
+}
