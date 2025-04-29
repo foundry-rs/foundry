@@ -249,11 +249,11 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
     }
 
     fn env_for(&self, tx: &PendingTransaction) -> Env {
-        let op_tx_env = tx.to_revm_tx_env();
+        let (tx_env, maybe_deposit) = tx.to_revm_tx_env();
 
-        let mut env = Env::from(self.cfg_env.clone(), self.block_env.clone(), op_tx_env.base);
+        let mut env = Env::from(self.cfg_env.clone(), self.block_env.clone(), tx_env);
         if env.tx.tx_type == DEPOSIT_TRANSACTION_TYPE {
-            env = env.with_deposit(op_tx_env.deposit);
+            env = env.with_deposit(maybe_deposit.unwrap());
         }
 
         env
