@@ -437,7 +437,7 @@ pub struct Backend {
     mem_db: FoundryEvmInMemoryDB,
     /// The journaled_state to use to initialize new forks with
     ///
-    /// The way [`revm::JournaledState`] works is, that it holds the "hot" accounts loaded from the
+    /// The way [`JournaledState`] works is, that it holds the "hot" accounts loaded from the
     /// underlying `Database` that feeds the Account and State data to the journaled_state so it
     /// can apply changes to the state while the EVM executes.
     ///

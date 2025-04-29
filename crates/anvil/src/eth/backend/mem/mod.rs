@@ -169,22 +169,23 @@ impl BlockRequest {
 pub struct Backend {
     /// Access to [`revm::Database`] abstraction.
     ///
-    /// This will be used in combination with [`revm::Evm`] and is responsible for feeding data to
-    /// the evm during its execution.
+    /// This will be used in combination with [`alloy_evm::Evm`] and is responsible for feeding
+    /// data to the evm during its execution.
     ///
     /// At time of writing, there are two different types of `Db`:
     ///   - [`MemDb`](crate::mem::in_memory_db::MemDb): everything is stored in memory
     ///   - [`ForkDb`](crate::mem::fork_db::ForkedDatabase): forks off a remote client, missing
     ///     data is retrieved via RPC-calls
     ///
-    /// In order to commit changes to the [`revm::Database`], the [`revm::Evm`] requires mutable
-    /// access, which requires a write-lock from this `db`. In forking mode, the time during
-    /// which the write-lock is active depends on whether the `ForkDb` can provide all requested
-    /// data from memory or whether it has to retrieve it via RPC calls first. This means that it
-    /// potentially blocks for some time, even taking into account the rate limits of RPC
-    /// endpoints. Therefore the `Db` is guarded by a `tokio::sync::RwLock` here so calls that
-    /// need to read from it, while it's currently written to, don't block. E.g. a new block is
-    /// currently mined and a new [`Self::set_storage_at()`] request is being executed.
+    /// In order to commit changes to the [`revm::Database`], the [`alloy_evm::Evm`] requires
+    /// mutable access, which requires a write-lock from this `db`. In forking mode, the time
+    /// during which the write-lock is active depends on whether the `ForkDb` can provide all
+    /// requested data from memory or whether it has to retrieve it via RPC calls first. This
+    /// means that it potentially blocks for some time, even taking into account the rate
+    /// limits of RPC endpoints. Therefore the `Db` is guarded by a `tokio::sync::RwLock` here
+    /// so calls that need to read from it, while it's currently written to, don't block. E.g.
+    /// a new block is currently mined and a new [`Self::set_storage_at()`] request is being
+    /// executed.
     db: Arc<AsyncRwLock<Box<dyn Db>>>,
     /// stores all block related data in memory.
     blockchain: Blockchain,
