@@ -8,7 +8,8 @@ use op_revm::{
 };
 use revm::{
     context::{
-        result::{EVMError, ExecutionResult, HaltReason, ResultAndState},
+        result::{EVMError, ExecutionResult, HaltReason, HaltReasonTr, ResultAndState},
+        transaction::TransactionError,
         BlockEnv, TxEnv,
     },
     handler::PrecompileProvider,
@@ -18,12 +19,12 @@ use revm::{
 };
 
 /// Alias for result type returned by [`OpEvm::transact`] methods.
-type AnvilEvmResult<DBError> =
-    Result<ResultAndState<OpHaltReason>, EVMError<DBError, OpTransactionError>>;
+type AnvilEvmResult<DBError, HaltReason, TxError> =
+    Result<ResultAndState<HaltReason>, EVMError<DBError, TxError>>;
 
 /// Alias for result type returned by [`OpEvm::transact_commit`] methods.
-type AnvilExecResult<DBError> =
-    Result<ExecutionResult<OpHaltReason>, EVMError<DBError, OpTransactionError>>;
+type AnvilExecResult<DBError, HaltReason, TxError> =
+    Result<ExecutionResult<HaltReason>, EVMError<DBError, TxError>>;
 
 /// [`EitherEvm`] delegates its calls to one of the two evm implementations; either [`EthEvm`] or
 /// [`OpEvm`].
@@ -64,7 +65,7 @@ where
         &mut self,
         tx: TxEnv,
         deposit: DepositTransactionParts,
-    ) -> AnvilEvmResult<DB::Error> {
+    ) -> AnvilEvmResult<DB::Error, OpHaltReason, OpTransactionError> {
         match self {
             EitherEvm::Eth(_) => {
                 Err(EVMError::Custom(BlockchainError::DepositTransactionUnsupported.to_string()))
@@ -81,7 +82,7 @@ where
         &mut self,
         tx: TxEnv,
         deposit: DepositTransactionParts,
-    ) -> AnvilExecResult<DB::Error>
+    ) -> AnvilExecResult<DB::Error, OpHaltReason, OpTransactionError>
     where
         DB: DatabaseCommit,
     {
@@ -100,7 +101,7 @@ where
     fn map_eth_result(
         &self,
         result: Result<ResultAndState<HaltReason>, EVMError<DB::Error>>,
-    ) -> AnvilEvmResult<DB::Error> {
+    ) -> AnvilEvmResult<DB::Error, OpHaltReason, OpTransactionError> {
         match result {
             Ok(result) => {
                 // Map the halt reason
@@ -114,7 +115,7 @@ where
     fn map_exec_result(
         &self,
         result: Result<ExecutionResult, EVMError<DB::Error>>,
-    ) -> AnvilExecResult<DB::Error> {
+    ) -> AnvilExecResult<DB::Error, OpHaltReason, OpTransactionError> {
         match result {
             Ok(result) => {
                 // Map the halt reason
