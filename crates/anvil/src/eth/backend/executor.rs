@@ -24,17 +24,17 @@ use anvil_core::eth::{
     trie,
 };
 use foundry_evm::{backend::DatabaseError, traces::CallTraceNode, Env};
-use foundry_evm_core::{evm::FoundryPrecompiles, OpEnv};
+use foundry_evm_core::evm::FoundryPrecompiles;
 use op_revm::{
-    transaction::deposit::{DepositTransactionParts, DEPOSIT_TRANSACTION_TYPE},
-    L1BlockInfo, OpContext, OpTransaction, OpTransactionError,
+    transaction::deposit::DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, OpContext, OpTransaction,
+    OpTransactionError,
 };
 use revm::{
     context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm as RevmEvm, JournalTr},
     context_interface::result::{EVMError, ExecutionResult, Output},
     database::WrapDatabaseRef,
     handler::instructions::EthInstructions,
-    interpreter::{interpreter::EthInterpreter, InstructionResult},
+    interpreter::InstructionResult,
     primitives::hardfork::SpecId,
     Database, DatabaseRef, Inspector, Journal,
 };
@@ -249,15 +249,14 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
     }
 
     fn env_for(&self, tx: &PendingTransaction) -> Env {
-        let mut tx_env = tx.to_revm_tx_env();
+        let op_tx_env = tx.to_revm_tx_env();
 
-        // TODO: support optimism
-        // if self.cfg_env.handler_cfg.is_optimism {
-        //     tx_env.optimism.enveloped_tx =
-        //         Some(alloy_rlp::encode(&tx.transaction.transaction).into());
-        // }
+        let mut env = Env::from(self.cfg_env.clone(), self.block_env.clone(), op_tx_env.base);
+        if env.tx.tx_type == DEPOSIT_TRANSACTION_TYPE {
+            env = env.with_deposit(op_tx_env.deposit);
+        }
 
-        Env::from(self.cfg_env.clone(), self.block_env.clone(), tx_env)
+        env
     }
 }
 
@@ -334,7 +333,8 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         );
 
         let tx_commit = if transaction.tx_type() == DEPOSIT_TRANSACTION_TYPE {
-            evm.transact_deposit_commit(env.tx, DepositTransactionParts::default())
+            // Unwrap is safe. This should always be set if the transaction is a deposit
+            evm.transact_deposit_commit(env.tx, env.deposit.unwrap())
         } else {
             evm.transact_commit(env.tx)
         };
@@ -417,48 +417,6 @@ fn build_logs_bloom(logs: Vec<Log>, bloom: &mut Bloom) {
         for topic in log.topics() {
             bloom.accrue(BloomInput::Raw(&topic[..]));
         }
-    }
-}
-
-pub type AnvilEvmContext<'db, DB> = EthEvmContext<DB>;
-
-pub enum EvmContext<DB: Database> {
-    Eth(EthEvmContext<DB>),
-    Op(OpContext<DB>),
-}
-
-impl<DB: Database> EvmContext<DB> {
-    pub fn new_eth(db: DB, env: &Env) -> Self {
-        let evm_context = EthEvmContext {
-            journaled_state: {
-                let mut journal = Journal::new(db);
-                journal.set_spec_id(env.evm_env.cfg_env.spec);
-                journal
-            },
-            block: env.evm_env.block_env.clone(),
-            cfg: env.evm_env.cfg_env.clone(),
-            tx: env.tx.clone(),
-            chain: (),
-            error: Ok(()),
-        };
-        EvmContext::Eth(evm_context)
-    }
-
-    pub fn new_op(db: DB, env: &OpEnv) -> Self {
-        let op_context = OpContext {
-            journaled_state: {
-                let mut journal = Journal::new(db);
-                // Converting SpecId into OpSpecId
-                journal.set_spec_id(env.evm_env.cfg_env.spec.into());
-                journal
-            },
-            block: env.evm_env.block_env.clone(),
-            cfg: env.evm_env.cfg_env.clone(),
-            tx: OpTransaction::new(env.tx.clone()),
-            chain: L1BlockInfo::default(),
-            error: Ok(()),
-        };
-        EvmContext::Op(op_context)
     }
 }
 

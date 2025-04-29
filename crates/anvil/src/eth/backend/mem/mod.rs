@@ -1069,18 +1069,17 @@ impl Backend {
         BlockchainError,
     > {
         let mut env = self.next_env();
-        env.tx = tx.pending_transaction.to_revm_tx_env();
-
-        // TODO: support Optimism
-        // if env.handler_cfg.is_optimism {
-        //     env.tx.optimism.enveloped_tx =
-        //         Some(alloy_rlp::encode(&tx.pending_transaction.transaction.transaction).into());
-        // }
+        let op_tx_env = tx.pending_transaction.to_revm_tx_env();
+        env.tx = op_tx_env.base;
 
         let db = self.db.read().await;
         let mut inspector = self.build_inspector();
         let mut evm = self.new_evm_with_inspector_ref(db.as_dyn(), &env, &mut inspector);
-        let ResultAndState { result, state } = evm.transact(env.tx)?;
+        let ResultAndState { result, state } = if env.tx.tx_type == DEPOSIT_TX_TYPE_ID {
+            evm.transact_deposit(env.tx, op_tx_env.deposit)?
+        } else {
+            evm.transact(env.tx)?
+        };
         let (exit_reason, gas_used, out, logs) = match result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
                 (reason.into(), gas_used, Some(output), Some(logs))

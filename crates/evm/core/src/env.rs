@@ -39,6 +39,11 @@ impl Env {
 
         Self::from(cfg, block, tx)
     }
+
+    pub fn with_deposit(mut self, deposit: DepositTransactionParts) -> Self {
+        self.deposit = Some(deposit);
+        self
+    }
 }
 
 /// Helper struct with mutable references to the block and cfg environments.
