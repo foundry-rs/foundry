@@ -1,4 +1,3 @@
-use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::Log;
 use alloy_sol_types::{SolEvent, SolInterface, SolValue};
 use foundry_common::{fmt::ConsoleFmt, ErrorExt};

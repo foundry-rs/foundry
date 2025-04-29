@@ -8,7 +8,6 @@ use crate::{
     utils::{configure_tx_env, configure_tx_req_env},
     AsEnvMut, Env, EnvMut, InspectorExt,
 };
-use alloy_evm::Evm;
 use alloy_genesis::GenesisAccount;
 use alloy_network::{AnyRpcBlock, AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{keccak256, uint, Address, TxKind, B256, U256};

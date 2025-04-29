@@ -9,7 +9,6 @@ use crate::{
     fork::{CreateFork, ForkId},
     AsEnvMut, Env, EnvMut, InspectorExt,
 };
-use alloy_evm::Evm;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::TransactionRequest;
@@ -76,16 +75,6 @@ impl<'a> CowBackend<'a> {
 
         let mut evm =
             crate::evm::new_evm_with_inspector(self, env.to_owned(), inspector).into_inner();
-
-        println!(
-            "
-            env: {:?}
-            evm.cfg: {:?}
-            evm.block: {:?}
-            env.tx: {:?} 
-        ",
-            env, evm.cfg, evm.block, env.tx
-        );
 
         let res = evm.transact(env.tx.clone()).wrap_err("EVM error")?;
 
