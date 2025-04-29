@@ -1,4 +1,4 @@
-use crate::{backend::DatabaseExt, EnvMut, InspectorExt};
+use crate::{backend::DatabaseExt, Env, EnvMut, InspectorExt};
 use alloy_evm::{eth::EthEvmContext, EthEvm};
 use alloy_primitives::Address;
 use revm::{
@@ -61,18 +61,18 @@ impl<CTX: ContextTr> PrecompileProvider<CTX> for FoundryPrecompiles {
 
 pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
     db: &'db mut dyn DatabaseExt,
-    env: &EnvMut<'_>,
+    env: Env,
     inspector: &'i mut I,
 ) -> EthEvm<&'db mut dyn DatabaseExt, &'i mut I, FoundryPrecompiles> {
     let evm_context = EthEvmContext {
         journaled_state: {
             let mut journal = Journal::new(db);
-            journal.set_spec_id(env.cfg.spec);
+            journal.set_spec_id(env.evm_env.cfg_env.spec);
             journal
         },
-        block: env.block.clone(),
-        cfg: env.cfg.clone(),
-        tx: env.tx.clone(),
+        block: env.evm_env.block_env,
+        cfg: env.evm_env.cfg_env,
+        tx: env.tx,
         chain: (),
         error: Ok(()),
     };

@@ -620,7 +620,7 @@ impl InspectorStackRefMut<'_> {
 
         let res = self.with_stack(|inspector| {
             let (db, journal, env) = ecx.as_db_env_and_journal();
-            let mut evm = new_evm_with_inspector(db, &env, inspector);
+            let mut evm = new_evm_with_inspector(db, env.to_owned(), inspector);
 
             evm.journaled_state.state = {
                 let mut state = journal.state.clone();
