@@ -281,7 +281,7 @@ impl Cheatcode for recordCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
         state.recording_accesses = true;
-        if !state.accesses.is_some() {
+        if state.accesses.is_none() {
             state.accesses = Some(Default::default());
         }
         Ok(Default::default())
