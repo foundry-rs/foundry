@@ -479,7 +479,7 @@ contract AContractTest is DSTest {
 | Total             | 100.00% (2/2) | 100.00% (1/1) | 50.00% (1/2) | 100.00% (1/1) |
 ╰-------------------+---------------+---------------+--------------+---------------╯
 
-    "#]]);
+"#]]);
 
     // Assert 100% branch coverage.
     cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
@@ -492,7 +492,7 @@ contract AContractTest is DSTest {
 | Total             | 100.00% (2/2) | 100.00% (1/1) | 100.00% (2/2) | 100.00% (1/1) |
 ╰-------------------+---------------+---------------+---------------+---------------╯
 
-    "#]]);
+"#]]);
 });
 
 forgetest!(line_hit_not_doubled, |prj, cmd| {
