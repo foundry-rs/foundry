@@ -2,7 +2,6 @@
 //! It is a great tool if some debugging is needed.
 
 use foundry_common::sh_println;
-use foundry_evm_core::evm::FoundryEvmContext;
 use revm::{
     bytecode::opcode::OpCode,
     inspector::inspectors::GasInspector,

@@ -2,9 +2,7 @@ use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::Log;
 use alloy_sol_types::{SolEvent, SolInterface, SolValue};
 use foundry_common::{fmt::ConsoleFmt, ErrorExt};
-use foundry_evm_core::{
-    abi::console, constants::HARDHAT_CONSOLE_ADDRESS, evm::FoundryEvmContext, InspectorExt,
-};
+use foundry_evm_core::{abi::console, constants::HARDHAT_CONSOLE_ADDRESS, InspectorExt};
 use revm::{
     interpreter::{
         interpreter::EthInterpreter, CallInputs, CallOutcome, Gas, InstructionResult, Interpreter,

@@ -1140,7 +1140,10 @@ fn read_callers(state: &Cheatcodes, default_sender: &Address, call_depth: u64) -
 }
 
 /// Ensures the `Account` is loaded and touched.
-pub(super) fn journaled_account<'a>(ecx: Ecx<'a, '_>, addr: Address) -> Result<&'a mut Account> {
+pub(super) fn journaled_account<'a>(
+    ecx: Ecx<'a, '_, '_>,
+    addr: Address,
+) -> Result<&'a mut Account> {
     ecx.journaled_state.load_account(addr)?;
     ecx.journaled_state.touch(addr);
     Ok(ecx.journaled_state.state.get_mut(&addr).expect("account is loaded"))

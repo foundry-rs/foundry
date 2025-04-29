@@ -25,7 +25,7 @@ use revm::{
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{hardfork::SpecId, HashMap as Map, Log, KECCAK_EMPTY},
     state::{Account, AccountInfo, EvmState, EvmStorageSlot},
-    Database, DatabaseCommit, JournalEntry,
+    Database, DatabaseCommit, ExecuteEvm, JournalEntry,
 };
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -778,7 +778,8 @@ impl Backend {
         inspector: &mut I,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
-        let mut evm = crate::evm::new_evm_with_inspector(self, env.to_owned(), inspector);
+        let mut evm =
+            crate::evm::new_evm_with_inspector(self, env.to_owned(), inspector).into_inner();
 
         let res = evm.transact(env.tx.clone()).wrap_err("EVM error")?;
 
@@ -1305,7 +1306,7 @@ impl DatabaseExt for Backend {
             let mut db = self.clone();
             let mut evm = new_evm_with_inspector(&mut db, env.to_owned(), inspector);
             evm.journaled_state.depth = journaled_state.depth + 1;
-            evm.transact(env.tx).wrap_err("EVM error")?
+            evm.into_inner().transact(env.tx).wrap_err("EVM error")?
         };
 
         self.commit(res.state);
@@ -1984,7 +1985,8 @@ fn commit_transaction(
         let depth = journaled_state.depth;
         let mut db = Backend::new_with_fork(fork_id, fork, journaled_state)?;
 
-        let mut evm = crate::evm::new_evm_with_inspector(&mut db as _, env.to_owned(), inspector);
+        let mut evm = crate::evm::new_evm_with_inspector(&mut db as _, env.to_owned(), inspector)
+            .into_inner();
         // Adjust inner EVM depth to ensure that inspectors receive accurate data.
         evm.journaled_state.depth = depth + 1;
         evm.transact(env.tx.clone()).wrap_err("EVM error")?
