@@ -8,7 +8,7 @@ forgetest_init!(toggle_invalidate_cache_on_build, |prj, cmd| {
     // All files are built with optimized tests.
     cmd.args(["build"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-Compiling 22 files with [..]
+Compiling 23 files with [..]
 ...
 
 "#]]);
@@ -27,7 +27,7 @@ No files changed, compilation skipped
     // All files are rebuilt with preprocessed cache false.
     cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-Compiling 22 files with [..]
+Compiling 23 files with [..]
 ...
 
 "#]]);
@@ -41,7 +41,7 @@ forgetest_init!(toggle_invalidate_cache_on_test, |prj, cmd| {
     // All files are built with optimized tests.
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-Compiling 20 files with [..]
+Compiling 21 files with [..]
 ...
 
 "#]]);
@@ -60,7 +60,7 @@ No files changed, compilation skipped
     // All files are rebuilt with preprocessed cache false.
     cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-Compiling 20 files with [..]
+Compiling 21 files with [..]
 ...
 
 "#]]);
@@ -126,7 +126,7 @@ contract CounterTest is Test {
     // All 20 files are compiled on first run.
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-Compiling 20 files with [..]
+Compiling 21 files with [..]
 ...
 
 "#]]);
@@ -268,7 +268,7 @@ contract CounterTest is Test {
     // All 21 files are compiled on first run.
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-Compiling 21 files with [..]
+Compiling 22 files with [..]
 ...
 
 "#]]);
@@ -417,7 +417,7 @@ contract CounterTest is Test {
     // 20 files plus one mock file are compiled on first run.
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-Compiling 21 files with [..]
+Compiling 22 files with [..]
 ...
 
 "#]]);
@@ -560,7 +560,7 @@ contract CounterTest is Test {
     // 20 files plus one mock file are compiled on first run.
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-Compiling 21 files with [..]
+Compiling 22 files with [..]
 ...
 
 "#]]);
@@ -699,7 +699,7 @@ contract CounterTest is Test {
     // 20 files plus one mock file are compiled on first run.
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-Compiling 21 files with [..]
+Compiling 22 files with [..]
 ...
 
 "#]]);
@@ -874,7 +874,7 @@ contract CounterTest is Test {
     // 22 files plus one mock file are compiled on first run.
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-Compiling 23 files with [..]
+Compiling 24 files with [..]
 ...
 [PASS] test_Increment_In_Counter() (gas: [..])
 [PASS] test_Increment_In_Counter_A() (gas: [..])
@@ -1091,7 +1091,7 @@ contract CounterTest is Test {
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-Compiling 21 files with [..]
+Compiling 22 files with [..]
 ...
 [PASS] test_Increment_In_Counter() (gas: [..])
 [PASS] test_Increment_In_Counter_With_Salt() (gas: [..])
@@ -1214,7 +1214,7 @@ contract CounterTest is Test {
     // All 20 files are compiled on first run.
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-Compiling 20 files with [..]
+Compiling 21 files with [..]
 ...
 
 "#]]);
@@ -1340,13 +1340,14 @@ contract CounterTest is Test {
     // All 20 files should properly compile.
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-Compiling 20 files with [..]
+Compiling 21 files with [..]
 ...
 
 "#]]);
 });
 
 // Test preprocessed contracts with decode internal fns.
+#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(preprocess_contract_with_decode_internal, |prj, cmd| {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;

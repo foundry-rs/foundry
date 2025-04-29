@@ -9,7 +9,10 @@ use foundry_block_explorers::{
     contract::{ContractCreationData, ContractMetadata, Metadata},
     errors::EtherscanError,
 };
-use foundry_common::{abi::encode_args, compile::ProjectCompiler, provider::RetryProvider, shell};
+use foundry_common::{
+    abi::encode_args, compile::ProjectCompiler, ignore_metadata_hash, provider::RetryProvider,
+    shell,
+};
 use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
 use foundry_evm::{
@@ -197,32 +200,11 @@ fn is_partial_match(
 }
 
 fn try_extract_and_compare_bytecode(mut local_bytecode: &[u8], mut bytecode: &[u8]) -> bool {
-    local_bytecode = extract_metadata_hash(local_bytecode);
-    bytecode = extract_metadata_hash(bytecode);
+    local_bytecode = ignore_metadata_hash(local_bytecode);
+    bytecode = ignore_metadata_hash(bytecode);
 
     // Now compare the local code and bytecode
     local_bytecode == bytecode
-}
-
-/// @dev This assumes that the metadata is at the end of the bytecode
-fn extract_metadata_hash(bytecode: &[u8]) -> &[u8] {
-    // Get the last two bytes of the bytecode to find the length of CBOR metadata
-    let metadata_len = &bytecode[bytecode.len() - 2..];
-    let metadata_len = u16::from_be_bytes([metadata_len[0], metadata_len[1]]);
-
-    if metadata_len as usize <= bytecode.len() {
-        if ciborium::from_reader::<ciborium::Value, _>(
-            &bytecode[bytecode.len() - 2 - metadata_len as usize..bytecode.len() - 2],
-        )
-        .is_ok()
-        {
-            &bytecode[..bytecode.len() - 2 - metadata_len as usize]
-        } else {
-            bytecode
-        }
-    } else {
-        bytecode
-    }
 }
 
 fn find_mismatch_in_settings(
