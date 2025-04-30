@@ -438,7 +438,7 @@ pub struct AnvilEvmArgs {
 
     /// Fetch state from a specific block number over a remote endpoint.
     ///
-    /// If a negative the the given value is subtracted from the `latest` block number.
+    /// If negative, the given value is subtracted from the `latest` block number.
     ///
     /// See --fork-url.
     #[arg(

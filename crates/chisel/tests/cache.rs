@@ -1,11 +1,9 @@
 use chisel::session::ChiselSession;
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::Config;
-use serial_test::serial;
 use std::path::Path;
 
 #[test]
-#[serial]
 fn test_cache_directory() {
     // Get the cache dir
     // Should be ~/.foundry/cache/chisel
@@ -17,7 +15,6 @@ fn test_cache_directory() {
 }
 
 #[test]
-#[serial]
 fn test_create_cache_directory() {
     // Get the cache dir
     let cache_dir = ChiselSession::cache_dir().unwrap();
@@ -30,7 +27,6 @@ fn test_create_cache_directory() {
 }
 
 #[test]
-#[serial]
 fn test_write_session() {
     // Create the cache directory if it doesn't exist
     let cache_dir = ChiselSession::cache_dir().unwrap();
@@ -58,7 +54,6 @@ fn test_write_session() {
 }
 
 #[test]
-#[serial]
 fn test_write_session_with_name() {
     // Create the cache directory if it doesn't exist
     let cache_dir = ChiselSession::cache_dir().unwrap();
@@ -83,7 +78,6 @@ fn test_write_session_with_name() {
 }
 
 #[test]
-#[serial]
 fn test_clear_cache() {
     // Create a session to validate clearing a non-empty cache directory
     let cache_dir = ChiselSession::cache_dir().unwrap();
@@ -108,7 +102,6 @@ fn test_clear_cache() {
 }
 
 #[test]
-#[serial]
 fn test_list_sessions() {
     // Create and clear the cache directory
     ChiselSession::create_cache_dir().unwrap();
@@ -135,7 +128,6 @@ fn test_list_sessions() {
 }
 
 #[test]
-#[serial]
 fn test_load_cache() {
     // Create and clear the cache directory
     ChiselSession::create_cache_dir().unwrap();
@@ -163,7 +155,6 @@ fn test_load_cache() {
 }
 
 #[test]
-#[serial]
 fn test_write_same_session_multiple_times() {
     // Create and clear the cache directory
     ChiselSession::create_cache_dir().unwrap();
@@ -186,7 +177,6 @@ fn test_write_same_session_multiple_times() {
 }
 
 #[test]
-#[serial]
 fn test_load_latest_cache() {
     // Create and clear the cache directory
     ChiselSession::create_cache_dir().unwrap();

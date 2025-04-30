@@ -1102,6 +1102,14 @@ impl DatabaseExt for Backend {
             // update the shared state and track
             let mut fork = self.inner.take_fork(idx);
 
+            // Make sure all persistent accounts on the newly selected fork starts from the init
+            // state (from setup).
+            for addr in &self.inner.persistent_accounts {
+                if let Some(account) = self.fork_init_journaled_state.state.get(addr) {
+                    fork.journaled_state.state.insert(*addr, account.clone());
+                }
+            }
+
             // since all forks handle their state separately, the depth can drift
             // this is a handover where the target fork starts at the same depth where it was
             // selected. This ensures that there are no gaps in depth which would
