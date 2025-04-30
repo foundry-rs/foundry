@@ -420,7 +420,10 @@ pub struct Cheatcodes {
     pub fork_revert_diagnostic: Option<RevertDiagnostic>,
 
     /// Recorded storage reads and writes
-    pub accesses: Option<RecordAccess>,
+    pub accesses: RecordAccess,
+
+    /// Whether storage access recording is currently active
+    pub recording_accesses: bool,
 
     /// Recorded account accesses (calls, creates) organized by relative call depth, where the
     /// topmost vector corresponds to accesses at the depth at which account access recording
@@ -538,6 +541,7 @@ impl Cheatcodes {
             assume_no_revert: Default::default(),
             fork_revert_diagnostic: Default::default(),
             accesses: Default::default(),
+            recording_accesses: Default::default(),
             recorded_account_diffs_stack: Default::default(),
             recorded_logs: Default::default(),
             record_debug_steps_info: Default::default(),
@@ -1332,7 +1336,7 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
         }
 
         // `record`: record storage reads and writes.
-        if self.accesses.is_some() {
+        if self.recording_accesses {
             self.record_accesses(interpreter);
         }
 
@@ -1945,7 +1949,7 @@ impl Cheatcodes {
     /// Records storage slots reads and writes.
     #[cold]
     fn record_accesses(&mut self, interpreter: &mut Interpreter) {
-        let Some(access) = &mut self.accesses else { return };
+        let access = &mut self.accesses;
         match interpreter.current_opcode() {
             op::SLOAD => {
                 let key = try_or_return!(interpreter.stack().peek(0));
