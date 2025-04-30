@@ -593,7 +593,7 @@ mod tests {
 
         assert_eq!(
             client.etherscan_api_url().as_str(),
-            "https://api.etherscan.io/v2/api?chainid=80001"
+            "https://api.etherscan.io/v2/api"
         );
         assert!(format!("{client:?}").contains("dummykey"));
 
