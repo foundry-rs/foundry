@@ -646,7 +646,7 @@ impl InspectorStackRefMut<'_> {
 
             let res = evm.transact(evm.tx.clone());
 
-            // need to reset the env in case it was modified via cheatcodes during execution
+            // apply the changes to the env
             *env.cfg = evm.cfg.clone();
             *env.block = evm.block.clone();
             *env.tx = evm.tx.clone();
