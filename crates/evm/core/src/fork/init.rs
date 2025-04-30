@@ -55,6 +55,7 @@ pub async fn environment<N: Network, P: Provider<N>>(
     // is a contract. So we disable the check by default.
     cfg.disable_eip3607 = true;
     cfg.disable_block_gas_limit = disable_block_gas_limit;
+    cfg.disable_nonce_check = true;
 
     let mut env = Env {
         evm_env: EvmEnv {
