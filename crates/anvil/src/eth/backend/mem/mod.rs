@@ -1,7 +1,7 @@
 //! In-memory blockchain backend.
 
 use self::state::trie_storage;
-use super::{evm::EitherEvm, executor::evm_with_inspector_ref};
+use super::executor::evm_with_inspector_ref;
 use crate::{
     config::PruneStateHistoryConfig,
     eth::{
@@ -93,7 +93,7 @@ use foundry_evm::{
     traces::TracingInspectorConfig,
     Env,
 };
-use foundry_evm_core::evm::FoundryPrecompiles;
+use foundry_evm_core::{either_evm::EitherEvm, evm::FoundryPrecompiles};
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
 use op_revm::{OpContext, OpHaltReason};
@@ -1143,7 +1143,7 @@ impl Backend {
             validator: self,
             pending: pool_transactions.into_iter(),
             block_env: env.evm_env.block_env.clone(),
-            cfg_env: env.evm_env.cfg_env.clone(),
+            cfg_env: env.evm_env.cfg_env,
             parent_hash: storage.best_hash,
             gas_used: 0,
             blob_gas_used: 0,

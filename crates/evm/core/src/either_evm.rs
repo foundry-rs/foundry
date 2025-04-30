@@ -1,4 +1,3 @@
-use crate::eth::error::BlockchainError;
 use alloy_evm::{eth::EthEvmContext, Database, EthEvm, Evm, EvmEnv};
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{Address, Bytes};
@@ -18,17 +17,17 @@ use revm::{
 };
 
 /// Alias for result type returned by [`Evm::transact`] methods.
-type AnvilEvmResult<DBError, HaltReason, TxError> =
+type EitherEvmResult<DBError, HaltReason, TxError> =
     Result<ResultAndState<HaltReason>, EVMError<DBError, TxError>>;
 
 /// Alias for result type returned by [`Evm::transact_commit`] methods.
-type AnvilExecResult<DBError, HaltReason, TxError> =
+type EitherExecResult<DBError, HaltReason, TxError> =
     Result<ExecutionResult<HaltReason>, EVMError<DBError, TxError>>;
 
 /// [`EitherEvm`] delegates its calls to one of the two evm implementations; either [`EthEvm`] or
 /// [`OpEvm`].
 ///
-/// Calls are delegated to [`OpEvm`] only if the optimism is enabled.
+/// Calls are delegated to [`OpEvm`] only if optimism is enabled.
 ///
 /// The call delegation is handled via its own implementation of the [`Evm`] trait.
 ///
@@ -64,11 +63,11 @@ where
         &mut self,
         tx: TxEnv,
         deposit: DepositTransactionParts,
-    ) -> AnvilEvmResult<DB::Error, OpHaltReason, OpTransactionError> {
+    ) -> EitherEvmResult<DB::Error, OpHaltReason, OpTransactionError> {
         match self {
-            Self::Eth(_) => {
-                Err(EVMError::Custom(BlockchainError::DepositTransactionUnsupported.to_string()))
-            }
+            Self::Eth(_) => Err(EVMError::Custom(
+                "op-stack deposit tx received but is not supported".to_string(),
+            )),
             Self::Op(evm) => {
                 let op_tx = OpTransaction { base: tx, deposit, enveloped_tx: None };
                 evm.transact_raw(op_tx)
@@ -81,14 +80,14 @@ where
         &mut self,
         tx: TxEnv,
         deposit: DepositTransactionParts,
-    ) -> AnvilExecResult<DB::Error, OpHaltReason, OpTransactionError>
+    ) -> EitherExecResult<DB::Error, OpHaltReason, OpTransactionError>
     where
         DB: DatabaseCommit,
     {
         match self {
-            Self::Eth(_) => {
-                Err(EVMError::Custom(BlockchainError::DepositTransactionUnsupported.to_string()))
-            }
+            Self::Eth(_) => Err(EVMError::Custom(
+                "op-stack deposit tx received but is not supported".to_string(),
+            )),
             Self::Op(evm) => {
                 let op_tx = OpTransaction { base: tx, deposit, enveloped_tx: None };
                 evm.transact_commit(op_tx)
@@ -96,11 +95,11 @@ where
         }
     }
 
-    /// Converts the [`EthEvm::transact`] result to [`AnvilEvmResult`].
+    /// Converts the [`EthEvm::transact`] result to [`EitherEvmResult`].
     fn map_eth_result(
         &self,
         result: Result<ResultAndState<HaltReason>, EVMError<DB::Error>>,
-    ) -> AnvilEvmResult<DB::Error, OpHaltReason, OpTransactionError> {
+    ) -> EitherEvmResult<DB::Error, OpHaltReason, OpTransactionError> {
         match result {
             Ok(result) => {
                 // Map the halt reason
@@ -110,11 +109,11 @@ where
         }
     }
 
-    /// Converts the [`EthEvm::transact_commit`] result to [`AnvilExecResult`].
+    /// Converts the [`EthEvm::transact_commit`] result to [`EitherExecResult`].
     fn map_exec_result(
         &self,
         result: Result<ExecutionResult, EVMError<DB::Error>>,
-    ) -> AnvilExecResult<DB::Error, OpHaltReason, OpTransactionError> {
+    ) -> EitherExecResult<DB::Error, OpHaltReason, OpTransactionError> {
         match result {
             Ok(result) => {
                 // Map the halt reason
