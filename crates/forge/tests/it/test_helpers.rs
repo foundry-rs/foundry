@@ -3,6 +3,7 @@
 use alloy_chains::NamedChain;
 use alloy_primitives::U256;
 use forge::{revm::primitives::SpecId, MultiContractRunner, MultiContractRunnerBuilder};
+use foundry_cli::utils::install_crypto_provider;
 use foundry_compilers::{
     artifacts::{EvmVersion, Libraries, Settings},
     compilers::multi::MultiCompiler,
@@ -172,6 +173,7 @@ impl ForgeTestData {
     ///
     /// Uses [get_compiled] to lazily compile the project.
     pub fn new(profile: ForgeTestProfile) -> Self {
+        install_crypto_provider();
         init_tracing();
         let config = Arc::new(profile.config());
         let mut project = config.project().unwrap();

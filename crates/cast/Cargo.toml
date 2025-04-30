@@ -61,7 +61,7 @@ serde_json.workspace = true
 serde.workspace = true
 
 # aws-kms
-aws-sdk-kms = { version = "1", default-features = false, optional = true }
+aws-sdk-kms = { workspace = true, default-features = false, optional = true }
 
 # bin
 foundry-cli.workspace = true
