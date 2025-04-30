@@ -2265,7 +2265,17 @@ impl Backend {
                 .await?
                 .map(|block| (block.header.hash, block))
             {
-                if let Some(state) = self.states.write().get(&block_hash) {
+                let read_guard = self.states.read();
+                let mut state_db = read_guard.get_state(&block_hash);
+
+                let mut write_guard = self.states.write();
+                if state_db.is_none() {
+                    state_db = write_guard.get_on_disk_state(&block_hash);
+                } else {
+                    drop(write_guard);
+                }
+
+                if let Some(state) = state_db {
                     let block = BlockEnv {
                         number: block_number,
                         coinbase: block.header.beneficiary,

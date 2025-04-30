@@ -174,6 +174,23 @@ impl InMemoryBlockStates {
     }
 
     /// Returns the state for the given `hash` if present
+    pub fn get_state(&self, hash: &B256) -> Option<&StateDb> {
+        self.states.get(hash)
+    }
+
+    /// Returns on-disk state for the given `hash` if present
+    pub fn get_on_disk_state(&mut self, hash: &B256) -> Option<&StateDb> {
+        if let Some(state) = self.on_disk_states.get_mut(hash) {
+            if let Some(cached) = self.disk_cache.read(*hash) {
+                state.init_from_state_snapshot(cached);
+                return Some(state);
+            }
+        }
+
+        None
+    }
+
+    /// Returns the state for the given `hash` if present
     pub fn get(&mut self, hash: &B256) -> Option<&StateDb> {
         self.states.get(hash).or_else(|| {
             if let Some(state) = self.on_disk_states.get_mut(hash) {
