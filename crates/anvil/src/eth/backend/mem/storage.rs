@@ -688,7 +688,7 @@ mod tests {
         assert_eq!(storage.on_disk_states.len(), 1);
         assert!(storage.on_disk_states.contains_key(&one));
 
-        let loaded = storage.get(&one).unwrap();
+        let loaded = storage.get_on_disk_state(&one).unwrap();
 
         let acc = loaded.basic_ref(addr).unwrap().unwrap();
         assert_eq!(acc.balance, U256::from(1337u64));
@@ -713,13 +713,20 @@ mod tests {
         // wait for files to be flushed
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-        assert_eq!(storage.on_disk_states.len(), num_states - storage.min_in_memory_limit);
+        let on_disk_states_len = num_states - storage.min_in_memory_limit;
+        assert_eq!(storage.on_disk_states.len(), on_disk_states_len);
         assert_eq!(storage.present.len(), storage.min_in_memory_limit);
 
         for idx in 0..num_states {
             let hash = B256::from(U256::from(idx));
             let addr = Address::from_word(hash);
-            let loaded = storage.get(&hash).unwrap();
+
+            let loaded = if idx < on_disk_states_len {
+                storage.get_on_disk_state(&hash).unwrap()
+            } else {
+                storage.get_state(&hash).unwrap()
+            };
+
             let acc = loaded.basic_ref(addr).unwrap().unwrap();
             let balance = (idx * 2) as u64;
             assert_eq!(acc.balance, U256::from(balance));

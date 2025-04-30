@@ -2919,9 +2919,18 @@ impl Backend {
     pub async fn rollback(&self, common_block: Block) -> Result<(), BlockchainError> {
         // Get the database at the common block
         let common_state = {
-            let mut state = self.states.write();
-            let state_db = state
-                .get(&common_block.header.hash_slow())
+            let hash = &common_block.header.hash_slow();
+            let read_guard = self.states.read();
+            let mut state_db = read_guard.get_state(hash);
+
+            let mut write_guard = self.states.write();
+            if state_db.is_none() {
+                state_db = write_guard.get_on_disk_state(hash);
+            } else {
+                drop(write_guard);
+            }
+
+            let state_db = state_db
                 .ok_or(BlockchainError::DataUnavailable)?;
             let db_full = state_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
             db_full.clone()
