@@ -96,7 +96,7 @@ jobs:
           - runner: ubuntu-24.04
             target: x86_64-unknown-linux-musl
             svm_target_platform: linux-amd64
-            platform: alpine
+            platform: linux
             arch: amd64
           # This is pinned to `macos-13-large` to support old SDK versions.
           # If the runner is deprecated it should be pinned to the oldest available version of the runner.
