@@ -123,7 +123,7 @@ impl FeeManager {
 
     pub fn excess_blob_gas_and_price(&self) -> Option<BlobExcessGasAndPrice> {
         if self.is_eip4844() {
-            Some(self.blob_excess_gas_and_price.read().clone())
+            Some(*self.blob_excess_gas_and_price.read())
         } else {
             None
         }

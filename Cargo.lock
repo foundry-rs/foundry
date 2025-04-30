@@ -2360,6 +2360,7 @@ dependencies = [
  "alloy-signer-local",
  "alloy-sol-types",
  "alloy-transport",
+ "anvil",
  "aws-sdk-kms",
  "chrono",
  "clap",
@@ -3775,6 +3776,7 @@ dependencies = [
  "alloy-signer",
  "alloy-signer-local",
  "alloy-transport",
+ "anvil",
  "axum",
  "chrono",
  "clap",
@@ -4024,6 +4026,7 @@ dependencies = [
  "alloy-chains",
  "alloy-consensus",
  "alloy-dyn-abi",
+ "alloy-evm",
  "alloy-genesis",
  "alloy-json-abi",
  "alloy-network",
@@ -4361,6 +4364,7 @@ name = "foundry-evm"
 version = "1.1.0"
 dependencies = [
  "alloy-dyn-abi",
+ "alloy-evm",
  "alloy-json-abi",
  "alloy-primitives",
  "alloy-sol-types",

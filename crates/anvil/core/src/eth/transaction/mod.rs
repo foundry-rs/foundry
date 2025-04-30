@@ -23,7 +23,7 @@ use alloy_serde::{OtherFields, WithOtherFields};
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
 use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
-use op_revm::{transaction::deposit::DepositTransactionParts, OpTransaction};
+use op_revm::transaction::deposit::DepositTransactionParts;
 use revm::{context::TxEnv, interpreter::InstructionResult};
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, Mul};
@@ -438,7 +438,7 @@ impl PendingTransaction {
                         gas_price: *gas_price,
                         gas_priority_fee: None,
                         gas_limit: *gas_limit,
-                        access_list: access_list.clone().into(),
+                        access_list: access_list.clone(),
                         tx_type: 1,
                         ..Default::default()
                     },
@@ -469,7 +469,7 @@ impl PendingTransaction {
                         gas_price: *max_fee_per_gas,
                         gas_priority_fee: Some(*max_priority_fee_per_gas),
                         gas_limit: *gas_limit,
-                        access_list: access_list.clone().into(),
+                        access_list: access_list.clone(),
                         tx_type: 2,
                         ..Default::default()
                     },
@@ -504,7 +504,7 @@ impl PendingTransaction {
                         max_fee_per_blob_gas: *max_fee_per_blob_gas,
                         blob_hashes: blob_versioned_hashes.clone(),
                         gas_limit: *gas_limit,
-                        access_list: access_list.clone().into(),
+                        access_list: access_list.clone(),
                         tx_type: 3,
                         ..Default::default()
                     },
@@ -535,7 +535,7 @@ impl PendingTransaction {
                         gas_price: *max_fee_per_gas,
                         gas_priority_fee: Some(*max_priority_fee_per_gas),
                         gas_limit: *gas_limit,
-                        access_list: access_list.clone().into(),
+                        access_list: access_list.clone(),
                         authorization_list: authorization_list.clone(),
                         tx_type: 4,
                         ..Default::default()

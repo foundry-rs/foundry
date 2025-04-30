@@ -2,17 +2,18 @@
 //! It is a great tool if some debugging is needed.
 
 use foundry_common::sh_println;
-use foundry_evm_core::evm::FoundryEvmContext;
+use foundry_evm_core::backend::DatabaseError;
 use revm::{
     bytecode::opcode::OpCode,
-    inspector::inspectors::GasInspector,
+    context::{ContextTr, JournalTr},
+    inspector::{inspectors::GasInspector, JournalExt},
     interpreter::{
         interpreter::EthInterpreter,
         interpreter_types::{Jumps, LoopControl, MemoryTr},
         CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter,
     },
     primitives::{Address, U256},
-    Inspector,
+    Database, Inspector,
 };
 
 /// Custom print [Inspector], it has step level information of execution.
@@ -23,18 +24,19 @@ pub struct CustomPrintTracer {
     gas_inspector: GasInspector,
 }
 
-impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for CustomPrintTracer {
-    fn initialize_interp(
-        &mut self,
-        interp: &mut Interpreter,
-        _context: &mut FoundryEvmContext<'_>,
-    ) {
+impl<CTX, D> Inspector<CTX, EthInterpreter> for CustomPrintTracer
+where
+    D: Database<Error = DatabaseError>,
+    CTX: ContextTr<Db = D>,
+    CTX::Journal: JournalExt,
+{
+    fn initialize_interp(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
         self.gas_inspector.initialize_interp(&interp.control.gas);
     }
 
     // get opcode by calling `interp.contract.opcode(interp.program_counter())`.
     // all other information can be obtained from interp.
-    fn step(&mut self, interp: &mut Interpreter, context: &mut FoundryEvmContext<'_>) {
+    fn step(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         let opcode = interp.bytecode.opcode();
         let name = OpCode::name_by_op(opcode);
 
@@ -44,7 +46,7 @@ impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for CustomPrintTracer {
 
         let _ = sh_println!(
             "depth:{}, PC:{}, gas:{:#x}({}), OPCODE: {:?}({:?})  refund:{:#x}({}) Stack:{:?}, Data size:{}",
-            context.journaled_state.depth,
+            context.journal().depth(),
             interp.bytecode.pc(),
             gas_remaining,
             gas_remaining,
@@ -59,33 +61,24 @@ impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for CustomPrintTracer {
         self.gas_inspector.step(&interp.control.gas);
     }
 
-    fn step_end(&mut self, interp: &mut Interpreter, _context: &mut FoundryEvmContext<'_>) {
+    fn step_end(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
         self.gas_inspector.step_end(interp.control.gas_mut());
     }
 
-    fn call_end(
-        &mut self,
-        _context: &mut FoundryEvmContext<'_>,
-        _inputs: &CallInputs,
-        outcome: &mut CallOutcome,
-    ) {
+    fn call_end(&mut self, _context: &mut CTX, _inputs: &CallInputs, outcome: &mut CallOutcome) {
         self.gas_inspector.call_end(outcome)
     }
 
     fn create_end(
         &mut self,
-        _context: &mut FoundryEvmContext<'_>,
+        _context: &mut CTX,
         _inputs: &CreateInputs,
         outcome: &mut CreateOutcome,
     ) {
         self.gas_inspector.create_end(outcome)
     }
 
-    fn call(
-        &mut self,
-        _context: &mut FoundryEvmContext<'_>,
-        inputs: &mut CallInputs,
-    ) -> Option<CallOutcome> {
+    fn call(&mut self, _context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         let _ = sh_println!(
             "SM Address: {:?}, caller:{:?},target:{:?} is_static:{:?}, transfer:{:?}, input_size:{:?}",
             inputs.bytecode_address,
@@ -98,11 +91,7 @@ impl Inspector<FoundryEvmContext<'_>, EthInterpreter> for CustomPrintTracer {
         None
     }
 
-    fn create(
-        &mut self,
-        _context: &mut FoundryEvmContext<'_>,
-        inputs: &mut CreateInputs,
-    ) -> Option<CreateOutcome> {
+    fn create(&mut self, _context: &mut CTX, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
         let _ = sh_println!(
             "CREATE CALL: caller:{:?}, scheme:{:?}, value:{:?}, init_code:{:?}, gas:{:?}",
             inputs.caller,

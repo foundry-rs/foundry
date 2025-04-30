@@ -20,7 +20,7 @@ use revm::{
     database::DatabaseRef,
     primitives::{hardfork::SpecId, HashMap as Map},
     state::{Account, AccountInfo},
-    Database, DatabaseCommit, InspectEvm,
+    Database, DatabaseCommit, ExecuteEvm,
 };
 use std::{borrow::Cow, collections::BTreeMap};
 
@@ -73,9 +73,10 @@ impl<'a> CowBackend<'a> {
         self.is_initialized = false;
         self.spec_id = env.evm_env.cfg_env.spec;
 
-        let mut evm = crate::evm::new_evm_with_inspector(self, &env.as_env_mut(), inspector);
+        let mut evm =
+            crate::evm::new_evm_with_inspector(self, env.to_owned(), inspector).into_inner();
 
-        let res = evm.inspect_replay().wrap_err("EVM error")?;
+        let res = evm.transact(env.tx.clone()).wrap_err("EVM error")?;
 
         *env = evm.as_env_mut().to_owned();
 

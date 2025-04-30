@@ -66,10 +66,10 @@ where
         deposit: DepositTransactionParts,
     ) -> AnvilEvmResult<DB::Error, OpHaltReason, OpTransactionError> {
         match self {
-            EitherEvm::Eth(_) => {
+            Self::Eth(_) => {
                 Err(EVMError::Custom(BlockchainError::DepositTransactionUnsupported.to_string()))
             }
-            EitherEvm::Op(evm) => {
+            Self::Op(evm) => {
                 let op_tx = OpTransaction { base: tx, deposit, enveloped_tx: None };
                 evm.transact_raw(op_tx)
             }
@@ -86,10 +86,10 @@ where
         DB: DatabaseCommit,
     {
         match self {
-            EitherEvm::Eth(_) => {
+            Self::Eth(_) => {
                 Err(EVMError::Custom(BlockchainError::DepositTransactionUnsupported.to_string()))
             }
-            EitherEvm::Op(evm) => {
+            Self::Op(evm) => {
                 let op_tx = OpTransaction { base: tx, deposit, enveloped_tx: None };
                 evm.transact_commit(op_tx)
             }
@@ -104,7 +104,7 @@ where
         match result {
             Ok(result) => {
                 // Map the halt reason
-                Ok(result.map_haltreason(|hr| OpHaltReason::Base(hr)))
+                Ok(result.map_haltreason(OpHaltReason::Base))
             }
             Err(e) => Err(self.map_eth_err(e)),
         }
@@ -118,7 +118,7 @@ where
         match result {
             Ok(result) => {
                 // Map the halt reason
-                Ok(result.map_haltreason(|hr| OpHaltReason::Base(hr)))
+                Ok(result.map_haltreason(OpHaltReason::Base))
             }
             Err(e) => Err(self.map_eth_err(e)),
         }
@@ -152,15 +152,15 @@ where
 
     fn block(&self) -> &BlockEnv {
         match self {
-            EitherEvm::Eth(evm) => evm.block(),
-            EitherEvm::Op(evm) => evm.block(),
+            Self::Eth(evm) => evm.block(),
+            Self::Op(evm) => evm.block(),
         }
     }
 
     fn db_mut(&mut self) -> &mut Self::DB {
         match self {
-            EitherEvm::Eth(evm) => evm.db_mut(),
-            EitherEvm::Op(evm) => evm.db_mut(),
+            Self::Eth(evm) => evm.db_mut(),
+            Self::Op(evm) => evm.db_mut(),
         }
     }
 
@@ -169,8 +169,8 @@ where
         Self: Sized,
     {
         match self {
-            EitherEvm::Eth(evm) => evm.into_db(),
-            EitherEvm::Op(evm) => evm.into_db(),
+            Self::Eth(evm) => evm.into_db(),
+            Self::Op(evm) => evm.into_db(),
         }
     }
 
@@ -179,8 +179,8 @@ where
         Self: Sized,
     {
         match self {
-            EitherEvm::Eth(evm) => evm.finish(),
-            EitherEvm::Op(evm) => {
+            Self::Eth(evm) => evm.finish(),
+            Self::Op(evm) => {
                 let (db, env) = evm.finish();
                 (db, map_env(env))
             }
@@ -189,22 +189,22 @@ where
 
     fn enable_inspector(&mut self) {
         match self {
-            EitherEvm::Eth(evm) => evm.enable_inspector(),
-            EitherEvm::Op(evm) => evm.enable_inspector(),
+            Self::Eth(evm) => evm.enable_inspector(),
+            Self::Op(evm) => evm.enable_inspector(),
         }
     }
 
     fn disable_inspector(&mut self) {
         match self {
-            EitherEvm::Eth(evm) => evm.disable_inspector(),
-            EitherEvm::Op(evm) => evm.disable_inspector(),
+            Self::Eth(evm) => evm.disable_inspector(),
+            Self::Op(evm) => evm.disable_inspector(),
         }
     }
 
     fn set_inspector_enabled(&mut self, enabled: bool) {
         match self {
-            EitherEvm::Eth(evm) => evm.set_inspector_enabled(enabled),
-            EitherEvm::Op(evm) => evm.set_inspector_enabled(enabled),
+            Self::Eth(evm) => evm.set_inspector_enabled(enabled),
+            Self::Op(evm) => evm.set_inspector_enabled(enabled),
         }
     }
 
@@ -213,8 +213,8 @@ where
         Self: Sized,
     {
         match self {
-            EitherEvm::Eth(evm) => evm.into_env(),
-            EitherEvm::Op(evm) => map_env(evm.into_env()),
+            Self::Eth(evm) => evm.into_env(),
+            Self::Op(evm) => map_env(evm.into_env()),
         }
     }
 
@@ -223,11 +223,11 @@ where
         tx: impl alloy_evm::IntoTxEnv<Self::Tx>,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
         match self {
-            EitherEvm::Eth(evm) => {
+            Self::Eth(evm) => {
                 let eth = evm.transact(tx);
                 self.map_eth_result(eth)
             }
-            EitherEvm::Op(evm) => {
+            Self::Op(evm) => {
                 let op_tx = OpTransaction::new(tx.into_tx_env());
                 evm.transact(op_tx)
             }
@@ -242,11 +242,11 @@ where
         Self::DB: DatabaseCommit,
     {
         match self {
-            EitherEvm::Eth(evm) => {
+            Self::Eth(evm) => {
                 let eth = evm.transact_commit(tx);
                 self.map_exec_result(eth)
             }
-            EitherEvm::Op(evm) => {
+            Self::Op(evm) => {
                 let op_tx = OpTransaction::new(tx.into_tx_env());
                 evm.transact_commit(op_tx)
             }
@@ -276,11 +276,11 @@ where
         data: Bytes,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
         match self {
-            EitherEvm::Eth(evm) => {
+            Self::Eth(evm) => {
                 let eth = evm.transact_system_call(caller, contract, data);
                 self.map_eth_result(eth)
             }
-            EitherEvm::Op(evm) => evm.transact_system_call(caller, contract, data),
+            Self::Op(evm) => evm.transact_system_call(caller, contract, data),
         }
     }
 }

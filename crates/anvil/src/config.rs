@@ -509,7 +509,7 @@ impl NodeConfig {
 
     pub fn get_blob_excess_gas_and_price(&self) -> BlobExcessGasAndPrice {
         if let Some(blob_excess_gas_and_price) = &self.blob_excess_gas_and_price {
-            blob_excess_gas_and_price.clone()
+            *blob_excess_gas_and_price
         } else if let Some(excess_blob_gas) = self.genesis.as_ref().and_then(|g| g.excess_blob_gas)
         {
             BlobExcessGasAndPrice::new(excess_blob_gas, false)
@@ -1037,7 +1037,7 @@ impl NodeConfig {
             cfg.memory_limit = value;
         }
 
-        let spec_id = cfg.spec.clone();
+        let spec_id = cfg.spec;
         let mut env = Env::from(
             cfg,
             BlockEnv {
@@ -1330,7 +1330,7 @@ latest block number: {latest_block}"
             compute_units_per_second: self.compute_units_per_second,
             total_difficulty: block.header.total_difficulty.unwrap_or_default(),
             blob_gas_used: block.header.blob_gas_used.map(|g| g as u128),
-            blob_excess_gas_and_price: env.evm_env.block_env.blob_excess_gas_and_price.clone(),
+            blob_excess_gas_and_price: env.evm_env.block_env.blob_excess_gas_and_price,
             force_transactions,
         };
 

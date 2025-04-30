@@ -24,7 +24,7 @@ use revm::{
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{hardfork::SpecId, HashMap as Map, Log, KECCAK_EMPTY},
     state::{Account, AccountInfo, EvmState, EvmStorageSlot},
-    Database, DatabaseCommit, InspectEvm, JournalEntry,
+    Database, DatabaseCommit, ExecuteEvm, JournalEntry,
 };
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -437,7 +437,7 @@ pub struct Backend {
     mem_db: FoundryEvmInMemoryDB,
     /// The journaled_state to use to initialize new forks with
     ///
-    /// The way [`revm::JournaledState`] works is, that it holds the "hot" accounts loaded from the
+    /// The way [`JournaledState`] works is, that it holds the "hot" accounts loaded from the
     /// underlying `Database` that feeds the Account and State data to the journaled_state so it
     /// can apply changes to the state while the EVM executes.
     ///
@@ -777,11 +777,12 @@ impl Backend {
         inspector: &mut I,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
-        let mut evm = crate::evm::new_evm_with_inspector(self, &env.as_env_mut(), inspector);
+        let mut evm =
+            crate::evm::new_evm_with_inspector(self, env.to_owned(), inspector).into_inner();
 
-        let res = evm.inspect_replay().wrap_err("EVM error")?;
+        let res = evm.transact(env.tx.clone()).wrap_err("EVM error")?;
 
-        *env = evm.data.ctx.as_env_mut().to_owned();
+        *env = evm.as_env_mut().to_owned();
 
         Ok(res)
     }
@@ -1237,8 +1238,10 @@ impl DatabaseExt for Backend {
 
         update_env_block(env, &block);
 
+        let mut env = env.to_owned();
+
         // replay all transactions that came before
-        self.replay_until(id, env, transaction, journaled_state)?;
+        self.replay_until(id, &mut env.as_env_mut(), transaction, journaled_state)?;
 
         Ok(())
     }
@@ -1297,12 +1300,12 @@ impl DatabaseExt for Backend {
 
         let res = {
             configure_tx_req_env(env, tx, None)?;
-            let mut env = self.env_with_handler_cfg(env);
+            let env = self.env_with_handler_cfg(env);
 
             let mut db = self.clone();
-            let mut evm = new_evm_with_inspector(&mut db, &env.as_env_mut(), inspector);
-            evm.data.ctx.journaled_state.depth = journaled_state.depth + 1;
-            evm.inspect_replay().wrap_err("EVM error")?
+            let mut evm = new_evm_with_inspector(&mut db, env.to_owned(), inspector);
+            evm.journaled_state.depth = journaled_state.depth + 1;
+            evm.into_inner().transact(env.tx).wrap_err("EVM error")?
         };
 
         self.commit(res.state);
@@ -1981,10 +1984,11 @@ fn commit_transaction(
         let depth = journaled_state.depth;
         let mut db = Backend::new_with_fork(fork_id, fork, journaled_state)?;
 
-        let mut evm = crate::evm::new_evm_with_inspector(&mut db as _, env, inspector);
+        let mut evm = crate::evm::new_evm_with_inspector(&mut db as _, env.to_owned(), inspector)
+            .into_inner();
         // Adjust inner EVM depth to ensure that inspectors receive accurate data.
-        evm.data.ctx.journaled_state.depth = depth + 1;
-        evm.inspect_replay().wrap_err("EVM error")?
+        evm.journaled_state.depth = depth + 1;
+        evm.transact(env.tx.clone()).wrap_err("EVM error")?
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 
