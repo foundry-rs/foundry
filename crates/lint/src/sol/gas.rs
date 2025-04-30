@@ -1,4 +1,5 @@
 use solar_ast::{Expr, ExprKind};
+use solar_interface::kw::Keccak256;
 use std::ops::ControlFlow;
 
 use super::{AsmKeccak256, ASM_KECCACK256};
@@ -12,7 +13,7 @@ impl<'ast> EarlyLintPass<'ast> for AsmKeccak256 {
     ) -> ControlFlow<()> {
         if let ExprKind::Call(expr, _) = &expr.kind {
             if let ExprKind::Ident(ident) = &expr.kind {
-                if ident.name.as_str() == "keccak256" {
+                if ident.name == Keccak256 {
                     ctx.emit(&ASM_KECCACK256, expr.span);
                 }
             }

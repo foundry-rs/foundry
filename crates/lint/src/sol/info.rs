@@ -19,7 +19,7 @@ impl<'ast> EarlyLintPass<'ast> for VariableMixedCase {
         if var.mutability.is_none() {
             if let Some(name) = var.name {
                 let name = name.as_str();
-                if !is_mixed_case(name) && name.len() > 1 {
+                if !is_mixed_case(name) {
                     ctx.emit(&VARIABLE_MIXED_CASE, var.span);
                 }
             }
@@ -78,22 +78,39 @@ impl<'ast> EarlyLintPass<'ast> for StructPascalCase {
     }
 }
 
-// Check if a string is mixedCase
+/// Check if a string is mixedCase
+///
+/// To avoid false positives like `fn increment()` or `uin256 counter`,
+/// lowercase strings are treated as mixedCase.
 pub fn is_mixed_case(s: &str) -> bool {
+    if s.len() <= 1 {
+        return true;
+    }
+
     let re = Regex::new(r"^[a-z_][a-zA-Z0-9]*$").unwrap();
-    re.is_match(s) && s.chars().any(|c| c.is_uppercase())
+    re.is_match(s)
 }
 
-// Check if a string is PascalCase
+/// Check if a string is PascalCase
 pub fn is_pascal_case(s: &str) -> bool {
+    if s.len() <= 1 {
+        return true;
+    }
+
     let re = Regex::new(r"^[A-Z][a-z]+(?:[A-Z][a-z]+)*$").unwrap();
     re.is_match(s)
 }
 
-// Check if a string is SCREAMING_SNAKE_CASE
+/// Check if a string is SCREAMING_SNAKE_CASE, where
+/// numbers must always be preceeded by an underscode.
 pub fn is_screaming_snake_case(s: &str) -> bool {
+    if s.len() <= 1 {
+        return true;
+    }
+
     let re = Regex::new(r"^[A-Z_][A-Z0-9_]*$").unwrap();
-    re.is_match(s) && s.contains('_')
+    let invalid_re = Regex::new(r"[A-Z][0-9]").unwrap();
+    re.is_match(s) && !invalid_re.is_match(s) 
 }
 
 #[cfg(test)]
@@ -113,12 +130,29 @@ mod test {
             .with_buffer_emitter(true);
 
         let emitted =
-            linter.lint_file(Path::new("testdata/VariableMixedCase.sol")).unwrap().to_string();
+            linter.lint_file(Path::new("testdata/MixedCase.sol")).unwrap().to_string();
         let warnings = emitted.matches(&format!("warning: {}", VARIABLE_MIXED_CASE.id())).count();
         let notes = emitted.matches(&format!("note: {}", VARIABLE_MIXED_CASE.id())).count();
 
         assert_eq!(warnings, 0, "Expected 0 warnings");
-        assert_eq!(notes, 6, "Expected 6 notes");
+        assert_eq!(notes, 5, "Expected 5 notes");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_function_mixed_case() -> eyre::Result<()> {
+        let linter = SolidityLinter::new()
+            .with_lints(Some(vec![FUNCTION_MIXED_CASE]))
+            .with_buffer_emitter(true);
+
+        let emitted =
+            linter.lint_file(Path::new("testdata/MixedCase.sol")).unwrap().to_string();
+        let warnings = emitted.matches(&format!("warning: {}", FUNCTION_MIXED_CASE.id())).count();
+        let notes = emitted.matches(&format!("note: {}", FUNCTION_MIXED_CASE.id())).count();
+
+        assert_eq!(warnings, 0, "Expected 0 warnings");
+        assert_eq!(notes, 3, "Expected 3 notes");
 
         Ok(())
     }
@@ -135,7 +169,7 @@ mod test {
         let notes = emitted.matches(&format!("note: {}", SCREAMING_SNAKE_CASE.id())).count();
 
         assert_eq!(warnings, 0, "Expected 0 warnings");
-        assert_eq!(notes, 10, "Expected 10 notes");
+        assert_eq!(notes, 9, "Expected 9 notes");
 
         Ok(())
     }
@@ -153,23 +187,6 @@ mod test {
 
         assert_eq!(warnings, 0, "Expected 0 warnings");
         assert_eq!(notes, 7, "Expected 7 notes");
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_function_mixed_case() -> eyre::Result<()> {
-        let linter = SolidityLinter::new()
-            .with_lints(Some(vec![FUNCTION_MIXED_CASE]))
-            .with_buffer_emitter(true);
-
-        let emitted =
-            linter.lint_file(Path::new("testdata/FunctionMixedCase.sol")).unwrap().to_string();
-        let warnings = emitted.matches(&format!("warning: {}", FUNCTION_MIXED_CASE.id())).count();
-        let notes = emitted.matches(&format!("note: {}", FUNCTION_MIXED_CASE.id())).count();
-
-        assert_eq!(warnings, 0, "Expected 0 warnings");
-        assert_eq!(notes, 4, "Expected 4 notes");
 
         Ok(())
     }

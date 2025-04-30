@@ -92,15 +92,15 @@ impl<'s> LintContext<'s> {
 
     // Helper method to emit diagnostics easily from passes
     pub fn emit<L: Lint>(&self, lint: &'static L, span: Span) {
-        let msg = if self.desc {
-            format!("{}: {}", lint.id(), lint.description())
+        let msg = if self.desc && lint.help().is_some() {
+            format!("{}\n  --> {}", lint.id(), lint.description())
         } else {
             lint.id().into()
         };
 
         let diag: DiagBuilder<'_, ()> = match lint.help() {
             Some(help) => self.sess.dcx.diag(lint.severity().into(), msg).span(span).help(help),
-            None => self.sess.dcx.diag(lint.severity().into(), msg).span(span),
+            None => self.sess.dcx.diag(lint.severity().into(), msg).span(span).help(lint.description()),
         };
 
         diag.emit();

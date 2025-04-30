@@ -7,9 +7,9 @@ contract ScreamingSnakeCaseTest {
     uint256 constant SCREAMING_SNAKE_CASE = 0;
     uint256 immutable _SCREAMING_SNAKE_CASE_1 = 0;
     uint256 immutable SCREAMING_SNAKE_CASE_1 = 0;
+    uint256 constant SCREAMINGSNAKECASE = 0;
 
     // Fails
-    uint256 constant SCREAMINGSNAKECASE = 0;
     uint256 constant screamingSnakeCase = 0;
     uint256 constant screaming_snake_case = 0;
     uint256 constant ScreamingSnakeCase = 0;
