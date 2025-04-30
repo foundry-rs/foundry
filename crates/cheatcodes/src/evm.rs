@@ -62,6 +62,12 @@ impl RecordAccess {
         self.record_read(target, slot);
         self.writes.entry(target).or_default().push(slot);
     }
+
+    /// Clears the recorded reads and writes.
+    pub fn clear(&mut self) {
+        // Also frees memory.
+        *self = Default::default();
+    }
 }
 
 /// Records the `snapshotGas*` cheatcodes.
@@ -283,7 +289,15 @@ impl Cheatcode for dumpStateCall {
 impl Cheatcode for recordCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        state.accesses = Some(Default::default());
+        state.recording_accesses = true;
+        state.accesses.clear();
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for stopRecordCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        state.recording_accesses = false;
         Ok(Default::default())
     }
 }
@@ -291,16 +305,10 @@ impl Cheatcode for recordCall {
 impl Cheatcode for accessesCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { target } = *self;
-        let result = state
-            .accesses
-            .as_mut()
-            .map(|accesses| {
-                (
-                    &accesses.reads.entry(target).or_default()[..],
-                    &accesses.writes.entry(target).or_default()[..],
-                )
-            })
-            .unwrap_or_default();
+        let result = (
+            state.accesses.reads.entry(target).or_default().as_slice(),
+            state.accesses.writes.entry(target).or_default().as_slice(),
+        );
         Ok(result.abi_encode_params())
     }
 }

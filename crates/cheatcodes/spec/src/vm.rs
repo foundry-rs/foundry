@@ -399,9 +399,14 @@ interface Vm {
 
     // -------- Record Storage --------
 
-    /// Records all storage reads and writes.
+    /// Records all storage reads and writes. Use `accesses` to get the recorded data.
+    /// Subsequent calls to `record` will clear the previous data.
     #[cheatcode(group = Evm, safety = Safe)]
     function record() external;
+
+    /// Stops recording storage reads and writes.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function stopRecord() external;
 
     /// Gets all accessed reads and write slot from a `vm.record` session, for a given address.
     #[cheatcode(group = Evm, safety = Safe)]
