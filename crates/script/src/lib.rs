@@ -511,7 +511,7 @@ impl Provider for ScriptArgs {
     }
 }
 
-#[derive(Default, Serialize)]
+#[derive(Default, Serialize, Clone)]
 pub struct ScriptResult {
     pub success: bool,
     #[serde(rename = "raw_logs")]
