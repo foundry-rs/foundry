@@ -9,9 +9,8 @@ use figment::{
     value::{Dict, Map},
     Error, Metadata, Profile, Provider,
 };
-use heck::ToKebabCase;
 use foundry_block_explorers::EtherscanApiVersion;
-use inflector::Inflector;
+use heck::ToKebabCase;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     collections::BTreeMap,
@@ -195,6 +194,8 @@ impl EtherscanConfig {
     ) -> Result<ResolvedEtherscanConfig, EtherscanConfigError> {
         let Self { chain, mut url, key, api_version } = self;
 
+        let api_version_string = api_version.map(|v| v.to_string());
+
         if let Some(url) = &mut url {
             *url = interpolate(url)?;
         }
@@ -224,26 +225,22 @@ impl EtherscanConfig {
         match (chain, url) {
             (Some(chain), Some(api_url)) => Ok(ResolvedEtherscanConfig {
                 api_url,
-                api_version: api_version.map(|v| v.to_string()),
+                api_version: api_version_string,
                 browser_url: chain.etherscan_urls().map(|(_, url)| url.to_string()),
                 key,
                 chain: Some(chain),
             }),
-            (Some(chain), None) => ResolvedEtherscanConfig::create(
-                key,
-                chain,
-                api_version.map(|v| v.to_string()),
-            )
-            .ok_or_else(|| {
-                let msg = alias.map(|a| format!(" `{a}`")).unwrap_or_default();
-                EtherscanConfigError::UnknownChain(msg, chain)
-            }),
+            (Some(chain), None) => ResolvedEtherscanConfig::create(key, chain, api_version_string)
+                .ok_or_else(|| {
+                    let msg = alias.map(|a| format!(" `{a}`")).unwrap_or_default();
+                    EtherscanConfigError::UnknownChain(msg, chain)
+                }),
             (None, Some(api_url)) => Ok(ResolvedEtherscanConfig {
                 api_url,
                 browser_url: None,
                 key,
                 chain: None,
-                api_version: api_version.map(|v| v.to_string()),
+                api_version: api_version_string,
             }),
             (None, None) => {
                 let msg = alias
