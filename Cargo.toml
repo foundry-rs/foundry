@@ -324,6 +324,7 @@ jiff = "0.2"
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
+foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers", rev = "8c03122" }
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
 # alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }

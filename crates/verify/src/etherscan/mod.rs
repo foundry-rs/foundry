@@ -591,10 +591,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(
-            client.etherscan_api_url().as_str(),
-            "https://api.etherscan.io/v2/api"
-        );
+        assert_eq!(client.etherscan_api_url().as_str(), "https://api.etherscan.io/v2/api");
         assert!(format!("{client:?}").contains("dummykey"));
 
         let args: VerifyArgs = VerifyArgs::parse_from([
