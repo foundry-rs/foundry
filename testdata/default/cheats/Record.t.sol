@@ -72,10 +72,10 @@ contract RecordTest is DSTest {
         assertEq(writes[0], bytes32(uint256(1)), "key for write is incorrect");
 
         vm.stopRecord();
-        NestedRecordAccess inner = target.record();
+        inner = target.record();
 
         // Verify that there are no new Records
-        (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(target));
+        (reads, writes) = vm.accesses(address(target));
 
         assertEq(reads.length, 2, "number of reads is incorrect");
         assertEq(reads[0], bytes32(uint256(1)), "key for read 0 is incorrect");
@@ -88,7 +88,7 @@ contract RecordTest is DSTest {
         vm.stopRecord();
 
         // verify reset all records
-        (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(target));
+        (reads, writes) = vm.accesses(address(target));
 
         assertEq(reads.length, 0, "number of reads is incorrect");
         assertEq(writes.length, 0, "number of writes is incorrect");
