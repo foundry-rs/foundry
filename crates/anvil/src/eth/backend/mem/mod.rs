@@ -2930,8 +2930,7 @@ impl Backend {
                 drop(write_guard);
             }
 
-            let state_db = state_db
-                .ok_or(BlockchainError::DataUnavailable)?;
+            let state_db = state_db.ok_or(BlockchainError::DataUnavailable)?;
             let db_full = state_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
             db_full.clone()
         };
