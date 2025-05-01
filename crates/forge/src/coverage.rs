@@ -144,8 +144,7 @@ impl CoverageReporter for LcovReporter {
                     }
                     // Add lines / statement hits only once.
                     CoverageItemKind::Line | CoverageItemKind::Statement => {
-                        if !recorded_lines.contains(&line) {
-                            recorded_lines.insert(line);
+                        if recorded_lines.insert(line) {
                             writeln!(out, "DA:{line},{hits}")?;
                         }
                     }
