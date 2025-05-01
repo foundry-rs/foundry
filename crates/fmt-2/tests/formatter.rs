@@ -8,7 +8,7 @@ use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 #[track_caller]
 fn format(source: &str, path: &Path, config: FormatterConfig) -> String {
-    match forge_fmt_2::format_source(source, Some(path), config) {
+    match forge_fmt_2::format_source(source, Some(path), config).into_result() {
         Ok(formatted) => formatted,
         Err(e) => panic!("failed to format {path:?}: {e}"),
     }

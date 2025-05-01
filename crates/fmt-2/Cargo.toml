@@ -19,8 +19,8 @@ solar-parse.workspace = true
 
 # alloy-primitives.workspace = true
 itertools.workspace = true
-thiserror.workspace = true
 tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [dev-dependencies]
 itertools.workspace = true

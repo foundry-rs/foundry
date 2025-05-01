@@ -1,6 +1,6 @@
 use super::comment::{Comment, CommentStyle};
 use solar_parse::{
-    ast::Span,
+    ast::{CommentKind, Span},
     interface::{source_map::SourceFile, BytePos, CharPos, SourceMap},
     lexer::token::RawTokenKind as TokenKind,
 };
@@ -102,6 +102,7 @@ fn gather_comments(sf: &SourceFile) -> Vec<Comment> {
                         let pos = pos + idx;
                         comments.push(Comment {
                             is_doc: false,
+                            kind: CommentKind::Line,
                             style: CommentStyle::BlankLine,
                             lines: vec![],
                             span: make_span(pos..pos),
@@ -117,6 +118,7 @@ fn gather_comments(sf: &SourceFile) -> Vec<Comment> {
                     (false, false) => CommentStyle::Isolated,
                     (true, false) => CommentStyle::Trailing,
                 };
+                let kind = CommentKind::Block;
 
                 // Count the number of chars since the start of the line by rescanning.
                 let pos_in_file = start_bpos + BytePos(pos as u32);
@@ -125,11 +127,12 @@ fn gather_comments(sf: &SourceFile) -> Vec<Comment> {
                 let col = CharPos(text[line_begin_pos..pos].chars().count());
 
                 let lines = split_block_comment_into_lines(token_text, col);
-                comments.push(Comment { is_doc, style, lines, span })
+                comments.push(Comment { is_doc, kind, style, lines, span })
             }
             TokenKind::LineComment { is_doc } => {
                 comments.push(Comment {
                     is_doc,
+                    kind: CommentKind::Line,
                     style: if code_to_the_left {
                         CommentStyle::Trailing
                     } else {

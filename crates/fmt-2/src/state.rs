@@ -13,6 +13,8 @@ use solar_parse::{
 };
 use std::borrow::Cow;
 
+// TODO(dani): trailing comments should always be passed Some
+
 pub(super) struct State<'sess, 'ast> {
     pub(crate) s: pp::Printer,
     ind: isize,
@@ -1096,6 +1098,9 @@ impl<'ast> State<'_, 'ast> {
                 self.space();
                 self.word(": ");
                 self.print_expr(els);
+                self.neverbreak();
+                self.s.offset(-self.ind);
+                self.end();
             }
             ast::ExprKind::Tuple(exprs) => self.print_tuple(exprs.iter(), |this, expr| {
                 if let Some(expr) = expr {
@@ -1183,7 +1188,10 @@ impl<'ast> State<'_, 'ast> {
             return;
         }
         match kind {
-            ast::StmtKind::Assembly(asm) => todo!(),
+            ast::StmtKind::Assembly(asm) => {
+                // TODO(dani): implement yul
+                self.word("<assembly>");
+            }
             ast::StmtKind::DeclSingle(var) => self.print_var(var),
             ast::StmtKind::DeclMulti(vars, expr) => {
                 self.print_tuple(vars.iter(), |this, var| {
@@ -1242,7 +1250,7 @@ impl<'ast> State<'_, 'ast> {
                 if let Some(els) = els {
                     self.word("else ");
                     self.print_stmt_as_block(els, true);
-                    todo!()
+                    // TODO(dani): handle nested else if correctly
                 }
 
                 self.end();
@@ -1255,7 +1263,10 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
             ast::StmtKind::Revert(path, args) => self.print_emit_revert("revert", path, args),
-            ast::StmtKind::Try(stmt_try) => todo!(),
+            ast::StmtKind::Try(stmt_try) => {
+                // TODO(dani): implement try
+                self.word("<try>");
+            }
             ast::StmtKind::UncheckedBlock(block) => {
                 self.word("unchecked ");
                 self.print_block(block, stmt.span);

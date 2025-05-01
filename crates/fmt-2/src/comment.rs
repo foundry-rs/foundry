@@ -19,15 +19,38 @@ pub enum CommentStyle {
 
 #[derive(Clone, Debug)]
 pub struct Comment {
-    pub is_doc: bool,
-    pub style: CommentStyle,
     pub lines: Vec<String>,
     pub span: Span,
+    pub style: CommentStyle,
+    pub is_doc: bool,
+    pub kind: CommentKind,
 }
 
 impl Comment {
     pub fn pos(&self) -> BytePos {
         self.span.lo()
+    }
+
+    pub fn prefix(&self) -> Option<&'static str> {
+        if self.lines.is_empty() {
+            return None;
+        }
+        Some(match (self.kind, self.is_doc) {
+            (CommentKind::Line, false) => "//",
+            (CommentKind::Line, true) => "///",
+            (CommentKind::Block, false) => "/*",
+            (CommentKind::Block, true) => "/**",
+        })
+    }
+
+    pub fn suffix(&self) -> Option<&'static str> {
+        if self.lines.is_empty() {
+            return None;
+        }
+        match self.kind {
+            CommentKind::Line => None,
+            CommentKind::Block => Some("*/"),
+        }
     }
 }
 

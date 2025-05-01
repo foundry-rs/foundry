@@ -112,7 +112,7 @@ impl Printer {
 
 impl Token {
     pub(crate) fn is_hardbreak(&self) -> bool {
-        if let Token::Break(BreakToken {
+        if let Self::Break(BreakToken {
             offset,
             blank_space,
             pre_break: _,

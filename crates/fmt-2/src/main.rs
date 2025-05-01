@@ -5,6 +5,10 @@
 use std::{io::Read, path::PathBuf};
 
 fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
     let args = std::env::args().collect::<Vec<_>>();
     let (src, path) = if args.len() < 2 || args[1] == "-" {
         let mut s = String::new();
@@ -15,13 +19,16 @@ fn main() {
         (std::fs::read_to_string(&path).unwrap(), Some(path))
     };
     let config = foundry_config::Config::load().unwrap();
-    match forge_fmt_2::format_source(&src, path.as_deref(), config.fmt) {
-        Ok(formatted) => {
-            print!("{formatted}");
-        }
-        Err(e) => {
-            eprintln!("failed formatting: {e}");
+    let result = forge_fmt_2::format_source(&src, path.as_deref(), config.fmt);
+    if let Some(formatted) = result.ok_ref() {
+        print!("{formatted}");
+    }
+    if let Some(diagnostics) = result.err_ref() {
+        if result.is_err() {
+            eprintln!("failed formatting:\n{diagnostics}");
             std::process::exit(1);
+        } else {
+            eprintln!("formatted with output:\n{diagnostics}");
         }
     }
 }

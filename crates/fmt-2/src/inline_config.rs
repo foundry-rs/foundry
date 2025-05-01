@@ -1,4 +1,3 @@
-use itertools::Itertools;
 use solar_parse::{ast::Span, lexer::token::RawTokenKind};
 use std::{fmt, str::FromStr};
 
@@ -65,11 +64,21 @@ pub struct InlineConfig {
 impl InlineConfig {
     /// Build a new inline config with an iterator of inline config items and their locations in a
     /// source file.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `items` is not sorted in ascending order of [`Span`]s.
     pub fn new(items: impl IntoIterator<Item = (Span, InlineConfigItem)>, src: &str) -> Self {
         let mut disabled_ranges = vec![];
         let mut disabled_range_start = None;
         let mut disabled_depth = 0usize;
-        for (sp, item) in items.into_iter().sorted_by_key(|(loc, _)| loc.lo().to_usize()) {
+        let mut prev_sp = Span::DUMMY;
+        for (sp, item) in items {
+            if cfg!(debug_assertions) {
+                assert!(sp >= prev_sp, "InlineConfig::new: unsorted items: {sp:?} < {prev_sp:?}");
+                prev_sp = sp;
+            }
+
             match item {
                 InlineConfigItem::DisableNextItem => {
                     use RawTokenKind::*;
