@@ -2265,28 +2265,21 @@ impl Backend {
                 .await?
                 .map(|block| (block.header.hash, block))
             {
-                let read_guard = self.states.read();
-                let mut state_db = read_guard.get_state(&block_hash);
+                let read_guard = self.states.upgradable_read();
 
-                let mut write_guard = self.states.write();
-                if state_db.is_none() {
-                    state_db = write_guard.get_on_disk_state(&block_hash);
+                if read_guard.has_state(&block_hash) {
+                    let state_db = read_guard.get_state(&block_hash);
+
+                    if let Some(state) = state_db {
+                        return Ok(get_block_env(state, block_number, block, f));
+                    }
                 } else {
-                    drop(write_guard);
-                }
+                    let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+                    let state_db = write_guard.get_on_disk_state(&block_hash);
 
-                if let Some(state) = state_db {
-                    let block = BlockEnv {
-                        number: block_number,
-                        coinbase: block.header.beneficiary,
-                        timestamp: U256::from(block.header.timestamp),
-                        difficulty: block.header.difficulty,
-                        prevrandao: block.header.mix_hash,
-                        basefee: U256::from(block.header.base_fee_per_gas.unwrap_or_default()),
-                        gas_limit: U256::from(block.header.gas_limit),
-                        ..Default::default()
-                    };
-                    return Ok(f(Box::new(state), block));
+                    if let Some(state) = state_db {
+                        return Ok(get_block_env(state, block_number, block, f));
+                    }
                 }
             }
 
@@ -2963,6 +2956,24 @@ impl Backend {
         }
         Ok(())
     }
+}
+
+fn get_block_env<F, T>(state: &StateDb, block_number: U256, block: AnyRpcBlock, f: F) -> T
+    where
+    F: FnOnce(Box<dyn MaybeFullDatabase + '_>, BlockEnv) -> T,
+{
+    let block = BlockEnv {
+        number: block_number,
+        coinbase: block.header.beneficiary,
+        timestamp: U256::from(block.header.timestamp),
+        difficulty: block.header.difficulty,
+        prevrandao: block.header.mix_hash,
+        basefee: U256::from(block.header.base_fee_per_gas.unwrap_or_default()),
+        gas_limit: U256::from(block.header.gas_limit),
+        ..Default::default()
+    };
+    
+    f(Box::new(state), block)
 }
 
 fn return_state_or_throw_err(db: Option<&StateDb>) -> Result<HashMap<Address, DbAccount, alloy_primitives::map::foldhash::fast::RandomState>, BlockchainError>{
