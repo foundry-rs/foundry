@@ -1049,11 +1049,12 @@ script_execution_protection = true
 chains = "all"
 endpoints = "all"
 
-[profile.default.resolc]
-resolc_compile = false
 [[profile.default.fs_permissions]]
 access = "read"
 path = "out"
+
+[profile.default.resolc]
+resolc_compile = false
 
 [fmt]
 line_length = 120
@@ -1304,11 +1305,11 @@ exclude = []
   "eof": false,
   "additional_compiler_profiles": [],
   "compilation_restrictions": [],
+  "script_execution_protection": true,
   "resolc": {
     "resolc_compile": false,
     "resolc": null
   }
-  "script_execution_protection": true
 }
 
 "#]]);
