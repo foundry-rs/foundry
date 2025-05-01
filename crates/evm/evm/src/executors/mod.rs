@@ -270,7 +270,7 @@ impl Executor {
     }
 
     #[inline]
-    pub fn set_script(&mut self, script_address: Address) {
+    pub fn set_script_execution(&mut self, script_address: Address) {
         self.inspector_mut().script(script_address);
     }
 

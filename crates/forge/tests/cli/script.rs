@@ -2662,6 +2662,17 @@ their addresses should not be relied upon. Error: script failed: <empty revert d
 ...
 
 "#]]);
+
+    // Disable script protection.
+    prj.update_config(|config| {
+        config.script_execution_protection = false;
+    });
+    cmd.assert_success().stdout_eq(str![[r#"
+...
+Script ran successfully.
+...
+
+"#]]);
 });
 
 // Tests that script warns if no tx to broadcast.
