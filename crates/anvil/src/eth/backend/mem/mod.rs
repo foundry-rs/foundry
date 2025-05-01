@@ -1,7 +1,7 @@
 //! In-memory blockchain backend.
 
 use self::state::trie_storage;
-use super::executor::new_evm_with_inspector_ref;
+use super::{db::StateDb, executor::new_evm_with_inspector_ref};
 use crate::{
     config::PruneStateHistoryConfig,
     eth::{
@@ -81,7 +81,7 @@ use anvil_core::eth::{
 use anvil_rpc::error::RpcError;
 use chrono::Datelike;
 use eyre::{Context, Result};
-use flate2::{read::GzDecoder, write::GzEncoder, Compression};
+use flate2::{read::GzDecoder, write::{self, GzEncoder}, Compression};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertStateSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
@@ -99,9 +99,9 @@ use foundry_evm::{
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use revm::{
-    db::WrapDatabaseRef,
+    db::{DbAccount, WrapDatabaseRef},
     interpreter::Host,
     primitives::{BlobExcessGasAndPrice, HashMap, OptimismFields, ResultAndState},
     DatabaseCommit,
@@ -2920,19 +2920,17 @@ impl Backend {
         // Get the database at the common block
         let common_state = {
             let hash = &common_block.header.hash_slow();
-            let read_guard = self.states.read();
-            let mut state_db = read_guard.get_state(hash);
+            let read_guard = self.states.upgradable_read();
+            if read_guard.has_state(hash) {
+                let db = read_guard.get_state(hash);
 
-            let mut write_guard = self.states.write();
-            if state_db.is_none() {
-                state_db = write_guard.get_on_disk_state(hash);
+                return_state_or_throw_err(db).unwrap()
             } else {
-                drop(write_guard);
-            }
+                let write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+                let db = write_guard.get_state(hash);
 
-            let state_db = state_db.ok_or(BlockchainError::DataUnavailable)?;
-            let db_full = state_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
-            db_full.clone()
+                return_state_or_throw_err(db).unwrap()
+            }
         };
 
         {
@@ -2965,6 +2963,12 @@ impl Backend {
         }
         Ok(())
     }
+}
+
+fn return_state_or_throw_err(db: Option<&StateDb>) -> Result<HashMap<Address, DbAccount, alloy_primitives::map::foldhash::fast::RandomState>, BlockchainError>{
+    let state_db = db.ok_or(BlockchainError::DataUnavailable)?;
+    let db_full = state_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
+    Ok(db_full.clone())
 }
 
 /// Get max nonce from transaction pool by address
