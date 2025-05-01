@@ -200,19 +200,6 @@ impl InMemoryBlockStates {
         None
     }
 
-    /// Returns the state for the given `hash` if present
-    pub fn get(&mut self, hash: &B256) -> Option<&StateDb> {
-        self.states.get(hash).or_else(|| {
-            if let Some(state) = self.on_disk_states.get_mut(hash) {
-                if let Some(cached) = self.disk_cache.read(*hash) {
-                    state.init_from_state_snapshot(cached);
-                    return Some(state);
-                }
-            }
-            None
-        })
-    }
-
     /// Sets the maximum number of stats we keep in memory
     pub fn set_cache_limit(&mut self, limit: usize) {
         self.in_memory_limit = limit;
