@@ -1,4 +1,4 @@
-use super::ScriptResult;
+use super::{ScriptConfig, ScriptResult};
 use crate::build::ScriptPredeployLibraries;
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
@@ -33,9 +33,8 @@ impl ScriptRunner {
         libraries: &ScriptPredeployLibraries,
         code: Bytes,
         setup: bool,
-        sender_nonce: u64,
+        script_config: &ScriptConfig,
         is_broadcast: bool,
-        need_create2_deployer: bool,
     ) -> Result<(Address, ScriptResult)> {
         trace!(target: "script", "executing setUP()");
 
@@ -45,11 +44,12 @@ impl ScriptRunner {
                 self.executor.set_balance(self.evm_opts.sender, U256::MAX)?;
             }
 
-            if need_create2_deployer {
+            if script_config.evm_opts.fork_url.is_none() {
                 self.executor.deploy_create2_deployer()?;
             }
         }
 
+        let sender_nonce = script_config.sender_nonce;
         self.executor.set_nonce(self.evm_opts.sender, sender_nonce)?;
 
         // We max out their balance so that they can deploy and make calls.
@@ -155,6 +155,11 @@ impl ScriptRunner {
 
         if self.evm_opts.sender == CALLER {
             self.executor.set_nonce(self.evm_opts.sender, prev_sender_nonce)?;
+        }
+
+        // set script address to be used by execution inspector
+        if script_config.config.script_execution_protection {
+            self.executor.set_script_execution(address);
         }
 
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)));

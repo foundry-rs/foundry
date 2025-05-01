@@ -150,7 +150,7 @@ jobs:
         run: |
           resolc --version
       - name: Forge RPC cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.foundry/cache

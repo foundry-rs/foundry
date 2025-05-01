@@ -5,8 +5,6 @@
 version = 2
 yanked = "warn"
 ignore = [
-    # proc-macro-error is unmaintained
-    "RUSTSEC-2024-0370",
     # https://rustsec.org/advisories/RUSTSEC-2024-0436 paste! is unmaintained
     "RUSTSEC-2024-0436",
     # https://rustsec.org/advisories/RUSTSEC-2024-0437 protobuf! Crash due to uncontrolled recursion in protobuf crate.

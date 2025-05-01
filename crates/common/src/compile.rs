@@ -173,10 +173,14 @@ impl ProjectCompiler {
     {
         self.project_root = project.root().to_path_buf();
 
-        // TODO: Avoid process::exit
+        // TODO: Avoid using std::process::exit(0).
+        // Replacing this with a return (e.g., Ok(ProjectCompileOutput::default())) would be more
+        // idiomatic, but it currently requires a `Default` bound on `C::Language`, which
+        // breaks compatibility with downstream crates like `foundry-cli`. This would need a
+        // broader refactor across the call chain. Leaving it as-is for now until a larger
+        // refactor is feasible.
         if !project.paths.has_input_files() && self.files.is_empty() {
             sh_println!("Nothing to compile")?;
-            // nothing to do here
             std::process::exit(0);
         }
 
@@ -220,7 +224,7 @@ impl ProjectCompiler {
         let quiet = self.quiet.unwrap_or(false);
         let bail = self.bail.unwrap_or(true);
 
-        let output = with_compilation_reporter(self.quiet.unwrap_or(false), || {
+        let output = with_compilation_reporter(quiet, || {
             tracing::debug!("compiling project");
 
             let timer = Instant::now();
@@ -245,7 +249,7 @@ impl ProjectCompiler {
                 }
             }
 
-            self.handle_output(&output);
+            self.handle_output(&output)?;
         }
 
         Ok(output)
@@ -255,7 +259,7 @@ impl ProjectCompiler {
     fn handle_output<C: Compiler<CompilerContract = Contract>>(
         &self,
         output: &ProjectCompileOutput<C>,
-    ) {
+    ) -> Result<()> {
         let print_names = self.print_names.unwrap_or(false);
         let print_sizes = self.print_sizes.unwrap_or(false);
 
@@ -267,17 +271,17 @@ impl ProjectCompiler {
             }
 
             if shell::is_json() {
-                let _ = sh_println!("{}", serde_json::to_string(&artifacts).unwrap());
+                sh_println!("{}", serde_json::to_string(&artifacts).unwrap())?;
             } else {
                 for (version, names) in artifacts {
-                    let _ = sh_println!(
+                    sh_println!(
                         "  compiler version: {}.{}.{}",
                         version.major,
                         version.minor,
                         version.patch
-                    );
+                    )?;
                     for name in names {
-                        let _ = sh_println!("    - {name}");
+                        sh_println!("    - {name}")?;
                     }
                 }
             }
@@ -286,7 +290,7 @@ impl ProjectCompiler {
         if print_sizes {
             // add extra newline if names were already printed
             if print_names && !shell::is_json() {
-                let _ = sh_println!();
+                sh_println!()?;
             }
 
             let mut size_report = SizeReport::new(
@@ -337,19 +341,22 @@ impl ProjectCompiler {
                 }
             }
 
-            let _ = sh_println!("{size_report}");
+            sh_println!("{size_report}")?;
 
-            // TODO: avoid process::exit
-            // exit with error if any contract exceeds the size limit, excluding test contracts.
-            if size_report.exceeds_runtime_size_limit() {
-                std::process::exit(1);
-            }
-
+            eyre::ensure!(
+                !size_report.exceeds_runtime_size_limit(),
+                "some contracts exceed the runtime size limit \
+                 (EIP-170: {CONTRACT_RUNTIME_SIZE_LIMIT} bytes)"
+            );
             // Check size limits only if not ignoring EIP-3860
-            if !self.ignore_eip_3860 && size_report.exceeds_initcode_size_limit() {
-                std::process::exit(1);
-            }
+            eyre::ensure!(
+                self.ignore_eip_3860 || !size_report.exceeds_initcode_size_limit(),
+                "some contracts exceed the initcode size limit \
+                 (EIP-3860: {CONTRACT_INITCODE_SIZE_LIMIT} bytes)"
+            );
         }
+
+        Ok(())
     }
 }
 

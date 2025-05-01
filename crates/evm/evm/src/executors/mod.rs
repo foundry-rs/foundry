@@ -258,6 +258,11 @@ impl Executor {
     }
 
     #[inline]
+    pub fn set_script_execution(&mut self, script_address: Address) {
+        self.inspector_mut().script(script_address);
+    }
+
+    #[inline]
     pub fn set_trace_printer(&mut self, trace_printer: bool) -> &mut Self {
         self.inspector_mut().print(trace_printer);
         self

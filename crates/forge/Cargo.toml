@@ -35,7 +35,6 @@ rayon.workspace = true
 serde.workspace = true
 tracing.workspace = true
 yansi.workspace = true
-humantime-serde = "1.1.1"
 chrono.workspace = true
 
 # bin
@@ -121,4 +120,5 @@ default = ["jemalloc"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["dep:tikv-jemallocator"]
 aws-kms = ["foundry-wallets/aws-kms"]
+gcp-kms = ["foundry-wallets/gcp-kms"]
 isolate-by-default = ["foundry-config/isolate-by-default"]

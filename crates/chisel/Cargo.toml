@@ -61,7 +61,6 @@ walkdir.workspace = true
 tikv-jemallocator = { workspace = true, optional = true }
 
 [dev-dependencies]
-serial_test = "3"
 tracing-subscriber.workspace = true
 
 [features]

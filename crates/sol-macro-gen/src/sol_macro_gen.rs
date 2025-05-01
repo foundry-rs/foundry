@@ -119,8 +119,15 @@ impl MultiSolMacroGen {
 
         let tokens = match kind {
             SolInputKind::Sol(mut file) => {
-                let sol_attr: syn::Attribute = syn::parse_quote! {
-                    #[sol(rpc, alloy_sol_types = alloy::sol_types, alloy_contract = alloy::contract, all_derives = #all_derives)]
+                let sol_attr: syn::Attribute = if all_derives {
+                    syn::parse_quote! {
+                            #[sol(rpc, alloy_sol_types = alloy::sol_types, alloy_contract =
+                    alloy::contract, all_derives = true, extra_derives(serde::Serialize,
+                    serde::Deserialize))]     }
+                } else {
+                    syn::parse_quote! {
+                            #[sol(rpc, alloy_sol_types = alloy::sol_types, alloy_contract =
+                    alloy::contract)]     }
                 };
                 file.attrs.push(sol_attr);
                 expand(file).wrap_err("failed to expand")?

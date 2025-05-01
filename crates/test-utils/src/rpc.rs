@@ -10,18 +10,26 @@ use std::sync::{
     LazyLock,
 };
 
+fn shuffled<T>(mut vec: Vec<T>) -> Vec<T> {
+    vec.shuffle(&mut rand::thread_rng());
+    vec
+}
+
 // List of public archive reth nodes to use
 static RETH_ARCHIVE_HOSTS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    let mut hosts = vec!["reth-ethereum.ithaca.xyz"];
-    hosts.shuffle(&mut rand::thread_rng());
-    hosts
+    shuffled(vec![
+        //
+        "reth-ethereum.ithaca.xyz",
+    ])
 });
 
 // List of public reth nodes to use (archive and non archive)
 static RETH_HOSTS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    let mut hosts = vec!["reth-ethereum.ithaca.xyz", "reth-ethereum-full.ithaca.xyz"];
-    hosts.shuffle(&mut rand::thread_rng());
-    hosts
+    shuffled(vec![
+        //
+        "reth-ethereum.ithaca.xyz",
+        "reth-ethereum-full.ithaca.xyz",
+    ])
 });
 
 // List of general purpose DRPC keys to rotate through
@@ -40,7 +48,7 @@ static DRPC_KEYS: LazyLock<Vec<String>> = LazyLock::new(|| {
 
 // List of etherscan keys for mainnet
 static ETHERSCAN_MAINNET_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    let mut keys = vec![
+    shuffled(vec![
         "MCAUM7WPE9XP5UQMZPCKIBUJHPM1C24FP6",
         "JW6RWCG2C5QF8TANH4KC7AYIF1CX7RB5D1",
         "ZSMDY6BI2H55MBE3G9CUUQT4XYUDBB6ZSK",
@@ -53,14 +61,16 @@ static ETHERSCAN_MAINNET_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         "ZUB97R31KSYX7NYVW6224Q6EYY6U56H591",
         // Optimism
         // "JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46",
-    ];
-    keys.shuffle(&mut rand::thread_rng());
-    keys
+    ])
 });
 
 // List of etherscan keys for Optimism.
-static ETHERSCAN_OPTIMISM_KEYS: LazyLock<Vec<&'static str>> =
-    LazyLock::new(|| vec!["JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46"]);
+static ETHERSCAN_OPTIMISM_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    shuffled(vec![
+        //
+        "JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46",
+    ])
+});
 
 /// Returns the next index to use.
 fn next_idx() -> usize {
