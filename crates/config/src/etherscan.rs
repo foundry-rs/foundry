@@ -330,14 +330,16 @@ impl ResolvedEtherscanConfig {
         }
 
         let api_url = into_url(&api_url)?;
-        let parsed_api_version = EtherscanApiVersion::try_from(api_version.unwrap_or_default())?;
+        let parsed_api_version = api_version
+            .map(EtherscanApiVersion::try_from)
+            .transpose()?;
         let client = reqwest::Client::builder()
             .user_agent(ETHERSCAN_USER_AGENT)
             .tls_built_in_root_certs(api_url.scheme() == "https")
             .build()?;
         foundry_block_explorers::Client::builder()
             .with_client(client)
-            .with_api_version(parsed_api_version)
+            .with_api_version(parsed_api_version.unwrap_or_default())
             .with_api_key(api_key)
             .with_api_url(api_url)?
             // the browser url is not used/required by the client so we can simply set the
