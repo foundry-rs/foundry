@@ -81,7 +81,7 @@ use anvil_core::eth::{
 use anvil_rpc::error::RpcError;
 use chrono::Datelike;
 use eyre::{Context, Result};
-use flate2::{read::GzDecoder, write::{self, GzEncoder}, Compression};
+use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use foundry_evm::{
     backend::{DatabaseError, DatabaseResult, RevertStateSnapshotAction},
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
@@ -99,7 +99,7 @@ use foundry_evm::{
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
-use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
+use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::{
     db::{DbAccount, WrapDatabaseRef},
     interpreter::Host,
@@ -2959,7 +2959,7 @@ impl Backend {
 }
 
 fn get_block_env<F, T>(state: &StateDb, block_number: U256, block: AnyRpcBlock, f: F) -> T
-    where
+where
     F: FnOnce(Box<dyn MaybeFullDatabase + '_>, BlockEnv) -> T,
 {
     let block = BlockEnv {
@@ -2972,11 +2972,16 @@ fn get_block_env<F, T>(state: &StateDb, block_number: U256, block: AnyRpcBlock, 
         gas_limit: U256::from(block.header.gas_limit),
         ..Default::default()
     };
-    
+
     f(Box::new(state), block)
 }
 
-fn return_state_or_throw_err(db: Option<&StateDb>) -> Result<HashMap<Address, DbAccount, alloy_primitives::map::foldhash::fast::RandomState>, BlockchainError>{
+fn return_state_or_throw_err(
+    db: Option<&StateDb>,
+) -> Result<
+    HashMap<Address, DbAccount, alloy_primitives::map::foldhash::fast::RandomState>,
+    BlockchainError,
+> {
     let state_db = db.ok_or(BlockchainError::DataUnavailable)?;
     let db_full = state_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
     Ok(db_full.clone())
