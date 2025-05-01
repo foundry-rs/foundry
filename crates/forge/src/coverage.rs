@@ -1,6 +1,6 @@
 //! Coverage reports.
 
-use alloy_primitives::map::HashMap;
+use alloy_primitives::map::{HashMap, HashSet};
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Attribute, Cell, Color, Row, Table};
 use evm_disassembler::disassemble_bytes;
 use foundry_common::fs;
@@ -118,6 +118,8 @@ impl CoverageReporter for LcovReporter {
             writeln!(out, "TN:")?;
             writeln!(out, "SF:{}", path.display())?;
 
+            let mut recorded_lines = HashSet::new();
+
             for item in items {
                 let line = item.loc.lines.start;
                 // `lines` is half-open, so we need to subtract 1 to get the last included line.
@@ -140,8 +142,11 @@ impl CoverageReporter for LcovReporter {
                             writeln!(out, "FNDA:{hits},{name}")?;
                         }
                     }
-                    CoverageItemKind::Line => {
-                        writeln!(out, "DA:{line},{hits}")?;
+                    // Add lines / statement hits only once.
+                    CoverageItemKind::Line | CoverageItemKind::Statement => {
+                        if recorded_lines.insert(line) {
+                            writeln!(out, "DA:{line},{hits}")?;
+                        }
                     }
                     CoverageItemKind::Branch { branch_id, path_id, .. } => {
                         writeln!(
@@ -150,9 +155,6 @@ impl CoverageReporter for LcovReporter {
                             if hits == 0 { "-".to_string() } else { hits.to_string() }
                         )?;
                     }
-                    // Statements are not in the LCOV format.
-                    // We don't add them in order to avoid doubling line hits.
-                    CoverageItemKind::Statement => {}
                 }
             }
 
