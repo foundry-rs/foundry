@@ -11,7 +11,7 @@ use solar_parse::{
     interface::{BytePos, SourceMap},
     Cursor,
 };
-use std::borrow::Cow;
+use std::{borrow::Cow, ops::Deref};
 
 // TODO(dani): trailing comments should always be passed Some
 
@@ -215,6 +215,14 @@ impl<'sess> State<'sess, '_> {
         F: FnMut(&mut Self, T),
     {
         self.commasep(token::Delimiter::Parenthesis, values, print);
+    }
+
+    fn print_array<I, T, F>(&mut self, values: I, print: F)
+    where
+        I: IntoIterator<Item = T>,
+        F: FnMut(&mut Self, T),
+    {
+        self.commasep(token::Delimiter::Bracket, values, print);
     }
 
     fn commasep<I, T, F>(&mut self, delim: token::Delimiter, values: I, mut print: F)
@@ -982,20 +990,7 @@ impl<'ast> State<'_, 'ast> {
             if self.config.override_spacing {
                 self.nbsp();
             }
-            self.s.cbox(self.ind);
-            self.word("(");
-            self.zerobreak();
-            for (pos, path) in paths.iter().delimited() {
-                self.print_path(path);
-                if !pos.is_last {
-                    self.word(",");
-                    self.space();
-                }
-            }
-            self.zerobreak();
-            self.s.offset(-self.ind);
-            self.word(")");
-            self.end();
+            self.print_tuple(paths.iter().map(Deref::deref), Self::print_path);
         }
     }
 
@@ -1008,11 +1003,9 @@ impl<'ast> State<'_, 'ast> {
         }
 
         match kind {
-            ast::ExprKind::Array(exprs) => self.commasep(
-                token::Delimiter::Bracket,
-                exprs.iter().map(std::ops::Deref::deref),
-                Self::print_expr,
-            ),
+            ast::ExprKind::Array(exprs) => {
+                self.print_array(exprs.iter().map(Deref::deref), Self::print_expr)
+            }
             ast::ExprKind::Assign(lhs, None, rhs) => {
                 self.ibox(0);
                 self.print_expr(lhs);
@@ -1148,7 +1141,7 @@ impl<'ast> State<'_, 'ast> {
 
         match kind {
             ast::CallArgsKind::Unnamed(exprs) => {
-                self.print_tuple(exprs.iter().map(std::ops::Deref::deref), Self::print_expr);
+                self.print_tuple(exprs.iter().map(Deref::deref), Self::print_expr);
             }
             ast::CallArgsKind::Named(named_args) => {
                 self.word("(");
@@ -1285,15 +1278,8 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn print_if_cond(&mut self, kw: &'static str, cond: &'ast ast::Expr<'ast>) {
-        self.word(kw);
-        self.word(" (");
-        self.s.cbox(self.ind);
-        self.zerobreak();
-        self.print_expr(cond);
-        self.zerobreak();
-        self.s.offset(-self.ind);
-        self.end();
-        self.word(")");
+        self.word_nbsp(kw);
+        self.print_tuple(std::slice::from_ref(cond), Self::print_expr);
     }
 
     fn print_emit_revert(
