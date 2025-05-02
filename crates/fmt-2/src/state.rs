@@ -322,221 +322,226 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn print_item(&mut self, item: &'ast ast::Item<'ast>) {
-        let ast::Item { docs, span, kind } = item;
+        let ast::Item { ref docs, span, ref kind } = *item;
         self.print_docs(docs);
         self.print_comments(span.lo());
         match kind {
-            ast::ItemKind::Pragma(ast::PragmaDirective { tokens }) => {
-                self.word("pragma ");
-                match tokens {
-                    ast::PragmaTokens::Version(ident, semver_req) => {
-                        self.print_ident(*ident);
-                        self.nbsp();
-                        self.word(semver_req.to_string());
-                    }
-                    ast::PragmaTokens::Custom(a, b) => {
-                        self.print_ident_or_strlit(a);
-                        if let Some(b) = b {
-                            self.nbsp();
-                            self.print_ident_or_strlit(b);
-                        }
-                    }
-                    ast::PragmaTokens::Verbatim(tokens) => {
-                        self.print_tokens(tokens);
-                    }
-                }
-                self.word(";");
-                self.hardbreak();
-            }
-            ast::ItemKind::Import(ast::ImportDirective { path, items }) => {
-                self.word("import ");
-                match items {
-                    ast::ImportItems::Plain(_) | ast::ImportItems::Glob(_) => {
-                        self.print_ast_str_lit(path);
-                        if let Some(ident) = items.source_alias() {
-                            self.word(" as ");
-                            self.print_ident(ident);
-                        }
-                    }
-                    ast::ImportItems::Aliases(aliases) => {
-                        self.s.cbox(self.ind);
-                        self.word("{");
-                        self.braces_break();
-                        for (pos, (ident, alias)) in aliases.iter().delimited() {
-                            self.print_ident(*ident);
-                            if let Some(alias) = alias {
-                                self.word(" as ");
-                                self.print_ident(*alias);
-                            }
-                            if !pos.is_last {
-                                self.word(",");
-                                self.space();
-                            }
-                        }
-                        self.braces_break();
-                        self.s.offset(-self.ind);
-                        self.word("}");
-                        self.end();
-                        self.word(" from ");
-                        self.print_ast_str_lit(path);
-                    }
-                }
-                self.word(";");
-                self.hardbreak();
-            }
-            ast::ItemKind::Using(ast::UsingDirective { list, ty, global }) => {
-                self.word("using ");
-                match list {
-                    ast::UsingList::Single(path) => self.print_path(path),
-                    ast::UsingList::Multiple(items) => {
-                        self.s.cbox(self.ind);
-                        self.word("{");
-                        self.braces_break();
-                        for (pos, (path, op)) in items.iter().delimited() {
-                            self.print_path(path);
-                            if let Some(op) = op {
-                                self.word(" as ");
-                                self.word(op.to_str());
-                            }
-                            if !pos.is_last {
-                                self.word(",");
-                                self.space();
-                            }
-                        }
-                        self.braces_break();
-                        self.s.offset(-self.ind);
-                        self.word("}");
-                        self.end();
-                    }
-                }
-                self.word(" for ");
-                if let Some(ty) = ty {
-                    self.print_ty(ty);
-                } else {
-                    self.word("*");
-                }
-                if *global {
-                    self.word(" global");
-                }
-                self.word(";");
-                self.hardbreak();
-            }
-            ast::ItemKind::Contract(c @ ast::ItemContract { kind, name, layout, bases, body }) => {
-                self.contract = Some(c);
-
-                self.s.cbox(self.ind);
-                self.s.cbox(0);
-                self.word_nbsp(kind.to_str());
-                self.print_ident(*name);
-                self.nbsp();
-                if !bases.is_empty() {
-                    self.word("is");
-                    self.space();
-                    for (pos, base) in bases.iter().delimited() {
-                        self.print_modifier_call(base, false);
-                        if !pos.is_last {
-                            self.word(",");
-                            self.space();
-                        }
-                    }
-                    self.space();
-                    self.s.offset(-self.ind);
-                }
-                self.end();
-                if let Some(layout) = layout {
-                    self.word("layout at ");
-                    self.print_expr(layout.slot);
-                    self.space();
-                }
-
-                self.word("{");
-                if !body.is_empty() {
-                    self.hardbreak();
-                    let comment = self.print_comments(body[0].span.lo());
-                    if self.config.contract_new_lines && comment != Some(CommentStyle::BlankLine) {
-                        self.hardbreak();
-                    }
-                    for item in body.iter() {
-                        self.print_item(item);
-                    }
-                    let comment = self.print_comments(span.hi());
-                    if self.config.contract_new_lines && comment != Some(CommentStyle::BlankLine) {
-                        self.hardbreak();
-                    }
-                } else {
-                    self.print_comments(span.hi());
-                    self.zerobreak();
-                }
-                self.s.offset(-self.ind);
-                self.end();
-                self.word("}");
-                self.hardbreak();
-
-                self.contract = None;
-            }
+            ast::ItemKind::Pragma(pragma) => self.print_pragma(pragma),
+            ast::ItemKind::Import(import) => self.print_import(import),
+            ast::ItemKind::Using(using) => self.print_using(using),
+            ast::ItemKind::Contract(contract) => self.print_contract(contract, span),
             ast::ItemKind::Function(func) => self.print_function(func),
             ast::ItemKind::Variable(var) => self.print_var_def(var),
-            ast::ItemKind::Struct(ast::ItemStruct { name, fields }) => {
-                self.s.cbox(self.ind);
-                self.word("struct ");
-                self.print_ident(*name);
-                self.word(" {");
-                self.hardbreak_if_nonempty();
-                for var in fields.iter() {
-                    self.print_var_def(var);
+            ast::ItemKind::Struct(strukt) => self.print_struct(strukt, span),
+            ast::ItemKind::Enum(enm) => self.print_enum(enm, span),
+            ast::ItemKind::Udvt(udvt) => self.print_udvt(udvt),
+            ast::ItemKind::Error(err) => self.print_error(err),
+            ast::ItemKind::Event(event) => self.print_event(event),
+        }
+    }
+
+    fn print_pragma(&mut self, pragma: &'ast ast::PragmaDirective<'ast>) {
+        self.word("pragma ");
+        match &pragma.tokens {
+            ast::PragmaTokens::Version(ident, semver_req) => {
+                self.print_ident(*ident);
+                self.nbsp();
+                self.word(semver_req.to_string());
+            }
+            ast::PragmaTokens::Custom(a, b) => {
+                self.print_ident_or_strlit(a);
+                if let Some(b) = b {
+                    self.nbsp();
+                    self.print_ident_or_strlit(b);
                 }
-                self.print_comments_skip_ws(span.hi());
-                self.s.offset(-self.ind);
-                self.end();
-                self.word("}");
-                self.hardbreak();
             }
-            ast::ItemKind::Enum(ast::ItemEnum { name, variants }) => {
-                self.s.cbox(self.ind);
-                self.word("enum ");
-                self.print_ident(*name);
-                self.word(" {");
-                self.hardbreak_if_nonempty();
-                for (pos, ident) in variants.iter().delimited() {
-                    self.print_ident(*ident);
-                    if !pos.is_last {
-                        self.word(",");
-                    }
-                    self.maybe_print_trailing_comment(ident.span, None);
-                    self.hardbreak_if_not_bol();
-                }
-                self.print_comments_skip_ws(span.hi());
-                self.s.offset(-self.ind);
-                self.end();
-                self.word("}");
-                self.hardbreak();
-            }
-            ast::ItemKind::Udvt(ast::ItemUdvt { name, ty }) => {
-                self.word("type ");
-                self.print_ident(*name);
-                self.word(" is ");
-                self.print_ty(ty);
-                self.word(";");
-                self.hardbreak();
-            }
-            ast::ItemKind::Error(ast::ItemError { name, parameters }) => {
-                self.print_function_like(FunctionLike {
-                    kind: "error",
-                    name: Some(*name),
-                    parameters,
-                    ..Default::default()
-                });
-            }
-            ast::ItemKind::Event(ast::ItemEvent { name, parameters, anonymous }) => {
-                self.print_function_like(FunctionLike {
-                    kind: "event",
-                    name: Some(*name),
-                    parameters,
-                    anonymous: *anonymous,
-                    ..Default::default()
-                });
+            ast::PragmaTokens::Verbatim(tokens) => {
+                self.print_tokens(tokens);
             }
         }
+        self.word(";");
+        self.hardbreak();
+    }
+
+    fn print_import(&mut self, import: &'ast ast::ImportDirective<'ast>) {
+        let ast::ImportDirective { path, items } = import;
+        self.word("import ");
+        match items {
+            ast::ImportItems::Plain(_) | ast::ImportItems::Glob(_) => {
+                self.print_ast_str_lit(path);
+                if let Some(ident) = items.source_alias() {
+                    self.word(" as ");
+                    self.print_ident(ident);
+                }
+            }
+            ast::ImportItems::Aliases(aliases) => {
+                self.s.cbox(self.ind);
+                self.word("{");
+                self.braces_break();
+                for (pos, (ident, alias)) in aliases.iter().delimited() {
+                    self.print_ident(*ident);
+                    if let Some(alias) = alias {
+                        self.word(" as ");
+                        self.print_ident(*alias);
+                    }
+                    if !pos.is_last {
+                        self.word(",");
+                        self.space();
+                    }
+                }
+                self.braces_break();
+                self.s.offset(-self.ind);
+                self.word("}");
+                self.end();
+                self.word(" from ");
+                self.print_ast_str_lit(path);
+            }
+        }
+        self.word(";");
+        self.hardbreak();
+    }
+
+    fn print_using(&mut self, using: &'ast ast::UsingDirective<'ast>) {
+        let ast::UsingDirective { list, ty, global } = using;
+        self.word("using ");
+        match list {
+            ast::UsingList::Single(path) => self.print_path(path),
+            ast::UsingList::Multiple(items) => {
+                self.s.cbox(self.ind);
+                self.word("{");
+                self.braces_break();
+                for (pos, (path, op)) in items.iter().delimited() {
+                    self.print_path(path);
+                    if let Some(op) = op {
+                        self.word(" as ");
+                        self.word(op.to_str());
+                    }
+                    if !pos.is_last {
+                        self.word(",");
+                        self.space();
+                    }
+                }
+                self.braces_break();
+                self.s.offset(-self.ind);
+                self.word("}");
+                self.end();
+            }
+        }
+        self.word(" for ");
+        if let Some(ty) = ty {
+            self.print_ty(ty);
+        } else {
+            self.word("*");
+        }
+        if *global {
+            self.word(" global");
+        }
+        self.word(";");
+        self.hardbreak();
+    }
+
+    fn print_contract(&mut self, c: &'ast ast::ItemContract<'ast>, span: Span) {
+        let ast::ItemContract { kind, name, layout, bases, body } = c;
+        self.contract = Some(c);
+
+        self.s.cbox(self.ind);
+        self.s.cbox(0);
+        self.word_nbsp(kind.to_str());
+        self.print_ident(*name);
+        self.nbsp();
+        if !bases.is_empty() {
+            self.word("is");
+            self.space();
+            for (pos, base) in bases.iter().delimited() {
+                self.print_modifier_call(base, false);
+                if !pos.is_last {
+                    self.word(",");
+                    self.space();
+                }
+            }
+            self.space();
+            self.s.offset(-self.ind);
+        }
+        self.end();
+        if let Some(layout) = layout {
+            self.word("layout at ");
+            self.print_expr(layout.slot);
+            self.space();
+        }
+
+        self.word("{");
+        if !body.is_empty() {
+            self.hardbreak();
+            let comment = self.print_comments(body[0].span.lo());
+            if self.config.contract_new_lines && comment != Some(CommentStyle::BlankLine) {
+                self.hardbreak();
+            }
+            for item in body.iter() {
+                self.print_item(item);
+            }
+            let comment = self.print_comments(span.hi());
+            if self.config.contract_new_lines && comment != Some(CommentStyle::BlankLine) {
+                self.hardbreak();
+            }
+        } else {
+            self.print_comments(span.hi());
+            self.zerobreak();
+        }
+        self.s.offset(-self.ind);
+        self.end();
+        self.word("}");
+        self.hardbreak();
+
+        self.contract = None;
+    }
+
+    fn print_struct(&mut self, strukt: &'ast ast::ItemStruct<'ast>, span: Span) {
+        let ast::ItemStruct { name, fields } = strukt;
+        self.s.cbox(self.ind);
+        self.word("struct ");
+        self.print_ident(*name);
+        self.word(" {");
+        self.hardbreak_if_nonempty();
+        for var in fields.iter() {
+            self.print_var_def(var);
+        }
+        self.print_comments_skip_ws(span.hi());
+        self.s.offset(-self.ind);
+        self.end();
+        self.word("}");
+        self.hardbreak();
+    }
+
+    fn print_enum(&mut self, enm: &'ast ast::ItemEnum<'ast>, span: Span) {
+        let ast::ItemEnum { name, variants } = enm;
+        self.s.cbox(self.ind);
+        self.word("enum ");
+        self.print_ident(*name);
+        self.word(" {");
+        self.hardbreak_if_nonempty();
+        for (pos, ident) in variants.iter().delimited() {
+            self.print_ident(*ident);
+            if !pos.is_last {
+                self.word(",");
+            }
+            self.maybe_print_trailing_comment(ident.span, None);
+            self.hardbreak_if_not_bol();
+        }
+        self.print_comments_skip_ws(span.hi());
+        self.s.offset(-self.ind);
+        self.end();
+        self.word("}");
+        self.hardbreak();
+    }
+
+    fn print_udvt(&mut self, udvt: &'ast ast::ItemUdvt<'ast>) {
+        let ast::ItemUdvt { name, ty } = udvt;
+        self.word("type ");
+        self.print_ident(*name);
+        self.word(" is ");
+        self.print_ty(ty);
+        self.word(";");
+        self.hardbreak();
     }
 
     fn print_function(&mut self, func: &'ast ast::ItemFunction<'ast>) {
@@ -564,6 +569,27 @@ impl<'ast> State<'_, 'ast> {
             anonymous: false,
             body: body.as_deref(),
             body_span: *body_span,
+        });
+    }
+
+    fn print_error(&mut self, err: &'ast ast::ItemError<'ast>) {
+        let ast::ItemError { name, parameters } = err;
+        self.print_function_like(FunctionLike {
+            kind: "error",
+            name: Some(*name),
+            parameters,
+            ..Default::default()
+        });
+    }
+
+    fn print_event(&mut self, event: &'ast ast::ItemEvent<'ast>) {
+        let ast::ItemEvent { name, parameters, anonymous } = event;
+        self.print_function_like(FunctionLike {
+            kind: "event",
+            name: Some(*name),
+            parameters,
+            anonymous: *anonymous,
+            ..Default::default()
         });
     }
 
