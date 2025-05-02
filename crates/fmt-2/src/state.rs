@@ -338,6 +338,9 @@ impl<'ast> State<'_, 'ast> {
             ast::ItemKind::Error(err) => self.print_error(err),
             ast::ItemKind::Event(event) => self.print_event(event),
         }
+        self.print_comments(span.hi());
+        self.maybe_print_trailing_comment(span, None);
+        self.hardbreak_if_not_bol();
     }
 
     fn print_pragma(&mut self, pragma: &'ast ast::PragmaDirective<'ast>) {
@@ -360,7 +363,6 @@ impl<'ast> State<'_, 'ast> {
             }
         }
         self.word(";");
-        self.hardbreak();
     }
 
     fn print_import(&mut self, import: &'ast ast::ImportDirective<'ast>) {
@@ -398,7 +400,6 @@ impl<'ast> State<'_, 'ast> {
             }
         }
         self.word(";");
-        self.hardbreak();
     }
 
     fn print_using(&mut self, using: &'ast ast::UsingDirective<'ast>) {
@@ -437,7 +438,6 @@ impl<'ast> State<'_, 'ast> {
             self.word(" global");
         }
         self.word(";");
-        self.hardbreak();
     }
 
     fn print_contract(&mut self, c: &'ast ast::ItemContract<'ast>, span: Span) {
@@ -490,7 +490,6 @@ impl<'ast> State<'_, 'ast> {
         self.s.offset(-self.ind);
         self.end();
         self.word("}");
-        self.hardbreak();
 
         self.contract = None;
     }
@@ -509,7 +508,6 @@ impl<'ast> State<'_, 'ast> {
         self.s.offset(-self.ind);
         self.end();
         self.word("}");
-        self.hardbreak();
     }
 
     fn print_enum(&mut self, enm: &'ast ast::ItemEnum<'ast>, span: Span) {
@@ -531,7 +529,6 @@ impl<'ast> State<'_, 'ast> {
         self.s.offset(-self.ind);
         self.end();
         self.word("}");
-        self.hardbreak();
     }
 
     fn print_udvt(&mut self, udvt: &'ast ast::ItemUdvt<'ast>) {
@@ -541,7 +538,6 @@ impl<'ast> State<'_, 'ast> {
         self.word(" is ");
         self.print_ty(ty);
         self.word(";");
-        self.hardbreak();
     }
 
     fn print_function(&mut self, func: &'ast ast::ItemFunction<'ast>) {
@@ -662,9 +658,9 @@ impl<'ast> State<'_, 'ast> {
         if let Some(body) = body {
             self.nbsp();
             self.print_block(body, body_span);
-        } else {
+        } else if !(kind == "function" && name.is_none()) {
+            // Don't print semicolon if this is a function type.
             self.word(";");
-            self.hardbreak();
         }
     }
 
@@ -1321,7 +1317,6 @@ impl<'ast> State<'_, 'ast> {
 
     fn print_block(&mut self, block: &'ast [ast::Stmt<'ast>], span: Span) {
         self.print_block_inner(block, span, false, false);
-        self.hardbreak();
     }
 
     // Body of a if/loop.
