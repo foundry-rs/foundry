@@ -31,3 +31,4 @@ serde_json.workspace = true
 auto_impl.workspace = true
 yansi.workspace = true
 serde = { workspace = true, features = ["derive"] }
+clap = { version = "4", features = ["derive"] }
