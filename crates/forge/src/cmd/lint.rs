@@ -87,8 +87,7 @@ impl LintArgs {
             std::process::exit(0);
         }
 
-        // Helper to convert strings to `SolLint` objects
-        let convert_lints = |lints: &[String]| -> Result<Vec<SolLint>, SolLintError> {
+        let parse_lints = |lints: &[String]| -> Result<Vec<SolLint>, SolLintError> {
             lints.iter().map(|s| SolLint::try_from(s.as_str())).collect()
         };
 
