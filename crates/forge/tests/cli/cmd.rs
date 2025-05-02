@@ -35,7 +35,7 @@ Options:
 
   -j, --threads <THREADS>
           Number of threads to use. Specifying 0 defaults to the number of logical cores
-
+          
           [aliases: jobs]
 
   -V, --version
@@ -58,11 +58,11 @@ Display options:
 
   -v, --verbosity...
           Verbosity level of the log messages.
-
+          
           Pass multiple times to increase the verbosity (e.g. -v, -vv, -vvv).
-
+          
           Depending on the context the verbosity levels have different meanings.
-
+          
           For example, the verbosity levels of the EVM are:
           - 2 (-vv): Print logs for all tests.
           - 3 (-vvv): Print execution traces for failing tests.
