@@ -27,6 +27,33 @@ sol! {
         /// Returns the name associated with an ENS node, for reverse records.
         function name(bytes32 node) view returns (string);
     }
+    
+    #[sol(rpc)]
+    contract NameWrapper {
+        function isWrapped(bytes32 node) external returns (bool);
+        function setSubnodeRecord(
+                bytes32 node,
+                string label,
+                address owner,
+                address resolver,
+                uint64 ttl,
+                uint32 fuses,
+                uint64 expiry,
+            ) external;
+    }
+    
+    #[sol(rpc)]
+    contract PublicResolver {
+        function setAddr(bytes32 node, address addr) external;
+        function addr(bytes32 node) external returns (address);
+        function setName(bytes32 node,  string newName) external;
+    }
+    
+    #[sol(rpc)]
+    contract ReverseRegistrar {
+        function setName(string memory name) external returns (bytes32);
+        function setNameForAddr(address addr, address owner, address resolver, string name) external;
+    }
 }
 
 /// ENS registry address (`0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e`)
