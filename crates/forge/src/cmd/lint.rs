@@ -1,16 +1,21 @@
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use forge_lint::{
-    linter::{Linter, Severity},
+    linter::Linter,
     sol::{SolLint, SolLintError, SolidityLinter},
 };
-use foundry_cli::utils::LoadConfig;
-use foundry_config::impl_figment_convert_basic;
+use foundry_cli::utils::{FoundryPathExt, LoadConfig};
+use foundry_compilers::{solc::SolcLanguage, utils::SOLC_EXTENSIONS};
+use foundry_config::{filter::expand_globs, impl_figment_convert_basic, lint::Severity};
 use std::{collections::HashSet, path::PathBuf};
 
 /// CLI arguments for `forge lint`.
 #[derive(Clone, Debug, Parser)]
 pub struct LintArgs {
+    /// Path to the file.
+    #[arg(value_hint = ValueHint::FilePath, value_name = "PATH", num_args(1..))]
+    paths: Vec<PathBuf>,
+
     /// The project's root path.
     ///
     /// By default root of the Git repository, if in one,
@@ -18,31 +23,16 @@ pub struct LintArgs {
     #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     root: Option<PathBuf>,
 
-    /// Include only the specified files when linting.
-    #[arg(long, value_hint = ValueHint::FilePath, value_name = "FILES", num_args(1..))]
-    include: Option<Vec<PathBuf>>,
-
-    /// Exclude the specified files when linting.
-    #[arg(long, value_hint = ValueHint::FilePath, value_name = "FILES", num_args(1..))]
-    exclude: Option<Vec<PathBuf>>,
-
-    /// Specifies which lints to run based on severity.
+    /// Specifies which lints to run based on severity. Overrides the project config.
     ///
     /// Supported values: `high`, `med`, `low`, `info`, `gas`.
     #[arg(long, value_name = "SEVERITY", num_args(1..))]
     severity: Option<Vec<Severity>>,
 
-    /// Specifies which lints to run based on their ID (e.g., "incorrect-shift").
-    ///
-    /// Cannot be used with --deny-lint.
-    #[arg(long = "only-lint", value_name = "LINT_ID", num_args(1..), conflicts_with = "exclude_lint")]
-    include_lint: Option<Vec<String>>,
-
-    /// Deny specific lints based on their ID (e.g., "function-mixed-case").
-    ///
-    /// Cannot be used with --only-lint.
-    #[arg(long = "deny-lint", value_name = "LINT_ID", num_args(1..), conflicts_with = "include_lint")]
-    exclude_lint: Option<Vec<String>>,
+    /// Specifies which lints to run based on their ID (e.g., "incorrect-shift"). Overrides the
+    /// project config.
+    #[arg(long = "only-lint", value_name = "LINT_ID", num_args(1..))]
+    lint: Option<Vec<String>>,
 }
 
 impl_figment_convert_basic!(LintArgs);
@@ -52,50 +42,86 @@ impl LintArgs {
         let config = self.load_config()?;
         let project = config.project()?;
 
-        // Get all source files from the project
-        let mut sources =
-            project.paths.read_input_files()?.keys().cloned().collect::<Vec<PathBuf>>();
+        // Expand ignore globs and canonicalize from the get go
+        let ignored = expand_globs(&config.root, config.lint.ignore.iter())?
+            .iter()
+            .flat_map(foundry_common::fs::canonicalize_path)
+            .collect::<Vec<_>>();
 
-        // Add included paths to sources
-        if let Some(include_paths) = &self.include {
-            let included =
-                include_paths.iter().filter(|path| path.exists()).cloned().collect::<Vec<_>>();
-            sources.extend(included);
-        }
+        let cwd = std::env::current_dir()?;
+        let input = match &self.paths[..] {
+            [] => {
+                // Retrieve the project paths, and filter out the ignored ones.
+                let project_paths = config
+                    .project_paths::<SolcLanguage>()
+                    .input_files_iter()
+                    .filter(|p| !(ignored.contains(p) || ignored.contains(&cwd.join(p))))
+                    .collect();
+                project_paths
+            }
+            paths => {
+                let mut inputs = Vec::with_capacity(paths.len());
+                for path in paths {
+                    if !ignored.is_empty() &&
+                        ((path.is_absolute() && ignored.contains(path)) ||
+                            ignored.contains(&cwd.join(path)))
+                    {
+                        continue
+                    }
 
-        // Remove excluded files from sources
-        if let Some(exclude_paths) = &self.exclude {
-            let excluded = exclude_paths.iter().cloned().collect::<HashSet<_>>();
-            sources.retain(|path| !excluded.contains(path));
-        }
+                    if path.is_dir() {
+                        inputs
+                            .extend(foundry_compilers::utils::source_files(path, SOLC_EXTENSIONS));
+                    } else if path.is_sol() {
+                        inputs.push(path.to_path_buf());
+                    } else {
+                        warn!("Cannot process path {}", path.display());
+                    }
+                }
+                inputs
+            }
+        };
 
-        if sources.is_empty() {
+        if input.is_empty() {
             sh_println!("Nothing to lint")?;
             std::process::exit(0);
         }
 
+        // Helper to convert strings to `SolLint` objects
+        let convert_lints = |lints: &[String]| -> Result<Vec<SolLint>, SolLintError> {
+            lints.iter().map(|s| SolLint::try_from(s.as_str())).collect()
+        };
+
+        // Override default lint config with user-defined lints
+        let (include, exclude) = if let Some(cli_lints) = &self.lint {
+            let include_lints = convert_lints(cli_lints)?;
+            let target_ids: HashSet<&str> = cli_lints.iter().map(String::as_str).collect();
+            let filtered_excludes = config
+                .lint
+                .exclude_lints
+                .iter()
+                .filter(|l| !target_ids.contains(l.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+
+            (include_lints, convert_lints(&filtered_excludes)?)
+        } else {
+            (convert_lints(&config.lint.include_lints)?, convert_lints(&config.lint.exclude_lints)?)
+        };
+
+        // Override default severity config with user-defined severity
+        let severity = match self.severity {
+            Some(target) => target,
+            None => config.lint.severity,
+        };
+
         if project.compiler.solc.is_some() {
-            let mut linter = SolidityLinter::new().with_severity(self.severity);
+            let linter = SolidityLinter::new()
+                .with_lints(if include.is_empty() { None } else { Some(include) })
+                .without_lints(if exclude.is_empty() { None } else { Some(exclude) })
+                .with_severity(if severity.is_empty() { None } else { Some(severity) });
 
-            // Resolve and apply included lints if provided
-            if let Some(ref include_ids) = self.include_lint {
-                let included_lints = include_ids
-                    .iter()
-                    .map(|id_str| SolLint::try_from(id_str.as_str()))
-                    .collect::<Result<Vec<SolLint>, SolLintError>>()?;
-                linter = linter.with_lints(Some(included_lints));
-            }
-
-            // Resolve and apply excluded lints if provided
-            if let Some(ref exclude_ids) = self.exclude_lint {
-                let excluded_lints = exclude_ids
-                    .iter()
-                    .map(|id_str| SolLint::try_from(id_str.as_str()))
-                    .collect::<Result<Vec<SolLint>, SolLintError>>()?;
-                linter = linter.without_lints(Some(excluded_lints));
-            }
-
-            linter.lint(&sources);
+            linter.lint(&input);
         } else {
             todo!("Linting not supported for this language");
         };

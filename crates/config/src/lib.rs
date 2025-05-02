@@ -74,6 +74,9 @@ use cache::{Cache, ChainCache};
 pub mod fmt;
 pub use fmt::FormatterConfig;
 
+pub mod lint;
+pub use lint::{LinterConfig, Severity as LintSeverity};
+
 pub mod fs_permissions;
 pub use fs_permissions::FsPermissions;
 use fs_permissions::PathPermission;
@@ -446,6 +449,8 @@ pub struct Config {
     pub build_info_path: Option<PathBuf>,
     /// Configuration for `forge fmt`
     pub fmt: FormatterConfig,
+    /// Configuration for `forge lint`
+    pub lint: LinterConfig,
     /// Configuration for `forge doc`
     pub doc: DocConfig,
     /// Configuration for `forge bind-json`
@@ -559,6 +564,7 @@ impl Config {
         "rpc_endpoints",
         "etherscan",
         "fmt",
+        "lint",
         "doc",
         "fuzz",
         "invariant",
@@ -2393,6 +2399,7 @@ impl Default for Config {
             build_info: false,
             build_info_path: None,
             fmt: Default::default(),
+            lint: Default::default(),
             doc: Default::default(),
             bind_json: Default::default(),
             labels: Default::default(),
@@ -4425,6 +4432,32 @@ mod tests {
                     line_length: 100,
                     tab_width: 2,
                     bracket_spacing: true,
+                    ..Default::default()
+                }
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_lint_config() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r"
+                [lint]
+                severity = ['high', 'medium']
+                include_lints = ['function-mixed-case']
+                exclude_lints = ['incorrect-shift']
+                ",
+            )?;
+            let loaded = Config::load().unwrap().sanitized();
+            assert_eq!(
+                loaded.lint,
+                LinterConfig {
+                    severity: vec![LintSeverity::High, LintSeverity::Med],
+                    exclude_lints: vec!["incorrect-shift".into()],
                     ..Default::default()
                 }
             );

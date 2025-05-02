@@ -3585,10 +3585,10 @@ name = "forge-lint"
 version = "1.1.0"
 dependencies = [
  "auto_impl",
- "clap",
  "eyre",
  "foundry-common",
  "foundry-compilers",
+ "foundry-config",
  "rayon",
  "regex",
  "serde",
@@ -4025,6 +4025,7 @@ version = "1.1.0"
 dependencies = [
  "alloy-chains",
  "alloy-primitives",
+ "clap",
  "dirs",
  "dunce",
  "eyre",
@@ -4045,6 +4046,7 @@ dependencies = [
  "serde",
  "serde_json",
  "similar-asserts",
+ "solar-interface",
  "solar-parse",
  "soldeer-core",
  "tempfile",

@@ -3,8 +3,9 @@ pub mod high;
 pub mod info;
 pub mod med;
 
-use crate::linter::{EarlyLintPass, EarlyLintVisitor, Lint, LintContext, Linter, Severity};
+use crate::linter::{EarlyLintPass, EarlyLintVisitor, Lint, LintContext, Linter};
 use foundry_compilers::solc::SolcLanguage;
+use foundry_config::lint::Severity;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use solar_ast::{visit::Visit, Arena};
 use solar_interface::{

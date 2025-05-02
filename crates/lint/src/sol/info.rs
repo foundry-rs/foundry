@@ -102,7 +102,7 @@ pub fn is_pascal_case(s: &str) -> bool {
 }
 
 /// Check if a string is SCREAMING_SNAKE_CASE, where
-/// numbers must always be preceeded by an underscode.
+/// numbers must always be preceded by an underscode.
 pub fn is_screaming_snake_case(s: &str) -> bool {
     if s.len() <= 1 {
         return true;
@@ -110,7 +110,7 @@ pub fn is_screaming_snake_case(s: &str) -> bool {
 
     let re = Regex::new(r"^[A-Z_][A-Z0-9_]*$").unwrap();
     let invalid_re = Regex::new(r"[A-Z][0-9]").unwrap();
-    re.is_match(s) && !invalid_re.is_match(s) 
+    re.is_match(s) && !invalid_re.is_match(s)
 }
 
 #[cfg(test)]
@@ -129,8 +129,7 @@ mod test {
             .with_lints(Some(vec![VARIABLE_MIXED_CASE]))
             .with_buffer_emitter(true);
 
-        let emitted =
-            linter.lint_file(Path::new("testdata/MixedCase.sol")).unwrap().to_string();
+        let emitted = linter.lint_file(Path::new("testdata/MixedCase.sol")).unwrap().to_string();
         let warnings = emitted.matches(&format!("warning: {}", VARIABLE_MIXED_CASE.id())).count();
         let notes = emitted.matches(&format!("note: {}", VARIABLE_MIXED_CASE.id())).count();
 
@@ -146,8 +145,7 @@ mod test {
             .with_lints(Some(vec![FUNCTION_MIXED_CASE]))
             .with_buffer_emitter(true);
 
-        let emitted =
-            linter.lint_file(Path::new("testdata/MixedCase.sol")).unwrap().to_string();
+        let emitted = linter.lint_file(Path::new("testdata/MixedCase.sol")).unwrap().to_string();
         let warnings = emitted.matches(&format!("warning: {}", FUNCTION_MIXED_CASE.id())).count();
         let notes = emitted.matches(&format!("note: {}", FUNCTION_MIXED_CASE.id())).count();
 

@@ -1,13 +1,8 @@
-use clap::ValueEnum;
-use core::fmt;
 use foundry_compilers::Language;
+use foundry_config::lint::Severity;
 use solar_ast::{visit::Visit, Expr, ItemFunction, ItemStruct, Span, VariableDefinition};
-use solar_interface::{
-    diagnostics::{DiagBuilder, Level},
-    Session,
-};
+use solar_interface::{diagnostics::DiagBuilder, Session};
 use std::{ops::ControlFlow, path::PathBuf};
-use yansi::Paint;
 
 /// Trait representing a generic linter for analyzing and reporting issues in smart contract source
 /// code files. A linter can be implemented for any smart contract language supported by Foundry.
@@ -37,49 +32,6 @@ pub trait Lint {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum Severity {
-    High,
-    Med,
-    Low,
-    Info,
-    Gas,
-}
-
-impl Severity {
-    pub fn color(&self, message: &str) -> String {
-        match self {
-            Self::High => Paint::red(message).bold().to_string(),
-            Self::Med => Paint::rgb(message, 255, 135, 61).bold().to_string(),
-            Self::Low => Paint::yellow(message).bold().to_string(),
-            Self::Info => Paint::cyan(message).bold().to_string(),
-            Self::Gas => Paint::green(message).bold().to_string(),
-        }
-    }
-}
-
-impl From<Severity> for Level {
-    fn from(severity: Severity) -> Self {
-        match severity {
-            Severity::High | Severity::Med | Severity::Low => Self::Warning,
-            Severity::Info | Severity::Gas => Self::Note,
-        }
-    }
-}
-
-impl fmt::Display for Severity {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let colored = match self {
-            Self::High => self.color("High"),
-            Self::Med => self.color("Med"),
-            Self::Low => self.color("Low"),
-            Self::Info => self.color("Info"),
-            Self::Gas => self.color("Gas"),
-        };
-        write!(f, "{colored}")
-    }
-}
-
 pub struct LintContext<'s> {
     sess: &'s Session,
     desc: bool,
@@ -100,7 +52,9 @@ impl<'s> LintContext<'s> {
 
         let diag: DiagBuilder<'_, ()> = match lint.help() {
             Some(help) => self.sess.dcx.diag(lint.severity().into(), msg).span(span).help(help),
-            None => self.sess.dcx.diag(lint.severity().into(), msg).span(span).help(lint.description()),
+            None => {
+                self.sess.dcx.diag(lint.severity().into(), msg).span(span).help(lint.description())
+            }
         };
 
         diag.emit();

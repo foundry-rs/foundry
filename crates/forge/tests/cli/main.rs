@@ -20,6 +20,7 @@ mod eof;
 mod failure_assertions;
 mod geiger;
 mod inline_config;
+mod lint;
 mod multi_script;
 mod script;
 mod soldeer;
