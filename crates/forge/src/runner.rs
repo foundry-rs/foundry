@@ -387,7 +387,7 @@ impl<'a> ContractRunner<'a> {
         let test_fail_instances = functions
             .iter()
             .filter_map(|func| {
-                TestFunctionKind::classify(&func.name, !func.inputs.is_empty())
+                TestFunctionKind::classify(&func.name, !func.inputs.is_empty(), false)
                     .is_any_test_fail()
                     .then_some(func.name.clone())
             })
