@@ -32,7 +32,7 @@ pub struct MapDependency {
 
 /// Type for Soldeer configs, under dependencies tag in the foundry.toml
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SoldeerDependencyConfig(BTreeMap<String, SoldeerDependencyValue>);
+pub struct SoldeerDependencyConfig(pub BTreeMap<String, SoldeerDependencyValue>);
 
 impl AsRef<Self> for SoldeerDependencyConfig {
     fn as_ref(&self) -> &Self {
