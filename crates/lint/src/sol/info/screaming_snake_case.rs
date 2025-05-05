@@ -34,7 +34,7 @@ impl<'ast> EarlyLintPass<'ast> for ScreamingSnakeCase {
     }
 }
 
-/// Check if a string is SCREAMING_SNAKE_CASE. Numbers don't need to be preceeded by an underscore.
+/// Check if a string is SCREAMING_SNAKE_CASE. Numbers don't need to be preceded by an underscore.
 pub fn is_screaming_snake_case(s: &str) -> bool {
     if s.len() <= 1 {
         return true;
@@ -53,12 +53,10 @@ mod test {
 
     #[test]
     fn test_screaming_snake_case() -> eyre::Result<()> {
-        let linter = SolidityLinter::new()
-            .with_lints(Some(vec![SCREAMING_SNAKE_CASE]))
-            .with_buffer_emitter(true);
+        let linter = SolidityLinter::new().with_lints(Some(vec![SCREAMING_SNAKE_CASE]));
 
         let emitted =
-            linter.lint_file(Path::new("testdata/ScreamingSnakeCase.sol")).unwrap().to_string();
+            linter.lint_test(Path::new("testdata/ScreamingSnakeCase.sol")).unwrap().to_string();
         let warnings = emitted.matches(&format!("warning[{}]", SCREAMING_SNAKE_CASE.id())).count();
         let notes = emitted.matches(&format!("note[{}]", SCREAMING_SNAKE_CASE.id())).count();
 

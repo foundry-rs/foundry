@@ -37,10 +37,9 @@ mod test {
 
     #[test]
     fn test_keccak256() -> eyre::Result<()> {
-        let linter =
-            SolidityLinter::new().with_lints(Some(vec![ASM_KECCACK256])).with_buffer_emitter(true);
+        let linter = SolidityLinter::new().with_lints(Some(vec![ASM_KECCACK256]));
 
-        let emitted = linter.lint_file(Path::new("testdata/Keccak256.sol")).unwrap().to_string();
+        let emitted = linter.lint_test(Path::new("testdata/Keccak256.sol")).unwrap().to_string();
         let warnings = emitted.matches(&format!("warning[{}]", ASM_KECCACK256.id())).count();
         let notes = emitted.matches(&format!("note[{}]", ASM_KECCACK256.id())).count();
 

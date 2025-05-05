@@ -110,7 +110,6 @@ impl LintArgs {
 
         if project.compiler.solc.is_some() {
             let linter = SolidityLinter::new()
-                .with_description(true)
                 .with_lints(if include.is_empty() { None } else { Some(include) })
                 .without_lints(if exclude.is_empty() { None } else { Some(exclude) })
                 .with_severity(if severity.is_empty() { None } else { Some(severity) });

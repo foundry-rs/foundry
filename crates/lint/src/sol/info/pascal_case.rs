@@ -42,12 +42,10 @@ mod test {
 
     #[test]
     fn test_struct_pascal_case() -> eyre::Result<()> {
-        let linter = SolidityLinter::new()
-            .with_lints(Some(vec![PASCAL_CASE_STRUCT]))
-            .with_buffer_emitter(true);
+        let linter = SolidityLinter::new().with_lints(Some(vec![PASCAL_CASE_STRUCT]));
 
         let emitted =
-            linter.lint_file(Path::new("testdata/StructPascalCase.sol")).unwrap().to_string();
+            linter.lint_test(Path::new("testdata/StructPascalCase.sol")).unwrap().to_string();
         let warnings = emitted.matches(&format!("warning[{}]", PASCAL_CASE_STRUCT.id())).count();
         let notes = emitted.matches(&format!("note[{}]", PASCAL_CASE_STRUCT.id())).count();
 

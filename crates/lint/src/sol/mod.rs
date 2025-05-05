@@ -6,14 +6,12 @@ pub mod info;
 pub mod med;
 
 use crate::linter::{EarlyLintPass, EarlyLintVisitor, Lint, LintContext, Linter};
+
 use foundry_compilers::solc::SolcLanguage;
 use foundry_config::lint::Severity;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use solar_ast::{visit::Visit, Arena};
-use solar_interface::{
-    diagnostics::{EmittedDiagnostics, ErrorGuaranteed},
-    ColorChoice, Session,
-};
+use solar_interface::{diagnostics, Session};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -25,19 +23,11 @@ pub struct SolidityLinter {
     lints_included: Option<Vec<SolLint>>,
     lints_excluded: Option<Vec<SolLint>>,
     with_description: bool,
-    // This field is only used for testing purposes, in production it will always be false.
-    with_buffer_emitter: bool,
 }
 
 impl SolidityLinter {
     pub fn new() -> Self {
-        Self {
-            severity: None,
-            lints_included: None,
-            lints_excluded: None,
-            with_description: false,
-            with_buffer_emitter: false,
-        }
+        Self { severity: None, lints_included: None, lints_excluded: None, with_description: true }
     }
 
     pub fn with_severity(mut self, severity: Option<Vec<Severity>>) -> Self {
@@ -61,23 +51,22 @@ impl SolidityLinter {
     }
 
     #[cfg(test)]
-    pub(crate) fn with_buffer_emitter(mut self, with: bool) -> Self {
-        self.with_buffer_emitter = with;
-        self
-    }
-
-    // Helper function to ease testing, despite `fn lint` being the public API for the `Linter`
-    pub(crate) fn lint_file(&self, file: &Path) -> Option<EmittedDiagnostics> {
-        let mut sess = if self.with_buffer_emitter {
-            Session::builder().with_buffer_emitter(ColorChoice::Never).build()
-        } else {
-            Session::builder().with_stderr_emitter().build()
-        };
+    /// Helper function to ease testing, despite `fn lint` being the public API for the `Linter`.
+    /// Logs the diagnostics to the local buffer, so that tests can perform assertions.
+    pub(crate) fn lint_test(&self, file: &Path) -> Option<diagnostics::EmittedDiagnostics> {
+        let mut sess =
+            Session::builder().with_buffer_emitter(solar_interface::ColorChoice::Never).build();
         sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
 
+        self.process_file(&sess, file);
+
+        sess.emitted_diagnostics()
+    }
+
+    fn process_file(&self, sess: &Session, file: &Path) {
         let arena = Arena::new();
 
-        let _ = sess.enter(|| -> Result<(), ErrorGuaranteed> {
+        let _ = sess.enter(|| -> Result<(), diagnostics::ErrorGuaranteed> {
             // Declare all available passes and lints
             let mut passes_and_lints = Vec::new();
             passes_and_lints.extend(gas::create_lint_passes());
@@ -111,18 +100,16 @@ impl SolidityLinter {
                 .collect();
 
             // Initialize the parser and get the AST
-            let mut parser = solar_parse::Parser::from_file(&sess, &arena, file)?;
+            let mut parser = solar_parse::Parser::from_file(sess, &arena, file)?;
             let ast = parser.parse_file().map_err(|e| e.emit())?;
 
             // Initialize and run the visitor
-            let ctx = LintContext::new(&sess, self.with_description);
+            let ctx = LintContext::new(sess, self.with_description);
             let mut visitor = EarlyLintVisitor { ctx: &ctx, passes: &mut passes };
-            let _ = visitor.visit_source_unit(&ast);
+            _ = visitor.visit_source_unit(&ast);
 
             Ok(())
         });
-
-        sess.emitted_diagnostics()
     }
 }
 
@@ -131,8 +118,15 @@ impl Linter for SolidityLinter {
     type Lint = SolLint;
 
     fn lint(&self, input: &[PathBuf]) {
-        input.into_par_iter().for_each(|file| {
-            _ = self.lint_file(file);
+        // Create a single session for all files
+        let mut sess = Session::builder().with_stderr_emitter().build();
+        sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
+
+        // Process the files in parallel
+        sess.enter_parallel(|| {
+            input.into_par_iter().for_each(|file| {
+                self.process_file(&sess, file);
+            });
         });
     }
 }

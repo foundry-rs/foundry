@@ -72,11 +72,9 @@ mod test {
 
     #[test]
     fn test_variable_mixed_case() -> eyre::Result<()> {
-        let linter = SolidityLinter::new()
-            .with_lints(Some(vec![MIXED_CASE_VARIABLE]))
-            .with_buffer_emitter(true);
+        let linter = SolidityLinter::new().with_lints(Some(vec![MIXED_CASE_VARIABLE]));
 
-        let emitted = linter.lint_file(Path::new("testdata/MixedCase.sol")).unwrap().to_string();
+        let emitted = linter.lint_test(Path::new("testdata/MixedCase.sol")).unwrap().to_string();
         let warnings = emitted.matches(&format!("warning[{}]", MIXED_CASE_VARIABLE.id())).count();
         let notes = emitted.matches(&format!("note[{}]", MIXED_CASE_VARIABLE.id())).count();
 
@@ -88,11 +86,9 @@ mod test {
 
     #[test]
     fn test_function_mixed_case() -> eyre::Result<()> {
-        let linter = SolidityLinter::new()
-            .with_lints(Some(vec![MIXED_CASE_FUNCTION]))
-            .with_buffer_emitter(true);
+        let linter = SolidityLinter::new().with_lints(Some(vec![MIXED_CASE_FUNCTION]));
 
-        let emitted = linter.lint_file(Path::new("testdata/MixedCase.sol")).unwrap().to_string();
+        let emitted = linter.lint_test(Path::new("testdata/MixedCase.sol")).unwrap().to_string();
         let warnings = emitted.matches(&format!("warning[{}]", MIXED_CASE_FUNCTION.id())).count();
         let notes = emitted.matches(&format!("note[{}]", MIXED_CASE_FUNCTION.id())).count();
 

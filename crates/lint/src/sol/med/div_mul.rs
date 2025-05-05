@@ -48,12 +48,10 @@ mod test {
 
     #[test]
     fn test_divide_before_multiply() -> eyre::Result<()> {
-        let linter = SolidityLinter::new()
-            .with_lints(Some(vec![DIVIDE_BEFORE_MULTIPLY]))
-            .with_buffer_emitter(true);
+        let linter = SolidityLinter::new().with_lints(Some(vec![DIVIDE_BEFORE_MULTIPLY]));
 
         let emitted =
-            linter.lint_file(Path::new("testdata/DivideBeforeMultiply.sol")).unwrap().to_string();
+            linter.lint_test(Path::new("testdata/DivideBeforeMultiply.sol")).unwrap().to_string();
         let warnings =
             emitted.matches(&format!("warning[{}]", DIVIDE_BEFORE_MULTIPLY.id())).count();
         let notes = emitted.matches(&format!("note[{}]", DIVIDE_BEFORE_MULTIPLY.id())).count();
