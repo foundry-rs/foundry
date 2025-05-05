@@ -1,10 +1,22 @@
 use solar_ast::{BinOp, BinOpKind, Expr, ExprKind};
-use std::ops::ControlFlow;
 
-use super::{EarlyLintPass, IncorrectShift, LintContext, INCORRECT_SHIFT};
+use super::IncorrectShift;
+use crate::{
+    declare_forge_lint,
+    linter::{EarlyLintPass, LintContext},
+    sol::{Severity, SolLint},
+};
+
+declare_forge_lint!(
+    INCORRECT_SHIFT,
+    Severity::High,
+    "incorrect-shift",
+    "the order of args in a shift operation is incorrect",
+    ""
+);
 
 impl<'ast> EarlyLintPass<'ast> for IncorrectShift {
-    fn check_expr(&mut self, ctx: &LintContext<'_>, expr: &'ast Expr<'ast>) -> ControlFlow<()> {
+    fn check_expr(&mut self, ctx: &LintContext<'_>, expr: &'ast Expr<'ast>) {
         if let ExprKind::Binary(
             left_expr,
             BinOp { kind: BinOpKind::Shl | BinOpKind::Shr, .. },
@@ -15,7 +27,6 @@ impl<'ast> EarlyLintPass<'ast> for IncorrectShift {
                 ctx.emit(&INCORRECT_SHIFT, expr.span);
             }
         }
-        ControlFlow::Continue(())
     }
 }
 
@@ -46,8 +57,8 @@ mod test {
 
         let emitted =
             linter.lint_file(Path::new("testdata/IncorrectShift.sol")).unwrap().to_string();
-        let warnings = emitted.matches(&format!("warning: {}", INCORRECT_SHIFT.id())).count();
-        let notes = emitted.matches(&format!("note: {}", INCORRECT_SHIFT.id())).count();
+        let warnings = emitted.matches(&format!("warning[{}]", INCORRECT_SHIFT.id())).count();
+        let notes = emitted.matches(&format!("note[{}]", INCORRECT_SHIFT.id())).count();
 
         assert_eq!(warnings, 5, "Expected 5 warnings");
         assert_eq!(notes, 0, "Expected 0 notes");

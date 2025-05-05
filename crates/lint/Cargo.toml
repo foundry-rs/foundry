@@ -23,7 +23,7 @@ solar-parse.workspace = true
 solar-ast.workspace = true
 solar-interface.workspace = true
 
-regex.workspace = true
+heck.workspace = true
 eyre.workspace = true
 rayon.workspace = true
 thiserror.workspace = true

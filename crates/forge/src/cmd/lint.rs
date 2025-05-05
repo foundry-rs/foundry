@@ -60,15 +60,9 @@ impl LintArgs {
                 project_paths
             }
             paths => {
+                // Override default excluded paths and only lint the input files.
                 let mut inputs = Vec::with_capacity(paths.len());
                 for path in paths {
-                    if !ignored.is_empty() &&
-                        ((path.is_absolute() && ignored.contains(path)) ||
-                            ignored.contains(&cwd.join(path)))
-                    {
-                        continue
-                    }
-
                     if path.is_dir() {
                         inputs
                             .extend(foundry_compilers::utils::source_files(path, SOLC_EXTENSIONS));
@@ -84,7 +78,7 @@ impl LintArgs {
 
         if input.is_empty() {
             sh_println!("Nothing to lint")?;
-            std::process::exit(0);
+            return Ok(());
         }
 
         let parse_lints = |lints: &[String]| -> Result<Vec<SolLint>, SolLintError> {
@@ -93,7 +87,7 @@ impl LintArgs {
 
         // Override default lint config with user-defined lints
         let (include, exclude) = if let Some(cli_lints) = &self.lint {
-            let include_lints = convert_lints(cli_lints)?;
+            let include_lints = parse_lints(cli_lints)?;
             let target_ids: HashSet<&str> = cli_lints.iter().map(String::as_str).collect();
             let filtered_excludes = config
                 .lint
@@ -103,9 +97,9 @@ impl LintArgs {
                 .cloned()
                 .collect::<Vec<_>>();
 
-            (include_lints, convert_lints(&filtered_excludes)?)
+            (include_lints, parse_lints(&filtered_excludes)?)
         } else {
-            (convert_lints(&config.lint.include_lints)?, convert_lints(&config.lint.exclude_lints)?)
+            (parse_lints(&config.lint.include_lints)?, parse_lints(&config.lint.exclude_lints)?)
         };
 
         // Override default severity config with user-defined severity
@@ -116,6 +110,7 @@ impl LintArgs {
 
         if project.compiler.solc.is_some() {
             let linter = SolidityLinter::new()
+                .with_description(true)
                 .with_lints(if include.is_empty() { None } else { Some(include) })
                 .without_lints(if exclude.is_empty() { None } else { Some(exclude) })
                 .with_severity(if severity.is_empty() { None } else { Some(severity) });

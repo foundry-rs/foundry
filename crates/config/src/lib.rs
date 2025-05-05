@@ -4448,7 +4448,6 @@ mod tests {
                 r"
                 [lint]
                 severity = ['high', 'medium']
-                include_lints = ['function-mixed-case']
                 exclude_lints = ['incorrect-shift']
                 ",
             )?;

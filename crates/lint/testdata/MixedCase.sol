@@ -15,10 +15,10 @@ contract MixedCaseTest {
     function foo() public {
         // Passes
         uint256 testVal;
-        uint256 testVAL;
         uint256 testVal123;
 
         // Fails
+        uint256 testVAL;
         uint256 TestVal;
         uint256 TESTVAL;
     }
@@ -26,10 +26,10 @@ contract MixedCaseTest {
     // Passes
     function functionMixedCase() public {}
     function _functionMixedCase() internal {}
-    function functionmixedcase() public {} 
+    function functionmixedcase() public {}
 
     // Fails
     function Functionmixedcase() public {}
-    function FUNCTION_MIXED_CASE() public {} 
-    function FunctionMixedCase() public {} 
+    function FUNCTION_MIXED_CASE() public {}
+    function FunctionMixedCase() public {}
 }

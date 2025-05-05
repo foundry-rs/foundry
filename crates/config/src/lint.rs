@@ -20,7 +20,7 @@ pub struct LinterConfig {
     /// Cannot be used in combination with `exclude_lint`.
     pub include_lints: Vec<String>,
 
-    /// Deny specific lints based on their ID (e.g., "function-mixed-case").
+    /// Deny specific lints based on their ID (e.g. "mixed-case-function").
     ///
     /// Cannot be used in combination with `include_lint`.
     pub exclude_lints: Vec<String>,

@@ -1,3 +1,5 @@
+pub mod macros;
+
 pub mod gas;
 pub mod high;
 pub mod info;
@@ -77,15 +79,11 @@ impl SolidityLinter {
 
         let _ = sess.enter(|| -> Result<(), ErrorGuaranteed> {
             // Declare all available passes and lints
-            let passes_and_lints: Vec<(Box<dyn EarlyLintPass<'_>>, SolLint)> = vec![
-                (Box::new(AsmKeccak256), ASM_KECCACK256),
-                (Box::new(IncorrectShift), INCORRECT_SHIFT),
-                (Box::new(DivideBeforeMultiply), DIVIDE_BEFORE_MULTIPLY),
-                (Box::new(VariableMixedCase), VARIABLE_MIXED_CASE),
-                (Box::new(ScreamingSnakeCase), SCREAMING_SNAKE_CASE),
-                (Box::new(StructPascalCase), STRUCT_PASCAL_CASE),
-                (Box::new(FunctionMixedCase), FUNCTION_MIXED_CASE),
-            ];
+            let mut passes_and_lints = Vec::new();
+            passes_and_lints.extend(gas::create_lint_passes());
+            passes_and_lints.extend(high::create_lint_passes());
+            passes_and_lints.extend(med::create_lint_passes());
+            passes_and_lints.extend(info::create_lint_passes());
 
             // Filter based on linter config
             let mut passes: Vec<Box<dyn EarlyLintPass<'_>>> = passes_and_lints
@@ -168,119 +166,34 @@ impl Lint for SolLint {
     }
 }
 
-macro_rules! declare_forge_lints {
-    ($(($pass_id:ident, $lint_id:ident, $severity:expr, $str_id:expr, $description:expr, $help:expr)),* $(,)?) => {
-        // Declare the static `Lint` metadata
-        $(
-            pub static $lint_id: SolLint = SolLint {
-                id: $str_id,
-                severity: $severity,
-                description: $description,
-                help: if $help.is_empty() { None } else { Some($help) }
-            };
-        )*
+impl<'a> TryFrom<&'a str> for SolLint {
+    type Error = SolLintError;
 
-        // Implement TryFrom<&str> for `SolLint`
-        impl<'a> TryFrom<&'a str> for SolLint {
-            type Error = SolLintError;
-
-            fn try_from(value: &'a str) -> Result<Self, Self::Error> {
-                match value {
-                    $(
-                        $str_id => Ok($lint_id),
-                    )*
-                    _ => Err(SolLintError::InvalidId(value.to_string())),
-                }
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+        for &lint in high::REGISTERED_LINTS {
+            if lint.id() == value {
+                return Ok(lint);
             }
         }
 
-        // Declare the structs that will implement the pass trait
-        $(
-            #[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
-            pub struct $pass_id;
-        )*
-    };
+        for &lint in med::REGISTERED_LINTS {
+            if lint.id() == value {
+                return Ok(lint);
+            }
+        }
+
+        for &lint in info::REGISTERED_LINTS {
+            if lint.id() == value {
+                return Ok(lint);
+            }
+        }
+
+        for &lint in gas::REGISTERED_LINTS {
+            if lint.id() == value {
+                return Ok(lint);
+            }
+        }
+
+        Err(SolLintError::InvalidId(value.to_string()))
+    }
 }
-
-// Macro for defining lints and relevant metadata for the Solidity linter.
-//
-// This macro generates the [`SolLint`] enum with each lint along with utility methods and
-// corresponding structs for each lint specified.
-//
-// # Parameters
-//
-// Each lint is defined as a tuple with the following fields:
-// - `$id`: Identitifier used as the struct and enum variant created for the lint.
-// - `$severity`: The [`Severity`] of the lint (e.g. `High`, `Med`, `Low`, `Info`, `Gas`).
-// - `$description`: A short description of the lint.
-// - `$help`: Link to additional information about the lint or best practices.
-// - `$str_id`: A unique identifier used to reference a specific lint during configuration.
-declare_forge_lints!(
-    //High
-    (
-        IncorrectShift,
-        INCORRECT_SHIFT,
-        Severity::High,
-        "incorrect-shift",
-        "The order of args in a shift operation is incorrect",
-        ""
-    ),
-    // Med
-    (
-        DivideBeforeMultiply,
-        DIVIDE_BEFORE_MULTIPLY,
-        Severity::Med,
-        "divide-before-multiply",
-        "Multiplication should occur before division to avoid loss of precision",
-        ""
-    ),
-    // Low
-
-    // Info
-    (
-        VariableMixedCase,
-        VARIABLE_MIXED_CASE,
-        Severity::Info,
-        "variable-mixed-case",
-        "Mutable variables should use mixedCase",
-        ""
-    ),
-    (
-        ScreamingSnakeCase,
-        SCREAMING_SNAKE_CASE,
-        Severity::Info,
-        "screaming-snake-case",
-        "Constants and immutables should use SCREAMING_SNAKE_CASE",
-        "https://docs.soliditylang.org/en/latest/style-guide.html#contract-and-library-names"
-    ),
-    (
-        StructPascalCase,
-        STRUCT_PASCAL_CASE,
-        Severity::Info,
-        "struct-pascal-case",
-        "Structs should use PascalCase.",
-        "https://docs.soliditylang.org/en/latest/style-guide.html#struct-names"
-    ),
-    (
-        FunctionMixedCase,
-        FUNCTION_MIXED_CASE,
-        Severity::Info,
-        "function-mixed-case",
-        "Function names should use mixedCase.",
-        "https://docs.soliditylang.org/en/latest/style-guide.html#function-names"
-    ),
-    // Gas Optimizations
-    (
-        AsmKeccak256,
-        ASM_KECCACK256,
-        Severity::Gas,
-        "asm-keccack256",
-        "Hash via inline assembly to save gas",
-        ""
-    ),
-    // TODO: PackStorageVariables
-    // TODO: PackStructs
-    // TODO: UseConstantVariable
-    // TODO: UseImmutableVariable
-    // TODO: UseCalldataInsteadOfMemory
-);

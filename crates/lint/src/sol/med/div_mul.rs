@@ -1,17 +1,27 @@
 use solar_ast::{BinOp, BinOpKind, Expr, ExprKind};
-use std::ops::ControlFlow;
 
-use super::{DivideBeforeMultiply, DIVIDE_BEFORE_MULTIPLY};
-use crate::linter::{EarlyLintPass, LintContext};
+use super::DivideBeforeMultiply;
+use crate::{
+    declare_forge_lint,
+    linter::{EarlyLintPass, LintContext},
+    sol::{Severity, SolLint},
+};
+
+declare_forge_lint!(
+    DIVIDE_BEFORE_MULTIPLY,
+    Severity::Med,
+    "divide-before-multiply",
+    "multiplication should occur before division to avoid loss of precision",
+    ""
+);
 
 impl<'ast> EarlyLintPass<'ast> for DivideBeforeMultiply {
-    fn check_expr(&mut self, ctx: &LintContext<'_>, expr: &'ast Expr<'ast>) -> ControlFlow<()> {
+    fn check_expr(&mut self, ctx: &LintContext<'_>, expr: &'ast Expr<'ast>) {
         if let ExprKind::Binary(left_expr, BinOp { kind: BinOpKind::Mul, .. }, _) = &expr.kind {
             if contains_division(left_expr) {
                 ctx.emit(&DIVIDE_BEFORE_MULTIPLY, expr.span);
             }
         }
-        ControlFlow::Continue(())
     }
 }
 
@@ -45,8 +55,8 @@ mod test {
         let emitted =
             linter.lint_file(Path::new("testdata/DivideBeforeMultiply.sol")).unwrap().to_string();
         let warnings =
-            emitted.matches(&format!("warning: {}", DIVIDE_BEFORE_MULTIPLY.id())).count();
-        let notes = emitted.matches(&format!("note: {}", DIVIDE_BEFORE_MULTIPLY.id())).count();
+            emitted.matches(&format!("warning[{}]", DIVIDE_BEFORE_MULTIPLY.id())).count();
+        let notes = emitted.matches(&format!("note[{}]", DIVIDE_BEFORE_MULTIPLY.id())).count();
 
         assert_eq!(warnings, 6, "Expected 6 warnings");
         assert_eq!(notes, 0, "Expected 0 notes");

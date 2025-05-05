@@ -1,7 +1,11 @@
 use foundry_compilers::Language;
 use foundry_config::lint::Severity;
-use solar_ast::{visit::Visit, Expr, ItemFunction, ItemStruct, Span, VariableDefinition};
-use solar_interface::{diagnostics::DiagBuilder, Session};
+use solar_ast::{visit::Visit, Expr, ItemFunction, ItemStruct, VariableDefinition};
+use solar_interface::{
+    data_structures::Never,
+    diagnostics::{DiagBuilder, DiagId, MultiSpan},
+    Session, Span,
+};
 use std::{ops::ControlFlow, path::PathBuf};
 
 /// Trait representing a generic linter for analyzing and reporting issues in smart contract source
@@ -44,18 +48,19 @@ impl<'s> LintContext<'s> {
 
     // Helper method to emit diagnostics easily from passes
     pub fn emit<L: Lint>(&self, lint: &'static L, span: Span) {
-        let msg = if self.desc && lint.help().is_some() {
-            format!("{}\n  --> {}", lint.id(), lint.description())
-        } else {
-            lint.id().into()
+        let (desc, help) = match (self.desc, lint.help()) {
+            (true, Some(help)) => (lint.description(), help),
+            (true, None) => ("", lint.description()),
+            (false, _) => ("", ""),
         };
 
-        let diag: DiagBuilder<'_, ()> = match lint.help() {
-            Some(help) => self.sess.dcx.diag(lint.severity().into(), msg).span(span).help(help),
-            None => {
-                self.sess.dcx.diag(lint.severity().into(), msg).span(span).help(lint.description())
-            }
-        };
+        let diag: DiagBuilder<'_, ()> = self
+            .sess
+            .dcx
+            .diag(lint.severity().into(), desc)
+            .code(DiagId::new_str(lint.id()))
+            .span(MultiSpan::from_span(span))
+            .help(help);
 
         diag.emit();
     }
@@ -64,29 +69,14 @@ impl<'s> LintContext<'s> {
 /// Trait for lints that operate directly on the AST.
 /// Its methods mirror `solar_ast::visit::Visit`, with the addition of `LintCotext`.
 pub trait EarlyLintPass<'ast>: Send + Sync {
-    fn check_expr(&mut self, _ctx: &LintContext<'_>, _expr: &'ast Expr<'ast>) -> ControlFlow<()> {
-        ControlFlow::Continue(())
-    }
+    fn check_expr(&mut self, _ctx: &LintContext<'_>, _expr: &'ast Expr<'ast>) {}
+    fn check_item_struct(&mut self, _ctx: &LintContext<'_>, _struct: &'ast ItemStruct<'ast>) {}
+    fn check_item_function(&mut self, _ctx: &LintContext<'_>, _func: &'ast ItemFunction<'ast>) {}
     fn check_variable_definition(
         &mut self,
         _ctx: &LintContext<'_>,
         _var: &'ast VariableDefinition<'ast>,
-    ) -> ControlFlow<()> {
-        ControlFlow::Continue(())
-    }
-    fn check_item_struct(
-        &mut self,
-        _ctx: &LintContext<'_>,
-        _struct: &'ast ItemStruct<'ast>,
-    ) -> ControlFlow<()> {
-        ControlFlow::Continue(())
-    }
-    fn check_item_function(
-        &mut self,
-        _ctx: &LintContext<'_>,
-        _func: &'ast ItemFunction<'ast>,
-    ) -> ControlFlow<()> {
-        ControlFlow::Continue(())
+    ) {
     }
 
     // TODO: Add methods for each required AST node type
@@ -102,13 +92,11 @@ impl<'s, 'ast> Visit<'ast> for EarlyLintVisitor<'_, 's, 'ast>
 where
     's: 'ast,
 {
-    type BreakValue = ();
+    type BreakValue = Never;
 
     fn visit_expr(&mut self, expr: &'ast Expr<'ast>) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            if let ControlFlow::Break(_) = pass.check_expr(self.ctx, expr) {
-                return ControlFlow::Break(());
-            }
+            pass.check_expr(self.ctx, expr)
         }
         self.walk_expr(expr)
     }
@@ -118,9 +106,7 @@ where
         var: &'ast VariableDefinition<'ast>,
     ) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            if let ControlFlow::Break(_) = pass.check_variable_definition(self.ctx, var) {
-                return ControlFlow::Break(());
-            }
+            pass.check_variable_definition(self.ctx, var)
         }
         self.walk_variable_definition(var)
     }
@@ -130,9 +116,7 @@ where
         strukt: &'ast ItemStruct<'ast>,
     ) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            if let ControlFlow::Break(_) = pass.check_item_struct(self.ctx, strukt) {
-                return ControlFlow::Break(());
-            }
+            pass.check_item_struct(self.ctx, strukt)
         }
         self.walk_item_struct(strukt)
     }
@@ -142,9 +126,7 @@ where
         func: &'ast ItemFunction<'ast>,
     ) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            if let ControlFlow::Break(_) = pass.check_item_function(self.ctx, func) {
-                return ControlFlow::Break(());
-            }
+            pass.check_item_function(self.ctx, func)
         }
         self.walk_item_function(func)
     }

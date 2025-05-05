@@ -10,7 +10,7 @@ uint256 constant screaming_snake_case_info = 0;
 contract ContractWithLints {
     uint256 VARIABLE_MIXED_CASE_INFO;
 
-    function incorrectShitHigh() public {
+    function incorrectShiftHigh() public {
         uint256 localValue = 50;
         result = 8 >> localValue;
     }
@@ -48,13 +48,13 @@ forgetest!(can_use_config, |prj, cmd| {
         ..Default::default()
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
-warning: divide-before-multiply
+warning[divide-before-multiply]
   [FILE]:16:9
    |
 16 |         (1 / 2) * 3;
    |         -----------
    |
-   = help: Multiplication should occur before division to avoid loss of precision
+   = help: multiplication should occur before division to avoid loss of precision
 
 
 "#]]);
@@ -74,13 +74,13 @@ forgetest!(can_use_config_ignore, |prj, cmd| {
         ..Default::default()
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
-note: variable-mixed-case
+note[mixed-case-variable]
  [FILE]:6:9
   |
 6 |         uint256 VARIABLE_MIXED_CASE_INFO;
   |         ---------------------------------
   |
-  = help: Mutable variables should use mixedCase
+  = help: mutable variables should use mixedCase
 
 
 "#]]);
@@ -91,7 +91,7 @@ forgetest!(can_override_config_severity, |prj, cmd| {
     prj.add_source("ContractWithLints", CONTRACT).unwrap();
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT).unwrap();
 
-    // Check config for `severity` and `exclude`
+    // Override severity
     prj.write_config(Config {
         lint: LinterConfig {
             severity: vec![LintSeverity::High, LintSeverity::Med],
@@ -101,13 +101,13 @@ forgetest!(can_override_config_severity, |prj, cmd| {
         ..Default::default()
     });
     cmd.arg("lint").args(["--severity", "info"]).assert_success().stderr_eq(str![[r#"
-note: variable-mixed-case
+note[mixed-case-variable]
  [FILE]:6:9
   |
 6 |         uint256 VARIABLE_MIXED_CASE_INFO;
   |         ---------------------------------
   |
-  = help: Mutable variables should use mixedCase
+  = help: mutable variables should use mixedCase
 
 
 "#]]);
@@ -118,7 +118,7 @@ forgetest!(can_override_config_path, |prj, cmd| {
     prj.add_source("ContractWithLints", CONTRACT).unwrap();
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT).unwrap();
 
-    // Check config for `severity` and `exclude`
+    // Override excluded files
     prj.write_config(Config {
         lint: LinterConfig {
             severity: vec![LintSeverity::High, LintSeverity::Med],
@@ -129,13 +129,13 @@ forgetest!(can_override_config_path, |prj, cmd| {
         ..Default::default()
     });
     cmd.arg("lint").arg("src/ContractWithLints.sol").assert_success().stderr_eq(str![[r#"
-warning: divide-before-multiply
+warning[divide-before-multiply]
   [FILE]:16:9
    |
 16 |         (1 / 2) * 3;
    |         -----------
    |
-   = help: Multiplication should occur before division to avoid loss of precision
+   = help: multiplication should occur before division to avoid loss of precision
 
 
 "#]]);
@@ -146,7 +146,7 @@ forgetest!(can_override_config_lint, |prj, cmd| {
     prj.add_source("ContractWithLints", CONTRACT).unwrap();
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT).unwrap();
 
-    // Check config for `severity` and `exclude`
+    // Override excluded lints
     prj.write_config(Config {
         lint: LinterConfig {
             severity: vec![LintSeverity::High, LintSeverity::Med],
@@ -157,13 +157,13 @@ forgetest!(can_override_config_lint, |prj, cmd| {
     });
     cmd.arg("lint").args(["--only-lint", "incorrect-shift"]).assert_success().stderr_eq(str![[
         r#"
-warning: incorrect-shift
+warning[incorrect-shift]
   [FILE]:13:18
    |
 13 |         result = 8 >> localValue;
    |                  ---------------
    |
-   = help: The order of args in a shift operation is incorrect
+   = help: the order of args in a shift operation is incorrect
 
 
 "#

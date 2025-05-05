@@ -7,6 +7,10 @@ contract StructPascalCaseTest {
         uint256 a;
     }
 
+    struct PascalCAse {
+        uint256 a;
+    }
+
     // Fails
     struct _PascalCase {
         uint256 a;
@@ -29,10 +33,6 @@ contract StructPascalCaseTest {
     }
 
     struct PASCALCASE {
-        uint256 a;
-    }
-
-    struct PascalCAse {
         uint256 a;
     }
 }
