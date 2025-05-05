@@ -3,11 +3,13 @@ use alloy_chains::Chain;
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt, Specifier};
 use alloy_json_abi::{Constructor, JsonAbi};
 use alloy_network::{AnyNetwork, AnyTransactionReceipt, EthereumWallet, TransactionBuilder};
-use alloy_primitives::{hex, keccak256, Address, Bytes};
+use alloy_primitives::{hex, keccak256, Address, Bytes, B256};
 use alloy_provider::{PendingTransactionError, Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
+use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::SolCall;
 use alloy_transport::TransportError;
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
@@ -18,6 +20,10 @@ use foundry_cli::{
 };
 use foundry_common::{
     compile::{self},
+    ens::{
+        namehash, EnsRegistry, NameWrapper, NameWrapper::isWrappedCall, PublicResolver,
+        ReverseRegistrar,
+    },
     fmt::parse_tokens,
     shell,
 };
@@ -33,10 +39,14 @@ use foundry_config::{
     merge_impl_figment_convert, Config,
 };
 use serde_json::json;
-use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc, time::Duration};
-use std::io::{stdout, Write};
-use alloy_signer_local::PrivateKeySigner;
-use foundry_common::ens::{namehash, NameWrapper, PublicResolver, ReverseRegistrar};
+use std::{
+    borrow::Borrow,
+    io::{stdout, Write},
+    marker::PhantomData,
+    path::PathBuf,
+    sync::Arc,
+    time::Duration,
+};
 
 merge_impl_figment_convert!(CreateArgs, build, eth);
 
@@ -409,7 +419,15 @@ impl CreateArgs {
 
         if !self.ens_name.is_empty() {
             let key = self.eth.wallet.raw.private_key.unwrap();
-            Self::set_primary_name(provider, key, deployer_address, address, self.ens_name.clone(), self.reverseclaimable).await?;
+            Self::set_primary_name(
+                provider,
+                key,
+                deployer_address,
+                address,
+                self.ens_name.clone(),
+                self.reverseclaimable,
+            )
+            .await?;
         }
 
         if !self.verify {
@@ -455,17 +473,27 @@ impl CreateArgs {
         verify.run().await
     }
 
-    async fn set_primary_name<P: Provider<AnyNetwork>>(provider: P, key: String, sender_addr: Address, contract_addr: Address, name: String, reverseclaimable: bool) -> Result<()> {
-        let signer = key
-            .parse::<PrivateKeySigner>()?;
+    async fn set_primary_name<P: Provider<AnyNetwork>>(
+        provider: P,
+        key: String,
+        sender_addr: Address,
+        contract_addr: Address,
+        name: String,
+        reverseclaimable: bool,
+    ) -> Result<()> {
+        let signer = key.parse::<PrivateKeySigner>()?;
         // todo abhi: use the provider passed in
-        let provider = Arc::new(ProviderBuilder::new()
-            .wallet(signer)
-            .connect("https://sepolia.drpc.org").await?);
-            // .on_provider(provider);
-            // .connect_http(rpc_url.parse()?);
+        let provider = Arc::new(
+            ProviderBuilder::<_, _, AnyNetwork>::default()
+                .wallet(signer)
+                .connect("https://sepolia.drpc.org")
+                .await?,
+        );
+        // .on_provider(provider);
+        // .connect_http(rpc_url.parse()?);
 
-        let reverse_registrar_addr: Address = "0xCF75B92126B02C9811d8c632144288a3eb84afC8".parse()?;
+        let reverse_registrar_addr: Address =
+            "0xCF75B92126B02C9811d8c632144288a3eb84afC8".parse()?;
         let ens_registry_addr: Address = "0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e".parse()?;
         let public_resolver_addr: Address = "0x8948458626811dd0c23EB25Cc74291247077cC51".parse()?;
         let name_wrapper_addr: Address = "0x0635513f179D50A207757E05759CbD106d7dFcE8".parse()?;
@@ -477,37 +505,100 @@ impl CreateArgs {
         let parent = name_splits[1];
         let tld = name_splits[2];
 
+        // todo abhi: the printlns should be removed
         println!("label: {:?}", label);
         let parent_name = format!("{}.{}", parent, tld);
         println!("parent name: {:?}", parent_name);
         let parent_name_hash = namehash(&parent_name);
         println!("parent name hash: {:?}", parent_name_hash);
-        let labelhash = keccak256(&label);
+        let label_hash = keccak256(&label);
         let complete_name_hash = namehash(&name);
         println!("sender addr: {:?}", sender_addr);
 
+        Self::create_subname(
+            sender_addr,
+            &provider,
+            ens_registry_addr,
+            public_resolver_addr,
+            name_wrapper_addr,
+            label,
+            parent_name_hash,
+            label_hash,
+        )
+        .await?;
+
+        Self::set_resolutions(
+            &provider,
+            public_resolver_addr,
+            complete_name_hash,
+            name,
+            contract_addr,
+            reverseclaimable,
+            sender_addr,
+            reverse_registrar_addr,
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    async fn create_subname<P: Provider<AnyNetwork>>(
+        sender_addr: Address,
+        provider: &Arc<P>,
+        ens_registry_addr: Address,
+        public_resolver_addr: Address,
+        name_wrapper_addr: Address,
+        label: &str,
+        parent_name_hash: B256,
+        label_hash: B256,
+    ) -> Result<()> {
+        // check if parent domain (e.g. abhi.eth) is wrapped or unwrapped
         let name_wrapper = NameWrapper::new(name_wrapper_addr, provider.clone());
         let tx = name_wrapper.isWrapped(parent_name_hash);
         let result = provider.call(tx.into_transaction_request()).await?;
+        let is_wrapped = isWrappedCall::abi_decode_returns(&result, false)?._0;
         println!("iswrapped: {:?}", result);
         print!("creating subname ... ");
         stdout().flush()?;
-        let tx = name_wrapper.setSubnodeRecord(
-            parent_name_hash,
-            label.to_owned(),
-            sender_addr,
-            public_resolver_addr,
-            0,
-            0,
-            0,
-        );
-        let result = provider
-            .send_transaction(tx.into_transaction_request())
-            .await?
-            .watch()
-            .await?;
-        println!("done (txn hash: {:?})", result);
+        if is_wrapped {
+            let tx = name_wrapper.setSubnodeRecord(
+                parent_name_hash,
+                label.to_owned(),
+                sender_addr,
+                public_resolver_addr,
+                0,
+                0,
+                0,
+            );
+            let result =
+                provider.send_transaction(tx.into_transaction_request()).await?.watch().await?;
+            println!("done (txn hash: {:?})", result);
+        } else {
+            let ens_registry = EnsRegistry::new(ens_registry_addr, provider.clone());
+            let tx = ens_registry.setSubnodeRecord(
+                parent_name_hash,
+                label_hash,
+                sender_addr,
+                public_resolver_addr,
+                0,
+            );
+            let result =
+                provider.send_transaction(tx.into_transaction_request()).await?.watch().await?;
+            println!("done (txn hash: {:?})", result);
+        }
+        Ok(())
+    }
 
+    async fn set_resolutions<P: Provider<AnyNetwork>>(
+        provider: &Arc<P>,
+        public_resolver_addr: Address,
+        complete_name_hash: B256,
+        name: String,
+        contract_addr: Address,
+        reverse_claimable: bool,
+        sender_addr: Address,
+        reverse_registrar_addr: Address,
+    ) -> Result<()> {
         print!("checking if fwd resolution already set ... ");
         stdout().flush()?;
         let public_resolver = PublicResolver::new(public_resolver_addr, provider.clone());
@@ -515,34 +606,22 @@ impl CreateArgs {
         let result = provider.call(tx.into_transaction_request()).await?;
         println!("result: {:?})", result);
 
-        print!(
-            "setting fwd resolution ({} -> {}) ... ",
-            name, contract_addr
-        );
+        print!("setting fwd resolution ({} -> {}) ... ", name, contract_addr);
         stdout().flush()?;
         let tx = public_resolver.setAddr(complete_name_hash, contract_addr);
-        let result = provider
-            .send_transaction(tx.into_transaction_request())
-            .await?
-            .watch()
-            .await?;
+        let result =
+            provider.send_transaction(tx.into_transaction_request()).await?.watch().await?;
         println!("done (txn hash: {:?})", result);
 
-        print!(
-            "setting rev resolution ({} -> {}) ... ",
-            contract_addr, name
-        );
+        print!("setting rev resolution ({} -> {}) ... ", contract_addr, name);
         stdout().flush()?;
-        let reverse_claimable = reverseclaimable;
+        let reverse_claimable = reverse_claimable;
         if reverse_claimable {
             let addr = &(&sender_addr.to_string().to_ascii_lowercase())[2..];
             let reverse_node = namehash(&format!("{}.addr.reverse", addr));
             let tx = public_resolver.setName(reverse_node, name);
-            let result = provider
-                .send_transaction(tx.into_transaction_request())
-                .await?
-                .watch()
-                .await?;
+            let result =
+                provider.send_transaction(tx.into_transaction_request()).await?.watch().await?;
             println!("done (txn hash: {:?})", result);
         } else {
             let reverse_registrar = ReverseRegistrar::new(reverse_registrar_addr, provider.clone());
@@ -552,11 +631,8 @@ impl CreateArgs {
                 public_resolver_addr,
                 name,
             );
-            let result = provider
-                .send_transaction(tx.into_transaction_request())
-                .await?
-                .watch()
-                .await?;
+            let result =
+                provider.send_transaction(tx.into_transaction_request()).await?.watch().await?;
             println!("done (txn hash: {:?})", result);
         }
 

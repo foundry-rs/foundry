@@ -16,6 +16,13 @@ sol! {
     contract EnsRegistry {
         /// Returns the resolver for the specified node.
         function resolver(bytes32 node) view returns (address);
+        function setSubnodeRecord(
+                bytes32 node,
+                bytes32 label,
+                address owner,
+                address resolver,
+                uint64 ttl
+            ) external;
     }
 
     /// ENS Resolver interface.
@@ -27,7 +34,7 @@ sol! {
         /// Returns the name associated with an ENS node, for reverse records.
         function name(bytes32 node) view returns (string);
     }
-    
+
     #[sol(rpc)]
     contract NameWrapper {
         function isWrapped(bytes32 node) external returns (bool);
@@ -41,14 +48,14 @@ sol! {
                 uint64 expiry,
             ) external;
     }
-    
+
     #[sol(rpc)]
     contract PublicResolver {
         function setAddr(bytes32 node, address addr) external;
         function addr(bytes32 node) external returns (address);
         function setName(bytes32 node,  string newName) external;
     }
-    
+
     #[sol(rpc)]
     contract ReverseRegistrar {
         function setName(string memory name) external returns (bytes32);
