@@ -14,7 +14,7 @@ enum States { State1, State2, State3, State4, State5, State6, State7, State8, St
 enum States { State1, State2, State3, State4, State5, State6, State7, State8, State9 }
 
 // forgefmt: disable-next-line
-bytes32 constant private BYTES = 0x035aff83d86937d35b32e04f0ddc6ff469290eef2f1b692d8a815c89404d4749;
+bytes32 constant BYTES = 0x035aff83d86937d35b32e04f0ddc6ff469290eef2f1b692d8a815c89404d4749;
 
 // forgefmt: disable-start
 
@@ -466,7 +466,7 @@ error TopLevelCustomErrorArgWithoutName  (string);
 
     event Event1(uint256 indexed a, uint256 indexed a, uint256 indexed a, uint256 indexed a, uint256 indexed a, uint256 indexed a, uint256 indexed a, uint256 indexed a, uint256 indexed a, uint256 indexed a);
 
-// forgefmt: disable-stop
+// forgefmt: disable-end
 
 function setNumber(uint256 newNumber /* param1 */, uint256 sjdfasdfasdfasdfasfsdfsadfasdfasdfasdfsadjfkhasdfljkahsdfkjasdkfhsaf /* param2 */) public view returns (bool,bool) { /* inline*/ number1 = newNumber1; // forgefmt: disable-line
     number = newNumber;

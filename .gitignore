@@ -1,5 +1,6 @@
 .DS_STORE
 /target*
+/*.sol
 out/
 snapshots/
 out.json

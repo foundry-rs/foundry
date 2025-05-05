@@ -91,10 +91,10 @@ interface FunctionInterfaces {
 }
 
 contract FunctionDefinitions {
-    function () external {}
+    function f() external {}
     fallback () external {}
 
-    function () external payable {}
+    function f() external payable {}
     fallback () external payable {}
     receive () external payable {}
 

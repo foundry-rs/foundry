@@ -487,7 +487,7 @@ error TopLevelCustomErrorArgWithoutName  (string);
 
     event Event1(uint256 indexed a, uint256 indexed a, uint256 indexed a, uint256 indexed a, uint256 indexed a, uint256 indexed a, uint256 indexed a, uint256 indexed a, uint256 indexed a, uint256 indexed a);
 
-// forgefmt: disable-stop
+// forgefmt: disable-end
 
 function setNumber(uint256 newNumber /* param1 */, uint256 sjdfasdfasdfasdfasfsdfsadfasdfasdfasdfsadjfkhasdfljkahsdfkjasdkfhsaf /* param2 */) public view returns (bool,bool) { /* inline*/ number1 = newNumber1; // forgefmt: disable-line
     number = newNumber;

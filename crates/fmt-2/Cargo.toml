@@ -1,0 +1,30 @@
+[package]
+name = "forge-fmt-2"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+foundry-config.workspace = true
+
+solar-parse.workspace = true
+
+# alloy-primitives.workspace = true
+itertools.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+itertools.workspace = true
+similar-asserts.workspace = true
+toml.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+snapbox.workspace = true

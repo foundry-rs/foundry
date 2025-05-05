@@ -1,6 +1,6 @@
 // config: bracket_spacing = true
 contract EnumDefinitions {
-    enum Empty { }
+    enum Empty {}
     enum ActionChoices {
         GoLeft,
         GoRight,

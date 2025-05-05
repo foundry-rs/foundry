@@ -172,8 +172,8 @@ contract Yul {
                 v7
             {}
 
-            let zero:u32 := 0:u32
-            let v:u256, t:u32 := sample(1, 2)
+            let zero := 0
+            let v, t := sample(1, 2)
             let x, y := sample2(2, 1)
 
             let val1, val2, val3, val4, val5, val6, val7

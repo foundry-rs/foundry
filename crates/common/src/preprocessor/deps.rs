@@ -191,10 +191,10 @@ impl<'hir> Visit<'hir> for BytecodeDependencyCollector<'hir> {
 
                             // Calculate offset to remove named args, e.g. for an expression like
                             // `new Counter {value: 333} (  address(this))`
-                            // the offset will be used to replace `{value: 333} (  ` with `(`
+                            // the offset will be used to replace `{value: 333} (` with `(`
                             let call_args_offset = if named_args.is_some() && !call_args.is_empty()
                             {
-                                (call_args.span().lo() - ty_new.span.hi()).to_usize()
+                                (call_args.span.lo() - ty_new.span.hi()).to_usize()
                             } else {
                                 0
                             };

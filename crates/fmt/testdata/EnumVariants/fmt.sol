@@ -10,8 +10,8 @@ interface I {
     /// A modification applied to either `msg.sender` or `tx.origin`. Returned by `readCallers`.
     enum CallerMode2 {
         /// No caller modification is currently active.
-        None,
-        /// No caller modification is currently active2.
+        None, /// No caller modification is currently active2.
+
         Some
     }
 
