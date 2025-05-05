@@ -1,0 +1,27 @@
+[package]
+name = "naming"
+description = "setting ens names for smart contracts"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+eyre.workspace = true
+
+foundry-cli.workspace = true
+foundry-common.workspace = true
+
+alloy-contract.workspace = true
+alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
+# todo abhi: remove signer local crate
+alloy-signer-local.workspace = true
+alloy-sol-types.workspace = true
+clap = { version = "4.5.37", features = ["derive"] }

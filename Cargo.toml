@@ -22,6 +22,7 @@ members = [
     "crates/forge/",
     "crates/script-sequence/",
     "crates/macros/",
+    "crates/naming/",
     "crates/test-utils/",
 ]
 resolver = "2"
@@ -186,6 +187,8 @@ foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
 foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
+
+naming = { path = "crates/naming" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.13.0", default-features = false }

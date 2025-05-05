@@ -3507,6 +3507,7 @@ dependencies = [
  "inferno",
  "itertools 0.14.0",
  "mockall",
+ "naming",
  "opener",
  "parking_lot",
  "paste",
@@ -5958,6 +5959,20 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.101",
+]
+
+[[package]]
+name = "naming"
+version = "1.1.0"
+dependencies = [
+ "alloy-contract",
+ "alloy-provider",
+ "alloy-signer-local",
+ "alloy-sol-types",
+ "clap",
+ "eyre",
+ "foundry-cli",
+ "foundry-common",
 ]
 
 [[package]]
