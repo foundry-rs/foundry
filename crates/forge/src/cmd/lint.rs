@@ -12,7 +12,7 @@ use std::path::PathBuf;
 /// CLI arguments for `forge lint`.
 #[derive(Clone, Debug, Parser)]
 pub struct LintArgs {
-    /// Path to the file.
+    /// Path to the file to be checked. Overrides the `ignore` project config.
     #[arg(value_hint = ValueHint::FilePath, value_name = "PATH", num_args(1..))]
     paths: Vec<PathBuf>,
 
@@ -23,14 +23,14 @@ pub struct LintArgs {
     #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     root: Option<PathBuf>,
 
-    /// Specifies which lints to run based on severity. Overrides the project config.
+    /// Specifies which lints to run based on severity. Overrides the `severity` project config.
     ///
     /// Supported values: `high`, `med`, `low`, `info`, `gas`.
     #[arg(long, value_name = "SEVERITY", num_args(1..))]
     severity: Option<Vec<Severity>>,
 
     /// Specifies which lints to run based on their ID (e.g., "incorrect-shift"). Overrides the
-    /// project config.
+    /// `exclude_lints` project config.
     #[arg(long = "only-lint", value_name = "LINT_ID", num_args(1..))]
     lint: Option<Vec<String>>,
 }

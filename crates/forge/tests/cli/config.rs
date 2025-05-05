@@ -1069,7 +1069,6 @@ sort_imports = false
 
 [lint]
 severity = []
-include_lints = []
 exclude_lints = []
 ignore = []
 
@@ -1274,7 +1273,6 @@ exclude = []
   },
   "lint": {
     "severity": [],
-    "include_lints": [],
     "exclude_lints": [],
     "ignore": []
   },

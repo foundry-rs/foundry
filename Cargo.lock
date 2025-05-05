@@ -2250,7 +2250,7 @@ dependencies = [
  "serde",
  "serde_json",
  "solang-parser",
- "solar-parse 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
+ "solar-parse",
  "strum 0.27.1",
  "tikv-jemallocator",
  "time",
@@ -3571,8 +3571,8 @@ dependencies = [
  "similar",
  "similar-asserts",
  "solang-parser",
- "solar-interface 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
- "solar-parse 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
+ "solar-interface",
+ "solar-parse",
  "soldeer-commands",
  "strum 0.27.1",
  "svm-rs",
@@ -3643,9 +3643,9 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
- "solar-ast 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
- "solar-interface 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
- "solar-parse 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
+ "solar-ast",
+ "solar-interface",
+ "solar-parse",
  "thiserror 2.0.12",
  "yansi",
 ]
@@ -3928,8 +3928,8 @@ dependencies = [
  "semver 1.0.26",
  "serde",
  "serde_json",
- "solar-parse 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
- "solar-sema 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
+ "solar-parse",
+ "solar-sema",
  "terminal_size",
  "thiserror 2.0.12",
  "tokio",
@@ -3986,8 +3986,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "solar-parse 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "solar-sema 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "solar-parse",
+ "solar-sema",
  "svm-rs",
  "svm-rs-builds",
  "tempfile",
@@ -4096,8 +4096,8 @@ dependencies = [
  "serde",
  "serde_json",
  "similar-asserts",
- "solar-interface 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
- "solar-parse 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
+ "solar-interface",
+ "solar-parse",
  "soldeer-core",
  "tempfile",
  "thiserror 2.0.12",
@@ -4260,7 +4260,7 @@ dependencies = [
  "revm-inspectors",
  "serde",
  "serde_json",
- "solar-parse 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
+ "solar-parse",
  "tempfile",
  "tokio",
  "tracing",
@@ -7808,15 +7808,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "scc"
-version = "2.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22b2d775fb28f245817589471dd49c5edf64237f4a19d10ce9a92ff4651a27f4"
-dependencies = [
- "sdd",
-]
-
-[[package]]
 name = "schannel"
 version = "0.1.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7872,12 +7863,6 @@ dependencies = [
  "salsa20",
  "sha2",
 ]
-
-[[package]]
-name = "sdd"
-version = "3.0.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "584e070911c7017da6cb2eb0788d09f43d789029b5877d3e5ecc8acf86ceee21"
 
 [[package]]
 name = "sec1"
@@ -8347,26 +8332,6 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0a583a12e73099d1f54bfe7c8a30d7af5ff3591c61ee51cce91045ee5496d86"
-dependencies = [
- "alloy-primitives 0.8.25",
- "bumpalo",
- "derive_more 2.0.1",
- "either",
- "num-bigint",
- "num-rational",
- "semver 1.0.26",
- "solar-data-structures 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "solar-interface 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "solar-macros 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "strum 0.27.1",
- "typed-arena",
-]
-
-[[package]]
-name = "solar-ast"
-version = "0.1.2"
 source = "git+https://github.com/paradigmxyz/solar?branch=main#65186e7a3b2b6e1412d6ca8d544f9622311a1e81"
 dependencies = [
  "alloy-primitives 1.1.0",
@@ -8375,9 +8340,9 @@ dependencies = [
  "num-bigint",
  "num-rational",
  "semver 1.0.26",
- "solar-data-structures 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
- "solar-interface 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
- "solar-macros 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
+ "solar-data-structures",
+ "solar-interface",
+ "solar-macros",
  "strum 0.27.1",
  "typed-arena",
 ]
@@ -8385,33 +8350,9 @@ dependencies = [
 [[package]]
 name = "solar-config"
 version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12642e7e8490d6855a345b5b9d5e55630bd30f54450a909e28f1385b448baada"
-dependencies = [
- "strum 0.27.1",
-]
-
-[[package]]
-name = "solar-config"
-version = "0.1.2"
 source = "git+https://github.com/paradigmxyz/solar?branch=main#65186e7a3b2b6e1412d6ca8d544f9622311a1e81"
 dependencies = [
  "strum 0.27.1",
-]
-
-[[package]]
-name = "solar-data-structures"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dae8902cc28af53e2ba97c450aff7c59d112a433f9ef98fae808e02e25e6dee6"
-dependencies = [
- "bumpalo",
- "index_vec",
- "indexmap 2.9.0",
- "parking_lot",
- "rayon",
- "rustc-hash 2.1.1",
- "smallvec",
 ]
 
 [[package]]
@@ -8426,35 +8367,6 @@ dependencies = [
  "rayon",
  "rustc-hash 2.1.1",
  "smallvec",
-]
-
-[[package]]
-name = "solar-interface"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ded5ec7a5cee351c7a428842d273470180cab259c46f52d502ec3ab5484d0c3a"
-dependencies = [
- "annotate-snippets",
- "anstream",
- "anstyle",
- "const-hex",
- "derive_builder",
- "derive_more 2.0.1",
- "dunce",
- "itertools 0.10.5",
- "itoa",
- "lasso",
- "match_cfg",
- "normalize-path",
- "rayon",
- "scc",
- "scoped-tls",
- "solar-config 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "solar-data-structures 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "solar-macros 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "thiserror 1.0.69",
- "tracing",
- "unicode-width 0.2.0",
 ]
 
 [[package]]
@@ -8476,23 +8388,12 @@ dependencies = [
  "normalize-path",
  "rayon",
  "scoped-tls",
- "solar-config 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
- "solar-data-structures 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
- "solar-macros 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
+ "solar-config",
+ "solar-data-structures",
+ "solar-macros",
  "thiserror 1.0.69",
  "tracing",
  "unicode-width 0.2.0",
-]
-
-[[package]]
-name = "solar-macros"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca2c9ff6e00eeeff12eac9d589f1f20413d3b71b9c0c292d1eefbd34787e0836"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.101",
 ]
 
 [[package]]
@@ -8503,27 +8404,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.101",
-]
-
-[[package]]
-name = "solar-parse"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e1bc1d0253b0f7f2c7cd25ed7bc5d5e8cac43e717d002398250e0e66e43278b"
-dependencies = [
- "alloy-primitives 0.8.25",
- "bitflags 2.9.0",
- "bumpalo",
- "itertools 0.10.5",
- "memchr",
- "num-bigint",
- "num-rational",
- "num-traits",
- "smallvec",
- "solar-ast 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "solar-data-structures 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "solar-interface 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "tracing",
 ]
 
 [[package]]
@@ -8540,39 +8420,10 @@ dependencies = [
  "num-rational",
  "num-traits",
  "smallvec",
- "solar-ast 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
- "solar-data-structures 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
- "solar-interface 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
+ "solar-ast",
+ "solar-data-structures",
+ "solar-interface",
  "tracing",
-]
-
-[[package]]
-name = "solar-sema"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ded4b26fb85a0ae2f3277377236af0884c82f38965a2c51046a53016c8b5f332"
-dependencies = [
- "alloy-json-abi 0.8.25",
- "alloy-primitives 0.8.25",
- "bitflags 2.9.0",
- "bumpalo",
- "derive_more 2.0.1",
- "either",
- "once_map",
- "paste",
- "rayon",
- "scc",
- "serde",
- "serde_json",
- "solar-ast 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "solar-data-structures 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "solar-interface 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "solar-macros 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "solar-parse 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "strum 0.27.1",
- "thread_local",
- "tracing",
- "typed-arena",
 ]
 
 [[package]]
@@ -8591,11 +8442,11 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
- "solar-ast 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
- "solar-data-structures 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
- "solar-interface 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
- "solar-macros 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
- "solar-parse 0.1.2 (git+https://github.com/paradigmxyz/solar?branch=main)",
+ "solar-ast",
+ "solar-data-structures",
+ "solar-interface",
+ "solar-macros",
+ "solar-parse",
  "strum 0.27.1",
  "thread_local",
  "tracing",

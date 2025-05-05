@@ -1,4 +1,4 @@
-use foundry_config::{Config, LintSeverity, LinterConfig};
+use foundry_config::{LintSeverity, LinterConfig};
 
 const CONTRACT: &str = r#"
 // SPDX-License-Identifier: MIT
@@ -39,13 +39,12 @@ forgetest!(can_use_config, |prj, cmd| {
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT).unwrap();
 
     // Check config for `severity` and `exclude`
-    prj.write_config(Config {
-        lint: LinterConfig {
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
             severity: vec![LintSeverity::High, LintSeverity::Med],
             exclude_lints: vec!["incorrect-shift".into()],
             ..Default::default()
-        },
-        ..Default::default()
+        };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
 warning[divide-before-multiply]
@@ -66,12 +65,9 @@ forgetest!(can_use_config_ignore, |prj, cmd| {
     prj.add_source("OtherContract", OTHER_CONTRACT).unwrap();
 
     // Check config for `ignore`
-    prj.write_config(Config {
-        lint: LinterConfig {
-            ignore: vec!["src/ContractWithLints.sol".into()],
-            ..Default::default()
-        },
-        ..Default::default()
+    prj.update_config(|config| {
+        config.lint =
+            LinterConfig { ignore: vec!["src/ContractWithLints.sol".into()], ..Default::default() };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
 note[mixed-case-variable]
@@ -84,6 +80,15 @@ note[mixed-case-variable]
 
 
 "#]]);
+
+    // Check config again, ignoring all files
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            ignore: vec!["src/ContractWithLints.sol".into(), "src/OtherContract.sol".into()],
+            ..Default::default()
+        };
+    });
+    cmd.arg("lint").assert_success().stderr_eq(str![[""]]);
 });
 
 forgetest!(can_override_config_severity, |prj, cmd| {
@@ -92,13 +97,12 @@ forgetest!(can_override_config_severity, |prj, cmd| {
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT).unwrap();
 
     // Override severity
-    prj.write_config(Config {
-        lint: LinterConfig {
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
             severity: vec![LintSeverity::High, LintSeverity::Med],
             ignore: vec!["src/ContractWithLints.sol".into()],
             ..Default::default()
-        },
-        ..Default::default()
+        };
     });
     cmd.arg("lint").args(["--severity", "info"]).assert_success().stderr_eq(str![[r#"
 note[mixed-case-variable]
@@ -119,13 +123,12 @@ forgetest!(can_override_config_path, |prj, cmd| {
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT).unwrap();
 
     // Override excluded files
-    prj.write_config(Config {
-        lint: LinterConfig {
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
             severity: vec![LintSeverity::High, LintSeverity::Med],
             exclude_lints: vec!["incorrect-shift".into()],
             ignore: vec!["src/ContractWithLints.sol".into()],
-        },
-        ..Default::default()
+        };
     });
     cmd.arg("lint").arg("src/ContractWithLints.sol").assert_success().stderr_eq(str![[r#"
 warning[divide-before-multiply]
@@ -146,13 +149,12 @@ forgetest!(can_override_config_lint, |prj, cmd| {
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT).unwrap();
 
     // Override excluded lints
-    prj.write_config(Config {
-        lint: LinterConfig {
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
             severity: vec![LintSeverity::High, LintSeverity::Med],
             exclude_lints: vec!["incorrect-shift".into()],
             ..Default::default()
-        },
-        ..Default::default()
+        };
     });
     cmd.arg("lint").args(["--only-lint", "incorrect-shift"]).assert_success().stderr_eq(str![[
         r#"
