@@ -114,7 +114,7 @@ struct BufEntry {
 
 impl Printer {
     pub fn new(margin: usize) -> Self {
-        let margin = (margin as isize).max(MIN_SPACE);
+        let margin = (margin as isize).clamp(MIN_SPACE, SIZE_INFINITY - 1);
         Self {
             out: String::new(),
             space: margin,
