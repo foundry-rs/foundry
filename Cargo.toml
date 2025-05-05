@@ -188,7 +188,7 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.13.0", default-features = false }
+foundry-block-explorers = { version = "0.13.2", default-features = false }
 foundry-compilers = { version = "0.14.0", default-features = false }
 foundry-fork-db = "0.12"
 solang-parser = "=0.3.3"
@@ -324,7 +324,6 @@ jiff = "0.2"
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers", rev = "8c03122" }
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
 # alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }
