@@ -142,13 +142,14 @@ fn format_inner(
 
 fn parse_inline_config(sess: &Session, comments: &Comments, src: &str) -> InlineConfig {
     let items = comments.iter().filter_map(|comment| {
-        let item = comment
-            .lines
-            .first()?
-            .strip_prefix(comment.prefix()?)?
-            .trim_start()
-            .strip_prefix("forgefmt:")?
-            .trim();
+        let mut item = comment.lines.first()?.as_str();
+        if let Some(prefix) = comment.prefix() {
+            item = item.strip_prefix(prefix).unwrap_or(item);
+        }
+        if let Some(suffix) = comment.suffix() {
+            item = item.strip_suffix(suffix).unwrap_or(item);
+        }
+        let item = item.trim_start().strip_prefix("forgefmt:")?.trim();
         let span = comment.span;
         match item.parse::<inline_config::InlineConfigItem>() {
             Ok(item) => Some((span, item)),
