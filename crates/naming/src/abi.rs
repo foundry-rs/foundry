@@ -1,6 +1,6 @@
 use alloy_sol_types::sol;
 
-sol!{
+sol! {
     /// ENS Registry contract.
     #[sol(rpc)]
     contract EnsRegistry {

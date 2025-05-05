@@ -1,16 +1,20 @@
-use std::io::{stdout, Write};
-use std::sync::Arc;
-use alloy_provider::network::AnyNetwork;
-use alloy_provider::{Provider, ProviderBuilder};
+use crate::abi::{
+    EnsRegistry, NameWrapper, NameWrapper::isWrappedCall, PublicResolver, ReverseRegistrar,
+};
+use alloy_provider::{network::AnyNetwork, Provider, ProviderBuilder};
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::private::{keccak256, Address, B256};
+use alloy_sol_types::{
+    private::{keccak256, Address, B256},
+    SolCall,
+};
 use clap::Parser;
-use foundry_common::ens::namehash;
-use crate::abi::{EnsRegistry, NameWrapper, PublicResolver, ReverseRegistrar};
 use eyre::Result;
-use crate::abi::NameWrapper::isWrappedCall;
-use alloy_sol_types::SolCall;
 use foundry_cli::opts::EthereumOpts;
+use foundry_common::ens::namehash;
+use std::{
+    io::{stdout, Write},
+    sync::Arc,
+};
 
 #[derive(Clone, Debug, Parser)]
 pub struct NamingArgs {
@@ -27,17 +31,19 @@ pub struct NamingArgs {
     pub reverse_claimer: bool,
 
     #[command(flatten)]
-    pub eth: EthereumOpts
+    pub eth: EthereumOpts,
 }
 
 impl NamingArgs {
     pub async fn run(self) -> Result<()> {
-        Self::set_primary_name(self.eth.wallet.raw.private_key.unwrap(),
-                               self.sender_addr,
-                               self.address,
-                               self.ens_name,
-                               self.reverse_claimer
-        ).await
+        Self::set_primary_name(
+            self.eth.wallet.raw.private_key.unwrap(),
+            self.sender_addr,
+            self.address,
+            self.ens_name,
+            self.reverse_claimer,
+        )
+        .await
     }
 
     pub async fn set_primary_name(
@@ -91,7 +97,7 @@ impl NamingArgs {
             parent_name_hash,
             label_hash,
         )
-            .await?;
+        .await?;
 
         Self::set_resolutions(
             &provider,
@@ -103,7 +109,7 @@ impl NamingArgs {
             sender_addr,
             reverse_registrar_addr,
         )
-            .await?;
+        .await?;
 
         Ok(())
     }

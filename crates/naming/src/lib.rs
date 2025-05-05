@@ -1,2 +1,2 @@
-pub mod name;
 mod abi;
+pub mod name;

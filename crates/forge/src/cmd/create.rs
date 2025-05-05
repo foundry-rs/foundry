@@ -32,15 +32,9 @@ use foundry_config::{
     },
     merge_impl_figment_convert, Config,
 };
-use serde_json::json;
-use std::{
-    borrow::Borrow,
-    marker::PhantomData,
-    path::PathBuf,
-    sync::Arc,
-    time::Duration,
-};
 use naming::name::NamingArgs;
+use serde_json::json;
+use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc, time::Duration};
 
 merge_impl_figment_convert!(CreateArgs, build, eth);
 
