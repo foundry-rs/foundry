@@ -281,6 +281,32 @@ Warning: Target directory is not empty, but `--force` was specified
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
 });
 
+// checks that init works with vyper flag
+forgetest!(can_init_vyper_project, |prj, cmd| {
+    prj.wipe();
+
+    cmd.args(["init", "--vyper"]).arg(prj.root()).assert_success().stdout_eq(str![[r#"
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std[..]
+    Initialized forge project
+
+"#]]);
+
+    // Check that the Vyper project was initialized correctly
+    assert!(prj.root().join("foundry.toml").exists());
+    assert!(prj.root().join("lib/forge-std").exists());
+    assert!(prj.root().join("src").exists());
+    assert!(prj.root().join("test").exists());
+    assert!(prj.root().join("script").exists());
+    assert!(prj.root().join("src/interface").exists());
+    assert!(prj.root().join("src/utils").exists());
+    assert!(prj.root().join("src").read_dir().unwrap().any(|entry| {
+        let path = entry.unwrap().path();
+        path.to_string_lossy().ends_with(".vy")
+    }));
+});
+
 // Checks that a forge project fails to initialise if dir is already git repo and dirty
 forgetest!(can_detect_dirty_git_status_on_init, |prj, cmd| {
     prj.wipe();
