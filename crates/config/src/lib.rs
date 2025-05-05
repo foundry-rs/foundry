@@ -96,6 +96,7 @@ pub mod fix;
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use alloy_chains::{Chain, NamedChain};
 pub use figment;
+use foundry_block_explorers::EtherscanApiVersion;
 
 pub mod providers;
 pub use providers::Remappings;
@@ -120,6 +121,7 @@ mod bind_json;
 use bind_json::BindJsonConfig;
 
 mod compilation;
+use crate::etherscan::EtherscanConfigError::InvalidApiVersion;
 pub use compilation::{CompilationRestrictions, SettingsOverrides};
 
 /// Foundry configuration
@@ -281,6 +283,8 @@ pub struct Config {
     pub eth_rpc_headers: Option<Vec<String>>,
     /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table
     pub etherscan_api_key: Option<String>,
+    /// etherscan API version
+    pub etherscan_api_version: Option<String>,
     /// Multiple etherscan api configs and their aliases
     #[serde(default, skip_serializing_if = "EtherscanConfigs::is_empty")]
     pub etherscan: EtherscanConfigs,
@@ -1406,7 +1410,14 @@ impl Config {
         // etherscan fallback via API key
         if let Some(key) = self.etherscan_api_key.as_ref() {
             let chain = chain.or(self.chain).unwrap_or_default();
-            return Ok(ResolvedEtherscanConfig::create(key, chain, None::<String>));
+
+            let api_version = match self.etherscan_api_version.as_ref() {
+                Some(api_version) => EtherscanApiVersion::try_from(api_version.to_string())
+                    .map_err(|_| InvalidApiVersion(api_version.to_string()))?,
+                None => EtherscanApiVersion::V2,
+            };
+
+            return Ok(ResolvedEtherscanConfig::create(key, chain, api_version));
         }
 
         Ok(None)
@@ -2369,6 +2380,7 @@ impl Default for Config {
             eth_rpc_timeout: None,
             eth_rpc_headers: None,
             etherscan_api_key: None,
+            etherscan_api_version: None,
             verbosity: 0,
             remappings: vec![],
             auto_detect_remappings: true,
@@ -3081,7 +3093,7 @@ mod tests {
                             api_url: mainnet_urls.0.to_string(),
                             chain: Some(NamedChain::Mainnet.into()),
                             browser_url: Some(mainnet_urls.1.to_string()),
-                            api_version: None,
+                            api_version: EtherscanApiVersion::V2,
                             key: "FX42Z3BBJJEWXWGYV2X1CIPRSCN".to_string(),
                         }
                     ),
@@ -3091,7 +3103,7 @@ mod tests {
                             api_url: mb_urls.0.to_string(),
                             chain: Some(Moonbeam.into()),
                             browser_url: Some(mb_urls.1.to_string()),
-                            api_version: None,
+                            api_version: EtherscanApiVersion::V2,
                             key: "123456789".to_string(),
                         }
                     ),
@@ -3136,7 +3148,7 @@ mod tests {
                             api_url: mainnet_urls.0.to_string(),
                             chain: Some(NamedChain::Mainnet.into()),
                             browser_url: Some(mainnet_urls.1.to_string()),
-                            api_version: Some("v2".to_string()),
+                            api_version: EtherscanApiVersion::V2,
                             key: "FX42Z3BBJJEWXWGYV2X1CIPRSCN".to_string(),
                         }
                     ),
@@ -3146,7 +3158,7 @@ mod tests {
                             api_url: mb_urls.0.to_string(),
                             chain: Some(Moonbeam.into()),
                             browser_url: Some(mb_urls.1.to_string()),
-                            api_version: Some("v1".to_string()),
+                            api_version: EtherscanApiVersion::V1,
                             key: "123456789".to_string(),
                         }
                     ),

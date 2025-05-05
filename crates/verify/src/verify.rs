@@ -2,7 +2,7 @@
 
 use crate::{
     etherscan::EtherscanVerificationProvider,
-    provider::{VerificationProvider, VerificationProviderType},
+    provider::{VerificationContext, VerificationProvider, VerificationProviderType},
     utils::is_host_only,
     RetryArgs,
 };
@@ -23,8 +23,6 @@ use revm_primitives::HashSet;
 use semver::BuildMetadata;
 use std::path::PathBuf;
 
-use crate::provider::VerificationContext;
-
 /// Verification provider arguments
 #[derive(Clone, Debug, Parser)]
 pub struct VerifierArgs {
@@ -39,6 +37,10 @@ pub struct VerifierArgs {
     /// The verifier URL, if using a custom provider.
     #[arg(long, help_heading = "Verifier options", env = "VERIFIER_URL")]
     pub verifier_url: Option<String>,
+
+    /// The verifier API version, if using a custom provider.
+    #[arg(long, help_heading = "Verifier options", env = "VERIFIER_API_VERSION")]
+    pub verifier_api_version: Option<String>,
 }
 
 impl Default for VerifierArgs {
@@ -47,6 +49,7 @@ impl Default for VerifierArgs {
             verifier: VerificationProviderType::Sourcify,
             verifier_api_key: None,
             verifier_url: None,
+            verifier_api_version: None,
         }
     }
 }

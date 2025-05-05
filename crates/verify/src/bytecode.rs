@@ -141,6 +141,7 @@ impl VerifyBytecodeArgs {
             &self.verifier.verifier,
             self.verifier.verifier_url.as_deref(),
             self.etherscan.key().as_deref(),
+            self.verifier.verifier_api_version.as_deref(),
             &config,
         )?;
 

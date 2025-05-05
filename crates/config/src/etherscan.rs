@@ -58,6 +58,9 @@ pub enum EtherscanConfigError {
 
     #[error("At least one of `url` or `chain` must be present{0}")]
     MissingUrlOrChain(String),
+
+    #[error("Invalid Etherscan API version {0}")]
+    InvalidApiVersion(String),
 }
 
 /// Container type for Etherscan API keys and URLs.
@@ -194,7 +197,7 @@ impl EtherscanConfig {
     ) -> Result<ResolvedEtherscanConfig, EtherscanConfigError> {
         let Self { chain, mut url, key, api_version } = self;
 
-        let api_version_string = api_version.map(|v| v.to_string());
+        let api_version = api_version.unwrap_or(EtherscanApiVersion::V2);
 
         if let Some(url) = &mut url {
             *url = interpolate(url)?;
@@ -225,12 +228,12 @@ impl EtherscanConfig {
         match (chain, url) {
             (Some(chain), Some(api_url)) => Ok(ResolvedEtherscanConfig {
                 api_url,
-                api_version: api_version_string,
+                api_version,
                 browser_url: chain.etherscan_urls().map(|(_, url)| url.to_string()),
                 key,
                 chain: Some(chain),
             }),
-            (Some(chain), None) => ResolvedEtherscanConfig::create(key, chain, api_version_string)
+            (Some(chain), None) => ResolvedEtherscanConfig::create(key, chain, api_version)
                 .ok_or_else(|| {
                     let msg = alias.map(|a| format!(" `{a}`")).unwrap_or_default();
                     EtherscanConfigError::UnknownChain(msg, chain)
@@ -240,7 +243,7 @@ impl EtherscanConfig {
                 browser_url: None,
                 key,
                 chain: None,
-                api_version: api_version_string,
+                api_version,
             }),
             (None, None) => {
                 let msg = alias
@@ -264,8 +267,8 @@ pub struct ResolvedEtherscanConfig {
     /// The resolved API key.
     pub key: String,
     /// Etherscan API Version.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub api_version: Option<String>,
+    #[serde(default)]
+    pub api_version: EtherscanApiVersion,
     /// The chain name or EIP-155 chain ID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain: Option<Chain>,
@@ -276,13 +279,13 @@ impl ResolvedEtherscanConfig {
     pub fn create(
         api_key: impl Into<String>,
         chain: impl Into<Chain>,
-        api_version: Option<impl Into<String>>,
+        api_version: EtherscanApiVersion,
     ) -> Option<Self> {
         let chain = chain.into();
         let (api_url, browser_url) = chain.etherscan_urls()?;
         Some(Self {
             api_url: api_url.to_string(),
-            api_version: api_version.map(|v| v.into()),
+            api_version,
             browser_url: Some(browser_url.to_string()),
             key: api_key.into(),
             chain: Some(chain),
@@ -330,14 +333,13 @@ impl ResolvedEtherscanConfig {
         }
 
         let api_url = into_url(&api_url)?;
-        let parsed_api_version = api_version.map(EtherscanApiVersion::try_from).transpose()?;
         let client = reqwest::Client::builder()
             .user_agent(ETHERSCAN_USER_AGENT)
             .tls_built_in_root_certs(api_url.scheme() == "https")
             .build()?;
         foundry_block_explorers::Client::builder()
             .with_client(client)
-            .with_api_version(parsed_api_version.unwrap_or_default())
+            .with_api_version(api_version)
             .with_api_key(api_key)
             .with_api_url(api_url)?
             // the browser url is not used/required by the client so we can simply set the
@@ -452,7 +454,7 @@ mod tests {
         let mut resolved = configs.resolved();
         let config = resolved.remove("mainnet").unwrap().unwrap();
         // None version = None
-        assert_eq!(config.api_version, None);
+        assert_eq!(config.api_version, EtherscanApiVersion::V2);
         let client = config.into_client().unwrap();
         assert_eq!(*client.etherscan_api_version(), EtherscanApiVersion::V2);
     }
@@ -472,7 +474,7 @@ mod tests {
 
         let mut resolved = configs.resolved();
         let config = resolved.remove("mainnet").unwrap().unwrap();
-        assert_eq!(config.api_version, Some("v1".to_string()));
+        assert_eq!(config.api_version, EtherscanApiVersion::V1);
         let client = config.into_client().unwrap();
         assert_eq!(*client.etherscan_api_version(), EtherscanApiVersion::V1);
     }
