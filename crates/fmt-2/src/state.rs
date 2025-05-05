@@ -11,7 +11,7 @@ use solar_parse::{
     interface::{BytePos, SourceMap},
     Cursor,
 };
-use std::{borrow::Cow, ops::Deref};
+use std::borrow::Cow;
 
 // TODO(dani): trailing comments should always be passed Some
 
@@ -93,10 +93,10 @@ impl<'sess> State<'sess, '_> {
     fn print_comment(&mut self, mut cmnt: Comment) {
         match cmnt.style {
             CommentStyle::Mixed => {
+                // TODO(dani): ?
                 if !self.is_beginning_of_line() {
-                    // TODO(dani): ?
-                    // self.zerobreak();
-                    self.space();
+                    self.zerobreak();
+                    // self.space();
                 }
                 if let Some(last) = cmnt.lines.pop() {
                     self.ibox(0);
@@ -169,7 +169,7 @@ impl<'sess> State<'sess, '_> {
         self.comments.next()
     }
 
-    fn maybe_print_trailing_comment(&mut self, span: Span, next_pos: Option<BytePos>) {
+    fn print_trailing_comment(&mut self, span: Span, next_pos: Option<BytePos>) {
         if let Some(cmnt) = self.comments.trailing_comment(self.sm, span, next_pos) {
             self.print_comment(cmnt);
         }
@@ -209,45 +209,61 @@ impl<'sess> State<'sess, '_> {
         }
     }
 
-    fn print_tuple<I, T, F>(&mut self, values: I, print: F)
+    fn print_tuple<'a, T, P, S>(&mut self, values: &'a [T], print: P, get_span: S)
     where
-        I: IntoIterator<Item = T>,
-        F: FnMut(&mut Self, T),
+        P: FnMut(&mut Self, &'a T),
+        S: FnMut(&T) -> Option<Span>,
     {
-        self.commasep(token::Delimiter::Parenthesis, values, print);
+        self.word("(");
+        self.commasep(values, print, get_span);
+        self.word(")");
     }
 
-    fn print_array<I, T, F>(&mut self, values: I, print: F)
+    fn print_array<'a, T, P, S>(&mut self, values: &'a [T], print: P, get_span: S)
     where
-        I: IntoIterator<Item = T>,
-        F: FnMut(&mut Self, T),
+        P: FnMut(&mut Self, &'a T),
+        S: FnMut(&T) -> Option<Span>,
     {
-        self.commasep(token::Delimiter::Bracket, values, print);
+        self.word("[");
+        self.commasep(values, print, get_span);
+        self.word("]");
     }
 
-    fn commasep<I, T, F>(&mut self, delim: token::Delimiter, values: I, mut print: F)
+    fn commasep<'a, T, P, S>(&mut self, values: &'a [T], mut print: P, mut get_span: S)
     where
-        I: IntoIterator<Item = T>,
-        F: FnMut(&mut Self, T),
+        P: FnMut(&mut Self, &'a T),
+        S: FnMut(&T) -> Option<Span>,
     {
-        self.word(match delim {
-            token::Delimiter::Parenthesis => "(",
-            token::Delimiter::Brace => "{",
-            token::Delimiter::Bracket => "[",
-        });
+        if values.is_empty() {
+            return;
+        }
+
         self.s.cbox(self.ind);
         self.zerobreak();
-        for (pos, value) in values.into_iter().delimited() {
+        for (i, value) in values.iter().enumerate() {
+            let span = get_span(value);
+            if let Some(span) = span {
+                self.print_comments(span.lo());
+            }
             print(self, value);
-            self.trailing_comma(pos.is_last);
+            let is_last = i == values.len() - 1;
+            if !is_last {
+                self.word(",");
+            }
+            if let Some(span) = span {
+                let next_pos = if is_last { None } else { get_span(&values[i + 1]).map(Span::lo) };
+                self.print_trailing_comment(span, next_pos);
+            }
+            if !self.is_beginning_of_line() {
+                if is_last {
+                    self.zerobreak();
+                } else {
+                    self.space();
+                }
+            }
         }
         self.s.offset(-self.ind);
         self.end();
-        self.word(match delim {
-            token::Delimiter::Parenthesis => ")",
-            token::Delimiter::Brace => "}",
-            token::Delimiter::Bracket => "]",
-        });
     }
 }
 
@@ -296,20 +312,10 @@ impl State<'_, '_> {
     }
 }
 
-#[derive(Default)]
-struct FunctionLike<'a, 'b> {
-    kind: &'static str,
-    name: Option<ast::Ident>,
-    parameters: &'a [ast::VariableDefinition<'b>],
-    visibility: Option<ast::Visibility>,
-    state_mutability: ast::StateMutability,
-    virtual_: bool,
-    override_: Option<&'a ast::Override<'b>>,
-    modifiers: &'a [ast::Modifier<'b>],
-    returns: &'a [ast::VariableDefinition<'b>],
-    anonymous: bool,
-    body: Option<&'a [ast::Stmt<'b>]>,
-    body_span: Span,
+#[rustfmt::skip]
+macro_rules! get_span {
+    () => { |value| Some(value.span) };
+    (()) => { |value| Some(value.span()) };
 }
 
 /// Language-specific pretty printing.
@@ -339,7 +345,7 @@ impl<'ast> State<'_, 'ast> {
             ast::ItemKind::Event(event) => self.print_event(event),
         }
         self.print_comments(span.hi());
-        self.maybe_print_trailing_comment(span, None);
+        self.print_trailing_comment(span, None);
         self.hardbreak_if_not_bol();
     }
 
@@ -503,6 +509,8 @@ impl<'ast> State<'_, 'ast> {
         self.hardbreak_if_nonempty();
         for var in fields.iter() {
             self.print_var_def(var);
+            self.print_trailing_comment(var.span, None);
+            self.hardbreak_if_not_bol();
         }
         self.print_comments_skip_ws(span.hi());
         self.s.offset(-self.ind);
@@ -522,7 +530,7 @@ impl<'ast> State<'_, 'ast> {
             if !pos.is_last {
                 self.word(",");
             }
-            self.maybe_print_trailing_comment(ident.span, None);
+            self.print_trailing_comment(ident.span, None);
             self.hardbreak_if_not_bol();
         }
         self.print_comments_skip_ws(span.hi());
@@ -541,7 +549,7 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn print_function(&mut self, func: &'ast ast::ItemFunction<'ast>) {
-        let ast::ItemFunction { kind, header, body, body_span } = func;
+        let ast::ItemFunction { kind, ref header, ref body, body_span } = *func;
         let ast::FunctionHeader {
             name,
             ref parameters,
@@ -552,123 +560,104 @@ impl<'ast> State<'_, 'ast> {
             ref override_,
             ref returns,
         } = *header;
-        self.print_function_like(FunctionLike {
-            kind: kind.to_str(),
-            name,
-            parameters,
-            visibility,
-            state_mutability,
-            virtual_,
-            override_: override_.as_ref(),
-            modifiers,
-            returns,
-            anonymous: false,
-            body: body.as_deref(),
-            body_span: *body_span,
-        });
-    }
+        self.cbox(0);
 
-    fn print_error(&mut self, err: &'ast ast::ItemError<'ast>) {
-        let ast::ItemError { name, parameters } = err;
-        self.print_function_like(FunctionLike {
-            kind: "error",
-            name: Some(*name),
-            parameters,
-            ..Default::default()
-        });
-    }
-
-    fn print_event(&mut self, event: &'ast ast::ItemEvent<'ast>) {
-        let ast::ItemEvent { name, parameters, anonymous } = event;
-        self.print_function_like(FunctionLike {
-            kind: "event",
-            name: Some(*name),
-            parameters,
-            anonymous: *anonymous,
-            ..Default::default()
-        });
-    }
-
-    fn print_function_like(&mut self, args: FunctionLike<'ast, 'ast>) {
-        let FunctionLike {
-            kind,
-            name,
-            parameters,
-            visibility,
-            state_mutability,
-            virtual_,
-            override_,
-            modifiers,
-            returns,
-            anonymous,
-            body,
-            body_span,
-        } = args;
-        self.word(kind);
+        self.ibox(0);
+        self.word(kind.to_str());
         if let Some(name) = name {
             self.nbsp();
             self.print_ident(name);
         }
         self.print_parameter_list(parameters);
+        self.neverbreak();
+        self.end();
+
+        // Attributes.
+        self.s.cbox(self.ind);
         if let Some(visibility) = visibility {
-            self.nbsp();
+            self.space();
             self.word(visibility.to_str());
         }
         if state_mutability != ast::StateMutability::NonPayable {
-            self.nbsp();
+            self.space();
             self.word(state_mutability.to_str());
         }
         if virtual_ {
-            self.nbsp();
+            self.space();
             self.word("virtual");
         }
         if let Some(override_) = override_ {
-            self.nbsp();
+            self.space();
             self.print_override(override_);
         }
-        for modifier in modifiers {
-            self.nbsp();
-
-            // Add `()` in functions when the modifier is a base contract.
-            // HACK: heuristics:
-            // 1. exactly matches the name of a base contract as declared in the `contract is`;
-            // this does not account for inheritance;
-            let is_contract_base = self.contract.is_some_and(|contract| {
-                contract.bases.iter().any(|contract_base| contract_base.name == modifier.name)
-            });
-            // 2. assume that title case names in constructors are bases.
-            // LEGACY: constructors used to also be `function NameOfContract...`; not checked.
-            let is_constructor = args.kind == "constructor";
-            // LEGACY: we are checking the beginning of the path, not the last segment.
-            let is_base_contract = is_contract_base ||
-                (is_constructor &&
-                    modifier.name.first().name.as_str().starts_with(char::is_uppercase));
-
-            self.print_modifier_call(modifier, is_base_contract);
+        for modifier in modifiers.iter() {
+            self.space();
+            self.print_modifier_call(modifier, self.is_modifier_a_base_contract(kind, modifier));
         }
         if !returns.is_empty() {
-            self.nbsp();
+            self.space();
+            self.ibox(0);
             self.word("returns ");
             self.print_parameter_list(returns);
+            self.neverbreak();
+            self.end();
         }
-        if anonymous {
-            self.nbsp();
-            self.word("anonymous");
-        }
+        self.neverbreak();
+        self.s.offset(-self.ind);
+        self.end();
+
         if let Some(body) = body {
-            self.nbsp();
+            self.space();
             self.print_block(body, body_span);
-        } else if !(kind == "function" && name.is_none()) {
-            // Don't print semicolon if this is a function type.
+        } else {
             self.word(";");
         }
+        self.end();
+    }
+
+    fn is_modifier_a_base_contract(
+        &self,
+        kind: ast::FunctionKind,
+        modifier: &'ast ast::Modifier<'ast>,
+    ) -> bool {
+        // Add `()` in functions when the modifier is a base contract.
+        // HACK: heuristics:
+        // 1. exactly matches the name of a base contract as declared in the `contract is`;
+        // this does not account for inheritance;
+        let is_contract_base = self.contract.is_some_and(|contract| {
+            contract.bases.iter().any(|contract_base| contract_base.name == modifier.name)
+        });
+        // 2. assume that title case names in constructors are bases.
+        // LEGACY: constructors used to also be `function NameOfContract...`; not checked.
+        let is_constructor = matches!(kind, ast::FunctionKind::Constructor);
+        // LEGACY: we are checking the beginning of the path, not the last segment.
+        is_contract_base ||
+            (is_constructor &&
+                modifier.name.first().name.as_str().starts_with(char::is_uppercase))
+    }
+
+    fn print_error(&mut self, err: &'ast ast::ItemError<'ast>) {
+        let ast::ItemError { name, parameters } = err;
+        self.word("error ");
+        self.print_ident(*name);
+        self.print_parameter_list(parameters);
+        self.word(";");
+    }
+
+    fn print_event(&mut self, event: &'ast ast::ItemEvent<'ast>) {
+        let ast::ItemEvent { name, parameters, anonymous } = event;
+        self.word("event ");
+        self.print_ident(*name);
+        self.print_parameter_list(parameters);
+        if *anonymous {
+            self.word(" anonymous");
+        }
+        self.word(";");
     }
 
     fn print_var_def(&mut self, var: &'ast ast::VariableDefinition<'ast>) {
         self.print_var(var);
         self.word(";");
-        self.maybe_print_trailing_comment(var.span, None);
-        self.hardbreak_if_not_bol();
     }
 
     fn print_var(&mut self, var: &'ast ast::VariableDefinition<'ast>) {
@@ -721,7 +710,7 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn print_parameter_list(&mut self, parameters: &'ast [ast::VariableDefinition<'ast>]) {
-        self.print_tuple(parameters, Self::print_var);
+        self.print_tuple(parameters, Self::print_var, get_span!());
     }
 
     fn print_docs(&mut self, docs: &'ast ast::DocComments<'ast>) {
@@ -773,7 +762,7 @@ impl<'ast> State<'_, 'ast> {
                     }
                     if !pos.is_last {
                         self.space_if_not_bol();
-                        self.maybe_print_trailing_comment(span, None);
+                        self.print_trailing_comment(span, None);
                     } else {
                         self.neverbreak();
                     }
@@ -971,18 +960,14 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
             ast::TypeKind::Function(ast::TypeFunction {
-                parameters,
-                visibility,
-                state_mutability,
-                returns,
-            }) => self.print_function_like(FunctionLike {
-                kind: "function",
-                parameters,
-                visibility: *visibility,
-                state_mutability: *state_mutability,
-                returns,
-                ..Default::default()
-            }),
+                parameters: _,
+                visibility: _,
+                state_mutability: _,
+                returns: _,
+            }) => {
+                // LEGACY: not implemented.
+                self.print_span(ty.span);
+            }
             ast::TypeKind::Mapping(ast::TypeMapping { key, key_name, value, value_name }) => {
                 self.word("mapping(");
                 self.print_ty(key);
@@ -1012,7 +997,7 @@ impl<'ast> State<'_, 'ast> {
             if self.config.override_spacing {
                 self.nbsp();
             }
-            self.print_tuple(paths.iter().map(Deref::deref), Self::print_path);
+            self.print_tuple(paths, |this, path| this.print_path(path), get_span!(()));
         }
     }
 
@@ -1026,7 +1011,7 @@ impl<'ast> State<'_, 'ast> {
 
         match kind {
             ast::ExprKind::Array(exprs) => {
-                self.print_array(exprs.iter().map(Deref::deref), Self::print_expr)
+                self.print_array(exprs, |this, e| this.print_expr(e), get_span!())
             }
             ast::ExprKind::Assign(lhs, None, rhs) => {
                 self.ibox(0);
@@ -1117,14 +1102,18 @@ impl<'ast> State<'_, 'ast> {
                 self.s.offset(-self.ind);
                 self.end();
             }
-            ast::ExprKind::Tuple(exprs) => self.print_tuple(exprs.iter(), |this, expr| {
-                if let Some(expr) = expr {
-                    this.print_expr(expr);
-                }
-            }),
+            ast::ExprKind::Tuple(exprs) => self.print_tuple(
+                exprs,
+                |this, expr| {
+                    if let Some(expr) = expr {
+                        this.print_expr(expr);
+                    }
+                },
+                |e| e.as_deref().map(|e| e.span),
+            ),
             ast::ExprKind::TypeCall(ty) => {
                 self.word("type");
-                self.print_tuple(std::slice::from_ref(ty), Self::print_ty);
+                self.print_tuple(std::slice::from_ref(ty), Self::print_ty, get_span!());
             }
             ast::ExprKind::Type(ty) => self.print_ty(ty),
             ast::ExprKind::Unary(un_op, expr) => {
@@ -1163,7 +1152,7 @@ impl<'ast> State<'_, 'ast> {
 
         match kind {
             ast::CallArgsKind::Unnamed(exprs) => {
-                self.print_tuple(exprs.iter().map(Deref::deref), Self::print_expr);
+                self.print_tuple(exprs, |this, e| this.print_expr(e), get_span!());
             }
             ast::CallArgsKind::Named(named_args) => {
                 self.word("(");
@@ -1209,11 +1198,15 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::StmtKind::DeclSingle(var) => self.print_var(var),
             ast::StmtKind::DeclMulti(vars, expr) => {
-                self.print_tuple(vars.iter(), |this, var| {
-                    if let Some(var) = var {
-                        this.print_var(var);
-                    }
-                });
+                self.print_tuple(
+                    vars,
+                    |this, var| {
+                        if let Some(var) = var {
+                            this.print_var(var);
+                        }
+                    },
+                    |v| v.as_ref().map(|v| v.span),
+                );
                 self.word(" = ");
                 self.neverbreak();
                 self.print_expr(expr);
@@ -1230,8 +1223,9 @@ impl<'ast> State<'_, 'ast> {
             ast::StmtKind::Emit(path, args) => self.print_emit_revert("emit", path, args),
             ast::StmtKind::Expr(expr) => self.print_expr(expr),
             ast::StmtKind::For { init, cond, next, body } => {
+                self.s.cbox(0);
+                self.s.ibox(0);
                 self.word("for (");
-                self.s.cbox(self.ind);
                 self.zerobreak();
                 if let Some(init) = init {
                     self.print_stmt(init);
@@ -1250,24 +1244,32 @@ impl<'ast> State<'_, 'ast> {
                     self.print_expr(next);
                 }
                 self.zerobreak();
-                self.s.offset(-self.ind);
-                self.end();
                 self.word(") ");
+                self.neverbreak();
+                self.end();
                 self.print_stmt_as_block(body, false);
+                self.end();
             }
-            ast::StmtKind::If(cond, then, els) => {
+            ast::StmtKind::If(cond, then, els_opt) => {
                 self.s.cbox(0);
-
-                self.print_if_cond("if", cond);
-                self.nbsp();
-
-                self.print_stmt_as_block(then, true);
-                if let Some(els) = els {
+                self.print_if_no_else(cond, then);
+                let mut els_opt = els_opt.as_deref();
+                while let Some(els) = els_opt {
+                    if self.ends_with('}') {
+                        self.nbsp();
+                    } else {
+                        self.hardbreak();
+                    }
                     self.word("else ");
-                    self.print_stmt_as_block(els, true);
-                    // TODO(dani): handle nested else if correctly
+                    if let ast::StmtKind::If(cond, then, els) = &els.kind {
+                        self.print_if_no_else(cond, then);
+                        els_opt = els.as_deref();
+                        continue;
+                    } else {
+                        self.print_stmt_as_block(els, true);
+                    }
+                    break;
                 }
-
                 self.end();
             }
             ast::StmtKind::Return(expr) => {
@@ -1288,6 +1290,7 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::StmtKind::While(cond, stmt) => {
                 self.print_if_cond("while", cond);
+                self.nbsp();
                 self.print_stmt_as_block(stmt, true);
             }
             ast::StmtKind::Placeholder => self.word("_"),
@@ -1296,12 +1299,21 @@ impl<'ast> State<'_, 'ast> {
             self.word(";");
         }
         self.print_comments(stmt.span.hi());
-        self.maybe_print_trailing_comment(stmt.span, None);
+        self.print_trailing_comment(stmt.span, None);
+    }
+
+    fn print_if_no_else(&mut self, cond: &'ast ast::Expr<'ast>, then: &'ast ast::Stmt<'ast>) {
+        self.print_if_cond("if", cond);
+        self.nbsp();
+        self.print_stmt_as_block(then, true);
     }
 
     fn print_if_cond(&mut self, kw: &'static str, cond: &'ast ast::Expr<'ast>) {
+        self.ibox(0);
         self.word_nbsp(kw);
-        self.print_tuple(std::slice::from_ref(cond), Self::print_expr);
+        self.print_tuple(std::slice::from_ref(cond), |this, e| this.print_expr(e), get_span!());
+        self.neverbreak();
+        self.end();
     }
 
     fn print_emit_revert(
