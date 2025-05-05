@@ -124,7 +124,6 @@ forgetest!(can_override_config_path, |prj, cmd| {
             severity: vec![LintSeverity::High, LintSeverity::Med],
             exclude_lints: vec!["incorrect-shift".into()],
             ignore: vec!["src/ContractWithLints.sol".into()],
-            ..Default::default()
         },
         ..Default::default()
     });

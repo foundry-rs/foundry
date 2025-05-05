@@ -15,11 +15,6 @@ pub struct LinterConfig {
     /// If uninformed, all severities are checked.
     pub severity: Vec<Severity>,
 
-    /// Specifies which lints to run based on their ID (e.g., "incorrect-shift").
-    ///
-    /// Cannot be used in combination with `exclude_lint`.
-    pub include_lints: Vec<String>,
-
     /// Deny specific lints based on their ID (e.g. "mixed-case-function").
     ///
     /// Cannot be used in combination with `include_lint`.

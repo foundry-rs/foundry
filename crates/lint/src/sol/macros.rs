@@ -25,7 +25,7 @@ macro_rules! declare_forge_lint {
     };
 }
 
-/// Registers Solidity linter passes with their corresponding [`SolLint`].
+/// Registers Solidity linter passes with their corresponding `SolLint`.
 ///
 /// # Parameters
 ///

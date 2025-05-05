@@ -7,7 +7,7 @@ use forge_lint::{
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
 use foundry_compilers::{solc::SolcLanguage, utils::SOLC_EXTENSIONS};
 use foundry_config::{filter::expand_globs, impl_figment_convert_basic, lint::Severity};
-use std::{collections::HashSet, path::PathBuf};
+use std::path::PathBuf;
 
 /// CLI arguments for `forge lint`.
 #[derive(Clone, Debug, Parser)]
@@ -86,20 +86,9 @@ impl LintArgs {
         };
 
         // Override default lint config with user-defined lints
-        let (include, exclude) = if let Some(cli_lints) = &self.lint {
-            let include_lints = parse_lints(cli_lints)?;
-            let target_ids: HashSet<&str> = cli_lints.iter().map(String::as_str).collect();
-            let filtered_excludes = config
-                .lint
-                .exclude_lints
-                .iter()
-                .filter(|l| !target_ids.contains(l.as_str()))
-                .cloned()
-                .collect::<Vec<_>>();
-
-            (include_lints, parse_lints(&filtered_excludes)?)
-        } else {
-            (parse_lints(&config.lint.include_lints)?, parse_lints(&config.lint.exclude_lints)?)
+        let (include, exclude) = match &self.lint {
+            Some(cli_lints) => (Some(parse_lints(cli_lints)?), None),
+            None => (None, Some(parse_lints(&config.lint.exclude_lints)?)),
         };
 
         // Override default severity config with user-defined severity
@@ -110,8 +99,9 @@ impl LintArgs {
 
         if project.compiler.solc.is_some() {
             let linter = SolidityLinter::new()
-                .with_lints(if include.is_empty() { None } else { Some(include) })
-                .without_lints(if exclude.is_empty() { None } else { Some(exclude) })
+                .with_description(true)
+                .with_lints(include)
+                .without_lints(exclude)
                 .with_severity(if severity.is_empty() { None } else { Some(severity) });
 
             linter.lint(&input);
