@@ -16,8 +16,6 @@ pub struct LinterConfig {
     pub severity: Vec<Severity>,
 
     /// Deny specific lints based on their ID (e.g. "mixed-case-function").
-    ///
-    /// Cannot be used in combination with `include_lint`.
     pub exclude_lints: Vec<String>,
 
     /// Globs to ignore
