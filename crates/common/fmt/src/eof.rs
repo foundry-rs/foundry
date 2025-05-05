@@ -1,3 +1,4 @@
+use alloy_primitives::hex;
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, ContentArrangement, Table};
 use revm::bytecode::{
     eof::{EofBody, EofHeader},
@@ -16,9 +17,11 @@ pub fn pretty_eof(eof: &Eof) -> Result<String, fmt::Error> {
                 sum_code_sizes: _,
                 sum_container_sizes: _,
             },
-        body: EofBody { code_info, code_section, container_section, data_section, .. },
+        body,
         raw: _,
     } = eof;
+
+    let EofBody { code_info, code_section, container_section, data_section, .. } = &body;
 
     let mut result = String::new();
 
@@ -42,13 +45,13 @@ pub fn pretty_eof(eof: &Eof) -> Result<String, fmt::Error> {
         table.apply_modifier(UTF8_ROUND_CORNERS);
         table.set_content_arrangement(ContentArrangement::Dynamic);
         table.set_header(vec!["", "Inputs", "Outputs", "Max stack height", "Code"]);
-        for (idx, (code, type_section)) in code_section.iter().zip(code_info).enumerate() {
+        for (idx, type_section) in code_info.iter().enumerate() {
             table.add_row(vec![
                 &idx.to_string(),
                 &type_section.inputs.to_string(),
                 &type_section.outputs.to_string(),
                 &type_section.max_stack_size.to_string(),
-                &code.to_string(),
+                &hex::encode_prefixed(body.code(idx).unwrap_or_default()),
             ]);
         }
 
