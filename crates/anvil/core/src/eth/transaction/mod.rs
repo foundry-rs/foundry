@@ -383,7 +383,7 @@ impl PendingTransaction {
     /// Converts the [PendingTransaction] into the [TxEnv] context that [`revm`](foundry_evm)
     /// expects.
     ///
-    /// Base [`TxEnv`] is encapsulated in the [`OpTransaction`]
+    /// Base [`TxEnv`] is encapsulated in the [`op_revm::OpTransaction`]
     pub fn to_revm_tx_env(&self) -> (TxEnv, Option<DepositTransactionParts>) {
         fn transact_to(kind: &TxKind) -> TxKind {
             match kind {
