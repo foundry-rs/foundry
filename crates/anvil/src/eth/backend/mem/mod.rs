@@ -1457,8 +1457,6 @@ impl Backend {
             chain_id: None,
             access_list: access_list.unwrap_or_default(),
             blob_hashes,
-            // optimism: OptimismFields { enveloped_tx: Some(Bytes::new()), ..Default::default()
-            // }, // TODO: support Optimism
             authorization_list: authorization_list.unwrap_or_default(),
             ..Default::default()
         };
