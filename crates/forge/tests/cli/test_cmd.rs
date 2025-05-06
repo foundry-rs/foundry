@@ -681,8 +681,7 @@ contract TransientTest is Test {
     function test() public {
         TransientTester t = new TransientTester();
         vm.expectRevert(bytes("locked"));
-        t.maybeReentrant(address(t), abi.encodeCall(TransientTester.maybeReentrant, (address(0),
-new bytes(0))));
+        t.maybeReentrant(address(t), abi.encodeCall(TransientTester.maybeReentrant, (address(0), new bytes(0))));
 
         t.maybeReentrant(address(0), new bytes(0));
         assertEq(t.locked(), false);
@@ -794,20 +793,14 @@ contract CounterTest is Test {
 Compiler run successful!
 
 Ran 1 test for test/CounterFuzz.t.sol:CounterTest
-[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample:
-calldata=0xa76d58f5ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
-args=[115792089237316195423570985008687907853269984665640564039457584007913129639935 [1.157e77]]]
-testAddOne(uint256) (runs: 61, [AVG_GAS]) Suite result: FAILED. 0 passed; 1 failed; 0 skipped;
-[ELAPSED]
+[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff args=[115792089237316195423570985008687907853269984665640564039457584007913129639935 [1.157e77]]] testAddOne(uint256) (runs: 61, [AVG_GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/CounterFuzz.t.sol:CounterTest
-[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample:
-calldata=0xa76d58f5ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
-args=[115792089237316195423570985008687907853269984665640564039457584007913129639935 [1.157e77]]]
-testAddOne(uint256) (runs: 61, [AVG_GAS])
+[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff args=[115792089237316195423570985008687907853269984665640564039457584007913129639935 [1.157e77]]] testAddOne(uint256) (runs: 61, [AVG_GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -851,15 +844,14 @@ contract CounterTest is Test {
 Compiler run successful!
 
 Ran 1 test for test/CounterInvariant.t.sol:CounterTest
-[FAIL: failed to set up invariant testing environment: wrong count] invariant_early_exit() (runs:
-0, calls: 0, reverts: 0) Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL: failed to set up invariant testing environment: wrong count] invariant_early_exit() (runs: 0, calls: 0, reverts: 0)
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/CounterInvariant.t.sol:CounterTest
-[FAIL: failed to set up invariant testing environment: wrong count] invariant_early_exit() (runs:
-0, calls: 0, reverts: 0)
+[FAIL: failed to set up invariant testing environment: wrong count] invariant_early_exit() (runs: 0, calls: 0, reverts: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -1008,34 +1000,34 @@ Traces:
   [..] PrecompileLabelsTest::testPrecompileLabels()
     ├─ [0] VM::deal(VM: [0x7109709ECfa91a80626fF3989D68f67F5b1DD12D], 1000000000000000000 [1e18])
     │   └─ ← [Return]
-    ├─ [0] VM::deal(console: [0x000000000000000000636F6e736F6c652e6c6f67], 1000000000000000000
-[1e18])     │   └─ ← [Return]
-    ├─ [0] VM::deal(Create2Deployer: [0x4e59b44847b379578588920cA78FbF26c0B4956C],
-1000000000000000000 [1e18])     │   └─ ← [Return]
-    ├─ [0] VM::deal(DefaultSender: [0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38],
-1000000000000000000 [1e18])     │   └─ ← [Return]
-    ├─ [0] VM::deal(DefaultTestContract: [0xb4c79daB8f259C7Aee6E5b2Aa729821864227e84],
-1000000000000000000 [1e18])     │   └─ ← [Return]
-    ├─ [0] VM::deal(ECRecover: [0x0000000000000000000000000000000000000001], 1000000000000000000
-[1e18])     │   └─ ← [Return]
-    ├─ [0] VM::deal(SHA-256: [0x0000000000000000000000000000000000000002], 1000000000000000000
-[1e18])     │   └─ ← [Return]
-    ├─ [0] VM::deal(RIPEMD-160: [0x0000000000000000000000000000000000000003], 1000000000000000000
-[1e18])     │   └─ ← [Return]
-    ├─ [0] VM::deal(Identity: [0x0000000000000000000000000000000000000004], 1000000000000000000
-[1e18])     │   └─ ← [Return]
-    ├─ [0] VM::deal(ModExp: [0x0000000000000000000000000000000000000005], 1000000000000000000
-[1e18])     │   └─ ← [Return]
-    ├─ [0] VM::deal(ECAdd: [0x0000000000000000000000000000000000000006], 1000000000000000000
-[1e18])     │   └─ ← [Return]
-    ├─ [0] VM::deal(ECMul: [0x0000000000000000000000000000000000000007], 1000000000000000000
-[1e18])     │   └─ ← [Return]
-    ├─ [0] VM::deal(ECPairing: [0x0000000000000000000000000000000000000008], 1000000000000000000
-[1e18])     │   └─ ← [Return]
-    ├─ [0] VM::deal(Blake2F: [0x0000000000000000000000000000000000000009], 1000000000000000000
-[1e18])     │   └─ ← [Return]
-    ├─ [0] VM::deal(PointEvaluation: [0x000000000000000000000000000000000000000A],
-1000000000000000000 [1e18])     │   └─ ← [Return]
+    ├─ [0] VM::deal(console: [0x000000000000000000636F6e736F6c652e6c6f67], 1000000000000000000 [1e18])
+    │   └─ ← [Return]
+    ├─ [0] VM::deal(Create2Deployer: [0x4e59b44847b379578588920cA78FbF26c0B4956C], 1000000000000000000 [1e18])
+    │   └─ ← [Return]
+    ├─ [0] VM::deal(DefaultSender: [0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38], 1000000000000000000 [1e18])
+    │   └─ ← [Return]
+    ├─ [0] VM::deal(DefaultTestContract: [0xb4c79daB8f259C7Aee6E5b2Aa729821864227e84], 1000000000000000000 [1e18])
+    │   └─ ← [Return]
+    ├─ [0] VM::deal(ECRecover: [0x0000000000000000000000000000000000000001], 1000000000000000000 [1e18])
+    │   └─ ← [Return]
+    ├─ [0] VM::deal(SHA-256: [0x0000000000000000000000000000000000000002], 1000000000000000000 [1e18])
+    │   └─ ← [Return]
+    ├─ [0] VM::deal(RIPEMD-160: [0x0000000000000000000000000000000000000003], 1000000000000000000 [1e18])
+    │   └─ ← [Return]
+    ├─ [0] VM::deal(Identity: [0x0000000000000000000000000000000000000004], 1000000000000000000 [1e18])
+    │   └─ ← [Return]
+    ├─ [0] VM::deal(ModExp: [0x0000000000000000000000000000000000000005], 1000000000000000000 [1e18])
+    │   └─ ← [Return]
+    ├─ [0] VM::deal(ECAdd: [0x0000000000000000000000000000000000000006], 1000000000000000000 [1e18])
+    │   └─ ← [Return]
+    ├─ [0] VM::deal(ECMul: [0x0000000000000000000000000000000000000007], 1000000000000000000 [1e18])
+    │   └─ ← [Return]
+    ├─ [0] VM::deal(ECPairing: [0x0000000000000000000000000000000000000008], 1000000000000000000 [1e18])
+    │   └─ ← [Return]
+    ├─ [0] VM::deal(Blake2F: [0x0000000000000000000000000000000000000009], 1000000000000000000 [1e18])
+    │   └─ ← [Return]
+    ├─ [0] VM::deal(PointEvaluation: [0x000000000000000000000000000000000000000A], 1000000000000000000 [1e18])
+    │   └─ ← [Return]
     └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
@@ -1843,8 +1835,8 @@ contract CounterTest is Test {
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 ...
 [FAIL: Error != expected error: NumberNotEven(1) != RandomError()] test_decode() ([GAS])
-[FAIL: Error != expected error: NumberNotEven(1) != NumberNotEven(2)] test_decode_with_args()
-([GAS]) ...
+[FAIL: Error != expected error: NumberNotEven(1) != NumberNotEven(2)] test_decode_with_args() ([GAS])
+...
 "#]]);
 });
 
@@ -1892,8 +1884,8 @@ contract CounterTest is DSTest {
 ...
 [PASS] testExpectPartialRevertWith4Bytes() ([GAS])
 [PASS] testExpectPartialRevertWithSelector() ([GAS])
-[FAIL: Error != expected error: WrongNumber(0) != custom error 0x238ace70] testExpectRevert()
-([GAS]) ...
+[FAIL: Error != expected error: WrongNumber(0) != custom error 0x238ace70] testExpectRevert() ([GAS])
+...
 "#]]);
 });
 
@@ -1959,8 +1951,8 @@ contract CounterRevertTest is DSTest {
         CounterWithRevert counter = new CounterWithRevert();
         vm.assumeNoRevert();
         a = counter.count(a);
-        // Test `assumeNoRevert` applied to non reverting call should not be available for next
-reverting call.         vm.assumeNoRevert();
+        // Test `assumeNoRevert` applied to non reverting call should not be available for next reverting call.
+        vm.assumeNoRevert();
         counter.dummy();
         // Test will revert here (not in scope of `assumeNoRevert` cheatcode).
         counter.check(a);
@@ -2125,19 +2117,19 @@ forgetest_init!(should_generate_junit_xml_report, |prj, cmd| {
     cmd.args(["test", "--junit"]).assert_failure().stdout_eq(str![[r#"
 <?xml version="1.0" encoding="UTF-8"?>
 <testsuites name="Test run" tests="6" failures="2" errors="0" timestamp="[..]" time="[..]">
-    <testsuite name="src/JunitReportTest.t.sol:AJunitReportTest" tests="2" disabled="0"
-errors="0" failures="2" time="[..]">         <testcase name="test_junit_assert_fail()"
-time="[..]">             <failure message="panic: assertion failed (0x01)"/>
-            <system-out>[FAIL: panic: assertion failed (0x01)] test_junit_assert_fail()
-([GAS])</system-out>         </testcase>
+    <testsuite name="src/JunitReportTest.t.sol:AJunitReportTest" tests="2" disabled="0" errors="0" failures="2" time="[..]">
+        <testcase name="test_junit_assert_fail()" time="[..]">
+            <failure message="panic: assertion failed (0x01)"/>
+            <system-out>[FAIL: panic: assertion failed (0x01)] test_junit_assert_fail() ([GAS])</system-out>
+        </testcase>
         <testcase name="test_junit_revert_fail()" time="[..]">
             <failure message="Revert"/>
             <system-out>[FAIL: Revert] test_junit_revert_fail() ([GAS])</system-out>
         </testcase>
         <system-out>Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]</system-out>
     </testsuite>
-    <testsuite name="src/JunitReportTest.t.sol:BJunitReportTest" tests="4" disabled="2"
-errors="0" failures="0" time="[..]">         <testcase name="test_junit_pass()" time="[..]">
+    <testsuite name="src/JunitReportTest.t.sol:BJunitReportTest" tests="4" disabled="2" errors="0" failures="0" time="[..]">
+        <testcase name="test_junit_pass()" time="[..]">
             <system-out>[PASS] test_junit_pass() ([GAS])</system-out>
         </testcase>
         <testcase name="test_junit_pass_fuzz(uint256)" time="[..]">
@@ -2154,6 +2146,7 @@ errors="0" failures="0" time="[..]">         <testcase name="test_junit_pass()" 
         <system-out>Suite result: ok. 2 passed; 0 failed; 2 skipped; [ELAPSED]</system-out>
     </testsuite>
 </testsuites>
+
 
 "#]]);
 });
@@ -2179,13 +2172,14 @@ contract JunitReportTest is Test {
     cmd.args(["test", "--junit", "-vvvv"]).assert_success().stdout_eq(str![[r#"
 <?xml version="1.0" encoding="UTF-8"?>
 <testsuites name="Test run" tests="1" failures="0" errors="0" timestamp="[..]" time="[..]">
-    <testsuite name="src/JunitReportTest.t.sol:JunitReportTest" tests="1" disabled="0" errors="0"
-failures="0" time="[..]">         <testcase name="test_junit_with_logs()" time="[..]">
-            <system-out>[PASS] test_junit_with_logs() ([GAS])/nLogs:/n  Step1/n  Step2/n
-Step3/n</system-out>         </testcase>
+    <testsuite name="src/JunitReportTest.t.sol:JunitReportTest" tests="1" disabled="0" errors="0" failures="0" time="[..]">
+        <testcase name="test_junit_with_logs()" time="[..]">
+            <system-out>[PASS] test_junit_with_logs() ([GAS])/nLogs:/n  Step1/n  Step2/n  Step3/n</system-out>
+        </testcase>
         <system-out>Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]</system-out>
     </testsuite>
 </testsuites>
+
 
 "#]]);
 });
@@ -2273,15 +2267,13 @@ Use --match-contract and --match-path to further limit the search.
 
 "#]]);
     cmd.forge_fuse().args(["test", "--flamegraph"]).assert_failure().stderr_eq(str![[r#"
-Error: 2 tests matched your criteria, but exactly 1 test must match in order to generate a
-flamegraph.
+Error: 2 tests matched your criteria, but exactly 1 test must match in order to generate a flamegraph.
 
 Use --match-contract and --match-path to further limit the search.
 
 "#]]);
     cmd.forge_fuse().args(["test", "--flamechart"]).assert_failure().stderr_eq(str![[r#"
-Error: 2 tests matched your criteria, but exactly 1 test must match in order to generate a
-flamechart.
+Error: 2 tests matched your criteria, but exactly 1 test must match in order to generate a flamechart.
 
 Use --match-contract and --match-path to further limit the search.
 
@@ -2290,14 +2282,15 @@ Use --match-contract and --match-path to further limit the search.
 
 // Test a script that calls vm.rememberKeys
 forgetest_init!(script_testing, |prj, cmd| {
-    prj.add_source(
+    prj
+    .add_source(
         "Foo",
         r#"
 import "forge-std/Script.sol";
 
 interface Vm {
-function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint32 count)
-external returns (address[] memory keyAddrs); }
+function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint32 count) external returns (address[] memory keyAddrs);
+}
 
 contract WalletScript is Script {
 function run() public {
@@ -2312,6 +2305,7 @@ function run() public {
 
 contract FooTest {
     WalletScript public script;
+
 
     function setUp() public {
         script = new WalletScript();
@@ -2560,55 +2554,47 @@ contract ReverterTest is Test {
 
     /// @dev Test that `assumeNoRevert` does not reject an unanticipated error selector
     function testAssume_wrongSelector_fails(uint256 x) public view {
-        _vm.assumeNoRevert(Vm.PotentialRevert({revertData:
-abi.encodeWithSelector(Reverter.UnusedError.selector), partialMatch: false, reverter:
-address(0)}));         reverter.revertIf2(x);
+        _vm.assumeNoRevert(Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.UnusedError.selector), partialMatch: false, reverter: address(0)}));
+        reverter.revertIf2(x);
     }
 
     /// @dev Test that `assumeNoRevert` does not reject an unanticipated error with extra data
     function testAssume_wrongData_fails(uint256 x) public view {
-        _vm.assumeNoRevert(Vm.PotentialRevert({revertData:
-abi.encodeWithSelector(Reverter.RevertWithData.selector, 3), partialMatch: false, reverter:
-address(0)}));         reverter.revertWithDataIf2(x);
+        _vm.assumeNoRevert(Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.RevertWithData.selector, 3), partialMatch: false, reverter: address(0)}));
+        reverter.revertWithDataIf2(x);
     }
 
-    /// @dev Test that `assumeNoRevert` correctly rejects an error selector from a different
-contract     function testAssumeWithReverter_fails(uint256 x) public view {
+    /// @dev Test that `assumeNoRevert` correctly rejects an error selector from a different contract
+    function testAssumeWithReverter_fails(uint256 x) public view {
         ReverterB subReverter = (reverter.subReverter());
-        _vm.assumeNoRevert(Vm.PotentialRevert({revertData:
-abi.encodeWithSelector(Reverter.MyRevert.selector), partialMatch: false, reverter:
-address(reverter)}));         subReverter.revertIf2(x);
+        _vm.assumeNoRevert(Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.MyRevert.selector), partialMatch: false, reverter: address(reverter)}));
+        subReverter.revertIf2(x);
     }
 
-    /// @dev Test that `assumeNoRevert` correctly rejects one of two different error selectors
-when supplying a specific reverter     function testMultipleAssumes_OneWrong_fails(uint256 x)
-public view {         Vm.PotentialRevert[] memory revertData = new Vm.PotentialRevert[](2);
-        revertData[0] = Vm.PotentialRevert({revertData:
-abi.encodeWithSelector(Reverter.MyRevert.selector), partialMatch: false, reverter:
-address(reverter)});         revertData[1] = Vm.PotentialRevert({revertData:
-abi.encodeWithSelector(Reverter.RevertWithData.selector, 4), partialMatch: false, reverter:
-address(reverter)});         _vm.assumeNoRevert(revertData);
+    /// @dev Test that `assumeNoRevert` correctly rejects one of two different error selectors when supplying a specific reverter
+    function testMultipleAssumes_OneWrong_fails(uint256 x) public view {
+        Vm.PotentialRevert[] memory revertData = new Vm.PotentialRevert[](2);
+        revertData[0] = Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.MyRevert.selector), partialMatch: false, reverter: address(reverter)});
+        revertData[1] = Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.RevertWithData.selector, 4), partialMatch: false, reverter: address(reverter)});
+        _vm.assumeNoRevert(revertData);
         reverter.twoPossibleReverts(x);
     }
 
-    /// @dev Test that `assumeNoRevert` assumptions are cleared after the first non-cheatcode
-external call     function testMultipleAssumesClearAfterCall_fails(uint256 x) public view {
+    /// @dev Test that `assumeNoRevert` assumptions are cleared after the first non-cheatcode external call
+    function testMultipleAssumesClearAfterCall_fails(uint256 x) public view {
         Vm.PotentialRevert[] memory revertData = new Vm.PotentialRevert[](2);
-        revertData[0] = Vm.PotentialRevert({revertData:
-abi.encodeWithSelector(Reverter.MyRevert.selector), partialMatch: false, reverter: address(0)});
-        revertData[1] = Vm.PotentialRevert({revertData:
-abi.encodeWithSelector(Reverter.RevertWithData.selector, 4), partialMatch: false, reverter:
-address(reverter)});         _vm.assumeNoRevert(revertData);
+        revertData[0] = Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.MyRevert.selector), partialMatch: false, reverter: address(0)});
+        revertData[1] = Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.RevertWithData.selector, 4), partialMatch: false, reverter: address(reverter)});
+        _vm.assumeNoRevert(revertData);
         reverter.twoPossibleReverts(x);
 
         reverter.twoPossibleReverts(2);
     }
 
-    /// @dev Test that `assumeNoRevert` correctly rejects a generic assumeNoRevert call after any
-specific reason is provided     function
-testMultipleAssumes_ThrowOnGenericNoRevert_AfterSpecific_fails(bytes4 selector) public view {
-        _vm.assumeNoRevert(Vm.PotentialRevert({revertData: abi.encode(selector), partialMatch:
-false, reverter: address(0)}));         _vm.assumeNoRevert();
+    /// @dev Test that `assumeNoRevert` correctly rejects a generic assumeNoRevert call after any specific reason is provided
+    function testMultipleAssumes_ThrowOnGenericNoRevert_AfterSpecific_fails(bytes4 selector) public view {
+        _vm.assumeNoRevert(Vm.PotentialRevert({revertData: abi.encode(selector), partialMatch: false, reverter: address(0)}));
+        _vm.assumeNoRevert();
         reverter.twoPossibleReverts(2);
     }
 
@@ -2645,18 +2631,14 @@ false, reverter: address(0)}));         _vm.assumeNoRevert();
 Compiler run successful!
 
 Ran 8 tests for src/AssumeNoRevertTest.t.sol:ReverterTest
-[FAIL: expected 0 reverts with reason: 0x92fa317b, but got one; counterexample: [..]]
-testAssumeThenExpectCountZeroFails(uint256) (runs: [..], [AVG_GAS]) [FAIL: MyRevert();
-counterexample: calldata=[..]] testAssumeWithReverter_fails(uint256) (runs: [..], [AVG_GAS])
-[FAIL: RevertWithData(2); counterexample: [..]] testAssume_wrongData_fails(uint256) (runs: [..],
-[AVG_GAS]) [FAIL: MyRevert(); counterexample: [..]] testAssume_wrongSelector_fails(uint256)
-(runs: [..], [AVG_GAS]) [FAIL: expected 0 reverts with reason: 0x92fa317b, but got one;
-counterexample: [..]] testExpectCountZeroThenAssumeFails(uint256) (runs: [..], [AVG_GAS])
-[FAIL: MyRevert(); counterexample: [..]] testMultipleAssumesClearAfterCall_fails(uint256) (runs:
-0, [AVG_GAS]) [FAIL: RevertWithData(3); counterexample: [..]]
-testMultipleAssumes_OneWrong_fails(uint256) (runs: [..], [AVG_GAS]) [FAIL: vm.assumeNoRevert: you
-must make another external call prior to calling assumeNoRevert again; counterexample: [..]]
-testMultipleAssumes_ThrowOnGenericNoRevert_AfterSpecific_fails(bytes4) (runs: [..], [AVG_GAS])
+[FAIL: expected 0 reverts with reason: 0x92fa317b, but got one; counterexample: [..]] testAssumeThenExpectCountZeroFails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: MyRevert(); counterexample: calldata=[..]] testAssumeWithReverter_fails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: RevertWithData(2); counterexample: [..]] testAssume_wrongData_fails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: MyRevert(); counterexample: [..]] testAssume_wrongSelector_fails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: expected 0 reverts with reason: 0x92fa317b, but got one; counterexample: [..]] testExpectCountZeroThenAssumeFails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: MyRevert(); counterexample: [..]] testMultipleAssumesClearAfterCall_fails(uint256) (runs: 0, [AVG_GAS])
+[FAIL: RevertWithData(3); counterexample: [..]] testMultipleAssumes_OneWrong_fails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: vm.assumeNoRevert: you must make another external call prior to calling assumeNoRevert again; counterexample: [..]] testMultipleAssumes_ThrowOnGenericNoRevert_AfterSpecific_fails(bytes4) (runs: [..], [AVG_GAS])
 ...
 
 "#]]);
@@ -2816,9 +2798,8 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
                 );
 
                 assertEq(deployments.length, 2);
-                assertEq(deployments[0], address(0x90d4E26f2e78feDf488c7F3C46B8053a0515c71F)); //
-Create2 address - latest deployment                 assertEq(deployments[1],
-address(0x5FbDB2315678afecb367f032d93F642f64180aa3)); // Create address - oldest deployment
+                assertEq(deployments[0], address(0x90d4E26f2e78feDf488c7F3C46B8053a0515c71F)); // Create2 address - latest deployment
+                assertEq(deployments[1], address(0x5FbDB2315678afecb367f032d93F642f64180aa3)); // Create address - oldest deployment
             }
 }
     "#;
@@ -2873,9 +2854,9 @@ import {Test} from "forge-std/Test.sol";
 contract ScrollForkTest is Test {
     function test_roll_scroll_fork_to_tx() public {
         vm.createSelectFork("https://scroll-mainnet.chainstacklabs.com/");
-        bytes32 targetTxHash =
-0xf94774a1f69bba76892141190293ffe85dd8d9ac90a0a2e2b114b8c65764014c;         vm.
-rollFork(targetTxHash);     }
+        bytes32 targetTxHash = 0xf94774a1f69bba76892141190293ffe85dd8d9ac90a0a2e2b114b8c65764014c;
+        vm.rollFork(targetTxHash);
+    }
 }
    "#,
     )
@@ -2904,9 +2885,8 @@ contract ForkTest is Test {
     cmd.args(["test", "--mt", "test_fork_err_message"]).assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/ForkTest.t.sol:ForkTest
-[FAIL: vm.createSelectFork: could not instantiate forked environment with provider
-eth-mainnet.g.alchemy.com; failed to get latest block number; [..]] test_fork_err_message()
-([GAS]) Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL: vm.createSelectFork: could not instantiate forked environment with provider eth-mainnet.g.alchemy.com; failed to get latest block number; [..]] test_fork_err_message() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 
 "#]]);
@@ -2964,8 +2944,7 @@ contract ContractTest {
 ...
 Failing tests:
 Encountered 1 failing test in test/Foo.t.sol:ContractTest
-[FAIL: EVM error; transaction validation error: call gas cost exceeds the gas limit] setUp()
-([GAS])
+[FAIL: EVM error; transaction validation error: call gas cost exceeds the gas limit] setUp() ([GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -3276,20 +3255,20 @@ Traces:
     ├─ [..] → new Contract@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   └─ ← [Return] 542 bytes of code
     ├─ [..] SenderLogger::log()
-    │   ├─ emit Log(: CounterTest: [0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496], : DefaultSender:
-[0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38])     │   └─ ← [Stop]
-    ├─ [..] VM::startPrank(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], player:
-[0x44E97aF4418b7a17AABD8090bEA0A471a366305C])     │   └─ ← [Return]
+    │   ├─ emit Log(: CounterTest: [0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496], : DefaultSender: [0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38])
+    │   └─ ← [Stop]
+    ├─ [..] VM::startPrank(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
+    │   └─ ← [Return]
     ├─ [..] SenderLogger::log()
-    │   ├─ emit Log(: player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], : player:
-[0x44E97aF4418b7a17AABD8090bEA0A471a366305C])     │   └─ ← [Stop]
+    │   ├─ emit Log(: player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], : player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
+    │   └─ ← [Stop]
     ├─ [..] Contract::f()
     │   ├─ [..] VM::startPrank(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
     │   │   └─ ← [Return]
     │   └─ ← [Stop]
     ├─ [..] SenderLogger::log()
-    │   ├─ emit Log(: player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], : player:
-[0x44E97aF4418b7a17AABD8090bEA0A471a366305C])     │   └─ ← [Stop]
+    │   ├─ emit Log(: player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], : player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
+    │   └─ ← [Stop]
     ├─ [..] VM::stopPrank()
     │   └─ ← [Return]
     └─ ← [Stop]
@@ -3318,8 +3297,8 @@ contract CounterTest is Test {
     )
     .unwrap();
 
-    cmd.args(["test", "--mt", "testCheckDelegation", "-vvvv"]).assert_success().stdout_eq(str![[
-        r#" ...
+    cmd.args(["test", "--mt", "testCheckDelegation", "-vvvv"]).assert_success().stdout_eq(str![[r#"
+...
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] testCheckDelegation() ([GAS])
 Traces:
@@ -3329,17 +3308,13 @@ Traces:
     ├─ [0] VM::label(alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6], "alice")
     │   └─ ← [Return]
     ├─ [0] VM::signDelegation(0x0000000000000000000000000000000000000000, "<pk>")
-    │   └─ ← [Return] (0, 0x3d6ad67cc3dc94101a049f85f96937513a05485ae0f8b27545d25c4f71b12cf9,
-0x3c0f2d62834f59d6ef0209e8a935f80a891a236eb18ac0e3700dd8f7ac8ae279, 0,
-0x0000000000000000000000000000000000000000)     ├─ [0]
-VM::signAndAttachDelegation(0x0000000000000000000000000000000000000000, "<pk>")     │   └─ ←
-[Return] (0, 0x3d6ad67cc3dc94101a049f85f96937513a05485ae0f8b27545d25c4f71b12cf9,
-0x3c0f2d62834f59d6ef0209e8a935f80a891a236eb18ac0e3700dd8f7ac8ae279, 0,
-0x0000000000000000000000000000000000000000)     └─ ← [Stop]
+    │   └─ ← [Return] (0, 0x3d6ad67cc3dc94101a049f85f96937513a05485ae0f8b27545d25c4f71b12cf9, 0x3c0f2d62834f59d6ef0209e8a935f80a891a236eb18ac0e3700dd8f7ac8ae279, 0, 0x0000000000000000000000000000000000000000)
+    ├─ [0] VM::signAndAttachDelegation(0x0000000000000000000000000000000000000000, "<pk>")
+    │   └─ ← [Return] (0, 0x3d6ad67cc3dc94101a049f85f96937513a05485ae0f8b27545d25c4f71b12cf9, 0x3c0f2d62834f59d6ef0209e8a935f80a891a236eb18ac0e3700dd8f7ac8ae279, 0, 0x0000000000000000000000000000000000000000)
+    └─ ← [Stop]
 ...
 
-"#
-    ]]);
+"#]]);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/10068>
@@ -3599,8 +3574,8 @@ contract CounterTest is Test {
     }
 
     function test_modify_and_storage() public {
-        data[3].domain = Domain(getChain("base"), vm.createFork(getChain("base").rpcUrl,
-28839981));         data[3].bridges.push(Bridge(data[1].domain, data[2].domain, 123));
+        data[3].domain = Domain(getChain("base"), vm.createFork(getChain("base").rpcUrl, 28839981));
+        data[3].bridges.push(Bridge(data[1].domain, data[2].domain, 123));
         data[3].bridges.push(Bridge(data[1].domain, data[2].domain, 456));
 
         vm.selectFork(data[2].domain.forkId);

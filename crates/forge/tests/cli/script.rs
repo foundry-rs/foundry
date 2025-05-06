@@ -235,6 +235,7 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
+
 Script ran successfully.
 
 ## Setting up 1 EVM.
@@ -246,6 +247,7 @@ Simulated On-chain Traces:
 
   [..] GasWaster::wasteGas(200000 [2e5])
     └─ ← [Stop]
+
 
 ==========================
 
@@ -259,6 +261,7 @@ Chain 1
 
 ==========================
 
+
 ==========================
 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
@@ -266,6 +269,7 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 [SAVED_TRANSACTIONS]
 
 [SAVED_SENSITIVE_VALUES]
+
 
 "#]]);
 });
@@ -337,6 +341,7 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
+
 Script ran successfully.
 
 ## Setting up 1 EVM.
@@ -348,6 +353,7 @@ Simulated On-chain Traces:
 
   [..] GasWaster::wasteGas(200000 [2e5])
     └─ ← [Stop]
+
 
 ==========================
 
@@ -361,6 +367,7 @@ Chain 1
 
 ==========================
 
+
 ==========================
 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
@@ -368,6 +375,7 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 [SAVED_TRANSACTIONS]
 
 [SAVED_SENSITIVE_VALUES]
+
 
 "#]]);
 });
@@ -515,9 +523,11 @@ Traces:
     │   └─ ← [Return] 718 bytes of code
     └─ ← [Stop]
 
+
 Script ran successfully.
 
 SKIPPING ON CHAIN SIMULATION.
+
 
 ==========================
 
@@ -526,6 +536,7 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 [SAVED_TRANSACTIONS]
 
 [SAVED_SENSITIVE_VALUES]
+
 
 "#]]);
 
@@ -640,9 +651,11 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
+
 Script ran successfully.
 
 SKIPPING ON CHAIN SIMULATION.
+
 
 ==========================
 
@@ -651,6 +664,7 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 [SAVED_TRANSACTIONS]
 
 [SAVED_SENSITIVE_VALUES]
+
 
 "#]]);
 });
@@ -961,10 +975,7 @@ forgetest_async!(check_broadcast_log, |prj, cmd| {
 
     // Prepare CREATE2 Deployer
     let addr = address!("0x4e59b44847b379578588920ca78fbf26c0b4956c");
-    let code =
-hex::decode("
-7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3"
-).expect("Could not decode create2 deployer init_code").into();
+    let code = hex::decode("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3").expect("Could not decode create2 deployer init_code").into();
     api.anvil_set_code(addr, code).await.unwrap();
 
     tester
@@ -985,11 +996,7 @@ hex::decode("
     // Check broadcast logs
     // Ignore timestamp, blockHash, blockNumber, cumulativeGasUsed, effectiveGasPrice,
     // transactionIndex and logIndex values since they can change in between runs
-    let re = Regex::new(
-        r#"((timestamp":).[0-9]*)|((blockHash":).*)|((blockNumber":).*)|((cumulativeGasUsed":
-).*)|((effectiveGasPrice":).*)|((transactionIndex":).*)|((logIndex":).*)"#,
-    )
-    .unwrap();
+    let re = Regex::new(r#"((timestamp":).[0-9]*)|((blockHash":).*)|((blockNumber":).*)|((cumulativeGasUsed":).*)|((effectiveGasPrice":).*)|((transactionIndex":).*)|((logIndex":).*)"#).unwrap();
 
     let fixtures_log = std::fs::read_to_string(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1083,10 +1090,9 @@ Warning: Target directory is not empty, but `--force` was specified
 "#]]);
 
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let script = prj
-        .add_script(
-            "Counter.s.sol",
-            r#"
+    let script = prj.add_script(
+                "Counter.s.sol",
+                r#"
 import "forge-std/Script.sol";
 
 struct Point {
@@ -1104,8 +1110,8 @@ contract A {
     Point g;
     string h;
 
-  constructor(address _a, uint _b, int _c, bytes32 _d, bool _e, bytes memory _f, Point memory _g,
-string memory _h) {     a = _a;
+  constructor(address _a, uint _b, int _c, bytes32 _d, bool _e, bytes memory _f, Point memory _g, string memory _h) {
+    a = _a;
     b = _b;
     c = _c;
     d = _d;
@@ -1120,14 +1126,15 @@ contract Script0 is Script {
   function run() external {
     vm.broadcast();
 
-    new A(msg.sender, 2 ** 32, -1 * (2 ** 32), keccak256(abi.encode(1)), true, "abcdef",
-Point(10, 99), "hello");   }
+    new A(msg.sender, 2 ** 32, -1 * (2 ** 32), keccak256(abi.encode(1)), true, "abcdef", Point(10, 99), "hello");
+  }
 }
    "#,
-        )
-        .unwrap();
+            )
+            .unwrap();
 
-    cmd.forge_fuse()
+    cmd
+        .forge_fuse()
         .arg("script")
         .arg(script)
         .args([
@@ -1160,12 +1167,12 @@ Chain 31337
 
 ==========================
 
-SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s)
-to the previous command. See forge script --help for more.
+SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.
 
 [SAVED_TRANSACTIONS]
 
 [SAVED_SENSITIVE_VALUES]
+
 
 "#]]);
 
@@ -1227,8 +1234,8 @@ contract A {
   bytes f;
   string g;
 
-  constructor(address _a, uint _b, int _c, bytes32 _d, bool _e, bytes memory _f, string memory
-_g) {     a = _a;
+  constructor(address _a, uint _b, int _c, bytes32 _d, bool _e, bytes memory _f, string memory _g) {
+    a = _a;
     b = _b;
     c = _c;
     d = _d;
@@ -1239,22 +1246,23 @@ _g) {     a = _a;
 }
 
 contract B {
-  constructor(address _a, uint _b, int _c, bytes32 _d, bool _e, bytes memory _f, string memory
-_g) {     new A(_a, _b, _c, _d, _e, _f, _g);
+  constructor(address _a, uint _b, int _c, bytes32 _d, bool _e, bytes memory _f, string memory _g) {
+    new A(_a, _b, _c, _d, _e, _f, _g);
   }
 }
 
 contract Script0 is Script {
   function run() external {
     vm.broadcast();
-    new B(msg.sender, 2 ** 32, -1 * (2 ** 32), keccak256(abi.encode(1)), true, "abcdef",
-"hello");   }
+    new B(msg.sender, 2 ** 32, -1 * (2 ** 32), keccak256(abi.encode(1)), true, "abcdef", "hello");
+  }
 }
    "#,
         )
         .unwrap();
 
-    cmd.forge_fuse()
+    cmd
+        .forge_fuse()
         .arg("script")
         .arg(script)
         .args([
@@ -1287,12 +1295,12 @@ Chain 31337
 
 ==========================
 
-SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s)
-to the previous command. See forge script --help for more.
+SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.
 
 [SAVED_TRANSACTIONS]
 
 [SAVED_SENSITIVE_VALUES]
+
 
 "#]]);
 
@@ -1808,6 +1816,7 @@ Chain 31337
 
 ==========================
 
+
 ==========================
 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
@@ -1816,10 +1825,9 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 [SAVED_SENSITIVE_VALUES]
 
-"#]])
-    .stderr_eq(str![[r#"
-Warning: Script contains a transaction to 0x0000000000000000000000000000000000000000 which does
-not contain any code.
+
+"#]]).stderr_eq(str![[r#"
+Warning: Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 "#]]);
 
@@ -1859,6 +1867,7 @@ Chain 31337
 
 ==========================
 
+
 ==========================
 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
@@ -1867,10 +1876,9 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 [SAVED_SENSITIVE_VALUES]
 
-"#]])
-        .stderr_eq(str![[r#"
-Warning: Script contains a transaction to 0x0000000000000000000000000000000000000000 which does
-not contain any code.
+
+"#]]).stderr_eq(str![[r#"
+Warning: Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 "#]]);
 });
@@ -2006,6 +2014,7 @@ Chain 31337
 
 ==========================
 
+
 ==========================
 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
@@ -2014,10 +2023,9 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 [SAVED_SENSITIVE_VALUES]
 
-"#]])
-    .stderr_eq(str![[r#"
-Warning: Script contains a transaction to 0x0000000000000000000000000000000000000000 which does
-not contain any code.
+
+"#]]).stderr_eq(str![[r#"
+Warning: Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 "#]]);
 });
@@ -2185,8 +2193,7 @@ contract SimpleScript is Script {
         payable(0x3fAB184622Dc19b6109349B94811493BF2a45362).transfer(10000000 gwei);
         // deploy create2 factory
         vm.broadcastRawTransaction(
-            
-hex"f8a58085174876e800830186a08080b853604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf31ba02222222222222222222222222222222222222222222222222222222222222222a02222222222222222222222222222222222222222222222222222222222222222"
+            hex"f8a58085174876e800830186a08080b853604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf31ba02222222222222222222222222222222222222222222222222222222222222222a02222222222222222222222222222222222222222222222222222222222222222"
         );
     }
 }
@@ -2225,6 +2232,7 @@ Chain 31337
 
 ==========================
 
+
 ==========================
 
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
@@ -2232,6 +2240,7 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 [SAVED_TRANSACTIONS]
 
 [SAVED_SENSITIVE_VALUES]
+
 
 "#]]);
 
@@ -2290,8 +2299,8 @@ forgetest_init!(can_remeber_keys, |prj, cmd| {
 import "forge-std/Script.sol";
 
 interface Vm {
-    function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint32 count)
-external returns (address[] memory keyAddrs); }
+    function rememberKeys(string calldata mnemonic, string calldata derivationPath, uint32 count) external returns (address[] memory keyAddrs);
+}
 
 contract WalletScript is Script {
     function run() public {
@@ -2365,6 +2374,7 @@ Traces:
     │   │   └─ ← [Return] 100
     │   └─ ← [Return] 62 bytes of code
     └─ ← [Stop]
+
 
 Script ran successfully.
 
@@ -2526,6 +2536,7 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
+
 Script ran successfully.
 
 == Logs ==
@@ -2542,6 +2553,7 @@ Simulated On-chain Traces:
     ├─ emit log_string(val: "script ran")
     └─ ← [Stop]
 
+
 ==========================
 
 Chain 31337
@@ -2556,20 +2568,21 @@ Chain 31337
 
 === Transactions that will be broadcast ===
 
+
 Chain 31337
 
 ### Transaction 1 ###
 
 accessList           []
 chainId              31337
-gasLimit             228247
-gasPrice
+gasLimit             228231
+gasPrice             
 input                [..]
-maxFeePerBlobGas
-maxFeePerGas
-maxPriorityFeePerGas
+maxFeePerBlobGas     
+maxFeePerGas         
+maxPriorityFeePerGas 
 nonce                0
-to
+to                   
 type                 0
 value                0
 
@@ -2578,12 +2591,11 @@ value                0
 accessList           []
 chainId              31337
 gasLimit             93856
-gasPrice
-input
-0x7357f5d2000000000000000000000000000000000000000000000000000000000000007b00000000000000000000000000000000000000000000000000000000000001c8
-maxFeePerBlobGas
-maxFeePerGas
-maxPriorityFeePerGas
+gasPrice             
+input                0x7357f5d2000000000000000000000000000000000000000000000000000000000000007b00000000000000000000000000000000000000000000000000000000000001c8
+maxFeePerBlobGas     
+maxFeePerGas         
+maxPriorityFeePerGas 
 nonce                1
 to                   0x5FbDB2315678afecb367f032d93F642f64180aa3
 type                 0
@@ -2594,12 +2606,13 @@ data (decoded): run(uint256,uint256)(
   456
 )
 
-SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s)
-to the previous command. See forge script --help for more.
+
+SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.
 
 [SAVED_TRANSACTIONS]
 
 [SAVED_SENSITIVE_VALUES]
+
 
 "#]]);
 });
@@ -2618,12 +2631,9 @@ Script ran successfully.
         prj.paths().scripts.join("Counter1.s.sol"),
     )
     .unwrap();
-    cmd.forge_fuse()
-        .args(["script", "script/Counter1.s.sol"])
-        .assert_success()
-        .stderr_eq(str![[r#" ...
-Warning: Detected artifacts built from source files that no longer exist. Run `forge clean` to
-make sure builds are in sync with project files.
+    cmd.forge_fuse().args(["script", "script/Counter1.s.sol"]).assert_success().stderr_eq(str![[r#"
+...
+Warning: Detected artifacts built from source files that no longer exist. Run `forge clean` to make sure builds are in sync with project files.
  - [..]script/Counter.s.sol
 ...
 
@@ -2654,8 +2664,8 @@ forgetest_init!(should_revert_on_address_opcode, |prj, cmd| {
 
     cmd.arg("script").arg("ScriptWithAddress").assert_failure().stderr_eq(str![[r#"
 ...
-Error: Usage of `address(this)` detected in script contract. Script contracts are ephemeral and
-their addresses should not be relied upon. Error: script failed: <empty revert data>
+Error: Usage of `address(this)` detected in script contract. Script contracts are ephemeral and their addresses should not be relied upon.
+Error: script failed: <empty revert data>
 ...
 
 "#]]);
