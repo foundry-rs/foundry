@@ -203,6 +203,7 @@ ABI: [
   }
 ]
 
+
 "#]]);
 
     // Dry-run with `--json` flag
