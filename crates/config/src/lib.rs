@@ -1438,6 +1438,17 @@ impl Config {
         self.get_etherscan_config_with_chain(chain).ok().flatten().map(|c| c.key)
     }
 
+    /// Helper function to get the API version.
+    ///
+    /// See also [Self::get_etherscan_config_with_chain]
+    pub fn get_etherscan_api_version(&self, chain: Option<Chain>) -> EtherscanApiVersion {
+        self.get_etherscan_config_with_chain(chain)
+            .ok()
+            .flatten()
+            .map(|c| c.api_version)
+            .unwrap_or(EtherscanApiVersion::V2)
+    }
+
     /// Returns the remapping for the project's _src_ directory
     ///
     /// **Note:** this will add an additional `<src>/=<src path>` remapping here so imports that
