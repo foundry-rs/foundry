@@ -4409,6 +4409,7 @@ dependencies = [
  "alloy-genesis",
  "alloy-json-abi",
  "alloy-network",
+ "alloy-op-evm",
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types",

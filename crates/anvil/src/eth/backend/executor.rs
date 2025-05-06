@@ -1,4 +1,3 @@
-use crate::eth::backend::evm::EitherEvm;
 use crate::{
     eth::{
         backend::{
@@ -24,7 +23,7 @@ use anvil_core::eth::{
     trie,
 };
 use foundry_evm::{backend::DatabaseError, traces::CallTraceNode, Env};
-use foundry_evm_core::evm::FoundryPrecompiles;
+use foundry_evm_core::{either_evm::EitherEvm, evm::FoundryPrecompiles};
 use op_revm::{
     transaction::deposit::DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, OpContext, OpTransaction,
     OpTransactionError,
