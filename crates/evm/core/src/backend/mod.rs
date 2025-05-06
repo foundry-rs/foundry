@@ -1846,22 +1846,8 @@ impl Default for BackendInner {
 
 /// This updates the currently used env with the fork's environment
 pub(crate) fn update_current_env_with_fork_env(current: &mut EnvMut<'_>, fork: Env) {
-    current.block.number = fork.evm_env.block_env.number;
-    current.block.beneficiary = fork.evm_env.block_env.beneficiary;
-    current.block.timestamp = fork.evm_env.block_env.timestamp;
-    current.block.gas_limit = fork.evm_env.block_env.gas_limit;
-    current.block.basefee = fork.evm_env.block_env.basefee;
-    current.block.difficulty = fork.evm_env.block_env.difficulty;
-    current.block.prevrandao = fork.evm_env.block_env.prevrandao;
-    current.block.blob_excess_gas_and_price = fork.evm_env.block_env.blob_excess_gas_and_price;
-
-    current.cfg.chain_id = fork.evm_env.cfg_env.chain_id;
-    current.cfg.spec = fork.evm_env.cfg_env.spec;
-    current.cfg.limit_contract_code_size = fork.evm_env.cfg_env.limit_contract_code_size;
-    current.cfg.disable_nonce_check = fork.evm_env.cfg_env.disable_nonce_check;
-    current.cfg.blob_target_and_max_count = fork.evm_env.cfg_env.blob_target_and_max_count;
-    current.cfg.memory_limit = fork.evm_env.cfg_env.memory_limit;
-
+    *current.block = fork.evm_env.block_env;
+    *current.cfg = fork.evm_env.cfg_env;
     current.tx.chain_id = fork.tx.chain_id;
 }
 
