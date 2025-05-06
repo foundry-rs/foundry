@@ -22,7 +22,7 @@ use foundry_evm_core::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
         DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
-    decode::{RevertDecoder, SkipReason},
+    decode::{DetailedRevertReason, RevertDecoder, SkipReason},
     utils::StateChangeset,
     InspectorExt,
 };
@@ -769,6 +769,9 @@ impl From<DeployResult> for RawCallResult {
 pub struct RawCallResult {
     /// The status of the call
     pub exit_reason: InstructionResult,
+    /// Fallback reason for reverts.
+    /// Should only be used if no custom errors, or string errors can be decoded.
+    pub maybe_reason: Option<DetailedRevertReason>,
     /// Whether the call reverted or not
     pub reverted: bool,
     /// Whether the call includes a snapshot failure
@@ -810,6 +813,7 @@ impl Default for RawCallResult {
     fn default() -> Self {
         Self {
             exit_reason: InstructionResult::Continue,
+            maybe_reason: None,
             reverted: false,
             has_state_snapshot_failure: false,
             result: Bytes::new(),
@@ -853,7 +857,8 @@ impl RawCallResult {
         if let Some(reason) = SkipReason::decode(&self.result) {
             return EvmError::Skip(reason);
         }
-        let reason = rd.unwrap_or_default().decode(&self.result, Some(self.exit_reason));
+        let reason =
+            rd.unwrap_or_default().decode(&self.result, Some(self.exit_reason), self.maybe_reason);
         EvmError::Execution(Box::new(self.into_execution_error(reason)))
     }
 
@@ -950,8 +955,15 @@ fn convert_executed_result(
         _ => Bytes::new(),
     };
 
-    let InspectorData { mut logs, labels, traces, coverage, cheatcodes, chisel_state } =
-        inspector.collect();
+    let InspectorData {
+        mut logs,
+        labels,
+        traces,
+        coverage,
+        cheatcodes,
+        chisel_state,
+        maybe_reason,
+    } = inspector.collect();
 
     if logs.is_empty() {
         logs = exec_logs;
@@ -964,6 +976,7 @@ fn convert_executed_result(
 
     Ok(RawCallResult {
         exit_reason,
+        maybe_reason,
         reverted: !matches!(exit_reason, return_ok!()),
         has_state_snapshot_failure,
         result,

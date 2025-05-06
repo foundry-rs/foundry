@@ -3600,3 +3600,154 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
 });
+
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(detailed_revert_when_calling_non_contract_address, |prj, cmd| {
+    prj.add_test(
+        "NonContractCallRevertTest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+interface ICounter {
+    function number() external returns (uint256);
+}
+
+contract NonContractCallRevertTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        counter.setNumber(1);
+    }
+
+    function test_non_contract_call_failure() public {
+        console.log("test non contract call failure");
+        uint256 number = ICounter(address(0xdEADBEeF00000000000000000000000000000000)).number();
+        assertEq(number, 1);
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mc", "NonContractCallRevertTest", "-vvvv"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/NonContractCallRevertTest.t.sol:NonContractCallRevertTest
+[FAIL: EvmError: call to non-contract address `0xdEADBEeF00000000000000000000000000000000`] test_non_contract_call_failure() ([GAS])
+Logs:
+  test non contract call failure
+
+Traces:
+  [157143] NonContractCallRevertTest::setUp()
+    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [22492] Counter::setNumber(1)
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+  [6352] NonContractCallRevertTest::test_non_contract_call_failure()
+    ├─ [0] console::log("test non contract call failure") [staticcall]
+    │   └─ ← [Stop]
+    ├─ [0] 0xdEADBEeF00000000000000000000000000000000::number()
+    │   └─ ← [Stop]
+    └─ ← [Revert] EvmError: Revert
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/NonContractCallRevertTest.t.sol:NonContractCallRevertTest
+[FAIL: EvmError: call to non-contract address `0xdEADBEeF00000000000000000000000000000000`] test_non_contract_call_failure() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+"#]]);
+});
+
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(detailed_revert_when_delegatecalling_unlinked_library, |prj, cmd| {
+    prj.add_test(
+        "NonContractDelegateCallRevertTest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+library TestLibrary {
+    function foo(uint256 a) public pure returns (uint256) {
+        return a * 2;
+    }
+}
+
+contract LibraryCaller {
+    address public lib;
+
+    constructor(address _lib) {
+        lib = _lib;
+    }
+
+    function foobar(uint256 val) public returns (uint256) {
+        (bool success, bytes memory data) = lib.delegatecall(
+            abi.encodeWithSelector(TestLibrary.foo.selector, val)
+        );
+
+        assert(success);
+        return abi.decode(data, (uint256));
+    }
+}
+
+contract NonContractDelegateCallRevertTest is Test {
+    function test_unlinked_library_call_failure() public {
+        console.log("Test: Simulating call to unlinked library");
+        LibraryCaller caller = new LibraryCaller(0xdEADBEeF00000000000000000000000000000000);
+
+        caller.foobar(10);
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    // Run the test, expecting a failure and checking for the specific revert message.
+    // The -vvvv flag provides detailed trace output.
+    cmd.args(["test", "--mc", "NonContractDelegateCallRevertTest", "-vvvv"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/NonContractDelegateCallRevertTest.t.sol:NonContractDelegateCallRevertTest
+[FAIL: EvmError: delegatecall to non-contract address `0xdEADBEeF00000000000000000000000000000000` (usually an unliked library)] test_unlinked_library_call_failure() ([GAS])
+Logs:
+  Test: Simulating call to unlinked library
+
+Traces:
+  [255285] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
+    ├─ [0] console::log("Test: Simulating call to unlinked library") [staticcall]
+    │   └─ ← [Stop]
+    ├─ [214746] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 960 bytes of code
+    ├─ [3896] LibraryCaller::foobar(10)
+    │   ├─ [0] 0xdEADBEeF00000000000000000000000000000000::foo(10) [delegatecall]
+    │   │   └─ ← [Stop]
+    │   └─ ← [Revert] EvmError: Revert
+    └─ ← [Revert] EvmError: Revert
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/NonContractDelegateCallRevertTest.t.sol:NonContractDelegateCallRevertTest
+[FAIL: EvmError: delegatecall to non-contract address `0xdEADBEeF00000000000000000000000000000000` (usually an unliked library)] test_unlinked_library_call_failure() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+"#]]);
+});

@@ -359,7 +359,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                         let mut msg = "execution reverted".to_string();
                         if let Some(reason) = data
                             .as_ref()
-                            .and_then(|data| RevertDecoder::new().maybe_decode(data, None))
+                            .and_then(|data| RevertDecoder::new().maybe_decode(data, None, None))
                         {
                             msg = format!("{msg}: {reason}");
                         }

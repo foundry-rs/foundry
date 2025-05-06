@@ -3,7 +3,7 @@
 use crate::abi::{console, Vm};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Error, JsonAbi};
-use alloy_primitives::{hex, map::HashMap, Log, Selector};
+use alloy_primitives::{hex, map::HashMap, Address, Log, Selector};
 use alloy_sol_types::{
     ContractError::Revert, RevertReason, RevertReason::ContractError, SolEventInterface,
     SolInterface, SolValue,
@@ -12,6 +12,26 @@ use foundry_common::SELECTOR_LEN;
 use itertools::Itertools;
 use revm::interpreter::InstructionResult;
 use std::{fmt, sync::OnceLock};
+
+#[derive(Debug, Clone, Copy)]
+pub enum DetailedRevertReason {
+    CallToNonContract(Address),
+    DelegateCallToNonContract(Address),
+}
+
+impl fmt::Display for DetailedRevertReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DetailedRevertReason::CallToNonContract(addr) => {
+                write!(f, "call to non-contract address `{addr}`")
+            }
+            DetailedRevertReason::DelegateCallToNonContract(addr) => write!(
+                f,
+                "delegatecall to non-contract address `{addr}` (usually an unliked library)"
+            ),
+        }
+    }
+}
 
 /// A skip reason.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -127,8 +147,13 @@ impl RevertDecoder {
     ///
     /// Note that this is just a best-effort guess, and should not be relied upon for anything other
     /// than user output.
-    pub fn decode(&self, err: &[u8], status: Option<InstructionResult>) -> String {
-        self.maybe_decode(err, status).unwrap_or_else(|| {
+    pub fn decode(
+        &self,
+        err: &[u8],
+        status: Option<InstructionResult>,
+        revert_reason: Option<DetailedRevertReason>,
+    ) -> String {
+        self.maybe_decode(err, status, revert_reason).unwrap_or_else(|| {
             if err.is_empty() {
                 "<empty revert data>".to_string()
             } else {
@@ -140,7 +165,12 @@ impl RevertDecoder {
     /// Tries to decode an error message from the given revert bytes.
     ///
     /// See [`decode`](Self::decode) for more information.
-    pub fn maybe_decode(&self, err: &[u8], status: Option<InstructionResult>) -> Option<String> {
+    pub fn maybe_decode(
+        &self,
+        err: &[u8],
+        status: Option<InstructionResult>,
+        revert_reason: Option<DetailedRevertReason>,
+    ) -> Option<String> {
         if let Some(reason) = SkipReason::decode(err) {
             return Some(reason.to_string());
         }
@@ -196,6 +226,10 @@ impl RevertDecoder {
         }
 
         if let Some(status) = status {
+            if let Some(reason) = revert_reason {
+                return Some(format!("EvmError: {reason}"));
+            }
+
             if !status.is_ok() {
                 return Some(format!("EvmError: {status:?}"));
             }
@@ -272,7 +306,7 @@ mod tests {
             "0xe17594de"
             "756688fe00000000000000000000000000000000000000000000000000000000"
         );
-        assert_eq!(decoder.decode(data, None), "ValidationFailed(0x)");
+        assert_eq!(decoder.decode(data, None, None), "ValidationFailed(0x)");
 
         /*
         abi.encodeWithSelector(ValidationFailed.selector, abi.encodeWithSelector(InvalidNonce.selector))
@@ -283,6 +317,6 @@ mod tests {
             "0000000000000000000000000000000000000000000000000000000000000004"
             "756688fe00000000000000000000000000000000000000000000000000000000"
         );
-        assert_eq!(decoder.decode(data, None), "ValidationFailed(0x756688fe)");
+        assert_eq!(decoder.decode(data, None, None), "ValidationFailed(0x756688fe)");
     }
 }

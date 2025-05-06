@@ -1276,6 +1276,7 @@ impl Backend {
                     let r = RevertDecoder::new().decode(
                         info.out.as_ref().map(|b| &b[..]).unwrap_or_default(),
                         Some(info.exit),
+                        None,
                     );
                     node_info!("    Error: reverted with: {r}");
                 }
