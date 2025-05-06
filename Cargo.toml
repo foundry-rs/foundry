@@ -371,6 +371,7 @@ idna_adapter = "=1.1.0"
 
 ## revm
 revm = { git = "https://github.com/bluealloy/revm.git", rev = "2540c3f3" }
+op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "2540c3f3" }
 # revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "a625c04" }
 
 ## foundry

@@ -6646,8 +6646,7 @@ dependencies = [
 [[package]]
 name = "op-revm"
 version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e981d234dcfd3a3de7480e5a5cf7439071af39d15b7d258188cc4c69b9d1f26e"
+source = "git+https://github.com/bluealloy/revm.git?rev=2540c3f3#2540c3f390b33f46989c73cb2166fbc3b5b595ed"
 dependencies = [
  "auto_impl",
  "once_cell",
