@@ -41,8 +41,8 @@ static DRPC_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     ])
 });
 
-// List of etherscan keys for mainnet
-static ETHERSCAN_MAINNET_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+// List of etherscan keys.
+static ETHERSCAN_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     shuffled(vec![
         "MCAUM7WPE9XP5UQMZPCKIBUJHPM1C24FP6",
         "JW6RWCG2C5QF8TANH4KC7AYIF1CX7RB5D1",
@@ -54,8 +54,6 @@ static ETHERSCAN_MAINNET_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         "A15KZUMZXXCK1P25Y1VP1WGIVBBHIZDS74",
         "3IA6ASNQXN8WKN7PNFX7T72S9YG56X9FPG",
         "ZUB97R31KSYX7NYVW6224Q6EYY6U56H591",
-        // Optimism
-        // "JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46",
     ])
 });
 
@@ -139,7 +137,7 @@ fn archive_urls(is_ws: bool) -> &'static [String] {
 
 /// Returns the next etherscan api key.
 pub fn next_etherscan_api_key() -> String {
-    let key = next(&ETHERSCAN_MAINNET_KEYS).to_string();
+    let key = next(&ETHERSCAN_KEYS).to_string();
     eprintln!("--- next_etherscan_api_key() = {key} ---");
     key
 }
@@ -188,6 +186,7 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
 mod tests {
     use super::*;
     use alloy_primitives::address;
+    use foundry_block_explorers::EtherscanApiVersion;
     use foundry_config::Chain;
 
     #[tokio::test]
@@ -196,7 +195,7 @@ mod tests {
         let address = address!("0xdAC17F958D2ee523a2206206994597C13D831ec7");
         let mut first_abi = None;
         let mut failed = Vec::new();
-        for (i, &key) in ETHERSCAN_MAINNET_KEYS.iter().enumerate() {
+        for (i, &key) in ETHERSCAN_KEYS.iter().enumerate() {
             println!("trying key {i} ({key})");
 
             let client = foundry_block_explorers::Client::builder()
@@ -230,5 +229,33 @@ mod tests {
         if !failed.is_empty() {
             panic!("failed keys: {failed:#?}");
         }
+    }
+
+    #[tokio::test]
+    #[ignore = "run manually"]
+    async fn test_etherscan_keys_compatibility() {
+        let address = address!("0x111111125421cA6dc452d289314280a0f8842A65");
+        let ehterscan_key = "JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46";
+        let client = foundry_block_explorers::Client::builder()
+            .with_api_key(ehterscan_key)
+            .chain(Chain::optimism_mainnet())
+            .unwrap()
+            .build()
+            .unwrap();
+        if client.contract_abi(address).await.is_ok() {
+            panic!("v1 Optimism key should not work with v2 version")
+        }
+
+        let client = foundry_block_explorers::Client::builder()
+            .with_api_key(ehterscan_key)
+            .with_api_version(EtherscanApiVersion::V1)
+            .chain(Chain::optimism_mainnet())
+            .unwrap()
+            .build()
+            .unwrap();
+        match client.contract_abi(address).await {
+            Ok(_) => {}
+            Err(_) => panic!("v1 Optimism key should work with v1 version"),
+        };
     }
 }
