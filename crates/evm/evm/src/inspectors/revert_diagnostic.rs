@@ -13,9 +13,14 @@ use revm::{
 
 const IGNORE: [Address; 2] = [HARDHAT_CONSOLE_ADDRESS, CHEATCODE_ADDRESS];
 
+/// An inspector that tracks call context to enhances revert diagnostics.
+/// Useful for understanding reverts that are not linked to custom errors or revert strings.
 #[derive(Clone, Debug, Default)]
 pub struct RevertDiagnostic {
+    /// Tracks calls with calldata that target an address without executable code
     pub non_contract_call: Option<(Address, CallScheme)>,
+
+    /// Tracks whether a failed call has been spotted or not.
     pub reverted: bool,
 }
 
@@ -62,16 +67,17 @@ impl RevertDiagnostic {
 }
 
 impl<DB: Database + DatabaseExt> Inspector<DB> for RevertDiagnostic {
-    /// Stores call information that targeted a non-contract address. Excludes precompiles.
+    /// Tracks the first call, with non-zero calldata, that targeted a non-contract address.
+    /// Excludes precompiles and test addresses.
     fn call(&mut self, ctx: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
         let target = self.no_code_target_address(inputs);
 
-        if IGNORE.contains(&target) {
+        if IGNORE.contains(&target) || self.is_precompile(ctx.spec_id(), target) {
             return None;
         }
 
         if let Ok(state) = ctx.code(target) {
-            if state.is_empty() && !self.reverted && !self.is_precompile(ctx.spec_id(), target) {
+            if state.is_empty() && !inputs.input.is_empty() && !self.reverted {
                 self.non_contract_call = Some((target, inputs.scheme));
             }
         }
