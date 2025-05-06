@@ -91,17 +91,10 @@ impl CoverageCollector {
 /// tx) then the hash is calculated from the bytecode.
 #[inline]
 fn get_or_insert_contract_hash(interpreter: &mut Interpreter) -> B256 {
-    let mut hash = interpreter.bytecode.hash().unwrap_or_else(|| eof_panic());
-    if hash.is_zero() {
-        set_contract_hash(&mut hash, &interpreter.bytecode);
+    if interpreter.bytecode.hash().is_none_or(|h| h.is_zero()) {
+        interpreter.bytecode.regenerate_hash();
     }
-    hash
-}
-
-#[cold]
-#[inline(never)]
-fn set_contract_hash(hash: &mut B256, bytecode: &Bytecode) {
-    *hash = bytecode.hash_slow();
+    interpreter.bytecode.hash().unwrap_or_else(|| eof_panic())
 }
 
 #[cold]
