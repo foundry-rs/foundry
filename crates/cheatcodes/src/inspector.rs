@@ -39,7 +39,7 @@ use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
-    InspectorExt,
+    ContextExt, InspectorExt,
 };
 use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
 use foundry_wallets::multi_wallet::MultiWallet;
@@ -299,7 +299,7 @@ pub type BroadcastableTransactions = VecDeque<BroadcastableTransaction>;
 ///   cheatcode address: by default, the caller, test contract and newly deployed contracts are
 ///   allowed to execute cheatcodes
 #[derive(Clone, Debug)]
-pub struct Cheatcodes {
+pub struct Cheatcodes<CTX> {
     /// The block environment
     ///
     /// Used in the cheatcode handler to overwrite the block environment separately from the
@@ -430,18 +430,20 @@ pub struct Cheatcodes {
     pub deprecated: HashMap<&'static str, Option<&'static str>>,
     /// Unlocked wallets used in scripts and testing of scripts.
     pub wallets: Option<Wallets>,
+    /// Evm Context
+    _pd: std::marker::PhantomData<CTX>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
 // `CheatsConfig` which is unused, and inside it `ProjectPathsConfig` is relatively expensive to
 // create.
-impl Default for Cheatcodes {
+impl<CTX> Default for Cheatcodes<CTX> {
     fn default() -> Self {
         Self::new(Arc::default())
     }
 }
 
-impl Cheatcodes {
+impl<CTX> Cheatcodes<CTX> {
     /// Creates a new `Cheatcodes` with the given settings.
     pub fn new(config: Arc<CheatsConfig>) -> Self {
         Self {
@@ -484,6 +486,7 @@ impl Cheatcodes {
             arbitrary_storage: Default::default(),
             deprecated: Default::default(),
             wallets: Default::default(),
+            _pd: Default::default(),
         }
     }
 
@@ -1209,16 +1212,20 @@ impl Cheatcodes {
     }
 }
 
-impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
+impl<CTX> Inspector<CTX> for Cheatcodes<CTX>
+where
+    CTX: ContextExt,
+{
     #[inline]
-    fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+    fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
+        let (_db, journal, env) = ecx.as_db_env_and_journal();
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.
         if let Some(block) = self.block.take() {
-            ecx.block = block;
+            *env.block = block;
         }
         if let Some(gas_price) = self.gas_price.take() {
-            ecx.tx.gas_price = gas_price;
+            env.tx.gas_price = gas_price;
         }
 
         // Record gas for current frame.
@@ -1229,14 +1236,14 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         // `expectRevert`: track the max call depth during `expectRevert`
         if let Some(expected) = &mut self.expected_revert {
             expected.max_depth = max(
-                ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64"),
+                journal.depth.try_into().expect("journaled state depth exceeds u64"),
                 expected.max_depth,
             );
         }
     }
 
     #[inline]
-    fn step(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
         self.pc = interpreter.bytecode.pc();
 
         // `pauseGasMetering`: pause / resume interpreter gas.
@@ -1279,7 +1286,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
     }
 
     #[inline]
-    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
         if self.gas_metering.paused {
             self.meter_gas_end(interpreter);
         }
@@ -1294,7 +1301,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         }
     }
 
-    fn log(&mut self, interpreter: &mut Interpreter, _ecx: Ecx, log: Log) {
+    fn log(&mut self, interpreter: &mut Interpreter, _ecx: &mut CTX, log: Log) {
         if !self.expected_emits.is_empty() {
             expect::handle_expect_emit(self, &log, interpreter);
         }
@@ -1309,11 +1316,11 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         }
     }
 
-    fn call(&mut self, ecx: Ecx, inputs: &mut CallInputs) -> Option<CallOutcome> {
+    fn call(&mut self, ecx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         Self::call_with_executor(self, ecx, inputs, &mut TransparentCheatcodesExecutor)
     }
 
-    fn call_end(&mut self, ecx: Ecx, call: &CallInputs, outcome: &mut CallOutcome) {
+    fn call_end(&mut self, ecx: &mut CTX, call: &CallInputs, outcome: &mut CallOutcome) {
         let cheatcode_call = call.target_address == CHEATCODE_ADDRESS ||
             call.target_address == HARDHAT_CONSOLE_ADDRESS;
 
@@ -1716,24 +1723,29 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         }
     }
 
-    fn create(&mut self, ecx: Ecx, call: &mut CreateInputs) -> Option<CreateOutcome> {
+    fn create(&mut self, ecx: &mut CTX, call: &mut CreateInputs) -> Option<CreateOutcome> {
         self.create_common(ecx, call)
     }
 
-    fn create_end(&mut self, ecx: Ecx, call: &CreateInputs, outcome: &mut CreateOutcome) {
+    fn create_end(&mut self, ecx: &mut CTX, call: &CreateInputs, outcome: &mut CreateOutcome) {
         self.create_end_common(ecx, Some(call), outcome)
     }
 
-    fn eofcreate(&mut self, ecx: Ecx, call: &mut EOFCreateInputs) -> Option<CreateOutcome> {
+    fn eofcreate(&mut self, ecx: &mut CTX, call: &mut EOFCreateInputs) -> Option<CreateOutcome> {
         self.create_common(ecx, call)
     }
 
-    fn eofcreate_end(&mut self, ecx: Ecx, _call: &EOFCreateInputs, outcome: &mut CreateOutcome) {
+    fn eofcreate_end(
+        &mut self,
+        ecx: &mut CTX,
+        _call: &EOFCreateInputs,
+        outcome: &mut CreateOutcome,
+    ) {
         self.create_end_common(ecx, None, outcome)
     }
 }
 
-impl InspectorExt for Cheatcodes {
+impl<CTX> InspectorExt for Cheatcodes<CTX> {
     fn should_use_create2_factory(&mut self, ecx: Ecx, inputs: &CreateInputs) -> bool {
         if let CreateScheme::Create2 { .. } = inputs.scheme {
             let depth: u64 =
@@ -1758,7 +1770,7 @@ impl InspectorExt for Cheatcodes {
     }
 }
 
-impl Cheatcodes {
+impl<CTX> Cheatcodes<CTX> {
     #[cold]
     fn meter_gas(&mut self, interpreter: &mut Interpreter) {
         if let Some(paused_gas) = self.gas_metering.paused_frames.last() {
