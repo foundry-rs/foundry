@@ -59,14 +59,6 @@ static ETHERSCAN_MAINNET_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     ])
 });
 
-// List of etherscan keys for Optimism.
-static ETHERSCAN_OPTIMISM_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    shuffled(vec![
-        //
-        "JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46",
-    ])
-});
-
 /// Returns the next index to use.
 fn next_idx() -> usize {
     static NEXT_INDEX: AtomicUsize = AtomicUsize::new(0);
@@ -145,19 +137,10 @@ fn archive_urls(is_ws: bool) -> &'static [String] {
     }
 }
 
-/// Returns the next etherscan api key
-pub fn next_mainnet_etherscan_api_key() -> String {
-    next_etherscan_api_key(NamedChain::Mainnet)
-}
-
-/// Returns the next etherscan api key for given chain.
-pub fn next_etherscan_api_key(chain: NamedChain) -> String {
-    let keys = match chain {
-        Optimism => &ETHERSCAN_OPTIMISM_KEYS,
-        _ => &ETHERSCAN_MAINNET_KEYS,
-    };
-    let key = next(keys).to_string();
-    eprintln!("--- next_etherscan_api_key(chain={chain:?}) = {key} ---");
+/// Returns the next etherscan api key.
+pub fn next_etherscan_api_key() -> String {
+    let key = next(&ETHERSCAN_MAINNET_KEYS).to_string();
+    eprintln!("--- next_etherscan_api_key() = {key} ---");
     key
 }
 

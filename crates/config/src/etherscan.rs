@@ -319,12 +319,9 @@ impl ResolvedEtherscanConfig {
     ) -> Result<foundry_block_explorers::Client, foundry_block_explorers::errors::EtherscanError>
     {
         let Self { api_url, browser_url, key: api_key, chain, api_version } = self;
-        let (mainnet_api, mainnet_url) = NamedChain::Mainnet.etherscan_urls().expect("exist; qed");
 
-        let cache = chain
-            // try to match against mainnet, which is usually the most common target
-            .or_else(|| (api_url == mainnet_api).then(Chain::mainnet))
-            .and_then(Config::foundry_etherscan_chain_cache_dir);
+        let chain = chain.unwrap_or_default();
+        let cache = Config::foundry_etherscan_chain_cache_dir(chain);
 
         if let Some(cache_path) = &cache {
             // we also create the `sources` sub dir here
@@ -338,16 +335,15 @@ impl ResolvedEtherscanConfig {
             .user_agent(ETHERSCAN_USER_AGENT)
             .tls_built_in_root_certs(api_url.scheme() == "https")
             .build()?;
-        foundry_block_explorers::Client::builder()
+        let mut client_builder = foundry_block_explorers::Client::builder()
             .with_client(client)
             .with_api_version(api_version)
             .with_api_key(api_key)
-            .with_api_url(api_url)?
-            // the browser url is not used/required by the client so we can simply set the
-            // mainnet browser url here
-            .with_url(browser_url.as_deref().unwrap_or(mainnet_url))?
-            .with_cache(cache, Duration::from_secs(24 * 60 * 60))
-            .build()
+            .with_cache(cache, Duration::from_secs(24 * 60 * 60));
+        if let Some(browser_url) = browser_url {
+            client_builder = client_builder.with_url(browser_url)?;
+        }
+        client_builder.chain(chain)?.build()
     }
 }
 
