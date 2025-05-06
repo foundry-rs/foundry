@@ -451,7 +451,16 @@ impl figment::Provider for VerifyCheckArgs {
     fn data(
         &self,
     ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
-        self.etherscan.data()
+        let mut dict = self.etherscan.dict();
+        if let Some(api_key) = &self.etherscan.key {
+            dict.insert("etherscan_api_key".into(), api_key.as_str().into());
+        }
+
+        if let Some(api_version) = &self.etherscan.api_version {
+            dict.insert("etherscan_api_version".into(), api_version.as_str().into());
+        }
+
+        Ok(figment::value::Map::from([(Config::selected_profile(), dict)]))
     }
 }
 
