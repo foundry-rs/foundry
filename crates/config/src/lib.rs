@@ -1381,17 +1381,27 @@ impl Config {
         &self,
         chain: Option<Chain>,
     ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
+        let default_api_version = match self.etherscan_api_version.as_ref() {
+            Some(api_version) => EtherscanApiVersion::try_from(api_version.to_string())
+                .map_err(|_| InvalidApiVersion(api_version.to_string()))?,
+            None => EtherscanApiVersion::V2,
+        };
+
         if let Some(maybe_alias) = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref()) {
             if self.etherscan.contains_key(maybe_alias) {
-                return self.etherscan.clone().resolved().remove(maybe_alias).transpose();
+                return self
+                    .etherscan
+                    .clone()
+                    .resolved(default_api_version)
+                    .remove(maybe_alias)
+                    .transpose();
             }
         }
 
         // try to find by comparing chain IDs after resolving
-        if let Some(res) = chain
-            .or(self.chain)
-            .and_then(|chain| self.etherscan.clone().resolved().find_chain(chain))
-        {
+        if let Some(res) = chain.or(self.chain).and_then(|chain| {
+            self.etherscan.clone().resolved(default_api_version).find_chain(chain)
+        }) {
             match (res, self.etherscan_api_key.as_ref()) {
                 (Ok(mut config), Some(key)) => {
                     // we update the key, because if an etherscan_api_key is set, it should take
@@ -1409,15 +1419,11 @@ impl Config {
 
         // etherscan fallback via API key
         if let Some(key) = self.etherscan_api_key.as_ref() {
-            let chain = chain.or(self.chain).unwrap_or_default();
-
-            let api_version = match self.etherscan_api_version.as_ref() {
-                Some(api_version) => EtherscanApiVersion::try_from(api_version.to_string())
-                    .map_err(|_| InvalidApiVersion(api_version.to_string()))?,
-                None => EtherscanApiVersion::V2,
-            };
-
-            return Ok(ResolvedEtherscanConfig::create(key, chain, api_version));
+            return Ok(ResolvedEtherscanConfig::create(
+                key,
+                chain.or(self.chain).unwrap_or_default(),
+                default_api_version,
+            ));
         }
 
         Ok(None)
@@ -3075,11 +3081,11 @@ mod tests {
 
             let config = Config::load().unwrap();
 
-            assert!(config.etherscan.clone().resolved().has_unresolved());
+            assert!(config.etherscan.clone().resolved(EtherscanApiVersion::V2).has_unresolved());
 
             jail.set_env("_CONFIG_ETHERSCAN_MOONBEAM", "123456789");
 
-            let configs = config.etherscan.resolved();
+            let configs = config.etherscan.resolved(EtherscanApiVersion::V2);
             assert!(!configs.has_unresolved());
 
             let mb_urls = Moonbeam.etherscan_urls().unwrap();
@@ -3130,11 +3136,11 @@ mod tests {
 
             let config = Config::load().unwrap();
 
-            assert!(config.etherscan.clone().resolved().has_unresolved());
+            assert!(config.etherscan.clone().resolved(EtherscanApiVersion::V2).has_unresolved());
 
             jail.set_env("_CONFIG_ETHERSCAN_MOONBEAM", "123456789");
 
-            let configs = config.etherscan.resolved();
+            let configs = config.etherscan.resolved(EtherscanApiVersion::V2);
             assert!(!configs.has_unresolved());
 
             let mb_urls = Moonbeam.etherscan_urls().unwrap();

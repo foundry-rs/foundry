@@ -115,7 +115,12 @@ pub struct EtherscanOpts {
     pub key: Option<String>,
 
     /// The Etherscan API version.
-    #[arg(short, long = "etherscan-api-version", env = "ETHERSCAN_API_VERSION")]
+    #[arg(
+        short,
+        long = "etherscan-api-version",
+        alias = "api-version",
+        env = "ETHERSCAN_API_VERSION"
+    )]
     #[serde(rename = "etherscan_api_version", skip_serializing_if = "Option::is_none")]
     pub api_version: Option<String>,
 

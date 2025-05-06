@@ -182,6 +182,10 @@ pub struct ScriptArgs {
     #[arg(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     pub etherscan_api_key: Option<String>,
 
+    /// The Etherscan API version.
+    #[arg(long, env = "ETHERSCAN_API_VERSION", value_name = "VERSION")]
+    pub etherscan_api_version: Option<String>,
+
     /// Verifies all the contracts found in the receipts of a script, if any.
     #[arg(long)]
     pub verify: bool,
@@ -495,6 +499,9 @@ impl Provider for ScriptArgs {
                 "etherscan_api_key".to_string(),
                 figment::value::Value::from(etherscan_api_key.to_string()),
             );
+        }
+        if let Some(api_version) = &self.etherscan_api_version {
+            dict.insert("etherscan_api_version".to_string(), api_version.to_string().into());
         }
         if let Some(timeout) = self.timeout {
             dict.insert("transaction_timeout".to_string(), timeout.into());

@@ -87,13 +87,13 @@ impl EtherscanConfigs {
     }
 
     /// Returns all (alias -> url) pairs
-    pub fn resolved(self) -> ResolvedEtherscanConfigs {
+    pub fn resolved(self, default_api_version: EtherscanApiVersion) -> ResolvedEtherscanConfigs {
         ResolvedEtherscanConfigs {
             configs: self
                 .configs
                 .into_iter()
                 .map(|(name, e)| {
-                    let resolved = e.resolve(Some(&name));
+                    let resolved = e.resolve(Some(&name), default_api_version);
                     (name, resolved)
                 })
                 .collect(),
@@ -178,7 +178,7 @@ pub struct EtherscanConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     /// Etherscan API Version. Defaults to v2
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "api-version", skip_serializing_if = "Option::is_none")]
     pub api_version: Option<EtherscanApiVersion>,
     /// The etherscan API KEY that's required to make requests
     pub key: EtherscanApiKey,
@@ -194,10 +194,11 @@ impl EtherscanConfig {
     pub fn resolve(
         self,
         alias: Option<&str>,
+        default_api_version: EtherscanApiVersion,
     ) -> Result<ResolvedEtherscanConfig, EtherscanConfigError> {
         let Self { chain, mut url, key, api_version } = self;
 
-        let api_version = api_version.unwrap_or(EtherscanApiVersion::V2);
+        let api_version = api_version.unwrap_or(default_api_version);
 
         if let Some(url) = &mut url {
             *url = interpolate(url)?;
@@ -451,7 +452,7 @@ mod tests {
             },
         );
 
-        let mut resolved = configs.resolved();
+        let mut resolved = configs.resolved(EtherscanApiVersion::V2);
         let config = resolved.remove("mainnet").unwrap().unwrap();
         // None version = None
         assert_eq!(config.api_version, EtherscanApiVersion::V2);
@@ -472,7 +473,7 @@ mod tests {
             },
         );
 
-        let mut resolved = configs.resolved();
+        let mut resolved = configs.resolved(EtherscanApiVersion::V2);
         let config = resolved.remove("mainnet").unwrap().unwrap();
         assert_eq!(config.api_version, EtherscanApiVersion::V1);
         let client = config.into_client().unwrap();
@@ -492,7 +493,7 @@ mod tests {
             },
         );
 
-        let mut resolved = configs.resolved();
+        let mut resolved = configs.resolved(EtherscanApiVersion::V2);
         let config = resolved.remove("mainnet").unwrap().unwrap();
         let _ = config.into_client().unwrap();
     }
@@ -511,13 +512,13 @@ mod tests {
             },
         );
 
-        let mut resolved = configs.clone().resolved();
+        let mut resolved = configs.clone().resolved(EtherscanApiVersion::V2);
         let config = resolved.remove("mainnet").unwrap();
         assert!(config.is_err());
 
         std::env::set_var(env, "ABCDEFG");
 
-        let mut resolved = configs.resolved();
+        let mut resolved = configs.resolved(EtherscanApiVersion::V2);
         let config = resolved.remove("mainnet").unwrap().unwrap();
         assert_eq!(config.key, "ABCDEFG");
         let client = config.into_client().unwrap();
@@ -539,7 +540,7 @@ mod tests {
             },
         );
 
-        let mut resolved = configs.clone().resolved();
+        let mut resolved = configs.clone().resolved(EtherscanApiVersion::V2);
         let config = resolved.remove("blast_sepolia").unwrap().unwrap();
         assert_eq!(config.chain, Some(Chain::blast_sepolia()));
     }
@@ -552,10 +553,11 @@ mod tests {
             key: EtherscanApiKey::Key("ABCDEFG".to_string()),
             api_version: None,
         };
-        let resolved = config.clone().resolve(Some("base_sepolia")).unwrap();
+        let resolved =
+            config.clone().resolve(Some("base_sepolia"), EtherscanApiVersion::V2).unwrap();
         assert_eq!(resolved.chain, Some(Chain::base_sepolia()));
 
-        let resolved = config.resolve(Some("base-sepolia")).unwrap();
+        let resolved = config.resolve(Some("base-sepolia"), EtherscanApiVersion::V2).unwrap();
         assert_eq!(resolved.chain, Some(Chain::base_sepolia()));
     }
 }

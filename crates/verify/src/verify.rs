@@ -183,6 +183,10 @@ impl figment::Provider for VerifyArgs {
             dict.insert("etherscan_api_key".into(), api_key.as_str().into());
         }
 
+        if let Some(api_version) = &self.verifier.verifier_api_version {
+            dict.insert("etherscan_api_version".into(), api_version.as_str().into());
+        }
+
         Ok(figment::value::Map::from([(Config::selected_profile(), dict)]))
     }
 }
