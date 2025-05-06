@@ -1,7 +1,6 @@
 use crate::{HitMap, HitMaps};
 use alloy_primitives::B256;
 use revm::{
-    bytecode::Bytecode,
     context::ContextTr,
     inspector::JournalExt,
     interpreter::{interpreter_types::Jumps, Interpreter},

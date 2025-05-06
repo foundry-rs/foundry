@@ -7695,7 +7695,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "21.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=e4b5b5a8#e4b5b5a88f41412190fd3079f796000b4c89377d"
+source = "git+https://github.com/bluealloy/revm.git?rev=2540c3f3#2540c3f390b33f46989c73cb2166fbc3b5b595ed"
 dependencies = [
  "revm-bytecode",
  "revm-context",
@@ -7713,7 +7713,7 @@ dependencies = [
 [[package]]
 name = "revm-bytecode"
 version = "2.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=e4b5b5a8#e4b5b5a88f41412190fd3079f796000b4c89377d"
+source = "git+https://github.com/bluealloy/revm.git?rev=2540c3f3#2540c3f390b33f46989c73cb2166fbc3b5b595ed"
 dependencies = [
  "bitvec",
  "phf",
@@ -7724,7 +7724,7 @@ dependencies = [
 [[package]]
 name = "revm-context"
 version = "2.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=e4b5b5a8#e4b5b5a88f41412190fd3079f796000b4c89377d"
+source = "git+https://github.com/bluealloy/revm.git?rev=2540c3f3#2540c3f390b33f46989c73cb2166fbc3b5b595ed"
 dependencies = [
  "cfg-if",
  "derive-where",
@@ -7739,7 +7739,7 @@ dependencies = [
 [[package]]
 name = "revm-context-interface"
 version = "2.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=e4b5b5a8#e4b5b5a88f41412190fd3079f796000b4c89377d"
+source = "git+https://github.com/bluealloy/revm.git?rev=2540c3f3#2540c3f390b33f46989c73cb2166fbc3b5b595ed"
 dependencies = [
  "alloy-eip2930",
  "alloy-eip7702",
@@ -7753,7 +7753,7 @@ dependencies = [
 [[package]]
 name = "revm-database"
 version = "2.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=e4b5b5a8#e4b5b5a88f41412190fd3079f796000b4c89377d"
+source = "git+https://github.com/bluealloy/revm.git?rev=2540c3f3#2540c3f390b33f46989c73cb2166fbc3b5b595ed"
 dependencies = [
  "alloy-eips",
  "auto_impl",
@@ -7767,7 +7767,7 @@ dependencies = [
 [[package]]
 name = "revm-database-interface"
 version = "2.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=e4b5b5a8#e4b5b5a88f41412190fd3079f796000b4c89377d"
+source = "git+https://github.com/bluealloy/revm.git?rev=2540c3f3#2540c3f390b33f46989c73cb2166fbc3b5b595ed"
 dependencies = [
  "auto_impl",
  "revm-primitives",
@@ -7778,7 +7778,7 @@ dependencies = [
 [[package]]
 name = "revm-handler"
 version = "2.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=e4b5b5a8#e4b5b5a88f41412190fd3079f796000b4c89377d"
+source = "git+https://github.com/bluealloy/revm.git?rev=2540c3f3#2540c3f390b33f46989c73cb2166fbc3b5b595ed"
 dependencies = [
  "auto_impl",
  "revm-bytecode",
@@ -7795,7 +7795,7 @@ dependencies = [
 [[package]]
 name = "revm-inspector"
 version = "2.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=e4b5b5a8#e4b5b5a88f41412190fd3079f796000b4c89377d"
+source = "git+https://github.com/bluealloy/revm.git?rev=2540c3f3#2540c3f390b33f46989c73cb2166fbc3b5b595ed"
 dependencies = [
  "auto_impl",
  "revm-context",
@@ -7829,7 +7829,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "17.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=e4b5b5a8#e4b5b5a88f41412190fd3079f796000b4c89377d"
+source = "git+https://github.com/bluealloy/revm.git?rev=2540c3f3#2540c3f390b33f46989c73cb2166fbc3b5b595ed"
 dependencies = [
  "revm-bytecode",
  "revm-context-interface",
@@ -7840,7 +7840,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "18.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=e4b5b5a8#e4b5b5a88f41412190fd3079f796000b4c89377d"
+source = "git+https://github.com/bluealloy/revm.git?rev=2540c3f3#2540c3f390b33f46989c73cb2166fbc3b5b595ed"
 dependencies = [
  "ark-bls12-381",
  "ark-bn254",
@@ -7864,7 +7864,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "17.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=e4b5b5a8#e4b5b5a88f41412190fd3079f796000b4c89377d"
+source = "git+https://github.com/bluealloy/revm.git?rev=2540c3f3#2540c3f390b33f46989c73cb2166fbc3b5b595ed"
 dependencies = [
  "alloy-primitives",
  "enumn",
@@ -7874,7 +7874,7 @@ dependencies = [
 [[package]]
 name = "revm-state"
 version = "2.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=e4b5b5a8#e4b5b5a88f41412190fd3079f796000b4c89377d"
+source = "git+https://github.com/bluealloy/revm.git?rev=2540c3f3#2540c3f390b33f46989c73cb2166fbc3b5b595ed"
 dependencies = [
  "bitflags 2.9.0",
  "revm-bytecode",
