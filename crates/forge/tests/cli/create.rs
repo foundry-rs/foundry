@@ -453,8 +453,8 @@ Compiler run successful with warnings:
 Warning (2018): Function state mutability can be restricted to pure
  [FILE]:6:5:
   |
-6 |     function pairInfo() public view returns (uint reserveA, uint reserveB, uint totalSupply)
-{   |     ^ (Relevant source part starts here and spans across multiple lines).
+6 |     function pairInfo() public view returns (uint reserveA, uint reserveB, uint totalSupply) {
+  |     ^ (Relevant source part starts here and spans across multiple lines).
 
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
