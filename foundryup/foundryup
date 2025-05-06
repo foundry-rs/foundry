@@ -171,6 +171,10 @@ main() {
 
     # Optionally download the manuals
     if check_cmd tar; then
+      say "downloading manpages"
+      mkdir -p "$FOUNDRY_MAN_DIR"
+      download "$MAN_TARBALL_URL" | tar -xzC "$FOUNDRY_MAN_DIR"
+    else
       say 'skipping manpage download'
     fi
 
