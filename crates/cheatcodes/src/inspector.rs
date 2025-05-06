@@ -49,7 +49,7 @@ use rand::Rng;
 use revm::{
     self,
     bytecode::opcode as op,
-    context::{BlockEnv, JournalTr},
+    context::{BlockEnv, Cfg, ContextTr, JournalTr},
     context_interface::{transaction::SignedAuthorization, CreateScheme},
     interpreter::{
         interpreter_types::{Jumps, LoopControl, MemoryTr},
@@ -57,7 +57,7 @@ use revm::{
         Host, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
     },
     state::EvmStorageSlot,
-    Inspector,
+    Inspector, Journal,
 };
 use serde_json::Value;
 use std::{
@@ -1212,9 +1212,10 @@ impl<CTX> Cheatcodes<CTX> {
     }
 }
 
-impl<CTX> Inspector<CTX> for Cheatcodes<CTX>
+impl<CTX, DB> Inspector<CTX> for Cheatcodes<CTX>
 where
-    CTX: ContextExt,
+    CTX: ContextTr<Db = DB, Journal = Journal<DB>> + ContextExt,
+    DB: alloy_evm::Database + DatabaseExt,
 {
     #[inline]
     fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
@@ -1270,7 +1271,7 @@ where
         if !self.allowed_mem_writes.is_empty() {
             self.check_mem_opcodes(
                 interpreter,
-                ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64"),
+                ecx.journal_ref().depth().try_into().expect("journaled state depth exceeds u64"),
             );
         }
 
@@ -1330,7 +1331,7 @@ where
         if !cheatcode_call {
             // Clean up pranks
             let curr_depth: u64 =
-                ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64");
+                ecx.journal_ref().depth().try_into().expect("journaled state depth exceeds u64");
             if let Some(prank) = &self.get_prank(curr_depth) {
                 if curr_depth == prank.depth {
                     ecx.tx.caller = prank.prank_origin;
@@ -1770,7 +1771,11 @@ impl<CTX> InspectorExt for Cheatcodes<CTX> {
     }
 }
 
-impl<CTX> Cheatcodes<CTX> {
+impl<CTX, DB> Cheatcodes<CTX>
+where
+    CTX: ContextTr<Db = DB, Journal = Journal<DB>> + ContextExt,
+    DB: alloy_evm::Database + DatabaseExt,
+{
     #[cold]
     fn meter_gas(&mut self, interpreter: &mut Interpreter) {
         if let Some(paused_gas) = self.gas_metering.paused_frames.last() {
@@ -1783,11 +1788,11 @@ impl<CTX> Cheatcodes<CTX> {
     }
 
     #[cold]
-    fn meter_gas_record(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+    fn meter_gas_record(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
         if matches!(interpreter.control.instruction_result, InstructionResult::Continue) {
             self.gas_metering.gas_records.iter_mut().for_each(|record| {
                 let curr_depth: u64 = ecx
-                    .journaled_state
+                    .journal_ref()
                     .depth()
                     .try_into()
                     .expect("journaled state depth exceeds u64");
@@ -1847,7 +1852,7 @@ impl<CTX> Cheatcodes<CTX> {
     ///   cache) from mapped source address to the target address.
     /// - generates arbitrary value and saves it in target address storage.
     #[cold]
-    fn arbitrary_storage_end(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+    fn arbitrary_storage_end(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
         let (key, target_address) = if interpreter.bytecode.opcode() == op::SLOAD {
             (try_or_return!(interpreter.stack.peek(0)), interpreter.input.target_address)
         } else {
@@ -1899,7 +1904,7 @@ impl<CTX> Cheatcodes<CTX> {
     }
 
     #[cold]
-    fn record_state_diffs(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+    fn record_state_diffs(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
         let Some(account_accesses) = &mut self.recorded_account_diffs_stack else { return };
         match interpreter.bytecode.opcode() {
             op::SELFDESTRUCT => {
@@ -1910,7 +1915,7 @@ impl<CTX> Cheatcodes<CTX> {
                 let target = try_or_return!(interpreter.stack.peek(0));
                 let target = Address::from_word(B256::from(target));
                 let (initialized, old_balance) = ecx
-                    .journaled_state
+                    .journal()
                     .load_account(target)
                     .map(|account| (account.info.exists(), account.info.balance))
                     .unwrap_or_default();
@@ -1924,8 +1929,8 @@ impl<CTX> Cheatcodes<CTX> {
                 // register access for the target account
                 last.push(crate::Vm::AccountAccess {
                     chainInfo: crate::Vm::ChainInfo {
-                        forkId: ecx.journaled_state.database.active_fork_id().unwrap_or_default(),
-                        chainId: U256::from(ecx.cfg.chain_id),
+                        forkId: ecx.journal_ref().database.active_fork_id().unwrap_or_default(),
+                        chainId: U256::from(ecx.cfg().chain_id()),
                     },
                     accessor: interpreter.input.target_address,
                     account: target,
@@ -1939,7 +1944,7 @@ impl<CTX> Cheatcodes<CTX> {
                     deployedCode: Bytes::new(),
                     storageAccesses: vec![],
                     depth: ecx
-                        .journaled_state
+                        .journal_ref()
                         .depth()
                         .try_into()
                         .expect("journaled state depth exceeds u64"),
@@ -1956,7 +1961,7 @@ impl<CTX> Cheatcodes<CTX> {
                 // it's not set (zero value)
                 let mut present_value = U256::ZERO;
                 // Try to load the account and the slot's present value
-                if ecx.journaled_state.load_account(address).is_ok() {
+                if ecx.journal().load_account(address).is_ok() {
                     if let Some(previous) = ecx.sload(address, key) {
                         present_value = previous.data;
                     }
@@ -1970,7 +1975,7 @@ impl<CTX> Cheatcodes<CTX> {
                     reverted: false,
                 };
                 let curr_depth: u64 = ecx
-                    .journaled_state
+                    .journal_ref()
                     .depth()
                     .try_into()
                     .expect("journaled state depth exceeds u64");
@@ -1985,7 +1990,7 @@ impl<CTX> Cheatcodes<CTX> {
                 // Try to load the account and the slot's previous value, otherwise, assume it's
                 // not set (zero value)
                 let mut previous_value = U256::ZERO;
-                if ecx.journaled_state.load_account(address).is_ok() {
+                if ecx.journal().load_account(address).is_ok() {
                     if let Some(previous) = ecx.sload(address, key) {
                         previous_value = previous.data;
                     }
@@ -2000,7 +2005,7 @@ impl<CTX> Cheatcodes<CTX> {
                     reverted: false,
                 };
                 let curr_depth: u64 = ecx
-                    .journaled_state
+                    .journal_ref()
                     .depth()
                     .try_into()
                     .expect("journaled state depth exceeds u64");
@@ -2020,7 +2025,7 @@ impl<CTX> Cheatcodes<CTX> {
                     Address::from_word(B256::from(try_or_return!(interpreter.stack.peek(0))));
                 let initialized;
                 let balance;
-                if let Ok(acc) = ecx.journaled_state.load_account(address) {
+                if let Ok(acc) = ecx.journal().load_account(address) {
                     initialized = acc.info.exists();
                     balance = acc.info.balance;
                 } else {
@@ -2028,14 +2033,14 @@ impl<CTX> Cheatcodes<CTX> {
                     balance = U256::ZERO;
                 }
                 let curr_depth = ecx
-                    .journaled_state
+                    .journal_ref()
                     .depth()
                     .try_into()
                     .expect("journaled state depth exceeds u64");
                 let account_access = crate::Vm::AccountAccess {
                     chainInfo: crate::Vm::ChainInfo {
-                        forkId: ecx.journaled_state.database.active_fork_id().unwrap_or_default(),
-                        chainId: U256::from(ecx.cfg.chain_id),
+                        forkId: ecx.journal_ref().database.active_fork_id().unwrap_or_default(),
+                        chainId: U256::from(ecx.cfg().chain_id()),
                     },
                     accessor: interpreter.input.target_address,
                     account: address,
