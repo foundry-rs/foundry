@@ -100,6 +100,10 @@ pub trait ContextExt {
     fn as_db_env_and_journal(
         &mut self,
     ) -> (&mut Self::DB, &mut JournalInner<JournalEntry>, EnvMut<'_>);
+
+    fn cfg_env(&self) -> CfgEnv;
+    fn block_env(&self) -> BlockEnv;
+    fn tx_env(&self) -> TxEnv;
 }
 
 impl<DB: Database, C> ContextExt
@@ -115,5 +119,17 @@ impl<DB: Database, C> ContextExt
             &mut self.journaled_state.inner,
             EnvMut { block: &mut self.block, cfg: &mut self.cfg, tx: &mut self.tx },
         )
+    }
+
+    fn cfg_env(&self) -> CfgEnv {
+        self.cfg.clone()
+    }
+
+    fn block_env(&self) -> BlockEnv {
+        self.block.clone()
+    }
+
+    fn tx_env(&self) -> TxEnv {
+        self.tx.clone()
     }
 }

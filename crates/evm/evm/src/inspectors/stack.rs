@@ -505,10 +505,7 @@ impl InspectorStack {
 
 impl<CTX, DB> InspectorStackRefMut<'_, CTX>
 where
-    CTX: ContextTr<Db = DB, Journal = Journal<DB>> + ContextExt,
-    CTX::Tx: TxEnvExt + IntoTxEnv<TxEnv>,
-    CTX::Block: BlockEnvExt,
-    CTX::Cfg: CfgExt,
+    CTX: ContextTr<Db = DB, Journal = Journal<DB>> + ContextExt<DB = DB>,
     DB: DatabaseExt,
 {
     /// Adjusts the EVM data for the inner EVM context.
@@ -518,8 +515,8 @@ where
     fn adjust_evm_data_for_inner_context(&mut self, ecx: &mut CTX) {
         let inner_context_data =
             self.inner_context_data.as_ref().expect("should be called in inner context");
-        let (ecx_tx, _journal) = ecx.tx_journal();
-        ecx_tx.set_caller(inner_context_data.original_origin);
+        let (_, _, env) = ecx.as_db_env_and_journal();
+        env.tx.caller = inner_context_data.original_origin;
     }
 
     fn do_call_end(
@@ -609,23 +606,23 @@ where
         gas_limit: u64,
         value: U256,
     ) -> (InterpreterResult, Option<Address>) {
-        let cached_env =
-            Env::from(ecx.cfg().into_cfg_env(), ecx.block().to_block_env(), ecx.tx().into_tx_env());
+        let cached_env = Env::from(ecx.cfg_env(), ecx.block_env(), ecx.tx_env());
 
-        let (ecx_tx, ecx_journal) = ecx.tx_journal();
-        ecx.block().set_basefee(0);
+        let (_db, _journal, env) = ecx.as_db_env_and_journal();
+        env.block.basefee = 0;
 
-        ecx_tx.set_kind(kind);
-        ecx_tx.set_data(input);
-        ecx_tx.set_value(value);
+        env.tx.kind = kind;
+        env.tx.data = input;
+        env.tx.value = value;
+
         // Add 21000 to the gas limit to account for the base cost of transaction.
-        ecx_tx.set_gas_limit(gas_limit + 21000);
-        ecx_tx.set_caller(caller);
+        env.tx.gas_limit = gas_limit + 21000;
+        env.tx.caller = caller;
 
         // If we haven't disabled gas limit checks, ensure that transaction gas limit will not
         // exceed block gas limit.
-        if !ecx.cfg().is_block_gas_limit_disabled() {
-            ecx_tx.set_gas_limit(std::cmp::min(ecx.tx().gas_limit(), ecx.block().gas_limit()));
+        if !env.cfg.disable_block_gas_limit {
+            env.tx.gas_limit = std::cmp::min(env.tx.gas_limit, env.block.gas_limit);
         }
 
         self.inner_context_data = Some(InnerContextData { original_origin: cached_env.tx.caller });
@@ -660,9 +657,10 @@ where
             let res = evm.transact(env.tx.clone());
 
             // need to reset the env in case it was modified via cheatcodes during execution
-            ecx.cfg().set_cfg_env(cached_env.evm_env.cfg_env);
-            ecx.block().set_block(cached_env.evm_env.block_env);
-            ecx_tx.set_tx(cached_env.tx);
+
+            *env.cfg = cached_env.evm_env.cfg_env;
+            *env.block = cached_env.evm_env.block_env;
+            *env.tx = cached_env.tx;
 
             res
         });
@@ -680,7 +678,7 @@ where
         };
 
         for (addr, mut acc) in res.state {
-            let Some(acc_mut) = ecx.journal_ref().state.get_mut(&addr) else {
+            let Some(acc_mut) = ecx.journal().state.get_mut(&addr) else {
                 ecx.journal().state.insert(addr, acc);
                 continue
             };
@@ -749,11 +747,11 @@ where
     }
 
     /// Invoked at the beginning of a new top-level (0 depth) frame.
-    fn top_level_frame_start(&mut self, ecx: &mut EthEvmContext<&mut dyn DatabaseExt>) {
+    fn top_level_frame_start(&mut self, ecx: &mut CTX) {
         if self.enable_isolation {
             // If we're in isolation mode, we need to keep track of the state at the beginning of
             // the frame to be able to roll back on revert
-            self.top_frame_journal = ecx.journaled_state.state.clone();
+            self.top_frame_journal = ecx.journal_ref().state.clone();
         }
     }
 
@@ -780,10 +778,7 @@ where
 
 impl<CTX, DB> Inspector<CTX> for InspectorStackRefMut<'_, CTX>
 where
-    CTX: ContextTr<Db = DB, Journal = Journal<DB>> + ContextExt,
-    CTX::Block: BlockEnvExt,
-    CTX::Cfg: CfgExt,
-    CTX::Tx: TxEnvExt + IntoTxEnv<TxEnv>,
+    CTX: ContextTr<Db = DB, Journal = Journal<DB>> + ContextExt<DB = DB>,
     DB: DatabaseExt,
 {
     fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: &mut CTX) {
@@ -1225,141 +1220,5 @@ impl Deref for InspectorStack {
 impl DerefMut for InspectorStack {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
-    }
-}
-
-trait TxEnvExt: revm::context::Transaction {
-    fn set_caller(&mut self, caller: Address);
-    fn set_value(&mut self, value: U256);
-    fn set_gas_limit(&mut self, gas_limit: u64);
-    fn set_gas_price(&mut self, gas_price: u128);
-    fn set_data(&mut self, data: Bytes);
-    fn set_kind(&mut self, kind: TxKind);
-    fn set_tx(&mut self, tx: TxEnv) {
-        self.set_caller(tx.caller);
-        self.set_value(tx.value);
-        self.set_gas_limit(tx.gas_limit);
-        self.set_gas_price(tx.gas_price);
-        self.set_data(tx.data);
-        self.set_kind(tx.kind);
-    }
-}
-
-impl TxEnvExt for TxEnv {
-    fn set_caller(&mut self, caller: Address) {
-        self.caller = caller;
-    }
-
-    fn set_value(&mut self, value: U256) {
-        self.value = value;
-    }
-
-    fn set_gas_limit(&mut self, gas_limit: u64) {
-        self.gas_limit = gas_limit;
-    }
-
-    fn set_gas_price(&mut self, gas_price: u128) {
-        self.gas_price = gas_price;
-    }
-
-    fn set_data(&mut self, data: Bytes) {
-        self.data = data;
-    }
-
-    fn set_kind(&mut self, kind: TxKind) {
-        self.kind = kind;
-    }
-}
-
-impl TxEnvExt for OpTransaction<TxEnv> {
-    fn set_caller(&mut self, caller: Address) {
-        self.base.set_caller(caller);
-    }
-    fn set_value(&mut self, value: U256) {
-        self.base.set_value(value);
-    }
-    fn set_gas_limit(&mut self, gas_limit: u64) {
-        self.base.set_gas_limit(gas_limit);
-    }
-    fn set_gas_price(&mut self, gas_price: u128) {
-        self.base.set_gas_price(gas_price);
-    }
-    fn set_data(&mut self, data: Bytes) {
-        self.base.set_data(data);
-    }
-    fn set_kind(&mut self, kind: TxKind) {
-        self.base.set_kind(kind);
-    }
-}
-
-trait BlockEnvExt: Block {
-    fn set_basefee(&mut self, basefee: u64);
-    fn set_block(&mut self, block: BlockEnv);
-    fn to_block_env(&self) -> BlockEnv {
-        BlockEnv {
-            number: self.number(),
-            beneficiary: self.beneficiary(),
-            timestamp: self.timestamp(),
-            gas_limit: self.gas_limit(),
-            basefee: self.basefee(),
-            difficulty: self.difficulty(),
-            prevrandao: self.prevrandao(),
-            blob_excess_gas_and_price: self.blob_excess_gas_and_price(),
-        }
-    }
-}
-
-impl BlockEnvExt for BlockEnv {
-    fn set_basefee(&mut self, basefee: u64) {
-        self.basefee = basefee;
-    }
-
-    fn set_block(&mut self, block: BlockEnv) {
-        self.number = block.number;
-        self.beneficiary = block.beneficiary;
-        self.timestamp = block.timestamp;
-        self.gas_limit = block.gas_limit;
-        self.basefee = block.basefee;
-        self.difficulty = block.difficulty;
-        self.prevrandao = block.prevrandao;
-        self.basefee = block.basefee;
-        self.blob_excess_gas_and_price = block.blob_excess_gas_and_price;
-    }
-}
-
-pub trait CfgExt: Cfg {
-    fn into_cfg_env(&self) -> CfgEnv;
-
-    /// Does not alter the Spec in case of [`CfgEnv<OpSpecId>`]
-    fn set_cfg_env(&mut self, cfg: CfgEnv);
-}
-
-impl CfgExt for CfgEnv {
-    fn into_cfg_env(&self) -> CfgEnv {
-        self.clone()
-    }
-
-    fn set_cfg_env(&mut self, cfg: CfgEnv) {
-        *self = cfg;
-    }
-}
-
-impl CfgExt for CfgEnv<OpSpecId> {
-    fn into_cfg_env(&self) -> CfgEnv {
-        let spec = self.spec().into_eth_spec();
-        self.clone().with_spec(spec)
-    }
-    // Does not change the SpecId
-    fn set_cfg_env(&mut self, cfg: CfgEnv) {
-        self.chain_id = cfg.chain_id;
-        self.limit_contract_code_size = cfg.limit_contract_code_size;
-        self.disable_nonce_check = cfg.disable_nonce_check;
-        self.blob_target_and_max_count = cfg.blob_target_and_max_count;
-        self.memory_limit = cfg.memory_limit;
-        // TODO: Enable the optional_balance_check feature in revm
-        // self.disable_balance_check = cfg.disable_balance_check;
-        self.disable_block_gas_limit = cfg.disable_block_gas_limit;
-        self.disable_eip3607 = cfg.disable_eip3607;
-        self.disable_base_fee = cfg.disable_base_fee;
     }
 }
