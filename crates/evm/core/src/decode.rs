@@ -22,10 +22,10 @@ pub enum DetailedRevertReason {
 impl fmt::Display for DetailedRevertReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DetailedRevertReason::CallToNonContract(addr) => {
+            Self::CallToNonContract(addr) => {
                 write!(f, "call to non-contract address `{addr}`")
             }
-            DetailedRevertReason::DelegateCallToNonContract(addr) => write!(
+            Self::DelegateCallToNonContract(addr) => write!(
                 f,
                 "delegatecall to non-contract address `{addr}` (usually an unliked library)"
             ),

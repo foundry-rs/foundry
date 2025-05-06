@@ -3713,8 +3713,6 @@ contract NonContractDelegateCallRevertTest is Test {
     )
     .unwrap();
 
-    // Run the test, expecting a failure and checking for the specific revert message.
-    // The -vvvv flag provides detailed trace output.
     cmd.args(["test", "--mc", "NonContractDelegateCallRevertTest", "-vvvv"])
         .assert_failure()
         .stdout_eq(str![[r#"

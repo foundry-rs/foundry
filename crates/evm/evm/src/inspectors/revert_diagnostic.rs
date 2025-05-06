@@ -62,7 +62,7 @@ impl RevertDiagnostic {
 }
 
 impl<DB: Database + DatabaseExt> Inspector<DB> for RevertDiagnostic {
-    /// Stores call information that targeted non-contract address. Excludes precompiles.
+    /// Stores call information that targeted a non-contract address. Excludes precompiles.
     fn call(&mut self, ctx: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
         let target = self.no_code_target_address(inputs);
 

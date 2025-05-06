@@ -61,7 +61,7 @@ pub struct InspectorStackBuilder {
     pub wallets: Option<Wallets>,
     /// The CREATE2 deployer address.
     pub create2_deployer: Address,
-    /// Whether to provide context for EVM reverts.
+    /// Whether to provide diagnostics for EVM reverts.
     pub revert_diag: Option<bool>,
 }
 
@@ -166,7 +166,7 @@ impl InspectorStackBuilder {
         self
     }
 
-    /// Set the revert context inspector.
+    /// Set the revert diagnostic inspector.
     #[inline]
     pub fn revert_diagnostic(mut self, yes: bool) -> Self {
         self.revert_diag = Some(yes);
@@ -463,7 +463,7 @@ impl InspectorStack {
             script_address;
     }
 
-    /// Set the revert context inspector.
+    /// Set the revert diagnostic inspector.
     #[inline]
     pub fn revert_diagnostic(&mut self, yes: bool) {
         self.revert_diag = yes.then(RevertDiagnostic::default)
