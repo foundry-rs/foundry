@@ -1031,7 +1031,6 @@ impl NodeConfig {
         // caller is a contract. So we disable the check by default.
         cfg.disable_eip3607 = true;
         cfg.disable_block_gas_limit = self.disable_block_gas_limit;
-        // cfg.handler_cfg.is_optimism = self.enable_optimism; // TODO: add Optimism support
 
         if let Some(value) = self.memory_limit {
             cfg.memory_limit = value;
