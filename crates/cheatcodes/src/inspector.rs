@@ -88,7 +88,7 @@ pub trait CheatcodesExecutor {
     /// [revm::Inspector].
     fn get_inspector<'a>(&'a mut self, cheats: &'a mut Cheatcodes) -> Box<dyn InspectorExt + 'a>;
 
-    /// Obtains [revm::Evm] instance and executes the given CREATE frame.
+    /// Obtains [FoundryEvm] instance and executes the given CREATE frame.
     fn exec_create(
         &mut self,
         inputs: CreateInputs,
@@ -133,7 +133,7 @@ pub trait CheatcodesExecutor {
     }
 }
 
-/// Constructs [revm::Evm] and runs a given closure with it.
+/// Constructs [FoundryEvm] and runs a given closure with it.
 fn with_evm<E, F, O>(
     executor: &mut E,
     ccx: &mut CheatsCtxt,
