@@ -12,7 +12,7 @@ contract FeeTest is DSTest {
         assertEq(block.basefee, 10, "fee failed");
     }
 
-    function testFeeFuzzed(uint256 fee) public {
+    function testFeeFuzzed(uint64 fee) public {
         vm.fee(fee);
         assertEq(block.basefee, fee, "fee failed");
     }
