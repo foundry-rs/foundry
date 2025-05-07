@@ -151,6 +151,10 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
     type Spec = SpecId;
     type Tx = TxEnv;
 
+    fn chain_id(&self) -> u64 {
+        self.inner.data.ctx.cfg.chain_id
+    }
+
     fn block(&self) -> &BlockEnv {
         &self.inner.block
     }

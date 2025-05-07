@@ -8,6 +8,7 @@ use crate::{
     utils::{configure_tx_env, configure_tx_req_env},
     AsEnvMut, Env, EnvMut, InspectorExt,
 };
+use alloy_consensus::Typed2718;
 use alloy_evm::Evm;
 use alloy_genesis::GenesisAccount;
 use alloy_network::{AnyRpcBlock, AnyTxEnvelope, TransactionResponse};
@@ -884,8 +885,8 @@ impl Backend {
         for tx in full_block.inner.transactions.txns() {
             // System transactions such as on L2s don't contain any pricing info so we skip them
             // otherwise this would cause reverts
-            if is_known_system_sender(tx.from()) ||
-                tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
+            if is_known_system_sender(tx.inner().inner.signer()) ||
+                tx.ty() == Some(SYSTEM_TRANSACTION_TYPE)
             {
                 trace!(tx=?tx.tx_hash(), "skipping system transaction");
                 continue;
@@ -1268,7 +1269,7 @@ impl DatabaseExt for Backend {
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
         commit_transaction(
-            &tx,
+            &tx.inner,
             &mut env.as_env_mut(),
             journaled_state,
             fork,
