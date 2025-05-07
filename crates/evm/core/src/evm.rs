@@ -136,6 +136,7 @@ fn get_create2_factory_call_inputs(
 }
 
 pub struct FoundryEvm<'db, I: InspectorExt> {
+    #[allow(clippy::type_complexity)]
     pub inner: RevmEvm<
         EthEvmContext<&'db mut dyn DatabaseExt>,
         I,
@@ -217,13 +218,14 @@ impl<'db, I: InspectorExt> Deref for FoundryEvm<'db, I> {
     }
 }
 
-impl<'db, I: InspectorExt> DerefMut for FoundryEvm<'db, I> {
+impl<I: InspectorExt> DerefMut for FoundryEvm<'_, I> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner.data.ctx
     }
 }
 
 pub struct FoundryHandler<'db, I: InspectorExt> {
+    #[allow(clippy::type_complexity)]
     inner: MainnetHandler<
         RevmEvm<
             EthEvmContext<&'db mut dyn DatabaseExt>,
@@ -311,7 +313,7 @@ impl<'db, I: InspectorExt> Handler for FoundryHandler<'db, I> {
     }
 }
 
-impl<'db, I: InspectorExt> InspectorHandler for FoundryHandler<'db, I> {
+impl<I: InspectorExt> InspectorHandler for FoundryHandler<'_, I> {
     type IT = EthInterpreter;
 
     fn inspect_frame_call(
@@ -327,7 +329,7 @@ impl<'db, I: InspectorExt> InspectorHandler for FoundryHandler<'db, I> {
 
         let CreateScheme::Create2 { salt } = inputs.scheme else { return Ok(frame_or_result) };
 
-        if !evm.data.inspector.should_use_create2_factory(&mut evm.data.ctx, &inputs) {
+        if !evm.data.inspector.should_use_create2_factory(&mut evm.data.ctx, inputs) {
             return Ok(frame_or_result)
         }
 

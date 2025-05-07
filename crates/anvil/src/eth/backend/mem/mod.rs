@@ -1046,7 +1046,6 @@ impl Backend {
     }
 
     /// Creates an EVM instance with optionally injected precompiles.
-    #[expect(clippy::type_complexity)]
     fn new_evm_with_inspector_ref<'db, I>(
         &self,
         db: &'db dyn DatabaseRef<Error = DatabaseError>,
