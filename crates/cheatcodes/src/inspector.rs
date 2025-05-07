@@ -37,8 +37,9 @@ use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use foundry_common::{evm::Breakpoints, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
-    backend::{DatabaseExt, RevertDiagnostic},
+    backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
+    evm::{new_evm_with_existing_context, FoundryEvm},
     InspectorExt,
 };
 use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
@@ -48,16 +49,19 @@ use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
 use revm::{
     self,
-    bytecode::opcode as op,
-    context::{BlockEnv, JournalTr},
+    bytecode::{opcode as op, EOF_MAGIC_BYTES},
+    context::{result::EVMError, BlockEnv, JournalTr},
     context_interface::{transaction::SignedAuthorization, CreateScheme},
+    handler::FrameResult,
     interpreter::{
         interpreter_types::{Jumps, LoopControl, MemoryTr},
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInputs, Gas,
-        Host, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInputs,
+        EOFCreateKind, FrameInput, Gas, Host, InstructionResult, Interpreter, InterpreterAction,
+        InterpreterResult,
     },
+    primitives::hardfork::SpecId,
     state::EvmStorageSlot,
-    Inspector,
+    Inspector, Journal,
 };
 use serde_json::Value;
 use std::{
@@ -84,6 +88,41 @@ pub trait CheatcodesExecutor {
     /// [revm::Inspector].
     fn get_inspector<'a>(&'a mut self, cheats: &'a mut Cheatcodes) -> Box<dyn InspectorExt + 'a>;
 
+    /// Obtains [revm::Evm] instance and executes the given CREATE frame.
+    fn exec_create(
+        &mut self,
+        inputs: CreateInputs,
+        ccx: &mut CheatsCtxt,
+    ) -> Result<CreateOutcome, EVMError<DatabaseError>> {
+        with_evm(self, ccx, |evm| {
+            evm.inner.data.ctx.journaled_state.depth += 1;
+
+            // Handle EOF bytecode
+            let frame = if evm.inner.data.ctx.cfg.spec.is_enabled_in(SpecId::OSAKA) &&
+                inputs.scheme == CreateScheme::Create &&
+                inputs.init_code.starts_with(&EOF_MAGIC_BYTES)
+            {
+                FrameInput::EOFCreate(Box::new(EOFCreateInputs::new(
+                    inputs.caller,
+                    inputs.value,
+                    inputs.gas_limit,
+                    EOFCreateKind::Tx { initdata: inputs.init_code },
+                )))
+            } else {
+                FrameInput::Create(Box::new(inputs))
+            };
+
+            let outcome = match evm.run_execution(frame)? {
+                FrameResult::Call(_) => unreachable!(),
+                FrameResult::Create(create) | FrameResult::EOFCreate(create) => create,
+            };
+
+            evm.inner.data.ctx.journaled_state.depth -= 1;
+
+            Ok(outcome)
+        })
+    }
+
     fn console_log(&mut self, ccx: &mut CheatsCtxt, msg: &str) {
         self.get_inspector(ccx.state).console_log(msg);
     }
@@ -92,6 +131,46 @@ pub trait CheatcodesExecutor {
     fn tracing_inspector(&mut self) -> Option<&mut Option<TracingInspector>> {
         None
     }
+}
+
+/// Constructs [revm::Evm] and runs a given closure with it.
+fn with_evm<E, F, O>(
+    executor: &mut E,
+    ccx: &mut CheatsCtxt,
+    f: F,
+) -> Result<O, EVMError<DatabaseError>>
+where
+    E: CheatcodesExecutor + ?Sized,
+    F: for<'a, 'b> FnOnce(
+        &mut FoundryEvm<'a, &'b mut dyn InspectorExt>,
+    ) -> Result<O, EVMError<DatabaseError>>,
+{
+    let mut inspector = executor.get_inspector(ccx.state);
+    let error = std::mem::replace(&mut ccx.ecx.error, Ok(()));
+
+    let ctx = EthEvmContext {
+        block: ccx.ecx.block.clone(),
+        cfg: ccx.ecx.cfg.clone(),
+        tx: ccx.ecx.tx.clone(),
+        journaled_state: Journal {
+            inner: ccx.ecx.journaled_state.inner.clone(),
+            database: &mut *ccx.ecx.journaled_state.database as &mut dyn DatabaseExt,
+        },
+        chain: (),
+        error,
+    };
+
+    let mut evm = new_evm_with_existing_context(ctx, &mut *inspector);
+
+    let res = f(&mut evm)?;
+
+    ccx.ecx.journaled_state.inner = evm.inner.data.ctx.journaled_state.inner;
+    ccx.ecx.block = evm.inner.data.ctx.block;
+    ccx.ecx.tx = evm.inner.data.ctx.tx;
+    ccx.ecx.cfg = evm.inner.data.ctx.cfg;
+    ccx.ecx.error = evm.inner.data.ctx.error;
+
+    Ok(res)
 }
 
 /// Basic implementation of [CheatcodesExecutor] that simply returns the [Cheatcodes] instance as an
