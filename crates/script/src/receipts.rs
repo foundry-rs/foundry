@@ -37,7 +37,27 @@ pub async fn check_tx_status(
                 .get_receipt()
                 .await
             {
-                Ok(receipt) => Ok(receipt.into()),
+                Ok(receipt) => {
+                    // Check if the receipt has valid block information
+                    if receipt.block_number.is_none() || receipt.block_hash.is_none() || receipt.transaction_index.is_none() {
+                        // Receipt is empty, possibly due to RPC discarding the transaction
+                        match provider.get_transaction_by_hash(hash).await {
+                            Ok(_) => {
+                                // Transaction is still known to the node, so we should wait
+                                Err(RetryError::Continue(eyre!(
+                                    "Received an empty receipt for {hash}, but transaction is still known to the node, waiting for full receipt"
+                                )))
+                            }
+                            Err(_) => {
+                                // Transaction is not known to the node, mark it as dropped
+                                Ok(TxStatus::Dropped)
+                            }
+                        }
+                    } else {
+                        // Receipt has valid block information, proceed normally
+                        Ok(receipt.into())
+                    }
+                }
                 Err(e) => match provider.get_transaction_by_hash(hash).await {
                     Ok(_) => match e {
                         PendingTransactionError::TxWatcher(WatchTxError::Timeout) => {
