@@ -454,6 +454,9 @@ impl Backend {
         let db = self.db.write().await;
         // apply the genesis.json alloc
         self.genesis.apply_genesis_json_alloc(db)?;
+
+        trace!(target: "backend", "set genesis balances");
+
         Ok(())
     }
 
@@ -603,6 +606,8 @@ impl Backend {
             self.db.write().await.clear();
 
             self.apply_genesis().await?;
+
+            trace!(target: "backend", "reset fork");
 
             Ok(())
         } else {
