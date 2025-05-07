@@ -523,6 +523,9 @@ pub struct Config {
     #[serde(default)]
     pub compilation_restrictions: Vec<CompilationRestrictions>,
 
+    /// Whether to enable script execution protection.
+    pub script_execution_protection: bool,
+
     /// PRIVATE: This structure may grow, As such, constructing this structure should
     /// _always_ be done using a public constructor or update syntax:
     ///
@@ -2163,7 +2166,7 @@ impl FigmentProviders {
     }
 }
 
-/// Wrapper type for `regex::Regex` that implements `PartialEq`
+/// Wrapper type for [`regex::Regex`] that implements [`PartialEq`] and [`serde`] traits.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RegexWrapper {
@@ -2185,6 +2188,8 @@ impl std::cmp::PartialEq for RegexWrapper {
     }
 }
 
+impl Eq for RegexWrapper {}
+
 impl From<RegexWrapper> for regex::Regex {
     fn from(wrapper: RegexWrapper) -> Self {
         wrapper.inner
@@ -2194,6 +2199,26 @@ impl From<RegexWrapper> for regex::Regex {
 impl From<regex::Regex> for RegexWrapper {
     fn from(re: Regex) -> Self {
         Self { inner: re }
+    }
+}
+
+mod serde_regex {
+    use regex::Regex;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub(crate) fn serialize<S>(value: &Regex, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(value.as_str())
+    }
+
+    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<Regex, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Regex::new(&s).map_err(serde::de::Error::custom)
     }
 }
 
@@ -2390,6 +2415,7 @@ impl Default for Config {
             additional_compiler_profiles: Default::default(),
             compilation_restrictions: Default::default(),
             eof: false,
+            script_execution_protection: true,
             _non_exhaustive: (),
         }
     }
@@ -2553,7 +2579,7 @@ mod tests {
         vyper::VyperOptimizationMode, ModelCheckerEngine, YulDetails,
     };
     use similar_asserts::assert_eq;
-    use soldeer::RemappingsLocation;
+    use soldeer_core::remappings::RemappingsLocation;
     use std::{collections::BTreeMap, fs::File, io::Write};
     use tempfile::tempdir;
     use NamedChain::Moonbeam;
