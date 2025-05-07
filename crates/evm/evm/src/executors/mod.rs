@@ -396,7 +396,7 @@ impl Executor {
         let calldata = Bytes::from(args.abi_encode());
         let mut raw = self.call_raw(from, to, calldata, value)?;
         raw = raw.into_result(rd)?;
-        Ok(CallResult { decoded_result: C::abi_decode_returns(&raw.result, false)?, raw })
+        Ok(CallResult { decoded_result: C::abi_decode_returns(&raw.result)?, raw })
     }
 
     /// Performs a call to an account on the current state of the VM.
@@ -627,7 +627,7 @@ impl Executor {
             let executor = self.clone_with_backend(backend);
             let call = executor.call_sol(CALLER, address, &ITest::failedCall {}, U256::ZERO, None);
             match call {
-                Ok(CallResult { raw: _, decoded_result: ITest::failedReturn { failed } }) => {
+                Ok(CallResult { raw: _, decoded_result: failed }) => {
                     trace!(failed, "DSTest::failed()");
                     !failed
                 }
@@ -896,7 +896,7 @@ impl RawCallResult {
         rd: Option<&RevertDecoder>,
     ) -> Result<CallResult, EvmError> {
         self = self.into_result(rd)?;
-        let mut result = func.abi_decode_output(&self.result, false)?;
+        let mut result = func.abi_decode_output(&self.result)?;
         let decoded_result = if result.len() == 1 {
             result.pop().unwrap()
         } else {

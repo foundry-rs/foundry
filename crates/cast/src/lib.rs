@@ -160,7 +160,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
 
         if let Some(func) = func {
             // decode args into tokens
-            decoded = match func.abi_decode_output(res.as_ref(), false) {
+            decoded = match func.abi_decode_output(res.as_ref()) {
                 Ok(decoded) => decoded,
                 Err(err) => {
                     // ensure the address is a contract
@@ -1100,8 +1100,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             .balanceOf(owner)
             .block(block.unwrap_or_default())
             .call()
-            .await?
-            ._0)
+            .await?)
     }
 }
 

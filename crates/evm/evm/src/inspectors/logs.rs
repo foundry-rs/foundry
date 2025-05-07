@@ -38,7 +38,7 @@ impl LogCollector {
     }
 
     fn hardhat_log(&mut self, data: &[u8]) -> alloy_sol_types::Result<()> {
-        let decoded = console::hh::ConsoleCalls::abi_decode(data, false)?;
+        let decoded = console::hh::ConsoleCalls::abi_decode(data)?;
         self.logs.push(hh_to_ds(&decoded));
         Ok(())
     }
