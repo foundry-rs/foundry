@@ -180,7 +180,7 @@ async fn can_impersonate_contract() {
     let res = provider.send_transaction(tx.clone()).await;
     res.unwrap_err();
 
-    let greeting = greeter_contract.greet().call().await.unwrap()._0;
+    let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting);
 
     api.anvil_impersonate_account(impersonate).await.unwrap();
@@ -195,7 +195,7 @@ async fn can_impersonate_contract() {
     let res = provider.send_transaction(tx).await;
     res.unwrap_err();
 
-    let greeting = greeter_contract.greet().call().await.unwrap()._0;
+    let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting);
 }
 
@@ -430,12 +430,11 @@ async fn test_can_set_storage_bsc_fork() {
 
     let busd_contract = BUSD::new(busd_addr, &provider);
 
-    let BUSD::balanceOfReturn { _0 } = busd_contract
+    let balance = busd_contract
         .balanceOf(address!("0x0000000000000000000000000000000000000000"))
         .call()
         .await
         .unwrap();
-    let balance = _0;
     assert_eq!(balance, U256::from(12345u64));
 }
 
@@ -625,20 +624,16 @@ async fn test_fork_revert_call_latest_block_timestamp() {
     let multicall_contract =
         Multicall::new(address!("0xeefba1e63905ef1d7acba5a8513c70307c1ce441"), &provider);
 
-    let Multicall::getCurrentBlockTimestampReturn { timestamp } =
-        multicall_contract.getCurrentBlockTimestamp().call().await.unwrap();
+    let timestamp = multicall_contract.getCurrentBlockTimestamp().call().await.unwrap();
     assert_eq!(timestamp, U256::from(latest_block.header.timestamp));
 
-    let Multicall::getCurrentBlockDifficultyReturn { difficulty } =
-        multicall_contract.getCurrentBlockDifficulty().call().await.unwrap();
+    let difficulty = multicall_contract.getCurrentBlockDifficulty().call().await.unwrap();
     assert_eq!(difficulty, U256::from(latest_block.header.difficulty));
 
-    let Multicall::getCurrentBlockGasLimitReturn { gaslimit } =
-        multicall_contract.getCurrentBlockGasLimit().call().await.unwrap();
+    let gaslimit = multicall_contract.getCurrentBlockGasLimit().call().await.unwrap();
     assert_eq!(gaslimit, U256::from(latest_block.header.gas_limit));
 
-    let Multicall::getCurrentBlockCoinbaseReturn { coinbase } =
-        multicall_contract.getCurrentBlockCoinbase().call().await.unwrap();
+    let coinbase = multicall_contract.getCurrentBlockCoinbase().call().await.unwrap();
     assert_eq!(coinbase, latest_block.header.beneficiary);
 }
 
@@ -754,7 +749,7 @@ async fn test_reorg() {
         .await
         .unwrap();
     api.anvil_reorg(ReorgOptions { depth: 3, tx_block_pairs: vec![] }).await.unwrap();
-    let value = storage.getValue().call().await.unwrap()._0;
+    let value = storage.getValue().call().await.unwrap();
     assert_eq!("initial value".to_string(), value);
 
     api.mine_one().await;

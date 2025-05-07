@@ -40,7 +40,7 @@ use alloy_consensus::{
     transaction::Recovered, Account, BlockHeader, EnvKzgSettings, Header, Receipt,
     ReceiptWithBloom, Signed, Transaction as TransactionTrait, TxEnvelope,
 };
-use alloy_eips::{eip1559::BaseFeeParams, eip4844::MAX_BLOBS_PER_BLOCK};
+use alloy_eips::{eip1559::BaseFeeParams, eip7691::MAX_BLOBS_PER_BLOCK_ELECTRA};
 use alloy_evm::{eth::EthEvmContext, Database, Evm};
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
@@ -3087,8 +3087,11 @@ impl TransactionValidator for Backend {
             }
 
             // Ensure the tx does not exceed the max blobs per block.
-            if blob_count > MAX_BLOBS_PER_BLOCK {
-                return Err(InvalidTransactionError::TooManyBlobs(blob_count, MAX_BLOBS_PER_BLOCK))
+            if blob_count > MAX_BLOBS_PER_BLOCK_ELECTRA as usize {
+                return Err(InvalidTransactionError::TooManyBlobs(
+                    blob_count,
+                    MAX_BLOBS_PER_BLOCK_ELECTRA as usize,
+                ))
             }
 
             // Check for any blob validation errors if not impersonating.

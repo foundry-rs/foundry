@@ -184,7 +184,7 @@ impl CreateArgs {
             let deployer = signer.address();
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
                 .wallet(EthereumWallet::new(signer))
-                .on_provider(provider);
+                .connect_provider(provider);
             self.deploy(
                 abi,
                 bin,

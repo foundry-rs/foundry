@@ -314,7 +314,7 @@ async fn can_deploy_greeter_http() {
 
     let greeting = alloy_greeter.greet().call().await.unwrap();
 
-    assert_eq!("Hello World!", greeting._0);
+    assert_eq!("Hello World!", greeting);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -351,7 +351,7 @@ async fn can_deploy_and_mine_manually() {
     let address = receipt.contract_address.unwrap();
     let greeter_contract = Greeter::new(address, provider);
     let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Hello World!", greeting._0);
+    assert_eq!("Hello World!", greeting);
 
     let set_greeting = greeter_contract.setGreeting("Another Message".to_string());
     let tx = set_greeting.send().await.unwrap();
@@ -361,7 +361,7 @@ async fn can_deploy_and_mine_manually() {
 
     let _tx = tx.get_receipt().await.unwrap();
     let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Another Message", greeting._0);
+    assert_eq!("Another Message", greeting);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -410,7 +410,7 @@ async fn can_call_greeter_historic() {
     let greeter_contract = Greeter::new(greeter_addr, provider.clone());
 
     let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Hello World!", greeting._0);
+    assert_eq!("Hello World!", greeting);
 
     let block_number = provider.get_block_number().await.unwrap();
 
@@ -424,7 +424,7 @@ async fn can_call_greeter_historic() {
         .unwrap();
 
     let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Another Message", greeting._0);
+    assert_eq!("Another Message", greeting);
 
     // min
     api.mine_one().await;
@@ -432,7 +432,7 @@ async fn can_call_greeter_historic() {
     // returns previous state
     let greeting =
         greeter_contract.greet().block(BlockId::Number(block_number.into())).call().await.unwrap();
-    assert_eq!("Hello World!", greeting._0);
+    assert_eq!("Hello World!", greeting);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -452,7 +452,7 @@ async fn can_deploy_greeter_ws() {
     let greeter_contract = Greeter::new(greeter_addr, provider.clone());
 
     let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Hello World!", greeting._0);
+    assert_eq!("Hello World!", greeting);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -479,41 +479,31 @@ async fn get_blocktimestamp_works() {
 
     let contract = Multicall::deploy(provider.clone()).await.unwrap();
 
-    let timestamp = contract.getCurrentBlockTimestamp().call().await.unwrap().timestamp;
+    let timestamp = contract.getCurrentBlockTimestamp().call().await.unwrap();
 
     assert!(timestamp > U256::from(1));
 
     let latest_block =
         api.block_by_number(alloy_rpc_types::BlockNumberOrTag::Latest).await.unwrap().unwrap();
 
-    let timestamp = contract.getCurrentBlockTimestamp().call().await.unwrap().timestamp;
+    let timestamp = contract.getCurrentBlockTimestamp().call().await.unwrap();
     assert_eq!(timestamp.to::<u64>(), latest_block.header.timestamp);
 
     // repeat call same result
-    let timestamp = contract.getCurrentBlockTimestamp().call().await.unwrap().timestamp;
+    let timestamp = contract.getCurrentBlockTimestamp().call().await.unwrap();
     assert_eq!(timestamp.to::<u64>(), latest_block.header.timestamp);
 
     // mock timestamp
     let next_timestamp = timestamp.to::<u64>() + 1337;
     api.evm_set_next_block_timestamp(next_timestamp).unwrap();
 
-    let timestamp = contract
-        .getCurrentBlockTimestamp()
-        .block(BlockId::pending())
-        .call()
-        .await
-        .unwrap()
-        .timestamp;
+    let timestamp =
+        contract.getCurrentBlockTimestamp().block(BlockId::pending()).call().await.unwrap();
     assert_eq!(timestamp, U256::from(next_timestamp));
 
     // repeat call same result
-    let timestamp = contract
-        .getCurrentBlockTimestamp()
-        .block(BlockId::pending())
-        .call()
-        .await
-        .unwrap()
-        .timestamp;
+    let timestamp =
+        contract.getCurrentBlockTimestamp().block(BlockId::pending()).call().await.unwrap();
     assert_eq!(timestamp, U256::from(next_timestamp));
 }
 
@@ -535,7 +525,7 @@ async fn call_past_state() {
     let deployed_block = provider.get_block_number().await.unwrap();
 
     let value = contract.getValue().call().await.unwrap();
-    assert_eq!(value._0, "initial value");
+    assert_eq!(value, "initial value");
 
     let gas_price = api.gas_price();
     let set_tx = contract.setValue("hi".to_string()).gas_price(gas_price + 1);
@@ -544,16 +534,16 @@ async fn call_past_state() {
 
     // assert new value
     let value = contract.getValue().call().await.unwrap();
-    assert_eq!(value._0, "hi");
+    assert_eq!(value, "hi");
 
     // assert previous value
     let value =
         contract.getValue().block(BlockId::Number(deployed_block.into())).call().await.unwrap();
-    assert_eq!(value._0, "initial value");
+    assert_eq!(value, "initial value");
 
     let hash = provider.get_block(BlockId::Number(1.into())).await.unwrap().unwrap().header.hash;
     let value = contract.getValue().block(BlockId::Hash(hash.into())).call().await.unwrap();
-    assert_eq!(value._0, "initial value");
+    assert_eq!(value, "initial value");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1163,7 +1153,7 @@ async fn can_call_with_high_gas_limit() {
     let greeter_contract = Greeter::deploy(provider, "Hello World!".to_string()).await.unwrap();
 
     let greeting = greeter_contract.greet().gas(60_000_000).call().await.unwrap();
-    assert_eq!("Hello World!", greeting._0);
+    assert_eq!("Hello World!", greeting);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1202,7 +1192,7 @@ async fn test_reject_eip1559_pre_london() {
     let greeter_contract = Greeter::new(greeter_contract_addr, provider);
 
     let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Hello World!", greeting._0);
+    assert_eq!("Hello World!", greeting);
 }
 
 // https://github.com/foundry-rs/foundry/issues/6931

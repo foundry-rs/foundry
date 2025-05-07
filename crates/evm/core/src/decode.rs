@@ -55,7 +55,7 @@ pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
 /// This function returns [None] if it is not a DSTest log or the result of a Hardhat
 /// `console.log`.
 pub fn decode_console_log(log: &Log) -> Option<String> {
-    console::ds::ConsoleEvents::decode_log(log, false).ok().map(|decoded| decoded.to_string())
+    console::ds::ConsoleEvents::decode_log(log).ok().map(|decoded| decoded.to_string())
 }
 
 /// Decodes revert data.
@@ -151,7 +151,7 @@ impl RevertDecoder {
         }
 
         // Solidity's `Panic(uint256)` and `Vm`'s custom errors.
-        if let Ok(e) = alloy_sol_types::ContractError::<Vm::VmErrors>::abi_decode(err, false) {
+        if let Ok(e) = alloy_sol_types::ContractError::<Vm::VmErrors>::abi_decode(err) {
             return Some(e.to_string());
         }
 
@@ -163,7 +163,7 @@ impl RevertDecoder {
                 for error in errors {
                     // If we don't decode, don't return an error, try to decode as a string
                     // later.
-                    if let Ok(decoded) = error.abi_decode_input(data, false) {
+                    if let Ok(decoded) = error.abi_decode_input(data) {
                         return Some(format!(
                             "{}({})",
                             error.name,
@@ -211,7 +211,7 @@ impl RevertDecoder {
 /// Helper function that decodes provided error as an ABI encoded or an ASCII string (if not empty).
 fn decode_as_non_empty_string(err: &[u8]) -> Option<String> {
     // ABI-encoded `string`.
-    if let Ok(s) = String::abi_decode(err, true) {
+    if let Ok(s) = String::abi_decode(err) {
         if !s.is_empty() {
             return Some(s);
         }

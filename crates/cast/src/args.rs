@@ -215,7 +215,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::DecodeEvent { sig, data } => {
             let decoded_event = if let Some(event_sig) = sig {
-                get_event(event_sig.as_str())?.decode_log_parts(None, &hex::decode(data)?, false)?
+                get_event(event_sig.as_str())?.decode_log_parts(None, &hex::decode(data)?)?
             } else {
                 let data = data.strip_prefix("0x").unwrap_or(data.as_str());
                 let selector = data.get(..64).unwrap_or_default();
@@ -224,11 +224,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 if let Some(event) = identified_event {
                     let _ = sh_println!("{}", event.signature());
                     let data = data.get(64..).unwrap_or_default();
-                    get_event(event.signature().as_str())?.decode_log_parts(
-                        None,
-                        &hex::decode(data)?,
-                        false,
-                    )?
+                    get_event(event.signature().as_str())?
+                        .decode_log_parts(None, &hex::decode(data)?)?
                 } else {
                     eyre::bail!("No matching event signature found for selector `{selector}`")
                 }

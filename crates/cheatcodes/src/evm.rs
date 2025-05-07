@@ -191,7 +191,7 @@ impl Cheatcode for loadCall {
             if ccx.state.has_arbitrary_storage(&target) {
                 // If storage slot is untouched and load from a target with arbitrary storage,
                 // then set random value for current slot.
-                let rand_value = ccx.state.rng().gen();
+                let rand_value = ccx.state.rng().random();
                 ccx.state.arbitrary_storage.as_mut().unwrap().save(
                     ccx.ecx,
                     target,
@@ -203,7 +203,7 @@ impl Cheatcode for loadCall {
                 // If storage slot is untouched and load from a target that copies storage from
                 // a source address with arbitrary storage, then copy existing arbitrary value.
                 // If no arbitrary value generated yet, then the random one is saved and set.
-                let rand_value = ccx.state.rng().gen();
+                let rand_value = ccx.state.rng().random();
                 val.data = ccx.state.arbitrary_storage.as_mut().unwrap().copy(
                     ccx.ecx,
                     target,

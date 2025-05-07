@@ -478,12 +478,12 @@ async fn can_deploy_greeter_on_fork() {
     let greeter_contract = Greeter::deploy(&provider, "Hello World!".to_string()).await.unwrap();
 
     let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Hello World!", greeting._0);
+    assert_eq!("Hello World!", greeting);
 
     let greeter_contract = Greeter::deploy(&provider, "Hello World!".to_string()).await.unwrap();
 
     let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Hello World!", greeting._0);
+    assert_eq!("Hello World!", greeting);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -691,7 +691,7 @@ async fn test_fork_nft_set_approve_all() {
     let nouns = ERC721::new(nouns_addr, provider.clone());
 
     let real_owner = nouns.ownerOf(token_id).call().await.unwrap();
-    assert_eq!(real_owner._0, owner);
+    assert_eq!(real_owner, owner);
     let approval = nouns.setApprovalForAll(nouns_addr, true);
     let tx = TransactionRequest::default()
         .from(owner)
@@ -704,13 +704,13 @@ async fn test_fork_nft_set_approve_all() {
     assert!(status);
 
     // transfer: impersonate real owner and transfer nft
-    api.anvil_impersonate_account(real_owner._0).await.unwrap();
+    api.anvil_impersonate_account(real_owner).await.unwrap();
 
-    api.anvil_set_balance(real_owner._0, U256::from(10000e18 as u64)).await.unwrap();
+    api.anvil_set_balance(real_owner, U256::from(10000e18 as u64)).await.unwrap();
 
-    let call = nouns.transferFrom(real_owner._0, signer, token_id);
+    let call = nouns.transferFrom(real_owner, signer, token_id);
     let tx = TransactionRequest::default()
-        .from(real_owner._0)
+        .from(real_owner)
         .to(nouns_addr)
         .with_input(call.calldata().to_owned());
     let tx = WithOtherFields::new(tx);
@@ -719,7 +719,7 @@ async fn test_fork_nft_set_approve_all() {
     assert!(status);
 
     let real_owner = nouns.ownerOf(token_id).call().await.unwrap();
-    assert_eq!(real_owner._0, wallet.address());
+    assert_eq!(real_owner, wallet.address());
 }
 
 // <https://github.com/foundry-rs/foundry/issues/2261>
@@ -1115,11 +1115,11 @@ async fn can_override_fork_chain_id() {
         Greeter::deploy(provider.clone(), "Hello World!".to_string()).await.unwrap();
     let greeting = greeter_contract.greet().call().await.unwrap();
 
-    assert_eq!("Hello World!", greeting._0);
+    assert_eq!("Hello World!", greeting);
     let greeter_contract =
         Greeter::deploy(provider.clone(), "Hello World!".to_string()).await.unwrap();
     let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Hello World!", greeting._0);
+    assert_eq!("Hello World!", greeting);
 
     let provider = handle.http_provider();
     let chain_id = provider.get_chain_id().await.unwrap();

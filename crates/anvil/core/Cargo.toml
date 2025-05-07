@@ -39,4 +39,5 @@ bytes.workspace = true
 
 # misc
 rand.workspace = true
+rand_08.workspace = true
 thiserror.workspace = true

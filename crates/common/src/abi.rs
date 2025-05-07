@@ -61,11 +61,8 @@ pub fn abi_decode_calldata(
         calldata = &calldata[4..];
     }
 
-    let res = if input {
-        func.abi_decode_input(calldata, false)
-    } else {
-        func.abi_decode_output(calldata, false)
-    }?;
+    let res =
+        if input { func.abi_decode_input(calldata) } else { func.abi_decode_output(calldata) }?;
 
     // in case the decoding worked but nothing was decoded
     if res.is_empty() {
@@ -216,7 +213,7 @@ mod tests {
         assert_eq!(event.inputs.len(), 3);
 
         // Only the address fields get indexed since total_params > num_indexed_params
-        let parsed = event.decode_log(&log, false).unwrap();
+        let parsed = event.decode_log(&log).unwrap();
 
         assert_eq!(event.inputs.iter().filter(|param| param.indexed).count(), 2);
         assert_eq!(parsed.indexed[0], DynSolValue::Address(Address::from_word(param0)));
@@ -241,7 +238,7 @@ mod tests {
 
         // All parameters get indexed since num_indexed_params == total_params
         assert_eq!(event.inputs.iter().filter(|param| param.indexed).count(), 3);
-        let parsed = event.decode_log(&log, false).unwrap();
+        let parsed = event.decode_log(&log).unwrap();
 
         assert_eq!(parsed.indexed[0], DynSolValue::Address(Address::from_word(param0)));
         assert_eq!(parsed.indexed[1], DynSolValue::Uint(U256::from_be_bytes([3; 32]), 256));

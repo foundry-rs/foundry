@@ -280,7 +280,7 @@ impl ProviderBuilder {
         }
 
         let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
-            .on_provider(RootProvider::new(client));
+            .connect_provider(RootProvider::new(client));
 
         Ok(provider)
     }
@@ -323,7 +323,7 @@ impl ProviderBuilder {
         let provider = AlloyProviderBuilder::<_, _, AnyNetwork>::default()
             .with_recommended_fillers()
             .wallet(wallet)
-            .on_provider(RootProvider::new(client));
+            .connect_provider(RootProvider::new(client));
 
         Ok(provider)
     }

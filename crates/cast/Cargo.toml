@@ -57,6 +57,7 @@ chrono.workspace = true
 eyre.workspace = true
 futures.workspace = true
 rand.workspace = true
+rand_08.workspace = true
 rayon.workspace = true
 serde_json.workspace = true
 serde.workspace = true

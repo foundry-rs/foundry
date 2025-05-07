@@ -350,7 +350,7 @@ impl ExecutedState {
         let returned = &self.execution_result.returned;
         let func = &self.execution_data.func;
 
-        match func.abi_decode_output(returned, false) {
+        match func.abi_decode_output(returned) {
             Ok(decoded) => {
                 for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
                     let internal_type =
@@ -443,7 +443,7 @@ impl PreSimulationState {
 
         if result.success && !result.returned.is_empty() {
             sh_println!("\n== Return ==")?;
-            match func.abi_decode_output(&result.returned, false) {
+            match func.abi_decode_output(&result.returned) {
                 Ok(decoded) => {
                     for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
                         let internal_type =

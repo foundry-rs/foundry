@@ -297,7 +297,10 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         let max_blob_gas = self.blob_gas_used.saturating_add(
             transaction.pending_transaction.transaction.transaction.blob_gas().unwrap_or(0),
         );
-        if max_blob_gas > alloy_eips::eip4844::MAX_DATA_GAS_PER_BLOCK {
+        if max_blob_gas >
+            (alloy_eips::eip4844::DATA_GAS_PER_BLOB *
+                alloy_eips::eip7691::MAX_BLOBS_PER_BLOCK_ELECTRA)
+        {
             return Some(TransactionExecutionOutcome::BlobGasExhausted(transaction))
         }
 

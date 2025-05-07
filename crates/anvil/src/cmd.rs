@@ -12,7 +12,7 @@ use core::fmt;
 use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
 use futures::FutureExt;
-use rand::{rngs::StdRng, SeedableRng};
+use rand_08::{rngs::StdRng, SeedableRng};
 use std::{
     future::Future,
     net::IpAddr,
@@ -292,7 +292,7 @@ impl NodeArgs {
         if let Some(ref mnemonic) = self.mnemonic {
             gen = gen.phrase(mnemonic);
         } else if let Some(count) = self.mnemonic_random {
-            let mut rng = rand::thread_rng();
+            let mut rng = rand_08::thread_rng();
             let mnemonic = match Mnemonic::<English>::new_with_count(&mut rng, count) {
                 Ok(mnemonic) => mnemonic.to_phrase(),
                 Err(_) => DEFAULT_MNEMONIC.to_string(),

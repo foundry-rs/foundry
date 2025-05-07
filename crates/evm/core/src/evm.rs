@@ -1,4 +1,7 @@
-use std::ops::{Deref, DerefMut};
+use std::{
+    ops::{Deref, DerefMut},
+    str::FromStr,
+};
 
 use crate::{
     backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, Env, InspectorExt,
@@ -169,6 +172,10 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
     type Spec = SpecId;
     type Tx = TxEnv;
 
+    fn chain_id(&self) -> u64 {
+        self.inner.data.ctx.cfg.chain_id
+    }
+
     fn block(&self) -> &BlockEnv {
         &self.inner.block
     }
@@ -327,7 +334,7 @@ impl<'db, I: InspectorExt> InspectorHandler for FoundryHandler<'db, I> {
 
         let CreateScheme::Create2 { salt } = inputs.scheme else { return Ok(frame_or_result) };
 
-        if !evm.data.inspector.should_use_create2_factory(&mut evm.data.ctx, &inputs) {
+        if !evm.data.inspector.should_use_create2_factory(&mut evm.data.ctx, inputs) {
             return Ok(frame_or_result)
         }
 
@@ -347,7 +354,10 @@ impl<'db, I: InspectorExt> InspectorHandler for FoundryHandler<'db, I> {
             return Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
                 result: InterpreterResult {
                     result: InstructionResult::Revert,
-                    output: format!("missing CREATE2 deployer: {create2_deployer}").into(),
+                    output: Bytes::from_str(&format!(
+                        "missing CREATE2 deployer: {create2_deployer}"
+                    ))
+                    .unwrap(),
                     gas: Gas::new(gas_limit),
                 },
                 memory_offset: 0..0,
