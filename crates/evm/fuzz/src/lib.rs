@@ -79,7 +79,7 @@ impl BaseCounterExample {
         if let Some((name, abi)) = &contracts.get(&addr) {
             if let Some(func) = abi.functions().find(|f| f.selector() == bytes[..4]) {
                 // skip the function selector when decoding
-                if let Ok(args) = func.abi_decode_input(&bytes[4..], false) {
+                if let Ok(args) = func.abi_decode_input(&bytes[4..]) {
                     return Self {
                         sender: Some(sender),
                         addr: Some(addr),

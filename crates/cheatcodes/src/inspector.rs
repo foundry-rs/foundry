@@ -512,7 +512,7 @@ impl Cheatcodes {
         executor: &mut dyn CheatcodesExecutor,
     ) -> Result {
         // decode the cheatcode call
-        let decoded = Vm::VmCalls::abi_decode(&call.input, false).map_err(|e| {
+        let decoded = Vm::VmCalls::abi_decode(&call.input).map_err(|e| {
             if let alloy_sol_types::Error::UnknownSelector { name: _, selector } = e {
                 let msg = format!(
                     "unknown cheatcode with selector {selector}; \
