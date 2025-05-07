@@ -919,8 +919,7 @@ impl Cheatcodes {
         executor: &mut impl CheatcodesExecutor,
     ) -> Option<CallOutcome> {
         let gas = Gas::new(call.gas_limit);
-        let curr_depth =
-            ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64");
+        let curr_depth = ecx.journaled_state.depth();
 
         // At the root call to test function or script `run()`/`setUp()` functions, we are
         // decreasing sender nonce to ensure that it matches on-chain nonce once we start
@@ -1301,10 +1300,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
         // `expectRevert`: track the max call depth during `expectRevert`
         if let Some(expected) = &mut self.expected_revert {
-            expected.max_depth = max(
-                ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64"),
-                expected.max_depth,
-            );
+            expected.max_depth = max(ecx.journaled_state.depth(), expected.max_depth);
         }
     }
 
@@ -1395,8 +1391,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         // This should be placed before the revert handling, because we might exit early there
         if !cheatcode_call {
             // Clean up pranks
-            let curr_depth =
-                ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64");
+            let curr_depth = ecx.journaled_state.depth();
             if let Some(prank) = &self.get_prank(curr_depth) {
                 if curr_depth == prank.depth {
                     ecx.tx.caller = prank.prank_origin;
