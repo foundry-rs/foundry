@@ -1090,7 +1090,7 @@ impl Backend {
         let mut inspector = self.build_inspector();
         let mut evm = self.new_evm_with_inspector_ref(db.as_dyn(), &env, &mut inspector);
         let ResultAndState { result, state } = if env.tx.tx_type == DEPOSIT_TX_TYPE_ID {
-            evm.transact_deposit(env.tx, maybe_deposit.unwrap())?
+            evm.transact_deposit(env.tx, maybe_deposit.unwrap().deposit)?
         } else {
             evm.transact(env.tx)?
         };

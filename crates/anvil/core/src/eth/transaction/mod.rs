@@ -23,7 +23,7 @@ use alloy_serde::{OtherFields, WithOtherFields};
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
 use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
-use op_revm::transaction::deposit::DepositTransactionParts;
+use op_revm::{transaction::deposit::DepositTransactionParts, OpTransaction};
 use revm::{context::TxEnv, interpreter::InstructionResult};
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, Mul};
@@ -383,8 +383,8 @@ impl PendingTransaction {
     /// Converts the [PendingTransaction] into the [TxEnv] context that [`revm`](foundry_evm)
     /// expects.
     ///
-    /// Base [`TxEnv`] is encapsulated in the [`op_revm::OpTransaction`]
-    pub fn to_revm_tx_env(&self) -> (TxEnv, Option<DepositTransactionParts>) {
+    /// Base [`TxEnv`] is encapsulated in the [`OpTransaction`]
+    pub fn to_revm_tx_env(&self) -> (TxEnv, Option<OpTransaction<TxEnv>>) {
         fn transact_to(kind: &TxKind) -> TxKind {
             match kind {
                 TxKind::Call(c) => TxKind::Call(*c),
@@ -397,6 +397,7 @@ impl PendingTransaction {
             TypedTransaction::Legacy(tx) => {
                 let chain_id = tx.tx().chain_id;
                 let TxLegacy { nonce, gas_price, gas_limit, value, to, input, .. } = tx.tx();
+
                 (
                     TxEnv {
                         caller,
@@ -427,6 +428,7 @@ impl PendingTransaction {
                     access_list,
                     ..
                 } = tx.tx();
+
                 (
                     TxEnv {
                         caller,
@@ -458,6 +460,7 @@ impl PendingTransaction {
                     access_list,
                     ..
                 } = tx.tx();
+
                 (
                     TxEnv {
                         caller,
@@ -491,6 +494,7 @@ impl PendingTransaction {
                     blob_versioned_hashes,
                     ..
                 } = tx.tx().tx();
+
                 (
                     TxEnv {
                         caller,
@@ -524,6 +528,7 @@ impl PendingTransaction {
                     authorization_list,
                     input,
                 } = tx.tx();
+
                 (
                     TxEnv {
                         caller,
@@ -545,6 +550,7 @@ impl PendingTransaction {
             }
             TypedTransaction::Deposit(tx) => {
                 let chain_id = tx.chain_id();
+
                 let DepositTransaction {
                     nonce,
                     source_hash,
@@ -572,13 +578,18 @@ impl PendingTransaction {
                     ..Default::default()
                 };
 
-                let deposit = DepositTransactionParts {
-                    source_hash: *source_hash,
-                    mint: Some(mint.to::<u128>()),
-                    is_system_transaction: *is_system_tx,
-                };
-
-                (base, Some(deposit))
+                (
+                    base.clone(),
+                    Some(OpTransaction {
+                        base,
+                        enveloped_tx: None,
+                        deposit: DepositTransactionParts {
+                            source_hash: *source_hash,
+                            mint: Some(mint.to::<u128>()),
+                            is_system_transaction: *is_system_tx,
+                        },
+                    }),
+                )
             }
         }
     }

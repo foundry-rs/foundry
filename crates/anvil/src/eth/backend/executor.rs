@@ -252,7 +252,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
 
         let mut env = Env::from(self.cfg_env.clone(), self.block_env.clone(), tx_env);
         if env.tx.tx_type == DEPOSIT_TRANSACTION_TYPE {
-            env = env.with_deposit(maybe_deposit.unwrap());
+            env = env.with_deposit(maybe_deposit.unwrap().deposit);
         }
 
         env
