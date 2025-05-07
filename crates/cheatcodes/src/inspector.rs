@@ -403,7 +403,7 @@ pub struct Cheatcodes {
     pub labels: AddressHashMap<String>,
 
     /// Prank information, mapped to the call depth where pranks were added.
-    pub pranks: BTreeMap<u64, Prank>,
+    pub pranks: BTreeMap<usize, Prank>,
 
     /// Expected revert information
     pub expected_revert: Option<ExpectedRevert>,
@@ -569,7 +569,7 @@ impl Cheatcodes {
     /// Returns the configured prank at given depth or the first prank configured at a lower depth.
     /// For example, if pranks configured for depth 1, 3 and 5, the prank for depth 4 is the one
     /// configured at depth 3.
-    pub fn get_prank(&self, depth: u64) -> Option<&Prank> {
+    pub fn get_prank(&self, depth: usize) -> Option<&Prank> {
         self.pranks.range(..=depth).last().map(|(_, prank)| prank)
     }
 
@@ -681,8 +681,7 @@ impl Cheatcodes {
         }
 
         let gas = Gas::new(input.gas_limit());
-        let curr_depth: u64 =
-            ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64");
+        let curr_depth = ecx.journaled_state.depth();
 
         // Apply our prank
         if let Some(prank) = &self.get_prank(curr_depth) {
@@ -765,7 +764,7 @@ impl Cheatcodes {
                 reverted: false,
                 deployedCode: Bytes::new(), // updated on (eof)create_end
                 storageAccesses: vec![],    // updated on (eof)create_end
-                depth: curr_depth,
+                depth: curr_depth as u64,
             }]);
         }
 
@@ -779,8 +778,7 @@ impl Cheatcodes {
         call: Option<&CreateInputs>,
         outcome: &mut CreateOutcome,
     ) {
-        let curr_depth: u64 =
-            ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64");
+        let curr_depth = ecx.journaled_state.depth();
 
         // Clean up pranks
         if let Some(prank) = &self.get_prank(curr_depth) {
@@ -862,12 +860,8 @@ impl Cheatcodes {
                         // changes. Depending on what depth the cheat was called at, there
                         // may not be any pending calls to update if execution has
                         // percolated up to a higher depth.
-                        let depth: u64 = ecx
-                            .journaled_state
-                            .depth()
-                            .try_into()
-                            .expect("journaled state depth exceeds u64");
-                        if create_access.depth == depth {
+                        let depth = ecx.journaled_state.depth();
+                        if create_access.depth == depth as u64 {
                             debug_assert_eq!(
                                 create_access.kind as u8,
                                 crate::Vm::AccountAccessKind::Create as u8
@@ -925,7 +919,7 @@ impl Cheatcodes {
         executor: &mut impl CheatcodesExecutor,
     ) -> Option<CallOutcome> {
         let gas = Gas::new(call.gas_limit);
-        let curr_depth: u64 =
+        let curr_depth =
             ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64");
 
         // At the root call to test function or script `run()`/`setUp()` functions, we are
@@ -1401,7 +1395,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         // This should be placed before the revert handling, because we might exit early there
         if !cheatcode_call {
             // Clean up pranks
-            let curr_depth: u64 =
+            let curr_depth =
                 ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64");
             if let Some(prank) = &self.get_prank(curr_depth) {
                 if curr_depth == prank.depth {
@@ -1436,8 +1430,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
             }
 
             // allow multiple cheatcode calls at the same depth
-            let curr_depth: u64 =
-                ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64");
+            let curr_depth = ecx.journaled_state.depth();
             if curr_depth <= assume_no_revert.depth && !cheatcode_call {
                 // Discard run if we're at the same depth as cheatcode, call reverted, and no
                 // specific reason was supplied
@@ -1484,8 +1477,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                 }
             }
 
-            let curr_depth: u64 =
-                ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64");
+            let curr_depth = ecx.journaled_state.depth();
             if curr_depth <= expected_revert.depth {
                 let needs_processing = match expected_revert.kind {
                     ExpectedRevertKind::Default => !cheatcode_call,
@@ -1573,12 +1565,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                         // changes. Depending on the depth the cheat was
                         // called at, there may not be any pending
                         // calls to update if execution has percolated up to a higher depth.
-                        let curr_depth: u64 = ecx
-                            .journaled_state
-                            .depth()
-                            .try_into()
-                            .expect("journaled state depth exceeds u64");
-                        if call_access.depth == curr_depth {
+                        let curr_depth = ecx.journaled_state.depth();
+                        if call_access.depth == curr_depth as u64 {
                             if let Ok(acc) = ecx.journaled_state.load_account(call.target_address) {
                                 debug_assert!(access_is_call(call_access.kind));
                                 call_access.newBalance = acc.info.balance;
@@ -1613,8 +1601,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
             .expected_emits
             .iter()
             .any(|(expected, _)| {
-                let curr_depth: u64 =
-                    ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64");
+                let curr_depth = ecx.journaled_state.depth();
                 expected.depth == curr_depth
             }) &&
             // Ignore staticcalls
@@ -1815,8 +1802,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 impl InspectorExt for Cheatcodes {
     fn should_use_create2_factory(&mut self, ecx: Ecx, inputs: &CreateInputs) -> bool {
         if let CreateScheme::Create2 { .. } = inputs.scheme {
-            let depth: u64 =
-                ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64");
+            let depth = ecx.journaled_state.depth();
             let target_depth = if let Some(prank) = &self.get_prank(depth) {
                 prank.depth
             } else if let Some(broadcast) = &self.broadcast {
@@ -1856,11 +1842,7 @@ impl Cheatcodes {
     fn meter_gas_record(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
         if matches!(interpreter.control.instruction_result, InstructionResult::Continue) {
             self.gas_metering.gas_records.iter_mut().for_each(|record| {
-                let curr_depth: u64 = ecx
-                    .journaled_state
-                    .depth()
-                    .try_into()
-                    .expect("journaled state depth exceeds u64");
+                let curr_depth = ecx.journaled_state.depth();
                 if curr_depth == record.depth {
                     // Skip the first opcode of the first call frame as it includes the gas cost of
                     // creating the snapshot.
@@ -2039,7 +2021,7 @@ impl Cheatcodes {
                     newValue: present_value.into(),
                     reverted: false,
                 };
-                let curr_depth: u64 = ecx
+                let curr_depth = ecx
                     .journaled_state
                     .depth()
                     .try_into()
@@ -2069,7 +2051,7 @@ impl Cheatcodes {
                     newValue: value.into(),
                     reverted: false,
                 };
-                let curr_depth: u64 = ecx
+                let curr_depth = ecx
                     .journaled_state
                     .depth()
                     .try_into()
