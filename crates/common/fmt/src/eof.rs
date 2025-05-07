@@ -50,7 +50,7 @@ pub fn pretty_eof(eof: &Eof) -> Result<String, fmt::Error> {
                 &idx.to_string(),
                 &type_section.inputs.to_string(),
                 &type_section.outputs.to_string(),
-                &type_section.max_stack_size.to_string(),
+                &type_section.max_stack_increase.to_string(),
                 &hex::encode_prefixed(body.code(idx).unwrap_or_default()),
             ]);
         }

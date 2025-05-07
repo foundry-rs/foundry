@@ -203,9 +203,9 @@ solar-parse = { version = "=0.1.2", default-features = false }
 solar-sema = { version = "=0.1.2", default-features = false }
 
 ## revm
-revm = { version = "22.0.1", default-features = false }
+revm = { version = "23.0.0", default-features = false }
 revm-inspectors = { version = "0.20.1", features = ["serde"] }
-op-revm = { version = "3.0.2", default-features = false }
+op-revm = { version = "3.1.0", default-features = false }
 
 ## alloy-evm
 alloy-evm = "0.6.0"
@@ -379,9 +379,7 @@ idna_adapter = "=1.1.0"
 # revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "a625c04" }
 
 ## foundry
-# foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "8dcb86a" }
-# https://github.com/foundry-rs/foundry-fork-db/tree/yash/bump-alloy
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "0b11328" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "cdbbe64" } # Pinned to main
 # https://github.com/foundry-rs/compilers/commit/f77f7902fde4340ba55434b9ca3147f2683c8eff
 foundry-compilers = { git = "https://github.com/foundry-rs/compilers", rev = "f77f790" }
 # https://github.com/foundry-rs/block-explorers/commit/25d63a6cf7ca0571545dcff91c6c02cf00832090
