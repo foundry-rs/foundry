@@ -60,7 +60,6 @@ impl EnvMut<'_> {
             evm_env: EvmEnv { cfg_env: self.cfg.to_owned(), block_env: self.block.to_owned() },
             tx: self.tx.to_owned(),
             is_optimism: false,
-            // TODO: DepositTransactionParts get lost here
             deposit: None,
         }
     }
