@@ -207,20 +207,30 @@ impl ScriptProgress {
         let mut tasks = futures::stream::iter(futs).buffer_unordered(10);
 
         let mut errors: Vec<String> = vec![];
+        let mut discarded_transactions = false;
 
         while let Some((tx_hash, result)) = tasks.next().await {
             match result {
                 Err(err) => {
-                    errors.push(format!("Failure on receiving a receipt for {tx_hash:?}:\n{err}"));
-
-                    seq_progress.inner.write().finish_tx_spinner(tx_hash);
+                    // Check if the error is about an empty receipt
+                    if err.to_string().contains("Received an empty receipt") {
+                        discarded_transactions = true;
+                        // Special handling for empty receipts - we'll mark these for retrying
+                        deployment_sequence.remove_pending(tx_hash);
+                        let msg = format!("Transaction {tx_hash:?} was discarded by RPC. It will be retried when using --resume.");
+                        seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
+                    } else {
+                        errors.push(format!("Failure on receiving a receipt for {tx_hash:?}:\n{err}"));
+                        seq_progress.inner.write().finish_tx_spinner(tx_hash);
+                    }
                 }
                 Ok(TxStatus::Dropped) => {
                     // We want to remove it from pending so it will be re-broadcast.
                     deployment_sequence.remove_pending(tx_hash);
-                    errors.push(format!("Transaction dropped from the mempool: {tx_hash:?}"));
-
-                    seq_progress.inner.write().finish_tx_spinner(tx_hash);
+                    discarded_transactions = true;
+                    
+                    let msg = format!("Transaction {tx_hash:?} dropped from the mempool. It will be retried when using --resume.");
+                    seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
                 }
                 Ok(TxStatus::Success(receipt)) => {
                     trace!(tx_hash=?tx_hash, "received tx receipt");
@@ -249,11 +259,17 @@ impl ScriptProgress {
         // print any errors
         if !errors.is_empty() {
             let mut error_msg = errors.join("\n");
-            if !deployment_sequence.pending.is_empty() {
-                error_msg += "\n\n Add `--resume` to your command to try and continue broadcasting
-        the transactions."
+            
+            // Add information about using --resume if necessary
+            if !deployment_sequence.pending.is_empty() || discarded_transactions {
+                error_msg += "\n\n Add `--resume` to your command to try and continue broadcasting ";
+                error_msg += "the transactions. This will attempt to resend transactions that were discarded by the RPC.";
             }
+            
             eyre::bail!(error_msg);
+        } else if discarded_transactions {
+            // If we have discarded transactions but no errors, still inform the user
+            sh_warn!("Some transactions were discarded by the RPC node. Use `--resume` to retry these transactions.")?;
         }
 
         Ok(())
