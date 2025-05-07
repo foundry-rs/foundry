@@ -12,6 +12,7 @@ use dialoguer::{Input, Password};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
+use revm::{context::CreateScheme, interpreter::CreateInputs};
 use revm_inspectors::tracing::types::CallKind;
 use semver::Version;
 use std::{
@@ -359,37 +360,32 @@ fn deploy_code(
     value: Option<U256>,
     salt: Option<U256>,
 ) -> Result {
-    // TODO: implement exec_create
+    let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
+    if let Some(args) = constructor_args {
+        bytecode.extend_from_slice(args);
+    }
 
-    // let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
-    // if let Some(args) = constructor_args {
-    //     bytecode.extend_from_slice(args);
-    // }
+    let scheme =
+        if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create };
 
-    // let scheme =
-    //     if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create
-    // };
+    let outcome = executor.exec_create(
+        CreateInputs {
+            caller: ccx.caller,
+            scheme,
+            value: value.unwrap_or(U256::ZERO),
+            init_code: bytecode.into(),
+            gas_limit: ccx.gas_limit,
+        },
+        ccx,
+    )?;
 
-    // let outcome = executor.exec_create(
-    //     CreateInputs {
-    //         caller: ccx.caller,
-    //         scheme,
-    //         value: value.unwrap_or(U256::ZERO),
-    //         init_code: bytecode.into(),
-    //         gas_limit: ccx.gas_limit,
-    //     },
-    //     ccx,
-    // )?;
+    if !outcome.result.result.is_ok() {
+        return Err(crate::Error::from(outcome.result.output))
+    }
 
-    // if !outcome.result.result.is_ok() {
-    //     return Err(crate::Error::from(outcome.result.output))
-    // }
+    let address = outcome.address.ok_or_else(|| fmt_err!("contract creation failed"))?;
 
-    // let address = outcome.address.ok_or_else(|| fmt_err!("contract creation failed"))?;
-
-    // Ok(address.abi_encode())
-
-    Ok(Default::default())
+    Ok(address.abi_encode())
 }
 
 /// Returns the path to the json artifact depending on the input
