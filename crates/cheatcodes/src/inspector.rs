@@ -1842,7 +1842,10 @@ impl Cheatcodes {
     fn meter_gas(&mut self, interpreter: &mut Interpreter) {
         if let Some(paused_gas) = self.gas_metering.paused_frames.last() {
             // Keep gas constant if paused.
+            // Make sure we record the memory changes so that memory expansion is not paused.
+            let memory = interpreter.control.gas.memory;
             interpreter.control.gas = *paused_gas;
+            interpreter.control.gas.memory = memory;
         } else {
             // Record frame paused gas.
             self.gas_metering.paused_frames.push(interpreter.control.gas);
