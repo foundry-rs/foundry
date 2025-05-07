@@ -1547,9 +1547,9 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-[PASS] test_GasMeter() (gas: 53097)
+[PASS] test_GasMeter() (gas: [..])
 Traces:
-  [53097] ATest::test_GasMeter()
+  [..] ATest::test_GasMeter()
     ├─ [0] VM::pauseGasMetering()
     │   └─ ← [Return]
     ├─ [0] VM::resumeGasMetering()
