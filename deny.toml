@@ -98,6 +98,7 @@ unknown-registry = "warn"
 unknown-git = "deny"
 allow-git = [
     "https://github.com/alloy-rs/alloy",
+    "https://github.com/foundry-rs/foundry-fork-db",
     "https://github.com/paradigmxyz/revm-inspectors",
     "https://github.com/bluealloy/revm",
 ]
