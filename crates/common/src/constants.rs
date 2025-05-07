@@ -2,7 +2,7 @@
 
 use alloy_consensus::Typed2718;
 use alloy_network::AnyTxEnvelope;
-use alloy_primitives::{address, Address, PrimitiveSignature, B256};
+use alloy_primitives::{address, Address, Signature, B256};
 use std::time::Duration;
 
 /// The dev chain-id, inherited from hardhat
@@ -62,12 +62,9 @@ pub fn is_impersonated_tx(tx: &AnyTxEnvelope) -> bool {
     false
 }
 
-pub fn is_impersonated_sig(sig: &PrimitiveSignature, ty: u8) -> bool {
-    let impersonated_sig = PrimitiveSignature::from_scalars_and_parity(
-        B256::with_last_byte(1),
-        B256::with_last_byte(1),
-        false,
-    );
+pub fn is_impersonated_sig(sig: &Signature, ty: u8) -> bool {
+    let impersonated_sig =
+        Signature::from_scalars_and_parity(B256::with_last_byte(1), B256::with_last_byte(1), false);
     if ty != SYSTEM_TRANSACTION_TYPE && sig == &impersonated_sig {
         return true;
     }

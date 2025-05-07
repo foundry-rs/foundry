@@ -149,7 +149,7 @@ impl ContractsByArtifact {
                         // Try to decode ctor args with contract abi.
                         if let Some(constructor) = contract.abi.constructor() {
                             let constructor_args = &code[deployed_bytecode.len()..];
-                            if constructor.abi_decode_input(constructor_args, false).is_ok() {
+                            if constructor.abi_decode_input(constructor_args).is_ok() {
                                 // If we can decode args with current abi then remove args from
                                 // code to compare.
                                 code = &code[..deployed_bytecode.len()]
