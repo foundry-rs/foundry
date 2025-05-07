@@ -4500,7 +4500,7 @@ dependencies = [
 [[package]]
 name = "foundry-fork-db"
 version = "0.12.0"
-source = "git+https://github.com/foundry-rs/foundry-fork-db?rev=6144088#6144088516775c80cffeb05ef8f8832d8864fb91"
+source = "git+https://github.com/foundry-rs/foundry-fork-db?rev=bef37fc#bef37fc843ae186da76694c97192fef9ec6faa8d"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
