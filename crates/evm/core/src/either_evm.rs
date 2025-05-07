@@ -149,6 +149,13 @@ where
     type Tx = TxEnv;
     type Spec = SpecId;
 
+    fn chain_id(&self) -> u64 {
+        match self {
+            Self::Eth(evm) => evm.chain_id(),
+            Self::Op(evm) => evm.chain_id(),
+        }
+    }
+
     fn block(&self) -> &BlockEnv {
         match self {
             Self::Eth(evm) => evm.block(),

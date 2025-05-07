@@ -1,4 +1,7 @@
-use std::ops::{Deref, DerefMut};
+use std::{
+    ops::{Deref, DerefMut},
+    str::FromStr,
+};
 
 use crate::{
     backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, Env, InspectorExt,
@@ -319,7 +322,10 @@ impl<'db, I: InspectorExt> InspectorHandler for FoundryHandler<'db, I> {
             return Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
                 result: InterpreterResult {
                     result: InstructionResult::Revert,
-                    output: format!("missing CREATE2 deployer: {create2_deployer}").into(),
+                    output: Bytes::from_str(&format!(
+                        "missing CREATE2 deployer: {create2_deployer}"
+                    ))
+                    .unwrap(),
                     gas: Gas::new(gas_limit),
                 },
                 memory_offset: 0..0,
