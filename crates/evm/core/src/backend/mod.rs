@@ -203,7 +203,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
         &mut self,
         id: Option<LocalForkId>,
         transaction: B256,
-        env: &mut EnvMut<'_>,
+        env: Env,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()>;
@@ -212,7 +212,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
     fn transact_from_tx(
         &mut self,
         transaction: &TransactionRequest,
-        env: &mut EnvMut<'_>,
+        env: Env,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()>;
@@ -760,13 +760,6 @@ impl Backend {
         self.set_test_contract(test_contract);
     }
 
-    /// Returns the `Env` with the current `spec_id` set.
-    fn env_with_handler_cfg(&self, env: &mut EnvMut<'_>) -> Env {
-        let mut env = env.to_owned();
-        env.evm_env.cfg_env.spec = self.inner.spec_id;
-        env
-    }
-
     /// Executes the configured test call of the `env` without committing state changes.
     ///
     /// Note: in case there are any cheatcodes executed that modify the environment, this will
@@ -876,7 +869,7 @@ impl Backend {
     pub fn replay_until(
         &mut self,
         id: LocalForkId,
-        env: &mut EnvMut<'_>,
+        mut env: Env,
         tx_hash: B256,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<Option<Transaction<AnyTxEnvelope>>> {
@@ -885,7 +878,6 @@ impl Backend {
         let persistent_accounts = self.inner.persistent_accounts.clone();
         let fork_id = self.ensure_fork_id(id)?.clone();
 
-        let mut env = self.env_with_handler_cfg(env);
         let fork = self.inner.get_fork_by_id_mut(id)?;
         let full_block = fork.db.db.get_full_block(env.evm_env.block_env.number)?;
 
@@ -1238,10 +1230,10 @@ impl DatabaseExt for Backend {
 
         update_env_block(env, &block);
 
-        let mut env = env.to_owned();
+        let env = env.to_owned();
 
         // replay all transactions that came before
-        self.replay_until(id, &mut env.as_env_mut(), transaction, journaled_state)?;
+        self.replay_until(id, env, transaction, journaled_state)?;
 
         Ok(())
     }
@@ -1250,7 +1242,7 @@ impl DatabaseExt for Backend {
         &mut self,
         maybe_id: Option<LocalForkId>,
         transaction: B256,
-        env: &mut EnvMut<'_>,
+        mut env: Env,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()> {
@@ -1272,9 +1264,8 @@ impl DatabaseExt for Backend {
         // So we modify the env to match the transaction's block.
         let (_fork_block, block) =
             self.get_block_number_and_block_for_transaction(id, transaction)?;
-        update_env_block(env, &block);
+        update_env_block(&mut env.as_env_mut(), &block);
 
-        let mut env = self.env_with_handler_cfg(env);
         let fork = self.inner.get_fork_by_id_mut(id)?;
         commit_transaction(
             &tx,
@@ -1290,7 +1281,7 @@ impl DatabaseExt for Backend {
     fn transact_from_tx(
         &mut self,
         tx: &TransactionRequest,
-        env: &mut EnvMut<'_>,
+        mut env: Env,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn InspectorExt,
     ) -> eyre::Result<()> {
@@ -1299,8 +1290,7 @@ impl DatabaseExt for Backend {
         self.commit(journaled_state.state.clone());
 
         let res = {
-            configure_tx_req_env(env, tx, None)?;
-            let env = self.env_with_handler_cfg(env);
+            configure_tx_req_env(&mut env.as_env_mut(), tx, None)?;
 
             let mut db = self.clone();
             let mut evm = new_evm_with_inspector(&mut db, env.to_owned(), inspector);

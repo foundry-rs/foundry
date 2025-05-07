@@ -349,8 +349,14 @@ fn transact(
     transaction: B256,
     fork_id: Option<U256>,
 ) -> Result {
-    let (db, journal, mut env) = ccx.ecx.as_db_env_and_journal();
-    db.transact(fork_id, transaction, &mut env, journal, &mut *executor.get_inspector(ccx.state))?;
+    let (db, journal, env) = ccx.ecx.as_db_env_and_journal();
+    db.transact(
+        fork_id,
+        transaction,
+        env.to_owned(),
+        journal,
+        &mut *executor.get_inspector(ccx.state),
+    )?;
     Ok(Default::default())
 }
 

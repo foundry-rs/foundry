@@ -836,10 +836,10 @@ impl Cheatcode for broadcastRawTransactionCall {
         let tx = TxEnvelope::decode(&mut self.data.as_ref())
             .map_err(|err| fmt_err!("failed to decode RLP-encoded transaction: {err}"))?;
 
-        let (db, journal, mut env) = ccx.ecx.as_db_env_and_journal();
+        let (db, journal, env) = ccx.ecx.as_db_env_and_journal();
         db.transact_from_tx(
             &tx.clone().into(),
-            &mut env,
+            env.to_owned(),
             journal,
             &mut *executor.get_inspector(ccx.state),
         )?;
