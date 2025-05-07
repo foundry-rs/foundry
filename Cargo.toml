@@ -377,7 +377,9 @@ idna_adapter = "=1.1.0"
 # revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "a625c04" }
 
 ## foundry
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "8dcb86a" }
+# foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "8dcb86a" }
+# https://github.com/foundry-rs/foundry-fork-db/tree/yash/bump-alloy
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "0b11328" }
 # https://github.com/foundry-rs/compilers/commit/f77f7902fde4340ba55434b9ca3147f2683c8eff
 foundry-compilers = { git = "https://github.com/foundry-rs/compilers", rev = "f77f790" }
 # https://github.com/foundry-rs/block-explorers/commit/25d63a6cf7ca0571545dcff91c6c02cf00832090
