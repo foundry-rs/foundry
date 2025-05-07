@@ -37,6 +37,7 @@ type EitherExecResult<DBError, HaltReason, TxError> =
 /// However, the [`Evm::HaltReason`] and [`Evm::Error`] leverage the optimism [`OpHaltReason`] and
 /// [`OpTransactionError`] as these are supersets of the eth types. This makes it easier to map eth
 /// types to op types and also prevents ignoring of any error that maybe thrown by [`OpEvm`].
+#[allow(clippy::large_enum_variant)]
 pub enum EitherEvm<DB, I, P>
 where
     DB: Database,

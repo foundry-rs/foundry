@@ -41,7 +41,7 @@ use alloy_network::{
 };
 use alloy_primitives::{
     map::{HashMap, HashSet},
-    Address, Bytes, PrimitiveSignature as Signature, TxHash, TxKind, B256, B64, U256, U64,
+    Address, Bytes, Signature, TxHash, TxKind, B256, B64, U256, U64,
 };
 use alloy_provider::utils::{
     eip1559_default_estimator, EIP1559_FEE_ESTIMATION_PAST_BLOCKS,

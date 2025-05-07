@@ -2394,7 +2394,7 @@ forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
 
     let http_endpoint = handle.http_endpoint();
 
-    let provider = ProviderBuilder::new().on_http(http_endpoint.parse().unwrap());
+    let provider = ProviderBuilder::new().connect_http(http_endpoint.parse().unwrap());
 
     // send impersonated tx
     let tx = TransactionRequest::default()
