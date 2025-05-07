@@ -58,9 +58,6 @@ pub enum EtherscanConfigError {
 
     #[error("At least one of `url` or `chain` must be present{0}")]
     MissingUrlOrChain(String),
-
-    #[error("Invalid Etherscan API version {0}")]
-    InvalidApiVersion(String),
 }
 
 /// Container type for Etherscan API keys and URLs.

@@ -3593,6 +3593,7 @@ dependencies = [
  "eyre",
  "forge-script-sequence",
  "forge-verify",
+ "foundry-block-explorers",
  "foundry-cheatcodes",
  "foundry-cli",
  "foundry-common",
@@ -3691,9 +3692,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-block-explorers"
-version = "0.13.2"
+version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1cdb9266295447e86b27be80b74cfe7b37a79e48cc70fd01c21812af7ab3d79b"
+checksum = "8025385c52416bf14e5bb28d21eb5efe2490dd6fb001a49b87f1825a626b4909"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",

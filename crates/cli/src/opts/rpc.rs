@@ -2,6 +2,7 @@ use crate::opts::ChainValueParser;
 use alloy_chains::ChainKind;
 use clap::Parser;
 use eyre::Result;
+use foundry_block_explorers::EtherscanApiVersion;
 use foundry_config::{
     figment::{
         self,
@@ -122,7 +123,7 @@ pub struct EtherscanOpts {
         env = "ETHERSCAN_API_VERSION"
     )]
     #[serde(rename = "etherscan_api_version", skip_serializing_if = "Option::is_none")]
-    pub api_version: Option<String>,
+    pub api_version: Option<EtherscanApiVersion>,
 
     /// The chain name or EIP-155 chain ID.
     #[arg(

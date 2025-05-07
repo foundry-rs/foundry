@@ -10,6 +10,7 @@ use alloy_primitives::Address;
 use alloy_provider::Provider;
 use clap::{Parser, ValueHint};
 use eyre::Result;
+use foundry_block_explorers::EtherscanApiVersion;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::{self, LoadConfig},
@@ -40,7 +41,7 @@ pub struct VerifierArgs {
 
     /// The verifier API version, if using a custom provider.
     #[arg(long, help_heading = "Verifier options", env = "VERIFIER_API_VERSION")]
-    pub verifier_api_version: Option<String>,
+    pub verifier_api_version: Option<EtherscanApiVersion>,
 }
 
 impl Default for VerifierArgs {
@@ -184,7 +185,7 @@ impl figment::Provider for VerifyArgs {
         }
 
         if let Some(api_version) = &self.verifier.verifier_api_version {
-            dict.insert("etherscan_api_version".into(), api_version.as_str().into());
+            dict.insert("etherscan_api_version".into(), api_version.to_string().into());
         }
 
         Ok(figment::value::Map::from([(Config::selected_profile(), dict)]))
@@ -457,7 +458,7 @@ impl figment::Provider for VerifyCheckArgs {
         }
 
         if let Some(api_version) = &self.etherscan.api_version {
-            dict.insert("etherscan_api_version".into(), api_version.as_str().into());
+            dict.insert("etherscan_api_version".into(), api_version.to_string().into());
         }
 
         Ok(figment::value::Map::from([(Config::selected_profile(), dict)]))

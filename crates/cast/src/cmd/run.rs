@@ -300,7 +300,7 @@ impl figment::Provider for RunArgs {
         }
 
         if let Some(api_version) = &self.etherscan.api_version {
-            map.insert("etherscan_api_version".into(), api_version.as_str().into());
+            map.insert("etherscan_api_version".into(), api_version.to_string().into());
         }
 
         if let Some(evm_version) = self.evm_version {

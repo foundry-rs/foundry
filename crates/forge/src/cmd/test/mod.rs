@@ -16,6 +16,7 @@ use alloy_primitives::U256;
 use chrono::Utc;
 use clap::{Parser, ValueHint};
 use eyre::{bail, Context, OptionExt, Result};
+use foundry_block_explorers::EtherscanApiVersion;
 use foundry_cli::{
     opts::{BuildOpts, GlobalArgs},
     utils::{self, LoadConfig},
@@ -148,7 +149,7 @@ pub struct TestArgs {
 
     /// The Etherscan API version.
     #[arg(long, env = "ETHERSCAN_API_VERSION", value_name = "VERSION")]
-    etherscan_api_version: Option<String>,
+    etherscan_api_version: Option<EtherscanApiVersion>,
 
     /// List tests instead of running them.
     #[arg(long, short, conflicts_with_all = ["show_progress", "decode_internal", "summary"], help_heading = "Display options")]

@@ -251,7 +251,6 @@ impl EtherscanVerificationProvider {
         let chain = etherscan_opts.chain.unwrap_or_default();
         let etherscan_key = etherscan_opts.key();
         let verifier_type = &verifier_args.verifier;
-        let verifier_api_version = verifier_args.verifier_api_version.as_deref();
         let verifier_url = verifier_args.verifier_url.as_deref();
 
         // Verifier is etherscan if explicitly set or if no verifier set (default sourcify) but
@@ -260,19 +259,13 @@ impl EtherscanVerificationProvider {
             (verifier_type.is_sourcify() && etherscan_key.is_some());
         let etherscan_config = config.get_etherscan_config_with_chain(Some(chain))?;
 
-        let api_version = match verifier_api_version {
-            Some(api_version) => EtherscanApiVersion::try_from(api_version.to_string())?,
-            None => {
-                if is_etherscan {
-                    etherscan_config
-                        .as_ref()
-                        .map(|c| c.api_version)
-                        .unwrap_or(EtherscanApiVersion::V2)
-                } else {
-                    EtherscanApiVersion::V1
-                }
+        let api_version = verifier_args.verifier_api_version.unwrap_or_else(|| {
+            if is_etherscan {
+                etherscan_config.as_ref().map(|c| c.api_version).unwrap_or_default()
+            } else {
+                EtherscanApiVersion::V1
             }
-        };
+        });
 
         let etherscan_api_url = verifier_url
             .or_else(|| {

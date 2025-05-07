@@ -121,7 +121,6 @@ mod bind_json;
 use bind_json::BindJsonConfig;
 
 mod compilation;
-use crate::etherscan::EtherscanConfigError::InvalidApiVersion;
 pub use compilation::{CompilationRestrictions, SettingsOverrides};
 
 /// Foundry configuration
@@ -284,7 +283,7 @@ pub struct Config {
     /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table
     pub etherscan_api_key: Option<String>,
     /// etherscan API version
-    pub etherscan_api_version: Option<String>,
+    pub etherscan_api_version: Option<EtherscanApiVersion>,
     /// Multiple etherscan api configs and their aliases
     #[serde(default, skip_serializing_if = "EtherscanConfigs::is_empty")]
     pub etherscan: EtherscanConfigs,
@@ -1381,11 +1380,7 @@ impl Config {
         &self,
         chain: Option<Chain>,
     ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
-        let default_api_version = match self.etherscan_api_version.as_ref() {
-            Some(api_version) => EtherscanApiVersion::try_from(api_version.to_string())
-                .map_err(|_| InvalidApiVersion(api_version.to_string()))?,
-            None => EtherscanApiVersion::V2,
-        };
+        let default_api_version = self.etherscan_api_version.unwrap_or_default();
 
         if let Some(maybe_alias) = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref()) {
             if self.etherscan.contains_key(maybe_alias) {
@@ -1446,7 +1441,7 @@ impl Config {
             .ok()
             .flatten()
             .map(|c| c.api_version)
-            .unwrap_or(EtherscanApiVersion::V2)
+            .unwrap_or_default()
     }
 
     /// Returns the remapping for the project's _src_ directory

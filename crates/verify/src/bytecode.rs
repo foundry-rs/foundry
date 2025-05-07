@@ -106,7 +106,7 @@ impl figment::Provider for VerifyBytecodeArgs {
         }
 
         if let Some(api_version) = &self.verifier.verifier_api_version {
-            dict.insert("etherscan_api_version".into(), api_version.as_str().into());
+            dict.insert("etherscan_api_version".into(), api_version.to_string().into());
         }
 
         if let Some(block) = &self.block {
