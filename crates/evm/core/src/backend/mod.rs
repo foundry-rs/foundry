@@ -1295,7 +1295,7 @@ impl DatabaseExt for Backend {
             let mut db = self.clone();
             let mut evm = new_evm_with_inspector(&mut db, env.to_owned(), inspector);
             evm.journaled_state.depth = journaled_state.depth + 1;
-            evm.transact(env.tx).wrap_err("EVM error")?
+            evm.transact(env.tx)?
         };
 
         self.commit(res.state);
@@ -1963,7 +1963,7 @@ fn commit_transaction(
         let mut evm = crate::evm::new_evm_with_inspector(&mut db as _, env.to_owned(), inspector);
         // Adjust inner EVM depth to ensure that inspectors receive accurate data.
         evm.journaled_state.depth = depth + 1;
-        evm.transact(env.tx.clone()).wrap_err("EVM error")?
+        evm.transact(env.tx.clone()).wrap_err("backend: failed committing transaction")?
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 
