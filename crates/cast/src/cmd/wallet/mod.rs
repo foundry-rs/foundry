@@ -1,6 +1,6 @@
 use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
-use alloy_primitives::{hex, Address, PrimitiveSignature as Signature, B256, U256};
+use alloy_primitives::{hex, Address, Signature, B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::Authorization;
 use alloy_signer::{
@@ -17,7 +17,7 @@ use foundry_cli::{opts::RpcOpts, utils, utils::LoadConfig};
 use foundry_common::{fs, sh_println, shell};
 use foundry_config::Config;
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
-use rand::thread_rng;
+use rand_08::thread_rng;
 use serde_json::json;
 use std::path::Path;
 use yansi::Paint;
