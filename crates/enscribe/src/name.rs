@@ -1,7 +1,8 @@
 use crate::abi::{
-    EnsRegistry, NameWrapper, NameWrapper::isWrappedCall, PublicResolver, ReverseRegistrar,
+    EnsRegistry, NameWrapper, NameWrapper::isWrappedCall, PublicResolver, PublicResolver::addrCall,
+    ReverseRegistrar,
 };
-use alloy_provider::{network::AnyNetwork, Provider, ProviderBuilder};
+use alloy_provider::{network::AnyNetwork, Provider, ProviderBuilder, WalletProvider};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{
     private::{keccak256, Address, B256},
@@ -9,37 +10,59 @@ use alloy_sol_types::{
 };
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::opts::EthereumOpts;
 use foundry_common::ens::namehash;
+use serde::{Deserialize, Serialize};
 use std::{
     io::{stdout, Write},
     sync::Arc,
 };
 
+// todo abhi: change this to actual url after api deployed
+pub static CONFIG_API_URL: &str = "http://localhost:3000/config";
+pub static METRICS_API_URL: &str = "http://localhost:3000/metrics";
+
+#[derive(Debug, Deserialize)]
+pub struct ChainConfigResponse {
+    reverse_registrar_addr: String,
+    ens_registry_addr: String,
+    public_resolver_addr: String,
+    name_wrapper_addr: String,
+}
+
 #[derive(Clone, Debug, Parser)]
 pub struct NamingArgs {
     /// The name to set.
+    #[arg(long)]
     pub ens_name: String,
 
     /// The address of the contract.
-    pub address: Address,
-
-    pub sender_addr: Address,
+    #[arg(skip)]
+    pub contract_address: Address,
 
     /// Whether the contract is ReverseClaimable or not.
-    #[arg(long)]
+    #[arg(long, requires = "ens_name")]
     pub reverse_claimer: bool,
 
-    #[command(flatten)]
-    pub eth: EthereumOpts,
+    #[arg(skip)]
+    pub secret_key: String,
+}
+
+#[derive(Debug, Serialize)]
+struct Metric {
+    contract_address: String,
+    ens_name: String,
+    deployer_address: String,
+    network: u32,
+    created_at: u64,
+    source: String,
+    op_type: String,
 }
 
 impl NamingArgs {
     pub async fn run(self) -> Result<()> {
         Self::set_primary_name(
-            self.eth.wallet.raw.private_key.unwrap(),
-            self.sender_addr,
-            self.address,
+            self.secret_key,
+            self.contract_address,
             self.ens_name,
             self.reverse_claimer,
         )
@@ -48,27 +71,31 @@ impl NamingArgs {
 
     pub async fn set_primary_name(
         key: String,
-        sender_addr: Address,
         contract_addr: Address,
         name: String,
         reverseclaimable: bool,
     ) -> Result<()> {
+        println!("private key: {key}");
         let signer = key.parse::<PrivateKeySigner>()?;
         // todo abhi: pass in a provider
         let provider = Arc::new(
             ProviderBuilder::<_, _, AnyNetwork>::default()
+                .with_recommended_fillers()
                 .wallet(signer)
                 .connect("https://sepolia.drpc.org")
                 .await?,
         );
+
+        let config = Self::get_config(provider.get_chain_id().await?).await?;
+
+        let sender_addr = provider.default_signer_address();
         // .on_provider(provider);
         // .connect_http(rpc_url.parse()?);
 
-        let reverse_registrar_addr: Address =
-            "0xCF75B92126B02C9811d8c632144288a3eb84afC8".parse()?;
-        let ens_registry_addr: Address = "0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e".parse()?;
-        let public_resolver_addr: Address = "0x8948458626811dd0c23EB25Cc74291247077cC51".parse()?;
-        let name_wrapper_addr: Address = "0x0635513f179D50A207757E05759CbD106d7dFcE8".parse()?;
+        let reverse_registrar_addr: Address = config.reverse_registrar_addr.parse()?;
+        let ens_registry_addr: Address = config.ens_registry_addr.parse()?;
+        let public_resolver_addr: Address = config.public_resolver_addr.parse()?;
+        let name_wrapper_addr: Address = config.name_wrapper_addr.parse()?;
 
         // let provider = Arc::new(provider);
 
@@ -103,13 +130,26 @@ impl NamingArgs {
             &provider,
             public_resolver_addr,
             complete_name_hash,
-            name,
+            name.clone(),
             contract_addr,
             reverseclaimable,
             sender_addr,
             reverse_registrar_addr,
         )
         .await?;
+
+        Self::record_metric(Metric {
+            contract_address: contract_addr.to_string(),
+            ens_name: name,
+            deployer_address: sender_addr.to_string(),
+            network: provider.get_chain_id().await?.try_into()?,
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs(),
+            source: "forge".to_string(),
+            op_type: "set_primary_name".to_string(),
+        })
+        .await;
 
         Ok(())
     }
@@ -176,18 +216,22 @@ impl NamingArgs {
         let public_resolver = PublicResolver::new(public_resolver_addr, provider.clone());
         let tx = public_resolver.addr(complete_name_hash);
         let result = provider.call(tx.into_transaction_request()).await?;
+        let result = addrCall::abi_decode_returns(&result, false)?._0;
         println!("result: {:?})", result);
 
-        print!("setting fwd resolution ({} -> {}) ... ", name, contract_addr);
-        stdout().flush()?;
-        let tx = public_resolver.setAddr(complete_name_hash, contract_addr);
-        let result =
-            provider.send_transaction(tx.into_transaction_request()).await?.watch().await?;
-        println!("done (txn hash: {:?})", result);
+        if result == Address::ZERO {
+            print!("setting fwd resolution ({} -> {}) ... ", name, contract_addr);
+            stdout().flush()?;
+            let tx = public_resolver.setAddr(complete_name_hash, contract_addr);
+            let result =
+                provider.send_transaction(tx.into_transaction_request()).await?.watch().await?;
+            println!("done (txn hash: {:?})", result);
+        } else {
+            println!("fwd resolution already set");
+        }
 
         print!("setting rev resolution ({} -> {}) ... ", contract_addr, name);
         stdout().flush()?;
-        let reverse_claimable = reverse_claimable;
         if reverse_claimable {
             let addr = &(&sender_addr.to_string().to_ascii_lowercase())[2..];
             let reverse_node = namehash(&format!("{}.addr.reverse", addr));
@@ -209,5 +253,28 @@ impl NamingArgs {
         }
 
         Ok(())
+    }
+
+    async fn get_config(chain_id: u64) -> Result<ChainConfigResponse> {
+        let client = reqwest::Client::new();
+        let response = client.get(format!("{}/{}", CONFIG_API_URL, chain_id)).send().await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error: serde_json::Value = response.json().await?;
+            eyre::bail!(
+                "Contract naming request \
+                             failed with status code {status}\n\
+                             Details: {error:#}",
+            );
+        }
+
+        let text = response.text().await?;
+        Ok(serde_json::from_str::<ChainConfigResponse>(&text)?)
+    }
+
+    async fn record_metric(metric: Metric) {
+        let client = reqwest::Client::new();
+        let _ = client.post(METRICS_API_URL).json(&metric).send().await;
     }
 }

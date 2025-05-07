@@ -3186,6 +3186,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c34f04666d835ff5d62e058c3995147c06f42fe86ff053337632bca83e42702d"
 
 [[package]]
+name = "enscribe"
+version = "1.1.0"
+dependencies = [
+ "alloy-contract",
+ "alloy-provider",
+ "alloy-signer-local",
+ "alloy-sol-types",
+ "clap",
+ "eyre",
+ "foundry-cli",
+ "foundry-common",
+ "reqwest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "enumn"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3483,6 +3500,7 @@ dependencies = [
  "clearscreen",
  "comfy-table",
  "dunce",
+ "enscribe",
  "evm-disassembler",
  "eyre",
  "forge-doc",
@@ -3507,7 +3525,6 @@ dependencies = [
  "inferno",
  "itertools 0.14.0",
  "mockall",
- "naming",
  "opener",
  "parking_lot",
  "paste",
@@ -5959,20 +5976,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.101",
-]
-
-[[package]]
-name = "naming"
-version = "1.1.0"
-dependencies = [
- "alloy-contract",
- "alloy-provider",
- "alloy-signer-local",
- "alloy-sol-types",
- "clap",
- "eyre",
- "foundry-cli",
- "foundry-common",
 ]
 
 [[package]]

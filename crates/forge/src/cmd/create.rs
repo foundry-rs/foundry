@@ -10,6 +10,7 @@ use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_transport::TransportError;
 use clap::{Parser, ValueHint};
+use enscribe::NamingArgs;
 use eyre::{Context, Result};
 use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::{
@@ -32,7 +33,6 @@ use foundry_config::{
     },
     merge_impl_figment_convert, Config,
 };
-use naming::name::NamingArgs;
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc, time::Duration};
 
@@ -188,6 +188,7 @@ impl CreateArgs {
         } else {
             // Deploy with signer
             println!("Deploying with signer...");
+
             let signer = self.eth.wallet.signer().await?;
             let deployer = signer.address();
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
@@ -402,7 +403,13 @@ impl CreateArgs {
         };
 
         if !self.naming.ens_name.is_empty() {
-            self.naming.run().await?;
+            let naming_args = NamingArgs {
+                ens_name: self.naming.ens_name,
+                contract_address: deployed_contract,
+                reverse_claimer: self.naming.reverse_claimer,
+                secret_key: self.eth.wallet.raw.private_key.unwrap(),
+            };
+            naming_args.run().await?;
         }
 
         if !self.verify {

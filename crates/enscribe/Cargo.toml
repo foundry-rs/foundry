@@ -1,5 +1,5 @@
 [package]
-name = "naming"
+name = "enscribe"
 description = "setting ens names for smart contracts"
 
 version.workspace = true
@@ -25,3 +25,6 @@ alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
 alloy-signer-local.workspace = true
 alloy-sol-types.workspace = true
 clap = { version = "4.5.37", features = ["derive"] }
+reqwest.workspace = true
+serde_json.workspace = true
+serde.workspace = true
