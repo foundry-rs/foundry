@@ -302,7 +302,7 @@ impl<'db, I: InspectorExt> InspectorHandler for FoundryHandler<'db, I> {
 
         let CreateScheme::Create2 { salt } = inputs.scheme else { return Ok(frame_or_result) };
 
-        if !evm.data.inspector.should_use_create2_factory(&mut evm.data.ctx, &inputs) {
+        if !evm.data.inspector.should_use_create2_factory(&mut evm.data.ctx, inputs) {
             return Ok(frame_or_result)
         }
 

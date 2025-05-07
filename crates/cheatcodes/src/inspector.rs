@@ -45,7 +45,8 @@ use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
 use foundry_wallets::multi_wallet::MultiWallet;
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
-use rand::Rng;
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaChaRng;
 use revm::{
     self,
     bytecode::opcode as op,
@@ -420,6 +421,9 @@ pub struct Cheatcodes {
     /// strategies.
     test_runner: Option<TestRunner>,
 
+    /// Temp Rng since proptest hasn't been updated to rand 0.9
+    rng: Option<ChaChaRng>,
+
     /// Ignored traces.
     pub ignored_traces: IgnoredTraces,
 
@@ -484,6 +488,7 @@ impl Cheatcodes {
             arbitrary_storage: Default::default(),
             deprecated: Default::default(),
             wallets: Default::default(),
+            rng: Default::default(),
         }
     }
 
@@ -1152,7 +1157,12 @@ impl Cheatcodes {
     }
 
     pub fn rng(&mut self) -> &mut impl Rng {
-        self.test_runner().rng()
+        // Prop test uses rand 8 whereas alloy-core has been bumped to rand 9
+        // self.test_runner().rng()
+        self.rng.get_or_insert_with(|| match self.config.seed {
+            Some(seed) => ChaChaRng::from_seed(seed.to_be_bytes::<32>()),
+            None => ChaChaRng::from_os_rng(),
+        })
     }
 
     pub fn test_runner(&mut self) -> &mut TestRunner {
@@ -1850,7 +1860,7 @@ impl Cheatcodes {
             self.should_overwrite_arbitrary_storage(&target_address, key)
         {
             if self.has_arbitrary_storage(&target_address) {
-                let arbitrary_value = self.rng().gen();
+                let arbitrary_value = self.rng().random();
                 self.arbitrary_storage.as_mut().unwrap().save(
                     ecx,
                     target_address,
@@ -1858,7 +1868,7 @@ impl Cheatcodes {
                     arbitrary_value,
                 );
             } else if self.is_arbitrary_storage_copy(&target_address) {
-                let arbitrary_value = self.rng().gen();
+                let arbitrary_value = self.rng().random();
                 self.arbitrary_storage.as_mut().unwrap().copy(
                     ecx,
                     target_address,

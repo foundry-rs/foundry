@@ -126,7 +126,7 @@ test_repro!(3347, false, None, |res| {
     let test = res.test_results.remove("test()").unwrap();
     assert_eq!(test.logs.len(), 1);
     let event = Event::parse("event log2(uint256, uint256)").unwrap();
-    let decoded = event.decode_log(&test.logs[0].data, false).unwrap();
+    let decoded = event.decode_log(&test.logs[0].data).unwrap();
     assert_eq!(
         decoded,
         DecodedEvent {
