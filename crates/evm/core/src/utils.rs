@@ -1,7 +1,7 @@
 use alloy_consensus::BlockHeader;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::{AnyTxEnvelope, TransactionResponse};
-use alloy_primitives::{Address, Selector, TxKind, B256};
+use alloy_primitives::{Address, Selector, TxKind, B256, U256};
 use alloy_provider::{network::BlockResponse, Network};
 use alloy_rpc_types::{Transaction, TransactionRequest};
 use foundry_common::is_impersonated_tx;
@@ -57,9 +57,11 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
                 if let Some(l1_block_number) = block
                     .other_fields()
                     .and_then(|other| other.get("l1BlockNumber").cloned())
-                    .and_then(|v| v.as_u64())
+                    .and_then(|l1_block_number| {
+                        serde_json::from_value::<U256>(l1_block_number).ok()
+                    })
                 {
-                    env.evm_env.block_env.number = l1_block_number;
+                    env.evm_env.block_env.number = l1_block_number.to();
                 }
             }
             _ => {}
