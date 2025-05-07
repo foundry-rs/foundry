@@ -149,12 +149,12 @@ async fn can_preserve_historical_states_between_dump_and_load() {
     let greeter = Greeter::new(*address, provider);
 
     let greeting_at_init =
-        greeter.greet().block(BlockId::number(deploy_blk_num)).call().await.unwrap()._0;
+        greeter.greet().block(BlockId::number(deploy_blk_num)).call().await.unwrap();
 
     assert_eq!(greeting_at_init, "Hello");
 
     let greeting_after_change =
-        greeter.greet().block(BlockId::number(change_greeting_blk_num)).call().await.unwrap()._0;
+        greeter.greet().block(BlockId::number(change_greeting_blk_num)).call().await.unwrap();
 
     assert_eq!(greeting_after_change, "World!");
 }
