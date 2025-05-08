@@ -40,12 +40,14 @@ pub async fn check_tx_status(
                 Ok(receipt) => {
                     // Check if the receipt has valid block information
                     if receipt.block_number.is_none() || receipt.block_hash.is_none() || receipt.transaction_index.is_none() {
-                        // Receipt is empty, possibly due to RPC discarding the transaction
+                        // Receipt is empty, try to sleep and retry a few times
                         match provider.get_transaction_by_hash(hash).await {
                             Ok(_) => {
-                                // Transaction is still known to the node, so we should wait
-                                Err(RetryError::Continue(eyre!(
-                                    "Received an empty receipt for {hash}, but transaction is still known to the node, waiting for full receipt"
+                                // Sleep for a short time to allow the transaction to be mined
+                                tokio::time::sleep(Duration::from_millis(500)).await;
+                                // Transaction is still known to the node, retry
+                                Err(RetryError::Retry(eyre!(
+                                    "Received an empty receipt for {hash}, but transaction is still known to the node, retrying"
                                 )))
                             }
                             Err(_) => {
