@@ -80,7 +80,7 @@ pub async fn environment<N: Network, P: Provider<N>>(
         },
     };
 
-    apply_chain_and_block_specific_env_changes::<N>(&mut env.as_env_mut(), &block);
+    apply_chain_and_block_specific_env_changes::<N>(env.as_env_mut(), &block);
 
     Ok((env, block))
 }
