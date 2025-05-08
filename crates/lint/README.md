@@ -60,7 +60,7 @@ Guidelines for contributing to `forge lint`:
 
 1. Specify an issue that is being addressed in the PR description.
 2. Add a note on the solution in the PR description.
-3.  Add a test case to `lint/testdata` that specifically demonstrates the bug and is fixed by your changes. Ensure all tests pass.
+3. Add a test case to `lint/testdata` that specifically demonstrates the bug and is fixed by your changes. Ensure all tests pass.
 
 ### Developing a New Lint Rule
 
