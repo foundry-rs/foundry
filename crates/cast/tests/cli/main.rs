@@ -1318,6 +1318,17 @@ Error: Must specify a recipient address or contract code to deploy
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/9918>
+casttest!(send_7702_conflicts_with_create, |_prj, cmd| {
+    cmd.args([
+        "send", "--private-key", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" ,"--auth", "0xf85c827a6994f39fd6e51aad88f6f4ce6ab8827279cfffb922668001a03e1a66234e71242afcc7bc46c8950c3b2997b102db257774865f1232d2e7bf48a045e252dad189b27b2306792047745eba86bff0dd18aca813dbf3fba8c4e94576", "--create",  "0x60806040523373ffffffffffffffffffffffffffffffffffffffff163273ffffffffffffffffffffffffffffffffffffffff1614610072576040517f08c379a0000000000000000000000000000000000000000000000000000000008152600401610069906100e5565b60405180910390fd5b3373ffffffffffffffffffffffffffffffffffffffff16ff5b5f82825260208201905092915050565b7f74782e6f726967696e203d3d206d73672e73656e6465720000000000000000005f82015250565b5f6100cf60178361008b565b91506100da8261009b565b602082019050919050565b5f6020820190508181035f8301526100fc816100c3565b905091905056fe"
+    ]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: EIP-7702 transactions can't be CREATE transactions and require a destination address
+
+"#]]);
+});
+
 casttest!(storage, |_prj, cmd| {
     let rpc = next_http_archive_rpc_url();
     cmd.args(["storage", "vitalik.eth", "1", "--rpc-url", &rpc]).assert_success().stdout_eq(str![
