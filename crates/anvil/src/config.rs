@@ -1052,6 +1052,8 @@ impl NodeConfig {
             },
         );
 
+        env.is_optimism = self.enable_optimism;
+
         let fees = FeeManager::new(
             spec_id,
             self.get_base_fee(),

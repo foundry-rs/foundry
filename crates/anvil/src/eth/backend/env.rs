@@ -15,7 +15,7 @@ pub struct Env {
     pub is_optimism: bool,
 }
 
-/// Helper container type for [`EvmEnv`] and [`TxEnv`].
+/// Helper container type for [`EvmEnv`] and [`OpTransaction<TxEnv>`].
 impl Env {
     pub fn default_with_spec_id(spec_id: SpecId) -> Self {
         let mut cfg = CfgEnv::default();
