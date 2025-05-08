@@ -26,8 +26,7 @@ use anvil_core::eth::{
 use foundry_evm::{backend::DatabaseError, traces::CallTraceNode};
 use foundry_evm_core::{either_evm::EitherEvm, evm::FoundryPrecompiles};
 use op_revm::{
-    transaction::deposit::DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, OpContext, OpTransaction,
-    OpTransactionError,
+    transaction::deposit::DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, OpContext, OpTransactionError,
 };
 use revm::{
     context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm as RevmEvm, JournalTr},
@@ -331,10 +330,8 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             &mut inspector,
             transaction.tx_type() == DEPOSIT_TRANSACTION_TYPE,
         );
-
-        let tx = OpTransaction { base: env.tx.base, deposit: env.tx.deposit, enveloped_tx: None };
         trace!(target: "backend", "[{:?}] executing", transaction.hash());
-        let exec_result = match evm.transact_commit(tx) {
+        let exec_result = match evm.transact_commit(env.tx) {
             Ok(exec_result) => exec_result,
             Err(err) => {
                 warn!(target: "backend", "[{:?}] failed to execute: {:?}", transaction.hash(), err);
@@ -436,11 +433,7 @@ where
             },
             block: env.evm_env.block_env.clone(),
             cfg: env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::BEDROCK),
-            tx: OpTransaction {
-                base: env.tx.base.clone(),
-                deposit: env.tx.deposit.clone(),
-                enveloped_tx: None,
-            },
+            tx: env.tx.clone(),
             chain: L1BlockInfo::default(),
             error: Ok(()),
         };
