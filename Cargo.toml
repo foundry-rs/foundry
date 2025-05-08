@@ -195,8 +195,8 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.13.0", default-features = false }
-foundry-compilers = { version = "0.14.0", default-features = false }
+foundry-block-explorers = { version = "0.14.0", default-features = false }
+foundry-compilers = { version = "0.15.0", default-features = false }
 foundry-fork-db = "0.12"
 solang-parser = "=0.3.3"
 solar-parse = { version = "=0.1.2", default-features = false }
@@ -380,7 +380,3 @@ idna_adapter = "=1.1.0"
 
 ## foundry
 foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "cdbbe64" } # Pinned to main
-# https://github.com/foundry-rs/compilers/commit/f77f7902fde4340ba55434b9ca3147f2683c8eff
-foundry-compilers = { git = "https://github.com/foundry-rs/compilers", rev = "f77f790" }
-# https://github.com/foundry-rs/block-explorers/commit/25d63a6cf7ca0571545dcff91c6c02cf00832090
-foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers", rev = "25d63a6" }
