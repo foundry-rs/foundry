@@ -1748,7 +1748,8 @@ impl EthApi {
                 this.mine_one().await;
             }
             Ok(())
-        }).await?;
+        })
+        .await?;
 
         Ok(())
     }
@@ -2640,7 +2641,8 @@ impl EthApi {
                 this.mine_one().await;
             }
             Ok(())
-        }).await?;
+        })
+        .await?;
 
         Ok(blocks_to_mine)
     }
