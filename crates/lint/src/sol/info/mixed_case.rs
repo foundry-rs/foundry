@@ -52,7 +52,7 @@ impl<'ast> EarlyLintPass<'ast> for MixedCaseVariable {
 
 /// Check if a string is mixedCase
 ///
-/// To avoid false positives like `fn increment()` or `uin256 counter`,
+/// To avoid false positives like `fn increment()` or `uint256 counter`,
 /// lowercase strings are treated as mixedCase.
 pub fn is_mixed_case(s: &str) -> bool {
     if s.len() <= 1 {
