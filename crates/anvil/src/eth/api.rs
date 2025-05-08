@@ -62,7 +62,7 @@ use alloy_rpc_types::{
     },
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
     AccessList, AccessListResult, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
-    EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log,
+    EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log, Work,
 };
 use alloy_serde::WithOtherFields;
 use alloy_transport::TransportErrorKind;
@@ -76,7 +76,7 @@ use anvil_core::{
         wallet::{WalletCapabilities, WalletError},
         EthRequest,
     },
-    types::{ReorgOptions, TransactionData, Work},
+    types::{ReorgOptions, TransactionData},
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::ProviderBuilder;
