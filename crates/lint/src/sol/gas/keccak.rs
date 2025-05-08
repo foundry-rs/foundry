@@ -1,5 +1,5 @@
 use solar_ast::{Expr, ExprKind};
-use solar_interface::kw::Keccak256;
+use solar_interface::kw;
 
 use super::AsmKeccak256;
 use crate::{
@@ -20,7 +20,7 @@ impl<'ast> EarlyLintPass<'ast> for AsmKeccak256 {
     fn check_expr(&mut self, ctx: &crate::linter::LintContext<'_>, expr: &'ast Expr<'ast>) {
         if let ExprKind::Call(expr, _) = &expr.kind {
             if let ExprKind::Ident(ident) = &expr.kind {
-                if ident.name == Keccak256 {
+                if ident.name == kw::Keccak256 {
                     ctx.emit(&ASM_KECCAK256, expr.span);
                 }
             }

@@ -1,5 +1,5 @@
 use clap::{Parser, ValueHint};
-use eyre::Result;
+use eyre::{eyre, Result};
 use forge_lint::{
     linter::Linter,
     sol::{SolLint, SolLintError, SolidityLinter},
@@ -101,18 +101,18 @@ impl LintArgs {
             None => config.lint.severity,
         };
 
-        if project.compiler.solc.is_some() {
-            let linter = SolidityLinter::new()
-                .with_json_emitter(self.json)
-                .with_description(true)
-                .with_lints(include)
-                .without_lints(exclude)
-                .with_severity(if severity.is_empty() { None } else { Some(severity) });
+        if project.compiler.solc.is_none() {
+            return Err(eyre!("Linting not supported for this language"));
+        }
 
-            linter.lint(&input);
-        } else {
-            todo!("Linting not supported for this language");
-        };
+        let linter = SolidityLinter::new()
+            .with_json_emitter(self.json)
+            .with_description(true)
+            .with_lints(include)
+            .without_lints(exclude)
+            .with_severity(if severity.is_empty() { None } else { Some(severity) });
+
+        linter.lint(&input);
 
         Ok(())
     }

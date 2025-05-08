@@ -1,5 +1,5 @@
-mod keccack;
-use keccack::ASM_KECCAK256;
+mod keccak;
+use keccak::ASM_KECCAK256;
 
 use crate::{
     register_lints,

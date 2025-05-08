@@ -78,7 +78,7 @@ fn config<'a>(
             cfg_flag: None,
         },
         output_conflict_handling: ui_test::error_on_output_conflict,
-        bless_command: Some("cargo uibless".into()),
+        bless_command: Some(format!("BLESS=1 cargo nextest run {}", module_path!())),
         out_dir: root.join("target/ui"),
         comment_start: "//",
         diagnostic_extractor: ui_test::diagnostics::rustc::rustc_diagnostics_extractor,

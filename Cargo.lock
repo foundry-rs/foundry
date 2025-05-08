@@ -3690,21 +3690,14 @@ dependencies = [
 name = "forge-lint"
 version = "1.1.0"
 dependencies = [
- "auto_impl",
- "clap",
- "eyre",
- "foundry-common",
  "foundry-compilers",
  "foundry-config",
  "heck",
  "rayon",
- "serde",
- "serde_json",
  "solar-ast",
  "solar-interface",
  "solar-parse",
  "thiserror 2.0.12",
- "yansi",
 ]
 
 [[package]]

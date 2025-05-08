@@ -1,4 +1,4 @@
-use solar_ast::{Span, VarMut, VariableDefinition};
+use solar_ast::{VarMut, VariableDefinition};
 
 use super::ScreamingSnakeCase;
 use crate::{
@@ -29,24 +29,16 @@ impl<'ast> EarlyLintPass<'ast> for ScreamingSnakeCase {
         var: &'ast VariableDefinition<'ast>,
     ) {
         if let (Some(name), Some(mutability)) = (var.name, var.mutability) {
-            let name = name.as_str();
-            if name.len() < 2 || is_screaming_snake_case(name) {
+            let name_str = name.as_str();
+            if name_str.len() < 2 || is_screaming_snake_case(name_str) {
                 return;
             }
 
             match mutability {
-                VarMut::Constant => ctx.emit(&SCREAMING_SNAKE_CASE_CONSTANT, get_var_span(var)),
-                VarMut::Immutable => ctx.emit(&SCREAMING_SNAKE_CASE_IMMUTABLE, get_var_span(var)),
+                VarMut::Constant => ctx.emit(&SCREAMING_SNAKE_CASE_CONSTANT, name.span),
+                VarMut::Immutable => ctx.emit(&SCREAMING_SNAKE_CASE_IMMUTABLE, name.span),
             }
         }
-    }
-}
-
-/// Get the variable name span if available. Otherwise default to the line span.
-fn get_var_span<'ast>(var: &'ast VariableDefinition<'ast>) -> Span {
-    match var.name {
-        Some(ident) => ident.span,
-        None => var.span,
     }
 }
 
