@@ -2,16 +2,10 @@ use std::path::Path;
 use ui_test::spanned::Spanned;
 
 /// Test runner based on `ui_test`. Adapted from `https://github.com/paradigmxyz/solar/tools/tester`.
-pub fn run_tests<'a>(
-    cmd: &str,
-    cmd_path: &'a Path,
-    testdata: &'a Path,
-    bless: bool,
-) -> eyre::Result<()> {
+pub fn run_tests<'a>(cmd: &str, cmd_path: &'a Path, testdata: &'a Path) -> eyre::Result<()> {
     ui_test::color_eyre::install()?;
 
     let mut args = ui_test::Args::test()?;
-    args.bless = bless;
 
     // Fast path for `--list`, invoked by `cargo-nextest`.
     {
@@ -78,7 +72,7 @@ fn config<'a>(
             cfg_flag: None,
         },
         output_conflict_handling: ui_test::error_on_output_conflict,
-        bless_command: Some(format!("BLESS=1 cargo nextest run {}", module_path!())),
+        bless_command: Some(format!("cargo nextest run {} -- --bless", module_path!())),
         out_dir: root.join("target/ui"),
         comment_start: "//",
         diagnostic_extractor: ui_test::diagnostics::rustc::rustc_diagnostics_extractor,

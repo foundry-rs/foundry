@@ -17,6 +17,11 @@ workspace = true
 name = "forge"
 path = "bin/main.rs"
 
+[[test]]
+name = "ui"
+path = "tests/ui.rs"
+harness = false
+
 [dependencies]
 # lib
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }

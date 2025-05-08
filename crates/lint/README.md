@@ -20,25 +20,6 @@ It helps enforce best practices and improve code quality within Foundry projects
 *   **Gas Optimizations:**
     *   `asm-keccak256`: Recommends using inline assembly for `keccak256` for potential gas savings.
 
-## Architecture
-
-The `forge-lint` system operates by analyzing Solidity source code:
-
-1.  **Parsing**: Solidity source files are parsed into an Abstract Syntax Tree (AST) using `solar-parse`. This AST represents the structure of the code.
-2.  **AST Traversal**: The generated AST is then traversed using a Visitor pattern. The `EarlyLintVisitor` is responsible for walking through the AST nodes.
-3.  **Applying Lint Passes**: As the visitor encounters different AST nodes (like functions, expressions, variable definitions), it invokes registered "lint passes" (`EarlyLintPass` implementations). Each pass is designed to check for a specific code pattern.
-4.  **Emitting Diagnostics**: If a lint pass identifies a violation of its rule, it uses the `LintContext` to emit a diagnostic (either `warning` or `note`) that pinpoints the issue in the source code.
-
-### Key Components
-
-*   **`Linter` Trait**: Defines a generic interface for linters. `SolidityLinter` is the concrete implementation tailored for Solidity.
-*   **`Lint` Trait & `SolLint` Struct**:
-    *   `Lint`: A trait that defines the essential properties of a lint rule, such as its unique ID, severity, description, and an optional help message/URL.
-    *   `SolLint`: A struct implementing the `Lint` trait, used to hold the metadata for each specific Solidity lint rule.
-*   **`EarlyLintPass<'ast>` Trait**: Lints that operate directly on AST nodes implement this trait. It contains methods (like `check_expr`, `check_item_function`, etc.) called by the visitor.
-*   **`LintContext<'s>`**: Provides contextual information to lint passes during execution, such as access to the session for emitting diagnostics.
-*   **`EarlyLintVisitor<'a, 's, 'ast>`**: The core visitor that traverses the AST and dispatches checks to the registered `EarlyLintPass` instances.
-
 ## Configuration
 
 The behavior of the `SolidityLinter` can be customized with the following options:
@@ -83,38 +64,4 @@ Guidelines for contributing to `forge lint`:
 
 ### Developing a New Lint Rule
 
-1. Specify an issue that is being addressed in the PR description.
-2. In your PR:
-    *   Implement the lint logic by creating a new struct and implementing the `EarlyLintPass` trait for it within the relevant severity module (e.g., `src/sol/med/my_new_lint.rs`).
-    *   Declare your `SolLint` metadata using `declare_forge_lint!`.
-    *   Register your pass and lint using `register_lints!` in the `mod.rs` of its severity category.
-3. Add comprehensive tests in `lint/testdata/`:
-    *   Create `MyNewLint.sol` with various examples (triggering and non-triggering cases, edge cases).
-    *   Create `MyNewLint.stderr` with the expected output.
-
-### Testing
-
-Tests are located in the `lint/testdata` directory. A test for a lint rule involves:
-
- - A Solidity source file with various code snippets, some of which are expected to trigger the lint. Expected diagnostics must be indicated with either `//~WARN: description` or `//~NOTE: description` on the relevant line.
- - corresponding `.stderr` (blessed) file which contains the exact diagnostic output the linter is expected to produce for that source file.
-
-The testing framework runs the linter on the `.sol` file and compares its standard error output against the content of the `.stderr` file to ensure correctness.
-
-- Run the following commands to trigger the ui test runner:
-  ```sh
-  // using the default cargo cmd for running tests
-  cargo test -p forge --test ui
-
-  // using `nextest` for running tests
-  cargo nextest run -p forge --test ui
-  ```
-
-- If you need to generate the blessed files:
-  ```sh
-  // using the default cargo cmd for running tests
-  BLESS=1 cargo test -p forge --test ui
-
-  // using `nextest` for running tests
-  BLESS=1 cargo nextest run -p forge --test ui
-  ```
+Check the [dev docs](../../docs/dev/lintrules.md) for a full implementation guide.
