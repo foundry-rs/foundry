@@ -47,13 +47,12 @@ forgetest!(can_use_config, |prj, cmd| {
         };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
-warning[divide-before-multiply]
+warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
   [FILE]:16:9
    |
 16 |         (1 / 2) * 3;
    |         -----------
    |
-   = help: multiplication should occur before division to avoid loss of precision
 
 
 "#]]);
@@ -70,13 +69,12 @@ forgetest!(can_use_config_ignore, |prj, cmd| {
             LinterConfig { ignore: vec!["src/ContractWithLints.sol".into()], ..Default::default() };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
-note[mixed-case-variable]
+note[mixed-case-variable]: mutable variables should use mixedCase
  [FILE]:6:9
   |
 6 |         uint256 VARIABLE_MIXED_CASE_INFO;
   |         ---------------------------------
   |
-  = help: mutable variables should use mixedCase
 
 
 "#]]);
@@ -105,13 +103,12 @@ forgetest!(can_override_config_severity, |prj, cmd| {
         };
     });
     cmd.arg("lint").args(["--severity", "info"]).assert_success().stderr_eq(str![[r#"
-note[mixed-case-variable]
+note[mixed-case-variable]: mutable variables should use mixedCase
  [FILE]:6:9
   |
 6 |         uint256 VARIABLE_MIXED_CASE_INFO;
   |         ---------------------------------
   |
-  = help: mutable variables should use mixedCase
 
 
 "#]]);
@@ -131,13 +128,12 @@ forgetest!(can_override_config_path, |prj, cmd| {
         };
     });
     cmd.arg("lint").arg("src/ContractWithLints.sol").assert_success().stderr_eq(str![[r#"
-warning[divide-before-multiply]
+warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
   [FILE]:16:9
    |
 16 |         (1 / 2) * 3;
    |         -----------
    |
-   = help: multiplication should occur before division to avoid loss of precision
 
 
 "#]]);
@@ -158,13 +154,12 @@ forgetest!(can_override_config_lint, |prj, cmd| {
     });
     cmd.arg("lint").args(["--only-lint", "incorrect-shift"]).assert_success().stderr_eq(str![[
         r#"
-warning[incorrect-shift]
+warning[incorrect-shift]: the order of args in a shift operation is incorrect
   [FILE]:13:18
    |
 13 |         result = 8 >> localValue;
    |                  ---------------
    |
-   = help: the order of args in a shift operation is incorrect
 
 
 "#

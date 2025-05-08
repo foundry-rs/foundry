@@ -33,6 +33,10 @@ pub struct LintArgs {
     /// `exclude_lints` project config.
     #[arg(long = "only-lint", value_name = "LINT_ID", num_args(1..))]
     lint: Option<Vec<String>>,
+
+    /// Activates the linter's JSON formatter (rustc-compatible).
+    #[arg(long)]
+    json: bool,
 }
 
 impl_figment_convert_basic!(LintArgs);
@@ -99,6 +103,7 @@ impl LintArgs {
 
         if project.compiler.solc.is_some() {
             let linter = SolidityLinter::new()
+                .with_json_emitter(self.json)
                 .with_description(true)
                 .with_lints(include)
                 .without_lints(exclude)

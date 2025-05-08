@@ -30,6 +30,9 @@ pub use util::{TestCommand, TestProject};
 mod script;
 pub use script::{ScriptOutcome, ScriptTester};
 
+// UI test runner
+pub mod runner;
+
 // re-exports for convenience
 pub use foundry_compilers;
 

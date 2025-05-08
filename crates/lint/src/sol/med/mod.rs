@@ -6,4 +6,4 @@ use crate::{
     sol::{EarlyLintPass, SolLint},
 };
 
-register_lints!((DivideBeforeMultiply, DIVIDE_BEFORE_MULTIPLY));
+register_lints!((DivideBeforeMultiply, (DIVIDE_BEFORE_MULTIPLY)));

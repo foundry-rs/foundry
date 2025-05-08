@@ -38,27 +38,3 @@ fn contains_division<'ast>(expr: &'ast Expr<'ast>) -> bool {
         _ => false,
     }
 }
-
-#[cfg(test)]
-mod test {
-    use std::path::Path;
-
-    use super::*;
-    use crate::{linter::Lint, sol::SolidityLinter};
-
-    #[test]
-    fn test_divide_before_multiply() -> eyre::Result<()> {
-        let linter = SolidityLinter::new().with_lints(Some(vec![DIVIDE_BEFORE_MULTIPLY]));
-
-        let emitted =
-            linter.lint_test(Path::new("testdata/DivideBeforeMultiply.sol")).unwrap().to_string();
-        let warnings =
-            emitted.matches(&format!("warning[{}]", DIVIDE_BEFORE_MULTIPLY.id())).count();
-        let notes = emitted.matches(&format!("note[{}]", DIVIDE_BEFORE_MULTIPLY.id())).count();
-
-        assert_eq!(warnings, 6, "Expected 6 warnings");
-        assert_eq!(notes, 0, "Expected 0 notes");
-
-        Ok(())
-    }
-}

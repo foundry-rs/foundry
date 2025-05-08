@@ -10,8 +10,8 @@ use crate::{
 declare_forge_lint!(
     PASCAL_CASE_STRUCT,
     Severity::Info,
-    "struct-pascal-case",
-    "structs should use PascalCase.",
+    "pascal-case-struct",
+    "structs should use PascalCase",
     "https://docs.soliditylang.org/en/latest/style-guide.html#struct-names"
 );
 
@@ -31,27 +31,4 @@ pub fn is_pascal_case(s: &str) -> bool {
     }
 
     s == format!("{}", heck::AsPascalCase(s)).as_str()
-}
-
-#[cfg(test)]
-mod test {
-    use std::path::Path;
-
-    use super::*;
-    use crate::{linter::Lint, sol::SolidityLinter};
-
-    #[test]
-    fn test_struct_pascal_case() -> eyre::Result<()> {
-        let linter = SolidityLinter::new().with_lints(Some(vec![PASCAL_CASE_STRUCT]));
-
-        let emitted =
-            linter.lint_test(Path::new("testdata/StructPascalCase.sol")).unwrap().to_string();
-        let warnings = emitted.matches(&format!("warning[{}]", PASCAL_CASE_STRUCT.id())).count();
-        let notes = emitted.matches(&format!("note[{}]", PASCAL_CASE_STRUCT.id())).count();
-
-        assert_eq!(warnings, 0, "Expected 0 warnings");
-        assert_eq!(notes, 6, "Expected 7 notes");
-
-        Ok(())
-    }
 }

@@ -2,7 +2,6 @@
 pragma solidity ^0.8.0;
 
 contract StructPascalCaseTest {
-    // Passes
     struct PascalCase {
         uint256 a;
     }
@@ -11,28 +10,27 @@ contract StructPascalCaseTest {
         uint256 a;
     }
 
-    // Fails
-    struct _PascalCase {
+    struct _PascalCase { //~NOTE: structs should use PascalCase
         uint256 a;
     }
 
-    struct pascalCase {
+    struct pascalCase { //~NOTE: structs should use PascalCase
         uint256 a;
     }
 
-    struct pascalcase {
+    struct pascalcase { //~NOTE: structs should use PascalCase
         uint256 a;
     }
 
-    struct pascal_case {
+    struct pascal_case { //~NOTE: structs should use PascalCase
         uint256 a;
     }
 
-    struct PASCAL_CASE {
+    struct PASCAL_CASE { //~NOTE: structs should use PascalCase
         uint256 a;
     }
 
-    struct PASCALCASE {
+    struct PASCALCASE { //~NOTE: structs should use PascalCase
         uint256 a;
     }
 }

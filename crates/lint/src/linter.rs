@@ -50,7 +50,7 @@ impl<'s> LintContext<'s> {
     pub fn emit<L: Lint>(&self, lint: &'static L, span: Span) {
         let (desc, help) = match (self.desc, lint.help()) {
             (true, Some(help)) => (lint.description(), help),
-            (true, None) => ("", lint.description()),
+            (true, None) => (lint.description(), ""),
             (false, _) => ("", ""),
         };
 

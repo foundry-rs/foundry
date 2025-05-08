@@ -1,4 +1,4 @@
-use solar_ast::VariableDefinition;
+use solar_ast::{Span, VarMut, VariableDefinition};
 
 use super::ScreamingSnakeCase;
 use crate::{
@@ -8,11 +8,18 @@ use crate::{
 };
 
 declare_forge_lint!(
-    SCREAMING_SNAKE_CASE,
+    SCREAMING_SNAKE_CASE_CONSTANT,
     Severity::Info,
-    "screaming-snake-case",
-    "constants and immutables should use SCREAMING_SNAKE_CASE",
-    "https://docs.soliditylang.org/en/latest/style-guide.html#contract-and-library-names"
+    "screaming-snake-case-const",
+    "constants should use SCREAMING_SNAKE_CASE",
+    "https://docs.soliditylang.org/en/latest/style-guide.html#constants"
+);
+
+declare_forge_lint!(
+    SCREAMING_SNAKE_CASE_IMMUTABLE,
+    Severity::Info,
+    "screaming-snake-case-immutable",
+    "immutables should use SCREAMING_SNAKE_CASE"
 );
 
 impl<'ast> EarlyLintPass<'ast> for ScreamingSnakeCase {
@@ -21,16 +28,25 @@ impl<'ast> EarlyLintPass<'ast> for ScreamingSnakeCase {
         ctx: &LintContext<'_>,
         var: &'ast VariableDefinition<'ast>,
     ) {
-        if let Some(mutability) = var.mutability {
-            if mutability.is_constant() || mutability.is_immutable() {
-                if let Some(name) = var.name {
-                    let name = name.as_str();
-                    if !is_screaming_snake_case(name) && name.len() > 1 {
-                        ctx.emit(&SCREAMING_SNAKE_CASE, var.span);
-                    }
-                }
+        if let (Some(name), Some(mutability)) = (var.name, var.mutability) {
+            let name = name.as_str();
+            if name.len() < 2 || is_screaming_snake_case(name) {
+                return ();
+            }
+
+            match mutability {
+                VarMut::Constant => ctx.emit(&SCREAMING_SNAKE_CASE_CONSTANT, get_var_span(var)),
+                VarMut::Immutable => ctx.emit(&SCREAMING_SNAKE_CASE_IMMUTABLE, get_var_span(var)),
             }
         }
+    }
+}
+
+/// Get the variable name span if available. Otherwise default to the line span.
+fn get_var_span<'ast>(var: &'ast VariableDefinition<'ast>) -> Span {
+    match var.name {
+        Some(ident) => ident.span,
+        None => var.span,
     }
 }
 
@@ -42,27 +58,4 @@ pub fn is_screaming_snake_case(s: &str) -> bool {
 
     // Remove leading/trailing underscores like `heck` does
     s.trim_matches('_') == format!("{}", heck::AsShoutySnakeCase(s)).as_str()
-}
-
-#[cfg(test)]
-mod test {
-    use std::path::Path;
-
-    use super::*;
-    use crate::{linter::Lint, sol::SolidityLinter};
-
-    #[test]
-    fn test_screaming_snake_case() -> eyre::Result<()> {
-        let linter = SolidityLinter::new().with_lints(Some(vec![SCREAMING_SNAKE_CASE]));
-
-        let emitted =
-            linter.lint_test(Path::new("testdata/ScreamingSnakeCase.sol")).unwrap().to_string();
-        let warnings = emitted.matches(&format!("warning[{}]", SCREAMING_SNAKE_CASE.id())).count();
-        let notes = emitted.matches(&format!("note[{}]", SCREAMING_SNAKE_CASE.id())).count();
-
-        assert_eq!(warnings, 0, "Expected 0 warnings");
-        assert_eq!(notes, 8, "Expected 8 notes");
-
-        Ok(())
-    }
 }

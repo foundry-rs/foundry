@@ -5,7 +5,7 @@ mod pascal_case;
 use pascal_case::PASCAL_CASE_STRUCT;
 
 mod screaming_snake_case;
-use screaming_snake_case::SCREAMING_SNAKE_CASE;
+use screaming_snake_case::{SCREAMING_SNAKE_CASE_CONSTANT, SCREAMING_SNAKE_CASE_IMMUTABLE};
 
 use crate::{
     register_lints,
@@ -13,8 +13,8 @@ use crate::{
 };
 
 register_lints!(
-    (MixedCaseVariable, MIXED_CASE_VARIABLE),
-    (ScreamingSnakeCase, SCREAMING_SNAKE_CASE),
-    (PascalCaseStruct, PASCAL_CASE_STRUCT),
-    (MixedCaseFunction, MIXED_CASE_FUNCTION)
+    (PascalCaseStruct, (PASCAL_CASE_STRUCT)),
+    (MixedCaseVariable, (MIXED_CASE_VARIABLE)),
+    (MixedCaseFunction, (MIXED_CASE_FUNCTION)),
+    (ScreamingSnakeCase, (SCREAMING_SNAKE_CASE_CONSTANT, SCREAMING_SNAKE_CASE_IMMUTABLE))
 );

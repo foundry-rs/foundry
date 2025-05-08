@@ -30,7 +30,7 @@ macro_rules! declare_forge_lint {
 /// # Parameters
 ///
 /// - `$pass_id`: Identitifier of the generated struct that will implement the pass trait.
-/// - `$lint`: `SolLint` constant.
+/// - (`$lint`): tuple with `SolLint` constants that should be evaluated on every input that pass.
 ///
 /// # Outputs
 ///
@@ -39,7 +39,7 @@ macro_rules! declare_forge_lint {
 /// - `const LINT_PASSES` mapping each lint to its corresponding pass
 #[macro_export]
 macro_rules! register_lints {
-    ($(($pass_id:ident, $lint:expr)),* $(,)?) => {
+    ( $( ($pass_id:ident, ($($lint:expr),+ $(,)?)) ),* $(,)? ) => {
         // Declare the structs that will implement the pass trait
         $(
             #[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
@@ -53,21 +53,15 @@ macro_rules! register_lints {
         )*
 
         // Expose array constants
-        pub const REGISTERED_LINTS: &[SolLint] = &[$($lint),*];
+        pub const REGISTERED_LINTS: &[SolLint] = &[$( $($lint,) + )*];
         pub const LINT_PASSES: &[(SolLint, fn() -> Box<dyn EarlyLintPass<'static>>)] = &[
-            $(
-                ($lint, || Box::new($pass_id::default())),
-            )*
+            $( $( ($lint, || Box::new($pass_id::default())), )+ )*
         ];
 
         // Helper function to create lint passes with the required lifetime
         pub fn create_lint_passes<'a>() -> Vec<(Box<dyn EarlyLintPass<'a>>, SolLint)>
         {
-            vec![
-            $(
-                ($pass_id::as_lint_pass(), $lint),
-            )*
-            ]
+            vec![ $( $(($pass_id::as_lint_pass(), $lint), )+ )* ]
         }
     };
 }

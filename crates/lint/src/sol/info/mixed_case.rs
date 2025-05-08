@@ -11,7 +11,7 @@ declare_forge_lint!(
     MIXED_CASE_FUNCTION,
     Severity::Info,
     "mixed-case-function",
-    "function names should use mixedCase.",
+    "function names should use mixedCase",
     "https://docs.soliditylang.org/en/latest/style-guide.html#function-names"
 );
 
@@ -61,40 +61,4 @@ pub fn is_mixed_case(s: &str) -> bool {
 
     // Remove leading/trailing underscores like `heck` does
     s.trim_matches('_') == format!("{}", heck::AsLowerCamelCase(s)).as_str()
-}
-
-#[cfg(test)]
-mod test {
-    use std::path::Path;
-
-    use super::*;
-    use crate::{linter::Lint, sol::SolidityLinter};
-
-    #[test]
-    fn test_variable_mixed_case() -> eyre::Result<()> {
-        let linter = SolidityLinter::new().with_lints(Some(vec![MIXED_CASE_VARIABLE]));
-
-        let emitted = linter.lint_test(Path::new("testdata/MixedCase.sol")).unwrap().to_string();
-        let warnings = emitted.matches(&format!("warning[{}]", MIXED_CASE_VARIABLE.id())).count();
-        let notes = emitted.matches(&format!("note[{}]", MIXED_CASE_VARIABLE.id())).count();
-
-        assert_eq!(warnings, 0, "Expected 0 warnings");
-        assert_eq!(notes, 6, "Expected 6 notes");
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_function_mixed_case() -> eyre::Result<()> {
-        let linter = SolidityLinter::new().with_lints(Some(vec![MIXED_CASE_FUNCTION]));
-
-        let emitted = linter.lint_test(Path::new("testdata/MixedCase.sol")).unwrap().to_string();
-        let warnings = emitted.matches(&format!("warning[{}]", MIXED_CASE_FUNCTION.id())).count();
-        let notes = emitted.matches(&format!("note[{}]", MIXED_CASE_FUNCTION.id())).count();
-
-        assert_eq!(warnings, 0, "Expected 0 warnings");
-        assert_eq!(notes, 3, "Expected 3 notes");
-
-        Ok(())
-    }
 }

@@ -2,34 +2,28 @@
 pragma solidity ^0.8.0;
 
 contract MixedCaseTest {
-    // Passes
     uint256 variableMixedCase;
     uint256 _variableMixedCase;
     uint256 variablemixedcase;
 
-    // Fails
-    uint256 Variablemixedcase;
-    uint256 VARIABLE_MIXED_CASE;
-    uint256 VariableMixedCase;
+    uint256 Variablemixedcase; //~NOTE: mutable variables should use mixedCase
+    uint256 VARIABLE_MIXED_CASE; //~NOTE: mutable variables should use mixedCase
+    uint256 VariableMixedCase; //~NOTE: mutable variables should use mixedCase
 
     function foo() public {
-        // Passes
         uint256 testVal;
         uint256 testVal123;
 
-        // Fails
-        uint256 testVAL;
-        uint256 TestVal;
-        uint256 TESTVAL;
+        uint256 testVAL; //~NOTE: mutable variables should use mixedCase
+        uint256 TestVal; //~NOTE: mutable variables should use mixedCase
+        uint256 TESTVAL; //~NOTE: mutable variables should use mixedCase
     }
 
-    // Passes
     function functionMixedCase() public {}
     function _functionMixedCase() internal {}
     function functionmixedcase() public {}
 
-    // Fails
-    function Functionmixedcase() public {}
-    function FUNCTION_MIXED_CASE() public {}
-    function FunctionMixedCase() public {}
+    function Functionmixedcase() public {} //~NOTE: function names should use mixedCase
+    function FUNCTION_MIXED_CASE() public {} //~NOTE: function names should use mixedCase
+    function FunctionMixedCase() public {} //~NOTE: function names should use mixedCase
 }

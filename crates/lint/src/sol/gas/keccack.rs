@@ -9,9 +9,9 @@ use crate::{
 };
 
 declare_forge_lint!(
-    ASM_KECCACK256,
+    ASM_KECCAK256,
     Severity::Gas,
-    "asm-keccack256",
+    "asm-keccak256",
     "hash using inline assembly to save gas",
     ""
 );
@@ -21,31 +21,9 @@ impl<'ast> EarlyLintPass<'ast> for AsmKeccak256 {
         if let ExprKind::Call(expr, _) = &expr.kind {
             if let ExprKind::Ident(ident) = &expr.kind {
                 if ident.name == Keccak256 {
-                    ctx.emit(&ASM_KECCACK256, expr.span);
+                    ctx.emit(&ASM_KECCAK256, expr.span);
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use std::path::Path;
-
-    use super::*;
-    use crate::{linter::Lint, sol::SolidityLinter};
-
-    #[test]
-    fn test_keccak256() -> eyre::Result<()> {
-        let linter = SolidityLinter::new().with_lints(Some(vec![ASM_KECCACK256]));
-
-        let emitted = linter.lint_test(Path::new("testdata/Keccak256.sol")).unwrap().to_string();
-        let warnings = emitted.matches(&format!("warning[{}]", ASM_KECCACK256.id())).count();
-        let notes = emitted.matches(&format!("note[{}]", ASM_KECCACK256.id())).count();
-
-        assert_eq!(warnings, 0, "Expected 0 warnings");
-        assert_eq!(notes, 2, "Expected 2 notes");
-
-        Ok(())
     }
 }

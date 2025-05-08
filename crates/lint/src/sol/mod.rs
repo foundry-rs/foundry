@@ -11,8 +11,14 @@ use foundry_compilers::solc::SolcLanguage;
 use foundry_config::lint::Severity;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use solar_ast::{visit::Visit, Arena};
-use solar_interface::{diagnostics, Session};
-use std::path::{Path, PathBuf};
+use solar_interface::{
+    diagnostics::{self, DiagCtxt, JsonEmitter},
+    Session, SourceMap,
+};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use thiserror::Error;
 
 /// Linter implementation to analyze Solidity source code responsible for identifying
@@ -23,11 +29,18 @@ pub struct SolidityLinter {
     lints_included: Option<Vec<SolLint>>,
     lints_excluded: Option<Vec<SolLint>>,
     with_description: bool,
+    with_json_emitter: bool,
 }
 
 impl SolidityLinter {
     pub fn new() -> Self {
-        Self { severity: None, lints_included: None, lints_excluded: None, with_description: true }
+        Self {
+            severity: None,
+            lints_included: None,
+            lints_excluded: None,
+            with_description: true,
+            with_json_emitter: false,
+        }
     }
 
     pub fn with_severity(mut self, severity: Option<Vec<Severity>>) -> Self {
@@ -50,17 +63,9 @@ impl SolidityLinter {
         self
     }
 
-    #[cfg(test)]
-    /// Helper function to ease testing, despite `fn lint` being the public API for the `Linter`.
-    /// Logs the diagnostics to the local buffer, so that tests can perform assertions.
-    pub(crate) fn lint_test(&self, file: &Path) -> Option<diagnostics::EmittedDiagnostics> {
-        let mut sess =
-            Session::builder().with_buffer_emitter(solar_interface::ColorChoice::Never).build();
-        sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
-
-        self.process_file(&sess, file);
-
-        sess.emitted_diagnostics()
+    pub fn with_json_emitter(mut self, with: bool) -> Self {
+        self.with_json_emitter = with;
+        self
     }
 
     fn process_file(&self, sess: &Session, file: &Path) {
@@ -118,8 +123,22 @@ impl Linter for SolidityLinter {
     type Lint = SolLint;
 
     fn lint(&self, input: &[PathBuf]) {
+        let mut builder = Session::builder();
+
+        // Build session based on the linter config
+        if self.with_json_emitter {
+            let map = Arc::<SourceMap>::default();
+            let json_emitter = JsonEmitter::new(Box::new(std::io::stderr()), map.clone())
+                .rustc_like(true)
+                .ui_testing(false);
+
+            builder = builder.dcx(DiagCtxt::new(Box::new(json_emitter))).source_map(map);
+        } else {
+            builder = builder.with_stderr_emitter();
+        };
+
         // Create a single session for all files
-        let mut sess = Session::builder().with_stderr_emitter().build();
+        let mut sess = builder.build();
         sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
 
         // Process the files in parallel

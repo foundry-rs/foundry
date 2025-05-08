@@ -42,26 +42,3 @@ fn contains_incorrect_shift<'ast>(
 
     is_left_literal && is_right_not_literal
 }
-
-#[cfg(test)]
-mod test {
-    use std::path::Path;
-
-    use super::*;
-    use crate::{linter::Lint, sol::SolidityLinter};
-
-    #[test]
-    fn test_incorrect_shift() -> eyre::Result<()> {
-        let linter = SolidityLinter::new().with_lints(Some(vec![INCORRECT_SHIFT]));
-
-        let emitted =
-            linter.lint_test(Path::new("testdata/IncorrectShift.sol")).unwrap().to_string();
-        let warnings = emitted.matches(&format!("warning[{}]", INCORRECT_SHIFT.id())).count();
-        let notes = emitted.matches(&format!("note[{}]", INCORRECT_SHIFT.id())).count();
-
-        assert_eq!(warnings, 5, "Expected 5 warnings");
-        assert_eq!(notes, 0, "Expected 0 notes");
-
-        Ok(())
-    }
-}

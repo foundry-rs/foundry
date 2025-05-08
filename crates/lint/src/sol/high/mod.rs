@@ -6,4 +6,4 @@ use crate::{
     sol::{EarlyLintPass, SolLint},
 };
 
-register_lints!((IncorrectShift, INCORRECT_SHIFT));
+register_lints!((IncorrectShift, (INCORRECT_SHIFT)));
