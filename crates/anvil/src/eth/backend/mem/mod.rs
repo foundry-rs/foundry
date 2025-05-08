@@ -96,7 +96,9 @@ use foundry_evm::{
 use foundry_evm_core::{either_evm::EitherEvm, evm::FoundryPrecompiles};
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
-use op_revm::{transaction::deposit::DepositTransactionParts, OpContext, OpHaltReason, OpTransaction};
+use op_revm::{
+    transaction::deposit::DepositTransactionParts, OpContext, OpHaltReason, OpTransaction,
+};
 use parking_lot::{Mutex, RwLock};
 use revm::{
     context::{Block as RevmBlock, BlockEnv, TxEnv},
@@ -1602,7 +1604,7 @@ impl Backend {
                         let op_tx = OpTransaction {
                             base: env.tx,
                             deposit: env.deposit.unwrap_or_default(),
-                            enveloped_tx: None,   
+                            enveloped_tx: None,
                          };
                         trace!(target: "backend", env=?env.evm_env, spec=?env.evm_env.spec_id(),"simulate evm env");
                         evm.transact(op_tx)?
@@ -1617,7 +1619,7 @@ impl Backend {
                         let op_tx = OpTransaction {
                             base: env.tx,
                             deposit: env.deposit.unwrap_or_default(),
-                            enveloped_tx: None,   
+                            enveloped_tx: None,
                          };
                         trace!(target: "backend", env=?env.evm_env, spec=?env.evm_env.spec_id(),"simulate evm env");
                         evm.transact(op_tx)?
