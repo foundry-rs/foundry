@@ -1,4 +1,5 @@
 use alloy_evm::EvmEnv;
+use foundry_evm::Env as FoundryEnv;
 use op_revm::{transaction::deposit::DepositTransactionParts, OpTransaction};
 use revm::{
     context::{BlockEnv, CfgEnv, TxEnv},
@@ -10,6 +11,7 @@ use revm::{
 pub struct Env {
     pub evm_env: EvmEnv,
     pub tx: OpTransaction<TxEnv>,
+    pub is_optimism: bool,
 }
 
 /// Helper container type for [`EvmEnv`] and [`TxEnv`].
@@ -22,7 +24,7 @@ impl Env {
     }
 
     pub fn from(cfg: CfgEnv, block: BlockEnv, tx: OpTransaction<TxEnv>) -> Self {
-        Self { evm_env: EvmEnv { cfg_env: cfg, block_env: block }, tx }
+        Self { evm_env: EvmEnv { cfg_env: cfg, block_env: block }, tx, is_optimism: false }
     }
 
     pub fn new_with_spec_id(

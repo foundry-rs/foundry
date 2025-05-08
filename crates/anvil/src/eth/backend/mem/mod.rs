@@ -1090,7 +1090,7 @@ impl Backend {
         let db = self.db.read().await;
         let mut inspector = self.build_inspector();
         let mut evm = self.new_evm_with_inspector_ref(db.as_dyn(), &env, &mut inspector);
-        let ResultAndState { result, state } = evm.transact(op_tx)?;
+        let ResultAndState { result, state } = evm.transact(env.tx)?;
         let (exit_reason, gas_used, out, logs) = match result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
                 (reason.into(), gas_used, Some(output), Some(logs))

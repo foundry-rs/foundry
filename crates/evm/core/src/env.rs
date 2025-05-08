@@ -1,5 +1,4 @@
 pub use alloy_evm::EvmEnv;
-use op_revm::transaction::deposit::DepositTransactionParts;
 use revm::{
     context::{BlockEnv, CfgEnv, JournalInner, JournalTr, TxEnv},
     primitives::hardfork::SpecId,
@@ -11,8 +10,6 @@ use revm::{
 pub struct Env {
     pub evm_env: EvmEnv,
     pub tx: TxEnv,
-    pub is_optimism: bool,
-    pub deposit: Option<DepositTransactionParts>,
 }
 
 /// Helper container type for [`EvmEnv`] and [`TxEnv`].
@@ -25,12 +22,7 @@ impl Env {
     }
 
     pub fn from(cfg: CfgEnv, block: BlockEnv, tx: TxEnv) -> Self {
-        Self {
-            evm_env: EvmEnv { cfg_env: cfg, block_env: block },
-            tx,
-            is_optimism: false,
-            deposit: None,
-        }
+        Self { evm_env: EvmEnv { cfg_env: cfg, block_env: block }, tx }
     }
 
     pub fn new_with_spec_id(cfg: CfgEnv, block: BlockEnv, tx: TxEnv, spec_id: SpecId) -> Self {
@@ -38,11 +30,6 @@ impl Env {
         cfg.spec = spec_id;
 
         Self::from(cfg, block, tx)
-    }
-
-    pub fn with_deposit(mut self, deposit: DepositTransactionParts) -> Self {
-        self.deposit = Some(deposit);
-        self
     }
 }
 
@@ -59,8 +46,6 @@ impl EnvMut<'_> {
         Env {
             evm_env: EvmEnv { cfg_env: self.cfg.to_owned(), block_env: self.block.to_owned() },
             tx: self.tx.to_owned(),
-            is_optimism: false,
-            deposit: None,
         }
     }
 }
