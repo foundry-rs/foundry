@@ -40,8 +40,8 @@ pub fn run_tests<'a>(
     // run tests on all .sol files
     ui_test::run_tests_generic(
         vec![config],
-        move |path, _config| Some(path.extension().map_or(false, |ext| ext == "sol")),
-        move |config, file_contents| per_file_config(config, file_contents),
+        move |path, _config| Some(path.extension().is_some_and(|ext| ext == "sol")),
+        per_file_config,
         status_emitter,
     )?;
 

@@ -31,7 +31,7 @@ impl<'ast> EarlyLintPass<'ast> for ScreamingSnakeCase {
         if let (Some(name), Some(mutability)) = (var.name, var.mutability) {
             let name = name.as_str();
             if name.len() < 2 || is_screaming_snake_case(name) {
-                return ();
+                return;
             }
 
             match mutability {
