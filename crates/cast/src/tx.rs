@@ -13,6 +13,7 @@ use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_transport::TransportError;
 use eyre::Result;
+use foundry_block_explorers::EtherscanApiVersion;
 use foundry_cli::{
     opts::{CliAuthorizationList, TransactionOpts},
     utils::{self, parse_function_args},
@@ -141,6 +142,7 @@ pub struct CastTxBuilder<P, S> {
     auth: Option<CliAuthorizationList>,
     chain: Chain,
     etherscan_api_key: Option<String>,
+    etherscan_api_version: EtherscanApiVersion,
     access_list: Option<Option<AccessList>>,
     state: S,
 }
@@ -152,6 +154,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
         let mut tx = WithOtherFields::<TransactionRequest>::default();
 
         let chain = utils::get_chain(config.chain, &provider).await?;
+        let etherscan_api_version = config.get_etherscan_api_version(Some(chain));
         let etherscan_api_key = config.get_etherscan_api_key(Some(chain));
         let legacy = tx_opts.legacy || chain.is_legacy();
 
@@ -192,6 +195,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
             blob: tx_opts.blob,
             chain,
             etherscan_api_key,
+            etherscan_api_version,
             auth: tx_opts.auth,
             access_list: tx_opts.access_list,
             state: InitState,
@@ -208,6 +212,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
             blob: self.blob,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
+            etherscan_api_version: self.etherscan_api_version,
             auth: self.auth,
             access_list: self.access_list,
             state: ToState { to },
@@ -233,6 +238,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, ToState> {
                 self.chain,
                 &self.provider,
                 self.etherscan_api_key.as_deref(),
+                self.etherscan_api_version,
             )
             .await?
         } else {
@@ -264,6 +270,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, ToState> {
             blob: self.blob,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
+            etherscan_api_version: self.etherscan_api_version,
             auth: self.auth,
             access_list: self.access_list,
             state: InputState { kind: self.state.to.into(), input, func },
