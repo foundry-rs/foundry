@@ -9,7 +9,7 @@ use foundry_config::NamedChain;
 use revm::primitives::hardfork::SpecId;
 pub use revm::state::EvmState as StateChangeset;
 
-use crate::{Env, EnvMut};
+use crate::{AsEnvMut, EnvMut};
 
 /// Depending on the configured chain id and block number this should apply any specific changes
 ///
@@ -18,19 +18,21 @@ use crate::{Env, EnvMut};
 ///
 /// Should be called with proper chain id (retrieved from provider if not provided).
 pub fn apply_chain_and_block_specific_env_changes<N: Network>(
-    env: &mut Env,
+    env: &mut EnvMut<'_>,
     block: &N::BlockResponse,
 ) {
     use NamedChain::*;
-    if let Ok(chain) = NamedChain::try_from(env.evm_env.cfg_env.chain_id) {
+
+    let env = env.as_env_mut();
+
+    if let Ok(chain) = NamedChain::try_from(env.cfg.chain_id) {
         let block_number = block.header().number();
 
         match chain {
             Mainnet => {
                 // after merge difficulty is supplanted with prevrandao EIP-4399
                 if block_number >= 15_537_351u64 {
-                    env.evm_env.block_env.difficulty =
-                        env.evm_env.block_env.prevrandao.unwrap_or_default().into();
+                    env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
                 }
 
                 return;
@@ -42,13 +44,13 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
                 // (`mixHash`) is always zero, even though bsc adopts the newer EVM
                 // specification. This will confuse revm and causes emulation
                 // failure.
-                env.evm_env.block_env.prevrandao = Some(env.evm_env.block_env.difficulty.into());
+                env.block.prevrandao = Some(env.block.difficulty.into());
                 return;
             }
             Moonbeam | Moonbase | Moonriver | MoonbeamDev | Rsk => {
-                if env.evm_env.block_env.prevrandao.is_none() {
+                if env.block.prevrandao.is_none() {
                     // <https://github.com/foundry-rs/foundry/issues/4232>
-                    env.evm_env.block_env.prevrandao = Some(B256::random());
+                    env.block.prevrandao = Some(B256::random());
                 }
             }
             c if c.is_arbitrum() => {
@@ -61,7 +63,7 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
                         serde_json::from_value::<U256>(l1_block_number).ok()
                     })
                 {
-                    env.evm_env.block_env.number = l1_block_number.to();
+                    env.block.number = l1_block_number.to();
                 }
             }
             _ => {}
@@ -70,8 +72,7 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
 
     // if difficulty is `0` we assume it's past merge
     if block.header().difficulty().is_zero() {
-        env.evm_env.block_env.difficulty =
-            env.evm_env.block_env.prevrandao.unwrap_or_default().into();
+        env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
     }
 }
 

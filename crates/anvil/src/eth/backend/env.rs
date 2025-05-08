@@ -1,5 +1,6 @@
 use alloy_evm::EvmEnv;
-use foundry_evm::Env as FoundryEnv;
+use foundry_evm::EnvMut;
+use foundry_evm_core::AsEnvMut;
 use op_revm::{transaction::deposit::DepositTransactionParts, OpTransaction};
 use revm::{
     context::{BlockEnv, CfgEnv, TxEnv},
@@ -42,5 +43,15 @@ impl Env {
     pub fn with_deposit(mut self, deposit: DepositTransactionParts) -> Self {
         self.tx.deposit = deposit;
         self
+    }
+}
+
+impl AsEnvMut for Env {
+    fn as_env_mut(&mut self) -> EnvMut<'_> {
+        EnvMut {
+            block: &mut self.evm_env.block_env,
+            cfg: &mut self.evm_env.cfg_env,
+            tx: &mut self.tx.base,
+        }
     }
 }
