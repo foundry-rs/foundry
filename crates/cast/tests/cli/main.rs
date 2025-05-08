@@ -9,7 +9,7 @@ use anvil::{EthereumHardfork, NodeConfig};
 use foundry_test_utils::{
     rpc::{
         next_etherscan_api_key, next_http_archive_rpc_url, next_http_rpc_endpoint,
-        next_mainnet_etherscan_api_key, next_rpc_endpoint, next_ws_rpc_endpoint,
+        next_rpc_endpoint, next_ws_rpc_endpoint,
     },
     str,
     util::OutputExt,
@@ -1378,7 +1378,7 @@ casttest!(storage_layout_simple, |_prj, cmd| {
         "--block",
         "21034138",
         "--etherscan-api-key",
-        next_mainnet_etherscan_api_key().as_str(),
+        next_etherscan_api_key().as_str(),
         "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
     ])
     .assert_success()
@@ -1405,7 +1405,7 @@ casttest!(storage_layout_simple_json, |_prj, cmd| {
         "--block",
         "21034138",
         "--etherscan-api-key",
-        next_mainnet_etherscan_api_key().as_str(),
+        next_etherscan_api_key().as_str(),
         "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
         "--json",
     ])
@@ -1422,7 +1422,7 @@ casttest!(storage_layout_complex, |_prj, cmd| {
         "--block",
         "21034138",
         "--etherscan-api-key",
-        next_mainnet_etherscan_api_key().as_str(),
+        next_etherscan_api_key().as_str(),
         "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
     ])
     .assert_success()
@@ -1470,7 +1470,7 @@ casttest!(storage_layout_complex_proxy, |_prj, cmd| {
         "--block",
         "7857852",
         "--etherscan-api-key",
-        next_mainnet_etherscan_api_key().as_str(),
+        next_etherscan_api_key().as_str(),
         "0xE2588A9CAb7Ea877206E35f615a39f84a64A7A3b",
         "--proxy",
         "0x29fcb43b46531bca003ddc8fcb67ffe91900c762"
@@ -1512,7 +1512,7 @@ casttest!(storage_layout_complex_json, |_prj, cmd| {
         "--block",
         "21034138",
         "--etherscan-api-key",
-        next_mainnet_etherscan_api_key().as_str(),
+        next_etherscan_api_key().as_str(),
         "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
         "--json",
     ])
@@ -1601,7 +1601,7 @@ casttest!(fetch_weth_interface_from_etherscan, |_prj, cmd| {
     cmd.args([
         "interface",
         "--etherscan-api-key",
-        &next_mainnet_etherscan_api_key(),
+        &next_etherscan_api_key(),
         "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
     ])
     .assert_success()
@@ -1880,7 +1880,7 @@ casttest!(fetch_creation_code_from_etherscan, |_prj, cmd| {
     cmd.args([
         "creation-code",
         "--etherscan-api-key",
-        &next_mainnet_etherscan_api_key(),
+        &next_etherscan_api_key(),
         "0x0923cad07f06b2d0e5e49e63b8b35738d4156b95",
         "--rpc-url",
         eth_rpc_url.as_str(),
@@ -1899,7 +1899,7 @@ casttest!(fetch_creation_code_only_args_from_etherscan, |_prj, cmd| {
     cmd.args([
         "creation-code",
         "--etherscan-api-key",
-        &next_mainnet_etherscan_api_key(),
+        &next_etherscan_api_key(),
         "0x6982508145454ce325ddbe47a25d4ec3d2311933",
         "--rpc-url",
         eth_rpc_url.as_str(),
@@ -1919,7 +1919,7 @@ casttest!(fetch_constructor_args_from_etherscan, |_prj, cmd| {
     cmd.args([
         "constructor-args",
         "--etherscan-api-key",
-        &next_mainnet_etherscan_api_key(),
+        &next_etherscan_api_key(),
         "0x6982508145454ce325ddbe47a25d4ec3d2311933",
         "--rpc-url",
         eth_rpc_url.as_str(),
@@ -1940,7 +1940,7 @@ casttest!(test_non_mainnet_traces, |prj, cmd| {
         "--rpc-url",
         next_rpc_endpoint(NamedChain::Optimism).as_str(),
         "--etherscan-api-key",
-        next_etherscan_api_key(NamedChain::Optimism).as_str(),
+        next_etherscan_api_key().as_str(),
     ])
     .assert_success()
     .stdout_eq(str![[r#"
@@ -1963,7 +1963,7 @@ casttest!(fetch_artifact_from_etherscan, |_prj, cmd| {
     cmd.args([
         "artifact",
         "--etherscan-api-key",
-        &next_mainnet_etherscan_api_key(),
+        &next_etherscan_api_key(),
         "0x0923cad07f06b2d0e5e49e63b8b35738d4156b95",
         "--rpc-url",
         eth_rpc_url.as_str(),
@@ -2444,7 +2444,7 @@ contract WETH9 {
 
 casttest!(fetch_src_default, |_prj, cmd| {
     let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-    let etherscan_api_key = next_mainnet_etherscan_api_key();
+    let etherscan_api_key = next_etherscan_api_key();
 
     cmd.args(["source", &weth.to_string(), "--flatten", "--etherscan-api-key", &etherscan_api_key])
         .assert_success()
