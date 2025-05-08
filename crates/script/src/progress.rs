@@ -212,12 +212,12 @@ impl ScriptProgress {
         while let Some((tx_hash, result)) = tasks.next().await {
             match result {
                 Err(err) => {
-                    // Check if the error is about an empty receipt
+                    // Check if this is a retry error for empty receipts
                     if err.to_string().contains("Received an empty receipt") {
+                        // We've already retried several times with sleep, but the receipt is still empty
                         discarded_transactions = true;
-                        // Special handling for empty receipts - we'll mark these for retrying
                         deployment_sequence.remove_pending(tx_hash);
-                        let msg = format!("Transaction {tx_hash:?} was discarded by RPC. It will be retried when using --resume.");
+                        let msg = format!("Transaction {tx_hash:?} was discarded by RPC despite multiple retry attempts. It will be retried when using --resume.");
                         seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
                     } else {
                         errors.push(format!("Failure on receiving a receipt for {tx_hash:?}:\n{err}"));
