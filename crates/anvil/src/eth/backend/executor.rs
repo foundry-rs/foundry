@@ -248,11 +248,11 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
     }
 
     fn env_for(&self, tx: &PendingTransaction) -> Env {
-        let (tx_env, maybe_deposit) = tx.to_revm_tx_env();
+        let op_tx = tx.to_revm_tx_env();
 
-        let mut env = Env::from(self.cfg_env.clone(), self.block_env.clone(), tx_env);
+        let mut env = Env::from(self.cfg_env.clone(), self.block_env.clone(), op_tx.base);
         if env.tx.tx_type == DEPOSIT_TRANSACTION_TYPE {
-            env = env.with_deposit(maybe_deposit.unwrap());
+            env = env.with_deposit(op_tx.deposit);
         }
 
         env
@@ -331,14 +331,13 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             transaction.tx_type() == DEPOSIT_TRANSACTION_TYPE,
         );
 
-        let tx_commit = if transaction.tx_type() == DEPOSIT_TRANSACTION_TYPE {
-            // Unwrap is safe. This should always be set if the transaction is a deposit
-            evm.transact_deposit_commit(env.tx, env.deposit.unwrap())
-        } else {
-            evm.transact_commit(env.tx)
+        let tx = OpTransaction {
+            base: env.tx,
+            deposit: env.deposit.unwrap_or_default(),
+            enveloped_tx: None,
         };
         trace!(target: "backend", "[{:?}] executing", transaction.hash());
-        let exec_result = match tx_commit {
+        let exec_result = match evm.transact_commit(tx) {
             Ok(exec_result) => exec_result,
             Err(err) => {
                 warn!(target: "backend", "[{:?}] failed to execute: {:?}", transaction.hash(), err);
@@ -440,7 +439,11 @@ where
             },
             block: env.evm_env.block_env.clone(),
             cfg: env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::BEDROCK),
-            tx: OpTransaction::new(env.tx.clone()),
+            tx: OpTransaction {
+                base: env.tx.clone(),
+                deposit: env.deposit.clone().unwrap_or_default(),
+                enveloped_tx: None,
+            },
             chain: L1BlockInfo::default(),
             error: Ok(()),
         };

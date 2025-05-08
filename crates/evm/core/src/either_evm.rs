@@ -1,10 +1,7 @@
 use alloy_evm::{eth::EthEvmContext, Database, EthEvm, Evm, EvmEnv};
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{Address, Bytes};
-use op_revm::{
-    transaction::deposit::DepositTransactionParts, OpContext, OpHaltReason, OpSpecId,
-    OpTransaction, OpTransactionError,
-};
+use op_revm::{OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError};
 use revm::{
     context::{
         result::{EVMError, ExecutionResult, HaltReason, ResultAndState},
@@ -31,8 +28,7 @@ type EitherExecResult<DBError, HaltReason, TxError> =
 ///
 /// The call delegation is handled via its own implementation of the [`Evm`] trait.
 ///
-/// The [`Evm::transact`] and other such calls work over the [`TxEnv`] type. This is wrapped into
-/// [`OpTransaction`] type in case of [`OpEvm`] under the hood.
+/// The [`Evm::transact`] and other such calls work over the [`OpTransaction<TxEnv>`] type.
 ///
 /// However, the [`Evm::HaltReason`] and [`Evm::Error`] leverage the optimism [`OpHaltReason`] and
 /// [`OpTransactionError`] as these are supersets of the eth types. This makes it easier to map eth
@@ -55,47 +51,6 @@ where
     P: PrecompileProvider<EthEvmContext<DB>, Output = InterpreterResult>
         + PrecompileProvider<OpContext<DB>, Output = InterpreterResult>,
 {
-    /// Transact a deposit transaction.
-    ///
-    /// This does not commit the transaction to the [`Database`].
-    ///
-    /// In order to transact and commit use [`EitherEvm::transact_deposit_commit`].
-    pub fn transact_deposit(
-        &mut self,
-        tx: TxEnv,
-        deposit: DepositTransactionParts,
-    ) -> EitherEvmResult<DB::Error, OpHaltReason, OpTransactionError> {
-        match self {
-            Self::Eth(_) => Err(EVMError::Custom(
-                "op-stack deposit tx received but is not supported".to_string(),
-            )),
-            Self::Op(evm) => {
-                let op_tx = OpTransaction { base: tx, deposit, enveloped_tx: None };
-                evm.transact_raw(op_tx)
-            }
-        }
-    }
-
-    /// Transact a deposit transaction and commits it to the [`Database`].
-    pub fn transact_deposit_commit(
-        &mut self,
-        tx: TxEnv,
-        deposit: DepositTransactionParts,
-    ) -> EitherExecResult<DB::Error, OpHaltReason, OpTransactionError>
-    where
-        DB: DatabaseCommit,
-    {
-        match self {
-            Self::Eth(_) => Err(EVMError::Custom(
-                "op-stack deposit tx received but is not supported".to_string(),
-            )),
-            Self::Op(evm) => {
-                let op_tx = OpTransaction { base: tx, deposit, enveloped_tx: None };
-                evm.transact_commit(op_tx)
-            }
-        }
-    }
-
     /// Converts the [`EthEvm::transact`] result to [`EitherEvmResult`].
     fn map_eth_result(
         &self,
@@ -147,7 +102,7 @@ where
     type DB = DB;
     type Error = EVMError<DB::Error, OpTransactionError>;
     type HaltReason = OpHaltReason;
-    type Tx = TxEnv;
+    type Tx = OpTransaction<TxEnv>;
     type Spec = SpecId;
 
     fn block(&self) -> &BlockEnv {
@@ -224,13 +179,10 @@ where
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
         match self {
             Self::Eth(evm) => {
-                let eth = evm.transact(tx);
+                let eth = evm.transact(tx.into_tx_env().base);
                 self.map_eth_result(eth)
             }
-            Self::Op(evm) => {
-                let op_tx = OpTransaction::new(tx.into_tx_env());
-                evm.transact(op_tx)
-            }
+            Self::Op(evm) => evm.transact(tx),
         }
     }
 
@@ -243,13 +195,10 @@ where
     {
         match self {
             Self::Eth(evm) => {
-                let eth = evm.transact_commit(tx);
+                let eth = evm.transact_commit(tx.into_tx_env().base);
                 self.map_exec_result(eth)
             }
-            Self::Op(evm) => {
-                let op_tx = OpTransaction::new(tx.into_tx_env());
-                evm.transact_commit(op_tx)
-            }
+            Self::Op(evm) => evm.transact_commit(tx),
         }
     }
 
@@ -259,13 +208,10 @@ where
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
         match self {
             Self::Eth(evm) => {
-                let res = evm.transact_raw(tx);
+                let res = evm.transact_raw(tx.base);
                 self.map_eth_result(res)
             }
-            Self::Op(evm) => {
-                let op_tx = OpTransaction::new(tx);
-                evm.transact_raw(op_tx)
-            }
+            Self::Op(evm) => evm.transact_raw(tx),
         }
     }
 
