@@ -1087,6 +1087,11 @@ impl Backend {
         let mut env = self.next_env();
         env.tx = tx.pending_transaction.to_revm_tx_env();
 
+        if env.is_optimism {
+            env.tx.enveloped_tx =
+                Some(alloy_rlp::encode(&tx.pending_transaction.transaction.transaction).into());
+        }
+
         let db = self.db.read().await;
         let mut inspector = self.build_inspector();
         let mut evm = self.new_evm_with_inspector_ref(db.as_dyn(), &env, &mut inspector);
