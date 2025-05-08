@@ -451,7 +451,7 @@ impl<'ast> State<'_, 'ast> {
         self.contract = Some(c);
 
         self.s.cbox(self.ind);
-        self.s.cbox(0);
+        self.cbox(0);
         self.word_nbsp(kind.to_str());
         self.print_ident(*name);
         self.nbsp();
@@ -569,7 +569,6 @@ impl<'ast> State<'_, 'ast> {
             self.print_ident(name);
         }
         self.print_parameter_list(parameters);
-        self.neverbreak();
         self.end();
 
         // Attributes.
@@ -596,20 +595,20 @@ impl<'ast> State<'_, 'ast> {
         }
         if !returns.is_empty() {
             self.space();
-            self.ibox(0);
             self.word("returns ");
             self.print_parameter_list(returns);
-            self.neverbreak();
-            self.end();
         }
-        self.neverbreak();
-        self.s.offset(-self.ind);
-        self.end();
 
         if let Some(body) = body {
             self.space();
+            self.s.offset(-self.ind);
+            self.word("");
+            self.end();
             self.print_block(body, body_span);
         } else {
+            self.neverbreak();
+            self.s.offset(-self.ind);
+            self.end();
             self.word(";");
         }
         self.end();
@@ -754,7 +753,7 @@ impl<'ast> State<'_, 'ast> {
 
         match *kind {
             ast::LitKind::Str(kind, ..) => {
-                self.s.cbox(0);
+                self.cbox(0);
                 for (pos, (span, symbol)) in lit.literals().delimited() {
                     if !self.handle_span(span) {
                         let quote_pos = span.lo() + kind.prefix().len() as u32;
@@ -1223,8 +1222,8 @@ impl<'ast> State<'_, 'ast> {
             ast::StmtKind::Emit(path, args) => self.print_emit_revert("emit", path, args),
             ast::StmtKind::Expr(expr) => self.print_expr(expr),
             ast::StmtKind::For { init, cond, next, body } => {
-                self.s.cbox(0);
-                self.s.ibox(0);
+                self.cbox(0);
+                self.ibox(0);
                 self.word("for (");
                 self.zerobreak();
                 if let Some(init) = init {
@@ -1251,7 +1250,8 @@ impl<'ast> State<'_, 'ast> {
                 self.end();
             }
             ast::StmtKind::If(cond, then, els_opt) => {
-                self.s.cbox(0);
+                self.cbox(0);
+                self.ibox(0);
                 self.print_if_no_else(cond, then);
                 let mut els_opt = els_opt.as_deref();
                 while let Some(els) = els_opt {
@@ -1260,6 +1260,7 @@ impl<'ast> State<'_, 'ast> {
                     } else {
                         self.hardbreak();
                     }
+                    self.ibox(0);
                     self.word("else ");
                     if let ast::StmtKind::If(cond, then, els) = &els.kind {
                         self.print_if_no_else(cond, then);
@@ -1289,8 +1290,10 @@ impl<'ast> State<'_, 'ast> {
                 self.print_block(block, stmt.span);
             }
             ast::StmtKind::While(cond, stmt) => {
+                self.ibox(0);
                 self.print_if_cond("while", cond);
                 self.nbsp();
+                self.end();
                 self.print_stmt_as_block(stmt, true);
             }
             ast::StmtKind::Placeholder => self.word("_"),
@@ -1305,15 +1308,13 @@ impl<'ast> State<'_, 'ast> {
     fn print_if_no_else(&mut self, cond: &'ast ast::Expr<'ast>, then: &'ast ast::Stmt<'ast>) {
         self.print_if_cond("if", cond);
         self.nbsp();
+        self.end();
         self.print_stmt_as_block(then, true);
     }
 
     fn print_if_cond(&mut self, kw: &'static str, cond: &'ast ast::Expr<'ast>) {
-        self.ibox(0);
         self.word_nbsp(kw);
         self.print_tuple(std::slice::from_ref(cond), |this, e| this.print_expr(e), get_span!());
-        self.neverbreak();
-        self.end();
     }
 
     fn print_emit_revert(

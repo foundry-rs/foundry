@@ -331,6 +331,8 @@ idna_adapter = "=1.1.0"
 solar-parse = { git = "https://github.com/paradigmxyz/solar", branch = "main" }
 solar-sema = { git = "https://github.com/paradigmxyz/solar", branch = "main" }
 
+figment = { git = "https://github.com/DaniPopes/Figment", branch = "less-mono" }
+
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
 # alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }
