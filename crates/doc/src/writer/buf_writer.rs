@@ -204,7 +204,7 @@ impl BufWriter {
         self.write_piped(&VARIANTS_TABLE_HEADERS.join("|"))?;
         self.write_piped(&VARIANTS_TABLE_SEPARATOR)?;
 
-        for value in params.values.iter() {
+        for value in &params.values {
             let param_name = value.as_ref().map(|v| v.name.clone());
 
             let comment = param_name.as_ref().and_then(|name| {
