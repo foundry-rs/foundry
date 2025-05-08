@@ -1,7 +1,8 @@
 use crate::{
     eth::{
         backend::{
-            db::Db, mem::op_haltreason_to_instruction_result, validate::TransactionValidator,
+            db::Db, env::Env, mem::op_haltreason_to_instruction_result,
+            validate::TransactionValidator,
         },
         error::InvalidTransactionError,
         pool::transactions::PoolTransaction,
@@ -22,7 +23,7 @@ use anvil_core::eth::{
     },
     trie,
 };
-use foundry_evm::{backend::DatabaseError, traces::CallTraceNode, Env};
+use foundry_evm::{backend::DatabaseError, traces::CallTraceNode};
 use foundry_evm_core::{either_evm::EitherEvm, evm::FoundryPrecompiles};
 use op_revm::{
     transaction::deposit::DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, OpContext, OpTransaction,

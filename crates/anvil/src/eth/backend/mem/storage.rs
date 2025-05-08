@@ -5,6 +5,7 @@ use crate::eth::{
             MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates,
             SerializableTransaction, StateDb,
         },
+        env::Env,
         mem::cache::DiskStateCache,
     },
     error::BlockchainError,
@@ -37,7 +38,6 @@ use foundry_evm::{
     traces::{
         CallKind, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, TracingInspectorConfig,
     },
-    Env,
 };
 use parking_lot::RwLock;
 use revm::{context::Block as RevmBlock, primitives::hardfork::SpecId};

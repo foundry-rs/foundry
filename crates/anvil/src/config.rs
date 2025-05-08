@@ -2,6 +2,7 @@ use crate::{
     eth::{
         backend::{
             db::{Db, SerializableState},
+            env::Env,
             fork::{ClientFork, ClientForkConfig},
             genesis::GenesisConfig,
             mem::fork_db::ForkedDatabase,
@@ -37,9 +38,9 @@ use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
     utils::apply_chain_and_block_specific_env_changes,
-    Env,
 };
 use itertools::Itertools;
+use op_revm::OpTransaction;
 use parking_lot::RwLock;
 use rand::thread_rng;
 use revm::{
@@ -1044,10 +1045,11 @@ impl NodeConfig {
                 basefee: self.get_base_fee(),
                 ..Default::default()
             },
-            TxEnv { chain_id: Some(self.get_chain_id()), ..Default::default() },
+            OpTransaction {
+                base: TxEnv { chain_id: Some(self.get_chain_id()), ..Default::default() },
+                ..Default::default()
+            },
         );
-
-        env.is_optimism = self.enable_optimism;
 
         let fees = FeeManager::new(
             spec_id,

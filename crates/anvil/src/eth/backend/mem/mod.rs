@@ -8,6 +8,7 @@ use crate::{
         backend::{
             cheats::CheatsManager,
             db::{Db, MaybeFullDatabase, SerializableState},
+            env::Env,
             executor::{ExecutedTransactions, TransactionExecutor},
             fork::ClientFork,
             genesis::GenesisConfig,
@@ -91,7 +92,6 @@ use foundry_evm::{
     decode::RevertDecoder,
     inspectors::AccessListInspector,
     traces::TracingInspectorConfig,
-    Env,
 };
 use foundry_evm_core::{either_evm::EitherEvm, evm::FoundryPrecompiles};
 use futures::channel::mpsc::{unbounded, UnboundedSender};
