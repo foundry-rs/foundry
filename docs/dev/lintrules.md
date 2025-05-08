@@ -29,10 +29,10 @@ The `forge-lint` system operates by analyzing Solidity source code:
   *   Create a static `SolLint` instance using the `declare_forge_lint!` to define its metadata.
       ```rust
       declare_forge_lint!(
-          MIXED_CASE_FUNCTION, // The Rust identifier for this SolLint static
-          Severity::Info,      // The default severity of the lint
-          "mixed-case-function", // A unique string ID for configuration/CLI
-          "function names should use mixedCase", // A brief description
+          MIXED_CASE_FUNCTION,                      // The Rust identifier for this SolLint static
+          Severity::Info,                           // The default severity of the lint
+          "mixed-case-function",                    // A unique string ID for configuration/CLI
+          "function names should use mixedCase",    // A brief description
           "https://docs.soliditylang.org/en/latest/style-guide.html#function-names" // Optional help link
       );
       ```
