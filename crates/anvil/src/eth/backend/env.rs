@@ -1,5 +1,5 @@
 use alloy_evm::EvmEnv;
-use op_revm::OpTransaction;
+use op_revm::{transaction::deposit::DepositTransactionParts, OpTransaction};
 use revm::{
     context::{BlockEnv, CfgEnv, TxEnv},
     primitives::hardfork::SpecId,
@@ -35,5 +35,10 @@ impl Env {
         cfg.spec = spec_id;
 
         Self::from(cfg, block, tx)
+    }
+
+    pub fn with_deposit(mut self, deposit: DepositTransactionParts) -> Self {
+        self.tx.deposit = deposit;
+        self
     }
 }

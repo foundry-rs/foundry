@@ -1085,8 +1085,7 @@ impl Backend {
         BlockchainError,
     > {
         let mut env = self.next_env();
-        let op_tx = tx.pending_transaction.to_revm_tx_env();
-        env.tx = op_tx.base.clone();
+        env.tx = tx.pending_transaction.to_revm_tx_env();
 
         let db = self.db.read().await;
         let mut inspector = self.build_inspector();
@@ -1435,36 +1434,39 @@ impl Backend {
         let caller = from.unwrap_or_default();
         let to = to.as_ref().and_then(TxKind::to);
         let blob_hashes = blob_versioned_hashes.unwrap_or_default();
-        env.tx = TxEnv {
-            caller,
-            gas_limit,
-            gas_price,
-            gas_priority_fee: max_priority_fee_per_gas,
-            max_fee_per_blob_gas: max_fee_per_blob_gas
-                .or_else(|| {
-                    if !blob_hashes.is_empty() {
-                        env.evm_env.block_env.blob_gasprice()
-                    } else {
-                        Some(0)
-                    }
-                })
-                .unwrap_or_default(),
-            kind: match to {
-                Some(addr) => TxKind::Call(*addr),
-                None => TxKind::Create,
+        env.tx = OpTransaction {
+            base: TxEnv {
+                caller,
+                gas_limit,
+                gas_price,
+                gas_priority_fee: max_priority_fee_per_gas,
+                max_fee_per_blob_gas: max_fee_per_blob_gas
+                    .or_else(|| {
+                        if !blob_hashes.is_empty() {
+                            env.evm_env.block_env.blob_gasprice()
+                        } else {
+                            Some(0)
+                        }
+                    })
+                    .unwrap_or_default(),
+                kind: match to {
+                    Some(addr) => TxKind::Call(*addr),
+                    None => TxKind::Create,
+                },
+                tx_type: transaction_type.unwrap_or_default(),
+                value: value.unwrap_or_default(),
+                data: input.into_input().unwrap_or_default(),
+                chain_id: None,
+                access_list: access_list.unwrap_or_default(),
+                blob_hashes,
+                authorization_list: authorization_list.unwrap_or_default(),
+                ..Default::default()
             },
-            tx_type: transaction_type.unwrap_or_default(),
-            value: value.unwrap_or_default(),
-            data: input.into_input().unwrap_or_default(),
-            chain_id: None,
-            access_list: access_list.unwrap_or_default(),
-            blob_hashes,
-            authorization_list: authorization_list.unwrap_or_default(),
             ..Default::default()
         };
 
         if let Some(nonce) = nonce {
-            env.tx.nonce = nonce;
+            env.tx.base.nonce = nonce;
         } else {
             // Disable nonce check in revm
             env.evm_env.cfg_env.disable_nonce_check = true;
@@ -1492,8 +1494,7 @@ impl Backend {
                     .map(|st| st.unwrap_or_default())
                     .unwrap_or_default(),
             };
-
-            env.deposit = Some(deposit);
+            env.tx.deposit = deposit;
         }
 
         env
@@ -1601,13 +1602,8 @@ impl Backend {
                             &mut inspector,
                         );
 
-                        let op_tx = OpTransaction {
-                            base: env.tx,
-                            deposit: env.deposit.unwrap_or_default(),
-                            enveloped_tx: None,
-                         };
                         trace!(target: "backend", env=?env.evm_env, spec=?env.evm_env.spec_id(),"simulate evm env");
-                        evm.transact(op_tx)?
+                        evm.transact(env.tx)?
                     } else {
                         let mut inspector = self.build_inspector();
                         let mut evm = self.new_evm_with_inspector_ref(
@@ -1615,14 +1611,8 @@ impl Backend {
                             &env,
                             &mut inspector,
                         );
-
-                        let op_tx = OpTransaction {
-                            base: env.tx,
-                            deposit: env.deposit.unwrap_or_default(),
-                            enveloped_tx: None,
-                         };
                         trace!(target: "backend", env=?env.evm_env, spec=?env.evm_env.spec_id(),"simulate evm env");
-                        evm.transact(op_tx)?
+                        evm.transact(env.tx)?
                     };
                     trace!(target: "backend", ?result, ?request, "simulate call");
 
@@ -1753,12 +1743,7 @@ impl Backend {
 
         let env = self.build_call_env(request, fee_details, block_env);
         let mut evm = self.new_evm_with_inspector_ref(state, &env, &mut inspector);
-        let tx = OpTransaction {
-            base: env.tx,
-            deposit: env.deposit.unwrap_or_default(),
-            enveloped_tx: None,
-        };
-        let ResultAndState { result, state } = evm.transact(tx)?;
+        let ResultAndState { result, state } = evm.transact(env.tx)?;
         let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
                 (reason.into(), gas_used, Some(output))
@@ -1819,12 +1804,7 @@ impl Backend {
                                 &env,
                                 &mut inspector,
                             );
-                            let op_tx = OpTransaction {
-                                base: env.tx,
-                                deposit: env.deposit.unwrap_or_default(),
-                                enveloped_tx: None,
-                            };
-                            let ResultAndState { result, state: _ } = evm.transact(op_tx)?;
+                            let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
 
                             drop(evm);
                             let tracing_inspector = inspector.tracer.expect("tracer disappeared");
@@ -1856,12 +1836,7 @@ impl Backend {
 
             let env = self.build_call_env(request, fee_details, block);
             let mut evm = self.new_evm_with_inspector_ref(state.as_dyn(), &env, &mut inspector);
-            let op_tx = OpTransaction {
-                base: env.tx,
-                deposit: env.deposit.unwrap_or_default(),
-                enveloped_tx: None,
-            };
-            let ResultAndState { result, state: _ } = evm.transact(op_tx)?;
+            let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
 
             let (exit_reason, gas_used, out) = match result {
                 ExecutionResult::Success { reason, gas_used, output, .. } => {
@@ -1903,12 +1878,7 @@ impl Backend {
 
         let env = self.build_call_env(request, fee_details, block_env);
         let mut evm = self.new_evm_with_inspector_ref(state, &env, &mut inspector);
-        let op_tx = OpTransaction {
-            base: env.tx,
-            deposit: env.deposit.unwrap_or_default(),
-            enveloped_tx: None,
-        };
-        let ResultAndState { result, state: _ } = evm.transact(op_tx)?;
+        let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
         let (exit_reason, gas_used, out) = match result {
             ExecutionResult::Success { reason, gas_used, output, .. } => {
                 (reason.into(), gas_used, Some(output))
