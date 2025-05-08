@@ -131,7 +131,7 @@ impl Executor {
     }
 
     fn clone_with_backend(&self, backend: Backend) -> Self {
-        let env = Env::from_with_spec_id(
+        let env = Env::new_with_spec_id(
             self.env.evm_env.cfg_env.clone(),
             self.env.evm_env.block_env.clone(),
             self.env.tx.clone(),
@@ -835,7 +835,7 @@ impl Default for RawCallResult {
             coverage: None,
             transactions: None,
             state_changeset: HashMap::default(),
-            env: Env::from_with_spec_id(
+            env: Env::new_with_spec_id(
                 Default::default(),
                 Default::default(),
                 Default::default(),

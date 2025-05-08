@@ -82,7 +82,7 @@ impl ExecutorBuilder {
             stack.gas_price = Some(env.tx.gas_price);
         }
         let gas_limit = gas_limit.unwrap_or(env.evm_env.block_env.gas_limit);
-        let env = Env::from_with_spec_id(
+        let env = Env::new_with_spec_id(
             env.evm_env.cfg_env.clone(),
             env.evm_env.block_env.clone(),
             env.tx,

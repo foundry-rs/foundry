@@ -187,7 +187,7 @@ impl RunArgs {
             odyssey,
             create2_deployer,
         )?;
-        let mut env = Env::from_with_spec_id(
+        let mut env = Env::new_with_spec_id(
             env.evm_env.cfg_env.clone(),
             env.evm_env.block_env.clone(),
             env.tx.clone(),

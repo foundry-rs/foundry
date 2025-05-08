@@ -33,7 +33,7 @@ impl Env {
         }
     }
 
-    pub fn from_with_spec_id(cfg: CfgEnv, block: BlockEnv, tx: TxEnv, spec_id: SpecId) -> Self {
+    pub fn new_with_spec_id(cfg: CfgEnv, block: BlockEnv, tx: TxEnv, spec_id: SpecId) -> Self {
         let mut cfg = cfg;
         cfg.spec = spec_id;
 
