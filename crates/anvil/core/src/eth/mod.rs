@@ -10,7 +10,7 @@ use alloy_rpc_types::{
         filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions},
     },
-    BlockId, BlockNumberOrTag as BlockNumber, Filter, Index,
+    BlockId, BlockNumberOrTag as BlockNumber, BlockOverrides, Filter, Index,
 };
 use alloy_serde::WithOtherFields;
 use foundry_common::serde_helpers::{
@@ -151,6 +151,7 @@ pub enum EthRequest {
         WithOtherFields<TransactionRequest>,
         #[serde(default)] Option<BlockId>,
         #[serde(default)] Option<StateOverride>,
+        #[serde(default)] Option<Box<BlockOverrides>>,
     ),
 
     #[serde(rename = "eth_simulateV1")]
@@ -164,6 +165,7 @@ pub enum EthRequest {
         WithOtherFields<TransactionRequest>,
         #[serde(default)] Option<BlockId>,
         #[serde(default)] Option<StateOverride>,
+        #[serde(default)] Option<Box<BlockOverrides>>,
     ),
 
     #[serde(rename = "eth_getTransactionByHash", with = "sequence")]

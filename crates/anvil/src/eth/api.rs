@@ -1,5 +1,8 @@
 use super::{
-    backend::mem::{state, BlockRequest, State},
+    backend::{
+        db::MaybeFullDatabase,
+        mem::{state, BlockRequest, State},
+    },
     sign::build_typed_transaction,
 };
 use crate::{
@@ -54,7 +57,7 @@ use alloy_rpc_types::{
     },
     request::TransactionRequest,
     simulate::{SimulatePayload, SimulatedBlock},
-    state::StateOverride,
+    state::EvmOverrides,
     trace::{
         filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
@@ -84,7 +87,7 @@ use foundry_evm::{
     backend::DatabaseError,
     decode::RevertDecoder,
     revm::{
-        db::DatabaseRef,
+        db::{CacheDB, DatabaseRef},
         interpreter::{return_ok, return_revert, InstructionResult},
         primitives::BlockEnv,
     },
@@ -247,18 +250,20 @@ impl EthApi {
             EthRequest::EthSendRawTransaction(tx) => {
                 self.send_raw_transaction(tx).await.to_rpc_result()
             }
-            EthRequest::EthCall(call, block, overrides) => {
-                self.call(call, block, overrides).await.to_rpc_result()
-            }
+            EthRequest::EthCall(call, block, state_override, block_overrides) => self
+                .call(call, block, EvmOverrides::new(state_override, block_overrides))
+                .await
+                .to_rpc_result(),
             EthRequest::EthSimulateV1(simulation, block) => {
                 self.simulate_v1(simulation, block).await.to_rpc_result()
             }
             EthRequest::EthCreateAccessList(call, block) => {
                 self.create_access_list(call, block).await.to_rpc_result()
             }
-            EthRequest::EthEstimateGas(call, block, overrides) => {
-                self.estimate_gas(call, block, overrides).await.to_rpc_result()
-            }
+            EthRequest::EthEstimateGas(call, block, state_override, block_overrides) => self
+                .estimate_gas(call, block, EvmOverrides::new(state_override, block_overrides))
+                .await
+                .to_rpc_result(),
             EthRequest::EthGetRawTransactionByHash(hash) => {
                 self.raw_transaction(hash).await.to_rpc_result()
             }
@@ -969,7 +974,8 @@ impl EthApi {
 
         if request.gas.is_none() {
             // estimate if not provided
-            if let Ok(gas) = self.estimate_gas(request.clone(), None, None).await {
+            if let Ok(gas) = self.estimate_gas(request.clone(), None, EvmOverrides::default()).await
+            {
                 request.gas = Some(gas.to());
             }
         }
@@ -996,7 +1002,8 @@ impl EthApi {
 
         if request.gas.is_none() {
             // estimate if not provided
-            if let Ok(gas) = self.estimate_gas(request.clone(), None, None).await {
+            if let Ok(gas) = self.estimate_gas(request.clone(), None, EvmOverrides::default()).await
+            {
                 request.gas = Some(gas.to());
             }
         }
@@ -1070,7 +1077,7 @@ impl EthApi {
         &self,
         request: WithOtherFields<TransactionRequest>,
         block_number: Option<BlockId>,
-        overrides: Option<StateOverride>,
+        overrides: EvmOverrides,
     ) -> Result<Bytes> {
         node_info!("eth_call");
         let block_request = self.block_request(block_number).await?;
@@ -1078,8 +1085,8 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
-                    if overrides.is_some() {
-                        return Err(BlockchainError::StateOverrideError(
+                    if overrides.has_state() || overrides.has_block() {
+                        return Err(BlockchainError::EvmOverrideError(
                             "not available on past forked blocks".to_string(),
                         ));
                     }
@@ -1201,7 +1208,7 @@ impl EthApi {
         &self,
         request: WithOtherFields<TransactionRequest>,
         block_number: Option<BlockId>,
-        overrides: Option<StateOverride>,
+        overrides: EvmOverrides,
     ) -> Result<U256> {
         node_info!("eth_estimateGas");
         self.do_estimate_gas(
@@ -2082,7 +2089,9 @@ impl EthApi {
 
                 // Estimate gas
                 if tx_req.gas.is_none() {
-                    if let Ok(gas) = self.estimate_gas(tx_req.clone(), None, None).await {
+                    if let Ok(gas) =
+                        self.estimate_gas(tx_req.clone(), None, EvmOverrides::default()).await
+                    {
                         tx_req.gas = Some(gas.to());
                     }
                 }
@@ -2550,7 +2559,8 @@ impl EthApi {
 
         request.from = Some(from);
 
-        let gas_limit_fut = self.estimate_gas(request.clone(), Some(BlockId::latest()), None);
+        let gas_limit_fut =
+            self.estimate_gas(request.clone(), Some(BlockId::latest()), EvmOverrides::default());
 
         let fees_fut = self.fee_history(
             U256::from(EIP1559_FEE_ESTIMATION_PAST_BLOCKS),
@@ -2651,15 +2661,15 @@ impl EthApi {
         &self,
         request: WithOtherFields<TransactionRequest>,
         block_number: Option<BlockId>,
-        overrides: Option<StateOverride>,
+        overrides: EvmOverrides,
     ) -> Result<u128> {
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
-                    if overrides.is_some() {
-                        return Err(BlockchainError::StateOverrideError(
+                    if overrides.has_state() || overrides.has_block() {
+                        return Err(BlockchainError::EvmOverrideError(
                             "not available on past forked blocks".to_string(),
                         ));
                     }
@@ -2672,14 +2682,18 @@ impl EthApi {
         // <https://github.com/foundry-rs/foundry/issues/6036>
         self.on_blocking_task(|this| async move {
             this.backend
-                .with_database_at(Some(block_request), |mut state, block| {
-                    if let Some(overrides) = overrides {
-                        state = Box::new(state::apply_state_override(
-                            overrides.into_iter().collect(),
-                            state,
-                        )?);
+                .with_database_at(Some(block_request), |state, mut block| {
+                    let mut cache_db = CacheDB::new(state);
+                    if let Some(state_overrides) = overrides.state {
+                        state::apply_state_overrides(
+                            state_overrides.into_iter().collect(),
+                            &mut cache_db,
+                        )?;
                     }
-                    this.do_estimate_gas_with_state(request, &state, block)
+                    if let Some(block_overrides) = overrides.block {
+                        state::apply_block_overrides(*block_overrides, &mut cache_db, &mut block);
+                    }
+                    this.do_estimate_gas_with_state(request, cache_db.as_dyn(), block)
                 })
                 .await?
         })

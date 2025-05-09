@@ -60,6 +60,8 @@ pub enum BlockchainError {
     AlloyForkProvider(#[from] TransportError),
     #[error("EVM error {0:?}")]
     EvmError(InstructionResult),
+    #[error("Evm override error: {0}")]
+    EvmOverrideError(String),
     #[error("Invalid url {0:?}")]
     InvalidUrl(String),
     #[error("Internal error: {0:?}")]
@@ -427,6 +429,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 }
                 err @ BlockchainError::EvmError(_) => {
                     RpcError::internal_error_with(err.to_string())
+                }
+                err @ BlockchainError::EvmOverrideError(_) => {
+                    RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::InvalidUrl(_) => RpcError::invalid_params(err.to_string()),
                 BlockchainError::Internal(err) => RpcError::internal_error_with(err),
