@@ -1,7 +1,7 @@
 //! In-memory blockchain backend.
 
 use self::state::trie_storage;
-use super::executor::new_evm_with_inspector_ref;
+use super::{executor::new_evm_with_inspector_ref};
 use crate::{
     config::PruneStateHistoryConfig,
     eth::{
@@ -960,6 +960,7 @@ impl Backend {
         if let Some(block) = state.block.clone() {
             self.env.write().block = block.clone();
 
+
             // Set the current best block number.
             // Defaults to block number for compatibility with existing state files.
             let fork_num_and_hash = self.get_fork().map(|f| (f.block_number(), f.block_hash()));
@@ -1001,6 +1002,26 @@ impl Backend {
 
                 self.blockchain.storage.write().best_hash = best_hash;
             }
+        }
+
+        if let Some(block) = state.blocks.last() {
+            let header = &block.header;
+            let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
+                header.gas_used as u128,
+                header.gas_limit as u128,
+                header.base_fee_per_gas.unwrap_or_default(),
+            );
+            let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
+                header.excess_blob_gas.map(|g| g as u128).unwrap_or_default(),
+                header.blob_gas_used.map(|g| g as u128).unwrap_or_default(),
+            );
+
+            // update next base fee
+            self.fees.set_base_fee(next_block_base_fee);
+            self.fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
+                next_block_excess_blob_gas,
+                false,
+            ));
         }
 
         if !self.db.write().await.load_state(state.clone())? {
