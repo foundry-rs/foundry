@@ -70,21 +70,8 @@ pub fn trie_account_rlp(info: &AccountInfo, storage: &HashMap<U256, U256>) -> Ve
     out
 }
 
-/// Applies the given state overrides to the state, returning a new CacheDB state
-pub fn apply_state_override<D>(
-    overrides: StateOverride,
-    state: D,
-) -> Result<CacheDB<D>, BlockchainError>
-where
-    D: DatabaseRef<Error = DatabaseError>,
-{
-    let mut cache_db = CacheDB::new(state);
-    apply_cached_db_state_override(overrides, &mut cache_db)?;
-    Ok(cache_db)
-}
-
 /// Applies the given state overrides to the given CacheDB
-pub fn apply_cached_db_state_override<D>(
+pub fn apply_state_overrides<D>(
     overrides: StateOverride,
     cache_db: &mut CacheDB<D>,
 ) -> Result<(), BlockchainError>

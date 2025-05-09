@@ -61,9 +61,10 @@ use alloy_rpc_types::{
         },
         parity::LocalizedTransactionTrace,
     },
-    AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
-    EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
-    FilteredParams, Header as AlloyHeader, Index, Log, Transaction, TransactionReceipt,
+    AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber, BlockOverrides,
+    BlockTransactions, EIP1186AccountProofResponse as AccountProof,
+    EIP1186StorageProof as StorageProof, Filter, FilteredParams, Header as AlloyHeader, Index, Log,
+    Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
 use alloy_signer::Signature;
@@ -1359,16 +1360,20 @@ impl Backend {
         request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_request: Option<BlockRequest>,
-        overrides: Option<StateOverride>,
+        state_overrides: Option<StateOverride>,
+        block_overrides: Option<BlockOverrides>,
     ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
-        self.with_database_at(block_request, |state, block| {
+        self.with_database_at(block_request, |state, mut block| {
             let block_number = block.number.to::<u64>();
-            let (exit, out, gas, state) = match overrides {
-                None => self.call_with_state(state.as_dyn(), request, fee_details, block),
-                Some(overrides) => {
-                    let state = state::apply_state_override(overrides.into_iter().collect(), state)?;
-                    self.call_with_state(state.as_dyn(), request, fee_details, block)
-                },
+            let (exit, out, gas, state) = {
+                let mut cache_db = CacheDB::new(state);
+                if let Some(state_overrides) = state_overrides {
+                    state::apply_state_overrides(state_overrides.into_iter().collect(), &mut cache_db)?;
+                }
+                if let Some(block_overrides) = block_overrides {
+                    apply_block_overrides(block_overrides, &mut cache_db, &mut block);
+                }
+                self.call_with_state(cache_db.as_dyn(), request, fee_details, block)
             }?;
             trace!(target: "backend", "call return {:?} out: {:?} gas {} on block {}", exit, out, gas, block_number);
             Ok((exit, out, gas, state))
@@ -1512,34 +1517,12 @@ impl Backend {
                 let mut log_index = 0;
                 let mut gas_used = 0;
                 let mut transactions = Vec::with_capacity(calls.len());
-                // apply state overrides before executing the transactions
+                // apply state and block overrides before executing the transactions
                 if let Some(state_overrides) = state_overrides {
-                    state::apply_cached_db_state_override(state_overrides, &mut cache_db)?;
+                    state::apply_state_overrides(state_overrides, &mut cache_db)?;
                 }
-
-                // apply block overrides
-                if let Some(overrides) = block_overrides {
-                    if let Some(number) = overrides.number {
-                        block_env.number = number.saturating_to();
-                    }
-                    if let Some(difficulty) = overrides.difficulty {
-                        block_env.difficulty = difficulty;
-                    }
-                    if let Some(time) = overrides.time {
-                        block_env.timestamp = U256::from(time);
-                    }
-                    if let Some(gas_limit) = overrides.gas_limit {
-                        block_env.gas_limit = U256::from(gas_limit);
-                    }
-                    if let Some(coinbase) = overrides.coinbase {
-                        block_env.coinbase = coinbase;
-                    }
-                    if let Some(random) = overrides.random {
-                        block_env.prevrandao = Some(random);
-                    }
-                    if let Some(base_fee) = overrides.base_fee {
-                        block_env.basefee = base_fee.saturating_to();
-                    }
+                if let Some(block_overrides) = block_overrides {
+                    apply_block_overrides(block_overrides, &mut cache_db, &mut block_env);
                 }
 
                 // execute all calls in that block
@@ -1740,19 +1723,20 @@ impl Backend {
         block_request: Option<BlockRequest>,
         opts: GethDebugTracingCallOptions,
     ) -> Result<GethTrace, BlockchainError> {
-        let GethDebugTracingCallOptions { tracing_options, block_overrides: _, state_overrides } =
+        let GethDebugTracingCallOptions { tracing_options, block_overrides, state_overrides } =
             opts;
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = tracing_options;
 
-        self.with_database_at(block_request, |state, block| {
+        self.with_database_at(block_request, |state, mut block| {
             let block_number = block.number;
 
-            let state = if let Some(overrides) = state_overrides {
-                Box::new(state::apply_state_override(overrides, state)?)
-                    as Box<dyn MaybeFullDatabase>
-            } else {
-                state
-            };
+            let mut cache_db = CacheDB::new(state);
+            if let Some(state_overrides) = state_overrides {
+                state::apply_state_overrides(state_overrides, &mut cache_db)?;
+            }
+            if let Some(block_overrides) = block_overrides {
+                apply_block_overrides(block_overrides, &mut cache_db, &mut block);
+            }
 
             if let Some(tracer) = tracer {
                 return match tracer {
@@ -1768,7 +1752,7 @@ impl Backend {
 
                             let env = self.build_call_env(request, fee_details, block);
                             let mut evm = self.new_evm_with_inspector_ref(
-                                state.as_dyn(),
+                                cache_db.as_dyn(),
                                 env,
                                 &mut inspector,
                             );
@@ -1803,7 +1787,7 @@ impl Backend {
                 .with_tracing_config(TracingInspectorConfig::from_geth_config(&config));
 
             let env = self.build_call_env(request, fee_details, block);
-            let mut evm = self.new_evm_with_inspector_ref(state.as_dyn(), env, &mut inspector);
+            let mut evm = self.new_evm_with_inspector_ref(cache_db.as_dyn(), env, &mut inspector);
             let ResultAndState { result, state: _ } = evm.transact()?;
 
             let (exit_reason, gas_used, out) = match result {
@@ -3312,4 +3296,51 @@ pub fn is_arbitrum(chain_id: u64) -> bool {
         return chain.is_arbitrum()
     }
     false
+}
+
+/// Applies the given block overrides to the env and updates overridden block hashes in the db.
+pub fn apply_block_overrides<DB>(
+    overrides: BlockOverrides,
+    cache_db: &mut CacheDB<DB>,
+    env: &mut BlockEnv,
+) {
+    let BlockOverrides {
+        number,
+        difficulty,
+        time,
+        gas_limit,
+        coinbase,
+        random,
+        base_fee,
+        block_hash,
+    } = overrides;
+
+    if let Some(block_hashes) = block_hash {
+        // override block hashes
+        cache_db
+            .block_hashes
+            .extend(block_hashes.into_iter().map(|(num, hash)| (U256::from(num), hash)))
+    }
+
+    if let Some(number) = number {
+        env.number = number;
+    }
+    if let Some(difficulty) = difficulty {
+        env.difficulty = difficulty;
+    }
+    if let Some(time) = time {
+        env.timestamp = U256::from(time);
+    }
+    if let Some(gas_limit) = gas_limit {
+        env.gas_limit = U256::from(gas_limit);
+    }
+    if let Some(coinbase) = coinbase {
+        env.coinbase = coinbase;
+    }
+    if let Some(random) = random {
+        env.prevrandao = Some(random);
+    }
+    if let Some(base_fee) = base_fee {
+        env.basefee = base_fee;
+    }
 }

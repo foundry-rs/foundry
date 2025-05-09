@@ -871,6 +871,7 @@ async fn test_fork_call() {
             }),
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -1313,6 +1314,7 @@ async fn test_fork_execution_reverted() {
                 ..Default::default()
             }),
             Some(target.into()),
+            None,
             None,
         )
         .await;

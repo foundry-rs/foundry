@@ -1090,7 +1090,7 @@ async fn estimates_gas_on_pending_by_default() {
         .to(sender)
         .value(U256::from(1e10))
         .input(Bytes::from(vec![0x42]).into());
-    api.estimate_gas(WithOtherFields::new(tx), None, None).await.unwrap();
+    api.estimate_gas(WithOtherFields::new(tx), None, None, None).await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1107,7 +1107,7 @@ async fn test_estimate_gas() {
         .value(U256::from(1e10))
         .input(Bytes::from(vec![0x42]).into());
     // Expect the gas estimation to fail due to insufficient funds.
-    let error_result = api.estimate_gas(WithOtherFields::new(tx.clone()), None, None).await;
+    let error_result = api.estimate_gas(WithOtherFields::new(tx.clone()), None, None, None).await;
 
     assert!(error_result.is_err(), "Expected an error due to insufficient funds");
     let error_message = error_result.unwrap_err().to_string();
@@ -1125,7 +1125,7 @@ async fn test_estimate_gas() {
 
     // Estimate gas with state override implying sufficient funds.
     let gas_estimate = api
-        .estimate_gas(WithOtherFields::new(tx), None, Some(state_override))
+        .estimate_gas(WithOtherFields::new(tx), None, Some(state_override), None)
         .await
         .expect("Failed to estimate gas with state override");
 
@@ -1242,5 +1242,5 @@ async fn estimates_gas_prague() {
         .with_input(hex!("0xcafebabe"))
         .with_from(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
         .with_to(address!("0x70997970c51812dc3a010c7d01b50e0d17dc79c8"));
-    api.estimate_gas(WithOtherFields::new(req), None, None).await.unwrap();
+    api.estimate_gas(WithOtherFields::new(req), None, None, None).await.unwrap();
 }
