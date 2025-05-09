@@ -88,6 +88,7 @@ watchexec-signals = "4.0"
 clearscreen = "4.0"
 evm-disassembler.workspace = true
 num-bigint = "0.4"
+symlink = "0.1"
 
 # doc server
 axum = { workspace = true, features = ["ws"] }

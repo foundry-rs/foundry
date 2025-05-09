@@ -21,7 +21,9 @@ use foundry_config::Config;
 use rayon::prelude::*;
 use solar_parse::ast::visit::Visit;
 use std::path::{Path, PathBuf};
+use symlink::symlink_dir;
 use tempfile::TempDir;
+
 pub struct MutationsSummary {
     total: usize,
     dead: usize,
@@ -142,6 +144,8 @@ impl MutationHandler {
             Self::copy_origin(&mutation_dir, target_contract_path, config);
 
             mutant.path = mutation_dir;
+
+            break;
         }
 
         self.temp_dir = Some(temp_dir_root);
@@ -174,6 +178,7 @@ impl MutationHandler {
         let out_src = &config.out;
         let contract_src = &config.src;
         let test_src = &config.test;
+        let libs = &config.libs;
 
         // Get all paths relative to project root
         let to_relative_path = |src_path: &Path| -> PathBuf {
@@ -185,35 +190,39 @@ impl MutationHandler {
         let rel_out = to_relative_path(out_src);
         let rel_src = to_relative_path(contract_src);
         let rel_test = to_relative_path(test_src);
+        // let rel_libs = libs.iter().map(|lib| to_relative_path(lib)).collect::<Vec<_>>();
 
         // Create the target directories under the mutation path
         let cache_dest = path.join(&rel_cache);
         let out_dest = path.join(&rel_out);
         let contract_dest = path.join(&rel_src);
         let test_dest = path.join(&rel_test);
+        // let libs_dest =
+        //     libs.iter().map(|lib| path.join(&to_relative_path(lib))).collect::<Vec<_>>();
 
         std::fs::create_dir_all(&cache_dest).expect("Failed to create temp cache directory");
         std::fs::create_dir_all(&out_dest).expect("Failed to create temp out directory");
         std::fs::create_dir_all(&contract_dest).expect("Failed to create temp src directory");
-        std::fs::create_dir_all(&test_dest).expect("Failed to create temp test directory");
+        // std::fs::create_dir_all(&test_dest).expect("Failed to create temp test directory");
 
-        Self::copy_dir_except(cache_src, cache_dest, src_contract_path)
-            .expect("Failed to copy in temp cache");
-        Self::copy_dir_except(out_src, out_dest, src_contract_path)
-            .expect("Failed to copy in temp out directory");
+        Self::create_symlink_dir(cache_src, cache_dest).expect("Failed to copy in temp cache");
+        Self::create_symlink_dir(out_src, out_dest).expect("Failed to copy in temp out directory");
         Self::copy_dir_except(contract_src, contract_dest, src_contract_path)
             .expect("Failed to copy in temp src directory");
-        Self::copy_dir_except(test_src, test_dest, src_contract_path)
-            .expect("Failed to copy in temp test directory");
+
+        // Self::create_symlink_dir(test_src, test_dest, src_contract_path)
+        // .expect("Failed to copy in temp test directory");
+        symlink_dir(test_src, test_dest).expect("Failed to symlink in temp test directory");
+
+        for lib in libs {
+            // let lib_dest = path.join(&rel_libs);
+            symlink_dir(lib, path.join(&to_relative_path(lib)))
+                .expect("Failed to symlink in temp lib directory");
+        }
     }
 
-    /// Recursively copy all files except one, from a src to a dst folder
-    /// @todo Symlinks instead?
-    fn copy_dir_except(
-        src: impl AsRef<Path>,
-        dst: impl AsRef<Path>,
-        except: &Path,
-    ) -> std::io::Result<()> {
+    /// Recursively create symlinks
+    fn create_symlink_dir(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {
         std::fs::create_dir_all(&dst)?;
 
         for entry in std::fs::read_dir(src)? {
@@ -221,8 +230,8 @@ impl MutationHandler {
             let ty = entry.file_type()?;
 
             if ty.is_dir() {
-                Self::copy_dir_except(entry.path(), dst.as_ref().join(entry.file_name()), except)?;
-            } else if entry.file_name() != except.file_name().unwrap_or_default() {
+                Self::create_symlink_dir(entry.path(), dst.as_ref().join(entry.file_name()))?;
+            } else {
                 // Create symlinks instead of copying files - much faster
                 #[cfg(unix)]
                 {
@@ -238,6 +247,30 @@ impl MutationHandler {
                         dst.as_ref().join(entry.file_name()),
                     )?;
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Recursively copy all files except one, from a src to a dst folder
+    fn copy_dir_except(
+        src: impl AsRef<Path>,
+        dst: impl AsRef<Path>,
+        except: &Path,
+    ) -> std::io::Result<()> {
+        std::fs::create_dir_all(&dst)?;
+
+        for entry in std::fs::read_dir(src)? {
+            let entry = entry?;
+            let ty = entry.file_type()?;
+
+            if ty.is_dir() {
+                Self::copy_dir_except(entry.path(), dst.as_ref().join(entry.file_name()), except)?;
+            } else if entry.file_name() != except.file_name().unwrap_or_default() {
+                // std::os::unix::fs::symlink(entry.path(),
+                // &dst.as_ref().join(entry.file_name()))?; // and for windows, would be
+                // std::os::windows::fs::symlink_file
+                std::fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
             }
         }
         Ok(())
@@ -266,6 +299,7 @@ impl MutationHandler {
                 .unwrap_or_else(|_| panic!("Failed to create directories for {:?}", &parent));
         }
 
+        // insert the mutation at the correct span
         let span = mutation.span;
         let replacement = mutation.mutation.to_string();
         let src_content = Arc::clone(&self.src);
@@ -281,6 +315,7 @@ impl MutationHandler {
         new_content.push_str(&replacement);
         new_content.push_str(after);
 
+        // then write it in the temp folder
         std::fs::write(&target_path, new_content)
             .unwrap_or_else(|_| panic!("Failed to write to target file {:?}", &target_path));
     }
@@ -299,6 +334,10 @@ impl MutationHandler {
         let rel_out = to_relative_path(&self.config.out);
         let rel_src = to_relative_path(&self.config.src);
 
+        dbg!(&self.config.src);
+        dbg!(&rel_src);
+        dbg!(&self.config.remappings);
+
         // Create a new config with the correct paths mirroring the original structure
         let mut config = (*self.config).clone();
         config.root = temp_folder.clone();
@@ -307,9 +346,13 @@ impl MutationHandler {
         config.out = temp_folder.join(&rel_out);
         let project = config.project().unwrap();
 
+        dbg!(&config);
+
         let compiler = ProjectCompiler::new(&project).unwrap();
 
         let output = compiler.compile().unwrap();
+
+        dbg!(&output);
 
         match output.has_compiler_errors() {
             true => None,
