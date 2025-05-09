@@ -1735,15 +1735,18 @@ impl EthApi {
             return Ok(());
         }
 
-        // mine all the blocks
-        for _ in 0..blocks.to::<u64>() {
-            // If we have an interval, jump forwards in time to the "next" timestamp
-            if let Some(interval) = interval {
-                self.backend.time().increase_time(interval);
+        self.on_blocking_task(|this| async move {
+            // mine all the blocks
+            for _ in 0..blocks.to::<u64>() {
+                // If we have an interval, jump forwards in time to the "next" timestamp
+                if let Some(interval) = interval {
+                    this.backend.time().increase_time(interval);
+                }
+                this.mine_one().await;
             }
-
-            self.mine_one().await;
-        }
+            Ok(())
+        })
+        .await?;
 
         Ok(())
     }
@@ -2627,10 +2630,16 @@ impl EthApi {
             }
         }
 
-        // mine all the blocks
-        for _ in 0..blocks_to_mine {
-            self.mine_one().await;
-        }
+        // this can be blocking for a bit, especially in forking mode
+        // <https://github.com/foundry-rs/foundry/issues/6036>
+        self.on_blocking_task(|this| async move {
+            // mine all the blocks
+            for _ in 0..blocks_to_mine {
+                this.mine_one().await;
+            }
+            Ok(())
+        })
+        .await?;
 
         Ok(blocks_to_mine)
     }

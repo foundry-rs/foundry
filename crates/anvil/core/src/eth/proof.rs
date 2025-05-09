@@ -1,7 +1,8 @@
 //! Return types for `eth_getProof`
 
-use crate::eth::trie::KECCAK_NULL_RLP;
+//use crate::eth::trie::KECCAK_NULL_RLP;
 use alloy_primitives::{B256, U256};
+use alloy_trie::EMPTY_ROOT_HASH;
 use revm::primitives::KECCAK_EMPTY;
 
 #[derive(Clone, Debug, PartialEq, Eq, alloy_rlp::RlpEncodable, alloy_rlp::RlpDecodable)]
@@ -18,7 +19,7 @@ impl Default for BasicAccount {
             balance: U256::ZERO,
             nonce: U256::ZERO,
             code_hash: KECCAK_EMPTY,
-            storage_root: KECCAK_NULL_RLP,
+            storage_root: EMPTY_ROOT_HASH,
         }
     }
 }
