@@ -10,8 +10,10 @@ use alloy_sol_types::SolValue;
 use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
 use parking_lot::Mutex;
 use revm::{
-    bytecode::Bytecode, context::JournalTr, context_interface::transaction::SignedAuthorization,
-    primitives::hardfork::SpecId,
+    bytecode::Bytecode,
+    context::JournalTr,
+    context_interface::transaction::SignedAuthorization,
+    primitives::{hardfork::SpecId, KECCAK_EMPTY},
 };
 use std::sync::Arc;
 
@@ -131,8 +133,13 @@ fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<(
         return Err("invalid nonce".into());
     }
     authority_acc.data.info.nonce += 1;
-    let bytecode = Bytecode::new_eip7702(*auth.address());
-    ccx.ecx.journaled_state.set_code(authority, bytecode);
+    if auth.address.is_zero() {
+        // Set empty code if the delegation address of authority is 0x.
+        ccx.ecx.journaled_state.set_code_with_hash(authority, Bytecode::default(), KECCAK_EMPTY);
+    } else {
+        let bytecode = Bytecode::new_eip7702(*auth.address());
+        ccx.ecx.journaled_state.set_code(authority, bytecode);
+    }
     Ok(())
 }
 

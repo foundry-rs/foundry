@@ -1073,7 +1073,6 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-types",
  "alloy-serde",
- "alloy-trie",
  "bytes",
  "foundry-common",
  "foundry-evm",
