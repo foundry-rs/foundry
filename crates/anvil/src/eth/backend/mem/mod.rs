@@ -2847,7 +2847,7 @@ impl Backend {
                     .zip(storage_proofs)
                     .map(|(key, proof)| {
                         let storage_key: U256 = key.into();
-                        let value = account.storage.get(&storage_key).cloned().unwrap_or_default();
+                        let value = account.storage.get(&storage_key).copied().unwrap_or_default();
                         StorageProof { key: JsonStorageKey::Hash(key), value, proof }
                     })
                     .collect(),

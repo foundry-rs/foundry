@@ -962,7 +962,7 @@ impl EthApi {
         node_info!("eth_signTransaction");
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
-            self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
+            self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)
         })?;
 
         let (nonce, _) = self.request_nonce(&request, from).await?;
@@ -990,7 +990,7 @@ impl EthApi {
         node_info!("eth_sendTransaction");
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
-            self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
+            self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)
         })?;
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
 
@@ -2071,7 +2071,7 @@ impl EthApi {
                 };
 
                 let from = tx_req.from.map(Ok).unwrap_or_else(|| {
-                    self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
+                    self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)
                 })?;
 
                 // Get the nonce at the common block
