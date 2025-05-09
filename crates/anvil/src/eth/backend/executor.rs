@@ -68,9 +68,9 @@ impl ExecutedTransaction {
             TypedTransaction::EIP1559(_) => TypedReceipt::EIP1559(receipt_with_bloom),
             TypedTransaction::EIP4844(_) => TypedReceipt::EIP4844(receipt_with_bloom),
             TypedTransaction::EIP7702(_) => TypedReceipt::EIP7702(receipt_with_bloom),
-            TypedTransaction::Deposit(tx) => TypedReceipt::Deposit(DepositReceipt {
+            TypedTransaction::Deposit(_tx) => TypedReceipt::Deposit(DepositReceipt {
                 inner: receipt_with_bloom,
-                deposit_nonce: Some(tx.nonce),
+                deposit_nonce: Some(0),
                 deposit_receipt_version: Some(1),
             }),
         }

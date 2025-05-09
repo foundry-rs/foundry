@@ -2,13 +2,10 @@ use crate::eth::error::BlockchainError;
 use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
 use alloy_network::TxSignerSync;
-use alloy_primitives::{map::AddressHashMap, Address, PrimitiveSignature as Signature, B256, U256};
+use alloy_primitives::{map::AddressHashMap, Address, PrimitiveSignature as Signature, B256};
 use alloy_signer::Signer as AlloySigner;
 use alloy_signer_local::PrivateKeySigner;
-use anvil_core::eth::transaction::{
-    optimism::DepositTransaction, TypedTransaction, TypedTransactionRequest,
-};
-use op_alloy_consensus::TxDeposit;
+use anvil_core::eth::transaction::{TypedTransaction, TypedTransactionRequest};
 
 /// A transaction signer
 #[async_trait::async_trait]
@@ -132,30 +129,7 @@ pub fn build_typed_transaction(
         TypedTransactionRequest::EIP4844(tx) => {
             TypedTransaction::EIP4844(tx.into_signed(signature))
         }
-        TypedTransactionRequest::Deposit(tx) => {
-            let TxDeposit {
-                from,
-                gas_limit,
-                to,
-                value,
-                input,
-                source_hash,
-                mint,
-                is_system_transaction,
-                ..
-            } = tx;
-            TypedTransaction::Deposit(DepositTransaction {
-                from,
-                gas_limit,
-                kind: to,
-                value,
-                input,
-                source_hash,
-                mint: mint.map_or(U256::ZERO, U256::from),
-                is_system_tx: is_system_transaction,
-                nonce: 0,
-            })
-        }
+        TypedTransactionRequest::Deposit(tx) => TypedTransaction::Deposit(tx),
     };
 
     Ok(tx)

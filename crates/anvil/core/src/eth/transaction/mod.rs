@@ -1,13 +1,11 @@
 //! Transaction related types
-
-use crate::eth::transaction::optimism::DepositTransaction;
 use alloy_consensus::{
     transaction::{
         eip4844::{TxEip4844, TxEip4844Variant, TxEip4844WithSidecar},
         Recovered, TxEip7702,
     },
-    Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, TxEip1559, TxEip2930, TxEnvelope, TxLegacy,
-    TxReceipt, Typed2718,
+    Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, Transaction, TxEip1559, TxEip2930,
+    TxEnvelope, TxLegacy, TxReceipt, Typed2718,
 };
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
 use alloy_network::{AnyReceiptEnvelope, AnyRpcTransaction, AnyTransactionReceipt, AnyTxEnvelope};
@@ -29,8 +27,6 @@ use revm::{
 };
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, Mul};
-
-pub mod optimism;
 
 /// Converts a [TransactionRequest] into a [TypedTransactionRequest].
 /// Should be removed once the call builder abstraction for providers is in place.
@@ -525,23 +521,22 @@ impl PendingTransaction {
             }
             TypedTransaction::Deposit(tx) => {
                 let chain_id = tx.chain_id();
-                let DepositTransaction {
-                    nonce,
+                let TxDeposit {
                     source_hash,
-                    gas_limit,
-                    value,
-                    kind,
+                    to,
                     mint,
+                    value,
+                    gas_limit,
+                    is_system_transaction,
                     input,
-                    is_system_tx,
                     ..
                 } = tx;
                 TxEnv {
                     caller,
-                    transact_to: transact_to(kind),
+                    transact_to: transact_to(to),
                     data: input.clone(),
                     chain_id,
-                    nonce: Some(*nonce),
+                    nonce: Some(0),
                     value: *value,
                     gas_price: U256::ZERO,
                     gas_priority_fee: None,
@@ -549,8 +544,8 @@ impl PendingTransaction {
                     access_list: vec![],
                     optimism: OptimismFields {
                         source_hash: Some(*source_hash),
-                        mint: Some(mint.to::<u128>()),
-                        is_system_transaction: Some(*is_system_tx),
+                        mint: *mint,
+                        is_system_transaction: Some(*is_system_transaction),
                         enveloped_tx: None,
                     },
                     ..Default::default()
@@ -574,7 +569,7 @@ pub enum TypedTransaction {
     /// EIP-7702 transaction
     EIP7702(Signed<TxEip7702>),
     /// op-stack deposit transaction
-    Deposit(DepositTransaction),
+    Deposit(TxDeposit),
 }
 
 /// This is a function that demotes TypedTransaction to TransactionRequest for greater flexibility
@@ -625,7 +620,7 @@ impl TryFrom<AnyRpcTransaction> for TypedTransaction {
             AnyTxEnvelope::Unknown(mut tx) => {
                 // Try to convert to deposit transaction
                 if tx.ty() == DEPOSIT_TX_TYPE_ID {
-                    let nonce = get_field::<U64>(&tx.inner.fields, "nonce")?;
+                    let _nonce = get_field::<U64>(&tx.inner.fields, "nonce")?;
                     tx.inner.fields.insert("from".to_string(), serde_json::to_value(from).unwrap());
                     let deposit_tx =
                         tx.inner.fields.deserialize_into::<TxDeposit>().map_err(|e| {
@@ -633,29 +628,6 @@ impl TryFrom<AnyRpcTransaction> for TypedTransaction {
                                 "Failed to deserialize deposit tx: {e}"
                             ))
                         })?;
-
-                    let TxDeposit {
-                        source_hash,
-                        is_system_transaction,
-                        value,
-                        gas_limit,
-                        input,
-                        mint,
-                        from,
-                        to,
-                    } = deposit_tx;
-
-                    let deposit_tx = DepositTransaction {
-                        nonce: nonce.to(),
-                        source_hash,
-                        from,
-                        kind: to,
-                        mint: mint.map(|m| U256::from(m)).unwrap_or_default(),
-                        value,
-                        gas_limit,
-                        is_system_tx: is_system_transaction,
-                        input,
-                    };
 
                     return Ok(Self::Deposit(deposit_tx));
                 };
@@ -845,9 +817,9 @@ impl TypedTransaction {
                 access_list: t.tx().access_list.clone(),
             },
             Self::Deposit(t) => TransactionEssentials {
-                kind: t.kind,
+                kind: t.to,
                 input: t.input.clone(),
-                nonce: t.nonce,
+                nonce: 0,
                 gas_limit: t.gas_limit,
                 gas_price: Some(0),
                 max_fee_per_gas: None,
@@ -868,7 +840,7 @@ impl TypedTransaction {
             Self::EIP1559(t) => t.tx().nonce,
             Self::EIP4844(t) => t.tx().tx().nonce,
             Self::EIP7702(t) => t.tx().nonce,
-            Self::Deposit(t) => t.nonce,
+            Self::Deposit(_t) => 0,
         }
     }
 
@@ -921,7 +893,7 @@ impl TypedTransaction {
             Self::EIP1559(t) => *t.hash(),
             Self::EIP4844(t) => *t.hash(),
             Self::EIP7702(t) => *t.hash(),
-            Self::Deposit(t) => t.hash(),
+            Self::Deposit(t) => t.tx_hash(),
         }
     }
 
@@ -943,7 +915,7 @@ impl TypedTransaction {
             Self::EIP1559(tx) => tx.recover_signer(),
             Self::EIP4844(tx) => tx.recover_signer(),
             Self::EIP7702(tx) => tx.recover_signer(),
-            Self::Deposit(tx) => tx.recover(),
+            Self::Deposit(tx) => Ok(tx.from),
         }
     }
 
@@ -955,7 +927,7 @@ impl TypedTransaction {
             Self::EIP1559(tx) => tx.tx().to,
             Self::EIP4844(tx) => TxKind::Call(tx.tx().tx().to),
             Self::EIP7702(tx) => TxKind::Call(tx.tx().to),
-            Self::Deposit(tx) => tx.kind,
+            Self::Deposit(tx) => tx.to,
         }
     }
 
@@ -1007,7 +979,7 @@ impl Decodable for TypedTransaction {
         if ty != 0x7E {
             Ok(TxEnvelope::decode(buf)?.into())
         } else {
-            Ok(Self::Deposit(DepositTransaction::decode_2718(buf)?))
+            Ok(Self::Deposit(TxDeposit::decode_2718(buf)?))
         }
     }
 }
@@ -1047,7 +1019,7 @@ impl Encodable2718 for TypedTransaction {
 impl Decodable2718 for TypedTransaction {
     fn typed_decode(ty: u8, buf: &mut &[u8]) -> Result<Self, Eip2718Error> {
         if ty == 0x7E {
-            return Ok(Self::Deposit(DepositTransaction::decode(buf)?))
+            return Ok(Self::Deposit(TxDeposit::decode(buf)?))
         }
         match TxEnvelope::typed_decode(ty, buf)? {
             TxEnvelope::Eip2930(tx) => Ok(Self::EIP2930(tx)),

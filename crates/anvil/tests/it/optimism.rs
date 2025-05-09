@@ -8,7 +8,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use anvil::{spawn, EthereumHardfork, NodeConfig};
-use anvil_core::eth::transaction::optimism::DepositTransaction;
+use op_alloy_consensus::TxDeposit;
 use op_alloy_rpc_types::OpTransactionFields;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -208,15 +208,14 @@ async fn test_deposit_tx_checks_sufficient_funds_after_applying_deposited_value(
     let recipient_prev_balance = provider.get_balance(recipient).await.unwrap();
     assert_eq!(recipient_prev_balance, U256::from(0));
 
-    let deposit_tx = DepositTransaction {
+    let deposit_tx = TxDeposit {
         source_hash: b256!("0x0000000000000000000000000000000000000000000000000000000000000000"),
         from: sender,
-        nonce: 0,
-        kind: TxKind::Call(recipient),
-        mint: U256::from(send_value),
+        to: TxKind::Call(recipient),
+        mint: Some(u128::from(send_value)),
         value: U256::from(send_value),
         gas_limit: 21_000,
-        is_system_tx: false,
+        is_system_transaction: false,
         input: Vec::new().into(),
     };
 
