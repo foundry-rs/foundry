@@ -6,9 +6,7 @@
       "declaration": "error CheatcodeError(string message);"
     }
   ],
-  "events": [
-    
-  ],
+  "events": [],
   "enums": [
     {
       "name": "CallerMode",
