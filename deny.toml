@@ -55,6 +55,7 @@ allow = [
     "CDDL-1.0",
     "Zlib",
     "OpenSSL",
+    "CDLA-Permissive-2.0",
 ]
 
 # Allow 1 or more licenses on a per-crate basis, so that particular licenses

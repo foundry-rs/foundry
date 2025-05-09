@@ -191,7 +191,7 @@ foundry-linking = { path = "crates/linking" }
 enscribe = { path = "crates/enscribe" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.13.0", default-features = false }
+foundry-block-explorers = { version = "0.13.3", default-features = false }
 foundry-compilers = { version = "0.14.0", default-features = false }
 foundry-fork-db = "0.12"
 solang-parser = "=0.3.3"
