@@ -91,7 +91,7 @@ impl PubSubEthRpcHandler {
                     }
                     SubscriptionKind::NewPendingTransactions => {
                         trace!(target: "rpc::ws", "received pending transactions subscription");
-                        let subscription = match *raw_params {
+                        match *raw_params {
                             Params::Bool(true) => EthSubscription::FullPendingTransactions(
                                 self.api.full_pending_transactions(),
                                 id.clone(),
@@ -107,8 +107,7 @@ impl PubSubEthRpcHandler {
                                     "Expected boolean parameter for newPendingTransactions",
                                 ))
                             }
-                        };
-                        subscription
+                        }
                     }
                     SubscriptionKind::Syncing => {
                         return RpcError::internal_error_with("Not implemented").into()
