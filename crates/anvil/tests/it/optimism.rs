@@ -212,7 +212,7 @@ async fn test_deposit_tx_checks_sufficient_funds_after_applying_deposited_value(
         source_hash: b256!("0x0000000000000000000000000000000000000000000000000000000000000000"),
         from: sender,
         to: TxKind::Call(recipient),
-        mint: Some(u128::from(send_value)),
+        mint: Some(send_value),
         value: U256::from(send_value),
         gas_limit: 21_000,
         is_system_transaction: false,
