@@ -8,10 +8,11 @@ use crate::{
     mem::inspector::Inspector,
     PrecompileFactory,
 };
-use alloy_consensus::{constants::EMPTY_WITHDRAWALS, Receipt, ReceiptWithBloom};
-use alloy_eips::{eip2718::Encodable2718, eip7685::EMPTY_REQUESTS_HASH};
+use alloy_consensus::{
+    constants::EMPTY_WITHDRAWALS, proofs::calculate_receipt_root, Receipt, ReceiptWithBloom,
+};
+use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{Bloom, BloomInput, Log, B256};
-use alloy_trie::root;
 use anvil_core::eth::{
     block::{Block, BlockInfo, PartialHeader},
     transaction::{
@@ -211,9 +212,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             transactions.push(transaction.pending_transaction.transaction.clone());
         }
 
-        let receipts_root = root::ordered_trie_root(
-            &receipts.iter().map(Encodable2718::encoded_2718).collect::<Vec<_>>(),
-        );
+        let receipts_root = calculate_receipt_root(&receipts);
 
         let partial_header = PartialHeader {
             parent_hash,
