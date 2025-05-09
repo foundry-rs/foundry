@@ -21,7 +21,6 @@ pub mod block;
 pub mod proof;
 pub mod subscription;
 pub mod transaction;
-pub mod trie;
 pub mod wallet;
 
 pub mod serde_helpers;

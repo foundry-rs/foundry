@@ -1,11 +1,9 @@
-use super::{
-    transaction::{TransactionInfo, TypedReceipt},
-    trie,
-};
+use super::transaction::{TransactionInfo, TypedReceipt};
 use alloy_consensus::{Header, EMPTY_OMMER_ROOT_HASH};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, Bloom, Bytes, B256, B64, U256};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
+use alloy_trie::root;
 
 // Type alias to optionally support impersonated transactions
 type Transaction = crate::eth::transaction::MaybeImpersonatedTransaction;
@@ -36,8 +34,8 @@ impl Block {
         T: Into<Transaction>,
     {
         let transactions: Vec<_> = transactions.into_iter().map(Into::into).collect();
-        let transactions_root =
-            trie::ordered_trie_root(transactions.iter().map(|r| r.encoded_2718()));
+        let encoded_transactions: Vec<_> = transactions.iter().map(|r| r.encoded_2718()).collect();
+        let transactions_root = root::ordered_trie_root(&encoded_transactions);
 
         Self {
             header: Header {
