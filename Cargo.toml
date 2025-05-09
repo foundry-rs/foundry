@@ -54,6 +54,7 @@ redundant_imports = "warn"
 redundant-lifetimes = "warn"
 rust-2018-idioms = "warn"
 unused-must-use = "warn"
+# unreachable-pub = "warn"
 
 [workspace.lints.rustdoc]
 all = "warn"
