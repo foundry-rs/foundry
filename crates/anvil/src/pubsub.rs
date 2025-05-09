@@ -4,7 +4,11 @@ use crate::{
 };
 use alloy_primitives::{TxHash, B256};
 use alloy_rpc_types::{pubsub::SubscriptionResult, FilteredParams, Log, Transaction};
-use anvil_core::eth::{block::Block, subscription::SubscriptionId, transaction::TypedReceipt};
+use anvil_core::eth::{
+    block::Block,
+    subscription::SubscriptionId,
+    transaction::{PendingTransaction, TypedReceipt},
+};
 use anvil_rpc::{request::Version, response::ResponseResult};
 use futures::{channel::mpsc::Receiver, ready, Stream, StreamExt};
 use serde::Serialize;
@@ -86,6 +90,7 @@ pub enum EthSubscription {
     Logs(Box<LogsSubscription>),
     Header(NewBlockNotifications, StorageInfo, SubscriptionId),
     PendingTransactions(Receiver<TxHash>, SubscriptionId),
+    FullPendingTransactions(Receiver<PendingTransaction>, SubscriptionId),
 }
 
 impl EthSubscription {
@@ -115,6 +120,15 @@ impl EthSubscription {
                     .map(SubscriptionResult::<Transaction>::TransactionHash)
                     .map(to_rpc_result)
                     .map(|result| {
+                        let params = EthSubscriptionParams { subscription: id.clone(), result };
+                        EthSubscriptionResponse::new(params)
+                    });
+                Poll::Ready(res)
+            }
+
+            Self::FullPendingTransactions(tx, id) => {
+                let res =
+                    ready!(tx.poll_next_unpin(cx)).map(|tx| to_rpc_result(tx)).map(|result| {
                         let params = EthSubscriptionParams { subscription: id.clone(), result };
                         EthSubscriptionResponse::new(params)
                     });

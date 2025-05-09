@@ -2863,6 +2863,29 @@ impl EthApi {
         self.pool.add_ready_listener()
     }
 
+    /// Returns a listeners for pending transactions
+    pub fn full_pending_transactions(&self) -> Receiver<PendingTransaction> {
+        let (mut tx, rx): (
+            futures::channel::mpsc::Sender<PendingTransaction>,
+            Receiver<PendingTransaction>,
+        ) = futures::channel::mpsc::channel(1024);
+
+        let pending_transactions = self.pool.pending_transactions();
+
+        tokio::spawn(async move {
+            for transaction in pending_transactions {
+                if futures::SinkExt::send(&mut tx, transaction.pending_transaction.clone())
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+
+        rx
+    }
+
     /// Returns a new accessor for certain storage elements
     pub fn storage_info(&self) -> StorageInfo {
         StorageInfo::new(Arc::clone(&self.backend))

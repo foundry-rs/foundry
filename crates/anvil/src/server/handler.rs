@@ -58,17 +58,17 @@ impl PubSubEthRpcHandler {
                 let canceled = cx.remove_subscription(&id).is_some();
                 ResponseResult::Success(canceled.into())
             }
-            EthPubSub::EthSubscribe(kind, params) => {
-                let filter = match *params {
+            EthPubSub::EthSubscribe(kind, raw_params) => {
+                let filter = match &*raw_params {
                     Params::None => None,
-                    Params::Logs(filter) => Some(*filter),
+                    Params::Logs(filter) => Some(filter.clone()),
                     Params::Bool(_) => {
                         return ResponseResult::Error(RpcError::invalid_params(
                             "Expected params for logs subscription",
                         ))
                     }
                 };
-                let params = FilteredParams::new(filter);
+                let params = FilteredParams::new(filter.map(|b| *b));
 
                 let subscription = match kind {
                     SubscriptionKind::Logs => {
@@ -91,10 +91,27 @@ impl PubSubEthRpcHandler {
                     }
                     SubscriptionKind::NewPendingTransactions => {
                         trace!(target: "rpc::ws", "received pending transactions subscription");
-                        EthSubscription::PendingTransactions(
-                            self.api.new_ready_transactions(),
-                            id.clone(),
-                        )
+                        let full_tx = match *raw_params {
+                            Params::Bool(true) => true,
+                            Params::Bool(false) | Params::None => false,
+                            _ => {
+                                return ResponseResult::Error(RpcError::invalid_params(
+                                    "Expected boolean parameter for newPendingTransactions",
+                                ));
+                            }
+                        };
+
+                        if full_tx {
+                            EthSubscription::FullPendingTransactions(
+                                self.api.full_pending_transactions(),
+                                id.clone(),
+                            )
+                        } else {
+                            EthSubscription::PendingTransactions(
+                                self.api.new_ready_transactions(),
+                                id.clone(),
+                            )
+                        }
                     }
                     SubscriptionKind::Syncing => {
                         return RpcError::internal_error_with("Not implemented").into()
