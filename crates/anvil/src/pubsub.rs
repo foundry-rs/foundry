@@ -124,11 +124,10 @@ impl EthSubscription {
             }
 
             Self::FullPendingTransactions(tx, id) => {
-                let res =
-                    ready!(tx.poll_next_unpin(cx)).map(|tx| to_rpc_result(tx)).map(|result| {
-                        let params = EthSubscriptionParams { subscription: id.clone(), result };
-                        EthSubscriptionResponse::new(params)
-                    });
+                let res = ready!(tx.poll_next_unpin(cx)).map(to_rpc_result).map(|result| {
+                    let params = EthSubscriptionParams { subscription: id.clone(), result };
+                    EthSubscriptionResponse::new(params)
+                });
                 Poll::Ready(res)
             }
         }
