@@ -26,6 +26,7 @@ use dialoguer::Confirm;
 use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
+use foundry_block_explorers::EtherscanApiVersion;
 use foundry_cli::{
     opts::{BuildOpts, GlobalArgs},
     utils::LoadConfig,
@@ -182,6 +183,10 @@ pub struct ScriptArgs {
     #[arg(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     pub etherscan_api_key: Option<String>,
 
+    /// The Etherscan API version.
+    #[arg(long, env = "ETHERSCAN_API_VERSION", value_name = "VERSION")]
+    pub etherscan_api_version: Option<EtherscanApiVersion>,
+
     /// Verifies all the contracts found in the receipts of a script, if any.
     #[arg(long)]
     pub verify: bool,
@@ -279,6 +284,10 @@ impl ScriptArgs {
                 .as_ref()
                 .is_none_or(|txs| txs.is_empty())
             {
+                if pre_simulation.args.broadcast {
+                    sh_warn!("No transactions to broadcast.")?;
+                }
+
                 return Ok(());
             }
 
@@ -492,6 +501,9 @@ impl Provider for ScriptArgs {
                 figment::value::Value::from(etherscan_api_key.to_string()),
             );
         }
+        if let Some(api_version) = &self.etherscan_api_version {
+            dict.insert("etherscan_api_version".to_string(), api_version.to_string().into());
+        }
         if let Some(timeout) = self.timeout {
             dict.insert("transaction_timeout".to_string(), timeout.into());
         }
@@ -602,7 +614,7 @@ impl ScriptConfig {
                 Some(db) => db.clone(),
                 None => {
                     let fork = self.evm_opts.get_fork(&self.config, env.clone());
-                    let backend = Backend::spawn(fork);
+                    let backend = Backend::spawn(fork)?;
                     self.backends.insert(fork_url.clone(), backend.clone());
                     backend
                 }
@@ -611,7 +623,7 @@ impl ScriptConfig {
             // It's only really `None`, when we don't pass any `--fork-url`. And if so, there is
             // no need to cache it, since there won't be any onchain simulation that we'd need
             // to cache the backend for.
-            Backend::spawn(None)
+            Backend::spawn(None)?
         };
 
         // We need to enable tracing to decode contract names: local or external.

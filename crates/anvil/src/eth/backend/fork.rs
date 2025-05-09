@@ -14,6 +14,7 @@ use alloy_provider::{
 };
 use alloy_rpc_types::{
     request::TransactionRequest,
+    simulate::{SimulatePayload, SimulatedBlock},
     trace::{
         geth::{GethDebugTracingOptions, GethTrace},
         parity::LocalizedTransactionTrace as Trace,
@@ -197,7 +198,23 @@ impl ClientFork {
         Ok(res)
     }
 
-    /// Sends `eth_call`
+    /// Sends `eth_simulateV1`
+    pub async fn simulate_v1(
+        &self,
+        request: &SimulatePayload,
+        block: Option<BlockNumber>,
+    ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>, TransportError> {
+        let mut simulate_call = self.provider().simulate(request);
+        if let Some(n) = block {
+            simulate_call = simulate_call.number(n.as_number().unwrap());
+        }
+
+        let res = simulate_call.await?;
+
+        Ok(res)
+    }
+
+    /// Sends `eth_estimateGas`
     pub async fn estimate_gas(
         &self,
         request: &WithOtherFields<TransactionRequest>,

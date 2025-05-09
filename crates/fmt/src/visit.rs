@@ -172,7 +172,7 @@ pub trait Visitor {
         self.visit_source(loc)
     }
 
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     fn visit_try(
         &mut self,
         loc: Loc,

@@ -41,7 +41,7 @@ fn recursive_flatten_call_trace<'a>(
 
     let node = &arena.nodes()[node_idx];
 
-    for order in node.ordering.iter() {
+    for order in &node.ordering {
         match order {
             TraceMemberOrder::Step(step_idx) => {
                 if *record_started {

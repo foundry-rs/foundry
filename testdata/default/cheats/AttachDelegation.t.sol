@@ -39,6 +39,19 @@ contract AttachDelegationTest is DSTest {
         assertEq(token.balanceOf(bob), 100);
     }
 
+    /// forge-config: default.allow_internal_expect_revert = true
+    function testCallSingleAttachDelegationWithNonce() public {
+        Vm.SignedDelegation memory signedDelegation = vm.signDelegation(address(implementation), alice_pk, 11);
+        vm.broadcast(bob_pk);
+        vm._expectCheatcodeRevert("vm.attachDelegation: invalid nonce");
+        vm.attachDelegation(signedDelegation);
+
+        signedDelegation = vm.signDelegation(address(implementation), alice_pk, 0);
+        vm.attachDelegation(signedDelegation);
+        signedDelegation = vm.signDelegation(address(implementation), alice_pk, 1);
+        vm.attachDelegation(signedDelegation);
+    }
+
     function testMultiCallAttachDelegation() public {
         Vm.SignedDelegation memory signedDelegation = vm.signDelegation(address(implementation), alice_pk);
         vm.broadcast(bob_pk);
@@ -125,6 +138,15 @@ contract AttachDelegationTest is DSTest {
         SimpleDelegateContract(alice).execute(calls);
 
         assertEq(token.balanceOf(bob), 100);
+    }
+
+    /// forge-config: default.allow_internal_expect_revert = true
+    function testCallSingleSignAndAttachDelegationWithNonce() public {
+        vm._expectCheatcodeRevert("vm.signAndAttachDelegation: invalid nonce");
+        vm.signAndAttachDelegation(address(implementation), alice_pk, 11);
+
+        vm.signAndAttachDelegation(address(implementation), alice_pk, 0);
+        vm.signAndAttachDelegation(address(implementation), alice_pk, 1);
     }
 }
 

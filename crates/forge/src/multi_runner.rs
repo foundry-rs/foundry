@@ -136,8 +136,11 @@ impl MultiContractRunner {
     /// The same as [`test`](Self::test), but returns the results instead of streaming them.
     ///
     /// Note that this method returns only when all tests have been executed.
-    pub fn test_collect(&mut self, filter: &dyn TestFilter) -> BTreeMap<String, SuiteResult> {
-        self.test_iter(filter).collect()
+    pub fn test_collect(
+        &mut self,
+        filter: &dyn TestFilter,
+    ) -> Result<BTreeMap<String, SuiteResult>> {
+        Ok(self.test_iter(filter)?.collect())
     }
 
     /// Executes _all_ tests that match the given `filter`.
@@ -148,10 +151,10 @@ impl MultiContractRunner {
     pub fn test_iter(
         &mut self,
         filter: &dyn TestFilter,
-    ) -> impl Iterator<Item = (String, SuiteResult)> {
+    ) -> Result<impl Iterator<Item = (String, SuiteResult)>> {
         let (tx, rx) = mpsc::channel();
-        self.test(filter, tx, false);
-        rx.into_iter()
+        self.test(filter, tx, false)?;
+        Ok(rx.into_iter())
     }
 
     /// Executes _all_ tests that match the given `filter`.
@@ -165,12 +168,12 @@ impl MultiContractRunner {
         filter: &dyn TestFilter,
         tx: mpsc::Sender<(String, SuiteResult)>,
         show_progress: bool,
-    ) {
+    ) -> Result<()> {
         let tokio_handle = tokio::runtime::Handle::current();
         trace!("running all tests");
 
         // The DB backend that serves all the data.
-        let db = Backend::spawn(self.fork.take());
+        let db = Backend::spawn(self.fork.take())?;
 
         let find_timer = Instant::now();
         let contracts = self.matching_contracts(filter).collect::<Vec<_>>();
@@ -221,6 +224,8 @@ impl MultiContractRunner {
                 let _ = tx.send((id.identifier(), result));
             })
         }
+
+        Ok(())
     }
 
     fn run_test_suite(

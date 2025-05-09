@@ -8,6 +8,10 @@ extern crate foundry_common;
 #[macro_use]
 extern crate tracing;
 
+pub mod args;
+pub mod cmd;
+pub mod opts;
+
 pub mod coverage;
 
 pub mod gas_report;

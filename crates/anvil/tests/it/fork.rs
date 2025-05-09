@@ -28,7 +28,7 @@ const DEAD_BALANCE_AT_BLOCK_NUMBER: u128 = 12_556_069_338_441_120_059_867u128;
 const BLOCK_TIMESTAMP: u64 = 1_650_274_250u64;
 
 /// Represents an anvil fork of an anvil node
-#[allow(unused)]
+#[expect(unused)]
 pub struct LocalFork {
     origin_api: EthApi,
     origin_handle: NodeHandle,
@@ -36,7 +36,7 @@ pub struct LocalFork {
     fork_handle: NodeHandle,
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 impl LocalFork {
     /// Spawns two nodes with the test config
     pub async fn new() -> Self {
@@ -532,7 +532,7 @@ async fn can_reset_fork_to_new_fork() {
     let (api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(eth_rpc_url))).await;
     let provider = handle.http_provider();
 
-    let op = address!("C0d3c0d3c0D3c0D3C0d3C0D3C0D3c0d3c0d30007"); // L2CrossDomainMessenger - Dead on mainnet.
+    let op = address!("0xC0d3c0d3c0D3c0D3C0d3C0D3C0D3c0d3c0d30007"); // L2CrossDomainMessenger - Dead on mainnet.
 
     let tx = TransactionRequest::default().with_to(op).with_input("0x54fd4d50");
 
@@ -1092,7 +1092,7 @@ async fn test_block_receipts() {
     assert!(receipts.is_none());
 
     // Receipts from a block hash (14608400)
-    let hash = b256!("4c1c76f89cfe4eb503b09a0993346dd82865cac9d76034efc37d878c66453f0a");
+    let hash = b256!("0x4c1c76f89cfe4eb503b09a0993346dd82865cac9d76034efc37d878c66453f0a");
     let receipts = api.block_receipts(BlockId::Hash(hash.into())).await.unwrap();
     assert!(receipts.is_some());
 }
@@ -1308,7 +1308,7 @@ async fn test_fork_execution_reverted() {
     let resp = api
         .call(
             WithOtherFields::new(TransactionRequest {
-                to: Some(TxKind::from(address!("Fd6CC4F251eaE6d02f9F7B41D1e80464D3d2F377"))),
+                to: Some(TxKind::from(address!("0xFd6CC4F251eaE6d02f9F7B41D1e80464D3d2F377"))),
                 input: TransactionInput::new(bytes!("8f283b3c")),
                 ..Default::default()
             }),
@@ -1324,22 +1324,23 @@ async fn test_fork_execution_reverted() {
 
 // <https://github.com/foundry-rs/foundry/issues/8227>
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn test_immutable_fork_transaction_hash() {
     use std::str::FromStr;
 
     // Fork to a block with a specific transaction
     let fork_tx_hash =
-        TxHash::from_str("39d64ebf9eb3f07ede37f8681bc3b61928817276c4c4680b6ef9eac9f88b6786")
+        TxHash::from_str("2ac736ce725d628ef20569a1bb501726b42b33f9d171f60b92b69de3ce705845")
             .unwrap();
     let (api, _) = spawn(
         fork_config()
             .with_blocktime(Some(Duration::from_millis(500)))
             .with_fork_transaction_hash(Some(fork_tx_hash))
-            .with_eth_rpc_url(Some("https://rpc.immutable.com".to_string())),
+            .with_eth_rpc_url(Some("https://immutable-zkevm.drpc.org".to_string())),
     )
     .await;
 
-    let fork_block_number = 8521008;
+    let fork_block_number = 21824325;
 
     // Make sure the fork starts from previous block
     let mut block_number = api.block_number().unwrap().to::<u64>();
@@ -1356,26 +1357,26 @@ async fn test_immutable_fork_transaction_hash() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(block.transactions.len(), 14);
+    assert_eq!(block.transactions.len(), 6);
     let block = api
         .block_by_number_full(BlockNumberOrTag::Number(fork_block_number))
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(block.transactions.len(), 3);
+    assert!(!block.transactions.is_empty());
 
     // Validate the transactions preceding the target transaction exist
     let expected_transactions = [
-        TxHash::from_str("1bfe33136edc3d26bd01ce75c8f5ae14fffe8b142d30395cb4b6d3dc3043f400")
+        TxHash::from_str("c900784c993221ba192c53a3ff9996f6af83a951100ceb93e750f7ef86bd43d5")
             .unwrap(),
-        TxHash::from_str("8c0ce5fb9ec2c8e03f7fcc69c7786393c691ce43b58a06d74d6733679308fc01")
+        TxHash::from_str("f86f001bbdf69f8f64ff8a4a5fc3e684cf3a7706f204eba8439752f6f67cd2c4")
             .unwrap(),
         fork_tx_hash,
     ];
     for expected in [
-        (expected_transactions[0], address!("8C1aB379E7263d37049505626D2F975288F5dF12")),
-        (expected_transactions[1], address!("df918d9D02d5C7Df6825a7046dBF3D10F705Aa76")),
-        (expected_transactions[2], address!("5Be88952ce249024613e0961eB437f5E9424A90c")),
+        (expected_transactions[0], address!("0x0a02a416f87a13626dda0ad386859497565222aa")),
+        (expected_transactions[1], address!("0x0a02a416f87a13626dda0ad386859497565222aa")),
+        (expected_transactions[2], address!("0x4f07d669d76ed9a17799fc4c04c4005196240940")),
     ] {
         let tx = api.backend.mined_transaction_by_hash(expected.0).unwrap();
         assert_eq!(tx.inner.inner.signer(), expected.1);

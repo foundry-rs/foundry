@@ -42,6 +42,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         out: "out-test".into(),
         libs: vec!["lib-test".into()],
         cache: true,
+        dynamic_test_linking: false,
         cache_path: "test-cache".into(),
         snapshots: "snapshots".into(),
         gas_snapshot_check: false,
@@ -118,6 +119,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         eth_rpc_timeout: None,
         eth_rpc_headers: None,
         etherscan_api_key: None,
+        etherscan_api_version: None,
         etherscan: Default::default(),
         verbosity: 4,
         remappings: vec![Remapping::from_str("forge-std/=lib/forge-std/").unwrap().into()],
@@ -168,6 +170,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
         eof: false,
+        script_execution_protection: true,
         _non_exhaustive: (),
     };
     prj.write_config(input.clone());
@@ -485,6 +488,18 @@ forgetest!(can_set_optimizer_runs, |prj, cmd| {
 
     let config = prj.config_from_output(["--optimizer-runs", "300"]);
     assert_eq!(config.optimizer_runs, Some(300));
+});
+
+// test that use_literal_content works
+forgetest!(can_set_use_literal_content, |prj, cmd| {
+    // explicitly set use_literal_content
+    prj.update_config(|config| config.use_literal_content = false);
+
+    let config = cmd.config();
+    assert_eq!(config.use_literal_content, false);
+
+    let config = prj.config_from_output(["--use-literal-content"]);
+    assert_eq!(config.use_literal_content, true);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/9665>
@@ -959,6 +974,7 @@ remappings = ["forge-std/=lib/forge-std/src/"]
 auto_detect_remappings = true
 libraries = []
 cache = true
+dynamic_test_linking = false
 cache_path = "cache"
 snapshots = "snapshots"
 gas_snapshot_check = false
@@ -1027,14 +1043,15 @@ transaction_timeout = 120
 eof = false
 additional_compiler_profiles = []
 compilation_restrictions = []
-
-[[profile.default.fs_permissions]]
-access = "read"
-path = "out"
+script_execution_protection = true
 
 [profile.default.rpc_storage_caching]
 chains = "all"
 endpoints = "all"
+
+[[profile.default.fs_permissions]]
+access = "read"
+path = "out"
 
 [fmt]
 line_length = 120
@@ -1116,6 +1133,7 @@ exclude = []
   "auto_detect_remappings": true,
   "libraries": [],
   "cache": true,
+  "dynamic_test_linking": false,
   "cache_path": "cache",
   "snapshots": "snapshots",
   "gas_snapshot_check": false,
@@ -1144,6 +1162,7 @@ exclude = []
   "eth_rpc_timeout": null,
   "eth_rpc_headers": null,
   "etherscan_api_key": null,
+  "etherscan_api_version": null,
   "ignored_error_codes": [
     "license",
     "code-size",
@@ -1283,7 +1302,8 @@ exclude = []
   "transaction_timeout": 120,
   "eof": false,
   "additional_compiler_profiles": [],
-  "compilation_restrictions": []
+  "compilation_restrictions": [],
+  "script_execution_protection": true
 }
 
 "#]]);

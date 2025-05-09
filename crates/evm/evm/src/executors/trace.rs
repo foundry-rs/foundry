@@ -20,9 +20,9 @@ impl TracingExecutor {
         trace_mode: TraceMode,
         odyssey: bool,
         create2_deployer: Address,
-    ) -> Self {
-        let db = Backend::spawn(fork);
-        Self {
+    ) -> eyre::Result<Self> {
+        let db = Backend::spawn(fork)?;
+        Ok(Self {
             // configures a bare version of the evm executor: no cheatcode inspector is enabled,
             // tracing will be enabled only for the targeted transaction
             executor: ExecutorBuilder::new()
@@ -31,7 +31,7 @@ impl TracingExecutor {
                 })
                 .spec_id(evm_spec_id(version.unwrap_or_default(), odyssey))
                 .build(env, db),
-        }
+        })
     }
 
     /// Returns the spec id of the executor

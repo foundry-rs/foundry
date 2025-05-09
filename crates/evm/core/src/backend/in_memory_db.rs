@@ -168,7 +168,7 @@ mod tests {
     fn mem_db_insert_basic_default() {
         let mut db = MemDb::default();
         let address = Address::from_word(b256!(
-            "000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045"
+            "0x000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045"
         ));
 
         let info = Database::basic(&mut db, address).unwrap();

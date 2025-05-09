@@ -143,16 +143,15 @@ impl MaybeForkedDatabase for MemDb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Bytes;
+    use alloy_primitives::{address, Bytes};
     use foundry_evm::revm::primitives::{Bytecode, KECCAK_EMPTY};
-    use std::{collections::BTreeMap, str::FromStr};
+    use std::collections::BTreeMap;
 
     // verifies that all substantial aspects of a loaded account remain the same after an account
     // is dumped and reloaded
     #[test]
     fn test_dump_reload_cycle() {
-        let test_addr: Address =
-            Address::from_str("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266").unwrap();
+        let test_addr: Address = address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266");
 
         let mut dump_db = MemDb::default();
 
@@ -192,10 +191,8 @@ mod tests {
     // accounts as well.
     #[test]
     fn test_load_state_merge() {
-        let test_addr: Address =
-            Address::from_str("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266").unwrap();
-        let test_addr2: Address =
-            Address::from_str("0x70997970c51812dc3a010c7d01b50e0d17dc79c8").unwrap();
+        let test_addr: Address = address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266");
+        let test_addr2: Address = address!("0x70997970c51812dc3a010c7d01b50e0d17dc79c8");
 
         let contract_code = Bytecode::new_raw(Bytes::from("fake contract code"));
 

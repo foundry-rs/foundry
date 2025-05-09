@@ -550,3 +550,44 @@ contract PrankTest is DSTest {
         );
     }
 }
+
+contract Issue9990 is DSTest {
+    Vm constant vm = Vm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+
+    function testDelegatePrank() external {
+        A a = new A();
+        vm.etch(address(0x11111), hex"11");
+        vm.startPrank(address(0x11111), true);
+        (bool success,) = address(a).delegatecall(abi.encodeWithSelector(A.foo.selector));
+        require(success, "MyTest: error calling foo on A");
+        vm.stopPrank();
+    }
+}
+
+// Contracts for DELEGATECALL test case: testDelegatePrank
+contract A {
+    function foo() external {
+        require(address(0x11111) == msg.sender, "wrong msg.sender in A");
+        require(address(0x11111) == address(this), "wrong address(this) in A");
+        B b = new B();
+        (bool success,) = address(b).call(abi.encodeWithSelector(B.bar.selector));
+        require(success, "A: error calling B.bar");
+    }
+}
+
+contract B {
+    function bar() external {
+        require(address(0x11111) == msg.sender, "wrong msg.sender in B");
+        require(0x769A6A5f81bD725e4302751162A7cb30482A222d == address(this), "wrong address(this) in B");
+        C c = new C();
+        (bool success,) = address(c).delegatecall(abi.encodeWithSelector(C.bar.selector));
+        require(success, "B: error calling C.bar");
+    }
+}
+
+contract C {
+    function bar() external view {
+        require(address(0x11111) == msg.sender, "wrong msg.sender in C");
+        require(0x769A6A5f81bD725e4302751162A7cb30482A222d == address(this), "wrong address(this) in C");
+    }
+}

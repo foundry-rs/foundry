@@ -51,7 +51,7 @@ use tracing::Span;
 /// predeploy libraries.
 ///
 /// `address(uint160(uint256(keccak256("foundry library deployer"))))`
-pub const LIBRARY_DEPLOYER: Address = address!("1F95D37F27EA0dEA9C252FC09D5A6eaA97647353");
+pub const LIBRARY_DEPLOYER: Address = address!("0x1F95D37F27EA0dEA9C252FC09D5A6eaA97647353");
 
 /// A type that executes all tests of a contract
 pub struct ContractRunner<'a> {
@@ -132,7 +132,7 @@ impl<'a> ContractRunner<'a> {
         self.executor.set_balance(LIBRARY_DEPLOYER, U256::MAX)?;
 
         let mut result = TestSetup::default();
-        for code in self.mcr.libs_to_deploy.iter() {
+        for code in &self.mcr.libs_to_deploy {
             let deploy_result = self.executor.deploy(
                 LIBRARY_DEPLOYER,
                 code.clone(),
@@ -290,7 +290,7 @@ impl<'a> ContractRunner<'a> {
             self.contract.abi.functions().filter(|func| func.name.is_setup()).collect();
         let call_setup = setup_fns.len() == 1 && setup_fns[0].name == "setUp";
         // There is a single miss-cased `setUp` function, so we add a warning
-        for &setup_fn in setup_fns.iter() {
+        for &setup_fn in &setup_fns {
             if setup_fn.name != "setUp" {
                 warnings.push(format!(
                     "Found invalid setup function \"{}\" did you mean \"setUp()\"?",

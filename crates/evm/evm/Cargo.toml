@@ -49,5 +49,5 @@ parking_lot.workspace = true
 proptest.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-indicatif = "0.17"
+indicatif.workspace = true
 serde.workspace = true

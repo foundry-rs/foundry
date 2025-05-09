@@ -4,9 +4,8 @@ use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use std::fmt;
 
 /// Unique subscription id
-#[derive(Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
-#[cfg_attr(feature = "serde", serde(untagged))]
+#[derive(Clone, PartialEq, Eq, Hash, serde::Deserialize, serde::Serialize)]
+#[serde(untagged)]
 pub enum SubscriptionId {
     /// numerical sub id
     Number(u64),

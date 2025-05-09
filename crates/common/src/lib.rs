@@ -5,7 +5,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-#[allow(unused_extern_crates)] // Used by `ConsoleFmt`.
+#[expect(unused_extern_crates)] // Used by `ConsoleFmt`.
 extern crate self as foundry_common;
 
 #[macro_use]
@@ -25,6 +25,7 @@ pub mod ens;
 pub mod errors;
 pub mod evm;
 pub mod fs;
+mod preprocessor;
 pub mod provider;
 pub mod reports;
 pub mod retry;

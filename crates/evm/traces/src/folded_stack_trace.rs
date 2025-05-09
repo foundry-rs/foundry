@@ -181,7 +181,7 @@ impl FoldedStackTraceBuilder {
     /// the children function calls.
     fn build_without_subtraction(&mut self) -> Vec<String> {
         let mut lines = Vec::new();
-        for TraceEntry { names, gas } in self.traces.iter() {
+        for TraceEntry { names, gas } in &self.traces {
             lines.push(format!("{} {}", names.join(";"), gas));
         }
         lines

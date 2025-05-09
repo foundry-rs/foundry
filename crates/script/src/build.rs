@@ -182,7 +182,7 @@ impl PreprocessedState {
             }
         };
 
-        #[allow(clippy::redundant_clone)]
+        #[expect(clippy::redundant_clone)]
         let sources_to_compile = source_files_iter(
             project.paths.sources.as_path(),
             MultiCompilerLanguage::FILE_EXTENSIONS,
@@ -229,7 +229,7 @@ impl PreprocessedState {
             args,
             script_config,
             script_wallets,
-            build_data: BuildData { output, target, project_root: project.root().clone() },
+            build_data: BuildData { output, target, project_root: project.root().to_path_buf() },
         })
     }
 }

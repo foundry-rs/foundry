@@ -133,7 +133,7 @@ impl Visitor for Parser {
     type Error = ParserError;
 
     fn visit_source_unit(&mut self, source_unit: &mut SourceUnit) -> ParserResult<()> {
-        for source in source_unit.0.iter_mut() {
+        for source in &mut source_unit.0 {
             match source {
                 SourceUnitPart::ContractDefinition(def) => {
                     // Create new contract parse item.
@@ -184,7 +184,7 @@ impl Visitor for Parser {
         // If the function parameter doesn't have a name, try to set it with
         // `@custom:name` tag if any was provided
         let mut start_loc = func.loc.start();
-        for (loc, param) in func.params.iter_mut() {
+        for (loc, param) in &mut func.params {
             if let Some(param) = param {
                 if param.name.is_none() {
                     let docs = self.parse_docs_range(start_loc, loc.end())?;

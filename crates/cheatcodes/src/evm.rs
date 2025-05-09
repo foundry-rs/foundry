@@ -16,6 +16,7 @@ use foundry_evm_core::{
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
 };
 use foundry_evm_traces::StackSnapshotType;
+use itertools::Itertools;
 use rand::Rng;
 use revm::primitives::{Account, Bytecode, SpecId, KECCAK_EMPTY};
 use std::{
@@ -54,6 +55,12 @@ impl RecordAccess {
     pub fn record_write(&mut self, target: Address, slot: U256) {
         self.record_read(target, slot);
         self.writes.entry(target).or_default().push(slot);
+    }
+
+    /// Clears the recorded reads and writes.
+    pub fn clear(&mut self) {
+        // Also frees memory.
+        *self = Default::default();
     }
 }
 
@@ -279,7 +286,15 @@ impl Cheatcode for dumpStateCall {
 impl Cheatcode for recordCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        state.accesses = Some(Default::default());
+        state.recording_accesses = true;
+        state.accesses.clear();
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for stopRecordCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        state.recording_accesses = false;
         Ok(Default::default())
     }
 }
@@ -287,16 +302,10 @@ impl Cheatcode for recordCall {
 impl Cheatcode for accessesCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { target } = *self;
-        let result = state
-            .accesses
-            .as_mut()
-            .map(|accesses| {
-                (
-                    &accesses.reads.entry(target).or_default()[..],
-                    &accesses.writes.entry(target).or_default()[..],
-                )
-            })
-            .unwrap_or_default();
+        let result = (
+            state.accesses.reads.entry(target).or_default().as_slice(),
+            state.accesses.writes.entry(target).or_default().as_slice(),
+        );
         Ok(result.abi_encode_params())
     }
 }
@@ -581,6 +590,48 @@ impl Cheatcode for coolCall {
             account.unmark_touch();
             account.storage.clear();
         }
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for accessListCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { access } = self;
+        let access_list = access
+            .iter()
+            .map(|item| {
+                let keys = item.storageKeys.iter().map(|key| B256::from(*key)).collect_vec();
+                alloy_rpc_types::AccessListItem { address: item.target, storage_keys: keys }
+            })
+            .collect_vec();
+        state.access_list = Some(alloy_rpc_types::AccessList::from(access_list));
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for noAccessListCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self {} = self;
+        // Set to empty option in order to override previous applied access list.
+        if state.access_list.is_some() {
+            state.access_list = Some(alloy_rpc_types::AccessList::default());
+        }
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for warmSlotCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { target, slot } = *self;
+        set_cold_slot(ccx, target, slot.into(), false);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for coolSlotCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { target, slot } = *self;
+        set_cold_slot(ccx, target, slot.into(), true);
         Ok(Default::default())
     }
 }
@@ -1194,4 +1245,13 @@ fn get_recorded_state_diffs(state: &mut Cheatcodes) -> BTreeMap<Address, Account
             });
     }
     state_diffs
+}
+
+/// Helper function to set / unset cold storage slot of the target address.
+fn set_cold_slot(ccx: &mut CheatsCtxt, target: Address, slot: U256, cold: bool) {
+    if let Some(account) = ccx.ecx.journaled_state.state.get_mut(&target) {
+        if let Some(storage_slot) = account.storage.get_mut(&slot) {
+            storage_slot.is_cold = cold;
+        }
+    }
 }

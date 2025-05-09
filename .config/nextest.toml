@@ -1,3 +1,6 @@
+[test-groups]
+chisel-serial = { max-threads = 1 }
+
 [profile.default]
 retries = { backoff = "exponential", count = 2, delay = "3s", jitter = true }
 slow-timeout = { period = "1m", terminate-after = 3 }
@@ -9,3 +12,7 @@ slow-timeout = { period = "5m", terminate-after = 4 }
 [[profile.default.overrides]]
 filter = "package(foundry-cheatcodes-spec)"
 retries = 0
+
+[[profile.default.overrides]]
+filter = "package(chisel)"
+test-group = "chisel-serial"

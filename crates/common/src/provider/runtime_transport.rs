@@ -138,7 +138,7 @@ impl RuntimeTransport {
     /// Connects the underlying transport, depending on the URL scheme.
     pub async fn connect(&self) -> Result<InnerTransport, RuntimeTransportError> {
         match self.url.scheme() {
-            "http" | "https" => self.connect_http().await,
+            "http" | "https" => self.connect_http(),
             "ws" | "wss" => self.connect_ws().await,
             "file" => self.connect_ipc().await,
             _ => Err(RuntimeTransportError::BadScheme(self.url.scheme().to_string())),
@@ -165,7 +165,7 @@ impl RuntimeTransport {
         };
 
         // Add any custom headers.
-        for header in self.headers.iter() {
+        for header in &self.headers {
             let make_err = || RuntimeTransportError::BadHeader(header.to_string());
 
             let (key, val) = header.split_once(':').ok_or_else(make_err)?;
@@ -190,7 +190,7 @@ impl RuntimeTransport {
     }
 
     /// Connects to an HTTP [alloy_transport_http::Http] transport.
-    async fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
+    fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let client = self.reqwest_client()?;
         Ok(InnerTransport::Http(Http::with_client(client, self.url.clone())))
     }
@@ -351,7 +351,7 @@ mod tests {
         let transport = RuntimeTransportBuilder::new(url.clone())
             .with_headers(vec!["User-Agent: test-agent".to_string()])
             .build();
-        let inner = transport.connect_http().await.unwrap();
+        let inner = transport.connect_http().unwrap();
 
         match inner {
             InnerTransport::Http(http) => {

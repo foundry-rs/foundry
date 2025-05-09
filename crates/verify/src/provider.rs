@@ -91,7 +91,7 @@ impl VerificationContext {
         let graph =
             Graph::<MultiCompilerParsedSource>::resolve_sources(&self.project.paths, sources)?;
 
-        Ok(graph.imports(&self.target_path).into_iter().cloned().collect())
+        Ok(graph.imports(&self.target_path).into_iter().map(Into::into).collect())
     }
 }
 

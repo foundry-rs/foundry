@@ -461,7 +461,7 @@ impl Backend {
     ///
     /// If `fork` is `Some` this will use a `fork` database, otherwise with an in-memory
     /// database.
-    pub fn spawn(fork: Option<CreateFork>) -> Self {
+    pub fn spawn(fork: Option<CreateFork>) -> eyre::Result<Self> {
         Self::new(MultiFork::spawn(), fork)
     }
 
@@ -471,7 +471,7 @@ impl Backend {
     /// database.
     ///
     /// Prefer using [`spawn`](Self::spawn) instead.
-    pub fn new(forks: MultiFork, fork: Option<CreateFork>) -> Self {
+    pub fn new(forks: MultiFork, fork: Option<CreateFork>) -> eyre::Result<Self> {
         trace!(target: "backend", forking_mode=?fork.is_some(), "creating executor backend");
         // Note: this will take of registering the `fork`
         let inner = BackendInner {
@@ -488,8 +488,7 @@ impl Backend {
         };
 
         if let Some(fork) = fork {
-            let (fork_id, fork, _) =
-                backend.forks.create_fork(fork).expect("Unable to create fork");
+            let (fork_id, fork, _) = backend.forks.create_fork(fork)?;
             let fork_db = ForkDB::new(fork);
             let fork_ids = backend.inner.insert_new_fork(
                 fork_id.clone(),
@@ -502,17 +501,21 @@ impl Backend {
 
         trace!(target: "backend", forking_mode=? backend.active_fork_ids.is_some(), "created executor backend");
 
-        backend
+        Ok(backend)
     }
 
     /// Creates a new instance of `Backend` with fork added to the fork database and sets the fork
     /// as active
-    pub(crate) fn new_with_fork(id: &ForkId, fork: Fork, journaled_state: JournaledState) -> Self {
-        let mut backend = Self::spawn(None);
+    pub(crate) fn new_with_fork(
+        id: &ForkId,
+        fork: Fork,
+        journaled_state: JournaledState,
+    ) -> eyre::Result<Self> {
+        let mut backend = Self::spawn(None)?;
         let fork_ids = backend.inner.insert_new_fork(id.clone(), fork.db, journaled_state);
         backend.inner.launched_with_fork = Some((id.clone(), fork_ids.0, fork_ids.1));
         backend.active_fork_ids = Some(fork_ids);
-        backend
+        Ok(backend)
     }
 
     /// Creates a new instance with a `BackendDatabase::InMemory` cache layer for the `CacheDB`
@@ -1099,6 +1102,14 @@ impl DatabaseExt for Backend {
             // update the shared state and track
             let mut fork = self.inner.take_fork(idx);
 
+            // Make sure all persistent accounts on the newly selected fork starts from the init
+            // state (from setup).
+            for addr in &self.inner.persistent_accounts {
+                if let Some(account) = self.fork_init_journaled_state.state.get(addr) {
+                    fork.journaled_state.state.insert(*addr, account.clone());
+                }
+            }
+
             // since all forks handle their state separately, the depth can drift
             // this is a handover where the target fork starts at the same depth where it was
             // selected. This ensures that there are no gaps in depth which would
@@ -1182,7 +1193,7 @@ impl DatabaseExt for Backend {
                 // Special case for accounts that are not created: we don't merge their state but
                 // load it in order to reflect their state at the new block (they should explicitly
                 // be marked as persistent if it is desired to keep state between fork rolls).
-                for (addr, acc) in journaled_state.state.iter() {
+                for (addr, acc) in &journaled_state.state {
                     if acc.is_created() {
                         if acc.is_touched() {
                             merge_journaled_state_data(
@@ -1375,7 +1386,7 @@ impl DatabaseExt for Backend {
         journaled_state: &mut JournaledState,
     ) -> Result<(), BackendError> {
         // Loop through all of the allocs defined in the map and commit them to the journal.
-        for (addr, acc) in allocs.iter() {
+        for (addr, acc) in allocs {
             self.clone_account(acc, addr, journaled_state)?;
         }
 
@@ -1944,7 +1955,7 @@ fn commit_transaction(
         let fork = fork.clone();
         let journaled_state = journaled_state.clone();
         let depth = journaled_state.depth;
-        let mut db = Backend::new_with_fork(fork_id, fork, journaled_state);
+        let mut db = Backend::new_with_fork(fork_id, fork, journaled_state)?;
 
         let mut evm = crate::utils::new_evm_with_inspector(&mut db as _, env, inspector);
         // Adjust inner EVM depth to ensure that inspectors receive accurate data.
@@ -1967,7 +1978,7 @@ pub fn update_state<DB: Database>(
     for (addr, acc) in state.iter_mut() {
         if !persistent_accounts.is_some_and(|accounts| accounts.contains(addr)) {
             acc.info = db.basic(*addr)?.unwrap_or_default();
-            for (key, val) in acc.storage.iter_mut() {
+            for (key, val) in &mut acc.storage {
                 val.present_value = db.storage(*addr, *key)?;
             }
         }
@@ -2026,7 +2037,7 @@ mod tests {
             evm_opts,
         };
 
-        let backend = Backend::spawn(Some(fork));
+        let backend = Backend::spawn(Some(fork)).unwrap();
 
         // some rng contract from etherscan
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();

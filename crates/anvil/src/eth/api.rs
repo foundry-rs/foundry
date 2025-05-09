@@ -53,6 +53,7 @@ use alloy_rpc_types::{
         ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
     },
     request::TransactionRequest,
+    simulate::{SimulatePayload, SimulatedBlock},
     state::StateOverride,
     trace::{
         filter::TraceFilter,
@@ -133,7 +134,7 @@ pub struct EthApi {
 
 impl EthApi {
     /// Creates a new instance
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn new(
         pool: Arc<Pool>,
         backend: Arc<backend::mem::Backend>,
@@ -248,6 +249,9 @@ impl EthApi {
             }
             EthRequest::EthCall(call, block, overrides) => {
                 self.call(call, block, overrides).await.to_rpc_result()
+            }
+            EthRequest::EthSimulateV1(simulation, block) => {
+                self.simulate_v1(simulation, block).await.to_rpc_result()
             }
             EthRequest::EthCreateAccessList(call, block) => {
                 self.create_access_list(call, block).await.to_rpc_result()
@@ -1103,6 +1107,33 @@ impl EthApi {
         .await
     }
 
+    pub async fn simulate_v1(
+        &self,
+        request: SimulatePayload,
+        block_number: Option<BlockId>,
+    ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>> {
+        node_info!("eth_simulateV1");
+        let block_request = self.block_request(block_number).await?;
+        // check if the number predates the fork, if in fork mode
+        if let BlockRequest::Number(number) = block_request {
+            if let Some(fork) = self.get_fork() {
+                if fork.predates_fork(number) {
+                    return Ok(fork.simulate_v1(&request, Some(number.into())).await?)
+                }
+            }
+        }
+
+        // this can be blocking for a bit, especially in forking mode
+        // <https://github.com/foundry-rs/foundry/issues/6036>
+        self.on_blocking_task(|this| async move {
+            let simulated_blocks = this.backend.simulate(request, Some(block_request)).await?;
+            trace!(target : "node", "Simulate status {:?}", simulated_blocks);
+
+            Ok(simulated_blocks)
+        })
+        .await
+    }
+
     /// This method creates an EIP2930 type accessList based on a given Transaction. The accessList
     /// contains all storage slots and addresses read and written by the transaction, except for the
     /// sender account and the precompiles.
@@ -1707,15 +1738,18 @@ impl EthApi {
             return Ok(());
         }
 
-        // mine all the blocks
-        for _ in 0..blocks.to::<u64>() {
-            // If we have an interval, jump forwards in time to the "next" timestamp
-            if let Some(interval) = interval {
-                self.backend.time().increase_time(interval);
+        self.on_blocking_task(|this| async move {
+            // mine all the blocks
+            for _ in 0..blocks.to::<u64>() {
+                // If we have an interval, jump forwards in time to the "next" timestamp
+                if let Some(interval) = interval {
+                    this.backend.time().increase_time(interval);
+                }
+                this.mine_one().await;
             }
-
-            self.mine_one().await;
-        }
+            Ok(())
+        })
+        .await?;
 
         Ok(())
     }
@@ -2599,10 +2633,16 @@ impl EthApi {
             }
         }
 
-        // mine all the blocks
-        for _ in 0..blocks_to_mine {
-            self.mine_one().await;
-        }
+        // this can be blocking for a bit, especially in forking mode
+        // <https://github.com/foundry-rs/foundry/issues/6036>
+        self.on_blocking_task(|this| async move {
+            // mine all the blocks
+            for _ in 0..blocks_to_mine {
+                this.mine_one().await;
+            }
+            Ok(())
+        })
+        .await?;
 
         Ok(blocks_to_mine)
     }
@@ -2628,17 +2668,22 @@ impl EthApi {
             }
         }
 
-        self.backend
-            .with_database_at(Some(block_request), |mut state, block| {
-                if let Some(overrides) = overrides {
-                    state = Box::new(state::apply_state_override(
-                        overrides.into_iter().collect(),
-                        state,
-                    )?);
-                }
-                self.do_estimate_gas_with_state(request, &state, block)
-            })
-            .await?
+        // this can be blocking for a bit, especially in forking mode
+        // <https://github.com/foundry-rs/foundry/issues/6036>
+        self.on_blocking_task(|this| async move {
+            this.backend
+                .with_database_at(Some(block_request), |mut state, block| {
+                    if let Some(overrides) = overrides {
+                        state = Box::new(state::apply_state_override(
+                            overrides.into_iter().collect(),
+                            state,
+                        )?);
+                    }
+                    this.do_estimate_gas_with_state(request, &state, block)
+                })
+                .await?
+        })
+        .await
     }
 
     /// Estimates the gas usage of the `request` with the state.
@@ -2803,7 +2848,7 @@ impl EthApi {
     }
 
     /// Returns the first signer that can sign for the given address
-    #[allow(clippy::borrowed_box)]
+    #[expect(clippy::borrowed_box)]
     pub fn get_signer(&self, address: Address) -> Option<&Box<dyn Signer>> {
         self.signers.iter().find(|signer| signer.is_signer_for(address))
     }
@@ -2884,6 +2929,7 @@ impl EthApi {
         let gas_price = request.gas_price;
 
         let gas_limit = request.gas.unwrap_or_else(|| self.backend.gas_limit());
+        let from = request.from;
 
         let request = match transaction_request_to_typed(request) {
             Some(TypedTransactionRequest::Legacy(mut m)) => {
@@ -2931,10 +2977,26 @@ impl EthApi {
                         }
                         TxEip4844Variant::TxEip4844WithSidecar(m)
                     }
-                    // It is not valid to receive a TxEip4844 without a sidecar, therefore
-                    // we must reject it.
-                    TxEip4844Variant::TxEip4844(_) => {
-                        return Err(BlockchainError::FailedToDecodeTransaction)
+                    TxEip4844Variant::TxEip4844(mut tx) => {
+                        if !self.backend.skip_blob_validation(from) {
+                            return Err(BlockchainError::FailedToDecodeTransaction)
+                        }
+
+                        // Allows 4844 with no sidecar when impersonation is active.
+                        tx.nonce = nonce;
+                        tx.chain_id = chain_id;
+                        tx.gas_limit = gas_limit;
+                        if max_fee_per_gas.is_none() {
+                            tx.max_fee_per_gas = self.gas_price();
+                        }
+                        if max_fee_per_blob_gas.is_none() {
+                            tx.max_fee_per_blob_gas = self
+                                .excess_blob_gas_and_price()
+                                .unwrap_or_default()
+                                .map_or(0, |g| g.blob_gasprice)
+                        }
+
+                        TxEip4844Variant::TxEip4844(tx)
                     }
                 })
             }

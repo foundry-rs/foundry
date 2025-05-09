@@ -1,8 +1,5 @@
 pub use crate::ic::*;
-use crate::{
-    backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, precompiles::ODYSSEY_P256,
-    InspectorExt,
-};
+use crate::{backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, InspectorExt};
 use alloy_consensus::BlockHeader;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::{AnyTxEnvelope, TransactionResponse};
@@ -59,7 +56,7 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
                 env.block.prevrandao = Some(env.block.difficulty.into());
                 return;
             }
-            Moonbeam | Moonbase | Moonriver | MoonbeamDev => {
+            Moonbeam | Moonbase | Moonriver | MoonbeamDev | Rsk => {
                 if env.block.prevrandao.is_none() {
                     // <https://github.com/foundry-rs/foundry/issues/4232>
                     env.block.prevrandao = Some(B256::random());
@@ -312,7 +309,7 @@ pub fn odyssey_handler_register<EXT, DB: revm::Database>(handler: &mut EvmHandle
     handler.pre_execution.load_precompiles = Arc::new(move || {
         let mut loaded_precompiles = prev();
 
-        loaded_precompiles.extend([ODYSSEY_P256, P256VERIFY]);
+        loaded_precompiles.extend([P256VERIFY]);
 
         loaded_precompiles
     });

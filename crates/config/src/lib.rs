@@ -48,8 +48,6 @@ use std::{
     fs,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::mpsc::{self, RecvTimeoutError},
-    time::Duration,
 };
 
 mod macros;
@@ -98,6 +96,7 @@ pub mod fix;
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use alloy_chains::{Chain, NamedChain};
 pub use figment;
+use foundry_block_explorers::EtherscanApiVersion;
 
 pub mod providers;
 pub use providers::Remappings;
@@ -196,6 +195,8 @@ pub struct Config {
     pub libraries: Vec<String>,
     /// whether to enable cache
     pub cache: bool,
+    /// whether to dynamically link tests
+    pub dynamic_test_linking: bool,
     /// where the cache is stored if enabled
     pub cache_path: PathBuf,
     /// where the gas snapshots are stored
@@ -281,6 +282,8 @@ pub struct Config {
     pub eth_rpc_headers: Option<Vec<String>>,
     /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table
     pub etherscan_api_key: Option<String>,
+    /// etherscan API version
+    pub etherscan_api_version: Option<EtherscanApiVersion>,
     /// Multiple etherscan api configs and their aliases
     #[serde(default, skip_serializing_if = "EtherscanConfigs::is_empty")]
     pub etherscan: EtherscanConfigs,
@@ -523,6 +526,9 @@ pub struct Config {
     #[serde(default)]
     pub compilation_restrictions: Vec<CompilationRestrictions>,
 
+    /// Whether to enable script execution protection.
+    pub script_execution_protection: bool,
+
     /// PRIVATE: This structure may grow, As such, constructing this structure should
     /// _always_ be done using a public constructor or update syntax:
     ///
@@ -578,17 +584,14 @@ impl Config {
     /// Default address for tx.origin
     ///
     /// `0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38`
-    pub const DEFAULT_SENDER: Address = address!("1804c8AB1F12E6bbf3894d4083f33e07309d1f38");
+    pub const DEFAULT_SENDER: Address = address!("0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38");
 
     /// Default salt for create2 library deployments
     pub const DEFAULT_CREATE2_LIBRARY_SALT: FixedBytes<32> = FixedBytes::<32>::ZERO;
 
     /// Default create2 deployer
     pub const DEFAULT_CREATE2_DEPLOYER: Address =
-        address!("4e59b44847b379578588920ca78fbf26c0b4956c");
-
-    /// Docker image with eof-enabled solc binary
-    pub const EOF_SOLC_IMAGE: &'static str = "ghcr.io/paradigmxyz/forge-eof@sha256:46f868ce5264e1190881a3a335d41d7f42d6f26ed20b0c823609c715e38d603f";
+        address!("0x4e59b44847b379578588920ca78fbf26c0b4956c");
 
     /// Loads the `Config` from the current directory.
     ///
@@ -901,16 +904,20 @@ impl Config {
 
     /// Adjusts settings if EOF compilation is enabled.
     ///
-    /// This includes enabling via_ir, eof_version and ensuring that evm_version is not lower than
-    /// Prague.
+    /// This includes enabling optimizer, via_ir, eof_version and ensuring that evm_version is not
+    /// lower than Osaka.
     pub fn sanitize_eof_settings(&mut self) {
         if self.eof {
-            self.via_ir = true;
+            self.optimizer = Some(true);
+            self.normalize_optimizer_settings();
+
             if self.eof_version.is_none() {
                 self.eof_version = Some(EofVersion::V1);
             }
-            if self.evm_version < EvmVersion::Prague {
-                self.evm_version = EvmVersion::Prague;
+
+            self.via_ir = true;
+            if self.evm_version < EvmVersion::Osaka {
+                self.evm_version = EvmVersion::Osaka;
             }
         }
     }
@@ -1086,45 +1093,7 @@ impl Config {
     /// it's missing, unless the `offline` flag is enabled, in which case an error is thrown.
     ///
     /// If `solc` is [`SolcReq::Local`] then this will ensure that the path exists.
-    #[allow(clippy::disallowed_macros)]
     fn ensure_solc(&self) -> Result<Option<Solc>, SolcError> {
-        if self.eof {
-            let (tx, rx) = mpsc::channel();
-            let root = self.root.clone();
-            std::thread::spawn(move || {
-                tx.send(
-                    Solc::new_with_args(
-                        "docker",
-                        [
-                            "run",
-                            "--rm",
-                            "-i",
-                            "-v",
-                            &format!("{}:/app/root", root.display()),
-                            Self::EOF_SOLC_IMAGE,
-                        ],
-                    )
-                    .map(Some),
-                )
-            });
-            // If it takes more than 1 second, this likely means we are pulling the image.
-            return match rx.recv_timeout(Duration::from_secs(1)) {
-                Ok(res) => res,
-                Err(RecvTimeoutError::Timeout) => {
-                    // `sh_warn!` is a circular dependency, preventing us from using it here.
-                    eprintln!(
-                        "{}",
-                        yansi::Paint::yellow(
-                            "Pulling Docker image for eof-solc, this might take some time..."
-                        )
-                    );
-
-                    rx.recv().expect("sender dropped")
-                }
-                Err(RecvTimeoutError::Disconnected) => panic!("sender dropped"),
-            };
-        }
-
         if let Some(solc) = &self.solc {
             let solc = match solc {
                 SolcReq::Version(version) => {
@@ -1231,7 +1200,7 @@ impl Config {
     /// Returns configured [Vyper] compiler.
     pub fn vyper_compiler(&self) -> Result<Option<Vyper>, SolcError> {
         // Only instantiate Vyper if there are any Vyper files in the project.
-        if self.project_paths::<VyperLanguage>().input_files_iter().next().is_none() {
+        if !self.project_paths::<VyperLanguage>().has_input_files() {
             return Ok(None);
         }
         let vyper = if let Some(path) = &self.vyper.path {
@@ -1239,7 +1208,6 @@ impl Config {
         } else {
             Vyper::new("vyper").ok()
         };
-
         Ok(vyper)
     }
 
@@ -1412,17 +1380,23 @@ impl Config {
         &self,
         chain: Option<Chain>,
     ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
+        let default_api_version = self.etherscan_api_version.unwrap_or_default();
+
         if let Some(maybe_alias) = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref()) {
             if self.etherscan.contains_key(maybe_alias) {
-                return self.etherscan.clone().resolved().remove(maybe_alias).transpose();
+                return self
+                    .etherscan
+                    .clone()
+                    .resolved(default_api_version)
+                    .remove(maybe_alias)
+                    .transpose();
             }
         }
 
         // try to find by comparing chain IDs after resolving
-        if let Some(res) = chain
-            .or(self.chain)
-            .and_then(|chain| self.etherscan.clone().resolved().find_chain(chain))
-        {
+        if let Some(res) = chain.or(self.chain).and_then(|chain| {
+            self.etherscan.clone().resolved(default_api_version).find_chain(chain)
+        }) {
             match (res, self.etherscan_api_key.as_ref()) {
                 (Ok(mut config), Some(key)) => {
                     // we update the key, because if an etherscan_api_key is set, it should take
@@ -1440,8 +1414,11 @@ impl Config {
 
         // etherscan fallback via API key
         if let Some(key) = self.etherscan_api_key.as_ref() {
-            let chain = chain.or(self.chain).unwrap_or_default();
-            return Ok(ResolvedEtherscanConfig::create(key, chain));
+            return Ok(ResolvedEtherscanConfig::create(
+                key,
+                chain.or(self.chain).unwrap_or_default(),
+                default_api_version,
+            ));
         }
 
         Ok(None)
@@ -1454,6 +1431,17 @@ impl Config {
     /// See also [Self::get_etherscan_config_with_chain]
     pub fn get_etherscan_api_key(&self, chain: Option<Chain>) -> Option<String> {
         self.get_etherscan_config_with_chain(chain).ok().flatten().map(|c| c.key)
+    }
+
+    /// Helper function to get the API version.
+    ///
+    /// See also [Self::get_etherscan_config_with_chain]
+    pub fn get_etherscan_api_version(&self, chain: Option<Chain>) -> EtherscanApiVersion {
+        self.get_etherscan_config_with_chain(chain)
+            .ok()
+            .flatten()
+            .map(|c| c.api_version)
+            .unwrap_or_default()
     }
 
     /// Returns the remapping for the project's _src_ directory
@@ -2201,7 +2189,7 @@ impl FigmentProviders {
     }
 }
 
-/// Wrapper type for `regex::Regex` that implements `PartialEq`
+/// Wrapper type for [`regex::Regex`] that implements [`PartialEq`] and [`serde`] traits.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RegexWrapper {
@@ -2223,6 +2211,8 @@ impl std::cmp::PartialEq for RegexWrapper {
     }
 }
 
+impl Eq for RegexWrapper {}
+
 impl From<RegexWrapper> for regex::Regex {
     fn from(wrapper: RegexWrapper) -> Self {
         wrapper.inner
@@ -2232,6 +2222,26 @@ impl From<RegexWrapper> for regex::Regex {
 impl From<regex::Regex> for RegexWrapper {
     fn from(re: Regex) -> Self {
         Self { inner: re }
+    }
+}
+
+mod serde_regex {
+    use regex::Regex;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub(crate) fn serialize<S>(value: &Regex, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(value.as_str())
+    }
+
+    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<Regex, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Regex::new(&s).map_err(serde::de::Error::custom)
     }
 }
 
@@ -2319,6 +2329,7 @@ impl Default for Config {
             out: "out".into(),
             libs: vec!["lib".into()],
             cache: true,
+            dynamic_test_linking: false,
             cache_path: "cache".into(),
             broadcast: "broadcast".into(),
             snapshots: "snapshots".into(),
@@ -2381,6 +2392,7 @@ impl Default for Config {
             eth_rpc_timeout: None,
             eth_rpc_headers: None,
             etherscan_api_key: None,
+            etherscan_api_version: None,
             verbosity: 0,
             remappings: vec![],
             auto_detect_remappings: true,
@@ -2427,6 +2439,7 @@ impl Default for Config {
             additional_compiler_profiles: Default::default(),
             compilation_restrictions: Default::default(),
             eof: false,
+            script_execution_protection: true,
             _non_exhaustive: (),
         }
     }
@@ -2590,7 +2603,7 @@ mod tests {
         vyper::VyperOptimizationMode, ModelCheckerEngine, YulDetails,
     };
     use similar_asserts::assert_eq;
-    use soldeer::RemappingsLocation;
+    use soldeer_core::remappings::RemappingsLocation;
     use std::{collections::BTreeMap, fs::File, io::Write};
     use tempfile::tempdir;
     use NamedChain::Moonbeam;
@@ -2603,10 +2616,7 @@ mod tests {
 
     #[test]
     fn default_sender() {
-        assert_eq!(
-            Config::DEFAULT_SENDER,
-            Address::from_str("0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38").unwrap()
-        );
+        assert_eq!(Config::DEFAULT_SENDER, address!("0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38"));
     }
 
     #[test]
@@ -3077,11 +3087,11 @@ mod tests {
 
             let config = Config::load().unwrap();
 
-            assert!(config.etherscan.clone().resolved().has_unresolved());
+            assert!(config.etherscan.clone().resolved(EtherscanApiVersion::V2).has_unresolved());
 
             jail.set_env("_CONFIG_ETHERSCAN_MOONBEAM", "123456789");
 
-            let configs = config.etherscan.resolved();
+            let configs = config.etherscan.resolved(EtherscanApiVersion::V2);
             assert!(!configs.has_unresolved());
 
             let mb_urls = Moonbeam.etherscan_urls().unwrap();
@@ -3095,6 +3105,7 @@ mod tests {
                             api_url: mainnet_urls.0.to_string(),
                             chain: Some(NamedChain::Mainnet.into()),
                             browser_url: Some(mainnet_urls.1.to_string()),
+                            api_version: EtherscanApiVersion::V2,
                             key: "FX42Z3BBJJEWXWGYV2X1CIPRSCN".to_string(),
                         }
                     ),
@@ -3104,6 +3115,62 @@ mod tests {
                             api_url: mb_urls.0.to_string(),
                             chain: Some(Moonbeam.into()),
                             browser_url: Some(mb_urls.1.to_string()),
+                            api_version: EtherscanApiVersion::V2,
+                            key: "123456789".to_string(),
+                        }
+                    ),
+                ])
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_resolve_etherscan_with_versions() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+
+                [etherscan]
+                mainnet = { key = "FX42Z3BBJJEWXWGYV2X1CIPRSCN", api_version = "v2" }
+                moonbeam = { key = "${_CONFIG_ETHERSCAN_MOONBEAM}", api_version = "v1" }
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+
+            assert!(config.etherscan.clone().resolved(EtherscanApiVersion::V2).has_unresolved());
+
+            jail.set_env("_CONFIG_ETHERSCAN_MOONBEAM", "123456789");
+
+            let configs = config.etherscan.resolved(EtherscanApiVersion::V2);
+            assert!(!configs.has_unresolved());
+
+            let mb_urls = Moonbeam.etherscan_urls().unwrap();
+            let mainnet_urls = NamedChain::Mainnet.etherscan_urls().unwrap();
+            assert_eq!(
+                configs,
+                ResolvedEtherscanConfigs::new([
+                    (
+                        "mainnet",
+                        ResolvedEtherscanConfig {
+                            api_url: mainnet_urls.0.to_string(),
+                            chain: Some(NamedChain::Mainnet.into()),
+                            browser_url: Some(mainnet_urls.1.to_string()),
+                            api_version: EtherscanApiVersion::V2,
+                            key: "FX42Z3BBJJEWXWGYV2X1CIPRSCN".to_string(),
+                        }
+                    ),
+                    (
+                        "moonbeam",
+                        ResolvedEtherscanConfig {
+                            api_url: mb_urls.0.to_string(),
+                            chain: Some(Moonbeam.into()),
+                            browser_url: Some(mb_urls.1.to_string()),
+                            api_version: EtherscanApiVersion::V1,
                             key: "123456789".to_string(),
                         }
                     ),
@@ -4617,7 +4684,7 @@ mod tests {
     }
 
     // a test to print the config, mainly used to update the example config in the README
-    #[allow(clippy::disallowed_macros)]
+    #[expect(clippy::disallowed_macros)]
     #[test]
     #[ignore]
     fn print_config() {
@@ -4643,7 +4710,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unknown_lints, non_local_definitions)]
     fn can_use_impl_figment_macro() {
         #[derive(Default, Serialize)]
         struct MyArgs {
@@ -4835,11 +4901,11 @@ mod tests {
                 config.labels,
                 AddressHashMap::from_iter(vec![
                     (
-                        Address::from_str("0x1F98431c8aD98523631AE4a59f267346ea31F984").unwrap(),
+                        address!("0x1F98431c8aD98523631AE4a59f267346ea31F984"),
                         "Uniswap V3: Factory".to_string()
                     ),
                     (
-                        Address::from_str("0xC36442b4a4522E871399CD717aBDD847Ab11FE88").unwrap(),
+                        address!("0xC36442b4a4522E871399CD717aBDD847Ab11FE88"),
                         "Uniswap V3: Positions NFT".to_string()
                     ),
                 ])

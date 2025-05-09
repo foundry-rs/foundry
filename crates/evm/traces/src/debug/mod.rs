@@ -200,6 +200,13 @@ impl<'a> DebugStepsWalker<'a> {
 fn parse_function_from_loc(source: &SourceData, loc: &SourceElement) -> Option<String> {
     let start = loc.offset() as usize;
     let end = start + loc.length() as usize;
+    let src_len = source.source.len();
+
+    // Handle special case of preprocessed test sources.
+    if start > src_len || end > src_len {
+        return None;
+    }
+
     let source_part = &source.source[start..end];
     if !source_part.starts_with("function") {
         return None;

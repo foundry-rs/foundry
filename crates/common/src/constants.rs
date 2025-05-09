@@ -31,13 +31,13 @@ supported. Please try to change your RPC url to an archive node if the issue per
 
 /// Arbitrum L1 sender address of the first transaction in every block.
 /// `0x00000000000000000000000000000000000a4b05`
-pub const ARBITRUM_SENDER: Address = address!("00000000000000000000000000000000000a4b05");
+pub const ARBITRUM_SENDER: Address = address!("0x00000000000000000000000000000000000a4b05");
 
 /// The system address, the sender of the first transaction in every block:
 /// `0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001`
 ///
 /// See also <https://github.com/ethereum-optimism/optimism/blob/65ec61dde94ffa93342728d324fecf474d228e1f/specs/deposits.md#l1-attributes-deposited-transaction>
-pub const OPTIMISM_SYSTEM_ADDRESS: Address = address!("deaddeaddeaddeaddeaddeaddeaddeaddead0001");
+pub const OPTIMISM_SYSTEM_ADDRESS: Address = address!("0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001");
 
 /// Transaction identifier of System transaction types
 pub const SYSTEM_TRANSACTION_TYPE: u8 = 126;
@@ -77,13 +77,12 @@ pub fn is_impersonated_sig(sig: &PrimitiveSignature, ty: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
 
     #[test]
     fn test_constant_sender() {
-        let arb = Address::from_str("0x00000000000000000000000000000000000a4b05").unwrap();
+        let arb = address!("0x00000000000000000000000000000000000a4b05");
         assert_eq!(arb, ARBITRUM_SENDER);
-        let base = Address::from_str("0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001").unwrap();
+        let base = address!("0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001");
         assert_eq!(base, OPTIMISM_SYSTEM_ADDRESS);
     }
 }

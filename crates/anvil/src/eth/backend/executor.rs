@@ -8,15 +8,16 @@ use crate::{
     mem::inspector::Inspector,
     PrecompileFactory,
 };
-use alloy_consensus::{constants::EMPTY_WITHDRAWALS, Receipt, ReceiptWithBloom};
-use alloy_eips::{eip2718::Encodable2718, eip7685::EMPTY_REQUESTS_HASH};
+use alloy_consensus::{
+    constants::EMPTY_WITHDRAWALS, proofs::calculate_receipt_root, Receipt, ReceiptWithBloom,
+};
+use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{Bloom, BloomInput, Log, B256};
 use anvil_core::eth::{
     block::{Block, BlockInfo, PartialHeader},
     transaction::{
         DepositReceipt, PendingTransaction, TransactionInfo, TypedReceipt, TypedTransaction,
     },
-    trie,
 };
 use foundry_evm::{
     backend::DatabaseError,
@@ -108,6 +109,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     pub enable_steps_tracing: bool,
     pub odyssey: bool,
     pub print_logs: bool,
+    pub print_traces: bool,
     /// Precompiles to inject to the EVM.
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
 }
@@ -210,8 +212,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             transactions.push(transaction.pending_transaction.transaction.clone());
         }
 
-        let receipts_root =
-            trie::ordered_trie_root(receipts.iter().map(Encodable2718::encoded_2718));
+        let receipts_root = calculate_receipt_root(&receipts);
 
         let partial_header = PartialHeader {
             parent_hash,
@@ -312,6 +313,9 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         if self.print_logs {
             inspector = inspector.with_log_collector();
         }
+        if self.print_traces {
+            inspector = inspector.with_trace_printer();
+        }
 
         let exec_result = {
             let mut evm = new_evm_with_inspector(&mut *self.db, env, &mut inspector, self.odyssey);
@@ -345,6 +349,10 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
                 }
             }
         };
+
+        if self.print_traces {
+            inspector.print_traces();
+        }
         inspector.print_logs();
 
         let (exit_reason, gas_used, out, logs) = match exec_result {

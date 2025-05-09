@@ -83,6 +83,7 @@ impl Cheatcodes<'static> {
                 Vm::Wallet::STRUCT.clone(),
                 Vm::FfiResult::STRUCT.clone(),
                 Vm::ChainInfo::STRUCT.clone(),
+                Vm::Chain::STRUCT.clone(),
                 Vm::AccountAccess::STRUCT.clone(),
                 Vm::StorageAccess::STRUCT.clone(),
                 Vm::Gas::STRUCT.clone(),
@@ -90,6 +91,7 @@ impl Cheatcodes<'static> {
                 Vm::BroadcastTxSummary::STRUCT.clone(),
                 Vm::SignedDelegation::STRUCT.clone(),
                 Vm::PotentialRevert::STRUCT.clone(),
+                Vm::AccessListItem::STRUCT.clone(),
             ]),
             enums: Cow::Owned(vec![
                 Vm::CallerMode::ENUM.clone(),
@@ -106,7 +108,7 @@ impl Cheatcodes<'static> {
 }
 
 #[cfg(test)]
-#[allow(clippy::disallowed_macros)]
+#[expect(clippy::disallowed_macros)]
 mod tests {
     use super::*;
     use std::{fs, path::Path};
