@@ -4276,6 +4276,46 @@
     },
     {
       "func": {
+        "id": "eip712HashStruct",
+        "description": "",
+        "declaration": "function eip712HashStruct(string memory typeDefinition, bytes calldata encodedData) external pure returns (bytes32 structHash);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "eip712HashStruct(string,bytes)",
+        "selector": "0xaedeaebc",
+        "selectorBytes": [
+          174,
+          222,
+          174,
+          188
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "eip712HashType",
+        "description": "",
+        "declaration": "function eip712HashType(string memory typeDefinition) external pure returns (bytes32 typeHash);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "eip712HashType(string)",
+        "selector": "0x6792e9e2",
+        "selectorBytes": [
+          103,
+          146,
+          233,
+          226
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "ensNamehash",
         "description": "Returns ENS namehash for provided string.",
         "declaration": "function ensNamehash(string calldata name) external pure returns (bytes32);",

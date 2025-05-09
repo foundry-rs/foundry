@@ -1,11 +1,12 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
-use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{aliases::B32, map::HashMap, B64, U256};
+use alloy_dyn_abi::{eip712_parser, DynSolType, DynSolValue};
+use alloy_primitives::{aliases::B32, keccak256, map::HashMap, B64, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::ens::namehash;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
+use itertools::Itertools;
 use proptest::prelude::Strategy;
 use rand::{seq::SliceRandom, Rng, RngCore};
 
@@ -313,3 +314,33 @@ fn random_int(state: &mut Cheatcodes, bits: Option<U256>) -> Result {
         .current()
         .abi_encode())
 }
+
+// TODO: impl plan:
+// 1. start with string representation as an input
+// 2. pass Contract::Struct
+//   a. use `fn get_artifact_code()` as reference to see how to access the ABI representation
+//   b. explore the ABI to get the type definition
+// 3. unify 1. and 2.
+impl Cheatcode for eip712HashTypeCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { typeDefinition } = self;
+
+        let mut types = eip712_parser::EncodeType::parse(typeDefinition)
+            .map_err(|e| {
+                fmt_err!("Failed to parse EIP-712 type definition '{}': {}", typeDefinition, e)
+            })?
+            .types;
+
+        // TODO: open a PR to alloy to handle sorting directly in the parser
+        // EIP712 requires alphabeting order of the secondary types
+        let mut sorted = vec![types.remove(0)];
+        types.sort_by(|a, b| a.type_name.cmp(b.type_name));
+        sorted.extend(types);
+
+        let canonical: String = sorted.into_iter().map(|t| t.span.to_owned()).collect();
+        let canonical_hash = keccak256(canonical.abi_encode());
+
+        Ok(canonical_hash.to_vec())
+    }
+}
+impl Cheatcode for eip712HashStructCall {}
