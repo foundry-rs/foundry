@@ -679,12 +679,7 @@
         "mutability": "",
         "signature": "_expectCheatcodeRevert()",
         "selector": "0x79a4f48a",
-        "selectorBytes": [
-          121,
-          164,
-          244,
-          138
-        ]
+        "selectorBytes": [121, 164, 244, 138]
       },
       "group": "testing",
       "status": "internal",
@@ -699,12 +694,7 @@
         "mutability": "",
         "signature": "_expectCheatcodeRevert(bytes4)",
         "selector": "0x884cb0ae",
-        "selectorBytes": [
-          136,
-          76,
-          176,
-          174
-        ]
+        "selectorBytes": [136, 76, 176, 174]
       },
       "group": "testing",
       "status": "internal",
@@ -719,12 +709,7 @@
         "mutability": "",
         "signature": "_expectCheatcodeRevert(bytes)",
         "selector": "0x7843b44d",
-        "selectorBytes": [
-          120,
-          67,
-          180,
-          77
-        ]
+        "selectorBytes": [120, 67, 180, 77]
       },
       "group": "testing",
       "status": "internal",
@@ -739,12 +724,7 @@
         "mutability": "",
         "signature": "accessList((address,bytes32[])[])",
         "selector": "0x743e4cb7",
-        "selectorBytes": [
-          116,
-          62,
-          76,
-          183
-        ]
+        "selectorBytes": [116, 62, 76, 183]
       },
       "group": "evm",
       "status": "stable",
@@ -759,12 +739,7 @@
         "mutability": "",
         "signature": "accesses(address)",
         "selector": "0x65bc9481",
-        "selectorBytes": [
-          101,
-          188,
-          148,
-          129
-        ]
+        "selectorBytes": [101, 188, 148, 129]
       },
       "group": "evm",
       "status": "stable",
@@ -779,12 +754,7 @@
         "mutability": "view",
         "signature": "activeFork()",
         "selector": "0x2f103f22",
-        "selectorBytes": [
-          47,
-          16,
-          63,
-          34
-        ]
+        "selectorBytes": [47, 16, 63, 34]
       },
       "group": "evm",
       "status": "stable",
@@ -799,12 +769,7 @@
         "mutability": "pure",
         "signature": "addr(uint256)",
         "selector": "0xffa18649",
-        "selectorBytes": [
-          255,
-          161,
-          134,
-          73
-        ]
+        "selectorBytes": [255, 161, 134, 73]
       },
       "group": "evm",
       "status": "stable",
@@ -819,12 +784,7 @@
         "mutability": "",
         "signature": "allowCheatcodes(address)",
         "selector": "0xea060291",
-        "selectorBytes": [
-          234,
-          6,
-          2,
-          145
-        ]
+        "selectorBytes": [234, 6, 2, 145]
       },
       "group": "evm",
       "status": "stable",
@@ -839,12 +799,7 @@
         "mutability": "pure",
         "signature": "assertApproxEqAbsDecimal(uint256,uint256,uint256,uint256)",
         "selector": "0x045c55ce",
-        "selectorBytes": [
-          4,
-          92,
-          85,
-          206
-        ]
+        "selectorBytes": [4, 92, 85, 206]
       },
       "group": "testing",
       "status": "stable",
@@ -859,12 +814,7 @@
         "mutability": "pure",
         "signature": "assertApproxEqAbsDecimal(uint256,uint256,uint256,uint256,string)",
         "selector": "0x60429eb2",
-        "selectorBytes": [
-          96,
-          66,
-          158,
-          178
-        ]
+        "selectorBytes": [96, 66, 158, 178]
       },
       "group": "testing",
       "status": "stable",
@@ -879,12 +829,7 @@
         "mutability": "pure",
         "signature": "assertApproxEqAbsDecimal(int256,int256,uint256,uint256)",
         "selector": "0x3d5bc8bc",
-        "selectorBytes": [
-          61,
-          91,
-          200,
-          188
-        ]
+        "selectorBytes": [61, 91, 200, 188]
       },
       "group": "testing",
       "status": "stable",
@@ -899,12 +844,7 @@
         "mutability": "pure",
         "signature": "assertApproxEqAbsDecimal(int256,int256,uint256,uint256,string)",
         "selector": "0x6a5066d4",
-        "selectorBytes": [
-          106,
-          80,
-          102,
-          212
-        ]
+        "selectorBytes": [106, 80, 102, 212]
       },
       "group": "testing",
       "status": "stable",
@@ -919,12 +859,7 @@
         "mutability": "pure",
         "signature": "assertApproxEqAbs(uint256,uint256,uint256)",
         "selector": "0x16d207c6",
-        "selectorBytes": [
-          22,
-          210,
-          7,
-          198
-        ]
+        "selectorBytes": [22, 210, 7, 198]
       },
       "group": "testing",
       "status": "stable",
@@ -939,12 +874,7 @@
         "mutability": "pure",
         "signature": "assertApproxEqAbs(uint256,uint256,uint256,string)",
         "selector": "0xf710b062",
-        "selectorBytes": [
-          247,
-          16,
-          176,
-          98
-        ]
+        "selectorBytes": [247, 16, 176, 98]
       },
       "group": "testing",
       "status": "stable",
@@ -959,12 +889,7 @@
         "mutability": "pure",
         "signature": "assertApproxEqAbs(int256,int256,uint256)",
         "selector": "0x240f839d",
-        "selectorBytes": [
-          36,
-          15,
-          131,
-          157
-        ]
+        "selectorBytes": [36, 15, 131, 157]
       },
       "group": "testing",
       "status": "stable",
@@ -979,12 +904,7 @@
         "mutability": "pure",
         "signature": "assertApproxEqAbs(int256,int256,uint256,string)",
         "selector": "0x8289e621",
-        "selectorBytes": [
-          130,
-          137,
-          230,
-          33
-        ]
+        "selectorBytes": [130, 137, 230, 33]
       },
       "group": "testing",
       "status": "stable",
@@ -999,12 +919,7 @@
         "mutability": "pure",
         "signature": "assertApproxEqRelDecimal(uint256,uint256,uint256,uint256)",
         "selector": "0x21ed2977",
-        "selectorBytes": [
-          33,
-          237,
-          41,
-          119
-        ]
+        "selectorBytes": [33, 237, 41, 119]
       },
       "group": "testing",
       "status": "stable",
@@ -1019,12 +934,7 @@
         "mutability": "pure",
         "signature": "assertApproxEqRelDecimal(uint256,uint256,uint256,uint256,string)",
         "selector": "0x82d6c8fd",
-        "selectorBytes": [
-          130,
-          214,
-          200,
-          253
-        ]
+        "selectorBytes": [130, 214, 200, 253]
       },
       "group": "testing",
       "status": "stable",
@@ -1039,12 +949,7 @@
         "mutability": "pure",
         "signature": "assertApproxEqRelDecimal(int256,int256,uint256,uint256)",
         "selector": "0xabbf21cc",
-        "selectorBytes": [
-          171,
-          191,
-          33,
-          204
-        ]
+        "selectorBytes": [171, 191, 33, 204]
       },
       "group": "testing",
       "status": "stable",
@@ -1059,12 +964,7 @@
         "mutability": "pure",
         "signature": "assertApproxEqRelDecimal(int256,int256,uint256,uint256,string)",
         "selector": "0xfccc11c4",
-        "selectorBytes": [
-          252,
-          204,
-          17,
-          196
-        ]
+        "selectorBytes": [252, 204, 17, 196]
       },
       "group": "testing",
       "status": "stable",
@@ -1079,12 +979,7 @@
         "mutability": "pure",
         "signature": "assertApproxEqRel(uint256,uint256,uint256)",
         "selector": "0x8cf25ef4",
-        "selectorBytes": [
-          140,
-          242,
-          94,
-          244
-        ]
+        "selectorBytes": [140, 242, 94, 244]
       },
       "group": "testing",
       "status": "stable",
@@ -1099,12 +994,7 @@
         "mutability": "pure",
         "signature": "assertApproxEqRel(uint256,uint256,uint256,string)",
         "selector": "0x1ecb7d33",
-        "selectorBytes": [
-          30,
-          203,
-          125,
-          51
-        ]
+        "selectorBytes": [30, 203, 125, 51]
       },
       "group": "testing",
       "status": "stable",
@@ -1119,12 +1009,7 @@
         "mutability": "pure",
         "signature": "assertApproxEqRel(int256,int256,uint256)",
         "selector": "0xfea2d14f",
-        "selectorBytes": [
-          254,
-          162,
-          209,
-          79
-        ]
+        "selectorBytes": [254, 162, 209, 79]
       },
       "group": "testing",
       "status": "stable",
@@ -1139,12 +1024,7 @@
         "mutability": "pure",
         "signature": "assertApproxEqRel(int256,int256,uint256,string)",
         "selector": "0xef277d72",
-        "selectorBytes": [
-          239,
-          39,
-          125,
-          114
-        ]
+        "selectorBytes": [239, 39, 125, 114]
       },
       "group": "testing",
       "status": "stable",
@@ -1159,12 +1039,7 @@
         "mutability": "pure",
         "signature": "assertEqDecimal(uint256,uint256,uint256)",
         "selector": "0x27af7d9c",
-        "selectorBytes": [
-          39,
-          175,
-          125,
-          156
-        ]
+        "selectorBytes": [39, 175, 125, 156]
       },
       "group": "testing",
       "status": "stable",
@@ -1179,12 +1054,7 @@
         "mutability": "pure",
         "signature": "assertEqDecimal(uint256,uint256,uint256,string)",
         "selector": "0xd0cbbdef",
-        "selectorBytes": [
-          208,
-          203,
-          189,
-          239
-        ]
+        "selectorBytes": [208, 203, 189, 239]
       },
       "group": "testing",
       "status": "stable",
@@ -1199,12 +1069,7 @@
         "mutability": "pure",
         "signature": "assertEqDecimal(int256,int256,uint256)",
         "selector": "0x48016c04",
-        "selectorBytes": [
-          72,
-          1,
-          108,
-          4
-        ]
+        "selectorBytes": [72, 1, 108, 4]
       },
       "group": "testing",
       "status": "stable",
@@ -1219,12 +1084,7 @@
         "mutability": "pure",
         "signature": "assertEqDecimal(int256,int256,uint256,string)",
         "selector": "0x7e77b0c5",
-        "selectorBytes": [
-          126,
-          119,
-          176,
-          197
-        ]
+        "selectorBytes": [126, 119, 176, 197]
       },
       "group": "testing",
       "status": "stable",
@@ -1239,12 +1099,7 @@
         "mutability": "pure",
         "signature": "assertEq(bool,bool)",
         "selector": "0xf7fe3477",
-        "selectorBytes": [
-          247,
-          254,
-          52,
-          119
-        ]
+        "selectorBytes": [247, 254, 52, 119]
       },
       "group": "testing",
       "status": "stable",
@@ -1259,12 +1114,7 @@
         "mutability": "pure",
         "signature": "assertEq(bool,bool,string)",
         "selector": "0x4db19e7e",
-        "selectorBytes": [
-          77,
-          177,
-          158,
-          126
-        ]
+        "selectorBytes": [77, 177, 158, 126]
       },
       "group": "testing",
       "status": "stable",
@@ -1279,12 +1129,7 @@
         "mutability": "pure",
         "signature": "assertEq(string,string)",
         "selector": "0xf320d963",
-        "selectorBytes": [
-          243,
-          32,
-          217,
-          99
-        ]
+        "selectorBytes": [243, 32, 217, 99]
       },
       "group": "testing",
       "status": "stable",
@@ -1299,12 +1144,7 @@
         "mutability": "pure",
         "signature": "assertEq(string,string,string)",
         "selector": "0x36f656d8",
-        "selectorBytes": [
-          54,
-          246,
-          86,
-          216
-        ]
+        "selectorBytes": [54, 246, 86, 216]
       },
       "group": "testing",
       "status": "stable",
@@ -1319,12 +1159,7 @@
         "mutability": "pure",
         "signature": "assertEq(bytes,bytes)",
         "selector": "0x97624631",
-        "selectorBytes": [
-          151,
-          98,
-          70,
-          49
-        ]
+        "selectorBytes": [151, 98, 70, 49]
       },
       "group": "testing",
       "status": "stable",
@@ -1339,12 +1174,7 @@
         "mutability": "pure",
         "signature": "assertEq(bytes,bytes,string)",
         "selector": "0xe24fed00",
-        "selectorBytes": [
-          226,
-          79,
-          237,
-          0
-        ]
+        "selectorBytes": [226, 79, 237, 0]
       },
       "group": "testing",
       "status": "stable",
@@ -1359,12 +1189,7 @@
         "mutability": "pure",
         "signature": "assertEq(bool[],bool[])",
         "selector": "0x707df785",
-        "selectorBytes": [
-          112,
-          125,
-          247,
-          133
-        ]
+        "selectorBytes": [112, 125, 247, 133]
       },
       "group": "testing",
       "status": "stable",
@@ -1379,12 +1204,7 @@
         "mutability": "pure",
         "signature": "assertEq(bool[],bool[],string)",
         "selector": "0xe48a8f8d",
-        "selectorBytes": [
-          228,
-          138,
-          143,
-          141
-        ]
+        "selectorBytes": [228, 138, 143, 141]
       },
       "group": "testing",
       "status": "stable",
@@ -1399,12 +1219,7 @@
         "mutability": "pure",
         "signature": "assertEq(uint256[],uint256[])",
         "selector": "0x975d5a12",
-        "selectorBytes": [
-          151,
-          93,
-          90,
-          18
-        ]
+        "selectorBytes": [151, 93, 90, 18]
       },
       "group": "testing",
       "status": "stable",
@@ -1419,12 +1234,7 @@
         "mutability": "pure",
         "signature": "assertEq(uint256[],uint256[],string)",
         "selector": "0x5d18c73a",
-        "selectorBytes": [
-          93,
-          24,
-          199,
-          58
-        ]
+        "selectorBytes": [93, 24, 199, 58]
       },
       "group": "testing",
       "status": "stable",
@@ -1439,12 +1249,7 @@
         "mutability": "pure",
         "signature": "assertEq(int256[],int256[])",
         "selector": "0x711043ac",
-        "selectorBytes": [
-          113,
-          16,
-          67,
-          172
-        ]
+        "selectorBytes": [113, 16, 67, 172]
       },
       "group": "testing",
       "status": "stable",
@@ -1459,12 +1264,7 @@
         "mutability": "pure",
         "signature": "assertEq(int256[],int256[],string)",
         "selector": "0x191f1b30",
-        "selectorBytes": [
-          25,
-          31,
-          27,
-          48
-        ]
+        "selectorBytes": [25, 31, 27, 48]
       },
       "group": "testing",
       "status": "stable",
@@ -1479,12 +1279,7 @@
         "mutability": "pure",
         "signature": "assertEq(uint256,uint256)",
         "selector": "0x98296c54",
-        "selectorBytes": [
-          152,
-          41,
-          108,
-          84
-        ]
+        "selectorBytes": [152, 41, 108, 84]
       },
       "group": "testing",
       "status": "stable",
@@ -1499,12 +1294,7 @@
         "mutability": "pure",
         "signature": "assertEq(address[],address[])",
         "selector": "0x3868ac34",
-        "selectorBytes": [
-          56,
-          104,
-          172,
-          52
-        ]
+        "selectorBytes": [56, 104, 172, 52]
       },
       "group": "testing",
       "status": "stable",
@@ -1519,12 +1309,7 @@
         "mutability": "pure",
         "signature": "assertEq(address[],address[],string)",
         "selector": "0x3e9173c5",
-        "selectorBytes": [
-          62,
-          145,
-          115,
-          197
-        ]
+        "selectorBytes": [62, 145, 115, 197]
       },
       "group": "testing",
       "status": "stable",
@@ -1539,12 +1324,7 @@
         "mutability": "pure",
         "signature": "assertEq(bytes32[],bytes32[])",
         "selector": "0x0cc9ee84",
-        "selectorBytes": [
-          12,
-          201,
-          238,
-          132
-        ]
+        "selectorBytes": [12, 201, 238, 132]
       },
       "group": "testing",
       "status": "stable",
@@ -1559,12 +1339,7 @@
         "mutability": "pure",
         "signature": "assertEq(bytes32[],bytes32[],string)",
         "selector": "0xe03e9177",
-        "selectorBytes": [
-          224,
-          62,
-          145,
-          119
-        ]
+        "selectorBytes": [224, 62, 145, 119]
       },
       "group": "testing",
       "status": "stable",
@@ -1579,12 +1354,7 @@
         "mutability": "pure",
         "signature": "assertEq(string[],string[])",
         "selector": "0xcf1c049c",
-        "selectorBytes": [
-          207,
-          28,
-          4,
-          156
-        ]
+        "selectorBytes": [207, 28, 4, 156]
       },
       "group": "testing",
       "status": "stable",
@@ -1599,12 +1369,7 @@
         "mutability": "pure",
         "signature": "assertEq(string[],string[],string)",
         "selector": "0xeff6b27d",
-        "selectorBytes": [
-          239,
-          246,
-          178,
-          125
-        ]
+        "selectorBytes": [239, 246, 178, 125]
       },
       "group": "testing",
       "status": "stable",
@@ -1619,12 +1384,7 @@
         "mutability": "pure",
         "signature": "assertEq(bytes[],bytes[])",
         "selector": "0xe5fb9b4a",
-        "selectorBytes": [
-          229,
-          251,
-          155,
-          74
-        ]
+        "selectorBytes": [229, 251, 155, 74]
       },
       "group": "testing",
       "status": "stable",
@@ -1639,12 +1399,7 @@
         "mutability": "pure",
         "signature": "assertEq(bytes[],bytes[],string)",
         "selector": "0xf413f0b6",
-        "selectorBytes": [
-          244,
-          19,
-          240,
-          182
-        ]
+        "selectorBytes": [244, 19, 240, 182]
       },
       "group": "testing",
       "status": "stable",
@@ -1659,12 +1414,7 @@
         "mutability": "pure",
         "signature": "assertEq(uint256,uint256,string)",
         "selector": "0x88b44c85",
-        "selectorBytes": [
-          136,
-          180,
-          76,
-          133
-        ]
+        "selectorBytes": [136, 180, 76, 133]
       },
       "group": "testing",
       "status": "stable",
@@ -1679,12 +1429,7 @@
         "mutability": "pure",
         "signature": "assertEq(int256,int256)",
         "selector": "0xfe74f05b",
-        "selectorBytes": [
-          254,
-          116,
-          240,
-          91
-        ]
+        "selectorBytes": [254, 116, 240, 91]
       },
       "group": "testing",
       "status": "stable",
@@ -1699,12 +1444,7 @@
         "mutability": "pure",
         "signature": "assertEq(int256,int256,string)",
         "selector": "0x714a2f13",
-        "selectorBytes": [
-          113,
-          74,
-          47,
-          19
-        ]
+        "selectorBytes": [113, 74, 47, 19]
       },
       "group": "testing",
       "status": "stable",
@@ -1719,12 +1459,7 @@
         "mutability": "pure",
         "signature": "assertEq(address,address)",
         "selector": "0x515361f6",
-        "selectorBytes": [
-          81,
-          83,
-          97,
-          246
-        ]
+        "selectorBytes": [81, 83, 97, 246]
       },
       "group": "testing",
       "status": "stable",
@@ -1739,12 +1474,7 @@
         "mutability": "pure",
         "signature": "assertEq(address,address,string)",
         "selector": "0x2f2769d1",
-        "selectorBytes": [
-          47,
-          39,
-          105,
-          209
-        ]
+        "selectorBytes": [47, 39, 105, 209]
       },
       "group": "testing",
       "status": "stable",
@@ -1759,12 +1489,7 @@
         "mutability": "pure",
         "signature": "assertEq(bytes32,bytes32)",
         "selector": "0x7c84c69b",
-        "selectorBytes": [
-          124,
-          132,
-          198,
-          155
-        ]
+        "selectorBytes": [124, 132, 198, 155]
       },
       "group": "testing",
       "status": "stable",
@@ -1779,12 +1504,7 @@
         "mutability": "pure",
         "signature": "assertEq(bytes32,bytes32,string)",
         "selector": "0xc1fa1ed0",
-        "selectorBytes": [
-          193,
-          250,
-          30,
-          208
-        ]
+        "selectorBytes": [193, 250, 30, 208]
       },
       "group": "testing",
       "status": "stable",
@@ -1799,12 +1519,7 @@
         "mutability": "pure",
         "signature": "assertFalse(bool)",
         "selector": "0xa5982885",
-        "selectorBytes": [
-          165,
-          152,
-          40,
-          133
-        ]
+        "selectorBytes": [165, 152, 40, 133]
       },
       "group": "testing",
       "status": "stable",
@@ -1819,12 +1534,7 @@
         "mutability": "pure",
         "signature": "assertFalse(bool,string)",
         "selector": "0x7ba04809",
-        "selectorBytes": [
-          123,
-          160,
-          72,
-          9
-        ]
+        "selectorBytes": [123, 160, 72, 9]
       },
       "group": "testing",
       "status": "stable",
@@ -1839,12 +1549,7 @@
         "mutability": "pure",
         "signature": "assertGeDecimal(uint256,uint256,uint256)",
         "selector": "0x3d1fe08a",
-        "selectorBytes": [
-          61,
-          31,
-          224,
-          138
-        ]
+        "selectorBytes": [61, 31, 224, 138]
       },
       "group": "testing",
       "status": "stable",
@@ -1859,12 +1564,7 @@
         "mutability": "pure",
         "signature": "assertGeDecimal(uint256,uint256,uint256,string)",
         "selector": "0x8bff9133",
-        "selectorBytes": [
-          139,
-          255,
-          145,
-          51
-        ]
+        "selectorBytes": [139, 255, 145, 51]
       },
       "group": "testing",
       "status": "stable",
@@ -1879,12 +1579,7 @@
         "mutability": "pure",
         "signature": "assertGeDecimal(int256,int256,uint256)",
         "selector": "0xdc28c0f1",
-        "selectorBytes": [
-          220,
-          40,
-          192,
-          241
-        ]
+        "selectorBytes": [220, 40, 192, 241]
       },
       "group": "testing",
       "status": "stable",
@@ -1899,12 +1594,7 @@
         "mutability": "pure",
         "signature": "assertGeDecimal(int256,int256,uint256,string)",
         "selector": "0x5df93c9b",
-        "selectorBytes": [
-          93,
-          249,
-          60,
-          155
-        ]
+        "selectorBytes": [93, 249, 60, 155]
       },
       "group": "testing",
       "status": "stable",
@@ -1919,12 +1609,7 @@
         "mutability": "pure",
         "signature": "assertGe(uint256,uint256)",
         "selector": "0xa8d4d1d9",
-        "selectorBytes": [
-          168,
-          212,
-          209,
-          217
-        ]
+        "selectorBytes": [168, 212, 209, 217]
       },
       "group": "testing",
       "status": "stable",
@@ -1939,12 +1624,7 @@
         "mutability": "pure",
         "signature": "assertGe(uint256,uint256,string)",
         "selector": "0xe25242c0",
-        "selectorBytes": [
-          226,
-          82,
-          66,
-          192
-        ]
+        "selectorBytes": [226, 82, 66, 192]
       },
       "group": "testing",
       "status": "stable",
@@ -1959,12 +1639,7 @@
         "mutability": "pure",
         "signature": "assertGe(int256,int256)",
         "selector": "0x0a30b771",
-        "selectorBytes": [
-          10,
-          48,
-          183,
-          113
-        ]
+        "selectorBytes": [10, 48, 183, 113]
       },
       "group": "testing",
       "status": "stable",
@@ -1979,12 +1654,7 @@
         "mutability": "pure",
         "signature": "assertGe(int256,int256,string)",
         "selector": "0xa84328dd",
-        "selectorBytes": [
-          168,
-          67,
-          40,
-          221
-        ]
+        "selectorBytes": [168, 67, 40, 221]
       },
       "group": "testing",
       "status": "stable",
@@ -1999,12 +1669,7 @@
         "mutability": "pure",
         "signature": "assertGtDecimal(uint256,uint256,uint256)",
         "selector": "0xeccd2437",
-        "selectorBytes": [
-          236,
-          205,
-          36,
-          55
-        ]
+        "selectorBytes": [236, 205, 36, 55]
       },
       "group": "testing",
       "status": "stable",
@@ -2019,12 +1684,7 @@
         "mutability": "pure",
         "signature": "assertGtDecimal(uint256,uint256,uint256,string)",
         "selector": "0x64949a8d",
-        "selectorBytes": [
-          100,
-          148,
-          154,
-          141
-        ]
+        "selectorBytes": [100, 148, 154, 141]
       },
       "group": "testing",
       "status": "stable",
@@ -2039,12 +1699,7 @@
         "mutability": "pure",
         "signature": "assertGtDecimal(int256,int256,uint256)",
         "selector": "0x78611f0e",
-        "selectorBytes": [
-          120,
-          97,
-          31,
-          14
-        ]
+        "selectorBytes": [120, 97, 31, 14]
       },
       "group": "testing",
       "status": "stable",
@@ -2059,12 +1714,7 @@
         "mutability": "pure",
         "signature": "assertGtDecimal(int256,int256,uint256,string)",
         "selector": "0x04a5c7ab",
-        "selectorBytes": [
-          4,
-          165,
-          199,
-          171
-        ]
+        "selectorBytes": [4, 165, 199, 171]
       },
       "group": "testing",
       "status": "stable",
@@ -2079,12 +1729,7 @@
         "mutability": "pure",
         "signature": "assertGt(uint256,uint256)",
         "selector": "0xdb07fcd2",
-        "selectorBytes": [
-          219,
-          7,
-          252,
-          210
-        ]
+        "selectorBytes": [219, 7, 252, 210]
       },
       "group": "testing",
       "status": "stable",
@@ -2099,12 +1744,7 @@
         "mutability": "pure",
         "signature": "assertGt(uint256,uint256,string)",
         "selector": "0xd9a3c4d2",
-        "selectorBytes": [
-          217,
-          163,
-          196,
-          210
-        ]
+        "selectorBytes": [217, 163, 196, 210]
       },
       "group": "testing",
       "status": "stable",
@@ -2119,12 +1759,7 @@
         "mutability": "pure",
         "signature": "assertGt(int256,int256)",
         "selector": "0x5a362d45",
-        "selectorBytes": [
-          90,
-          54,
-          45,
-          69
-        ]
+        "selectorBytes": [90, 54, 45, 69]
       },
       "group": "testing",
       "status": "stable",
@@ -2139,12 +1774,7 @@
         "mutability": "pure",
         "signature": "assertGt(int256,int256,string)",
         "selector": "0xf8d33b9b",
-        "selectorBytes": [
-          248,
-          211,
-          59,
-          155
-        ]
+        "selectorBytes": [248, 211, 59, 155]
       },
       "group": "testing",
       "status": "stable",
@@ -2159,12 +1789,7 @@
         "mutability": "pure",
         "signature": "assertLeDecimal(uint256,uint256,uint256)",
         "selector": "0xc304aab7",
-        "selectorBytes": [
-          195,
-          4,
-          170,
-          183
-        ]
+        "selectorBytes": [195, 4, 170, 183]
       },
       "group": "testing",
       "status": "stable",
@@ -2179,12 +1804,7 @@
         "mutability": "pure",
         "signature": "assertLeDecimal(uint256,uint256,uint256,string)",
         "selector": "0x7fefbbe0",
-        "selectorBytes": [
-          127,
-          239,
-          187,
-          224
-        ]
+        "selectorBytes": [127, 239, 187, 224]
       },
       "group": "testing",
       "status": "stable",
@@ -2199,12 +1819,7 @@
         "mutability": "pure",
         "signature": "assertLeDecimal(int256,int256,uint256)",
         "selector": "0x11d1364a",
-        "selectorBytes": [
-          17,
-          209,
-          54,
-          74
-        ]
+        "selectorBytes": [17, 209, 54, 74]
       },
       "group": "testing",
       "status": "stable",
@@ -2219,12 +1834,7 @@
         "mutability": "pure",
         "signature": "assertLeDecimal(int256,int256,uint256,string)",
         "selector": "0xaa5cf788",
-        "selectorBytes": [
-          170,
-          92,
-          247,
-          136
-        ]
+        "selectorBytes": [170, 92, 247, 136]
       },
       "group": "testing",
       "status": "stable",
@@ -2239,12 +1849,7 @@
         "mutability": "pure",
         "signature": "assertLe(uint256,uint256)",
         "selector": "0x8466f415",
-        "selectorBytes": [
-          132,
-          102,
-          244,
-          21
-        ]
+        "selectorBytes": [132, 102, 244, 21]
       },
       "group": "testing",
       "status": "stable",
@@ -2259,12 +1864,7 @@
         "mutability": "pure",
         "signature": "assertLe(uint256,uint256,string)",
         "selector": "0xd17d4b0d",
-        "selectorBytes": [
-          209,
-          125,
-          75,
-          13
-        ]
+        "selectorBytes": [209, 125, 75, 13]
       },
       "group": "testing",
       "status": "stable",
@@ -2279,12 +1879,7 @@
         "mutability": "pure",
         "signature": "assertLe(int256,int256)",
         "selector": "0x95fd154e",
-        "selectorBytes": [
-          149,
-          253,
-          21,
-          78
-        ]
+        "selectorBytes": [149, 253, 21, 78]
       },
       "group": "testing",
       "status": "stable",
@@ -2299,12 +1894,7 @@
         "mutability": "pure",
         "signature": "assertLe(int256,int256,string)",
         "selector": "0x4dfe692c",
-        "selectorBytes": [
-          77,
-          254,
-          105,
-          44
-        ]
+        "selectorBytes": [77, 254, 105, 44]
       },
       "group": "testing",
       "status": "stable",
@@ -2319,12 +1909,7 @@
         "mutability": "pure",
         "signature": "assertLtDecimal(uint256,uint256,uint256)",
         "selector": "0x2077337e",
-        "selectorBytes": [
-          32,
-          119,
-          51,
-          126
-        ]
+        "selectorBytes": [32, 119, 51, 126]
       },
       "group": "testing",
       "status": "stable",
@@ -2339,12 +1924,7 @@
         "mutability": "pure",
         "signature": "assertLtDecimal(uint256,uint256,uint256,string)",
         "selector": "0xa972d037",
-        "selectorBytes": [
-          169,
-          114,
-          208,
-          55
-        ]
+        "selectorBytes": [169, 114, 208, 55]
       },
       "group": "testing",
       "status": "stable",
@@ -2359,12 +1939,7 @@
         "mutability": "pure",
         "signature": "assertLtDecimal(int256,int256,uint256)",
         "selector": "0xdbe8d88b",
-        "selectorBytes": [
-          219,
-          232,
-          216,
-          139
-        ]
+        "selectorBytes": [219, 232, 216, 139]
       },
       "group": "testing",
       "status": "stable",
@@ -2379,12 +1954,7 @@
         "mutability": "pure",
         "signature": "assertLtDecimal(int256,int256,uint256,string)",
         "selector": "0x40f0b4e0",
-        "selectorBytes": [
-          64,
-          240,
-          180,
-          224
-        ]
+        "selectorBytes": [64, 240, 180, 224]
       },
       "group": "testing",
       "status": "stable",
@@ -2399,12 +1969,7 @@
         "mutability": "pure",
         "signature": "assertLt(uint256,uint256)",
         "selector": "0xb12fc005",
-        "selectorBytes": [
-          177,
-          47,
-          192,
-          5
-        ]
+        "selectorBytes": [177, 47, 192, 5]
       },
       "group": "testing",
       "status": "stable",
@@ -2419,12 +1984,7 @@
         "mutability": "pure",
         "signature": "assertLt(uint256,uint256,string)",
         "selector": "0x65d5c135",
-        "selectorBytes": [
-          101,
-          213,
-          193,
-          53
-        ]
+        "selectorBytes": [101, 213, 193, 53]
       },
       "group": "testing",
       "status": "stable",
@@ -2439,12 +1999,7 @@
         "mutability": "pure",
         "signature": "assertLt(int256,int256)",
         "selector": "0x3e914080",
-        "selectorBytes": [
-          62,
-          145,
-          64,
-          128
-        ]
+        "selectorBytes": [62, 145, 64, 128]
       },
       "group": "testing",
       "status": "stable",
@@ -2459,12 +2014,7 @@
         "mutability": "pure",
         "signature": "assertLt(int256,int256,string)",
         "selector": "0x9ff531e3",
-        "selectorBytes": [
-          159,
-          245,
-          49,
-          227
-        ]
+        "selectorBytes": [159, 245, 49, 227]
       },
       "group": "testing",
       "status": "stable",
@@ -2479,12 +2029,7 @@
         "mutability": "pure",
         "signature": "assertNotEqDecimal(uint256,uint256,uint256)",
         "selector": "0x669efca7",
-        "selectorBytes": [
-          102,
-          158,
-          252,
-          167
-        ]
+        "selectorBytes": [102, 158, 252, 167]
       },
       "group": "testing",
       "status": "stable",
@@ -2499,12 +2044,7 @@
         "mutability": "pure",
         "signature": "assertNotEqDecimal(uint256,uint256,uint256,string)",
         "selector": "0xf5a55558",
-        "selectorBytes": [
-          245,
-          165,
-          85,
-          88
-        ]
+        "selectorBytes": [245, 165, 85, 88]
       },
       "group": "testing",
       "status": "stable",
@@ -2519,12 +2059,7 @@
         "mutability": "pure",
         "signature": "assertNotEqDecimal(int256,int256,uint256)",
         "selector": "0x14e75680",
-        "selectorBytes": [
-          20,
-          231,
-          86,
-          128
-        ]
+        "selectorBytes": [20, 231, 86, 128]
       },
       "group": "testing",
       "status": "stable",
@@ -2539,12 +2074,7 @@
         "mutability": "pure",
         "signature": "assertNotEqDecimal(int256,int256,uint256,string)",
         "selector": "0x33949f0b",
-        "selectorBytes": [
-          51,
-          148,
-          159,
-          11
-        ]
+        "selectorBytes": [51, 148, 159, 11]
       },
       "group": "testing",
       "status": "stable",
@@ -2559,12 +2089,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(bool,bool)",
         "selector": "0x236e4d66",
-        "selectorBytes": [
-          35,
-          110,
-          77,
-          102
-        ]
+        "selectorBytes": [35, 110, 77, 102]
       },
       "group": "testing",
       "status": "stable",
@@ -2579,12 +2104,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(bool,bool,string)",
         "selector": "0x1091a261",
-        "selectorBytes": [
-          16,
-          145,
-          162,
-          97
-        ]
+        "selectorBytes": [16, 145, 162, 97]
       },
       "group": "testing",
       "status": "stable",
@@ -2599,12 +2119,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(string,string)",
         "selector": "0x6a8237b3",
-        "selectorBytes": [
-          106,
-          130,
-          55,
-          179
-        ]
+        "selectorBytes": [106, 130, 55, 179]
       },
       "group": "testing",
       "status": "stable",
@@ -2619,12 +2134,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(string,string,string)",
         "selector": "0x78bdcea7",
-        "selectorBytes": [
-          120,
-          189,
-          206,
-          167
-        ]
+        "selectorBytes": [120, 189, 206, 167]
       },
       "group": "testing",
       "status": "stable",
@@ -2639,12 +2149,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(bytes,bytes)",
         "selector": "0x3cf78e28",
-        "selectorBytes": [
-          60,
-          247,
-          142,
-          40
-        ]
+        "selectorBytes": [60, 247, 142, 40]
       },
       "group": "testing",
       "status": "stable",
@@ -2659,12 +2164,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(bytes,bytes,string)",
         "selector": "0x9507540e",
-        "selectorBytes": [
-          149,
-          7,
-          84,
-          14
-        ]
+        "selectorBytes": [149, 7, 84, 14]
       },
       "group": "testing",
       "status": "stable",
@@ -2679,12 +2179,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(bool[],bool[])",
         "selector": "0x286fafea",
-        "selectorBytes": [
-          40,
-          111,
-          175,
-          234
-        ]
+        "selectorBytes": [40, 111, 175, 234]
       },
       "group": "testing",
       "status": "stable",
@@ -2699,12 +2194,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(bool[],bool[],string)",
         "selector": "0x62c6f9fb",
-        "selectorBytes": [
-          98,
-          198,
-          249,
-          251
-        ]
+        "selectorBytes": [98, 198, 249, 251]
       },
       "group": "testing",
       "status": "stable",
@@ -2719,12 +2209,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(uint256[],uint256[])",
         "selector": "0x56f29cba",
-        "selectorBytes": [
-          86,
-          242,
-          156,
-          186
-        ]
+        "selectorBytes": [86, 242, 156, 186]
       },
       "group": "testing",
       "status": "stable",
@@ -2739,12 +2224,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(uint256[],uint256[],string)",
         "selector": "0x9a7fbd8f",
-        "selectorBytes": [
-          154,
-          127,
-          189,
-          143
-        ]
+        "selectorBytes": [154, 127, 189, 143]
       },
       "group": "testing",
       "status": "stable",
@@ -2759,12 +2239,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(int256[],int256[])",
         "selector": "0x0b72f4ef",
-        "selectorBytes": [
-          11,
-          114,
-          244,
-          239
-        ]
+        "selectorBytes": [11, 114, 244, 239]
       },
       "group": "testing",
       "status": "stable",
@@ -2779,12 +2254,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(int256[],int256[],string)",
         "selector": "0xd3977322",
-        "selectorBytes": [
-          211,
-          151,
-          115,
-          34
-        ]
+        "selectorBytes": [211, 151, 115, 34]
       },
       "group": "testing",
       "status": "stable",
@@ -2799,12 +2269,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(uint256,uint256)",
         "selector": "0xb7909320",
-        "selectorBytes": [
-          183,
-          144,
-          147,
-          32
-        ]
+        "selectorBytes": [183, 144, 147, 32]
       },
       "group": "testing",
       "status": "stable",
@@ -2819,12 +2284,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(address[],address[])",
         "selector": "0x46d0b252",
-        "selectorBytes": [
-          70,
-          208,
-          178,
-          82
-        ]
+        "selectorBytes": [70, 208, 178, 82]
       },
       "group": "testing",
       "status": "stable",
@@ -2839,12 +2299,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(address[],address[],string)",
         "selector": "0x72c7e0b5",
-        "selectorBytes": [
-          114,
-          199,
-          224,
-          181
-        ]
+        "selectorBytes": [114, 199, 224, 181]
       },
       "group": "testing",
       "status": "stable",
@@ -2859,12 +2314,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(bytes32[],bytes32[])",
         "selector": "0x0603ea68",
-        "selectorBytes": [
-          6,
-          3,
-          234,
-          104
-        ]
+        "selectorBytes": [6, 3, 234, 104]
       },
       "group": "testing",
       "status": "stable",
@@ -2879,12 +2329,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(bytes32[],bytes32[],string)",
         "selector": "0xb873634c",
-        "selectorBytes": [
-          184,
-          115,
-          99,
-          76
-        ]
+        "selectorBytes": [184, 115, 99, 76]
       },
       "group": "testing",
       "status": "stable",
@@ -2899,12 +2344,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(string[],string[])",
         "selector": "0xbdfacbe8",
-        "selectorBytes": [
-          189,
-          250,
-          203,
-          232
-        ]
+        "selectorBytes": [189, 250, 203, 232]
       },
       "group": "testing",
       "status": "stable",
@@ -2919,12 +2359,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(string[],string[],string)",
         "selector": "0xb67187f3",
-        "selectorBytes": [
-          182,
-          113,
-          135,
-          243
-        ]
+        "selectorBytes": [182, 113, 135, 243]
       },
       "group": "testing",
       "status": "stable",
@@ -2939,12 +2374,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(bytes[],bytes[])",
         "selector": "0xedecd035",
-        "selectorBytes": [
-          237,
-          236,
-          208,
-          53
-        ]
+        "selectorBytes": [237, 236, 208, 53]
       },
       "group": "testing",
       "status": "stable",
@@ -2959,12 +2389,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(bytes[],bytes[],string)",
         "selector": "0x1dcd1f68",
-        "selectorBytes": [
-          29,
-          205,
-          31,
-          104
-        ]
+        "selectorBytes": [29, 205, 31, 104]
       },
       "group": "testing",
       "status": "stable",
@@ -2979,12 +2404,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(uint256,uint256,string)",
         "selector": "0x98f9bdbd",
-        "selectorBytes": [
-          152,
-          249,
-          189,
-          189
-        ]
+        "selectorBytes": [152, 249, 189, 189]
       },
       "group": "testing",
       "status": "stable",
@@ -2999,12 +2419,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(int256,int256)",
         "selector": "0xf4c004e3",
-        "selectorBytes": [
-          244,
-          192,
-          4,
-          227
-        ]
+        "selectorBytes": [244, 192, 4, 227]
       },
       "group": "testing",
       "status": "stable",
@@ -3019,12 +2434,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(int256,int256,string)",
         "selector": "0x4724c5b9",
-        "selectorBytes": [
-          71,
-          36,
-          197,
-          185
-        ]
+        "selectorBytes": [71, 36, 197, 185]
       },
       "group": "testing",
       "status": "stable",
@@ -3039,12 +2449,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(address,address)",
         "selector": "0xb12e1694",
-        "selectorBytes": [
-          177,
-          46,
-          22,
-          148
-        ]
+        "selectorBytes": [177, 46, 22, 148]
       },
       "group": "testing",
       "status": "stable",
@@ -3059,12 +2464,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(address,address,string)",
         "selector": "0x8775a591",
-        "selectorBytes": [
-          135,
-          117,
-          165,
-          145
-        ]
+        "selectorBytes": [135, 117, 165, 145]
       },
       "group": "testing",
       "status": "stable",
@@ -3079,12 +2479,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(bytes32,bytes32)",
         "selector": "0x898e83fc",
-        "selectorBytes": [
-          137,
-          142,
-          131,
-          252
-        ]
+        "selectorBytes": [137, 142, 131, 252]
       },
       "group": "testing",
       "status": "stable",
@@ -3099,12 +2494,7 @@
         "mutability": "pure",
         "signature": "assertNotEq(bytes32,bytes32,string)",
         "selector": "0xb2332f51",
-        "selectorBytes": [
-          178,
-          51,
-          47,
-          81
-        ]
+        "selectorBytes": [178, 51, 47, 81]
       },
       "group": "testing",
       "status": "stable",
@@ -3119,12 +2509,7 @@
         "mutability": "pure",
         "signature": "assertTrue(bool)",
         "selector": "0x0c9fd581",
-        "selectorBytes": [
-          12,
-          159,
-          213,
-          129
-        ]
+        "selectorBytes": [12, 159, 213, 129]
       },
       "group": "testing",
       "status": "stable",
@@ -3139,12 +2524,7 @@
         "mutability": "pure",
         "signature": "assertTrue(bool,string)",
         "selector": "0xa34edc03",
-        "selectorBytes": [
-          163,
-          78,
-          220,
-          3
-        ]
+        "selectorBytes": [163, 78, 220, 3]
       },
       "group": "testing",
       "status": "stable",
@@ -3159,12 +2539,7 @@
         "mutability": "pure",
         "signature": "assume(bool)",
         "selector": "0x4c63e562",
-        "selectorBytes": [
-          76,
-          99,
-          229,
-          98
-        ]
+        "selectorBytes": [76, 99, 229, 98]
       },
       "group": "testing",
       "status": "stable",
@@ -3179,12 +2554,7 @@
         "mutability": "pure",
         "signature": "assumeNoRevert()",
         "selector": "0x285b366a",
-        "selectorBytes": [
-          40,
-          91,
-          54,
-          106
-        ]
+        "selectorBytes": [40, 91, 54, 106]
       },
       "group": "testing",
       "status": "stable",
@@ -3199,12 +2569,7 @@
         "mutability": "pure",
         "signature": "assumeNoRevert((address,bool,bytes))",
         "selector": "0xd8591eeb",
-        "selectorBytes": [
-          216,
-          89,
-          30,
-          235
-        ]
+        "selectorBytes": [216, 89, 30, 235]
       },
       "group": "testing",
       "status": "stable",
@@ -3219,12 +2584,7 @@
         "mutability": "pure",
         "signature": "assumeNoRevert((address,bool,bytes)[])",
         "selector": "0x8a4592cc",
-        "selectorBytes": [
-          138,
-          69,
-          146,
-          204
-        ]
+        "selectorBytes": [138, 69, 146, 204]
       },
       "group": "testing",
       "status": "stable",
@@ -3239,12 +2599,7 @@
         "mutability": "",
         "signature": "attachBlob(bytes)",
         "selector": "0x10cb385c",
-        "selectorBytes": [
-          16,
-          203,
-          56,
-          92
-        ]
+        "selectorBytes": [16, 203, 56, 92]
       },
       "group": "scripting",
       "status": "stable",
@@ -3259,12 +2614,7 @@
         "mutability": "",
         "signature": "attachDelegation((uint8,bytes32,bytes32,uint64,address))",
         "selector": "0x14ae3519",
-        "selectorBytes": [
-          20,
-          174,
-          53,
-          25
-        ]
+        "selectorBytes": [20, 174, 53, 25]
       },
       "group": "scripting",
       "status": "stable",
@@ -3279,12 +2629,7 @@
         "mutability": "",
         "signature": "blobBaseFee(uint256)",
         "selector": "0x6d315d7e",
-        "selectorBytes": [
-          109,
-          49,
-          93,
-          126
-        ]
+        "selectorBytes": [109, 49, 93, 126]
       },
       "group": "evm",
       "status": "stable",
@@ -3299,12 +2644,7 @@
         "mutability": "",
         "signature": "blobhashes(bytes32[])",
         "selector": "0x129de7eb",
-        "selectorBytes": [
-          18,
-          157,
-          231,
-          235
-        ]
+        "selectorBytes": [18, 157, 231, 235]
       },
       "group": "evm",
       "status": "stable",
@@ -3319,12 +2659,7 @@
         "mutability": "pure",
         "signature": "breakpoint(string)",
         "selector": "0xf0259e92",
-        "selectorBytes": [
-          240,
-          37,
-          158,
-          146
-        ]
+        "selectorBytes": [240, 37, 158, 146]
       },
       "group": "testing",
       "status": "stable",
@@ -3339,12 +2674,7 @@
         "mutability": "pure",
         "signature": "breakpoint(string,bool)",
         "selector": "0xf7d39a8d",
-        "selectorBytes": [
-          247,
-          211,
-          154,
-          141
-        ]
+        "selectorBytes": [247, 211, 154, 141]
       },
       "group": "testing",
       "status": "stable",
@@ -3359,12 +2689,7 @@
         "mutability": "",
         "signature": "broadcastRawTransaction(bytes)",
         "selector": "0x8c0c72e0",
-        "selectorBytes": [
-          140,
-          12,
-          114,
-          224
-        ]
+        "selectorBytes": [140, 12, 114, 224]
       },
       "group": "scripting",
       "status": "stable",
@@ -3379,12 +2704,7 @@
         "mutability": "",
         "signature": "broadcast()",
         "selector": "0xafc98040",
-        "selectorBytes": [
-          175,
-          201,
-          128,
-          64
-        ]
+        "selectorBytes": [175, 201, 128, 64]
       },
       "group": "scripting",
       "status": "stable",
@@ -3399,12 +2719,7 @@
         "mutability": "",
         "signature": "broadcast(address)",
         "selector": "0xe6962cdb",
-        "selectorBytes": [
-          230,
-          150,
-          44,
-          219
-        ]
+        "selectorBytes": [230, 150, 44, 219]
       },
       "group": "scripting",
       "status": "stable",
@@ -3419,12 +2734,7 @@
         "mutability": "",
         "signature": "broadcast(uint256)",
         "selector": "0xf67a965b",
-        "selectorBytes": [
-          246,
-          122,
-          150,
-          91
-        ]
+        "selectorBytes": [246, 122, 150, 91]
       },
       "group": "scripting",
       "status": "stable",
@@ -3439,12 +2749,7 @@
         "mutability": "",
         "signature": "chainId(uint256)",
         "selector": "0x4049ddd2",
-        "selectorBytes": [
-          64,
-          73,
-          221,
-          210
-        ]
+        "selectorBytes": [64, 73, 221, 210]
       },
       "group": "evm",
       "status": "stable",
@@ -3459,12 +2764,7 @@
         "mutability": "",
         "signature": "clearMockedCalls()",
         "selector": "0x3fdf4e15",
-        "selectorBytes": [
-          63,
-          223,
-          78,
-          21
-        ]
+        "selectorBytes": [63, 223, 78, 21]
       },
       "group": "evm",
       "status": "stable",
@@ -3479,12 +2779,7 @@
         "mutability": "",
         "signature": "cloneAccount(address,address)",
         "selector": "0x533d61c9",
-        "selectorBytes": [
-          83,
-          61,
-          97,
-          201
-        ]
+        "selectorBytes": [83, 61, 97, 201]
       },
       "group": "evm",
       "status": "stable",
@@ -3499,12 +2794,7 @@
         "mutability": "",
         "signature": "closeFile(string)",
         "selector": "0x48c3241f",
-        "selectorBytes": [
-          72,
-          195,
-          36,
-          31
-        ]
+        "selectorBytes": [72, 195, 36, 31]
       },
       "group": "filesystem",
       "status": "stable",
@@ -3519,12 +2809,7 @@
         "mutability": "",
         "signature": "coinbase(address)",
         "selector": "0xff483c54",
-        "selectorBytes": [
-          255,
-          72,
-          60,
-          84
-        ]
+        "selectorBytes": [255, 72, 60, 84]
       },
       "group": "evm",
       "status": "stable",
@@ -3539,12 +2824,7 @@
         "mutability": "pure",
         "signature": "computeCreate2Address(bytes32,bytes32,address)",
         "selector": "0xd323826a",
-        "selectorBytes": [
-          211,
-          35,
-          130,
-          106
-        ]
+        "selectorBytes": [211, 35, 130, 106]
       },
       "group": "utilities",
       "status": "stable",
@@ -3559,12 +2839,7 @@
         "mutability": "pure",
         "signature": "computeCreate2Address(bytes32,bytes32)",
         "selector": "0x890c283b",
-        "selectorBytes": [
-          137,
-          12,
-          40,
-          59
-        ]
+        "selectorBytes": [137, 12, 40, 59]
       },
       "group": "utilities",
       "status": "stable",
@@ -3579,12 +2854,7 @@
         "mutability": "pure",
         "signature": "computeCreateAddress(address,uint256)",
         "selector": "0x74637a7a",
-        "selectorBytes": [
-          116,
-          99,
-          122,
-          122
-        ]
+        "selectorBytes": [116, 99, 122, 122]
       },
       "group": "utilities",
       "status": "stable",
@@ -3599,12 +2869,7 @@
         "mutability": "",
         "signature": "contains(string,string)",
         "selector": "0x3fb18aec",
-        "selectorBytes": [
-          63,
-          177,
-          138,
-          236
-        ]
+        "selectorBytes": [63, 177, 138, 236]
       },
       "group": "string",
       "status": "stable",
@@ -3619,12 +2884,7 @@
         "mutability": "",
         "signature": "cool(address)",
         "selector": "0x40ff9f21",
-        "selectorBytes": [
-          64,
-          255,
-          159,
-          33
-        ]
+        "selectorBytes": [64, 255, 159, 33]
       },
       "group": "evm",
       "status": "stable",
@@ -3639,12 +2899,7 @@
         "mutability": "",
         "signature": "coolSlot(address,bytes32)",
         "selector": "0x8c78e654",
-        "selectorBytes": [
-          140,
-          120,
-          230,
-          84
-        ]
+        "selectorBytes": [140, 120, 230, 84]
       },
       "group": "evm",
       "status": "stable",
@@ -3659,12 +2914,7 @@
         "mutability": "",
         "signature": "copyFile(string,string)",
         "selector": "0xa54a87d8",
-        "selectorBytes": [
-          165,
-          74,
-          135,
-          216
-        ]
+        "selectorBytes": [165, 74, 135, 216]
       },
       "group": "filesystem",
       "status": "stable",
@@ -3679,12 +2929,7 @@
         "mutability": "",
         "signature": "copyStorage(address,address)",
         "selector": "0x203dac0d",
-        "selectorBytes": [
-          32,
-          61,
-          172,
-          13
-        ]
+        "selectorBytes": [32, 61, 172, 13]
       },
       "group": "utilities",
       "status": "stable",
@@ -3699,12 +2944,7 @@
         "mutability": "",
         "signature": "createDir(string,bool)",
         "selector": "0x168b64d3",
-        "selectorBytes": [
-          22,
-          139,
-          100,
-          211
-        ]
+        "selectorBytes": [22, 139, 100, 211]
       },
       "group": "filesystem",
       "status": "stable",
@@ -3719,12 +2959,7 @@
         "mutability": "",
         "signature": "createFork(string)",
         "selector": "0x31ba3498",
-        "selectorBytes": [
-          49,
-          186,
-          52,
-          152
-        ]
+        "selectorBytes": [49, 186, 52, 152]
       },
       "group": "evm",
       "status": "stable",
@@ -3739,12 +2974,7 @@
         "mutability": "",
         "signature": "createFork(string,uint256)",
         "selector": "0x6ba3ba2b",
-        "selectorBytes": [
-          107,
-          163,
-          186,
-          43
-        ]
+        "selectorBytes": [107, 163, 186, 43]
       },
       "group": "evm",
       "status": "stable",
@@ -3759,12 +2989,7 @@
         "mutability": "",
         "signature": "createFork(string,bytes32)",
         "selector": "0x7ca29682",
-        "selectorBytes": [
-          124,
-          162,
-          150,
-          130
-        ]
+        "selectorBytes": [124, 162, 150, 130]
       },
       "group": "evm",
       "status": "stable",
@@ -3779,12 +3004,7 @@
         "mutability": "",
         "signature": "createSelectFork(string)",
         "selector": "0x98680034",
-        "selectorBytes": [
-          152,
-          104,
-          0,
-          52
-        ]
+        "selectorBytes": [152, 104, 0, 52]
       },
       "group": "evm",
       "status": "stable",
@@ -3799,12 +3019,7 @@
         "mutability": "",
         "signature": "createSelectFork(string,uint256)",
         "selector": "0x71ee464d",
-        "selectorBytes": [
-          113,
-          238,
-          70,
-          77
-        ]
+        "selectorBytes": [113, 238, 70, 77]
       },
       "group": "evm",
       "status": "stable",
@@ -3819,12 +3034,7 @@
         "mutability": "",
         "signature": "createSelectFork(string,bytes32)",
         "selector": "0x84d52b7a",
-        "selectorBytes": [
-          132,
-          213,
-          43,
-          122
-        ]
+        "selectorBytes": [132, 213, 43, 122]
       },
       "group": "evm",
       "status": "stable",
@@ -3839,12 +3049,7 @@
         "mutability": "",
         "signature": "createWallet(string)",
         "selector": "0x7404f1d2",
-        "selectorBytes": [
-          116,
-          4,
-          241,
-          210
-        ]
+        "selectorBytes": [116, 4, 241, 210]
       },
       "group": "crypto",
       "status": "stable",
@@ -3859,12 +3064,7 @@
         "mutability": "",
         "signature": "createWallet(uint256)",
         "selector": "0x7a675bb6",
-        "selectorBytes": [
-          122,
-          103,
-          91,
-          182
-        ]
+        "selectorBytes": [122, 103, 91, 182]
       },
       "group": "crypto",
       "status": "stable",
@@ -3879,12 +3079,7 @@
         "mutability": "",
         "signature": "createWallet(uint256,string)",
         "selector": "0xed7c5462",
-        "selectorBytes": [
-          237,
-          124,
-          84,
-          98
-        ]
+        "selectorBytes": [237, 124, 84, 98]
       },
       "group": "crypto",
       "status": "stable",
@@ -3899,12 +3094,7 @@
         "mutability": "",
         "signature": "deal(address,uint256)",
         "selector": "0xc88a5e6d",
-        "selectorBytes": [
-          200,
-          138,
-          94,
-          109
-        ]
+        "selectorBytes": [200, 138, 94, 109]
       },
       "group": "evm",
       "status": "stable",
@@ -3919,12 +3109,7 @@
         "mutability": "",
         "signature": "deleteSnapshot(uint256)",
         "selector": "0xa6368557",
-        "selectorBytes": [
-          166,
-          54,
-          133,
-          87
-        ]
+        "selectorBytes": [166, 54, 133, 87]
       },
       "group": "evm",
       "status": {
@@ -3941,12 +3126,7 @@
         "mutability": "",
         "signature": "deleteSnapshots()",
         "selector": "0x421ae469",
-        "selectorBytes": [
-          66,
-          26,
-          228,
-          105
-        ]
+        "selectorBytes": [66, 26, 228, 105]
       },
       "group": "evm",
       "status": {
@@ -3963,12 +3143,7 @@
         "mutability": "",
         "signature": "deleteStateSnapshot(uint256)",
         "selector": "0x08d6b37a",
-        "selectorBytes": [
-          8,
-          214,
-          179,
-          122
-        ]
+        "selectorBytes": [8, 214, 179, 122]
       },
       "group": "evm",
       "status": "stable",
@@ -3983,12 +3158,7 @@
         "mutability": "",
         "signature": "deleteStateSnapshots()",
         "selector": "0xe0933c74",
-        "selectorBytes": [
-          224,
-          147,
-          60,
-          116
-        ]
+        "selectorBytes": [224, 147, 60, 116]
       },
       "group": "evm",
       "status": "stable",
@@ -4003,12 +3173,7 @@
         "mutability": "",
         "signature": "deployCode(string)",
         "selector": "0x9a8325a0",
-        "selectorBytes": [
-          154,
-          131,
-          37,
-          160
-        ]
+        "selectorBytes": [154, 131, 37, 160]
       },
       "group": "filesystem",
       "status": "stable",
@@ -4023,12 +3188,7 @@
         "mutability": "",
         "signature": "deployCode(string,bytes)",
         "selector": "0x29ce9dde",
-        "selectorBytes": [
-          41,
-          206,
-          157,
-          222
-        ]
+        "selectorBytes": [41, 206, 157, 222]
       },
       "group": "filesystem",
       "status": "stable",
@@ -4043,12 +3203,7 @@
         "mutability": "",
         "signature": "deployCode(string,uint256)",
         "selector": "0x0af6a701",
-        "selectorBytes": [
-          10,
-          246,
-          167,
-          1
-        ]
+        "selectorBytes": [10, 246, 167, 1]
       },
       "group": "filesystem",
       "status": "stable",
@@ -4063,12 +3218,7 @@
         "mutability": "",
         "signature": "deployCode(string,bytes,uint256)",
         "selector": "0xff5d64e4",
-        "selectorBytes": [
-          255,
-          93,
-          100,
-          228
-        ]
+        "selectorBytes": [255, 93, 100, 228]
       },
       "group": "filesystem",
       "status": "stable",
@@ -4083,12 +3233,7 @@
         "mutability": "",
         "signature": "deployCode(string,bytes32)",
         "selector": "0x17ab1d79",
-        "selectorBytes": [
-          23,
-          171,
-          29,
-          121
-        ]
+        "selectorBytes": [23, 171, 29, 121]
       },
       "group": "filesystem",
       "status": "stable",
@@ -4103,12 +3248,7 @@
         "mutability": "",
         "signature": "deployCode(string,bytes,bytes32)",
         "selector": "0x016155bf",
-        "selectorBytes": [
-          1,
-          97,
-          85,
-          191
-        ]
+        "selectorBytes": [1, 97, 85, 191]
       },
       "group": "filesystem",
       "status": "stable",
@@ -4123,12 +3263,7 @@
         "mutability": "",
         "signature": "deployCode(string,uint256,bytes32)",
         "selector": "0x002cb687",
-        "selectorBytes": [
-          0,
-          44,
-          182,
-          135
-        ]
+        "selectorBytes": [0, 44, 182, 135]
       },
       "group": "filesystem",
       "status": "stable",
@@ -4143,12 +3278,7 @@
         "mutability": "",
         "signature": "deployCode(string,bytes,uint256,bytes32)",
         "selector": "0x3aa773ea",
-        "selectorBytes": [
-          58,
-          167,
-          115,
-          234
-        ]
+        "selectorBytes": [58, 167, 115, 234]
       },
       "group": "filesystem",
       "status": "stable",
@@ -4163,12 +3293,7 @@
         "mutability": "pure",
         "signature": "deriveKey(string,uint32)",
         "selector": "0x6229498b",
-        "selectorBytes": [
-          98,
-          41,
-          73,
-          139
-        ]
+        "selectorBytes": [98, 41, 73, 139]
       },
       "group": "crypto",
       "status": "stable",
@@ -4183,12 +3308,7 @@
         "mutability": "pure",
         "signature": "deriveKey(string,string,uint32)",
         "selector": "0x6bcb2c1b",
-        "selectorBytes": [
-          107,
-          203,
-          44,
-          27
-        ]
+        "selectorBytes": [107, 203, 44, 27]
       },
       "group": "crypto",
       "status": "stable",
@@ -4203,12 +3323,7 @@
         "mutability": "pure",
         "signature": "deriveKey(string,uint32,string)",
         "selector": "0x32c8176d",
-        "selectorBytes": [
-          50,
-          200,
-          23,
-          109
-        ]
+        "selectorBytes": [50, 200, 23, 109]
       },
       "group": "crypto",
       "status": "stable",
@@ -4223,12 +3338,7 @@
         "mutability": "pure",
         "signature": "deriveKey(string,string,uint32,string)",
         "selector": "0x29233b1f",
-        "selectorBytes": [
-          41,
-          35,
-          59,
-          31
-        ]
+        "selectorBytes": [41, 35, 59, 31]
       },
       "group": "crypto",
       "status": "stable",
@@ -4243,12 +3353,7 @@
         "mutability": "",
         "signature": "difficulty(uint256)",
         "selector": "0x46cc92d9",
-        "selectorBytes": [
-          70,
-          204,
-          146,
-          217
-        ]
+        "selectorBytes": [70, 204, 146, 217]
       },
       "group": "evm",
       "status": "stable",
@@ -4263,36 +3368,11 @@
         "mutability": "",
         "signature": "dumpState(string)",
         "selector": "0x709ecd3f",
-        "selectorBytes": [
-          112,
-          158,
-          205,
-          63
-        ]
+        "selectorBytes": [112, 158, 205, 63]
       },
       "group": "evm",
       "status": "stable",
       "safety": "unsafe"
-    },
-    {
-      "func": {
-        "id": "eip712HashStruct",
-        "description": "",
-        "declaration": "function eip712HashStruct(string memory typeDefinition, bytes calldata encodedData) external pure returns (bytes32 structHash);",
-        "visibility": "external",
-        "mutability": "pure",
-        "signature": "eip712HashStruct(string,bytes)",
-        "selector": "0xaedeaebc",
-        "selectorBytes": [
-          174,
-          222,
-          174,
-          188
-        ]
-      },
-      "group": "utilities",
-      "status": "stable",
-      "safety": "safe"
     },
     {
       "func": {
@@ -4303,12 +3383,7 @@
         "mutability": "pure",
         "signature": "eip712HashType(string)",
         "selector": "0x6792e9e2",
-        "selectorBytes": [
-          103,
-          146,
-          233,
-          226
-        ]
+        "selectorBytes": [103, 146, 233, 226]
       },
       "group": "utilities",
       "status": "stable",
@@ -4323,12 +3398,7 @@
         "mutability": "pure",
         "signature": "ensNamehash(string)",
         "selector": "0x8c374c65",
-        "selectorBytes": [
-          140,
-          55,
-          76,
-          101
-        ]
+        "selectorBytes": [140, 55, 76, 101]
       },
       "group": "utilities",
       "status": "stable",
@@ -4343,12 +3413,7 @@
         "mutability": "view",
         "signature": "envAddress(string)",
         "selector": "0x350d56bf",
-        "selectorBytes": [
-          53,
-          13,
-          86,
-          191
-        ]
+        "selectorBytes": [53, 13, 86, 191]
       },
       "group": "environment",
       "status": "stable",
@@ -4363,12 +3428,7 @@
         "mutability": "view",
         "signature": "envAddress(string,string)",
         "selector": "0xad31b9fa",
-        "selectorBytes": [
-          173,
-          49,
-          185,
-          250
-        ]
+        "selectorBytes": [173, 49, 185, 250]
       },
       "group": "environment",
       "status": "stable",
@@ -4383,12 +3443,7 @@
         "mutability": "view",
         "signature": "envBool(string)",
         "selector": "0x7ed1ec7d",
-        "selectorBytes": [
-          126,
-          209,
-          236,
-          125
-        ]
+        "selectorBytes": [126, 209, 236, 125]
       },
       "group": "environment",
       "status": "stable",
@@ -4403,12 +3458,7 @@
         "mutability": "view",
         "signature": "envBool(string,string)",
         "selector": "0xaaaddeaf",
-        "selectorBytes": [
-          170,
-          173,
-          222,
-          175
-        ]
+        "selectorBytes": [170, 173, 222, 175]
       },
       "group": "environment",
       "status": "stable",
@@ -4423,12 +3473,7 @@
         "mutability": "view",
         "signature": "envBytes32(string)",
         "selector": "0x97949042",
-        "selectorBytes": [
-          151,
-          148,
-          144,
-          66
-        ]
+        "selectorBytes": [151, 148, 144, 66]
       },
       "group": "environment",
       "status": "stable",
@@ -4443,12 +3488,7 @@
         "mutability": "view",
         "signature": "envBytes32(string,string)",
         "selector": "0x5af231c1",
-        "selectorBytes": [
-          90,
-          242,
-          49,
-          193
-        ]
+        "selectorBytes": [90, 242, 49, 193]
       },
       "group": "environment",
       "status": "stable",
@@ -4463,12 +3503,7 @@
         "mutability": "view",
         "signature": "envBytes(string)",
         "selector": "0x4d7baf06",
-        "selectorBytes": [
-          77,
-          123,
-          175,
-          6
-        ]
+        "selectorBytes": [77, 123, 175, 6]
       },
       "group": "environment",
       "status": "stable",
@@ -4483,12 +3518,7 @@
         "mutability": "view",
         "signature": "envBytes(string,string)",
         "selector": "0xddc2651b",
-        "selectorBytes": [
-          221,
-          194,
-          101,
-          27
-        ]
+        "selectorBytes": [221, 194, 101, 27]
       },
       "group": "environment",
       "status": "stable",
@@ -4503,12 +3533,7 @@
         "mutability": "view",
         "signature": "envExists(string)",
         "selector": "0xce8365f9",
-        "selectorBytes": [
-          206,
-          131,
-          101,
-          249
-        ]
+        "selectorBytes": [206, 131, 101, 249]
       },
       "group": "environment",
       "status": "stable",
@@ -4523,12 +3548,7 @@
         "mutability": "view",
         "signature": "envInt(string)",
         "selector": "0x892a0c61",
-        "selectorBytes": [
-          137,
-          42,
-          12,
-          97
-        ]
+        "selectorBytes": [137, 42, 12, 97]
       },
       "group": "environment",
       "status": "stable",
@@ -4543,12 +3563,7 @@
         "mutability": "view",
         "signature": "envInt(string,string)",
         "selector": "0x42181150",
-        "selectorBytes": [
-          66,
-          24,
-          17,
-          80
-        ]
+        "selectorBytes": [66, 24, 17, 80]
       },
       "group": "environment",
       "status": "stable",
@@ -4563,12 +3578,7 @@
         "mutability": "view",
         "signature": "envOr(string,bool)",
         "selector": "0x4777f3cf",
-        "selectorBytes": [
-          71,
-          119,
-          243,
-          207
-        ]
+        "selectorBytes": [71, 119, 243, 207]
       },
       "group": "environment",
       "status": "stable",
@@ -4583,12 +3593,7 @@
         "mutability": "view",
         "signature": "envOr(string,uint256)",
         "selector": "0x5e97348f",
-        "selectorBytes": [
-          94,
-          151,
-          52,
-          143
-        ]
+        "selectorBytes": [94, 151, 52, 143]
       },
       "group": "environment",
       "status": "stable",
@@ -4603,12 +3608,7 @@
         "mutability": "view",
         "signature": "envOr(string,string,address[])",
         "selector": "0xc74e9deb",
-        "selectorBytes": [
-          199,
-          78,
-          157,
-          235
-        ]
+        "selectorBytes": [199, 78, 157, 235]
       },
       "group": "environment",
       "status": "stable",
@@ -4623,12 +3623,7 @@
         "mutability": "view",
         "signature": "envOr(string,string,bytes32[])",
         "selector": "0x2281f367",
-        "selectorBytes": [
-          34,
-          129,
-          243,
-          103
-        ]
+        "selectorBytes": [34, 129, 243, 103]
       },
       "group": "environment",
       "status": "stable",
@@ -4643,12 +3638,7 @@
         "mutability": "view",
         "signature": "envOr(string,string,string[])",
         "selector": "0x859216bc",
-        "selectorBytes": [
-          133,
-          146,
-          22,
-          188
-        ]
+        "selectorBytes": [133, 146, 22, 188]
       },
       "group": "environment",
       "status": "stable",
@@ -4663,12 +3653,7 @@
         "mutability": "view",
         "signature": "envOr(string,string,bytes[])",
         "selector": "0x64bc3e64",
-        "selectorBytes": [
-          100,
-          188,
-          62,
-          100
-        ]
+        "selectorBytes": [100, 188, 62, 100]
       },
       "group": "environment",
       "status": "stable",
@@ -4683,12 +3668,7 @@
         "mutability": "view",
         "signature": "envOr(string,int256)",
         "selector": "0xbbcb713e",
-        "selectorBytes": [
-          187,
-          203,
-          113,
-          62
-        ]
+        "selectorBytes": [187, 203, 113, 62]
       },
       "group": "environment",
       "status": "stable",
@@ -4703,12 +3683,7 @@
         "mutability": "view",
         "signature": "envOr(string,address)",
         "selector": "0x561fe540",
-        "selectorBytes": [
-          86,
-          31,
-          229,
-          64
-        ]
+        "selectorBytes": [86, 31, 229, 64]
       },
       "group": "environment",
       "status": "stable",
@@ -4723,12 +3698,7 @@
         "mutability": "view",
         "signature": "envOr(string,bytes32)",
         "selector": "0xb4a85892",
-        "selectorBytes": [
-          180,
-          168,
-          88,
-          146
-        ]
+        "selectorBytes": [180, 168, 88, 146]
       },
       "group": "environment",
       "status": "stable",
@@ -4743,12 +3713,7 @@
         "mutability": "view",
         "signature": "envOr(string,string)",
         "selector": "0xd145736c",
-        "selectorBytes": [
-          209,
-          69,
-          115,
-          108
-        ]
+        "selectorBytes": [209, 69, 115, 108]
       },
       "group": "environment",
       "status": "stable",
@@ -4763,12 +3728,7 @@
         "mutability": "view",
         "signature": "envOr(string,bytes)",
         "selector": "0xb3e47705",
-        "selectorBytes": [
-          179,
-          228,
-          119,
-          5
-        ]
+        "selectorBytes": [179, 228, 119, 5]
       },
       "group": "environment",
       "status": "stable",
@@ -4783,12 +3743,7 @@
         "mutability": "view",
         "signature": "envOr(string,string,bool[])",
         "selector": "0xeb85e83b",
-        "selectorBytes": [
-          235,
-          133,
-          232,
-          59
-        ]
+        "selectorBytes": [235, 133, 232, 59]
       },
       "group": "environment",
       "status": "stable",
@@ -4803,12 +3758,7 @@
         "mutability": "view",
         "signature": "envOr(string,string,uint256[])",
         "selector": "0x74318528",
-        "selectorBytes": [
-          116,
-          49,
-          133,
-          40
-        ]
+        "selectorBytes": [116, 49, 133, 40]
       },
       "group": "environment",
       "status": "stable",
@@ -4823,12 +3773,7 @@
         "mutability": "view",
         "signature": "envOr(string,string,int256[])",
         "selector": "0x4700d74b",
-        "selectorBytes": [
-          71,
-          0,
-          215,
-          75
-        ]
+        "selectorBytes": [71, 0, 215, 75]
       },
       "group": "environment",
       "status": "stable",
@@ -4843,12 +3788,7 @@
         "mutability": "view",
         "signature": "envString(string)",
         "selector": "0xf877cb19",
-        "selectorBytes": [
-          248,
-          119,
-          203,
-          25
-        ]
+        "selectorBytes": [248, 119, 203, 25]
       },
       "group": "environment",
       "status": "stable",
@@ -4863,12 +3803,7 @@
         "mutability": "view",
         "signature": "envString(string,string)",
         "selector": "0x14b02bc9",
-        "selectorBytes": [
-          20,
-          176,
-          43,
-          201
-        ]
+        "selectorBytes": [20, 176, 43, 201]
       },
       "group": "environment",
       "status": "stable",
@@ -4883,12 +3818,7 @@
         "mutability": "view",
         "signature": "envUint(string)",
         "selector": "0xc1978d1f",
-        "selectorBytes": [
-          193,
-          151,
-          141,
-          31
-        ]
+        "selectorBytes": [193, 151, 141, 31]
       },
       "group": "environment",
       "status": "stable",
@@ -4903,12 +3833,7 @@
         "mutability": "view",
         "signature": "envUint(string,string)",
         "selector": "0xf3dec099",
-        "selectorBytes": [
-          243,
-          222,
-          192,
-          153
-        ]
+        "selectorBytes": [243, 222, 192, 153]
       },
       "group": "environment",
       "status": "stable",
@@ -4923,12 +3848,7 @@
         "mutability": "",
         "signature": "etch(address,bytes)",
         "selector": "0xb4d6c782",
-        "selectorBytes": [
-          180,
-          214,
-          199,
-          130
-        ]
+        "selectorBytes": [180, 214, 199, 130]
       },
       "group": "evm",
       "status": "stable",
@@ -4943,12 +3863,7 @@
         "mutability": "",
         "signature": "eth_getLogs(uint256,uint256,address,bytes32[])",
         "selector": "0x35e1349b",
-        "selectorBytes": [
-          53,
-          225,
-          52,
-          155
-        ]
+        "selectorBytes": [53, 225, 52, 155]
       },
       "group": "evm",
       "status": "stable",
@@ -4963,12 +3878,7 @@
         "mutability": "view",
         "signature": "exists(string)",
         "selector": "0x261a323e",
-        "selectorBytes": [
-          38,
-          26,
-          50,
-          62
-        ]
+        "selectorBytes": [38, 26, 50, 62]
       },
       "group": "filesystem",
       "status": "stable",
@@ -4983,12 +3893,7 @@
         "mutability": "",
         "signature": "expectCallMinGas(address,uint256,uint64,bytes)",
         "selector": "0x08e4e116",
-        "selectorBytes": [
-          8,
-          228,
-          225,
-          22
-        ]
+        "selectorBytes": [8, 228, 225, 22]
       },
       "group": "testing",
       "status": "stable",
@@ -5003,12 +3908,7 @@
         "mutability": "",
         "signature": "expectCallMinGas(address,uint256,uint64,bytes,uint64)",
         "selector": "0xe13a1834",
-        "selectorBytes": [
-          225,
-          58,
-          24,
-          52
-        ]
+        "selectorBytes": [225, 58, 24, 52]
       },
       "group": "testing",
       "status": "stable",
@@ -5023,12 +3923,7 @@
         "mutability": "",
         "signature": "expectCall(address,bytes)",
         "selector": "0xbd6af434",
-        "selectorBytes": [
-          189,
-          106,
-          244,
-          52
-        ]
+        "selectorBytes": [189, 106, 244, 52]
       },
       "group": "testing",
       "status": "stable",
@@ -5043,12 +3938,7 @@
         "mutability": "",
         "signature": "expectCall(address,bytes,uint64)",
         "selector": "0xc1adbbff",
-        "selectorBytes": [
-          193,
-          173,
-          187,
-          255
-        ]
+        "selectorBytes": [193, 173, 187, 255]
       },
       "group": "testing",
       "status": "stable",
@@ -5063,12 +3953,7 @@
         "mutability": "",
         "signature": "expectCall(address,uint256,bytes)",
         "selector": "0xf30c7ba3",
-        "selectorBytes": [
-          243,
-          12,
-          123,
-          163
-        ]
+        "selectorBytes": [243, 12, 123, 163]
       },
       "group": "testing",
       "status": "stable",
@@ -5083,12 +3968,7 @@
         "mutability": "",
         "signature": "expectCall(address,uint256,bytes,uint64)",
         "selector": "0xa2b1a1ae",
-        "selectorBytes": [
-          162,
-          177,
-          161,
-          174
-        ]
+        "selectorBytes": [162, 177, 161, 174]
       },
       "group": "testing",
       "status": "stable",
@@ -5103,12 +3983,7 @@
         "mutability": "",
         "signature": "expectCall(address,uint256,uint64,bytes)",
         "selector": "0x23361207",
-        "selectorBytes": [
-          35,
-          54,
-          18,
-          7
-        ]
+        "selectorBytes": [35, 54, 18, 7]
       },
       "group": "testing",
       "status": "stable",
@@ -5123,12 +3998,7 @@
         "mutability": "",
         "signature": "expectCall(address,uint256,uint64,bytes,uint64)",
         "selector": "0x65b7b7cc",
-        "selectorBytes": [
-          101,
-          183,
-          183,
-          204
-        ]
+        "selectorBytes": [101, 183, 183, 204]
       },
       "group": "testing",
       "status": "stable",
@@ -5143,12 +4013,7 @@
         "mutability": "",
         "signature": "expectCreate(bytes,address)",
         "selector": "0x73cdce36",
-        "selectorBytes": [
-          115,
-          205,
-          206,
-          54
-        ]
+        "selectorBytes": [115, 205, 206, 54]
       },
       "group": "testing",
       "status": "stable",
@@ -5163,12 +4028,7 @@
         "mutability": "",
         "signature": "expectCreate2(bytes,address)",
         "selector": "0xea54a472",
-        "selectorBytes": [
-          234,
-          84,
-          164,
-          114
-        ]
+        "selectorBytes": [234, 84, 164, 114]
       },
       "group": "testing",
       "status": "stable",
@@ -5183,12 +4043,7 @@
         "mutability": "",
         "signature": "expectEmitAnonymous(bool,bool,bool,bool,bool)",
         "selector": "0xc948db5e",
-        "selectorBytes": [
-          201,
-          72,
-          219,
-          94
-        ]
+        "selectorBytes": [201, 72, 219, 94]
       },
       "group": "testing",
       "status": "stable",
@@ -5203,12 +4058,7 @@
         "mutability": "",
         "signature": "expectEmitAnonymous(bool,bool,bool,bool,bool,address)",
         "selector": "0x71c95899",
-        "selectorBytes": [
-          113,
-          201,
-          88,
-          153
-        ]
+        "selectorBytes": [113, 201, 88, 153]
       },
       "group": "testing",
       "status": "stable",
@@ -5223,12 +4073,7 @@
         "mutability": "",
         "signature": "expectEmitAnonymous()",
         "selector": "0x2e5f270c",
-        "selectorBytes": [
-          46,
-          95,
-          39,
-          12
-        ]
+        "selectorBytes": [46, 95, 39, 12]
       },
       "group": "testing",
       "status": "stable",
@@ -5243,12 +4088,7 @@
         "mutability": "",
         "signature": "expectEmitAnonymous(address)",
         "selector": "0x6fc68705",
-        "selectorBytes": [
-          111,
-          198,
-          135,
-          5
-        ]
+        "selectorBytes": [111, 198, 135, 5]
       },
       "group": "testing",
       "status": "stable",
@@ -5263,12 +4103,7 @@
         "mutability": "",
         "signature": "expectEmit(bool,bool,bool,bool)",
         "selector": "0x491cc7c2",
-        "selectorBytes": [
-          73,
-          28,
-          199,
-          194
-        ]
+        "selectorBytes": [73, 28, 199, 194]
       },
       "group": "testing",
       "status": "stable",
@@ -5283,12 +4118,7 @@
         "mutability": "",
         "signature": "expectEmit(bool,bool,bool,bool,address)",
         "selector": "0x81bad6f3",
-        "selectorBytes": [
-          129,
-          186,
-          214,
-          243
-        ]
+        "selectorBytes": [129, 186, 214, 243]
       },
       "group": "testing",
       "status": "stable",
@@ -5303,12 +4133,7 @@
         "mutability": "",
         "signature": "expectEmit()",
         "selector": "0x440ed10d",
-        "selectorBytes": [
-          68,
-          14,
-          209,
-          13
-        ]
+        "selectorBytes": [68, 14, 209, 13]
       },
       "group": "testing",
       "status": "stable",
@@ -5323,12 +4148,7 @@
         "mutability": "",
         "signature": "expectEmit(address)",
         "selector": "0x86b9620d",
-        "selectorBytes": [
-          134,
-          185,
-          98,
-          13
-        ]
+        "selectorBytes": [134, 185, 98, 13]
       },
       "group": "testing",
       "status": "stable",
@@ -5343,12 +4163,7 @@
         "mutability": "",
         "signature": "expectEmit(bool,bool,bool,bool,uint64)",
         "selector": "0x5e1d1c33",
-        "selectorBytes": [
-          94,
-          29,
-          28,
-          51
-        ]
+        "selectorBytes": [94, 29, 28, 51]
       },
       "group": "testing",
       "status": "stable",
@@ -5363,12 +4178,7 @@
         "mutability": "",
         "signature": "expectEmit(bool,bool,bool,bool,address,uint64)",
         "selector": "0xc339d02c",
-        "selectorBytes": [
-          195,
-          57,
-          208,
-          44
-        ]
+        "selectorBytes": [195, 57, 208, 44]
       },
       "group": "testing",
       "status": "stable",
@@ -5383,12 +4193,7 @@
         "mutability": "",
         "signature": "expectEmit(uint64)",
         "selector": "0x4c74a335",
-        "selectorBytes": [
-          76,
-          116,
-          163,
-          53
-        ]
+        "selectorBytes": [76, 116, 163, 53]
       },
       "group": "testing",
       "status": "stable",
@@ -5403,12 +4208,7 @@
         "mutability": "",
         "signature": "expectEmit(address,uint64)",
         "selector": "0xb43aece3",
-        "selectorBytes": [
-          180,
-          58,
-          236,
-          227
-        ]
+        "selectorBytes": [180, 58, 236, 227]
       },
       "group": "testing",
       "status": "stable",
@@ -5423,12 +4223,7 @@
         "mutability": "",
         "signature": "expectPartialRevert(bytes4)",
         "selector": "0x11fb5b9c",
-        "selectorBytes": [
-          17,
-          251,
-          91,
-          156
-        ]
+        "selectorBytes": [17, 251, 91, 156]
       },
       "group": "testing",
       "status": "stable",
@@ -5443,12 +4238,7 @@
         "mutability": "",
         "signature": "expectPartialRevert(bytes4,address)",
         "selector": "0x51aa008a",
-        "selectorBytes": [
-          81,
-          170,
-          0,
-          138
-        ]
+        "selectorBytes": [81, 170, 0, 138]
       },
       "group": "testing",
       "status": "stable",
@@ -5463,12 +4253,7 @@
         "mutability": "",
         "signature": "expectRevert()",
         "selector": "0xf4844814",
-        "selectorBytes": [
-          244,
-          132,
-          72,
-          20
-        ]
+        "selectorBytes": [244, 132, 72, 20]
       },
       "group": "testing",
       "status": "stable",
@@ -5483,12 +4268,7 @@
         "mutability": "",
         "signature": "expectRevert(bytes4)",
         "selector": "0xc31eb0e0",
-        "selectorBytes": [
-          195,
-          30,
-          176,
-          224
-        ]
+        "selectorBytes": [195, 30, 176, 224]
       },
       "group": "testing",
       "status": "stable",
@@ -5503,12 +4283,7 @@
         "mutability": "",
         "signature": "expectRevert(bytes4,address,uint64)",
         "selector": "0xb0762d73",
-        "selectorBytes": [
-          176,
-          118,
-          45,
-          115
-        ]
+        "selectorBytes": [176, 118, 45, 115]
       },
       "group": "testing",
       "status": "stable",
@@ -5523,12 +4298,7 @@
         "mutability": "",
         "signature": "expectRevert(bytes,address,uint64)",
         "selector": "0xd345fb1f",
-        "selectorBytes": [
-          211,
-          69,
-          251,
-          31
-        ]
+        "selectorBytes": [211, 69, 251, 31]
       },
       "group": "testing",
       "status": "stable",
@@ -5543,12 +4313,7 @@
         "mutability": "",
         "signature": "expectRevert(bytes)",
         "selector": "0xf28dceb3",
-        "selectorBytes": [
-          242,
-          141,
-          206,
-          179
-        ]
+        "selectorBytes": [242, 141, 206, 179]
       },
       "group": "testing",
       "status": "stable",
@@ -5563,12 +4328,7 @@
         "mutability": "",
         "signature": "expectRevert(address)",
         "selector": "0xd814f38a",
-        "selectorBytes": [
-          216,
-          20,
-          243,
-          138
-        ]
+        "selectorBytes": [216, 20, 243, 138]
       },
       "group": "testing",
       "status": "stable",
@@ -5583,12 +4343,7 @@
         "mutability": "",
         "signature": "expectRevert(bytes4,address)",
         "selector": "0x260bc5de",
-        "selectorBytes": [
-          38,
-          11,
-          197,
-          222
-        ]
+        "selectorBytes": [38, 11, 197, 222]
       },
       "group": "testing",
       "status": "stable",
@@ -5603,12 +4358,7 @@
         "mutability": "",
         "signature": "expectRevert(bytes,address)",
         "selector": "0x61ebcf12",
-        "selectorBytes": [
-          97,
-          235,
-          207,
-          18
-        ]
+        "selectorBytes": [97, 235, 207, 18]
       },
       "group": "testing",
       "status": "stable",
@@ -5623,12 +4373,7 @@
         "mutability": "",
         "signature": "expectRevert(uint64)",
         "selector": "0x4ee38244",
-        "selectorBytes": [
-          78,
-          227,
-          130,
-          68
-        ]
+        "selectorBytes": [78, 227, 130, 68]
       },
       "group": "testing",
       "status": "stable",
@@ -5643,12 +4388,7 @@
         "mutability": "",
         "signature": "expectRevert(bytes4,uint64)",
         "selector": "0xe45ca72d",
-        "selectorBytes": [
-          228,
-          92,
-          167,
-          45
-        ]
+        "selectorBytes": [228, 92, 167, 45]
       },
       "group": "testing",
       "status": "stable",
@@ -5663,12 +4403,7 @@
         "mutability": "",
         "signature": "expectRevert(bytes,uint64)",
         "selector": "0x4994c273",
-        "selectorBytes": [
-          73,
-          148,
-          194,
-          115
-        ]
+        "selectorBytes": [73, 148, 194, 115]
       },
       "group": "testing",
       "status": "stable",
@@ -5683,12 +4418,7 @@
         "mutability": "",
         "signature": "expectRevert(address,uint64)",
         "selector": "0x1ff5f952",
-        "selectorBytes": [
-          31,
-          245,
-          249,
-          82
-        ]
+        "selectorBytes": [31, 245, 249, 82]
       },
       "group": "testing",
       "status": "stable",
@@ -5703,12 +4433,7 @@
         "mutability": "",
         "signature": "expectSafeMemory(uint64,uint64)",
         "selector": "0x6d016688",
-        "selectorBytes": [
-          109,
-          1,
-          102,
-          136
-        ]
+        "selectorBytes": [109, 1, 102, 136]
       },
       "group": "testing",
       "status": "stable",
@@ -5723,12 +4448,7 @@
         "mutability": "",
         "signature": "expectSafeMemoryCall(uint64,uint64)",
         "selector": "0x05838bf4",
-        "selectorBytes": [
-          5,
-          131,
-          139,
-          244
-        ]
+        "selectorBytes": [5, 131, 139, 244]
       },
       "group": "testing",
       "status": "stable",
@@ -5743,12 +4463,7 @@
         "mutability": "",
         "signature": "fee(uint256)",
         "selector": "0x39b37ab0",
-        "selectorBytes": [
-          57,
-          179,
-          122,
-          176
-        ]
+        "selectorBytes": [57, 179, 122, 176]
       },
       "group": "evm",
       "status": "stable",
@@ -5763,12 +4478,7 @@
         "mutability": "",
         "signature": "ffi(string[])",
         "selector": "0x89160467",
-        "selectorBytes": [
-          137,
-          22,
-          4,
-          103
-        ]
+        "selectorBytes": [137, 22, 4, 103]
       },
       "group": "filesystem",
       "status": "stable",
@@ -5783,12 +4493,7 @@
         "mutability": "view",
         "signature": "foundryVersionAtLeast(string)",
         "selector": "0x6248be1f",
-        "selectorBytes": [
-          98,
-          72,
-          190,
-          31
-        ]
+        "selectorBytes": [98, 72, 190, 31]
       },
       "group": "testing",
       "status": "stable",
@@ -5803,12 +4508,7 @@
         "mutability": "view",
         "signature": "foundryVersionCmp(string)",
         "selector": "0xca7b0a09",
-        "selectorBytes": [
-          202,
-          123,
-          10,
-          9
-        ]
+        "selectorBytes": [202, 123, 10, 9]
       },
       "group": "testing",
       "status": "stable",
@@ -5823,12 +4523,7 @@
         "mutability": "view",
         "signature": "fsMetadata(string)",
         "selector": "0xaf368a08",
-        "selectorBytes": [
-          175,
-          54,
-          138,
-          8
-        ]
+        "selectorBytes": [175, 54, 138, 8]
       },
       "group": "filesystem",
       "status": "stable",
@@ -5843,12 +4538,7 @@
         "mutability": "view",
         "signature": "getArtifactPathByCode(bytes)",
         "selector": "0xeb74848c",
-        "selectorBytes": [
-          235,
-          116,
-          132,
-          140
-        ]
+        "selectorBytes": [235, 116, 132, 140]
       },
       "group": "filesystem",
       "status": "stable",
@@ -5863,12 +4553,7 @@
         "mutability": "view",
         "signature": "getArtifactPathByDeployedCode(bytes)",
         "selector": "0x6d853ba5",
-        "selectorBytes": [
-          109,
-          133,
-          59,
-          165
-        ]
+        "selectorBytes": [109, 133, 59, 165]
       },
       "group": "filesystem",
       "status": "stable",
@@ -5883,12 +4568,7 @@
         "mutability": "view",
         "signature": "getBlobBaseFee()",
         "selector": "0x1f6d6ef7",
-        "selectorBytes": [
-          31,
-          109,
-          110,
-          247
-        ]
+        "selectorBytes": [31, 109, 110, 247]
       },
       "group": "evm",
       "status": "stable",
@@ -5903,12 +4583,7 @@
         "mutability": "view",
         "signature": "getBlobhashes()",
         "selector": "0xf56ff18b",
-        "selectorBytes": [
-          245,
-          111,
-          241,
-          139
-        ]
+        "selectorBytes": [245, 111, 241, 139]
       },
       "group": "evm",
       "status": "stable",
@@ -5923,12 +4598,7 @@
         "mutability": "view",
         "signature": "getBlockNumber()",
         "selector": "0x42cbb15c",
-        "selectorBytes": [
-          66,
-          203,
-          177,
-          92
-        ]
+        "selectorBytes": [66, 203, 177, 92]
       },
       "group": "evm",
       "status": "stable",
@@ -5943,12 +4613,7 @@
         "mutability": "view",
         "signature": "getBlockTimestamp()",
         "selector": "0x796b89b9",
-        "selectorBytes": [
-          121,
-          107,
-          137,
-          185
-        ]
+        "selectorBytes": [121, 107, 137, 185]
       },
       "group": "evm",
       "status": "stable",
@@ -5963,12 +4628,7 @@
         "mutability": "view",
         "signature": "getBroadcast(string,uint64,uint8)",
         "selector": "0x3dc90cb3",
-        "selectorBytes": [
-          61,
-          201,
-          12,
-          179
-        ]
+        "selectorBytes": [61, 201, 12, 179]
       },
       "group": "filesystem",
       "status": "stable",
@@ -5983,12 +4643,7 @@
         "mutability": "view",
         "signature": "getBroadcasts(string,uint64,uint8)",
         "selector": "0xf7afe919",
-        "selectorBytes": [
-          247,
-          175,
-          233,
-          25
-        ]
+        "selectorBytes": [247, 175, 233, 25]
       },
       "group": "filesystem",
       "status": "stable",
@@ -6003,12 +4658,7 @@
         "mutability": "view",
         "signature": "getBroadcasts(string,uint64)",
         "selector": "0xf2fa4a26",
-        "selectorBytes": [
-          242,
-          250,
-          74,
-          38
-        ]
+        "selectorBytes": [242, 250, 74, 38]
       },
       "group": "filesystem",
       "status": "stable",
@@ -6023,12 +4673,7 @@
         "mutability": "view",
         "signature": "getChain(string)",
         "selector": "0x4cc1c2bb",
-        "selectorBytes": [
-          76,
-          193,
-          194,
-          187
-        ]
+        "selectorBytes": [76, 193, 194, 187]
       },
       "group": "testing",
       "status": "stable",
@@ -6043,12 +4688,7 @@
         "mutability": "view",
         "signature": "getChain(uint256)",
         "selector": "0xb6791ad4",
-        "selectorBytes": [
-          182,
-          121,
-          26,
-          212
-        ]
+        "selectorBytes": [182, 121, 26, 212]
       },
       "group": "testing",
       "status": "stable",
@@ -6063,12 +4703,7 @@
         "mutability": "view",
         "signature": "getCode(string)",
         "selector": "0x8d1cc925",
-        "selectorBytes": [
-          141,
-          28,
-          201,
-          37
-        ]
+        "selectorBytes": [141, 28, 201, 37]
       },
       "group": "filesystem",
       "status": "stable",
@@ -6083,12 +4718,7 @@
         "mutability": "view",
         "signature": "getDeployedCode(string)",
         "selector": "0x3ebf73b4",
-        "selectorBytes": [
-          62,
-          191,
-          115,
-          180
-        ]
+        "selectorBytes": [62, 191, 115, 180]
       },
       "group": "filesystem",
       "status": "stable",
@@ -6103,12 +4733,7 @@
         "mutability": "view",
         "signature": "getDeployment(string)",
         "selector": "0xa8091d97",
-        "selectorBytes": [
-          168,
-          9,
-          29,
-          151
-        ]
+        "selectorBytes": [168, 9, 29, 151]
       },
       "group": "filesystem",
       "status": "stable",
@@ -6123,12 +4748,7 @@
         "mutability": "view",
         "signature": "getDeployment(string,uint64)",
         "selector": "0x0debd5d6",
-        "selectorBytes": [
-          13,
-          235,
-          213,
-          214
-        ]
+        "selectorBytes": [13, 235, 213, 214]
       },
       "group": "filesystem",
       "status": "stable",
@@ -6143,12 +4763,7 @@
         "mutability": "view",
         "signature": "getDeployments(string,uint64)",
         "selector": "0x74e133dd",
-        "selectorBytes": [
-          116,
-          225,
-          51,
-          221
-        ]
+        "selectorBytes": [116, 225, 51, 221]
       },
       "group": "filesystem",
       "status": "stable",
@@ -6163,12 +4778,7 @@
         "mutability": "view",
         "signature": "getFoundryVersion()",
         "selector": "0xea991bb5",
-        "selectorBytes": [
-          234,
-          153,
-          27,
-          181
-        ]
+        "selectorBytes": [234, 153, 27, 181]
       },
       "group": "testing",
       "status": "stable",
@@ -6183,12 +4793,7 @@
         "mutability": "view",
         "signature": "getLabel(address)",
         "selector": "0x28a249b0",
-        "selectorBytes": [
-          40,
-          162,
-          73,
-          176
-        ]
+        "selectorBytes": [40, 162, 73, 176]
       },
       "group": "utilities",
       "status": "stable",
@@ -6203,12 +4808,7 @@
         "mutability": "",
         "signature": "getMappingKeyAndParentOf(address,bytes32)",
         "selector": "0x876e24e6",
-        "selectorBytes": [
-          135,
-          110,
-          36,
-          230
-        ]
+        "selectorBytes": [135, 110, 36, 230]
       },
       "group": "evm",
       "status": "stable",
@@ -6223,12 +4823,7 @@
         "mutability": "",
         "signature": "getMappingLength(address,bytes32)",
         "selector": "0x2f2fd63f",
-        "selectorBytes": [
-          47,
-          47,
-          214,
-          63
-        ]
+        "selectorBytes": [47, 47, 214, 63]
       },
       "group": "evm",
       "status": "stable",
@@ -6243,12 +4838,7 @@
         "mutability": "",
         "signature": "getMappingSlotAt(address,bytes32,uint256)",
         "selector": "0xebc73ab4",
-        "selectorBytes": [
-          235,
-          199,
-          58,
-          180
-        ]
+        "selectorBytes": [235, 199, 58, 180]
       },
       "group": "evm",
       "status": "stable",
@@ -6263,12 +4853,7 @@
         "mutability": "view",
         "signature": "getNonce(address)",
         "selector": "0x2d0335ab",
-        "selectorBytes": [
-          45,
-          3,
-          53,
-          171
-        ]
+        "selectorBytes": [45, 3, 53, 171]
       },
       "group": "evm",
       "status": "stable",
@@ -6283,12 +4868,7 @@
         "mutability": "",
         "signature": "getNonce((address,uint256,uint256,uint256))",
         "selector": "0xa5748aad",
-        "selectorBytes": [
-          165,
-          116,
-          138,
-          173
-        ]
+        "selectorBytes": [165, 116, 138, 173]
       },
       "group": "evm",
       "status": "stable",
@@ -6303,12 +4883,7 @@
         "mutability": "",
         "signature": "getRecordedLogs()",
         "selector": "0x191553a4",
-        "selectorBytes": [
-          25,
-          21,
-          83,
-          164
-        ]
+        "selectorBytes": [25, 21, 83, 164]
       },
       "group": "evm",
       "status": "stable",
@@ -6323,12 +4898,7 @@
         "mutability": "view",
         "signature": "getStateDiff()",
         "selector": "0x80df01cc",
-        "selectorBytes": [
-          128,
-          223,
-          1,
-          204
-        ]
+        "selectorBytes": [128, 223, 1, 204]
       },
       "group": "evm",
       "status": "stable",
@@ -6343,12 +4913,7 @@
         "mutability": "view",
         "signature": "getStateDiffJson()",
         "selector": "0xf54fe009",
-        "selectorBytes": [
-          245,
-          79,
-          224,
-          9
-        ]
+        "selectorBytes": [245, 79, 224, 9]
       },
       "group": "evm",
       "status": "stable",
@@ -6363,12 +4928,7 @@
         "mutability": "",
         "signature": "getWallets()",
         "selector": "0xdb7a4605",
-        "selectorBytes": [
-          219,
-          122,
-          70,
-          5
-        ]
+        "selectorBytes": [219, 122, 70, 5]
       },
       "group": "scripting",
       "status": "stable",
@@ -6383,12 +4943,7 @@
         "mutability": "pure",
         "signature": "indexOf(string,string)",
         "selector": "0x8a0807b7",
-        "selectorBytes": [
-          138,
-          8,
-          7,
-          183
-        ]
+        "selectorBytes": [138, 8, 7, 183]
       },
       "group": "string",
       "status": "stable",
@@ -6403,12 +4958,7 @@
         "mutability": "",
         "signature": "interceptInitcode()",
         "selector": "0x838653c7",
-        "selectorBytes": [
-          131,
-          134,
-          83,
-          199
-        ]
+        "selectorBytes": [131, 134, 83, 199]
       },
       "group": "utilities",
       "status": "stable",
@@ -6423,12 +4973,7 @@
         "mutability": "view",
         "signature": "isContext(uint8)",
         "selector": "0x64af255d",
-        "selectorBytes": [
-          100,
-          175,
-          37,
-          93
-        ]
+        "selectorBytes": [100, 175, 37, 93]
       },
       "group": "environment",
       "status": "stable",
@@ -6443,12 +4988,7 @@
         "mutability": "view",
         "signature": "isDir(string)",
         "selector": "0x7d15d019",
-        "selectorBytes": [
-          125,
-          21,
-          208,
-          25
-        ]
+        "selectorBytes": [125, 21, 208, 25]
       },
       "group": "filesystem",
       "status": "stable",
@@ -6463,12 +5003,7 @@
         "mutability": "view",
         "signature": "isFile(string)",
         "selector": "0xe0eb04d4",
-        "selectorBytes": [
-          224,
-          235,
-          4,
-          212
-        ]
+        "selectorBytes": [224, 235, 4, 212]
       },
       "group": "filesystem",
       "status": "stable",
@@ -6483,12 +5018,7 @@
         "mutability": "view",
         "signature": "isPersistent(address)",
         "selector": "0xd92d8efd",
-        "selectorBytes": [
-          217,
-          45,
-          142,
-          253
-        ]
+        "selectorBytes": [217, 45, 142, 253]
       },
       "group": "evm",
       "status": "stable",
@@ -6503,12 +5033,7 @@
         "mutability": "view",
         "signature": "keyExists(string,string)",
         "selector": "0x528a683c",
-        "selectorBytes": [
-          82,
-          138,
-          104,
-          60
-        ]
+        "selectorBytes": [82, 138, 104, 60]
       },
       "group": "json",
       "status": {
@@ -6525,12 +5050,7 @@
         "mutability": "view",
         "signature": "keyExistsJson(string,string)",
         "selector": "0xdb4235f6",
-        "selectorBytes": [
-          219,
-          66,
-          53,
-          246
-        ]
+        "selectorBytes": [219, 66, 53, 246]
       },
       "group": "json",
       "status": "stable",
@@ -6545,12 +5065,7 @@
         "mutability": "view",
         "signature": "keyExistsToml(string,string)",
         "selector": "0x600903ad",
-        "selectorBytes": [
-          96,
-          9,
-          3,
-          173
-        ]
+        "selectorBytes": [96, 9, 3, 173]
       },
       "group": "toml",
       "status": "stable",
@@ -6565,12 +5080,7 @@
         "mutability": "",
         "signature": "label(address,string)",
         "selector": "0xc657c718",
-        "selectorBytes": [
-          198,
-          87,
-          199,
-          24
-        ]
+        "selectorBytes": [198, 87, 199, 24]
       },
       "group": "utilities",
       "status": "stable",
@@ -6585,12 +5095,7 @@
         "mutability": "view",
         "signature": "lastCallGas()",
         "selector": "0x2b589b28",
-        "selectorBytes": [
-          43,
-          88,
-          155,
-          40
-        ]
+        "selectorBytes": [43, 88, 155, 40]
       },
       "group": "evm",
       "status": "stable",
@@ -6605,12 +5110,7 @@
         "mutability": "view",
         "signature": "load(address,bytes32)",
         "selector": "0x667f9d70",
-        "selectorBytes": [
-          102,
-          127,
-          157,
-          112
-        ]
+        "selectorBytes": [102, 127, 157, 112]
       },
       "group": "evm",
       "status": "stable",
@@ -6625,12 +5125,7 @@
         "mutability": "",
         "signature": "loadAllocs(string)",
         "selector": "0xb3a056d7",
-        "selectorBytes": [
-          179,
-          160,
-          86,
-          215
-        ]
+        "selectorBytes": [179, 160, 86, 215]
       },
       "group": "evm",
       "status": "stable",
@@ -6645,12 +5140,7 @@
         "mutability": "",
         "signature": "makePersistent(address)",
         "selector": "0x57e22dde",
-        "selectorBytes": [
-          87,
-          226,
-          45,
-          222
-        ]
+        "selectorBytes": [87, 226, 45, 222]
       },
       "group": "evm",
       "status": "stable",
@@ -6665,12 +5155,7 @@
         "mutability": "",
         "signature": "makePersistent(address,address)",
         "selector": "0x4074e0a8",
-        "selectorBytes": [
-          64,
-          116,
-          224,
-          168
-        ]
+        "selectorBytes": [64, 116, 224, 168]
       },
       "group": "evm",
       "status": "stable",
@@ -6685,12 +5170,7 @@
         "mutability": "",
         "signature": "makePersistent(address,address,address)",
         "selector": "0xefb77a75",
-        "selectorBytes": [
-          239,
-          183,
-          122,
-          117
-        ]
+        "selectorBytes": [239, 183, 122, 117]
       },
       "group": "evm",
       "status": "stable",
@@ -6705,12 +5185,7 @@
         "mutability": "",
         "signature": "makePersistent(address[])",
         "selector": "0x1d9e269e",
-        "selectorBytes": [
-          29,
-          158,
-          38,
-          158
-        ]
+        "selectorBytes": [29, 158, 38, 158]
       },
       "group": "evm",
       "status": "stable",
@@ -6725,12 +5200,7 @@
         "mutability": "",
         "signature": "mockCallRevert(address,bytes,bytes)",
         "selector": "0xdbaad147",
-        "selectorBytes": [
-          219,
-          170,
-          209,
-          71
-        ]
+        "selectorBytes": [219, 170, 209, 71]
       },
       "group": "evm",
       "status": "stable",
@@ -6745,12 +5215,7 @@
         "mutability": "",
         "signature": "mockCallRevert(address,uint256,bytes,bytes)",
         "selector": "0xd23cd037",
-        "selectorBytes": [
-          210,
-          60,
-          208,
-          55
-        ]
+        "selectorBytes": [210, 60, 208, 55]
       },
       "group": "evm",
       "status": "stable",
@@ -6765,12 +5230,7 @@
         "mutability": "",
         "signature": "mockCallRevert(address,bytes4,bytes)",
         "selector": "0x2dfba5df",
-        "selectorBytes": [
-          45,
-          251,
-          165,
-          223
-        ]
+        "selectorBytes": [45, 251, 165, 223]
       },
       "group": "evm",
       "status": "stable",
@@ -6785,12 +5245,7 @@
         "mutability": "",
         "signature": "mockCallRevert(address,uint256,bytes4,bytes)",
         "selector": "0x596c8f04",
-        "selectorBytes": [
-          89,
-          108,
-          143,
-          4
-        ]
+        "selectorBytes": [89, 108, 143, 4]
       },
       "group": "evm",
       "status": "stable",
@@ -6805,12 +5260,7 @@
         "mutability": "",
         "signature": "mockCall(address,bytes,bytes)",
         "selector": "0xb96213e4",
-        "selectorBytes": [
-          185,
-          98,
-          19,
-          228
-        ]
+        "selectorBytes": [185, 98, 19, 228]
       },
       "group": "evm",
       "status": "stable",
@@ -6825,12 +5275,7 @@
         "mutability": "",
         "signature": "mockCall(address,uint256,bytes,bytes)",
         "selector": "0x81409b91",
-        "selectorBytes": [
-          129,
-          64,
-          155,
-          145
-        ]
+        "selectorBytes": [129, 64, 155, 145]
       },
       "group": "evm",
       "status": "stable",
@@ -6845,12 +5290,7 @@
         "mutability": "",
         "signature": "mockCall(address,bytes4,bytes)",
         "selector": "0x08e0c537",
-        "selectorBytes": [
-          8,
-          224,
-          197,
-          55
-        ]
+        "selectorBytes": [8, 224, 197, 55]
       },
       "group": "evm",
       "status": "stable",
@@ -6865,12 +5305,7 @@
         "mutability": "",
         "signature": "mockCall(address,uint256,bytes4,bytes)",
         "selector": "0xe7b36a3d",
-        "selectorBytes": [
-          231,
-          179,
-          106,
-          61
-        ]
+        "selectorBytes": [231, 179, 106, 61]
       },
       "group": "evm",
       "status": "stable",
@@ -6885,12 +5320,7 @@
         "mutability": "",
         "signature": "mockCalls(address,bytes,bytes[])",
         "selector": "0x5c5c3de9",
-        "selectorBytes": [
-          92,
-          92,
-          61,
-          233
-        ]
+        "selectorBytes": [92, 92, 61, 233]
       },
       "group": "evm",
       "status": "stable",
@@ -6905,12 +5335,7 @@
         "mutability": "",
         "signature": "mockCalls(address,uint256,bytes,bytes[])",
         "selector": "0x08bcbae1",
-        "selectorBytes": [
-          8,
-          188,
-          186,
-          225
-        ]
+        "selectorBytes": [8, 188, 186, 225]
       },
       "group": "evm",
       "status": "stable",
@@ -6925,12 +5350,7 @@
         "mutability": "",
         "signature": "mockFunction(address,address,bytes)",
         "selector": "0xadf84d21",
-        "selectorBytes": [
-          173,
-          248,
-          77,
-          33
-        ]
+        "selectorBytes": [173, 248, 77, 33]
       },
       "group": "evm",
       "status": "stable",
@@ -6945,12 +5365,7 @@
         "mutability": "",
         "signature": "noAccessList()",
         "selector": "0x238ad778",
-        "selectorBytes": [
-          35,
-          138,
-          215,
-          120
-        ]
+        "selectorBytes": [35, 138, 215, 120]
       },
       "group": "evm",
       "status": "stable",
@@ -6965,12 +5380,7 @@
         "mutability": "pure",
         "signature": "parseAddress(string)",
         "selector": "0xc6ce059d",
-        "selectorBytes": [
-          198,
-          206,
-          5,
-          157
-        ]
+        "selectorBytes": [198, 206, 5, 157]
       },
       "group": "string",
       "status": "stable",
@@ -6985,12 +5395,7 @@
         "mutability": "pure",
         "signature": "parseBool(string)",
         "selector": "0x974ef924",
-        "selectorBytes": [
-          151,
-          78,
-          249,
-          36
-        ]
+        "selectorBytes": [151, 78, 249, 36]
       },
       "group": "string",
       "status": "stable",
@@ -7005,12 +5410,7 @@
         "mutability": "pure",
         "signature": "parseBytes(string)",
         "selector": "0x8f5d232d",
-        "selectorBytes": [
-          143,
-          93,
-          35,
-          45
-        ]
+        "selectorBytes": [143, 93, 35, 45]
       },
       "group": "string",
       "status": "stable",
@@ -7025,12 +5425,7 @@
         "mutability": "pure",
         "signature": "parseBytes32(string)",
         "selector": "0x087e6e81",
-        "selectorBytes": [
-          8,
-          126,
-          110,
-          129
-        ]
+        "selectorBytes": [8, 126, 110, 129]
       },
       "group": "string",
       "status": "stable",
@@ -7045,12 +5440,7 @@
         "mutability": "pure",
         "signature": "parseInt(string)",
         "selector": "0x42346c5e",
-        "selectorBytes": [
-          66,
-          52,
-          108,
-          94
-        ]
+        "selectorBytes": [66, 52, 108, 94]
       },
       "group": "string",
       "status": "stable",
@@ -7065,12 +5455,7 @@
         "mutability": "pure",
         "signature": "parseJsonAddress(string,string)",
         "selector": "0x1e19e657",
-        "selectorBytes": [
-          30,
-          25,
-          230,
-          87
-        ]
+        "selectorBytes": [30, 25, 230, 87]
       },
       "group": "json",
       "status": "stable",
@@ -7085,12 +5470,7 @@
         "mutability": "pure",
         "signature": "parseJsonAddressArray(string,string)",
         "selector": "0x2fce7883",
-        "selectorBytes": [
-          47,
-          206,
-          120,
-          131
-        ]
+        "selectorBytes": [47, 206, 120, 131]
       },
       "group": "json",
       "status": "stable",
@@ -7105,12 +5485,7 @@
         "mutability": "pure",
         "signature": "parseJsonBool(string,string)",
         "selector": "0x9f86dc91",
-        "selectorBytes": [
-          159,
-          134,
-          220,
-          145
-        ]
+        "selectorBytes": [159, 134, 220, 145]
       },
       "group": "json",
       "status": "stable",
@@ -7125,12 +5500,7 @@
         "mutability": "pure",
         "signature": "parseJsonBoolArray(string,string)",
         "selector": "0x91f3b94f",
-        "selectorBytes": [
-          145,
-          243,
-          185,
-          79
-        ]
+        "selectorBytes": [145, 243, 185, 79]
       },
       "group": "json",
       "status": "stable",
@@ -7145,12 +5515,7 @@
         "mutability": "pure",
         "signature": "parseJsonBytes(string,string)",
         "selector": "0xfd921be8",
-        "selectorBytes": [
-          253,
-          146,
-          27,
-          232
-        ]
+        "selectorBytes": [253, 146, 27, 232]
       },
       "group": "json",
       "status": "stable",
@@ -7165,12 +5530,7 @@
         "mutability": "pure",
         "signature": "parseJsonBytes32(string,string)",
         "selector": "0x1777e59d",
-        "selectorBytes": [
-          23,
-          119,
-          229,
-          157
-        ]
+        "selectorBytes": [23, 119, 229, 157]
       },
       "group": "json",
       "status": "stable",
@@ -7185,12 +5545,7 @@
         "mutability": "pure",
         "signature": "parseJsonBytes32Array(string,string)",
         "selector": "0x91c75bc3",
-        "selectorBytes": [
-          145,
-          199,
-          91,
-          195
-        ]
+        "selectorBytes": [145, 199, 91, 195]
       },
       "group": "json",
       "status": "stable",
@@ -7205,12 +5560,7 @@
         "mutability": "pure",
         "signature": "parseJsonBytesArray(string,string)",
         "selector": "0x6631aa99",
-        "selectorBytes": [
-          102,
-          49,
-          170,
-          153
-        ]
+        "selectorBytes": [102, 49, 170, 153]
       },
       "group": "json",
       "status": "stable",
@@ -7225,12 +5575,7 @@
         "mutability": "pure",
         "signature": "parseJsonInt(string,string)",
         "selector": "0x7b048ccd",
-        "selectorBytes": [
-          123,
-          4,
-          140,
-          205
-        ]
+        "selectorBytes": [123, 4, 140, 205]
       },
       "group": "json",
       "status": "stable",
@@ -7245,12 +5590,7 @@
         "mutability": "pure",
         "signature": "parseJsonIntArray(string,string)",
         "selector": "0x9983c28a",
-        "selectorBytes": [
-          153,
-          131,
-          194,
-          138
-        ]
+        "selectorBytes": [153, 131, 194, 138]
       },
       "group": "json",
       "status": "stable",
@@ -7265,12 +5605,7 @@
         "mutability": "pure",
         "signature": "parseJsonKeys(string,string)",
         "selector": "0x213e4198",
-        "selectorBytes": [
-          33,
-          62,
-          65,
-          152
-        ]
+        "selectorBytes": [33, 62, 65, 152]
       },
       "group": "json",
       "status": "stable",
@@ -7285,12 +5620,7 @@
         "mutability": "pure",
         "signature": "parseJsonString(string,string)",
         "selector": "0x49c4fac8",
-        "selectorBytes": [
-          73,
-          196,
-          250,
-          200
-        ]
+        "selectorBytes": [73, 196, 250, 200]
       },
       "group": "json",
       "status": "stable",
@@ -7305,12 +5635,7 @@
         "mutability": "pure",
         "signature": "parseJsonStringArray(string,string)",
         "selector": "0x498fdcf4",
-        "selectorBytes": [
-          73,
-          143,
-          220,
-          244
-        ]
+        "selectorBytes": [73, 143, 220, 244]
       },
       "group": "json",
       "status": "stable",
@@ -7325,12 +5650,7 @@
         "mutability": "pure",
         "signature": "parseJsonTypeArray(string,string,string)",
         "selector": "0x0175d535",
-        "selectorBytes": [
-          1,
-          117,
-          213,
-          53
-        ]
+        "selectorBytes": [1, 117, 213, 53]
       },
       "group": "json",
       "status": "stable",
@@ -7345,12 +5665,7 @@
         "mutability": "pure",
         "signature": "parseJsonType(string,string)",
         "selector": "0xa9da313b",
-        "selectorBytes": [
-          169,
-          218,
-          49,
-          59
-        ]
+        "selectorBytes": [169, 218, 49, 59]
       },
       "group": "json",
       "status": "stable",
@@ -7365,12 +5680,7 @@
         "mutability": "pure",
         "signature": "parseJsonType(string,string,string)",
         "selector": "0xe3f5ae33",
-        "selectorBytes": [
-          227,
-          245,
-          174,
-          51
-        ]
+        "selectorBytes": [227, 245, 174, 51]
       },
       "group": "json",
       "status": "stable",
@@ -7385,12 +5695,7 @@
         "mutability": "pure",
         "signature": "parseJsonUint(string,string)",
         "selector": "0xaddde2b6",
-        "selectorBytes": [
-          173,
-          221,
-          226,
-          182
-        ]
+        "selectorBytes": [173, 221, 226, 182]
       },
       "group": "json",
       "status": "stable",
@@ -7405,12 +5710,7 @@
         "mutability": "pure",
         "signature": "parseJsonUintArray(string,string)",
         "selector": "0x522074ab",
-        "selectorBytes": [
-          82,
-          32,
-          116,
-          171
-        ]
+        "selectorBytes": [82, 32, 116, 171]
       },
       "group": "json",
       "status": "stable",
@@ -7425,12 +5725,7 @@
         "mutability": "pure",
         "signature": "parseJson(string)",
         "selector": "0x6a82600a",
-        "selectorBytes": [
-          106,
-          130,
-          96,
-          10
-        ]
+        "selectorBytes": [106, 130, 96, 10]
       },
       "group": "json",
       "status": "stable",
@@ -7445,12 +5740,7 @@
         "mutability": "pure",
         "signature": "parseJson(string,string)",
         "selector": "0x85940ef1",
-        "selectorBytes": [
-          133,
-          148,
-          14,
-          241
-        ]
+        "selectorBytes": [133, 148, 14, 241]
       },
       "group": "json",
       "status": "stable",
@@ -7465,12 +5755,7 @@
         "mutability": "pure",
         "signature": "parseTomlAddress(string,string)",
         "selector": "0x65e7c844",
-        "selectorBytes": [
-          101,
-          231,
-          200,
-          68
-        ]
+        "selectorBytes": [101, 231, 200, 68]
       },
       "group": "toml",
       "status": "stable",
@@ -7485,12 +5770,7 @@
         "mutability": "pure",
         "signature": "parseTomlAddressArray(string,string)",
         "selector": "0x65c428e7",
-        "selectorBytes": [
-          101,
-          196,
-          40,
-          231
-        ]
+        "selectorBytes": [101, 196, 40, 231]
       },
       "group": "toml",
       "status": "stable",
@@ -7505,12 +5785,7 @@
         "mutability": "pure",
         "signature": "parseTomlBool(string,string)",
         "selector": "0xd30dced6",
-        "selectorBytes": [
-          211,
-          13,
-          206,
-          214
-        ]
+        "selectorBytes": [211, 13, 206, 214]
       },
       "group": "toml",
       "status": "stable",
@@ -7525,12 +5800,7 @@
         "mutability": "pure",
         "signature": "parseTomlBoolArray(string,string)",
         "selector": "0x127cfe9a",
-        "selectorBytes": [
-          18,
-          124,
-          254,
-          154
-        ]
+        "selectorBytes": [18, 124, 254, 154]
       },
       "group": "toml",
       "status": "stable",
@@ -7545,12 +5815,7 @@
         "mutability": "pure",
         "signature": "parseTomlBytes(string,string)",
         "selector": "0xd77bfdb9",
-        "selectorBytes": [
-          215,
-          123,
-          253,
-          185
-        ]
+        "selectorBytes": [215, 123, 253, 185]
       },
       "group": "toml",
       "status": "stable",
@@ -7565,12 +5830,7 @@
         "mutability": "pure",
         "signature": "parseTomlBytes32(string,string)",
         "selector": "0x8e214810",
-        "selectorBytes": [
-          142,
-          33,
-          72,
-          16
-        ]
+        "selectorBytes": [142, 33, 72, 16]
       },
       "group": "toml",
       "status": "stable",
@@ -7585,12 +5845,7 @@
         "mutability": "pure",
         "signature": "parseTomlBytes32Array(string,string)",
         "selector": "0x3e716f81",
-        "selectorBytes": [
-          62,
-          113,
-          111,
-          129
-        ]
+        "selectorBytes": [62, 113, 111, 129]
       },
       "group": "toml",
       "status": "stable",
@@ -7605,12 +5860,7 @@
         "mutability": "pure",
         "signature": "parseTomlBytesArray(string,string)",
         "selector": "0xb197c247",
-        "selectorBytes": [
-          177,
-          151,
-          194,
-          71
-        ]
+        "selectorBytes": [177, 151, 194, 71]
       },
       "group": "toml",
       "status": "stable",
@@ -7625,12 +5875,7 @@
         "mutability": "pure",
         "signature": "parseTomlInt(string,string)",
         "selector": "0xc1350739",
-        "selectorBytes": [
-          193,
-          53,
-          7,
-          57
-        ]
+        "selectorBytes": [193, 53, 7, 57]
       },
       "group": "toml",
       "status": "stable",
@@ -7645,12 +5890,7 @@
         "mutability": "pure",
         "signature": "parseTomlIntArray(string,string)",
         "selector": "0xd3522ae6",
-        "selectorBytes": [
-          211,
-          82,
-          42,
-          230
-        ]
+        "selectorBytes": [211, 82, 42, 230]
       },
       "group": "toml",
       "status": "stable",
@@ -7665,12 +5905,7 @@
         "mutability": "pure",
         "signature": "parseTomlKeys(string,string)",
         "selector": "0x812a44b2",
-        "selectorBytes": [
-          129,
-          42,
-          68,
-          178
-        ]
+        "selectorBytes": [129, 42, 68, 178]
       },
       "group": "toml",
       "status": "stable",
@@ -7685,12 +5920,7 @@
         "mutability": "pure",
         "signature": "parseTomlString(string,string)",
         "selector": "0x8bb8dd43",
-        "selectorBytes": [
-          139,
-          184,
-          221,
-          67
-        ]
+        "selectorBytes": [139, 184, 221, 67]
       },
       "group": "toml",
       "status": "stable",
@@ -7705,12 +5935,7 @@
         "mutability": "pure",
         "signature": "parseTomlStringArray(string,string)",
         "selector": "0x9f629281",
-        "selectorBytes": [
-          159,
-          98,
-          146,
-          129
-        ]
+        "selectorBytes": [159, 98, 146, 129]
       },
       "group": "toml",
       "status": "stable",
@@ -7725,12 +5950,7 @@
         "mutability": "pure",
         "signature": "parseTomlTypeArray(string,string,string)",
         "selector": "0x49be3743",
-        "selectorBytes": [
-          73,
-          190,
-          55,
-          67
-        ]
+        "selectorBytes": [73, 190, 55, 67]
       },
       "group": "toml",
       "status": "stable",
@@ -7745,12 +5965,7 @@
         "mutability": "pure",
         "signature": "parseTomlType(string,string)",
         "selector": "0x47fa5e11",
-        "selectorBytes": [
-          71,
-          250,
-          94,
-          17
-        ]
+        "selectorBytes": [71, 250, 94, 17]
       },
       "group": "toml",
       "status": "stable",
@@ -7765,12 +5980,7 @@
         "mutability": "pure",
         "signature": "parseTomlType(string,string,string)",
         "selector": "0xf9fa5cdb",
-        "selectorBytes": [
-          249,
-          250,
-          92,
-          219
-        ]
+        "selectorBytes": [249, 250, 92, 219]
       },
       "group": "toml",
       "status": "stable",
@@ -7785,12 +5995,7 @@
         "mutability": "pure",
         "signature": "parseTomlUint(string,string)",
         "selector": "0xcc7b0487",
-        "selectorBytes": [
-          204,
-          123,
-          4,
-          135
-        ]
+        "selectorBytes": [204, 123, 4, 135]
       },
       "group": "toml",
       "status": "stable",
@@ -7805,12 +6010,7 @@
         "mutability": "pure",
         "signature": "parseTomlUintArray(string,string)",
         "selector": "0xb5df27c8",
-        "selectorBytes": [
-          181,
-          223,
-          39,
-          200
-        ]
+        "selectorBytes": [181, 223, 39, 200]
       },
       "group": "toml",
       "status": "stable",
@@ -7825,12 +6025,7 @@
         "mutability": "pure",
         "signature": "parseToml(string)",
         "selector": "0x592151f0",
-        "selectorBytes": [
-          89,
-          33,
-          81,
-          240
-        ]
+        "selectorBytes": [89, 33, 81, 240]
       },
       "group": "toml",
       "status": "stable",
@@ -7845,12 +6040,7 @@
         "mutability": "pure",
         "signature": "parseToml(string,string)",
         "selector": "0x37736e08",
-        "selectorBytes": [
-          55,
-          115,
-          110,
-          8
-        ]
+        "selectorBytes": [55, 115, 110, 8]
       },
       "group": "toml",
       "status": "stable",
@@ -7865,12 +6055,7 @@
         "mutability": "pure",
         "signature": "parseUint(string)",
         "selector": "0xfa91454d",
-        "selectorBytes": [
-          250,
-          145,
-          69,
-          77
-        ]
+        "selectorBytes": [250, 145, 69, 77]
       },
       "group": "string",
       "status": "stable",
@@ -7885,12 +6070,7 @@
         "mutability": "",
         "signature": "pauseGasMetering()",
         "selector": "0xd1a5b36f",
-        "selectorBytes": [
-          209,
-          165,
-          179,
-          111
-        ]
+        "selectorBytes": [209, 165, 179, 111]
       },
       "group": "evm",
       "status": "stable",
@@ -7905,12 +6085,7 @@
         "mutability": "view",
         "signature": "pauseTracing()",
         "selector": "0xc94d1f90",
-        "selectorBytes": [
-          201,
-          77,
-          31,
-          144
-        ]
+        "selectorBytes": [201, 77, 31, 144]
       },
       "group": "utilities",
       "status": "stable",
@@ -7925,12 +6100,7 @@
         "mutability": "",
         "signature": "prank(address)",
         "selector": "0xca669fa7",
-        "selectorBytes": [
-          202,
-          102,
-          159,
-          167
-        ]
+        "selectorBytes": [202, 102, 159, 167]
       },
       "group": "evm",
       "status": "stable",
@@ -7945,12 +6115,7 @@
         "mutability": "",
         "signature": "prank(address,address)",
         "selector": "0x47e50cce",
-        "selectorBytes": [
-          71,
-          229,
-          12,
-          206
-        ]
+        "selectorBytes": [71, 229, 12, 206]
       },
       "group": "evm",
       "status": "stable",
@@ -7965,12 +6130,7 @@
         "mutability": "",
         "signature": "prank(address,bool)",
         "selector": "0xa7f8bf5c",
-        "selectorBytes": [
-          167,
-          248,
-          191,
-          92
-        ]
+        "selectorBytes": [167, 248, 191, 92]
       },
       "group": "evm",
       "status": "stable",
@@ -7985,12 +6145,7 @@
         "mutability": "",
         "signature": "prank(address,address,bool)",
         "selector": "0x7d73d042",
-        "selectorBytes": [
-          125,
-          115,
-          208,
-          66
-        ]
+        "selectorBytes": [125, 115, 208, 66]
       },
       "group": "evm",
       "status": "stable",
@@ -8005,12 +6160,7 @@
         "mutability": "",
         "signature": "prevrandao(bytes32)",
         "selector": "0x3b925549",
-        "selectorBytes": [
-          59,
-          146,
-          85,
-          73
-        ]
+        "selectorBytes": [59, 146, 85, 73]
       },
       "group": "evm",
       "status": "stable",
@@ -8025,12 +6175,7 @@
         "mutability": "",
         "signature": "prevrandao(uint256)",
         "selector": "0x9cb1c0d4",
-        "selectorBytes": [
-          156,
-          177,
-          192,
-          212
-        ]
+        "selectorBytes": [156, 177, 192, 212]
       },
       "group": "evm",
       "status": "stable",
@@ -8045,12 +6190,7 @@
         "mutability": "view",
         "signature": "projectRoot()",
         "selector": "0xd930a0e6",
-        "selectorBytes": [
-          217,
-          48,
-          160,
-          230
-        ]
+        "selectorBytes": [217, 48, 160, 230]
       },
       "group": "filesystem",
       "status": "stable",
@@ -8065,12 +6205,7 @@
         "mutability": "",
         "signature": "prompt(string)",
         "selector": "0x47eaf474",
-        "selectorBytes": [
-          71,
-          234,
-          244,
-          116
-        ]
+        "selectorBytes": [71, 234, 244, 116]
       },
       "group": "filesystem",
       "status": "stable",
@@ -8085,12 +6220,7 @@
         "mutability": "",
         "signature": "promptAddress(string)",
         "selector": "0x62ee05f4",
-        "selectorBytes": [
-          98,
-          238,
-          5,
-          244
-        ]
+        "selectorBytes": [98, 238, 5, 244]
       },
       "group": "filesystem",
       "status": "stable",
@@ -8105,12 +6235,7 @@
         "mutability": "",
         "signature": "promptSecret(string)",
         "selector": "0x1e279d41",
-        "selectorBytes": [
-          30,
-          39,
-          157,
-          65
-        ]
+        "selectorBytes": [30, 39, 157, 65]
       },
       "group": "filesystem",
       "status": "stable",
@@ -8125,12 +6250,7 @@
         "mutability": "",
         "signature": "promptSecretUint(string)",
         "selector": "0x69ca02b7",
-        "selectorBytes": [
-          105,
-          202,
-          2,
-          183
-        ]
+        "selectorBytes": [105, 202, 2, 183]
       },
       "group": "filesystem",
       "status": "stable",
@@ -8145,12 +6265,7 @@
         "mutability": "",
         "signature": "promptUint(string)",
         "selector": "0x652fd489",
-        "selectorBytes": [
-          101,
-          47,
-          212,
-          137
-        ]
+        "selectorBytes": [101, 47, 212, 137]
       },
       "group": "filesystem",
       "status": "stable",
@@ -8165,12 +6280,7 @@
         "mutability": "pure",
         "signature": "publicKeyP256(uint256)",
         "selector": "0xc453949e",
-        "selectorBytes": [
-          196,
-          83,
-          148,
-          158
-        ]
+        "selectorBytes": [196, 83, 148, 158]
       },
       "group": "crypto",
       "status": "stable",
@@ -8185,12 +6295,7 @@
         "mutability": "",
         "signature": "randomAddress()",
         "selector": "0xd5bee9f5",
-        "selectorBytes": [
-          213,
-          190,
-          233,
-          245
-        ]
+        "selectorBytes": [213, 190, 233, 245]
       },
       "group": "utilities",
       "status": "stable",
@@ -8205,12 +6310,7 @@
         "mutability": "view",
         "signature": "randomBool()",
         "selector": "0xcdc126bd",
-        "selectorBytes": [
-          205,
-          193,
-          38,
-          189
-        ]
+        "selectorBytes": [205, 193, 38, 189]
       },
       "group": "utilities",
       "status": "stable",
@@ -8225,12 +6325,7 @@
         "mutability": "view",
         "signature": "randomBytes(uint256)",
         "selector": "0x6c5d32a9",
-        "selectorBytes": [
-          108,
-          93,
-          50,
-          169
-        ]
+        "selectorBytes": [108, 93, 50, 169]
       },
       "group": "utilities",
       "status": "stable",
@@ -8245,12 +6340,7 @@
         "mutability": "view",
         "signature": "randomBytes4()",
         "selector": "0x9b7cd579",
-        "selectorBytes": [
-          155,
-          124,
-          213,
-          121
-        ]
+        "selectorBytes": [155, 124, 213, 121]
       },
       "group": "utilities",
       "status": "stable",
@@ -8265,12 +6355,7 @@
         "mutability": "view",
         "signature": "randomBytes8()",
         "selector": "0x0497b0a5",
-        "selectorBytes": [
-          4,
-          151,
-          176,
-          165
-        ]
+        "selectorBytes": [4, 151, 176, 165]
       },
       "group": "utilities",
       "status": "stable",
@@ -8285,12 +6370,7 @@
         "mutability": "view",
         "signature": "randomInt()",
         "selector": "0x111f1202",
-        "selectorBytes": [
-          17,
-          31,
-          18,
-          2
-        ]
+        "selectorBytes": [17, 31, 18, 2]
       },
       "group": "utilities",
       "status": "stable",
@@ -8305,12 +6385,7 @@
         "mutability": "view",
         "signature": "randomInt(uint256)",
         "selector": "0x12845966",
-        "selectorBytes": [
-          18,
-          132,
-          89,
-          102
-        ]
+        "selectorBytes": [18, 132, 89, 102]
       },
       "group": "utilities",
       "status": "stable",
@@ -8325,12 +6400,7 @@
         "mutability": "",
         "signature": "randomUint()",
         "selector": "0x25124730",
-        "selectorBytes": [
-          37,
-          18,
-          71,
-          48
-        ]
+        "selectorBytes": [37, 18, 71, 48]
       },
       "group": "utilities",
       "status": "stable",
@@ -8345,12 +6415,7 @@
         "mutability": "",
         "signature": "randomUint(uint256,uint256)",
         "selector": "0xd61b051b",
-        "selectorBytes": [
-          214,
-          27,
-          5,
-          27
-        ]
+        "selectorBytes": [214, 27, 5, 27]
       },
       "group": "utilities",
       "status": "stable",
@@ -8365,12 +6430,7 @@
         "mutability": "view",
         "signature": "randomUint(uint256)",
         "selector": "0xcf81e69c",
-        "selectorBytes": [
-          207,
-          129,
-          230,
-          156
-        ]
+        "selectorBytes": [207, 129, 230, 156]
       },
       "group": "utilities",
       "status": "stable",
@@ -8385,12 +6445,7 @@
         "mutability": "",
         "signature": "readCallers()",
         "selector": "0x4ad0bac9",
-        "selectorBytes": [
-          74,
-          208,
-          186,
-          201
-        ]
+        "selectorBytes": [74, 208, 186, 201]
       },
       "group": "evm",
       "status": "stable",
@@ -8405,12 +6460,7 @@
         "mutability": "view",
         "signature": "readDir(string)",
         "selector": "0xc4bc59e0",
-        "selectorBytes": [
-          196,
-          188,
-          89,
-          224
-        ]
+        "selectorBytes": [196, 188, 89, 224]
       },
       "group": "filesystem",
       "status": "stable",
@@ -8425,12 +6475,7 @@
         "mutability": "view",
         "signature": "readDir(string,uint64)",
         "selector": "0x1497876c",
-        "selectorBytes": [
-          20,
-          151,
-          135,
-          108
-        ]
+        "selectorBytes": [20, 151, 135, 108]
       },
       "group": "filesystem",
       "status": "stable",
@@ -8445,12 +6490,7 @@
         "mutability": "view",
         "signature": "readDir(string,uint64,bool)",
         "selector": "0x8102d70d",
-        "selectorBytes": [
-          129,
-          2,
-          215,
-          13
-        ]
+        "selectorBytes": [129, 2, 215, 13]
       },
       "group": "filesystem",
       "status": "stable",
@@ -8465,12 +6505,7 @@
         "mutability": "view",
         "signature": "readFile(string)",
         "selector": "0x60f9bb11",
-        "selectorBytes": [
-          96,
-          249,
-          187,
-          17
-        ]
+        "selectorBytes": [96, 249, 187, 17]
       },
       "group": "filesystem",
       "status": "stable",
@@ -8485,12 +6520,7 @@
         "mutability": "view",
         "signature": "readFileBinary(string)",
         "selector": "0x16ed7bc4",
-        "selectorBytes": [
-          22,
-          237,
-          123,
-          196
-        ]
+        "selectorBytes": [22, 237, 123, 196]
       },
       "group": "filesystem",
       "status": "stable",
@@ -8505,12 +6535,7 @@
         "mutability": "view",
         "signature": "readLine(string)",
         "selector": "0x70f55728",
-        "selectorBytes": [
-          112,
-          245,
-          87,
-          40
-        ]
+        "selectorBytes": [112, 245, 87, 40]
       },
       "group": "filesystem",
       "status": "stable",
@@ -8525,12 +6550,7 @@
         "mutability": "view",
         "signature": "readLink(string)",
         "selector": "0x9f5684a2",
-        "selectorBytes": [
-          159,
-          86,
-          132,
-          162
-        ]
+        "selectorBytes": [159, 86, 132, 162]
       },
       "group": "filesystem",
       "status": "stable",
@@ -8545,12 +6565,7 @@
         "mutability": "",
         "signature": "record()",
         "selector": "0x266cf109",
-        "selectorBytes": [
-          38,
-          108,
-          241,
-          9
-        ]
+        "selectorBytes": [38, 108, 241, 9]
       },
       "group": "evm",
       "status": "stable",
@@ -8565,12 +6580,7 @@
         "mutability": "",
         "signature": "recordLogs()",
         "selector": "0x41af2f52",
-        "selectorBytes": [
-          65,
-          175,
-          47,
-          82
-        ]
+        "selectorBytes": [65, 175, 47, 82]
       },
       "group": "evm",
       "status": "stable",
@@ -8585,12 +6595,7 @@
         "mutability": "",
         "signature": "rememberKey(uint256)",
         "selector": "0x22100064",
-        "selectorBytes": [
-          34,
-          16,
-          0,
-          100
-        ]
+        "selectorBytes": [34, 16, 0, 100]
       },
       "group": "crypto",
       "status": "stable",
@@ -8605,12 +6610,7 @@
         "mutability": "",
         "signature": "rememberKeys(string,string,uint32)",
         "selector": "0x97cb9189",
-        "selectorBytes": [
-          151,
-          203,
-          145,
-          137
-        ]
+        "selectorBytes": [151, 203, 145, 137]
       },
       "group": "crypto",
       "status": "stable",
@@ -8625,12 +6625,7 @@
         "mutability": "",
         "signature": "rememberKeys(string,string,string,uint32)",
         "selector": "0xf8d58eaf",
-        "selectorBytes": [
-          248,
-          213,
-          142,
-          175
-        ]
+        "selectorBytes": [248, 213, 142, 175]
       },
       "group": "crypto",
       "status": "stable",
@@ -8645,12 +6640,7 @@
         "mutability": "",
         "signature": "removeDir(string,bool)",
         "selector": "0x45c62011",
-        "selectorBytes": [
-          69,
-          198,
-          32,
-          17
-        ]
+        "selectorBytes": [69, 198, 32, 17]
       },
       "group": "filesystem",
       "status": "stable",
@@ -8665,12 +6655,7 @@
         "mutability": "",
         "signature": "removeFile(string)",
         "selector": "0xf1afe04d",
-        "selectorBytes": [
-          241,
-          175,
-          224,
-          77
-        ]
+        "selectorBytes": [241, 175, 224, 77]
       },
       "group": "filesystem",
       "status": "stable",
@@ -8685,12 +6670,7 @@
         "mutability": "pure",
         "signature": "replace(string,string,string)",
         "selector": "0xe00ad03e",
-        "selectorBytes": [
-          224,
-          10,
-          208,
-          62
-        ]
+        "selectorBytes": [224, 10, 208, 62]
       },
       "group": "string",
       "status": "stable",
@@ -8705,12 +6685,7 @@
         "mutability": "",
         "signature": "resetGasMetering()",
         "selector": "0xbe367dd3",
-        "selectorBytes": [
-          190,
-          54,
-          125,
-          211
-        ]
+        "selectorBytes": [190, 54, 125, 211]
       },
       "group": "evm",
       "status": "stable",
@@ -8725,12 +6700,7 @@
         "mutability": "",
         "signature": "resetNonce(address)",
         "selector": "0x1c72346d",
-        "selectorBytes": [
-          28,
-          114,
-          52,
-          109
-        ]
+        "selectorBytes": [28, 114, 52, 109]
       },
       "group": "evm",
       "status": "stable",
@@ -8745,12 +6715,7 @@
         "mutability": "",
         "signature": "resumeGasMetering()",
         "selector": "0x2bcd50e0",
-        "selectorBytes": [
-          43,
-          205,
-          80,
-          224
-        ]
+        "selectorBytes": [43, 205, 80, 224]
       },
       "group": "evm",
       "status": "stable",
@@ -8765,12 +6730,7 @@
         "mutability": "view",
         "signature": "resumeTracing()",
         "selector": "0x72a09ccb",
-        "selectorBytes": [
-          114,
-          160,
-          156,
-          203
-        ]
+        "selectorBytes": [114, 160, 156, 203]
       },
       "group": "utilities",
       "status": "stable",
@@ -8785,12 +6745,7 @@
         "mutability": "",
         "signature": "revertTo(uint256)",
         "selector": "0x44d7f0a4",
-        "selectorBytes": [
-          68,
-          215,
-          240,
-          164
-        ]
+        "selectorBytes": [68, 215, 240, 164]
       },
       "group": "evm",
       "status": {
@@ -8807,12 +6762,7 @@
         "mutability": "",
         "signature": "revertToAndDelete(uint256)",
         "selector": "0x03e0aca9",
-        "selectorBytes": [
-          3,
-          224,
-          172,
-          169
-        ]
+        "selectorBytes": [3, 224, 172, 169]
       },
       "group": "evm",
       "status": {
@@ -8829,12 +6779,7 @@
         "mutability": "",
         "signature": "revertToState(uint256)",
         "selector": "0xc2527405",
-        "selectorBytes": [
-          194,
-          82,
-          116,
-          5
-        ]
+        "selectorBytes": [194, 82, 116, 5]
       },
       "group": "evm",
       "status": "stable",
@@ -8849,12 +6794,7 @@
         "mutability": "",
         "signature": "revertToStateAndDelete(uint256)",
         "selector": "0x3a1985dc",
-        "selectorBytes": [
-          58,
-          25,
-          133,
-          220
-        ]
+        "selectorBytes": [58, 25, 133, 220]
       },
       "group": "evm",
       "status": "stable",
@@ -8869,12 +6809,7 @@
         "mutability": "",
         "signature": "revokePersistent(address)",
         "selector": "0x997a0222",
-        "selectorBytes": [
-          153,
-          122,
-          2,
-          34
-        ]
+        "selectorBytes": [153, 122, 2, 34]
       },
       "group": "evm",
       "status": "stable",
@@ -8889,12 +6824,7 @@
         "mutability": "",
         "signature": "revokePersistent(address[])",
         "selector": "0x3ce969e6",
-        "selectorBytes": [
-          60,
-          233,
-          105,
-          230
-        ]
+        "selectorBytes": [60, 233, 105, 230]
       },
       "group": "evm",
       "status": "stable",
@@ -8909,12 +6839,7 @@
         "mutability": "",
         "signature": "roll(uint256)",
         "selector": "0x1f7b4f30",
-        "selectorBytes": [
-          31,
-          123,
-          79,
-          48
-        ]
+        "selectorBytes": [31, 123, 79, 48]
       },
       "group": "evm",
       "status": "stable",
@@ -8929,12 +6854,7 @@
         "mutability": "",
         "signature": "rollFork(uint256)",
         "selector": "0xd9bbf3a1",
-        "selectorBytes": [
-          217,
-          187,
-          243,
-          161
-        ]
+        "selectorBytes": [217, 187, 243, 161]
       },
       "group": "evm",
       "status": "stable",
@@ -8949,12 +6869,7 @@
         "mutability": "",
         "signature": "rollFork(bytes32)",
         "selector": "0x0f29772b",
-        "selectorBytes": [
-          15,
-          41,
-          119,
-          43
-        ]
+        "selectorBytes": [15, 41, 119, 43]
       },
       "group": "evm",
       "status": "stable",
@@ -8969,12 +6884,7 @@
         "mutability": "",
         "signature": "rollFork(uint256,uint256)",
         "selector": "0xd74c83a4",
-        "selectorBytes": [
-          215,
-          76,
-          131,
-          164
-        ]
+        "selectorBytes": [215, 76, 131, 164]
       },
       "group": "evm",
       "status": "stable",
@@ -8989,12 +6899,7 @@
         "mutability": "",
         "signature": "rollFork(uint256,bytes32)",
         "selector": "0xf2830f7b",
-        "selectorBytes": [
-          242,
-          131,
-          15,
-          123
-        ]
+        "selectorBytes": [242, 131, 15, 123]
       },
       "group": "evm",
       "status": "stable",
@@ -9009,12 +6914,7 @@
         "mutability": "view",
         "signature": "rpcUrl(string)",
         "selector": "0x975a6ce9",
-        "selectorBytes": [
-          151,
-          90,
-          108,
-          233
-        ]
+        "selectorBytes": [151, 90, 108, 233]
       },
       "group": "testing",
       "status": "stable",
@@ -9029,12 +6929,7 @@
         "mutability": "view",
         "signature": "rpcUrlStructs()",
         "selector": "0x9d2ad72a",
-        "selectorBytes": [
-          157,
-          42,
-          215,
-          42
-        ]
+        "selectorBytes": [157, 42, 215, 42]
       },
       "group": "testing",
       "status": "stable",
@@ -9049,12 +6944,7 @@
         "mutability": "view",
         "signature": "rpcUrls()",
         "selector": "0xa85a8418",
-        "selectorBytes": [
-          168,
-          90,
-          132,
-          24
-        ]
+        "selectorBytes": [168, 90, 132, 24]
       },
       "group": "testing",
       "status": "stable",
@@ -9069,12 +6959,7 @@
         "mutability": "",
         "signature": "rpc(string,string)",
         "selector": "0x1206c8a8",
-        "selectorBytes": [
-          18,
-          6,
-          200,
-          168
-        ]
+        "selectorBytes": [18, 6, 200, 168]
       },
       "group": "evm",
       "status": "stable",
@@ -9089,12 +6974,7 @@
         "mutability": "",
         "signature": "rpc(string,string,string)",
         "selector": "0x0199a220",
-        "selectorBytes": [
-          1,
-          153,
-          162,
-          32
-        ]
+        "selectorBytes": [1, 153, 162, 32]
       },
       "group": "evm",
       "status": "stable",
@@ -9109,12 +6989,7 @@
         "mutability": "",
         "signature": "selectFork(uint256)",
         "selector": "0x9ebf6827",
-        "selectorBytes": [
-          158,
-          191,
-          104,
-          39
-        ]
+        "selectorBytes": [158, 191, 104, 39]
       },
       "group": "evm",
       "status": "stable",
@@ -9129,12 +7004,7 @@
         "mutability": "",
         "signature": "serializeAddress(string,string,address)",
         "selector": "0x972c6062",
-        "selectorBytes": [
-          151,
-          44,
-          96,
-          98
-        ]
+        "selectorBytes": [151, 44, 96, 98]
       },
       "group": "json",
       "status": "stable",
@@ -9149,12 +7019,7 @@
         "mutability": "",
         "signature": "serializeAddress(string,string,address[])",
         "selector": "0x1e356e1a",
-        "selectorBytes": [
-          30,
-          53,
-          110,
-          26
-        ]
+        "selectorBytes": [30, 53, 110, 26]
       },
       "group": "json",
       "status": "stable",
@@ -9169,12 +7034,7 @@
         "mutability": "",
         "signature": "serializeBool(string,string,bool)",
         "selector": "0xac22e971",
-        "selectorBytes": [
-          172,
-          34,
-          233,
-          113
-        ]
+        "selectorBytes": [172, 34, 233, 113]
       },
       "group": "json",
       "status": "stable",
@@ -9189,12 +7049,7 @@
         "mutability": "",
         "signature": "serializeBool(string,string,bool[])",
         "selector": "0x92925aa1",
-        "selectorBytes": [
-          146,
-          146,
-          90,
-          161
-        ]
+        "selectorBytes": [146, 146, 90, 161]
       },
       "group": "json",
       "status": "stable",
@@ -9209,12 +7064,7 @@
         "mutability": "",
         "signature": "serializeBytes32(string,string,bytes32)",
         "selector": "0x2d812b44",
-        "selectorBytes": [
-          45,
-          129,
-          43,
-          68
-        ]
+        "selectorBytes": [45, 129, 43, 68]
       },
       "group": "json",
       "status": "stable",
@@ -9229,12 +7079,7 @@
         "mutability": "",
         "signature": "serializeBytes32(string,string,bytes32[])",
         "selector": "0x201e43e2",
-        "selectorBytes": [
-          32,
-          30,
-          67,
-          226
-        ]
+        "selectorBytes": [32, 30, 67, 226]
       },
       "group": "json",
       "status": "stable",
@@ -9249,12 +7094,7 @@
         "mutability": "",
         "signature": "serializeBytes(string,string,bytes)",
         "selector": "0xf21d52c7",
-        "selectorBytes": [
-          242,
-          29,
-          82,
-          199
-        ]
+        "selectorBytes": [242, 29, 82, 199]
       },
       "group": "json",
       "status": "stable",
@@ -9269,12 +7109,7 @@
         "mutability": "",
         "signature": "serializeBytes(string,string,bytes[])",
         "selector": "0x9884b232",
-        "selectorBytes": [
-          152,
-          132,
-          178,
-          50
-        ]
+        "selectorBytes": [152, 132, 178, 50]
       },
       "group": "json",
       "status": "stable",
@@ -9289,12 +7124,7 @@
         "mutability": "",
         "signature": "serializeInt(string,string,int256)",
         "selector": "0x3f33db60",
-        "selectorBytes": [
-          63,
-          51,
-          219,
-          96
-        ]
+        "selectorBytes": [63, 51, 219, 96]
       },
       "group": "json",
       "status": "stable",
@@ -9309,12 +7139,7 @@
         "mutability": "",
         "signature": "serializeInt(string,string,int256[])",
         "selector": "0x7676e127",
-        "selectorBytes": [
-          118,
-          118,
-          225,
-          39
-        ]
+        "selectorBytes": [118, 118, 225, 39]
       },
       "group": "json",
       "status": "stable",
@@ -9329,12 +7154,7 @@
         "mutability": "",
         "signature": "serializeJson(string,string)",
         "selector": "0x9b3358b0",
-        "selectorBytes": [
-          155,
-          51,
-          88,
-          176
-        ]
+        "selectorBytes": [155, 51, 88, 176]
       },
       "group": "json",
       "status": "stable",
@@ -9349,12 +7169,7 @@
         "mutability": "pure",
         "signature": "serializeJsonType(string,bytes)",
         "selector": "0x6d4f96a6",
-        "selectorBytes": [
-          109,
-          79,
-          150,
-          166
-        ]
+        "selectorBytes": [109, 79, 150, 166]
       },
       "group": "json",
       "status": "stable",
@@ -9369,12 +7184,7 @@
         "mutability": "",
         "signature": "serializeJsonType(string,string,string,bytes)",
         "selector": "0x6f93bccb",
-        "selectorBytes": [
-          111,
-          147,
-          188,
-          203
-        ]
+        "selectorBytes": [111, 147, 188, 203]
       },
       "group": "json",
       "status": "stable",
@@ -9389,12 +7199,7 @@
         "mutability": "",
         "signature": "serializeString(string,string,string)",
         "selector": "0x88da6d35",
-        "selectorBytes": [
-          136,
-          218,
-          109,
-          53
-        ]
+        "selectorBytes": [136, 218, 109, 53]
       },
       "group": "json",
       "status": "stable",
@@ -9409,12 +7214,7 @@
         "mutability": "",
         "signature": "serializeString(string,string,string[])",
         "selector": "0x561cd6f3",
-        "selectorBytes": [
-          86,
-          28,
-          214,
-          243
-        ]
+        "selectorBytes": [86, 28, 214, 243]
       },
       "group": "json",
       "status": "stable",
@@ -9429,12 +7229,7 @@
         "mutability": "",
         "signature": "serializeUintToHex(string,string,uint256)",
         "selector": "0xae5a2ae8",
-        "selectorBytes": [
-          174,
-          90,
-          42,
-          232
-        ]
+        "selectorBytes": [174, 90, 42, 232]
       },
       "group": "json",
       "status": "stable",
@@ -9449,12 +7244,7 @@
         "mutability": "",
         "signature": "serializeUint(string,string,uint256)",
         "selector": "0x129e9002",
-        "selectorBytes": [
-          18,
-          158,
-          144,
-          2
-        ]
+        "selectorBytes": [18, 158, 144, 2]
       },
       "group": "json",
       "status": "stable",
@@ -9469,12 +7259,7 @@
         "mutability": "",
         "signature": "serializeUint(string,string,uint256[])",
         "selector": "0xfee9a469",
-        "selectorBytes": [
-          254,
-          233,
-          164,
-          105
-        ]
+        "selectorBytes": [254, 233, 164, 105]
       },
       "group": "json",
       "status": "stable",
@@ -9489,12 +7274,7 @@
         "mutability": "",
         "signature": "setArbitraryStorage(address)",
         "selector": "0xe1631837",
-        "selectorBytes": [
-          225,
-          99,
-          24,
-          55
-        ]
+        "selectorBytes": [225, 99, 24, 55]
       },
       "group": "utilities",
       "status": "stable",
@@ -9509,12 +7289,7 @@
         "mutability": "",
         "signature": "setArbitraryStorage(address,bool)",
         "selector": "0xd3ec2a0b",
-        "selectorBytes": [
-          211,
-          236,
-          42,
-          11
-        ]
+        "selectorBytes": [211, 236, 42, 11]
       },
       "group": "utilities",
       "status": "stable",
@@ -9529,12 +7304,7 @@
         "mutability": "",
         "signature": "setBlockhash(uint256,bytes32)",
         "selector": "0x5314b54a",
-        "selectorBytes": [
-          83,
-          20,
-          181,
-          74
-        ]
+        "selectorBytes": [83, 20, 181, 74]
       },
       "group": "evm",
       "status": "stable",
@@ -9549,12 +7319,7 @@
         "mutability": "",
         "signature": "setEnv(string,string)",
         "selector": "0x3d5923ee",
-        "selectorBytes": [
-          61,
-          89,
-          35,
-          238
-        ]
+        "selectorBytes": [61, 89, 35, 238]
       },
       "group": "environment",
       "status": "stable",
@@ -9569,12 +7334,7 @@
         "mutability": "",
         "signature": "setNonce(address,uint64)",
         "selector": "0xf8e18b57",
-        "selectorBytes": [
-          248,
-          225,
-          139,
-          87
-        ]
+        "selectorBytes": [248, 225, 139, 87]
       },
       "group": "evm",
       "status": "stable",
@@ -9589,12 +7349,7 @@
         "mutability": "",
         "signature": "setNonceUnsafe(address,uint64)",
         "selector": "0x9b67b21c",
-        "selectorBytes": [
-          155,
-          103,
-          178,
-          28
-        ]
+        "selectorBytes": [155, 103, 178, 28]
       },
       "group": "evm",
       "status": "stable",
@@ -9609,12 +7364,7 @@
         "mutability": "",
         "signature": "shuffle(uint256[])",
         "selector": "0x54f1469c",
-        "selectorBytes": [
-          84,
-          241,
-          70,
-          156
-        ]
+        "selectorBytes": [84, 241, 70, 156]
       },
       "group": "utilities",
       "status": "stable",
@@ -9629,12 +7379,7 @@
         "mutability": "",
         "signature": "signAndAttachDelegation(address,uint256)",
         "selector": "0xc7fa7288",
-        "selectorBytes": [
-          199,
-          250,
-          114,
-          136
-        ]
+        "selectorBytes": [199, 250, 114, 136]
       },
       "group": "scripting",
       "status": "stable",
@@ -9649,12 +7394,7 @@
         "mutability": "",
         "signature": "signAndAttachDelegation(address,uint256,uint64)",
         "selector": "0xcde3e5be",
-        "selectorBytes": [
-          205,
-          227,
-          229,
-          190
-        ]
+        "selectorBytes": [205, 227, 229, 190]
       },
       "group": "scripting",
       "status": "stable",
@@ -9669,12 +7409,7 @@
         "mutability": "",
         "signature": "signCompact((address,uint256,uint256,uint256),bytes32)",
         "selector": "0x3d0e292f",
-        "selectorBytes": [
-          61,
-          14,
-          41,
-          47
-        ]
+        "selectorBytes": [61, 14, 41, 47]
       },
       "group": "crypto",
       "status": "stable",
@@ -9689,12 +7424,7 @@
         "mutability": "pure",
         "signature": "signCompact(uint256,bytes32)",
         "selector": "0xcc2a781f",
-        "selectorBytes": [
-          204,
-          42,
-          120,
-          31
-        ]
+        "selectorBytes": [204, 42, 120, 31]
       },
       "group": "crypto",
       "status": "stable",
@@ -9709,12 +7439,7 @@
         "mutability": "pure",
         "signature": "signCompact(bytes32)",
         "selector": "0xa282dc4b",
-        "selectorBytes": [
-          162,
-          130,
-          220,
-          75
-        ]
+        "selectorBytes": [162, 130, 220, 75]
       },
       "group": "crypto",
       "status": "stable",
@@ -9729,12 +7454,7 @@
         "mutability": "pure",
         "signature": "signCompact(address,bytes32)",
         "selector": "0x8e2f97bf",
-        "selectorBytes": [
-          142,
-          47,
-          151,
-          191
-        ]
+        "selectorBytes": [142, 47, 151, 191]
       },
       "group": "crypto",
       "status": "stable",
@@ -9749,12 +7469,7 @@
         "mutability": "",
         "signature": "signDelegation(address,uint256)",
         "selector": "0x5b593c7b",
-        "selectorBytes": [
-          91,
-          89,
-          60,
-          123
-        ]
+        "selectorBytes": [91, 89, 60, 123]
       },
       "group": "scripting",
       "status": "stable",
@@ -9769,12 +7484,7 @@
         "mutability": "",
         "signature": "signDelegation(address,uint256,uint64)",
         "selector": "0xceba2ec3",
-        "selectorBytes": [
-          206,
-          186,
-          46,
-          195
-        ]
+        "selectorBytes": [206, 186, 46, 195]
       },
       "group": "scripting",
       "status": "stable",
@@ -9789,12 +7499,7 @@
         "mutability": "pure",
         "signature": "signP256(uint256,bytes32)",
         "selector": "0x83211b40",
-        "selectorBytes": [
-          131,
-          33,
-          27,
-          64
-        ]
+        "selectorBytes": [131, 33, 27, 64]
       },
       "group": "crypto",
       "status": "stable",
@@ -9809,12 +7514,7 @@
         "mutability": "",
         "signature": "sign((address,uint256,uint256,uint256),bytes32)",
         "selector": "0xb25c5a25",
-        "selectorBytes": [
-          178,
-          92,
-          90,
-          37
-        ]
+        "selectorBytes": [178, 92, 90, 37]
       },
       "group": "crypto",
       "status": "stable",
@@ -9829,12 +7529,7 @@
         "mutability": "pure",
         "signature": "sign(uint256,bytes32)",
         "selector": "0xe341eaa4",
-        "selectorBytes": [
-          227,
-          65,
-          234,
-          164
-        ]
+        "selectorBytes": [227, 65, 234, 164]
       },
       "group": "crypto",
       "status": "stable",
@@ -9849,12 +7544,7 @@
         "mutability": "pure",
         "signature": "sign(bytes32)",
         "selector": "0x799cd333",
-        "selectorBytes": [
-          121,
-          156,
-          211,
-          51
-        ]
+        "selectorBytes": [121, 156, 211, 51]
       },
       "group": "crypto",
       "status": "stable",
@@ -9869,12 +7559,7 @@
         "mutability": "pure",
         "signature": "sign(address,bytes32)",
         "selector": "0x8c1aa205",
-        "selectorBytes": [
-          140,
-          26,
-          162,
-          5
-        ]
+        "selectorBytes": [140, 26, 162, 5]
       },
       "group": "crypto",
       "status": "stable",
@@ -9889,12 +7574,7 @@
         "mutability": "",
         "signature": "skip(bool)",
         "selector": "0xdd82d13e",
-        "selectorBytes": [
-          221,
-          130,
-          209,
-          62
-        ]
+        "selectorBytes": [221, 130, 209, 62]
       },
       "group": "testing",
       "status": "stable",
@@ -9909,12 +7589,7 @@
         "mutability": "",
         "signature": "skip(bool,string)",
         "selector": "0xc42a80a7",
-        "selectorBytes": [
-          196,
-          42,
-          128,
-          167
-        ]
+        "selectorBytes": [196, 42, 128, 167]
       },
       "group": "testing",
       "status": "stable",
@@ -9929,12 +7604,7 @@
         "mutability": "",
         "signature": "sleep(uint256)",
         "selector": "0xfa9d8713",
-        "selectorBytes": [
-          250,
-          157,
-          135,
-          19
-        ]
+        "selectorBytes": [250, 157, 135, 19]
       },
       "group": "testing",
       "status": "stable",
@@ -9949,12 +7619,7 @@
         "mutability": "",
         "signature": "snapshot()",
         "selector": "0x9711715a",
-        "selectorBytes": [
-          151,
-          17,
-          113,
-          90
-        ]
+        "selectorBytes": [151, 17, 113, 90]
       },
       "group": "evm",
       "status": {
@@ -9971,12 +7636,7 @@
         "mutability": "",
         "signature": "snapshotGasLastCall(string)",
         "selector": "0xdd9fca12",
-        "selectorBytes": [
-          221,
-          159,
-          202,
-          18
-        ]
+        "selectorBytes": [221, 159, 202, 18]
       },
       "group": "evm",
       "status": "stable",
@@ -9991,12 +7651,7 @@
         "mutability": "",
         "signature": "snapshotGasLastCall(string,string)",
         "selector": "0x200c6772",
-        "selectorBytes": [
-          32,
-          12,
-          103,
-          114
-        ]
+        "selectorBytes": [32, 12, 103, 114]
       },
       "group": "evm",
       "status": "stable",
@@ -10011,12 +7666,7 @@
         "mutability": "",
         "signature": "snapshotState()",
         "selector": "0x9cd23835",
-        "selectorBytes": [
-          156,
-          210,
-          56,
-          53
-        ]
+        "selectorBytes": [156, 210, 56, 53]
       },
       "group": "evm",
       "status": "stable",
@@ -10031,12 +7681,7 @@
         "mutability": "",
         "signature": "snapshotValue(string,uint256)",
         "selector": "0x51db805a",
-        "selectorBytes": [
-          81,
-          219,
-          128,
-          90
-        ]
+        "selectorBytes": [81, 219, 128, 90]
       },
       "group": "evm",
       "status": "stable",
@@ -10051,12 +7696,7 @@
         "mutability": "",
         "signature": "snapshotValue(string,string,uint256)",
         "selector": "0x6d2b27d8",
-        "selectorBytes": [
-          109,
-          43,
-          39,
-          216
-        ]
+        "selectorBytes": [109, 43, 39, 216]
       },
       "group": "evm",
       "status": "stable",
@@ -10071,12 +7711,7 @@
         "mutability": "",
         "signature": "sort(uint256[])",
         "selector": "0x9ec8b026",
-        "selectorBytes": [
-          158,
-          200,
-          176,
-          38
-        ]
+        "selectorBytes": [158, 200, 176, 38]
       },
       "group": "utilities",
       "status": "stable",
@@ -10091,12 +7726,7 @@
         "mutability": "pure",
         "signature": "split(string,string)",
         "selector": "0x8bb75533",
-        "selectorBytes": [
-          139,
-          183,
-          85,
-          51
-        ]
+        "selectorBytes": [139, 183, 85, 51]
       },
       "group": "string",
       "status": "stable",
@@ -10111,12 +7741,7 @@
         "mutability": "",
         "signature": "startBroadcast()",
         "selector": "0x7fb5297f",
-        "selectorBytes": [
-          127,
-          181,
-          41,
-          127
-        ]
+        "selectorBytes": [127, 181, 41, 127]
       },
       "group": "scripting",
       "status": "stable",
@@ -10131,12 +7756,7 @@
         "mutability": "",
         "signature": "startBroadcast(address)",
         "selector": "0x7fec2a8d",
-        "selectorBytes": [
-          127,
-          236,
-          42,
-          141
-        ]
+        "selectorBytes": [127, 236, 42, 141]
       },
       "group": "scripting",
       "status": "stable",
@@ -10151,12 +7771,7 @@
         "mutability": "",
         "signature": "startBroadcast(uint256)",
         "selector": "0xce817d47",
-        "selectorBytes": [
-          206,
-          129,
-          125,
-          71
-        ]
+        "selectorBytes": [206, 129, 125, 71]
       },
       "group": "scripting",
       "status": "stable",
@@ -10171,12 +7786,7 @@
         "mutability": "",
         "signature": "startDebugTraceRecording()",
         "selector": "0x419c8832",
-        "selectorBytes": [
-          65,
-          156,
-          136,
-          50
-        ]
+        "selectorBytes": [65, 156, 136, 50]
       },
       "group": "evm",
       "status": "stable",
@@ -10191,12 +7801,7 @@
         "mutability": "",
         "signature": "startMappingRecording()",
         "selector": "0x3e9705c0",
-        "selectorBytes": [
-          62,
-          151,
-          5,
-          192
-        ]
+        "selectorBytes": [62, 151, 5, 192]
       },
       "group": "evm",
       "status": "stable",
@@ -10211,12 +7816,7 @@
         "mutability": "",
         "signature": "startPrank(address)",
         "selector": "0x06447d56",
-        "selectorBytes": [
-          6,
-          68,
-          125,
-          86
-        ]
+        "selectorBytes": [6, 68, 125, 86]
       },
       "group": "evm",
       "status": "stable",
@@ -10231,12 +7831,7 @@
         "mutability": "",
         "signature": "startPrank(address,address)",
         "selector": "0x45b56078",
-        "selectorBytes": [
-          69,
-          181,
-          96,
-          120
-        ]
+        "selectorBytes": [69, 181, 96, 120]
       },
       "group": "evm",
       "status": "stable",
@@ -10251,12 +7846,7 @@
         "mutability": "",
         "signature": "startPrank(address,bool)",
         "selector": "0x1cc0b435",
-        "selectorBytes": [
-          28,
-          192,
-          180,
-          53
-        ]
+        "selectorBytes": [28, 192, 180, 53]
       },
       "group": "evm",
       "status": "stable",
@@ -10271,12 +7861,7 @@
         "mutability": "",
         "signature": "startPrank(address,address,bool)",
         "selector": "0x4eb859b5",
-        "selectorBytes": [
-          78,
-          184,
-          89,
-          181
-        ]
+        "selectorBytes": [78, 184, 89, 181]
       },
       "group": "evm",
       "status": "stable",
@@ -10291,12 +7876,7 @@
         "mutability": "",
         "signature": "startSnapshotGas(string)",
         "selector": "0x3cad9d7b",
-        "selectorBytes": [
-          60,
-          173,
-          157,
-          123
-        ]
+        "selectorBytes": [60, 173, 157, 123]
       },
       "group": "evm",
       "status": "stable",
@@ -10311,12 +7891,7 @@
         "mutability": "",
         "signature": "startSnapshotGas(string,string)",
         "selector": "0x6cd0cc53",
-        "selectorBytes": [
-          108,
-          208,
-          204,
-          83
-        ]
+        "selectorBytes": [108, 208, 204, 83]
       },
       "group": "evm",
       "status": "stable",
@@ -10331,12 +7906,7 @@
         "mutability": "",
         "signature": "startStateDiffRecording()",
         "selector": "0xcf22e3c9",
-        "selectorBytes": [
-          207,
-          34,
-          227,
-          201
-        ]
+        "selectorBytes": [207, 34, 227, 201]
       },
       "group": "evm",
       "status": "stable",
@@ -10351,12 +7921,7 @@
         "mutability": "",
         "signature": "stopAndReturnDebugTraceRecording()",
         "selector": "0xced398a2",
-        "selectorBytes": [
-          206,
-          211,
-          152,
-          162
-        ]
+        "selectorBytes": [206, 211, 152, 162]
       },
       "group": "evm",
       "status": "stable",
@@ -10371,12 +7936,7 @@
         "mutability": "",
         "signature": "stopAndReturnStateDiff()",
         "selector": "0xaa5cf90e",
-        "selectorBytes": [
-          170,
-          92,
-          249,
-          14
-        ]
+        "selectorBytes": [170, 92, 249, 14]
       },
       "group": "evm",
       "status": "stable",
@@ -10391,12 +7951,7 @@
         "mutability": "",
         "signature": "stopBroadcast()",
         "selector": "0x76eadd36",
-        "selectorBytes": [
-          118,
-          234,
-          221,
-          54
-        ]
+        "selectorBytes": [118, 234, 221, 54]
       },
       "group": "scripting",
       "status": "stable",
@@ -10411,12 +7966,7 @@
         "mutability": "",
         "signature": "stopExpectSafeMemory()",
         "selector": "0x0956441b",
-        "selectorBytes": [
-          9,
-          86,
-          68,
-          27
-        ]
+        "selectorBytes": [9, 86, 68, 27]
       },
       "group": "testing",
       "status": "stable",
@@ -10431,12 +7981,7 @@
         "mutability": "",
         "signature": "stopMappingRecording()",
         "selector": "0x0d4aae9b",
-        "selectorBytes": [
-          13,
-          74,
-          174,
-          155
-        ]
+        "selectorBytes": [13, 74, 174, 155]
       },
       "group": "evm",
       "status": "stable",
@@ -10451,12 +7996,7 @@
         "mutability": "",
         "signature": "stopPrank()",
         "selector": "0x90c5013b",
-        "selectorBytes": [
-          144,
-          197,
-          1,
-          59
-        ]
+        "selectorBytes": [144, 197, 1, 59]
       },
       "group": "evm",
       "status": "stable",
@@ -10471,12 +8011,7 @@
         "mutability": "",
         "signature": "stopSnapshotGas()",
         "selector": "0xf6402eda",
-        "selectorBytes": [
-          246,
-          64,
-          46,
-          218
-        ]
+        "selectorBytes": [246, 64, 46, 218]
       },
       "group": "evm",
       "status": "stable",
@@ -10491,12 +8026,7 @@
         "mutability": "",
         "signature": "stopSnapshotGas(string)",
         "selector": "0x773b2805",
-        "selectorBytes": [
-          119,
-          59,
-          40,
-          5
-        ]
+        "selectorBytes": [119, 59, 40, 5]
       },
       "group": "evm",
       "status": "stable",
@@ -10511,12 +8041,7 @@
         "mutability": "",
         "signature": "stopSnapshotGas(string,string)",
         "selector": "0x0c9db707",
-        "selectorBytes": [
-          12,
-          157,
-          183,
-          7
-        ]
+        "selectorBytes": [12, 157, 183, 7]
       },
       "group": "evm",
       "status": "stable",
@@ -10531,12 +8056,7 @@
         "mutability": "",
         "signature": "store(address,bytes32,bytes32)",
         "selector": "0x70ca10bb",
-        "selectorBytes": [
-          112,
-          202,
-          16,
-          187
-        ]
+        "selectorBytes": [112, 202, 16, 187]
       },
       "group": "evm",
       "status": "stable",
@@ -10551,12 +8071,7 @@
         "mutability": "pure",
         "signature": "toBase64URL(bytes)",
         "selector": "0xc8bd0e4a",
-        "selectorBytes": [
-          200,
-          189,
-          14,
-          74
-        ]
+        "selectorBytes": [200, 189, 14, 74]
       },
       "group": "utilities",
       "status": "stable",
@@ -10571,12 +8086,7 @@
         "mutability": "pure",
         "signature": "toBase64URL(string)",
         "selector": "0xae3165b3",
-        "selectorBytes": [
-          174,
-          49,
-          101,
-          179
-        ]
+        "selectorBytes": [174, 49, 101, 179]
       },
       "group": "utilities",
       "status": "stable",
@@ -10591,12 +8101,7 @@
         "mutability": "pure",
         "signature": "toBase64(bytes)",
         "selector": "0xa5cbfe65",
-        "selectorBytes": [
-          165,
-          203,
-          254,
-          101
-        ]
+        "selectorBytes": [165, 203, 254, 101]
       },
       "group": "utilities",
       "status": "stable",
@@ -10611,12 +8116,7 @@
         "mutability": "pure",
         "signature": "toBase64(string)",
         "selector": "0x3f8be2c8",
-        "selectorBytes": [
-          63,
-          139,
-          226,
-          200
-        ]
+        "selectorBytes": [63, 139, 226, 200]
       },
       "group": "utilities",
       "status": "stable",
@@ -10631,12 +8131,7 @@
         "mutability": "pure",
         "signature": "toLowercase(string)",
         "selector": "0x50bb0884",
-        "selectorBytes": [
-          80,
-          187,
-          8,
-          132
-        ]
+        "selectorBytes": [80, 187, 8, 132]
       },
       "group": "string",
       "status": "stable",
@@ -10651,12 +8146,7 @@
         "mutability": "pure",
         "signature": "toString(address)",
         "selector": "0x56ca623e",
-        "selectorBytes": [
-          86,
-          202,
-          98,
-          62
-        ]
+        "selectorBytes": [86, 202, 98, 62]
       },
       "group": "string",
       "status": "stable",
@@ -10671,12 +8161,7 @@
         "mutability": "pure",
         "signature": "toString(bytes)",
         "selector": "0x71aad10d",
-        "selectorBytes": [
-          113,
-          170,
-          209,
-          13
-        ]
+        "selectorBytes": [113, 170, 209, 13]
       },
       "group": "string",
       "status": "stable",
@@ -10691,12 +8176,7 @@
         "mutability": "pure",
         "signature": "toString(bytes32)",
         "selector": "0xb11a19e8",
-        "selectorBytes": [
-          177,
-          26,
-          25,
-          232
-        ]
+        "selectorBytes": [177, 26, 25, 232]
       },
       "group": "string",
       "status": "stable",
@@ -10711,12 +8191,7 @@
         "mutability": "pure",
         "signature": "toString(bool)",
         "selector": "0x71dce7da",
-        "selectorBytes": [
-          113,
-          220,
-          231,
-          218
-        ]
+        "selectorBytes": [113, 220, 231, 218]
       },
       "group": "string",
       "status": "stable",
@@ -10731,12 +8206,7 @@
         "mutability": "pure",
         "signature": "toString(uint256)",
         "selector": "0x6900a3ae",
-        "selectorBytes": [
-          105,
-          0,
-          163,
-          174
-        ]
+        "selectorBytes": [105, 0, 163, 174]
       },
       "group": "string",
       "status": "stable",
@@ -10751,12 +8221,7 @@
         "mutability": "pure",
         "signature": "toString(int256)",
         "selector": "0xa322c40e",
-        "selectorBytes": [
-          163,
-          34,
-          196,
-          14
-        ]
+        "selectorBytes": [163, 34, 196, 14]
       },
       "group": "string",
       "status": "stable",
@@ -10771,12 +8236,7 @@
         "mutability": "pure",
         "signature": "toUppercase(string)",
         "selector": "0x074ae3d7",
-        "selectorBytes": [
-          7,
-          74,
-          227,
-          215
-        ]
+        "selectorBytes": [7, 74, 227, 215]
       },
       "group": "string",
       "status": "stable",
@@ -10791,12 +8251,7 @@
         "mutability": "",
         "signature": "transact(bytes32)",
         "selector": "0xbe646da1",
-        "selectorBytes": [
-          190,
-          100,
-          109,
-          161
-        ]
+        "selectorBytes": [190, 100, 109, 161]
       },
       "group": "evm",
       "status": "stable",
@@ -10811,12 +8266,7 @@
         "mutability": "",
         "signature": "transact(uint256,bytes32)",
         "selector": "0x4d8abc4b",
-        "selectorBytes": [
-          77,
-          138,
-          188,
-          75
-        ]
+        "selectorBytes": [77, 138, 188, 75]
       },
       "group": "evm",
       "status": "stable",
@@ -10831,12 +8281,7 @@
         "mutability": "pure",
         "signature": "trim(string)",
         "selector": "0xb2dad155",
-        "selectorBytes": [
-          178,
-          218,
-          209,
-          85
-        ]
+        "selectorBytes": [178, 218, 209, 85]
       },
       "group": "string",
       "status": "stable",
@@ -10851,12 +8296,7 @@
         "mutability": "",
         "signature": "tryFfi(string[])",
         "selector": "0xf45c1ce7",
-        "selectorBytes": [
-          244,
-          92,
-          28,
-          231
-        ]
+        "selectorBytes": [244, 92, 28, 231]
       },
       "group": "filesystem",
       "status": "stable",
@@ -10871,12 +8311,7 @@
         "mutability": "",
         "signature": "txGasPrice(uint256)",
         "selector": "0x48f50c0f",
-        "selectorBytes": [
-          72,
-          245,
-          12,
-          15
-        ]
+        "selectorBytes": [72, 245, 12, 15]
       },
       "group": "evm",
       "status": "stable",
@@ -10891,12 +8326,7 @@
         "mutability": "view",
         "signature": "unixTime()",
         "selector": "0x625387dc",
-        "selectorBytes": [
-          98,
-          83,
-          135,
-          220
-        ]
+        "selectorBytes": [98, 83, 135, 220]
       },
       "group": "filesystem",
       "status": "stable",
@@ -10911,12 +8341,7 @@
         "mutability": "",
         "signature": "warmSlot(address,bytes32)",
         "selector": "0xb23184cf",
-        "selectorBytes": [
-          178,
-          49,
-          132,
-          207
-        ]
+        "selectorBytes": [178, 49, 132, 207]
       },
       "group": "evm",
       "status": "stable",
@@ -10931,12 +8356,7 @@
         "mutability": "",
         "signature": "warp(uint256)",
         "selector": "0xe5d6bf02",
-        "selectorBytes": [
-          229,
-          214,
-          191,
-          2
-        ]
+        "selectorBytes": [229, 214, 191, 2]
       },
       "group": "evm",
       "status": "stable",
@@ -10951,12 +8371,7 @@
         "mutability": "",
         "signature": "writeFile(string,string)",
         "selector": "0x897e0a97",
-        "selectorBytes": [
-          137,
-          126,
-          10,
-          151
-        ]
+        "selectorBytes": [137, 126, 10, 151]
       },
       "group": "filesystem",
       "status": "stable",
@@ -10971,12 +8386,7 @@
         "mutability": "",
         "signature": "writeFileBinary(string,bytes)",
         "selector": "0x1f21fc80",
-        "selectorBytes": [
-          31,
-          33,
-          252,
-          128
-        ]
+        "selectorBytes": [31, 33, 252, 128]
       },
       "group": "filesystem",
       "status": "stable",
@@ -10991,12 +8401,7 @@
         "mutability": "",
         "signature": "writeJson(string,string)",
         "selector": "0xe23cd19f",
-        "selectorBytes": [
-          226,
-          60,
-          209,
-          159
-        ]
+        "selectorBytes": [226, 60, 209, 159]
       },
       "group": "json",
       "status": "stable",
@@ -11011,12 +8416,7 @@
         "mutability": "",
         "signature": "writeJson(string,string,string)",
         "selector": "0x35d6ad46",
-        "selectorBytes": [
-          53,
-          214,
-          173,
-          70
-        ]
+        "selectorBytes": [53, 214, 173, 70]
       },
       "group": "json",
       "status": "stable",
@@ -11031,12 +8431,7 @@
         "mutability": "",
         "signature": "writeLine(string,string)",
         "selector": "0x619d897f",
-        "selectorBytes": [
-          97,
-          157,
-          137,
-          127
-        ]
+        "selectorBytes": [97, 157, 137, 127]
       },
       "group": "filesystem",
       "status": "stable",
@@ -11051,12 +8446,7 @@
         "mutability": "",
         "signature": "writeToml(string,string)",
         "selector": "0xc0865ba7",
-        "selectorBytes": [
-          192,
-          134,
-          91,
-          167
-        ]
+        "selectorBytes": [192, 134, 91, 167]
       },
       "group": "toml",
       "status": "stable",
@@ -11071,12 +8461,7 @@
         "mutability": "",
         "signature": "writeToml(string,string,string)",
         "selector": "0x51ac6a33",
-        "selectorBytes": [
-          81,
-          172,
-          106,
-          51
-        ]
+        "selectorBytes": [81, 172, 106, 51]
       },
       "group": "toml",
       "status": "stable",

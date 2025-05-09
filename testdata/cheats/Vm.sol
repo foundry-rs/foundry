@@ -207,7 +207,6 @@ interface Vm {
     function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index, string calldata language) external pure returns (uint256 privateKey);
     function difficulty(uint256 newDifficulty) external;
     function dumpState(string calldata pathToStateJson) external;
-    function eip712HashStruct(string memory typeDefinition, bytes calldata encodedData) external pure returns (bytes32 structHash);
     function eip712HashType(string memory typeDefinition) external pure returns (bytes32 typeHash);
     function ensNamehash(string calldata name) external pure returns (bytes32);
     function envAddress(string calldata name) external view returns (address value);

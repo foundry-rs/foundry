@@ -1,12 +1,16 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
+use std::collections::HashSet;
+
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
-use alloy_dyn_abi::{eip712_parser, DynSolType, DynSolValue};
+use alloy_dyn_abi::{
+    eip712_parser::{self, EncodeType},
+    DynSolType, DynSolValue,
+};
 use alloy_primitives::{aliases::B32, keccak256, map::HashMap, B64, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::ens::namehash;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
-use itertools::Itertools;
 use proptest::prelude::Strategy;
 use rand::{seq::SliceRandom, Rng, RngCore};
 
@@ -325,22 +329,86 @@ impl Cheatcode for eip712HashTypeCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { typeDefinition } = self;
 
-        let mut types = eip712_parser::EncodeType::parse(typeDefinition)
-            .map_err(|e| {
-                fmt_err!("Failed to parse EIP-712 type definition '{}': {}", typeDefinition, e)
-            })?
-            .types;
+        let types = eip712_parser::EncodeType::parse(typeDefinition).map_err(|e| {
+            fmt_err!("Failed to parse EIP-712 type definition '{}': {}", typeDefinition, e)
+        })?;
 
-        // TODO: open a PR to alloy to handle sorting directly in the parser
-        // EIP712 requires alphabeting order of the secondary types
-        let mut sorted = vec![types.remove(0)];
-        types.sort_by(|a, b| a.type_name.cmp(b.type_name));
-        sorted.extend(types);
-
-        let canonical: String = sorted.into_iter().map(|t| t.span.to_owned()).collect();
-        let canonical_hash = keccak256(canonical.abi_encode());
+        let canonical = canonicalize(types).map_err(|e| {
+            fmt_err!("Failed to canonicalize EIP-712 type definition: '{}': {}", typeDefinition, e)
+        })?;
+        let canonical_hash = keccak256(canonical.as_bytes());
 
         Ok(canonical_hash.to_vec())
     }
 }
-impl Cheatcode for eip712HashStructCall {}
+
+// TODO: replace for the built-in alloy fn when `https://github.com/alloy-rs/core/pull/950` is merged.
+/// Computes the canonical string representation of the type.
+///
+/// Orders the `ComponentTypes` based on the EIP712 rules, and removes unsupported whitespaces.
+fn canonicalize(input: EncodeType) -> Result<String, String> {
+    if input.types.is_empty() {
+        return Err("EIP-712 requires a primary type".into());
+    }
+
+    let primary_idx = get_primary_idx(&input)?;
+
+    // EIP712 requires alphabeting order of the secondary types
+    let mut types = input.types.clone();
+    let mut sorted = vec![types.remove(primary_idx)];
+    types.sort_by(|a, b| a.type_name.cmp(b.type_name));
+    sorted.extend(types);
+
+    // Ensure no unintended whitespaces
+    Ok(sorted.into_iter().map(|t| t.span.trim().replace(", ", ",")).collect())
+}
+
+/// Identifies the primary type from the list of component types.
+///
+/// The primary type is the component type that is not used as a property in any component type
+/// definition within this set.
+fn get_primary_idx(input: &EncodeType) -> Result<usize, String> {
+    // Track all defined component types and types used in component properties.
+    let mut components = HashSet::new();
+    let mut types_in_props = HashSet::new();
+
+    for ty in &input.types {
+        components.insert(ty.type_name);
+
+        for prop_def in &ty.props {
+            // Extract the base type name, removing array suffixes like "Person[]"
+            let type_str = prop_def.ty.span.trim();
+            let type_str = type_str.split('[').next().unwrap_or(type_str).trim();
+
+            // A type is considered a reference to another type if its name starts with an
+            // uppercase letter, otherwise it is assumed to be a basic type
+            if !type_str.is_empty() &&
+                type_str.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+            {
+                types_in_props.insert(type_str);
+            }
+        }
+    }
+
+    // Ensure all types in props have a defined `ComponentType`
+    for ty in &types_in_props {
+        if !components.contains(ty) {
+            return Err(format!("missing component definition for '{ty}'"));
+        }
+    }
+
+    // The primary type won't be a property of any other component
+    let mut primary = 0;
+    let mut is_found = false;
+    for (n, ty) in input.types.iter().enumerate() {
+        if !types_in_props.contains(ty.type_name) {
+            if is_found {
+                return Err("no primary component".into());
+            }
+            primary = n;
+            is_found = true;
+        }
+    }
+
+    Ok(primary)
+}
