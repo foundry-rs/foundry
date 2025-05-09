@@ -556,10 +556,8 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
                 PathBuf::from(&r.path)
             };
             r.path = new_path.to_string_lossy().to_string();
-            remappings.push(r);
-        } else {
-            remappings.push(r);
         }
+        remappings.push(r);
     }
 
     Ok(remappings.into_iter().map(|r| r.into_relative(root)).collect())
