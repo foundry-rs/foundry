@@ -620,7 +620,6 @@ impl TryFrom<AnyRpcTransaction> for TypedTransaction {
             AnyTxEnvelope::Unknown(mut tx) => {
                 // Try to convert to deposit transaction
                 if tx.ty() == DEPOSIT_TX_TYPE_ID {
-                    let _nonce = get_field::<U64>(&tx.inner.fields, "nonce")?;
                     tx.inner.fields.insert("from".to_string(), serde_json::to_value(from).unwrap());
                     let deposit_tx =
                         tx.inner.fields.deserialize_into::<TxDeposit>().map_err(|e| {
@@ -636,16 +635,6 @@ impl TryFrom<AnyRpcTransaction> for TypedTransaction {
             }
         }
     }
-}
-
-fn get_field<T: serde::de::DeserializeOwned>(
-    fields: &OtherFields,
-    key: &str,
-) -> Result<T, ConversionError> {
-    fields
-        .get_deserialized::<T>(key)
-        .ok_or_else(|| ConversionError::Custom(format!("Missing{key}")))?
-        .map_err(|e| ConversionError::Custom(format!("Failed to deserialize {key}: {e}")))
 }
 
 impl TypedTransaction {
