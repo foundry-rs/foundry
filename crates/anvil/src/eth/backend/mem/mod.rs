@@ -3140,7 +3140,7 @@ pub fn transaction_build(
     if let TypedTransaction::Deposit(ref deposit_tx) = eth_transaction.transaction {
         let dep_tx = deposit_tx;
 
-        let ser = serde_json::to_value(&dep_tx).expect("could not serialize TxDeposit");
+        let ser = serde_json::to_value(dep_tx).expect("could not serialize TxDeposit");
         let maybe_deposit_fields = OtherFields::try_from(ser);
 
         match maybe_deposit_fields {
@@ -3150,7 +3150,7 @@ pub fn transaction_build(
                 fields.insert("v".to_string(), serde_json::to_value("0x0").unwrap());
                 fields.insert("r".to_string(), serde_json::to_value(B256::ZERO).unwrap());
                 fields.insert(String::from("s"), serde_json::to_value(B256::ZERO).unwrap());
-                fields.insert(String::from("nonce"), serde_json::to_value(format!("0x0")).unwrap());
+                fields.insert(String::from("nonce"), serde_json::to_value("0x0").unwrap());
 
                 let inner = UnknownTypedTransaction {
                     ty: AnyTxType(DEPOSIT_TX_TYPE_ID),
