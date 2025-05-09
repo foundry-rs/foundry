@@ -319,12 +319,6 @@ fn random_int(state: &mut Cheatcodes, bits: Option<U256>) -> Result {
         .abi_encode())
 }
 
-// TODO: impl plan:
-// 1. start with string representation as an input
-// 2. pass Contract::Struct
-//   a. use `fn get_artifact_code()` as reference to see how to access the ABI representation
-//   b. explore the ABI to get the type definition
-// 3. unify 1. and 2.
 impl Cheatcode for eip712HashTypeCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { typeDefinition } = self;
