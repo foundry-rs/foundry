@@ -127,18 +127,13 @@ fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<(
     let authority = auth.recover_authority().map_err(|e| format!("{e}"))?;
     let authority_acc = ccx.ecx.journaled_state.load_account(authority, &mut ccx.ecx.db)?;
 
-    // Create and set bytecode with incremented nonce.
-    authority_acc.data.info.nonce += 1;
-    if authority_acc.data.info.nonce != auth.nonce {
+    if authority_acc.data.info.nonce + 1 != auth.nonce {
         return Err("invalid nonce".into());
     }
 
     let bytecode = Bytecode::new_eip7702(*auth.address());
     ccx.ecx.journaled_state.set_code(authority, bytecode);
 
-    // Reset authority nonce.
-    let authority_acc = ccx.ecx.journaled_state.load_account(authority, &mut ccx.ecx.db)?;
-    authority_acc.data.info.nonce -= 1;
     Ok(())
 }
 

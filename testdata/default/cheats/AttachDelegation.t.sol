@@ -46,7 +46,7 @@ contract AttachDelegationTest is DSTest {
         vm._expectCheatcodeRevert("vm.attachDelegation: invalid nonce");
         vm.attachDelegation(signedDelegation);
 
-        signedDelegation = vm.signDelegation(address(implementation), alice_pk, 2);
+        signedDelegation = vm.signDelegation(address(implementation), alice_pk, 1);
         vm.attachDelegation(signedDelegation);
     }
 
@@ -143,7 +143,7 @@ contract AttachDelegationTest is DSTest {
         vm._expectCheatcodeRevert("vm.signAndAttachDelegation: invalid nonce");
         vm.signAndAttachDelegation(address(implementation), alice_pk, 11);
 
-        vm.signAndAttachDelegation(address(implementation), alice_pk, 2);
+        vm.signAndAttachDelegation(address(implementation), alice_pk, 1);
     }
 }
 
