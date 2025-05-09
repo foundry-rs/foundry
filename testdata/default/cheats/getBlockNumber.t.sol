@@ -17,7 +17,7 @@ contract GetBlockNumberTest is DSTest {
         assertEq(vm.getBlockNumber(), 10, "could not get correct block height after roll");
     }
 
-    function testGetBlockNumberWithRollFuzzed(uint128 jump) public {
+    function testGetBlockNumberWithRollFuzzed(uint32 jump) public {
         uint256 pre = vm.getBlockNumber();
         vm.roll(pre + jump);
         assertEq(vm.getBlockNumber(), pre + jump, "could not get correct block height after roll");

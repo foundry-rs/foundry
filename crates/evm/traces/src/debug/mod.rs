@@ -7,7 +7,7 @@ use alloy_dyn_abi::{
 use alloy_primitives::U256;
 use foundry_common::fmt::format_token;
 use foundry_compilers::artifacts::sourcemap::{Jump, SourceElement};
-use revm::interpreter::OpCode;
+use revm::bytecode::opcode::OpCode;
 use revm_inspectors::tracing::types::{CallTraceStep, DecodedInternalCall, DecodedTraceStep};
 pub use sources::{ArtifactData, ContractSources, SourceData};
 

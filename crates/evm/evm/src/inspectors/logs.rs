@@ -1,12 +1,17 @@
 use alloy_primitives::Log;
 use alloy_sol_types::{SolEvent, SolInterface, SolValue};
 use foundry_common::{fmt::ConsoleFmt, ErrorExt};
-use foundry_evm_core::{abi::console, constants::HARDHAT_CONSOLE_ADDRESS, InspectorExt};
+use foundry_evm_core::{
+    abi::console, backend::DatabaseError, constants::HARDHAT_CONSOLE_ADDRESS, InspectorExt,
+};
 use revm::{
+    context::ContextTr,
+    inspector::JournalExt,
     interpreter::{
-        CallInputs, CallOutcome, Gas, InstructionResult, Interpreter, InterpreterResult,
+        interpreter::EthInterpreter, CallInputs, CallOutcome, Gas, InstructionResult, Interpreter,
+        InterpreterResult,
     },
-    Database, EvmContext, Inspector,
+    Database, Inspector,
 };
 
 /// An inspector that collects logs during execution.
@@ -39,16 +44,17 @@ impl LogCollector {
     }
 }
 
-impl<DB: Database> Inspector<DB> for LogCollector {
-    fn log(&mut self, _interp: &mut Interpreter, _context: &mut EvmContext<DB>, log: &Log) {
-        self.logs.push(log.clone());
+impl<CTX, D> Inspector<CTX, EthInterpreter> for LogCollector
+where
+    D: Database<Error = DatabaseError>,
+    CTX: ContextTr<Db = D>,
+    CTX::Journal: JournalExt,
+{
+    fn log(&mut self, _interp: &mut Interpreter, _context: &mut CTX, log: Log) {
+        self.logs.push(log);
     }
 
-    fn call(
-        &mut self,
-        _context: &mut EvmContext<DB>,
-        inputs: &mut CallInputs,
-    ) -> Option<CallOutcome> {
+    fn call(&mut self, _context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         if inputs.target_address == HARDHAT_CONSOLE_ADDRESS {
             return self.do_hardhat_log(inputs);
         }

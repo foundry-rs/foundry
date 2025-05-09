@@ -8,7 +8,7 @@ use foundry_compilers::{
     multi::MultiCompilerLanguage,
     Artifact, Compiler, ProjectCompileOutput,
 };
-use foundry_evm_core::utils::PcIcMap;
+use foundry_evm_core::ic::PcIcMap;
 use foundry_linking::Linker;
 use rayon::prelude::*;
 use solar_parse::{interface::Session, Parser};

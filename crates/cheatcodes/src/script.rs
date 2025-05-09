@@ -9,7 +9,12 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
 use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
 use parking_lot::Mutex;
-use revm::primitives::{Bytecode, SignedAuthorization, SpecId, KECCAK_EMPTY};
+use revm::{
+    bytecode::Bytecode,
+    context::JournalTr,
+    context_interface::transaction::SignedAuthorization,
+    primitives::{hardfork::SpecId, KECCAK_EMPTY},
+};
 use std::sync::Arc;
 
 impl Cheatcode for broadcast_0Call {
@@ -41,7 +46,7 @@ impl Cheatcode for attachDelegationCall {
         let auth = Authorization {
             address: *implementation,
             nonce: *nonce,
-            chain_id: U256::from(ccx.ecx.env.cfg.chain_id),
+            chain_id: U256::from(ccx.ecx.cfg.chain_id),
         };
         let signed_auth = SignedAuthorization::new_unchecked(
             auth,
@@ -96,14 +101,13 @@ fn sign_delegation(
     let nonce = if let Some(nonce) = nonce {
         nonce
     } else {
-        let authority_acc =
-            ccx.ecx.journaled_state.load_account(signer.address(), &mut ccx.ecx.db)?;
+        let authority_acc = ccx.ecx.journaled_state.load_account(signer.address())?;
         authority_acc.data.info.nonce
     };
     let auth = Authorization {
         address: implementation,
         nonce,
-        chain_id: U256::from(ccx.ecx.env.cfg.chain_id),
+        chain_id: U256::from(ccx.ecx.cfg.chain_id),
     };
     let sig = signer.sign_hash_sync(&auth.signature_hash())?;
     // Attach delegation.
@@ -124,7 +128,7 @@ fn sign_delegation(
 
 fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<()> {
     let authority = auth.recover_authority().map_err(|e| format!("{e}"))?;
-    let authority_acc = ccx.ecx.journaled_state.load_account(authority, &mut ccx.ecx.db)?;
+    let authority_acc = ccx.ecx.journaled_state.load_account(authority)?;
     if authority_acc.data.info.nonce != auth.nonce {
         return Err("invalid nonce".into());
     }
@@ -143,7 +147,7 @@ impl Cheatcode for attachBlobCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { blob } = self;
         ensure!(
-            ccx.ecx.spec_id() >= SpecId::CANCUN,
+            ccx.ecx.cfg.spec >= SpecId::CANCUN,
             "`attachBlob` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
@@ -202,7 +206,7 @@ pub struct Broadcast {
     /// Original `tx.origin`
     pub original_origin: Address,
     /// Depth of the broadcast
-    pub depth: u64,
+    pub depth: usize,
     /// Whether the prank stops by itself after the next call
     pub single_call: bool,
 }
@@ -295,9 +299,9 @@ fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bo
     }
 
     let broadcast = Broadcast {
-        new_origin: new_origin.unwrap_or(ccx.ecx.env.tx.caller),
+        new_origin: new_origin.unwrap_or(ccx.ecx.tx.caller),
         original_caller: ccx.caller,
-        original_origin: ccx.ecx.env.tx.caller,
+        original_origin: ccx.ecx.tx.caller,
         depth,
         single_call,
     };
