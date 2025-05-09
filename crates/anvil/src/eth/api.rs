@@ -89,7 +89,13 @@ use foundry_evm::{
         primitives::BlockEnv,
     },
 };
-use futures::channel::{mpsc::Receiver, oneshot};
+use futures::{
+    channel::{
+        mpsc::{channel, Receiver},
+        oneshot,
+    },
+    StreamExt,
+};
 use parking_lot::RwLock;
 use revm::primitives::Bytecode;
 use std::{future::Future, sync::Arc, time::Duration};
@@ -2863,22 +2869,19 @@ impl EthApi {
         self.pool.add_ready_listener()
     }
 
-    /// Returns a listeners for pending transactions
-    pub fn full_pending_transactions(&self) -> Receiver<PendingTransaction> {
-        let (mut tx, rx): (
-            futures::channel::mpsc::Sender<PendingTransaction>,
-            Receiver<PendingTransaction>,
-        ) = futures::channel::mpsc::channel(1024);
+    /// Returns a listener for pending transactions, yielding full transactions
+    pub fn full_pending_transactions(&self) -> Receiver<AnyRpcTransaction> {
+        let (mut tx, rx) = channel(1024);
+        let mut hashes = self.new_ready_transactions();
 
-        let pending_transactions = self.pool.pending_transactions();
+        let this = Arc::new(self.clone());
 
         tokio::spawn(async move {
-            for transaction in pending_transactions {
-                if futures::SinkExt::send(&mut tx, transaction.pending_transaction.clone())
-                    .await
-                    .is_err()
-                {
-                    break;
+            while let Some(hash) = hashes.next().await {
+                if let Ok(Some(txn)) = this.transaction_by_hash(hash).await {
+                    if futures::SinkExt::send(&mut tx, txn).await.is_err() {
+                        break;
+                    }
                 }
             }
         });

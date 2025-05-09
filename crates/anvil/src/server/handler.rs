@@ -91,27 +91,24 @@ impl PubSubEthRpcHandler {
                     }
                     SubscriptionKind::NewPendingTransactions => {
                         trace!(target: "rpc::ws", "received pending transactions subscription");
-                        let full_tx = match *raw_params {
-                            Params::Bool(true) => true,
-                            Params::Bool(false) | Params::None => false,
+                        let subscription = match *raw_params {
+                            Params::Bool(true) => EthSubscription::FullPendingTransactions(
+                                self.api.full_pending_transactions(),
+                                id.clone(),
+                            ),
+                            Params::Bool(false) | Params::None => {
+                                EthSubscription::PendingTransactions(
+                                    self.api.new_ready_transactions(),
+                                    id.clone(),
+                                )
+                            }
                             _ => {
                                 return ResponseResult::Error(RpcError::invalid_params(
                                     "Expected boolean parameter for newPendingTransactions",
-                                ));
+                                ))
                             }
                         };
-
-                        if full_tx {
-                            EthSubscription::FullPendingTransactions(
-                                self.api.full_pending_transactions(),
-                                id.clone(),
-                            )
-                        } else {
-                            EthSubscription::PendingTransactions(
-                                self.api.new_ready_transactions(),
-                                id.clone(),
-                            )
-                        }
+                        subscription
                     }
                     SubscriptionKind::Syncing => {
                         return RpcError::internal_error_with("Not implemented").into()
