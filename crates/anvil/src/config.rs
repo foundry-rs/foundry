@@ -2,6 +2,7 @@ use crate::{
     eth::{
         backend::{
             db::{Db, SerializableState},
+            env::Env,
             fork::{ClientFork, ClientForkConfig},
             genesis::GenesisConfig,
             mem::fork_db::ForkedDatabase,
@@ -37,9 +38,10 @@ use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
     utils::apply_chain_and_block_specific_env_changes,
-    Env,
 };
+use foundry_evm_core::AsEnvMut;
 use itertools::Itertools;
+use op_revm::OpTransaction;
 use parking_lot::RwLock;
 use rand::thread_rng;
 use revm::{
@@ -1044,7 +1046,10 @@ impl NodeConfig {
                 basefee: self.get_base_fee(),
                 ..Default::default()
             },
-            TxEnv { chain_id: Some(self.get_chain_id()), ..Default::default() },
+            OpTransaction {
+                base: TxEnv { chain_id: Some(self.get_chain_id()), ..Default::default() },
+                ..Default::default()
+            },
         );
 
         env.is_optimism = self.enable_optimism;
@@ -1291,12 +1296,12 @@ latest block number: {latest_block}"
             // need to update the dev signers and env with the chain id
             self.set_chain_id(Some(chain_id));
             env.evm_env.cfg_env.chain_id = chain_id;
-            env.tx.chain_id = chain_id.into();
+            env.tx.base.chain_id = chain_id.into();
             chain_id
         };
         let override_chain_id = self.chain_id;
         // apply changes such as difficulty -> prevrandao and chain specifics for current chain id
-        apply_chain_and_block_specific_env_changes::<AnyNetwork>(env, &block);
+        apply_chain_and_block_specific_env_changes::<AnyNetwork>(env.as_env_mut(), &block);
 
         let meta = BlockchainDbMeta::new(env.evm_env.block_env.clone(), eth_rpc_url.clone());
         let block_chain_db = if self.fork_chain_id.is_some() {

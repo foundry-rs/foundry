@@ -1,7 +1,8 @@
 use crate::{
     eth::{
         backend::{
-            db::Db, mem::op_haltreason_to_instruction_result, validate::TransactionValidator,
+            db::Db, env::Env, mem::op_haltreason_to_instruction_result,
+            validate::TransactionValidator,
         },
         error::InvalidTransactionError,
         pool::transactions::PoolTransaction,
@@ -23,11 +24,10 @@ use anvil_core::eth::{
         DepositReceipt, PendingTransaction, TransactionInfo, TypedReceipt, TypedTransaction,
     },
 };
-use foundry_evm::{backend::DatabaseError, traces::CallTraceNode, Env};
+use foundry_evm::{backend::DatabaseError, traces::CallTraceNode};
 use foundry_evm_core::{either_evm::EitherEvm, evm::FoundryPrecompiles};
 use op_revm::{
-    transaction::deposit::DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, OpContext, OpTransaction,
-    OpTransactionError,
+    transaction::deposit::DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, OpContext, OpTransactionError,
 };
 use revm::{
     context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm as RevmEvm, JournalTr},
@@ -250,8 +250,8 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
     fn env_for(&self, tx: &PendingTransaction) -> Env {
         let op_tx = tx.to_revm_tx_env();
 
-        let mut env = Env::from(self.cfg_env.clone(), self.block_env.clone(), op_tx.base);
-        if env.tx.tx_type == DEPOSIT_TRANSACTION_TYPE {
+        let mut env = Env::from(self.cfg_env.clone(), self.block_env.clone(), op_tx.clone());
+        if env.tx.base.tx_type == DEPOSIT_TRANSACTION_TYPE {
             env = env.with_deposit(op_tx.deposit);
         }
 
@@ -287,7 +287,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         let env = self.env_for(&transaction.pending_transaction);
 
         // check that we comply with the block's gas limit, if not disabled
-        let max_gas = self.gas_used.saturating_add(env.tx.gas_limit);
+        let max_gas = self.gas_used.saturating_add(env.tx.base.gas_limit);
         if !env.evm_env.cfg_env.disable_block_gas_limit && max_gas > env.evm_env.block_env.gas_limit
         {
             return Some(TransactionExecutionOutcome::Exhausted(transaction))
@@ -330,14 +330,8 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             &mut inspector,
             transaction.tx_type() == DEPOSIT_TRANSACTION_TYPE,
         );
-
-        let tx = OpTransaction {
-            base: env.tx,
-            deposit: env.deposit.unwrap_or_default(),
-            enveloped_tx: None,
-        };
         trace!(target: "backend", "[{:?}] executing", transaction.hash());
-        let exec_result = match evm.transact_commit(tx) {
+        let exec_result = match evm.transact_commit(env.tx) {
             Ok(exec_result) => exec_result,
             Err(err) => {
                 warn!(target: "backend", "[{:?}] failed to execute: {:?}", transaction.hash(), err);
@@ -439,11 +433,7 @@ where
             },
             block: env.evm_env.block_env.clone(),
             cfg: env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::BEDROCK),
-            tx: OpTransaction {
-                base: env.tx.clone(),
-                deposit: env.deposit.clone().unwrap_or_default(),
-                enveloped_tx: None,
-            },
+            tx: env.tx.clone(),
             chain: L1BlockInfo::default(),
             error: Ok(()),
         };
@@ -467,7 +457,7 @@ where
             },
             block: env.evm_env.block_env.clone(),
             cfg: env.evm_env.cfg_env.clone(),
-            tx: env.tx.clone(),
+            tx: env.tx.base.clone(),
             chain: (),
             error: Ok(()),
         };

@@ -174,8 +174,6 @@ impl EvmOpts {
                 caller: self.sender,
                 ..Default::default()
             },
-            is_optimism: false,
-            deposit: None,
         }
     }
 
