@@ -792,9 +792,8 @@ fn duration_from_secs_f64(s: &str) -> Result<Duration, String> {
 
 #[cfg(test)]
 mod tests {
-    use crate::EthereumHardfork;
-
     use super::*;
+
     use std::{env, net::Ipv4Addr};
 
     #[test]

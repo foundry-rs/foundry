@@ -50,10 +50,10 @@ literal-string-with-formatting-args = "allow"
 result_large_err = "allow"
 
 [workspace.lints.rust]
-rust-2018-idioms = "warn"
-# unreachable-pub = "warn"
-unused-must-use = "warn"
+redundant_imports = "warn"
 redundant-lifetimes = "warn"
+rust-2018-idioms = "warn"
+unused-must-use = "warn"
 
 [workspace.lints.rustdoc]
 all = "warn"

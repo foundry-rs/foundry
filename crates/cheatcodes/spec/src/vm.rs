@@ -6,7 +6,6 @@ use super::*;
 use crate::Vm::ForgeContext;
 use alloy_sol_types::sol;
 use foundry_macros::Cheatcode;
-use std::fmt;
 
 sol! {
 // Cheatcodes are marked as view/pure/none using the following rules:
