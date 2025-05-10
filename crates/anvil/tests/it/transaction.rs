@@ -4,7 +4,7 @@ use crate::{
 };
 use alloy_network::{EthereumWallet, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{address, hex, map::B256HashSet, Address, Bytes, FixedBytes, U256};
-use alloy_provider::Provider;
+use alloy_provider::{Provider, WsConnect};
 use alloy_rpc_types::{
     state::{AccountOverride, StateOverride},
     AccessList, AccessListItem, BlockId, BlockNumberOrTag, BlockTransactions, TransactionRequest,
@@ -722,8 +722,10 @@ async fn can_listen_full_pending_transaction() {
     // Disable auto-mining so transactions remain pending
     api.anvil_set_auto_mine(false).await.unwrap();
 
-    let provider = handle.ws_provider();
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let provider = alloy_provider::ProviderBuilder::new()
+        .on_ws(WsConnect::new(handle.ws_endpoint()))
+        .await
+        .unwrap();
 
     // Subscribe to full pending transactions
     let sub = provider.subscribe_full_pending_transactions().await;
@@ -733,14 +735,10 @@ async fn can_listen_full_pending_transaction() {
     let from = handle.dev_wallets().next().unwrap().address();
     let tx = TransactionRequest::default().from(from).value(U256::from(1337)).to(Address::random());
 
-    let tx = WithOtherFields::new(tx);
     let tx = provider.send_transaction(tx).await.unwrap();
 
     // Wait for the subscription to yield a transaction
-    let received = tokio::time::timeout(Duration::from_secs(5), stream.next())
-        .await
-        .expect("timed out waiting for pending tx")
-        .expect("stream closed unexpectedly");
+    let received = stream.next().await.expect("Failed to receive pending tx");
 
     assert_eq!(received.tx_hash(), *tx.tx_hash());
 }
