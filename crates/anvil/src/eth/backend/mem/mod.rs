@@ -967,8 +967,8 @@ impl Backend {
             // Defaults to block number for compatibility with existing state files.
             let fork_num_and_hash = self.get_fork().map(|f| (f.block_number(), f.block_hash()));
 
+            let best_number = state.best_block_number.unwrap_or(block.number.to::<U64>());
             if let Some((number, hash)) = fork_num_and_hash {
-                let best_number = state.best_block_number.unwrap_or(block.number.to::<U64>());
                 trace!(target: "backend", state_block_number=?best_number, fork_block_number=?number);
                 // If the state.block_number is greater than the fork block number, set best number
                 // to the state block number.
@@ -991,7 +991,6 @@ impl Backend {
                     self.blockchain.storage.write().best_hash = hash;
                 }
             } else {
-                let best_number = state.best_block_number.unwrap_or(block.number.to::<U64>());
                 self.blockchain.storage.write().best_number = best_number;
 
                 // Set the current best block hash;
@@ -2861,7 +2860,7 @@ impl Backend {
                     .zip(storage_proofs)
                     .map(|(key, proof)| {
                         let storage_key: U256 = key.into();
-                        let value = account.storage.get(&storage_key).cloned().unwrap_or_default();
+                        let value = account.storage.get(&storage_key).copied().unwrap_or_default();
                         StorageProof { key: JsonStorageKey::Hash(key), value, proof }
                     })
                     .collect(),
