@@ -1,4 +1,4 @@
 mod abi;
 pub mod name;
 
-pub use name::NamingArgs;
+pub use name::{set_primary_name, NamingArgs};

@@ -18,6 +18,7 @@ eyre.workspace = true
 
 foundry-cli.workspace = true
 foundry-common.workspace = true
+foundry-wallets.workspace = true
 
 alloy-contract.workspace = true
 alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }

@@ -11,6 +11,7 @@ use forge_verify::{VerifyArgs, VerifyBytecodeArgs, VerifyCheckArgs};
 use foundry_cli::opts::GlobalArgs;
 use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
 use std::path::PathBuf;
+use crate::cmd::name::NameArgs;
 
 /// Build, test, fuzz, debug and deploy Solidity contracts.
 #[derive(Parser)]
@@ -88,6 +89,10 @@ pub enum ForgeSubcommand {
     /// Deploy a smart contract.
     #[command(visible_alias = "c")]
     Create(CreateArgs),
+    
+    /// Name a smart contract.
+    #[command(visible_alias = "n")]
+    Name(NameArgs),
 
     /// Create a new Forge project.
     Init(InitArgs),

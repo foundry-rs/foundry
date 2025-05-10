@@ -3184,6 +3184,7 @@ dependencies = [
  "eyre",
  "foundry-cli",
  "foundry-common",
+ "foundry-wallets",
  "reqwest",
  "serde",
  "serde_json",

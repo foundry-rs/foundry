@@ -43,4 +43,15 @@ sol! {
         function setName(string memory name) external returns (bytes32);
         function setNameForAddr(address addr, address owner, address resolver, string name) external;
     }
+
+    /// Enscribe contract
+    #[sol(rpc)]
+    contract Enscribe {
+        function setName(
+            address contractAddress,
+            string label,
+            string parentName,
+            bytes32 parentNode
+        ) external returns (bool success);
+    }
 }
