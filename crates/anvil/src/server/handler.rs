@@ -62,11 +62,7 @@ impl PubSubEthRpcHandler {
                 let filter = match &*raw_params {
                     Params::None => None,
                     Params::Logs(filter) => Some(filter.clone()),
-                    Params::Bool(_) => {
-                        return ResponseResult::Error(RpcError::invalid_params(
-                            "Expected params for logs subscription",
-                        ))
-                    }
+                    Params::Bool(_) => None,
                 };
                 let params = FilteredParams::new(filter.map(|b| *b));
 

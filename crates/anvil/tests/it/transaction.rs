@@ -715,6 +715,36 @@ async fn can_get_pending_transaction() {
     assert_eq!(mined.tx_hash(), pending.unwrap().unwrap().tx_hash());
 }
 
+// #[tokio::test(flavor = "multi_thread")]
+// async fn can_listen_full_pending_transaction() {
+//     let (api, handle) = spawn(NodeConfig::test()).await;
+
+//     // Disable auto-mining so transactions remain pending
+//     api.anvil_set_auto_mine(false).await.unwrap();
+
+//     let provider = handle.ws_provider();
+//     tokio::time::sleep(Duration::from_millis(100)).await;
+
+//     // Subscribe to full pending transactions
+//     let sub = provider.subscribe_full_pending_transactions().await;
+//     let mut stream = sub.expect("Failed to subscribe to pending tx").into_stream().take(5);
+
+//     let from = handle.dev_wallets().next().unwrap().address();
+//     let tx =
+// TransactionRequest::default().from(from).value(U256::from(1337)).to(Address::random());
+
+//     let tx = WithOtherFields::new(tx);
+//     let tx = provider.send_transaction(tx).await.unwrap();
+
+//     // Wait for the subscription to yield a transaction
+//     let received = tokio::time::timeout(Duration::from_secs(5), stream.next())
+//         .await
+//         .expect("timed out waiting for pending tx")
+//         .expect("stream closed unexpectedly");
+
+//     assert_eq!(received.tx_hash(), *tx.tx_hash());
+// }
+
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_raw_transaction() {
     let (api, handle) = spawn(NodeConfig::test()).await;
