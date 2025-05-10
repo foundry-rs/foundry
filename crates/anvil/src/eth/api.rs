@@ -746,8 +746,7 @@ impl EthApi {
                     return Ok(serde_json::json!({
                         "balance": acc.balance,
                         "nonce": acc.nonce,
-                        "code": acc.code_hash,
-                        "storage_root": acc.storage_root
+                        "code": acc.code_hash
                     }));
                 }
             }
@@ -758,8 +757,7 @@ impl EthApi {
         Ok(serde_json::json!({
             "balance": account.balance,
             "nonce": account.nonce,
-            "code": account.code_hash,
-            "storage_root": account.storage_root
+            "code": account.code_hash
         }))
     }
     /// Returns content of the storage at given address.
