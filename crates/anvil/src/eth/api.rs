@@ -349,6 +349,10 @@ impl EthApi {
             EthRequest::SetBalance(addr, val) => {
                 self.anvil_set_balance(addr, val).await.to_rpc_result()
             }
+            EthRequest::DealERC20(addr, val, _token_addr) => {
+                //this is a placeholder
+                self.anvil_set_balance(addr, val).await.to_rpc_result()
+            }
             EthRequest::SetCode(addr, code) => {
                 self.anvil_set_code(addr, code).await.to_rpc_result()
             }
