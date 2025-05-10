@@ -2,7 +2,7 @@
 
 use crate::constants::TEMPLATE_CONTRACT;
 use alloy_primitives::{address, hex, Address, Bytes};
-use anvil::{spawn, NodeConfig};
+use anvil::{spawn, EthereumHardfork, NodeConfig};
 use forge_script_sequence::ScriptSequence;
 use foundry_test_utils::{
     rpc::{self, next_http_archive_rpc_url},
@@ -2719,4 +2719,141 @@ Warning: No transactions to broadcast.
 
 "#
     ]);
+});
+
+// Tests EIP-7702 broadcast <https://github.com/foundry-rs/foundry/issues/10461>
+forgetest_async!(can_broadcast_txes_with_signed_auth, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+            "EIP7702Script.s.sol",
+            r#"
+import "forge-std/Script.sol";
+import {Vm} from "forge-std/Vm.sol";
+import {Counter} from "../src/Counter.sol";
+contract EIP7702Script is Script {
+    uint256 constant PRIVATE_KEY = uint256(bytes32(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80));
+    address constant SENDER = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+    function setUp() public {}
+    function run() public {
+        vm.startBroadcast(PRIVATE_KEY);
+        Counter counter = new Counter();
+        Counter counter1 = new Counter();
+        Counter counter2 = new Counter();
+        vm.signAndAttachDelegation(address(counter), PRIVATE_KEY);
+        Counter(SENDER).increment();
+        Counter(SENDER).increment();
+        vm.signAndAttachDelegation(address(counter1), PRIVATE_KEY);
+        Counter(SENDER).setNumber(0);
+        vm.signAndAttachDelegation(address(counter2), PRIVATE_KEY);
+        Counter(SENDER).setNumber(0);
+        vm.stopBroadcast();
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::PragueEOF.into()));
+    let (_api, handle) = spawn(node_config).await;
+
+    cmd.args([
+        "script",
+        "script/EIP7702Script.s.sol",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "-vvvvv",
+        "--non-interactive",
+        "--slow",
+        "--broadcast",
+        "--evm-version",
+        "prague",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Traces:
+  [..] EIP7702Script::setUp()
+    └─ ← [Stop]
+
+  [..] EIP7702Script::run()
+    ├─ [0] VM::startBroadcast(<pk>)
+    │   └─ ← [Return]
+    ├─ [..] → new Counter@0x5FbDB2315678afecb367f032d93F642f64180aa3
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [..] → new Counter@0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [..] → new Counter@0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [0] VM::signAndAttachDelegation(0x5FbDB2315678afecb367f032d93F642f64180aa3, "<pk>")
+    │   └─ ← [Return] (0, 0xd4301eb9f82f747137a5f2c3dc3a5c2d253917cf99ecdc0d49f7bb85313c3159, 0x786d354f0bbd456f44116ddd3aa50475e989d72d8396005e5b3a12cede83fb68, 4, 0x5FbDB2315678afecb367f032d93F642f64180aa3)
+    ├─ [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+    │   └─ ← [Stop]
+    ├─ [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+    │   └─ ← [Stop]
+    ├─ [0] VM::signAndAttachDelegation(0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512, "<pk>")
+    │   └─ ← [Return] (0, 0xaba9128338f7ff036a0d2ecb96d4f4376389005cd565f87aba33b312570af962, 0x69acbe0831fb8ca95338bc4b908dcfebaf7b81b0f770a12c073ceb07b89fbdf3, 7, 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512)
+    ├─ [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
+    │   └─ ← [Stop]
+    ├─ [0] VM::signAndAttachDelegation(0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0, "<pk>")
+    │   └─ ← [Return] (1, 0x3a3427b66e589338ce7ea06135650708f9152e93e257b4a5ec6eb86a3e09a2ce, 0x444651c354c89fd3312aafb05948e12c0a16220827a5e467705253ab4d8aa8d3, 9, 0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0)
+    ├─ [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
+    │   └─ ← [Stop]
+    ├─ [0] VM::stopBroadcast()
+    │   └─ ← [Return]
+    └─ ← [Stop]
+
+
+Script ran successfully.
+
+## Setting up 1 EVM.
+==========================
+Simulated On-chain Traces:
+
+  [..] → new Counter@0x5FbDB2315678afecb367f032d93F642f64180aa3
+    └─ ← [Return] 481 bytes of code
+
+  [..] → new Counter@0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+    └─ ← [Return] 481 bytes of code
+
+  [..] → new Counter@0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
+    └─ ← [Return] 481 bytes of code
+
+  [0] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+    └─ ← [Stop]
+
+  [0] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+    └─ ← [Stop]
+
+  [0] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
+    └─ ← [Stop]
+
+  [0] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
+    └─ ← [Stop]
+
+
+==========================
+
+Chain 31337
+
+[ESTIMATED_GAS_PRICE]
+
+[ESTIMATED_TOTAL_GAS_USED]
+
+[ESTIMATED_AMOUNT_REQUIRED]
+
+==========================
+
+
+==========================
+
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+[SAVED_TRANSACTIONS]
+
+[SAVED_SENSITIVE_VALUES]
+
+
+"#]]);
 });
