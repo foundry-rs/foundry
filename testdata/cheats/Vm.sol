@@ -31,7 +31,7 @@ interface Vm {
     function _expectCheatcodeRevert(bytes4 revertData) external;
     function _expectCheatcodeRevert(bytes calldata revertData) external;
     function accessList(AccessListItem[] calldata access) external;
-    function accesses(address target) external returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);
+    function accesses(address target) external view returns (bytes32[] memory readSlots, bytes32[] memory writeSlots);
     function activeFork() external view returns (uint256 forkId);
     function addr(uint256 privateKey) external pure returns (address keyAddr);
     function allowCheatcodes(address account) external;
@@ -173,7 +173,7 @@ interface Vm {
     function computeCreate2Address(bytes32 salt, bytes32 initCodeHash, address deployer) external pure returns (address);
     function computeCreate2Address(bytes32 salt, bytes32 initCodeHash) external pure returns (address);
     function computeCreateAddress(address deployer, uint256 nonce) external pure returns (address);
-    function contains(string calldata subject, string calldata search) external returns (bool result);
+    function contains(string calldata subject, string calldata search) external pure returns (bool result);
     function cool(address target) external;
     function coolSlot(address target, bytes32 slot) external;
     function copyFile(string calldata from, string calldata to) external returns (uint64 copied);
@@ -238,7 +238,7 @@ interface Vm {
     function envUint(string calldata name) external view returns (uint256 value);
     function envUint(string calldata name, string calldata delim) external view returns (uint256[] memory value);
     function etch(address target, bytes calldata newRuntimeBytecode) external;
-    function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] calldata topics) external returns (EthGetLogs[] memory logs);
+    function eth_getLogs(uint256 fromBlock, uint256 toBlock, address target, bytes32[] calldata topics) external view returns (EthGetLogs[] memory logs);
     function exists(string calldata path) external view returns (bool result);
     function expectCallMinGas(address callee, uint256 msgValue, uint64 minGas, bytes calldata data) external;
     function expectCallMinGas(address callee, uint256 msgValue, uint64 minGas, bytes calldata data, uint64 count) external;
@@ -301,15 +301,15 @@ interface Vm {
     function getDeployments(string calldata contractName, uint64 chainId) external view returns (address[] memory deployedAddresses);
     function getFoundryVersion() external view returns (string memory version);
     function getLabel(address account) external view returns (string memory currentLabel);
-    function getMappingKeyAndParentOf(address target, bytes32 elementSlot) external returns (bool found, bytes32 key, bytes32 parent);
-    function getMappingLength(address target, bytes32 mappingSlot) external returns (uint256 length);
-    function getMappingSlotAt(address target, bytes32 mappingSlot, uint256 idx) external returns (bytes32 value);
+    function getMappingKeyAndParentOf(address target, bytes32 elementSlot) external view returns (bool found, bytes32 key, bytes32 parent);
+    function getMappingLength(address target, bytes32 mappingSlot) external view returns (uint256 length);
+    function getMappingSlotAt(address target, bytes32 mappingSlot, uint256 idx) external view returns (bytes32 value);
     function getNonce(address account) external view returns (uint64 nonce);
-    function getNonce(Wallet calldata wallet) external returns (uint64 nonce);
-    function getRecordedLogs() external returns (Log[] memory logs);
+    function getNonce(Wallet calldata wallet) external view returns (uint64 nonce);
+    function getRecordedLogs() external view returns (Log[] memory logs);
     function getStateDiff() external view returns (string memory diff);
     function getStateDiffJson() external view returns (string memory diff);
-    function getWallets() external returns (address[] memory wallets);
+    function getWallets() external view returns (address[] memory wallets);
     function indexOf(string calldata input, string calldata key) external pure returns (uint256);
     function interceptInitcode() external;
     function isContext(ForgeContext context) external view returns (bool result);
@@ -338,7 +338,7 @@ interface Vm {
     function mockCalls(address callee, bytes calldata data, bytes[] calldata returnData) external;
     function mockCalls(address callee, uint256 msgValue, bytes calldata data, bytes[] calldata returnData) external;
     function mockFunction(address callee, address target, bytes calldata data) external;
-    function noAccessList() external;
+    function noAccessList() external view;
     function parseAddress(string calldata stringifiedValue) external pure returns (address parsedValue);
     function parseBool(string calldata stringifiedValue) external pure returns (bool parsedValue);
     function parseBytes(string calldata stringifiedValue) external pure returns (bytes memory parsedValue);
@@ -410,7 +410,7 @@ interface Vm {
     function randomUint() external returns (uint256);
     function randomUint(uint256 min, uint256 max) external returns (uint256);
     function randomUint(uint256 bits) external view returns (uint256);
-    function readCallers() external returns (CallerMode callerMode, address msgSender, address txOrigin);
+    function readCallers() external view returns (CallerMode callerMode, address msgSender, address txOrigin);
     function readDir(string calldata path) external view returns (DirEntry[] memory entries);
     function readDir(string calldata path, uint64 maxDepth) external view returns (DirEntry[] memory entries);
     function readDir(string calldata path, uint64 maxDepth, bool followLinks) external view returns (DirEntry[] memory entries);
