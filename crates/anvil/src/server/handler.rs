@@ -68,6 +68,12 @@ impl PubSubEthRpcHandler {
 
                 let subscription = match kind {
                     SubscriptionKind::Logs => {
+                        if raw_params.is_bool() {
+                            return ResponseResult::Error(RpcError::invalid_params(
+                                "Expected params for logs subscription",
+                            ))
+                        }
+
                         trace!(target: "rpc::ws", "received logs subscription {:?}", params);
                         let blocks = self.api.new_block_notifications();
                         let storage = self.api.storage_info();
