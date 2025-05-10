@@ -90,15 +90,13 @@ use foundry_evm::{
     },
 };
 use futures::{
-    channel::{
-        mpsc::{channel, Receiver},
-        oneshot,
-    },
+    channel::{mpsc::Receiver, oneshot},
     StreamExt,
 };
 use parking_lot::RwLock;
 use revm::primitives::Bytecode;
 use std::{future::Future, sync::Arc, time::Duration};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
@@ -2870,16 +2868,16 @@ impl EthApi {
     }
 
     /// Returns a listener for pending transactions, yielding full transactions
-    pub fn full_pending_transactions(&self) -> Receiver<AnyRpcTransaction> {
-        let (mut tx, rx) = channel(1024);
+    pub fn full_pending_transactions(&self) -> UnboundedReceiver<AnyRpcTransaction> {
+        let (tx, rx) = unbounded_channel();
         let mut hashes = self.new_ready_transactions();
 
-        let this = Arc::new(self.clone());
+        let this = self.clone();
 
         tokio::spawn(async move {
             while let Some(hash) = hashes.next().await {
                 if let Ok(Some(txn)) = this.transaction_by_hash(hash).await {
-                    if futures::SinkExt::send(&mut tx, txn).await.is_err() {
+                    if tx.send(txn).is_err() {
                         break;
                     }
                 }
