@@ -8,21 +8,14 @@
         nixpkgs.follows = "nixpkgs";
       };
     };
-    solc = {
-      url = "github:hellwolf/solc.nix";
-      inputs = {
-        nixpkgs.follows = "nixpkgs";
-        flake-utils.follows = "flake-utils";
-      };
-    };
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils, solc }:
+  outputs = { self, nixpkgs, rust-overlay, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
           inherit system;
-          overlays = [ rust-overlay.overlays.default solc.overlay ];
+          overlays = [ rust-overlay.overlays.default ];
         };
         lib = pkgs.lib;
         toolchain = pkgs.rust-bin.stable.latest.default.override {
@@ -33,9 +26,14 @@
         devShells.default = pkgs.mkShell {
           nativeBuildInputs = with pkgs; [
             pkg-config
-            solc_0_8_23
-            (solc.mkDefault pkgs solc_0_8_23)
             toolchain
+            rust-jemalloc-sys
+            cargo-nextest
+
+            # test dependencies
+            solc
+            vyper
+            nodejs
           ];
           buildInputs = lib.optionals pkgs.stdenv.isDarwin [
             pkgs.darwin.apple_sdk.frameworks.AppKit
