@@ -2093,10 +2093,6 @@ impl<W: Write> Visitor for Formatter<'_, W> {
         let (ident, string) = (ident.safe_unwrap(), string.safe_unwrap());
         return_source_if_disabled!(self, loc, ';');
 
-        // There are some issues with parsing Solidity's versions with crates like `semver`:
-        // 1. Ranges like `>=0.4.21<0.6.0` or `>=0.4.21 <0.6.0` are not parseable at all.
-        // 2. Versions like `0.8.10` got transformed into `^0.8.10` which is not the same.
-        // TODO: semver-solidity crate :D
         let pragma_descriptor = &string.string;
 
         write_chunk!(self, string.loc.end(), "pragma {} {};", &ident.name, pragma_descriptor)?;
