@@ -52,7 +52,7 @@ use alloy_rpc_types::{
     request::TransactionRequest,
     serde_helpers::JsonStorageKey,
     simulate::{SimBlock, SimCallResult, SimulatePayload, SimulatedBlock},
-    state::StateOverride,
+    state::EvmOverrides,
     trace::{
         filter::TraceFilter,
         geth::{
@@ -61,10 +61,9 @@ use alloy_rpc_types::{
         },
         parity::LocalizedTransactionTrace,
     },
-    AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber, BlockOverrides,
-    BlockTransactions, EIP1186AccountProofResponse as AccountProof,
-    EIP1186StorageProof as StorageProof, Filter, FilteredParams, Header as AlloyHeader, Index, Log,
-    Transaction, TransactionReceipt,
+    AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
+    EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
+    FilteredParams, Header as AlloyHeader, Index, Log, Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
 use alloy_signer::Signature;
@@ -1360,18 +1359,17 @@ impl Backend {
         request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_request: Option<BlockRequest>,
-        state_overrides: Option<StateOverride>,
-        block_overrides: Option<BlockOverrides>,
+        overrides: EvmOverrides,
     ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
         self.with_database_at(block_request, |state, mut block| {
             let block_number = block.number.to::<u64>();
             let (exit, out, gas, state) = {
                 let mut cache_db = CacheDB::new(state);
-                if let Some(state_overrides) = state_overrides {
+                if let Some(state_overrides) = overrides.state {
                     state::apply_state_overrides(state_overrides.into_iter().collect(), &mut cache_db)?;
                 }
-                if let Some(block_overrides) = block_overrides {
-                    state::apply_block_overrides(block_overrides, &mut cache_db, &mut block);
+                if let Some(block_overrides) = overrides.block {
+                    state::apply_block_overrides(*block_overrides, &mut cache_db, &mut block);
                 }
                 self.call_with_state(cache_db.as_dyn(), request, fee_details, block)
             }?;
