@@ -37,20 +37,10 @@
 
             packages = with pkgs; [ rust-analyzer-unwrapped ];
 
-            shellHook = ''
-              # Directly set CFLAGS to what we need.
-              # This will overwrite any CFLAGS inherited from the parent environment.
-              # -O2: Enable optimization (for _FORTIFY_SOURCE and jemalloc performance).
-              # -DJEMALLOC_STRERROR_R_RETURNS_CHAR_P: Hint for jemalloc's strerror_r usage.
-              export CFLAGS="-O2 -DJEMALLOC_STRERROR_R_RETURNS_CHAR_P"
-
-              # Simple trim of whitespace
-              export CFLAGS=$(echo "$CFLAGS" | xargs)
-            '';
-
             # Environment variables
             RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
             LD_LIBRARY_PATH = lib.makeLibraryPath [ pkgs.libusb1 ];
+            CFLAGS = "-DJEMALLOC_STRERROR_R_RETURNS_CHAR_WITH_GNU_SOURCE";
           };
         });
     };
