@@ -1,7 +1,7 @@
 //! In-memory blockchain backend.
 
 use self::state::trie_storage;
-use super::executor::new_evm_with_inspector_ref;
+use super::{db::StateDb, executor::new_evm_with_inspector_ref};
 use crate::{
     config::PruneStateHistoryConfig,
     eth::{
@@ -102,9 +102,9 @@ use foundry_evm::{
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::{
-    db::WrapDatabaseRef,
+    db::{DbAccount, WrapDatabaseRef},
     interpreter::Host,
     primitives::{BlobExcessGasAndPrice, HashMap, OptimismFields, ResultAndState},
     DatabaseCommit,
@@ -2284,18 +2284,21 @@ impl Backend {
                 .await?
                 .map(|block| (block.header.hash, block))
             {
-                if let Some(state) = self.states.write().get(&block_hash) {
-                    let block = BlockEnv {
-                        number: block_number,
-                        coinbase: block.header.beneficiary,
-                        timestamp: U256::from(block.header.timestamp),
-                        difficulty: block.header.difficulty,
-                        prevrandao: block.header.mix_hash,
-                        basefee: U256::from(block.header.base_fee_per_gas.unwrap_or_default()),
-                        gas_limit: U256::from(block.header.gas_limit),
-                        ..Default::default()
-                    };
-                    return Ok(f(Box::new(state), block));
+                let read_guard = self.states.upgradable_read();
+
+                if read_guard.has_state(&block_hash) {
+                    let state_db = read_guard.get_state(&block_hash);
+
+                    if let Some(state) = state_db {
+                        return Ok(get_block_env(state, block_number, block, f));
+                    }
+                } else {
+                    let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+                    let state_db = write_guard.get_on_disk_state(&block_hash);
+
+                    if let Some(state) = state_db {
+                        return Ok(get_block_env(state, block_number, block, f));
+                    }
                 }
             }
 
@@ -2928,12 +2931,18 @@ impl Backend {
     pub async fn rollback(&self, common_block: Block) -> Result<(), BlockchainError> {
         // Get the database at the common block
         let common_state = {
-            let mut state = self.states.write();
-            let state_db = state
-                .get(&common_block.header.hash_slow())
-                .ok_or(BlockchainError::DataUnavailable)?;
-            let db_full = state_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
-            db_full.clone()
+            let hash = &common_block.header.hash_slow();
+            let read_guard = self.states.upgradable_read();
+            if read_guard.has_state(hash) {
+                let db = read_guard.get_state(hash);
+
+                return_state_or_throw_err(db).unwrap()
+            } else {
+                let write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+                let db = write_guard.get_state(hash);
+
+                return_state_or_throw_err(db).unwrap()
+            }
         };
 
         {
@@ -2966,6 +2975,35 @@ impl Backend {
         }
         Ok(())
     }
+}
+
+fn get_block_env<F, T>(state: &StateDb, block_number: U256, block: AnyRpcBlock, f: F) -> T
+where
+    F: FnOnce(Box<dyn MaybeFullDatabase + '_>, BlockEnv) -> T,
+{
+    let block = BlockEnv {
+        number: block_number,
+        coinbase: block.header.beneficiary,
+        timestamp: U256::from(block.header.timestamp),
+        difficulty: block.header.difficulty,
+        prevrandao: block.header.mix_hash,
+        basefee: U256::from(block.header.base_fee_per_gas.unwrap_or_default()),
+        gas_limit: U256::from(block.header.gas_limit),
+        ..Default::default()
+    };
+
+    f(Box::new(state), block)
+}
+
+fn return_state_or_throw_err(
+    db: Option<&StateDb>,
+) -> Result<
+    HashMap<Address, DbAccount, alloy_primitives::map::foldhash::fast::RandomState>,
+    BlockchainError,
+> {
+    let state_db = db.ok_or(BlockchainError::DataUnavailable)?;
+    let db_full = state_db.maybe_as_full_db().ok_or(BlockchainError::DataUnavailable)?;
+    Ok(db_full.clone())
 }
 
 /// Get max nonce from transaction pool by address
