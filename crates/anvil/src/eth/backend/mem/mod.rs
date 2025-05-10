@@ -1,7 +1,7 @@
 //! In-memory blockchain backend.
 
 use self::state::trie_storage;
-use super::{executor::new_evm_with_inspector_ref};
+use super::executor::new_evm_with_inspector_ref;
 use crate::{
     config::PruneStateHistoryConfig,
     eth::{
@@ -959,7 +959,6 @@ impl Backend {
         // reset the block env
         if let Some(block) = state.block.clone() {
             self.env.write().block = block.clone();
-
 
             // Set the current best block number.
             // Defaults to block number for compatibility with existing state files.
