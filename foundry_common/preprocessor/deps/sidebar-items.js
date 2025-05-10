@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["BytecodeDependencyKind"],"fn":["named_arg","remove_bytecode_dependencies"],"struct":["BytecodeDependency","BytecodeDependencyCollector","PreprocessorDependencies"]};
