@@ -8,7 +8,7 @@ use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use clap::Parser;
-use eyre::Result;
+use eyre::{eyre, Result};
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils,
@@ -109,6 +109,17 @@ impl SendTxArgs {
             args: constructor_args,
         }) = command
         {
+            // ensure we don't violate settings for transactions that can't be CREATE: 7702 and 4844
+            // which require mandatory target
+            if to.is_none() && tx.auth.is_some() {
+                return Err(eyre!("EIP-7702 transactions can't be CREATE transactions and require a destination address"));
+            }
+            // ensure we don't violate settings for transactions that can't be CREATE: 7702 and 4844
+            // which require mandatory target
+            if to.is_none() && blob_data.is_some() {
+                return Err(eyre!("EIP-4844 transactions can't be CREATE transactions and require a destination address"));
+            }
+
             sig = constructor_sig;
             args = constructor_args;
             Some(code)

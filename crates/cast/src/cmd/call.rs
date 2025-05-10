@@ -3,8 +3,11 @@ use crate::{
     tx::{CastTxBuilder, SenderKind},
     Cast,
 };
-use alloy_primitives::{TxKind, U256};
-use alloy_rpc_types::{BlockId, BlockNumberOrTag};
+use alloy_primitives::{Address, Bytes, TxKind, U256};
+use alloy_rpc_types::{
+    state::{StateOverride, StateOverridesBuilder},
+    BlockId, BlockNumberOrTag,
+};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
@@ -26,9 +29,35 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
 };
-use std::str::FromStr;
+use regex::Regex;
+use std::{str::FromStr, sync::LazyLock};
+
+// matches override pattern <address>:<slot>:<value>
+// e.g. 0x123:0x1:0x1234
+static OVERRIDE_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^([^:]+):([^:]+):([^:]+)$").unwrap());
 
 /// CLI arguments for `cast call`.
+///
+/// ## State Override Flags
+///
+/// The following flags can be used to override the state for the call:
+///
+/// * `--override-balance <address>:<balance>` - Override the balance of an account
+/// * `--override-nonce <address>:<nonce>` - Override the nonce of an account
+/// * `--override-code <address>:<code>` - Override the code of an account
+/// * `--override-state <address>:<slot>:<value>` - Override a storage slot of an account
+///
+/// Multiple overrides can be specified for the same account. For example:
+///
+/// ```bash
+/// cast call 0x... "transfer(address,uint256)" 0x... 100 \
+///   --override-balance 0x123:0x1234 \
+///   --override-nonce 0x123:1 \
+///   --override-code 0x123:0x1234 \
+///   --override-state 0x123:0x1:0x1234
+///   --override-state-diff 0x123:0x1:0x1234
+/// ```
 #[derive(Debug, Parser)]
 pub struct CallArgs {
     /// The destination of the transaction.
@@ -92,6 +121,31 @@ pub struct CallArgs {
     /// Use current project artifacts for trace decoding.
     #[arg(long, visible_alias = "la")]
     pub with_local_artifacts: bool,
+
+    /// Override the balance of an account.
+    /// Format: address:balance
+    #[arg(long = "override-balance", value_name = "ADDRESS:BALANCE")]
+    pub balance_overrides: Option<Vec<String>>,
+
+    /// Override the nonce of an account.
+    /// Format: address:nonce
+    #[arg(long = "override-nonce", value_name = "ADDRESS:NONCE")]
+    pub nonce_overrides: Option<Vec<String>>,
+
+    /// Override the code of an account.
+    /// Format: address:code
+    #[arg(long = "override-code", value_name = "ADDRESS:CODE")]
+    pub code_overrides: Option<Vec<String>>,
+
+    /// Override the state of an account.
+    /// Format: address:slot:value
+    #[arg(long = "override-state", value_name = "ADDRESS:SLOT:VALUE")]
+    pub state_overrides: Option<Vec<String>>,
+
+    /// Override the state diff of an account.
+    /// Format: address:slot:value
+    #[arg(long = "override-state-diff", value_name = "ADDRESS:SLOT:VALUE")]
+    pub state_diff_overrides: Option<Vec<String>>,
 }
 
 #[derive(Debug, Parser)]
@@ -123,6 +177,7 @@ impl CallArgs {
         let figment = Into::<Figment>::into(&self.eth).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::from_provider(figment)?.sanitized();
+        let state_overrides = self.get_state_overrides()?;
 
         let Self {
             to,
@@ -211,6 +266,10 @@ impl CallArgs {
             let input = tx.inner.input.into_input().unwrap_or_default();
             let tx_kind = tx.inner.to.expect("set by builder");
 
+            if let Some(access_list) = tx.inner.access_list {
+                executor.env_mut().tx.access_list = access_list.0
+            }
+
             let trace = match tx_kind {
                 TxKind::Create => {
                     let deploy_result = executor.deploy(from, input, value, None);
@@ -236,9 +295,53 @@ impl CallArgs {
             return Ok(());
         }
 
-        sh_println!("{}", Cast::new(provider).call(&tx, func.as_ref(), block).await?)?;
+        sh_println!(
+            "{}",
+            Cast::new(provider).call(&tx, func.as_ref(), block, state_overrides).await?
+        )?;
 
         Ok(())
+    }
+    /// Parse state overrides from command line arguments
+    pub fn get_state_overrides(&self) -> eyre::Result<StateOverride> {
+        let mut state_overrides_builder = StateOverridesBuilder::default();
+
+        // Parse balance overrides
+        for override_str in self.balance_overrides.iter().flatten() {
+            let (addr, balance) = address_value_override(override_str)?;
+            state_overrides_builder =
+                state_overrides_builder.with_balance(addr.parse()?, balance.parse()?);
+        }
+
+        // Parse nonce overrides
+        for override_str in self.nonce_overrides.iter().flatten() {
+            let (addr, nonce) = address_value_override(override_str)?;
+            state_overrides_builder =
+                state_overrides_builder.with_nonce(addr.parse()?, nonce.parse()?);
+        }
+
+        // Parse code overrides
+        for override_str in self.code_overrides.iter().flatten() {
+            let (addr, code_str) = address_value_override(override_str)?;
+            state_overrides_builder =
+                state_overrides_builder.with_code(addr.parse()?, Bytes::from_str(code_str)?);
+        }
+
+        // Parse state overrides
+        for override_str in self.state_overrides.iter().flatten() {
+            let (addr, slot, value) = address_slot_value_override(override_str)?;
+            state_overrides_builder =
+                state_overrides_builder.with_state(addr, [(slot.into(), value.into())]);
+        }
+
+        // Parse state diff overrides
+        for override_str in self.state_diff_overrides.iter().flatten() {
+            let (addr, slot, value) = address_slot_value_override(override_str)?;
+            state_overrides_builder =
+                state_overrides_builder.with_state_diff(addr, [(slot.into(), value.into())]);
+        }
+
+        Ok(state_overrides_builder.build())
     }
 }
 
@@ -262,10 +365,30 @@ impl figment::Provider for CallArgs {
     }
 }
 
+/// Parse an override string in the format address:value.
+fn address_value_override(address_override: &str) -> Result<(&str, &str)> {
+    address_override.split_once(':').ok_or_else(|| {
+        eyre::eyre!("Invalid override {address_override}. Expected <address>:<value>")
+    })
+}
+
+/// Parse an override string in the format address:slot:value.
+fn address_slot_value_override(address_override: &str) -> Result<(Address, U256, U256)> {
+    let captures = OVERRIDE_PATTERN.captures(address_override).ok_or_else(|| {
+        eyre::eyre!("Invalid override {address_override}. Expected <address>:<slot>:<value>")
+    })?;
+
+    Ok((
+        captures[1].parse()?, // Address
+        captures[2].parse()?, // Slot (U256)
+        captures[3].parse()?, // Value (U256)
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{hex, Address};
+    use alloy_primitives::hex;
 
     #[test]
     fn can_parse_call_data() {
@@ -279,17 +402,59 @@ mod tests {
     }
 
     #[test]
-    fn call_sig_and_data_exclusive() {
-        let data = hex::encode("hello");
-        let to = Address::ZERO;
-        let args = CallArgs::try_parse_from([
+    fn can_parse_state_overrides() {
+        let args = CallArgs::parse_from([
             "foundry-cli",
-            to.to_string().as_str(),
-            "signature",
-            "--data",
-            format!("0x{data}").as_str(),
+            "--override-balance",
+            "0x123:0x1234",
+            "--override-nonce",
+            "0x123:1",
+            "--override-code",
+            "0x123:0x1234",
+            "--override-state",
+            "0x123:0x1:0x1234",
         ]);
 
-        assert!(args.is_err());
+        assert_eq!(args.balance_overrides, Some(vec!["0x123:0x1234".to_string()]));
+        assert_eq!(args.nonce_overrides, Some(vec!["0x123:1".to_string()]));
+        assert_eq!(args.code_overrides, Some(vec!["0x123:0x1234".to_string()]));
+        assert_eq!(args.state_overrides, Some(vec!["0x123:0x1:0x1234".to_string()]));
+    }
+
+    #[test]
+    fn can_parse_multiple_state_overrides() {
+        let args = CallArgs::parse_from([
+            "foundry-cli",
+            "--override-balance",
+            "0x123:0x1234",
+            "--override-balance",
+            "0x456:0x5678",
+            "--override-nonce",
+            "0x123:1",
+            "--override-nonce",
+            "0x456:2",
+            "--override-code",
+            "0x123:0x1234",
+            "--override-code",
+            "0x456:0x5678",
+            "--override-state",
+            "0x123:0x1:0x1234",
+            "--override-state",
+            "0x456:0x2:0x5678",
+        ]);
+
+        assert_eq!(
+            args.balance_overrides,
+            Some(vec!["0x123:0x1234".to_string(), "0x456:0x5678".to_string()])
+        );
+        assert_eq!(args.nonce_overrides, Some(vec!["0x123:1".to_string(), "0x456:2".to_string()]));
+        assert_eq!(
+            args.code_overrides,
+            Some(vec!["0x123:0x1234".to_string(), "0x456:0x5678".to_string()])
+        );
+        assert_eq!(
+            args.state_overrides,
+            Some(vec!["0x123:0x1:0x1234".to_string(), "0x456:0x2:0x5678".to_string()])
+        );
     }
 }

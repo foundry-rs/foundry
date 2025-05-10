@@ -9,7 +9,7 @@ use anvil::{EthereumHardfork, NodeConfig};
 use foundry_test_utils::{
     rpc::{
         next_etherscan_api_key, next_http_archive_rpc_url, next_http_rpc_endpoint,
-        next_mainnet_etherscan_api_key, next_rpc_endpoint, next_ws_rpc_endpoint,
+        next_rpc_endpoint, next_ws_rpc_endpoint,
     },
     str,
     util::OutputExt,
@@ -1318,6 +1318,17 @@ Error: Must specify a recipient address or contract code to deploy
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/9918>
+casttest!(send_7702_conflicts_with_create, |_prj, cmd| {
+    cmd.args([
+        "send", "--private-key", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" ,"--auth", "0xf85c827a6994f39fd6e51aad88f6f4ce6ab8827279cfffb922668001a03e1a66234e71242afcc7bc46c8950c3b2997b102db257774865f1232d2e7bf48a045e252dad189b27b2306792047745eba86bff0dd18aca813dbf3fba8c4e94576", "--create",  "0x60806040523373ffffffffffffffffffffffffffffffffffffffff163273ffffffffffffffffffffffffffffffffffffffff1614610072576040517f08c379a0000000000000000000000000000000000000000000000000000000008152600401610069906100e5565b60405180910390fd5b3373ffffffffffffffffffffffffffffffffffffffff16ff5b5f82825260208201905092915050565b7f74782e6f726967696e203d3d206d73672e73656e6465720000000000000000005f82015250565b5f6100cf60178361008b565b91506100da8261009b565b602082019050919050565b5f6020820190508181035f8301526100fc816100c3565b905091905056fe"
+    ]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: EIP-7702 transactions can't be CREATE transactions and require a destination address
+
+"#]]);
+});
+
 casttest!(storage, |_prj, cmd| {
     let rpc = next_http_archive_rpc_url();
     cmd.args(["storage", "vitalik.eth", "1", "--rpc-url", &rpc]).assert_success().stdout_eq(str![
@@ -1378,7 +1389,7 @@ casttest!(storage_layout_simple, |_prj, cmd| {
         "--block",
         "21034138",
         "--etherscan-api-key",
-        next_mainnet_etherscan_api_key().as_str(),
+        next_etherscan_api_key().as_str(),
         "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
     ])
     .assert_success()
@@ -1405,7 +1416,7 @@ casttest!(storage_layout_simple_json, |_prj, cmd| {
         "--block",
         "21034138",
         "--etherscan-api-key",
-        next_mainnet_etherscan_api_key().as_str(),
+        next_etherscan_api_key().as_str(),
         "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
         "--json",
     ])
@@ -1422,7 +1433,7 @@ casttest!(storage_layout_complex, |_prj, cmd| {
         "--block",
         "21034138",
         "--etherscan-api-key",
-        next_mainnet_etherscan_api_key().as_str(),
+        next_etherscan_api_key().as_str(),
         "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
     ])
     .assert_success()
@@ -1470,7 +1481,7 @@ casttest!(storage_layout_complex_proxy, |_prj, cmd| {
         "--block",
         "7857852",
         "--etherscan-api-key",
-        next_mainnet_etherscan_api_key().as_str(),
+        next_etherscan_api_key().as_str(),
         "0xE2588A9CAb7Ea877206E35f615a39f84a64A7A3b",
         "--proxy",
         "0x29fcb43b46531bca003ddc8fcb67ffe91900c762"
@@ -1512,7 +1523,7 @@ casttest!(storage_layout_complex_json, |_prj, cmd| {
         "--block",
         "21034138",
         "--etherscan-api-key",
-        next_mainnet_etherscan_api_key().as_str(),
+        next_etherscan_api_key().as_str(),
         "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
         "--json",
     ])
@@ -1601,7 +1612,7 @@ casttest!(fetch_weth_interface_from_etherscan, |_prj, cmd| {
     cmd.args([
         "interface",
         "--etherscan-api-key",
-        &next_mainnet_etherscan_api_key(),
+        &next_etherscan_api_key(),
         "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
     ])
     .assert_success()
@@ -1880,7 +1891,7 @@ casttest!(fetch_creation_code_from_etherscan, |_prj, cmd| {
     cmd.args([
         "creation-code",
         "--etherscan-api-key",
-        &next_mainnet_etherscan_api_key(),
+        &next_etherscan_api_key(),
         "0x0923cad07f06b2d0e5e49e63b8b35738d4156b95",
         "--rpc-url",
         eth_rpc_url.as_str(),
@@ -1899,7 +1910,7 @@ casttest!(fetch_creation_code_only_args_from_etherscan, |_prj, cmd| {
     cmd.args([
         "creation-code",
         "--etherscan-api-key",
-        &next_mainnet_etherscan_api_key(),
+        &next_etherscan_api_key(),
         "0x6982508145454ce325ddbe47a25d4ec3d2311933",
         "--rpc-url",
         eth_rpc_url.as_str(),
@@ -1919,7 +1930,7 @@ casttest!(fetch_constructor_args_from_etherscan, |_prj, cmd| {
     cmd.args([
         "constructor-args",
         "--etherscan-api-key",
-        &next_mainnet_etherscan_api_key(),
+        &next_etherscan_api_key(),
         "0x6982508145454ce325ddbe47a25d4ec3d2311933",
         "--rpc-url",
         eth_rpc_url.as_str(),
@@ -1940,7 +1951,7 @@ casttest!(test_non_mainnet_traces, |prj, cmd| {
         "--rpc-url",
         next_rpc_endpoint(NamedChain::Optimism).as_str(),
         "--etherscan-api-key",
-        next_etherscan_api_key(NamedChain::Optimism).as_str(),
+        next_etherscan_api_key().as_str(),
     ])
     .assert_success()
     .stdout_eq(str![[r#"
@@ -1963,7 +1974,7 @@ casttest!(fetch_artifact_from_etherscan, |_prj, cmd| {
     cmd.args([
         "artifact",
         "--etherscan-api-key",
-        &next_mainnet_etherscan_api_key(),
+        &next_etherscan_api_key(),
         "0x0923cad07f06b2d0e5e49e63b8b35738d4156b95",
         "--rpc-url",
         eth_rpc_url.as_str(),
@@ -2257,6 +2268,132 @@ forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
         .assert_success();
 });
 
+// https://github.com/foundry-rs/foundry/issues/10189
+forgetest_async!(cast_call_custom_override, |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "Counter",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function getBalance(address target) public returns (uint256) {
+        return target.balance;
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    // Deploy counter contract.
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "CounterScript",
+    ])
+    .assert_success();
+
+    // Override state, `number()` should return overridden value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-state",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x1234",
+            "number()(uint256)",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+4660
+
+"#]]);
+
+    // Override balance, `getBalance()` should return overridden value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-balance",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x1111",
+            "getBalance(address)(uint256)",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+4369
+
+"#]]);
+
+    // Override code with
+    // contract Counter {
+    //     uint256 public number1;
+    // }
+    // Calling `number()` should fail.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-code",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063c223a39e14602a575b5f5ffd5b60306044565b604051603b9190605f565b60405180910390f35b5f5481565b5f819050919050565b6059816049565b82525050565b5f60208201905060705f8301846052565b9291505056fea26469706673582212202a0acfb9083efed3e0e9f27177b090731d4392cf196d58e27e05088f59008d0964736f6c634300081d0033",
+            "number()(uint256)",
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: server returned an error response: error code 3: execution reverted, data: "0x"
+
+"#]]);
+
+    // Calling `number1()` with overridden state should return new value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-code",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063c223a39e14602a575b5f5ffd5b60306044565b604051603b9190605f565b60405180910390f35b5f5481565b5f819050919050565b6059816049565b82525050565b5f60208201905060705f8301846052565b9291505056fea26469706673582212202a0acfb9083efed3e0e9f27177b090731d4392cf196d58e27e05088f59008d0964736f6c634300081d0033",
+            "--override-state",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x2222",
+            "number1()(uint256)",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+8738
+
+"#]]);
+
+    // Calling `number1()` with overridden state should return new value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-code",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063c223a39e14602a575b5f5ffd5b60306044565b604051603b9190605f565b60405180910390f35b5f5481565b5f819050919050565b6059816049565b82525050565b5f60208201905060705f8301846052565b9291505056fea26469706673582212202a0acfb9083efed3e0e9f27177b090731d4392cf196d58e27e05088f59008d0964736f6c634300081d0033",
+            "--override-state-diff",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x2222",
+            "number1()(uint256)",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+8738
+
+"#]]);
+});
+
 // https://github.com/foundry-rs/foundry/issues/9541
 forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
     let (_api, handle) = anvil::spawn(
@@ -2318,7 +2455,7 @@ contract WETH9 {
 
 casttest!(fetch_src_default, |_prj, cmd| {
     let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-    let etherscan_api_key = next_mainnet_etherscan_api_key();
+    let etherscan_api_key = next_etherscan_api_key();
 
     cmd.args(["source", &weth.to_string(), "--flatten", "--etherscan-api-key", &etherscan_api_key])
         .assert_success()

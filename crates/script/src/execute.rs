@@ -144,9 +144,8 @@ impl PreExecutionState {
             &self.build_data.predeploy_libraries,
             self.execution_data.bytecode.clone(),
             needs_setup(&self.execution_data.abi),
-            self.script_config.sender_nonce,
+            &self.script_config,
             self.args.broadcast,
-            self.script_config.evm_opts.fork_url.is_none(),
         )?;
 
         if setup_result.success {
