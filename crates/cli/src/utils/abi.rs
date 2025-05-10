@@ -3,6 +3,7 @@ use alloy_json_abi::Function;
 use alloy_primitives::{hex, Address};
 use alloy_provider::{network::AnyNetwork, Provider};
 use eyre::{OptionExt, Result};
+use foundry_block_explorers::EtherscanApiVersion;
 use foundry_common::{
     abi::{encode_function_args, get_func, get_func_etherscan},
     ens::NameOrAddress,
@@ -31,6 +32,7 @@ pub async fn parse_function_args<P: Provider<AnyNetwork>>(
     chain: Chain,
     provider: &P,
     etherscan_api_key: Option<&str>,
+    etherscan_api_version: EtherscanApiVersion,
 ) -> Result<(Vec<u8>, Option<Function>)> {
     if sig.trim().is_empty() {
         eyre::bail!("Function signature or calldata must be provided.")
@@ -50,7 +52,7 @@ pub async fn parse_function_args<P: Provider<AnyNetwork>>(
             "If you wish to fetch function data from Etherscan, please provide an Etherscan API key.",
         )?;
         let to = to.ok_or_eyre("A 'to' address must be provided to fetch function data.")?;
-        get_func_etherscan(sig, to, &args, chain, etherscan_api_key).await?
+        get_func_etherscan(sig, to, &args, chain, etherscan_api_key, etherscan_api_version).await?
     };
 
     Ok((encode_function_args(&func, &args)?, Some(func)))
