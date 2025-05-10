@@ -1371,7 +1371,7 @@ impl Backend {
                     state::apply_state_overrides(state_overrides.into_iter().collect(), &mut cache_db)?;
                 }
                 if let Some(block_overrides) = block_overrides {
-                    apply_block_overrides(block_overrides, &mut cache_db, &mut block);
+                    state::apply_block_overrides(block_overrides, &mut cache_db, &mut block);
                 }
                 self.call_with_state(cache_db.as_dyn(), request, fee_details, block)
             }?;
@@ -1522,7 +1522,7 @@ impl Backend {
                     state::apply_state_overrides(state_overrides, &mut cache_db)?;
                 }
                 if let Some(block_overrides) = block_overrides {
-                    apply_block_overrides(block_overrides, &mut cache_db, &mut block_env);
+                    state::apply_block_overrides(block_overrides, &mut cache_db, &mut block_env);
                 }
 
                 // execute all calls in that block
@@ -1735,7 +1735,7 @@ impl Backend {
                 state::apply_state_overrides(state_overrides, &mut cache_db)?;
             }
             if let Some(block_overrides) = block_overrides {
-                apply_block_overrides(block_overrides, &mut cache_db, &mut block);
+                state::apply_block_overrides(block_overrides, &mut cache_db, &mut block);
             }
 
             if let Some(tracer) = tracer {
@@ -3296,51 +3296,4 @@ pub fn is_arbitrum(chain_id: u64) -> bool {
         return chain.is_arbitrum()
     }
     false
-}
-
-/// Applies the given block overrides to the env and updates overridden block hashes in the db.
-pub fn apply_block_overrides<DB>(
-    overrides: BlockOverrides,
-    cache_db: &mut CacheDB<DB>,
-    env: &mut BlockEnv,
-) {
-    let BlockOverrides {
-        number,
-        difficulty,
-        time,
-        gas_limit,
-        coinbase,
-        random,
-        base_fee,
-        block_hash,
-    } = overrides;
-
-    if let Some(block_hashes) = block_hash {
-        // override block hashes
-        cache_db
-            .block_hashes
-            .extend(block_hashes.into_iter().map(|(num, hash)| (U256::from(num), hash)))
-    }
-
-    if let Some(number) = number {
-        env.number = number;
-    }
-    if let Some(difficulty) = difficulty {
-        env.difficulty = difficulty;
-    }
-    if let Some(time) = time {
-        env.timestamp = U256::from(time);
-    }
-    if let Some(gas_limit) = gas_limit {
-        env.gas_limit = U256::from(gas_limit);
-    }
-    if let Some(coinbase) = coinbase {
-        env.coinbase = coinbase;
-    }
-    if let Some(random) = random {
-        env.prevrandao = Some(random);
-    }
-    if let Some(base_fee) = base_fee {
-        env.basefee = base_fee;
-    }
 }

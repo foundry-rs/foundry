@@ -1,7 +1,7 @@
 use super::{
     backend::{
         db::MaybeFullDatabase,
-        mem::{apply_block_overrides, state, BlockRequest, State},
+        mem::{state, BlockRequest, State},
     },
     sign::build_typed_transaction,
 };
@@ -2691,7 +2691,7 @@ impl EthApi {
                         )?;
                     }
                     if let Some(block_overrides) = block_overrides {
-                        apply_block_overrides(block_overrides, &mut cache_db, &mut block);
+                        state::apply_block_overrides(block_overrides, &mut cache_db, &mut block);
                     }
                     this.do_estimate_gas_with_state(request, cache_db.as_dyn(), block)
                 })
