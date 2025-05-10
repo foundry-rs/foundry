@@ -370,6 +370,32 @@
       ]
     },
     {
+      "name": "Chain",
+      "description": "Information about a blockchain.",
+      "fields": [
+        {
+          "name": "name",
+          "ty": "string",
+          "description": "The chain name."
+        },
+        {
+          "name": "chainId",
+          "ty": "uint256",
+          "description": "The chain's Chain ID."
+        },
+        {
+          "name": "chainAlias",
+          "ty": "string",
+          "description": "The chain's alias. (i.e. what gets specified in `foundry.toml`)."
+        },
+        {
+          "name": "rpcUrl",
+          "ty": "string",
+          "description": "A default RPC endpoint for this chain."
+        }
+      ]
+    },
+    {
       "name": "AccountAccess",
       "description": "The result of a `stopAndReturnStateDiff` call.",
       "fields": [
@@ -3206,6 +3232,26 @@
     },
     {
       "func": {
+        "id": "attachBlob",
+        "description": "Attach an EIP-4844 blob to the next call",
+        "declaration": "function attachBlob(bytes calldata blob) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "attachBlob(bytes)",
+        "selector": "0x10cb385c",
+        "selectorBytes": [
+          16,
+          203,
+          56,
+          92
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "attachDelegation",
         "description": "Designate the next call as an EIP-7702 transaction",
         "declaration": "function attachDelegation(SignedDelegation calldata signedDelegation) external;",
@@ -5930,6 +5976,46 @@
     },
     {
       "func": {
+        "id": "getChain_0",
+        "description": "Returns a Chain struct for specific alias",
+        "declaration": "function getChain(string calldata chainAlias) external view returns (Chain memory chain);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getChain(string)",
+        "selector": "0x4cc1c2bb",
+        "selectorBytes": [
+          76,
+          193,
+          194,
+          187
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getChain_1",
+        "description": "Returns a Chain struct for specific chainId",
+        "declaration": "function getChain(uint256 chainId) external view returns (Chain memory chain);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getChain(uint256)",
+        "selector": "0xb6791ad4",
+        "selectorBytes": [
+          182,
+          121,
+          26,
+          212
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getCode",
         "description": "Gets the creation bytecode from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
         "declaration": "function getCode(string calldata artifactPath) external view returns (bytes memory creationBytecode);",
@@ -8413,7 +8499,7 @@
     {
       "func": {
         "id": "record",
-        "description": "Records all storage reads and writes.",
+        "description": "Records all storage reads and writes. Use `accesses` to get the recorded data.\nSubsequent calls to `record` will clear the previous data.",
         "declaration": "function record() external;",
         "visibility": "external",
         "mutability": "",
@@ -10335,6 +10421,26 @@
       "group": "evm",
       "status": "stable",
       "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "stopRecord",
+        "description": "Stops recording storage reads and writes.",
+        "declaration": "function stopRecord() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "stopRecord()",
+        "selector": "0x996be76d",
+        "selectorBytes": [
+          153,
+          107,
+          231,
+          109
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
     },
     {
       "func": {

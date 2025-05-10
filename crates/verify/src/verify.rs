@@ -2,7 +2,7 @@
 
 use crate::{
     etherscan::EtherscanVerificationProvider,
-    provider::{VerificationProvider, VerificationProviderType},
+    provider::{VerificationContext, VerificationProvider, VerificationProviderType},
     utils::is_host_only,
     RetryArgs,
 };
@@ -10,6 +10,7 @@ use alloy_primitives::Address;
 use alloy_provider::Provider;
 use clap::{Parser, ValueHint};
 use eyre::Result;
+use foundry_block_explorers::EtherscanApiVersion;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::{self, LoadConfig},
@@ -22,8 +23,6 @@ use reqwest::Url;
 use revm_primitives::HashSet;
 use semver::BuildMetadata;
 use std::path::PathBuf;
-
-use crate::provider::VerificationContext;
 
 /// Verification provider arguments
 #[derive(Clone, Debug, Parser)]
@@ -39,6 +38,10 @@ pub struct VerifierArgs {
     /// The verifier URL, if using a custom provider.
     #[arg(long, help_heading = "Verifier options", env = "VERIFIER_URL")]
     pub verifier_url: Option<String>,
+
+    /// The verifier API version, if using a custom provider.
+    #[arg(long, help_heading = "Verifier options", env = "VERIFIER_API_VERSION")]
+    pub verifier_api_version: Option<EtherscanApiVersion>,
 }
 
 impl Default for VerifierArgs {
@@ -47,6 +50,7 @@ impl Default for VerifierArgs {
             verifier: VerificationProviderType::Sourcify,
             verifier_api_key: None,
             verifier_url: None,
+            verifier_api_version: None,
         }
     }
 }
@@ -178,6 +182,10 @@ impl figment::Provider for VerifyArgs {
 
         if let Some(api_key) = &self.verifier.verifier_api_key {
             dict.insert("etherscan_api_key".into(), api_key.as_str().into());
+        }
+
+        if let Some(api_version) = &self.verifier.verifier_api_version {
+            dict.insert("etherscan_api_version".into(), api_version.to_string().into());
         }
 
         Ok(figment::value::Map::from([(Config::selected_profile(), dict)]))
@@ -444,7 +452,16 @@ impl figment::Provider for VerifyCheckArgs {
     fn data(
         &self,
     ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
-        self.etherscan.data()
+        let mut dict = self.etherscan.dict();
+        if let Some(api_key) = &self.etherscan.key {
+            dict.insert("etherscan_api_key".into(), api_key.as_str().into());
+        }
+
+        if let Some(api_version) = &self.etherscan.api_version {
+            dict.insert("etherscan_api_version".into(), api_version.to_string().into());
+        }
+
+        Ok(figment::value::Map::from([(Config::selected_profile(), dict)]))
     }
 }
 

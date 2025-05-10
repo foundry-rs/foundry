@@ -105,6 +105,10 @@ impl figment::Provider for VerifyBytecodeArgs {
             dict.insert("etherscan_api_key".into(), api_key.as_str().into());
         }
 
+        if let Some(api_version) = &self.verifier.verifier_api_version {
+            dict.insert("etherscan_api_version".into(), api_version.to_string().into());
+        }
+
         if let Some(block) = &self.block {
             dict.insert("block".into(), figment::value::Value::serialize(block)?);
         }
@@ -136,13 +140,8 @@ impl VerifyBytecodeArgs {
         self.etherscan.key = config.get_etherscan_config_with_chain(Some(chain))?.map(|c| c.key);
 
         // Etherscan client
-        let etherscan = EtherscanVerificationProvider.client(
-            self.etherscan.chain.unwrap_or_default(),
-            &self.verifier.verifier,
-            self.verifier.verifier_url.as_deref(),
-            self.etherscan.key().as_deref(),
-            &config,
-        )?;
+        let etherscan =
+            EtherscanVerificationProvider.client(&self.etherscan, &self.verifier, &config)?;
 
         // Get the bytecode at the address, bailing if it doesn't exist.
         let code = provider.get_code_at(self.address).await?;
@@ -291,7 +290,7 @@ impl VerifyBytecodeArgs {
             .await?;
 
             let match_type = crate::utils::match_bytecodes(
-                &deployed_bytecode.original_bytes(),
+                deployed_bytecode.original_byte_slice(),
                 &onchain_runtime_code,
                 &constructor_args,
                 true,
@@ -501,7 +500,7 @@ impl VerifyBytecodeArgs {
 
             // Compare the onchain runtime bytecode with the runtime code from the fork.
             let match_type = crate::utils::match_bytecodes(
-                &fork_runtime_code.original_bytes(),
+                fork_runtime_code.original_byte_slice(),
                 &onchain_runtime_code,
                 &constructor_args,
                 true,

@@ -21,6 +21,8 @@ use crate::{
     CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result,
     Vm::{self, AccountAccess},
 };
+use alloy_consensus::BlobTransactionSidecar;
+use alloy_network::TransactionBuilder4844;
 use alloy_primitives::{
     hex,
     map::{AddressHashMap, HashMap, HashSet},
@@ -393,6 +395,9 @@ pub struct Cheatcodes {
     /// transaction construction.
     pub active_delegation: Option<SignedAuthorization>,
 
+    /// The active EIP-4844 blob that will be attached to the next call.
+    pub active_blob_sidecar: Option<BlobTransactionSidecar>,
+
     /// The gas price.
     ///
     /// Used in the cheatcode handler to overwrite the gas price separately from the gas price
@@ -415,7 +420,10 @@ pub struct Cheatcodes {
     pub fork_revert_diagnostic: Option<RevertDiagnostic>,
 
     /// Recorded storage reads and writes
-    pub accesses: Option<RecordAccess>,
+    pub accesses: RecordAccess,
+
+    /// Whether storage access recording is currently active
+    pub recording_accesses: bool,
 
     /// Recorded account accesses (calls, creates) organized by relative call depth, where the
     /// topmost vector corresponds to accesses at the depth at which account access recording
@@ -526,12 +534,14 @@ impl Cheatcodes {
             config,
             block: Default::default(),
             active_delegation: Default::default(),
+            active_blob_sidecar: Default::default(),
             gas_price: Default::default(),
             pranks: Default::default(),
             expected_revert: Default::default(),
             assume_no_revert: Default::default(),
             fork_revert_diagnostic: Default::default(),
             accesses: Default::default(),
+            recording_accesses: Default::default(),
             recorded_account_diffs_stack: Default::default(),
             recorded_logs: Default::default(),
             record_debug_steps_info: Default::default(),
@@ -1127,10 +1137,30 @@ where {
                         ..Default::default()
                     };
 
-                    if let Some(auth_list) = self.active_delegation.take() {
-                        tx_req.authorization_list = Some(vec![auth_list]);
-                    } else {
-                        tx_req.authorization_list = None;
+                    match (self.active_delegation.take(), self.active_blob_sidecar.take()) {
+                        (Some(_), Some(_)) => {
+                            let msg = "both delegation and blob are active; `attachBlob` and `attachDelegation` are not compatible";
+                            return Some(CallOutcome {
+                                result: InterpreterResult {
+                                    result: InstructionResult::Revert,
+                                    output: Error::encode(msg),
+                                    gas,
+                                },
+                                memory_offset: call.return_memory_offset.clone(),
+                            });
+                        }
+                        (Some(auth_list), None) => {
+                            tx_req.authorization_list = Some(vec![auth_list]);
+                            tx_req.sidecar = None;
+                        }
+                        (None, Some(blob_sidecar)) => {
+                            tx_req.set_blob_sidecar(blob_sidecar);
+                            tx_req.authorization_list = None;
+                        }
+                        (None, None) => {
+                            tx_req.sidecar = None;
+                            tx_req.authorization_list = None;
+                        }
                     }
 
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
@@ -1306,7 +1336,7 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
         }
 
         // `record`: record storage reads and writes.
-        if self.accesses.is_some() {
+        if self.recording_accesses {
             self.record_accesses(interpreter);
         }
 
@@ -1919,7 +1949,7 @@ impl Cheatcodes {
     /// Records storage slots reads and writes.
     #[cold]
     fn record_accesses(&mut self, interpreter: &mut Interpreter) {
-        let Some(access) = &mut self.accesses else { return };
+        let access = &mut self.accesses;
         match interpreter.current_opcode() {
             op::SLOAD => {
                 let key = try_or_return!(interpreter.stack().peek(0));

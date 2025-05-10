@@ -449,6 +449,9 @@ impl Backend {
         let db = self.db.write().await;
         // apply the genesis.json alloc
         self.genesis.apply_genesis_json_alloc(db)?;
+
+        trace!(target: "backend", "set genesis balances");
+
         Ok(())
     }
 
@@ -598,6 +601,8 @@ impl Backend {
             self.db.write().await.clear();
 
             self.apply_genesis().await?;
+
+            trace!(target: "backend", "reset fork");
 
             Ok(())
         } else {
@@ -2519,14 +2524,15 @@ impl Backend {
     ) -> Result<Vec<LocalizedTransactionTrace>, BlockchainError> {
         let matcher = filter.matcher();
         let start = filter.from_block.unwrap_or(0);
-        let end = filter.to_block.unwrap_or(self.best_number());
+        let end = filter.to_block.unwrap_or_else(|| self.best_number());
 
-        let dist = end.saturating_sub(start);
-        if dist == 0 {
+        if start > end {
             return Err(BlockchainError::RpcError(RpcError::invalid_params(
                 "invalid block range, ensure that to block is greater than from block".to_string(),
             )));
         }
+
+        let dist = end - start;
         if dist > 300 {
             return Err(BlockchainError::RpcError(RpcError::invalid_params(
                 "block range too large, currently limited to 300".to_string(),

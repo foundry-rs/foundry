@@ -38,6 +38,7 @@ pub fn run() -> Result<()> {
 
 /// Setup the global logger and other utilities.
 pub fn setup() -> Result<()> {
+    utils::install_crypto_provider();
     handler::install();
     utils::load_dotenv();
     utils::subscriber();
@@ -194,8 +195,19 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let tokens = SimpleCast::calldata_decode(&sig, &calldata, true)?;
             print_tokens(&tokens);
         }
-        CastSubcommand::CalldataEncode { sig, args } => {
-            sh_println!("{}", SimpleCast::calldata_encode(sig, &args)?)?;
+        CastSubcommand::CalldataEncode { sig, args, file } => {
+            let final_args = if let Some(file_path) = file {
+                let contents = fs::read_to_string(file_path)?;
+                contents
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(String::from)
+                    .collect()
+            } else {
+                args
+            };
+            sh_println!("{}", SimpleCast::calldata_encode(sig, &final_args)?)?;
         }
         CastSubcommand::DecodeString { data } => {
             let tokens = SimpleCast::calldata_decode("Any(string)", &data, true)?;
@@ -482,14 +494,17 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Run(cmd) => cmd.run().await?,
         CastSubcommand::SendTx(cmd) => cmd.run().await?,
-        CastSubcommand::Tx { tx_hash, field, raw, rpc } => {
+        CastSubcommand::Tx { tx_hash, from, nonce, field, raw, rpc } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
 
             // Can use either --raw or specify raw as a field
             let raw = raw || field.as_ref().is_some_and(|f| f == "raw");
 
-            sh_println!("{}", Cast::new(&provider).transaction(tx_hash, field, raw).await?)?
+            sh_println!(
+                "{}",
+                Cast::new(&provider).transaction(tx_hash, from, nonce, field, raw).await?
+            )?
         }
 
         // 4Byte

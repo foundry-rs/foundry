@@ -391,6 +391,10 @@ pub enum CastSubcommand {
         /// The arguments to encode.
         #[arg(allow_hyphen_values = true)]
         args: Vec<String>,
+
+        // Path to file containing arguments to encode.
+        #[arg(long, value_name = "PATH")]
+        file: Option<PathBuf>,
     },
 
     /// Get the symbolic name of the current chain.
@@ -446,7 +450,15 @@ pub enum CastSubcommand {
     #[command(visible_alias = "t")]
     Tx {
         /// The transaction hash.
-        tx_hash: String,
+        tx_hash: Option<String>,
+
+        /// The sender of the transaction.
+        #[arg(long, value_parser = NameOrAddress::from_str)]
+        from: Option<NameOrAddress>,
+
+        /// Nonce of the transaction.
+        #[arg(long)]
+        nonce: Option<u64>,
 
         /// If specified, only get the given field of the transaction. If "raw", the RLP encoded
         /// transaction will be printed.
@@ -1134,6 +1146,19 @@ mod tests {
                     args,
                     vec!["5c9d55b78febcc2061715ba4f57ecf8ea2711f2c".to_string(), "2".to_string()]
                 )
+            }
+            _ => unreachable!(),
+        };
+    }
+
+    #[test]
+    fn parse_call_data_with_file() {
+        let args: Cast = Cast::parse_from(["foundry-cli", "calldata", "f()", "--file", "test.txt"]);
+        match args.cmd {
+            CastSubcommand::CalldataEncode { sig, file, args } => {
+                assert_eq!(sig, "f()".to_string());
+                assert_eq!(file, Some(PathBuf::from("test.txt")));
+                assert!(args.is_empty());
             }
             _ => unreachable!(),
         };

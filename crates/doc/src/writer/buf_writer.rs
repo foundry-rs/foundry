@@ -104,7 +104,7 @@ impl BufWriter {
         self.write_list_item(&link.as_doc()?, depth)
     }
 
-    /// Writes a solidity code block block to the buffer.
+    /// Writes a solidity code block to the buffer.
     pub fn write_code(&mut self, code: &str) -> fmt::Result {
         writeln!(self.buf, "{}", Markdown::CodeBlock(SOLIDITY, code))
     }

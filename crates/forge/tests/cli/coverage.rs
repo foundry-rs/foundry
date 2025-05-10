@@ -1845,6 +1845,72 @@ contract ArrayConditionTest is DSTest {
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/10422>
+// Test that line hits are properly recorded in lcov report.
+forgetest!(do_while_lcov, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number = 21;
+
+    function increment() public {
+        uint256 i = 0;
+        do {
+            number++;
+            if (number > 20) {
+                number -= 2;
+            }
+        } while (++i < 10);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "Counter.t.sol",
+        r#"
+import "./test.sol";
+import "./Counter.sol";
+
+contract CounterTest is DSTest {
+    function test_do_while() public {
+        Counter counter = new Counter();
+        counter.increment();
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/Counter.sol
+DA:7,1
+FN:7,Counter.increment
+FNDA:1,Counter.increment
+DA:8,1
+DA:14,10
+DA:10,10
+DA:11,10
+BRDA:11,0,0,6
+DA:12,6
+FNF:1
+FNH:1
+LF:3
+LH:3
+BRF:1
+BRH:1
+end_of_record
+
+"#]],
+    );
+});
+
 #[track_caller]
 fn assert_lcov(cmd: &mut TestCommand, data: impl IntoData) {
     cmd.args(["--report=lcov", "--report-file"]).assert_file(data.into_data());
