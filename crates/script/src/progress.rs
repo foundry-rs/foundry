@@ -212,9 +212,9 @@ impl ScriptProgress {
         while let Some((tx_hash, result)) = tasks.next().await {
             match result {
                 Err(err) => {
-                    // Check if this is a retry error for empty receipts
-                    if err.to_string().contains("Received an empty receipt") {
-                        // We've already retried several times with sleep, but the receipt is still empty
+                    // Check if this is a retry error for pending receipts
+                    if err.to_string().contains("Received a pending receipt") {
+                        // We've already retried several times with sleep, but the receipt is still pending
                         discarded_transactions = true;
                         deployment_sequence.remove_pending(tx_hash);
                         let msg = format!("Transaction {tx_hash:?} was discarded by RPC despite multiple retry attempts. It will be retried when using --resume.");
@@ -262,8 +262,9 @@ impl ScriptProgress {
             
             // Add information about using --resume if necessary
             if !deployment_sequence.pending.is_empty() || discarded_transactions {
-                error_msg += "\n\n Add `--resume` to your command to try and continue broadcasting ";
-                error_msg += "the transactions. This will attempt to resend transactions that were discarded by the RPC.";
+                error_msg += r#"
+
+Add `--resume` to your command to try and continue broadcasting the transactions. This will attempt to resend transactions that were discarded by the RPC."#;
             }
             
             eyre::bail!(error_msg);
