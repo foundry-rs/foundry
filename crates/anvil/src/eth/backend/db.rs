@@ -4,7 +4,6 @@ use crate::{mem::storage::MinedTransaction, revm::primitives::AccountInfo};
 use alloy_consensus::Header;
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256, U64};
 use alloy_rpc_types::BlockId;
-use alloy_sol_types::sol;
 use anvil_core::eth::{
     block::Block,
     transaction::{MaybeImpersonatedTransaction, TransactionInfo, TypedReceipt, TypedTransaction},
@@ -113,15 +112,6 @@ pub trait Db:
         let mut info = self.basic(address)?.unwrap_or_default();
         info.balance = balance;
         self.insert_account(address, info);
-        Ok(())
-    }
-
-    fn deal_erc20(
-        &mut self,
-        address: Address,
-        balance: U256,
-        token_address: Address,
-    ) -> DatabaseResult<()> {
         Ok(())
     }
 

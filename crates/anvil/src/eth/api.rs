@@ -65,6 +65,7 @@ use alloy_rpc_types::{
     EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log, Work,
 };
 use alloy_serde::WithOtherFields;
+use alloy_sol_types::{sol, SolCall};
 use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
@@ -95,7 +96,7 @@ use futures::{
 };
 use parking_lot::RwLock;
 use revm::primitives::Bytecode;
-use std::{future::Future, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, future::Future, sync::Arc, time::Duration};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
@@ -1839,7 +1840,19 @@ impl EthApi {
         token_address: Address,
     ) -> Result<()> {
         node_info!("anvil_dealERC20");
-        self.backend.deal_erc20(address, balance, token_address).await?;
+
+        sol! {
+            #[sol(rpc)]
+            contract IERC20 {
+                function balanceOf(address target) external view returns (uint256);
+            }
+        }
+
+        let calldata = IERC20::balanceOfCall { target: address }.abi_encode();
+        let tx = TransactionRequest::default().with_input(calldata);
+        let access_list_result = self.create_access_list(WithOtherFields::new(tx), None).await?;
+        let access_list = access_list_result.access_list;
+
         Ok(())
     }
 
