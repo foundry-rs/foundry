@@ -737,27 +737,16 @@ impl EthApi {
         block_number: Option<BlockId>,
     ) -> Result<serde_json::Value> {
         node_info!("eth_getAccountInfo");
-        let block_request = self.block_request(block_number).await?;
-
-        if let BlockRequest::Number(number) = block_request {
-            if let Some(fork) = self.get_fork() {
-                if fork.predates_fork(number) {
-                    let acc = fork.get_account(address, number).await?;
-                    return Ok(serde_json::json!({
-                        "balance": acc.balance,
-                        "nonce": acc.nonce,
-                        "code": acc.code_hash
-                    }));
-                }
-            }
-        }
-
-        let account = self.backend.get_account_at_block(address, Some(block_request)).await?;
-
+        let account = self
+            .backend
+            .get_account_at_block(address, Some(self.block_request(block_number).await?))
+            .await?;
+        let code =
+            self.backend.get_code(address, Some(self.block_request(block_number).await?)).await?;
         Ok(serde_json::json!({
             "balance": account.balance,
             "nonce": account.nonce,
-            "code": account.code_hash
+            "code": code
         }))
     }
     /// Returns content of the storage at given address.
