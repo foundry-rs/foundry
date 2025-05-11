@@ -253,7 +253,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             tx_env.enveloped_tx = Some(alloy_rlp::encode(&tx.transaction.transaction).into());
         }
 
-        let mut env = Env::new(self.cfg_env.clone(), self.block_env.clone(), op_tx);
+        let mut env = Env::new(self.cfg_env.clone(), self.block_env.clone(), tx_env);
         env.is_optimism = self.optimism;
 
         env

@@ -102,7 +102,8 @@ fn sign_delegation(
         nonce
     } else {
         let authority_acc = ccx.ecx.journaled_state.load_account(signer.address())?;
-        authority_acc.data.info.nonce
+        // If we don't have a nonce then use next auth account nonce.
+        authority_acc.data.info.nonce + 1
     };
     let auth = Authorization {
         address: implementation,
@@ -129,10 +130,10 @@ fn sign_delegation(
 fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<()> {
     let authority = auth.recover_authority().map_err(|e| format!("{e}"))?;
     let authority_acc = ccx.ecx.journaled_state.load_account(authority)?;
-    if authority_acc.data.info.nonce != auth.nonce {
+    if authority_acc.data.info.nonce + 1 != auth.nonce {
         return Err("invalid nonce".into());
     }
-    authority_acc.data.info.nonce += 1;
+
     if auth.address.is_zero() {
         // Set empty code if the delegation address of authority is 0x.
         ccx.ecx.journaled_state.set_code_with_hash(authority, Bytecode::default(), KECCAK_EMPTY);

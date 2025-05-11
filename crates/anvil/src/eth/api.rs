@@ -80,7 +80,10 @@ use anvil_core::{
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::ProviderBuilder;
 use foundry_evm::{backend::DatabaseError, decode::RevertDecoder};
-use futures::channel::{mpsc::Receiver, oneshot};
+use futures::{
+    channel::{mpsc::Receiver, oneshot},
+    StreamExt,
+};
 use parking_lot::RwLock;
 use revm::{
     bytecode::Bytecode,
@@ -90,6 +93,7 @@ use revm::{
     interpreter::{return_ok, return_revert, InstructionResult},
 };
 use std::{future::Future, sync::Arc, time::Duration};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
@@ -2857,6 +2861,26 @@ impl EthApi {
     /// Returns a new listeners for ready transactions
     pub fn new_ready_transactions(&self) -> Receiver<TxHash> {
         self.pool.add_ready_listener()
+    }
+
+    /// Returns a listener for pending transactions, yielding full transactions
+    pub fn full_pending_transactions(&self) -> UnboundedReceiver<AnyRpcTransaction> {
+        let (tx, rx) = unbounded_channel();
+        let mut hashes = self.new_ready_transactions();
+
+        let this = self.clone();
+
+        tokio::spawn(async move {
+            while let Some(hash) = hashes.next().await {
+                if let Ok(Some(txn)) = this.transaction_by_hash(hash).await {
+                    if tx.send(txn).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+
+        rx
     }
 
     /// Returns a new accessor for certain storage elements
