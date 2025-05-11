@@ -45,7 +45,7 @@ use op_revm::OpTransaction;
 use parking_lot::RwLock;
 use rand::thread_rng;
 use revm::{
-    context::{BlockEnv, TxEnv},
+    context::{BlockEnv, CfgEnv, TxEnv},
     context_interface::block::BlobExcessGasAndPrice,
     primitives::hardfork::SpecId,
 };
@@ -1024,7 +1024,8 @@ impl NodeConfig {
     pub(crate) async fn setup(&mut self) -> Result<mem::Backend> {
         // configure the revm environment
 
-        let mut cfg = Env::default_with_spec_id(self.get_hardfork().into()).evm_env.cfg_env;
+        let mut cfg = CfgEnv::default();
+        cfg.spec = self.get_hardfork().into();
 
         cfg.chain_id = self.get_chain_id();
         cfg.limit_contract_code_size = self.code_size_limit;
@@ -1039,7 +1040,7 @@ impl NodeConfig {
         }
 
         let spec_id = cfg.spec;
-        let mut env = Env::from(
+        let mut env = Env::new(
             cfg,
             BlockEnv {
                 gas_limit: self.gas_limit(),
@@ -1390,7 +1391,7 @@ async fn derive_block_and_transactions(
         ForkChoice::Block(block_number) => {
             let block_number = *block_number;
             if block_number >= 0 {
-                return Ok((block_number as u64, None))
+                return Ok((block_number as u64, None));
             }
             // subtract from latest block number
             let latest = provider.get_block_number().await?;

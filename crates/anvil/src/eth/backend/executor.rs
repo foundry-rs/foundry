@@ -26,9 +26,7 @@ use anvil_core::eth::{
 };
 use foundry_evm::{backend::DatabaseError, traces::CallTraceNode};
 use foundry_evm_core::{either_evm::EitherEvm, evm::FoundryPrecompiles};
-use op_revm::{
-    transaction::deposit::DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, OpContext, OpTransactionError,
-};
+use op_revm::{L1BlockInfo, OpContext};
 use revm::{
     context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm as RevmEvm, JournalTr},
     context_interface::result::{EVMError, ExecutionResult, Output},
@@ -114,6 +112,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     pub blob_gas_used: u64,
     pub enable_steps_tracing: bool,
     pub odyssey: bool,
+    pub optimism: bool,
     pub print_logs: bool,
     pub print_traces: bool,
     /// Precompiles to inject to the EVM.
@@ -248,12 +247,14 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
     }
 
     fn env_for(&self, tx: &PendingTransaction) -> Env {
-        let op_tx = tx.to_revm_tx_env();
+        let mut tx_env = tx.to_revm_tx_env();
 
-        let mut env = Env::from(self.cfg_env.clone(), self.block_env.clone(), op_tx.clone());
-        if env.tx.base.tx_type == DEPOSIT_TRANSACTION_TYPE {
-            env = env.with_deposit(op_tx.deposit);
+        if self.optimism {
+            tx_env.enveloped_tx = Some(alloy_rlp::encode(&tx.transaction.transaction).into());
         }
+
+        let mut env = Env::new(self.cfg_env.clone(), self.block_env.clone(), op_tx);
+        env.is_optimism = self.optimism;
 
         env
     }
@@ -308,7 +309,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             &env,
         ) {
             warn!(target: "backend", "Skipping invalid tx execution [{:?}] {}", transaction.hash(), err);
-            return Some(TransactionExecutionOutcome::Invalid(transaction, err))
+            return Some(TransactionExecutionOutcome::Invalid(transaction, err));
         }
 
         let nonce = account.nonce;
@@ -324,32 +325,35 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             inspector = inspector.with_trace_printer();
         }
 
-        let mut evm = evm_with_inspector(
-            &mut *self.db,
-            &env,
-            &mut inspector,
-            transaction.tx_type() == DEPOSIT_TRANSACTION_TYPE,
-        );
-        trace!(target: "backend", "[{:?}] executing", transaction.hash());
-        let exec_result = match evm.transact_commit(env.tx) {
-            Ok(exec_result) => exec_result,
-            Err(err) => {
-                warn!(target: "backend", "[{:?}] failed to execute: {:?}", transaction.hash(), err);
-                match err {
-                    EVMError::Database(err) => {
-                        return Some(TransactionExecutionOutcome::DatabaseError(transaction, err))
+        let exec_result = {
+            let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
+            // if let Some(factory) = &self.precompile_factory {
+            //     inject_precompiles(&mut evm, factory.precompiles());
+            // }
+
+            trace!(target: "backend", "[{:?}] executing", transaction.hash());
+            // transact and commit the transaction
+            match evm.transact_commit(env.tx) {
+                Ok(exec_result) => exec_result,
+                Err(err) => {
+                    warn!(target: "backend", "[{:?}] failed to execute: {:?}", transaction.hash(), err);
+                    match err {
+                        EVMError::Database(err) => {
+                            return Some(TransactionExecutionOutcome::DatabaseError(
+                                transaction,
+                                err,
+                            ))
+                        }
+                        EVMError::Transaction(err) => {
+                            return Some(TransactionExecutionOutcome::Invalid(
+                                transaction,
+                                err.into(),
+                            ))
+                        }
+                        // This will correspond to prevrandao not set, and it should never happen.
+                        // If it does, it's a bug.
+                        e => panic!("failed to execute transaction: {e}"),
                     }
-                    EVMError::Transaction(err) => {
-                        let err = match err {
-                            OpTransactionError::Base(err) => err.into(),
-                            OpTransactionError::HaltedDepositPostRegolith |
-                            OpTransactionError::DepositSystemTxPostRegolith => {
-                                InvalidTransactionError::DepositTxErrorPostRegolith
-                            }
-                        };
-                        return Some(TransactionExecutionOutcome::Invalid(transaction, err))
-                    }
-                    e => panic!("failed to execute transaction: {e}"),
                 }
             }
         };
@@ -413,17 +417,16 @@ fn build_logs_bloom(logs: Vec<Log>, bloom: &mut Bloom) {
 }
 
 /// Creates a database with given database and inspector, optionally enabling odyssey features.
-pub fn evm_with_inspector<DB, I>(
+pub fn new_evm_with_inspector<DB, I>(
     db: DB,
     env: &Env,
     inspector: I,
-    is_optimism: bool,
 ) -> EitherEvm<DB, I, FoundryPrecompiles>
 where
     DB: Database<Error = DatabaseError>,
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
 {
-    if is_optimism {
+    if env.is_optimism {
         let op_context = OpContext {
             journaled_state: {
                 let mut journal = Journal::new(db);
@@ -476,11 +479,10 @@ where
 }
 
 /// Creates a new EVM with the given inspector and wraps the database in a `WrapDatabaseRef`.
-pub fn evm_with_inspector_ref<'db, DB, I>(
+pub fn new_evm_with_inspector_ref<'db, DB, I>(
     db: &'db DB,
     env: &Env,
     inspector: &'db mut I,
-    is_optimism: bool,
 ) -> EitherEvm<WrapDatabaseRef<&'db DB>, &'db mut I, FoundryPrecompiles>
 where
     DB: DatabaseRef<Error = DatabaseError> + 'db + ?Sized,
@@ -488,5 +490,5 @@ where
         + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>,
     WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
 {
-    evm_with_inspector(WrapDatabaseRef(db), env, inspector, is_optimism)
+    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector)
 }

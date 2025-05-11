@@ -1,7 +1,6 @@
 //! In-memory blockchain backend.
 
 use self::state::trie_storage;
-use super::executor::evm_with_inspector_ref;
 use crate::{
     config::PruneStateHistoryConfig,
     eth::{
@@ -123,6 +122,8 @@ use std::{
 };
 use storage::{Blockchain, MinedTransaction, DEFAULT_HISTORY_LIMIT};
 use tokio::sync::RwLock as AsyncRwLock;
+
+use super::executor::new_evm_with_inspector_ref;
 
 pub mod cache;
 pub mod fork_db;
@@ -1069,7 +1070,7 @@ impl Backend {
         WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>:
             Database<Error = DatabaseError>,
     {
-        evm_with_inspector_ref(db, env, inspector, self.is_optimism())
+        new_evm_with_inspector_ref(db, env, inspector)
         // TODO(yash): inject precompiles
         // if let Some(factory) = &self.precompile_factory {
         //     inject_precompiles(&mut evm, factory.precompiles());
@@ -1158,6 +1159,7 @@ impl Backend {
             print_traces: self.print_traces,
             precompile_factory: self.precompile_factory.clone(),
             odyssey: self.odyssey,
+            optimism: self.is_optimism(),
         };
 
         // create a new pending block
@@ -1241,6 +1243,7 @@ impl Backend {
                     print_traces: self.print_traces,
                     odyssey: self.odyssey,
                     precompile_factory: self.precompile_factory.clone(),
+                    optimism: self.is_optimism(),
                 };
                 let executed_tx = executor.execute();
 
