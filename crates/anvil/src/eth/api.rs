@@ -251,7 +251,7 @@ impl EthApi {
                 self.send_raw_transaction(tx).await.to_rpc_result()
             }
             EthRequest::EthCall(call, block, state_override, block_overrides) => self
-                .call(call, block, EvmOverrides::new(state_override, block_overrides.map(Box::new)))
+                .call(call, block, EvmOverrides::new(state_override, block_overrides))
                 .await
                 .to_rpc_result(),
             EthRequest::EthSimulateV1(simulation, block) => {
@@ -261,11 +261,7 @@ impl EthApi {
                 self.create_access_list(call, block).await.to_rpc_result()
             }
             EthRequest::EthEstimateGas(call, block, state_override, block_overrides) => self
-                .estimate_gas(
-                    call,
-                    block,
-                    EvmOverrides::new(state_override, block_overrides.map(Box::new)),
-                )
+                .estimate_gas(call, block, EvmOverrides::new(state_override, block_overrides))
                 .await
                 .to_rpc_result(),
             EthRequest::EthGetRawTransactionByHash(hash) => {
