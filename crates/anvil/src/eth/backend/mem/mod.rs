@@ -715,6 +715,16 @@ impl Backend {
         self.db.write().await.set_balance(address, balance)
     }
 
+    /// Sets the balance of the given address
+    pub async fn deal_erc20(
+        &self,
+        address: Address,
+        balance: U256,
+        token_address: Address,
+    ) -> DatabaseResult<()> {
+        self.db.write().await.deal_erc20(address, balance, token_address)
+    }
+
     /// Sets the code of the given address
     pub async fn set_code(&self, address: Address, code: Bytes) -> DatabaseResult<()> {
         self.db.write().await.set_code(address, code.0.into())

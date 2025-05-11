@@ -1829,6 +1829,20 @@ impl EthApi {
         Ok(())
     }
 
+    /// Deals ERC20 tokens to a address
+    ///
+    /// Handler for RPC call: `anvil_dealERC20`
+    pub async fn anvil_deal_erc20(
+        &self,
+        address: Address,
+        balance: U256,
+        token_address: Address,
+    ) -> Result<()> {
+        node_info!("anvil_dealERC20");
+        self.backend.deal_erc20(address, balance, token_address).await?;
+        Ok(())
+    }
+
     /// Sets the code of a contract.
     ///
     /// Handler for RPC call: `anvil_setCode`
