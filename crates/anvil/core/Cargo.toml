@@ -29,7 +29,6 @@ alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
-alloy-trie.workspace = true
 op-alloy-consensus = { workspace = true, features = ["serde"] }
 alloy-network.workspace = true
 serde.workspace = true

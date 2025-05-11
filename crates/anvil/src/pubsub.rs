@@ -2,6 +2,7 @@ use crate::{
     eth::{backend::notifications::NewBlockNotifications, error::to_rpc_result},
     StorageInfo,
 };
+use alloy_network::AnyRpcTransaction;
 use alloy_primitives::{TxHash, B256};
 use alloy_rpc_types::{pubsub::SubscriptionResult, FilteredParams, Log, Transaction};
 use anvil_core::eth::{block::Block, subscription::SubscriptionId, transaction::TypedReceipt};
@@ -13,6 +14,7 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+use tokio::sync::mpsc::UnboundedReceiver;
 
 /// Listens for new blocks and matching logs emitted in that block
 #[derive(Debug)]
@@ -86,6 +88,7 @@ pub enum EthSubscription {
     Logs(Box<LogsSubscription>),
     Header(NewBlockNotifications, StorageInfo, SubscriptionId),
     PendingTransactions(Receiver<TxHash>, SubscriptionId),
+    FullPendingTransactions(UnboundedReceiver<AnyRpcTransaction>, SubscriptionId),
 }
 
 impl EthSubscription {
@@ -118,6 +121,13 @@ impl EthSubscription {
                         let params = EthSubscriptionParams { subscription: id.clone(), result };
                         EthSubscriptionResponse::new(params)
                     });
+                Poll::Ready(res)
+            }
+            Self::FullPendingTransactions(tx, id) => {
+                let res = ready!(tx.poll_recv(cx)).map(to_rpc_result).map(|result| {
+                    let params = EthSubscriptionParams { subscription: id.clone(), result };
+                    EthSubscriptionResponse::new(params)
+                });
                 Poll::Ready(res)
             }
         }
