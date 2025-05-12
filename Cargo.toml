@@ -197,42 +197,42 @@ foundry-linking = { path = "crates/linking" }
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.14.0", default-features = false }
 foundry-compilers = { version = "0.15.0", default-features = false }
-foundry-fork-db = "0.12"
+foundry-fork-db = "0.13"
 solang-parser = "=0.3.3"
-solar-parse = { version = "=0.1.2", default-features = false }
-solar-sema = { version = "=0.1.2", default-features = false }
+solar-parse = { version = "=0.1.3", default-features = false }
+solar-sema = { version = "=0.1.3", default-features = false }
 
 ## revm
-revm = { version = "23.0.0", default-features = false }
-revm-inspectors = { version = "0.20.1", features = ["serde"] }
-op-revm = { version = "3.1.0", default-features = false }
+revm = { version = "23.1.0", default-features = false }
+revm-inspectors = { version = "0.21.0", features = ["serde"] }
+op-revm = { version = "4.0.2", default-features = false }
 
 ## alloy-evm
-alloy-evm = "0.6.0"
-alloy-op-evm = "0.6.0"
+alloy-evm = "0.7.1"
+alloy-op-evm = "0.7.1"
 
 ## alloy
-alloy-consensus = { version = "0.15.0", default-features = false }
-alloy-contract = { version = "0.15.0", default-features = false }
-alloy-eips = { version = "0.15.0", default-features = false }
-alloy-genesis = { version = "0.15.0", default-features = false }
-alloy-json-rpc = { version = "0.15.0", default-features = false }
-alloy-network = { version = "0.15.0", default-features = false }
-alloy-provider = { version = "0.15.0", default-features = false }
-alloy-pubsub = { version = "0.15.0", default-features = false }
-alloy-rpc-client = { version = "0.15.0", default-features = false }
-alloy-rpc-types = { version = "0.15.0", default-features = true }
-alloy-serde = { version = "0.15.0", default-features = false }
-alloy-signer = { version = "0.15.0", default-features = false }
-alloy-signer-aws = { version = "0.15.0", default-features = false }
-alloy-signer-gcp = { version = "0.15.0", default-features = false }
-alloy-signer-ledger = { version = "0.15.0", default-features = false }
-alloy-signer-local = { version = "0.15.0", default-features = false }
-alloy-signer-trezor = { version = "0.15.0", default-features = false }
-alloy-transport = { version = "0.15.0", default-features = false }
-alloy-transport-http = { version = "0.15.0", default-features = false }
-alloy-transport-ipc = { version = "0.15.0", default-features = false }
-alloy-transport-ws = { version = "0.15.0", default-features = false }
+alloy-consensus = { version = "0.15.10", default-features = false }
+alloy-contract = { version = "0.15.10", default-features = false }
+alloy-eips = { version = "0.15.10", default-features = false }
+alloy-genesis = { version = "0.15.10", default-features = false }
+alloy-json-rpc = { version = "0.15.10", default-features = false }
+alloy-network = { version = "0.15.10", default-features = false }
+alloy-provider = { version = "0.15.10", default-features = false }
+alloy-pubsub = { version = "0.15.10", default-features = false }
+alloy-rpc-client = { version = "0.15.10", default-features = false }
+alloy-rpc-types = { version = "0.15.10", default-features = true }
+alloy-serde = { version = "0.15.10", default-features = false }
+alloy-signer = { version = "0.15.10", default-features = false }
+alloy-signer-aws = { version = "0.15.10", default-features = false }
+alloy-signer-gcp = { version = "0.15.10", default-features = false }
+alloy-signer-ledger = { version = "0.15.10", default-features = false }
+alloy-signer-local = { version = "0.15.10", default-features = false }
+alloy-signer-trezor = { version = "0.15.10", default-features = false }
+alloy-transport = { version = "0.15.10", default-features = false }
+alloy-transport-http = { version = "0.15.10", default-features = false }
+alloy-transport-ipc = { version = "0.15.10", default-features = false }
+alloy-transport-ws = { version = "0.15.10", default-features = false }
 
 ## alloy-core
 alloy-dyn-abi = "1.0"
@@ -379,4 +379,6 @@ idna_adapter = "=1.1.0"
 # revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "a625c04" }
 
 ## foundry
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "cdbbe64" } # Pinned to main
+foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "b50891c" }
+foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "d05c34a" }
+# foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "cdbbe64" } # Pinned to main

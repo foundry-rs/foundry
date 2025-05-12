@@ -61,7 +61,7 @@ use alloy_rpc_types::{
     },
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
     AccessList, AccessListResult, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
-    EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log,
+    EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log, Work,
 };
 use alloy_serde::WithOtherFields;
 use alloy_transport::TransportErrorKind;
@@ -75,7 +75,7 @@ use anvil_core::{
         wallet::{WalletCapabilities, WalletError},
         EthRequest,
     },
-    types::{ReorgOptions, TransactionData, Work},
+    types::{ReorgOptions, TransactionData},
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::ProviderBuilder;
@@ -90,6 +90,7 @@ use revm::{
     interpreter::{return_ok, return_revert, InstructionResult},
 };
 use std::{future::Future, sync::Arc, time::Duration};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
@@ -1735,15 +1736,18 @@ impl EthApi {
             return Ok(());
         }
 
-        // mine all the blocks
-        for _ in 0..blocks.to::<u64>() {
-            // If we have an interval, jump forwards in time to the "next" timestamp
-            if let Some(interval) = interval {
-                self.backend.time().increase_time(interval);
+        self.on_blocking_task(|this| async move {
+            // mine all the blocks
+            for _ in 0..blocks.to::<u64>() {
+                // If we have an interval, jump forwards in time to the "next" timestamp
+                if let Some(interval) = interval {
+                    this.backend.time().increase_time(interval);
+                }
+                this.mine_one().await;
             }
-
-            self.mine_one().await;
-        }
+            Ok(())
+        })
+        .await?;
 
         Ok(())
     }
@@ -2627,10 +2631,16 @@ impl EthApi {
             }
         }
 
-        // mine all the blocks
-        for _ in 0..blocks_to_mine {
-            self.mine_one().await;
-        }
+        // this can be blocking for a bit, especially in forking mode
+        // <https://github.com/foundry-rs/foundry/issues/6036>
+        self.on_blocking_task(|this| async move {
+            // mine all the blocks
+            for _ in 0..blocks_to_mine {
+                this.mine_one().await;
+            }
+            Ok(())
+        })
+        .await?;
 
         Ok(blocks_to_mine)
     }
@@ -2848,6 +2858,26 @@ impl EthApi {
     /// Returns a new listeners for ready transactions
     pub fn new_ready_transactions(&self) -> Receiver<TxHash> {
         self.pool.add_ready_listener()
+    }
+
+    /// Returns a listener for pending transactions, yielding full transactions
+    pub fn full_pending_transactions(&self) -> UnboundedReceiver<AnyRpcTransaction> {
+        let (tx, rx) = unbounded_channel();
+        let mut hashes = self.new_ready_transactions();
+
+        let this = self.clone();
+
+        tokio::spawn(async move {
+            while let Some(hash) = hashes.next().await {
+                if let Ok(Some(txn)) = this.transaction_by_hash(hash).await {
+                    if tx.send(txn).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+
+        rx
     }
 
     /// Returns a new accessor for certain storage elements

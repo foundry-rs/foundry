@@ -20,7 +20,6 @@ use anvil_core::eth::{
     transaction::{
         DepositReceipt, PendingTransaction, TransactionInfo, TypedReceipt, TypedTransaction,
     },
-    trie,
 };
 use foundry_evm::{backend::DatabaseError, traces::CallTraceNode, Env};
 use foundry_evm_core::{either_evm::EitherEvm, evm::FoundryPrecompiles};
@@ -217,8 +216,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             transactions.push(transaction.pending_transaction.transaction.clone());
         }
 
-        let receipts_root =
-            trie::ordered_trie_root(receipts.iter().map(Encodable2718::encoded_2718));
+        let receipts_root = calculate_receipt_root(&receipts);
 
         let partial_header = PartialHeader {
             parent_hash,

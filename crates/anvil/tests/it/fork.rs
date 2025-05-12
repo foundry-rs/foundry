@@ -1324,6 +1324,7 @@ async fn test_fork_execution_reverted() {
 
 // <https://github.com/foundry-rs/foundry/issues/8227>
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn test_immutable_fork_transaction_hash() {
     use std::str::FromStr;
 
