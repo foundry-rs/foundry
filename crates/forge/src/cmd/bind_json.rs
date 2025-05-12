@@ -318,47 +318,48 @@ impl CompiledState {
             })
             .collect::<BTreeMap<_, _>>();
 
-        // Resolver for EIP712 schemas
-        let resolver = Resolver::new(&asts);
+        todo!();
+        // // Resolver for EIP712 schemas
+        // let resolver = Resolver::new(&asts);
 
-        let mut structs_to_write = Vec::new();
+        // let mut structs_to_write = Vec::new();
 
-        let include = config.bind_json.include;
-        let exclude = config.bind_json.exclude;
+        // let include = config.bind_json.include;
+        // let exclude = config.bind_json.exclude;
 
-        for ((path, id), (def, contract_name)) in structs {
-            // For some structs there's no schema (e.g. if they contain a mapping), so we just skip
-            // those.
-            let Some(schema) = resolver.resolve_struct_eip712(id)? else { continue };
+        // for ((path, id), (def, contract_name)) in structs {
+        //     // For some structs there's no schema (e.g. if they contain a mapping), so we just
+        // skip     // those.
+        //     let Some(schema) = resolver.resolve_struct_eip712(id)? else { continue };
 
-            if !include.is_empty() {
-                if !include.iter().any(|matcher| matcher.is_match(path)) {
-                    continue;
-                }
-            } else {
-                // Exclude library files by default
-                if project.paths.has_library_ancestor(path) {
-                    continue;
-                }
-            }
+        //     if !include.is_empty() {
+        //         if !include.iter().any(|matcher| matcher.is_match(path)) {
+        //             continue;
+        //         }
+        //     } else {
+        //         // Exclude library files by default
+        //         if project.paths.has_library_ancestor(path) {
+        //             continue;
+        //         }
+        //     }
 
-            if exclude.iter().any(|matcher| matcher.is_match(path)) {
-                continue;
-            }
+        //     if exclude.iter().any(|matcher| matcher.is_match(path)) {
+        //         continue;
+        //     }
 
-            structs_to_write.push(StructToWrite {
-                name: def.name.clone(),
-                contract_name,
-                path: path.to_path_buf(),
-                schema,
+        //     structs_to_write.push(StructToWrite {
+        //         name: def.name.clone(),
+        //         contract_name,
+        //         path: path.to_path_buf(),
+        //         schema,
 
-                // will be filled later
-                import_alias: None,
-                name_in_fns: String::new(),
-            })
-        }
+        //         // will be filled later
+        //         import_alias: None,
+        //         name_in_fns: String::new(),
+        //     })
+        // }
 
-        Ok(StructsState { structs_to_write, target_path })
+        // Ok(StructsState { structs_to_write, target_path })
     }
 }
 
