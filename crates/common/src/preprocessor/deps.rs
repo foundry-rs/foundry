@@ -194,7 +194,7 @@ impl<'hir> Visit<'hir> for BytecodeDependencyCollector<'hir> {
                             // the offset will be used to replace `{value: 333} (  ` with `(`
                             let call_args_offset = if named_args.is_some() && !call_args.is_empty()
                             {
-                                (call_args.span().lo() - ty_new.span.hi()).to_usize()
+                                (call_args.span.lo() - ty_new.span.hi()).to_usize()
                             } else {
                                 0
                             };

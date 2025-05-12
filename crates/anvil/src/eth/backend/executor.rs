@@ -443,6 +443,7 @@ where
             cfg: env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::BEDROCK),
             tx: OpTransaction::new(env.tx.clone()),
             chain: L1BlockInfo::default(),
+            local: (),
             error: Ok(()),
         };
 
@@ -467,6 +468,7 @@ where
             cfg: env.evm_env.cfg_env.clone(),
             tx: env.tx.clone(),
             chain: (),
+            local: (),
             error: Ok(()),
         };
 
