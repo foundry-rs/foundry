@@ -713,7 +713,7 @@ async fn can_listen_full_pending_transaction() {
     api.anvil_set_auto_mine(false).await.unwrap();
 
     let provider = alloy_provider::ProviderBuilder::new()
-        .on_ws(WsConnect::new(handle.ws_endpoint()))
+        .connect_ws(WsConnect::new(handle.ws_endpoint()))
         .await
         .unwrap();
 

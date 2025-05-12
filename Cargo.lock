@@ -1240,7 +1240,6 @@ dependencies = [
  "foundry-evm",
  "op-alloy-consensus",
  "op-revm",
- "rand 0.8.5",
  "rand 0.9.1",
  "revm",
  "serde",
