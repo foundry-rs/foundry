@@ -1114,7 +1114,7 @@ impl Cheatcodes {
 
                     let is_fixed_gas_limit = check_if_fixed_gas_limit(&ecx, call.gas_limit);
 
-                    let input = TransactionInput::new(call.input.bytes(ecx).clone());
+                    let input = TransactionInput::new(call.input.bytes(ecx));
 
                     let account =
                         ecx.journaled_state.inner.state().get_mut(&broadcast.new_origin).unwrap();
