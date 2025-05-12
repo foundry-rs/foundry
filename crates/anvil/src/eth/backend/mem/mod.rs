@@ -48,7 +48,7 @@ use alloy_eips::{
         EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
         LEGACY_TX_TYPE_ID,
     },
-    eip7691::MAX_BLOBS_PER_BLOCK_ELECTRA,
+    eip4844::MAX_BLOBS_PER_BLOCK_DENCUN,
 };
 use alloy_evm::{eth::EthEvmContext, Database, Evm};
 use alloy_network::{
@@ -1419,7 +1419,7 @@ impl Backend {
                     sidecar: _,
                     chain_id,
                     transaction_type,
-                    max_fee_per_gas, 
+                    max_fee_per_gas,
                     max_priority_fee_per_gas,
                     .. // Rest of the gas fees related fields are taken from `fee_details`
                 },
@@ -3151,10 +3151,10 @@ impl TransactionValidator for Backend {
             }
 
             // Ensure the tx does not exceed the max blobs per block.
-            if blob_count > MAX_BLOBS_PER_BLOCK_ELECTRA as usize {
+            if blob_count > MAX_BLOBS_PER_BLOCK_DENCUN as usize {
                 return Err(InvalidTransactionError::TooManyBlobs(
                     blob_count,
-                    MAX_BLOBS_PER_BLOCK_ELECTRA as usize,
+                    MAX_BLOBS_PER_BLOCK_DENCUN as usize,
                 ))
             }
 
