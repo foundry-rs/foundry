@@ -36,7 +36,9 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    transaction::Recovered, Account, BlockHeader, Header, Receipt, ReceiptWithBloom, Signed,
+    proofs::{calculate_receipt_root, calculate_transaction_root},
+    transaction::Recovered,
+    Account, BlockHeader, Header, Receipt, ReceiptWithBloom, Signed,
     Transaction as TransactionTrait, TxEnvelope,
 };
 use alloy_eips::{eip1559::BaseFeeParams, eip4844::MAX_BLOBS_PER_BLOCK};
@@ -45,7 +47,8 @@ use alloy_network::{
     EthereumWallet, UnknownTxEnvelope, UnknownTypedTransaction,
 };
 use alloy_primitives::{
-    address, hex, keccak256, utils::Unit, Address, Bytes, TxHash, TxKind, B256, U256, U64,
+    address, hex, keccak256, logs_bloom, utils::Unit, Address, Bytes, TxHash, TxKind, B256, U256,
+    U64,
 };
 use alloy_rpc_types::{
     anvil::Forking,
@@ -449,6 +452,9 @@ impl Backend {
         let db = self.db.write().await;
         // apply the genesis.json alloc
         self.genesis.apply_genesis_json_alloc(db)?;
+
+        trace!(target: "backend", "set genesis balances");
+
         Ok(())
     }
 
@@ -598,6 +604,8 @@ impl Backend {
             self.db.write().await.clear();
 
             self.apply_genesis().await?;
+
+            trace!(target: "backend", "reset fork");
 
             Ok(())
         } else {
@@ -1507,6 +1515,8 @@ impl Backend {
                 let mut log_index = 0;
                 let mut gas_used = 0;
                 let mut transactions = Vec::with_capacity(calls.len());
+                let mut receipts = Vec::new();
+                let mut logs= Vec::new();
                 // apply state overrides before executing the transactions
                 if let Some(state_overrides) = state_overrides {
                     state::apply_cached_db_state_override(state_overrides, &mut cache_db)?;
@@ -1612,7 +1622,7 @@ impl Backend {
                                 message: "execution failed".to_string(),
                             }
                         }),
-                        logs: result
+                        logs: result.clone()
                             .into_logs()
                             .into_iter()
                             .enumerate()
@@ -1629,15 +1639,24 @@ impl Backend {
                             })
                             .collect(),
                     };
-
+                    let receipt = Receipt {
+                        status: result.is_success().into(),
+                        cumulative_gas_used: result.gas_used(),
+                        logs:sim_res.logs.clone()
+                    };
+                    receipts.push(receipt.with_bloom());
+                    logs.extend(sim_res.logs.clone().iter().map(|log| log.inner.clone()));
                     log_index += sim_res.logs.len();
                     call_res.push(sim_res);
                 }
-
+                let transactions_envelopes: Vec<AnyTxEnvelope> = transactions
+                .iter()
+                .map(|tx| AnyTxEnvelope::from(tx.clone()))
+                .collect();
                 let header = Header {
-                    logs_bloom: Default::default(),
-                    transactions_root: Default::default(),
-                    receipts_root: Default::default(),
+                    logs_bloom:logs_bloom(logs.iter()),
+                    transactions_root: calculate_transaction_root(&transactions_envelopes),
+                    receipts_root: calculate_receipt_root(&transactions_envelopes),
                     parent_hash: Default::default(),
                     ommers_hash: Default::default(),
                     beneficiary: block_env.coinbase,
@@ -2519,14 +2538,15 @@ impl Backend {
     ) -> Result<Vec<LocalizedTransactionTrace>, BlockchainError> {
         let matcher = filter.matcher();
         let start = filter.from_block.unwrap_or(0);
-        let end = filter.to_block.unwrap_or(self.best_number());
+        let end = filter.to_block.unwrap_or_else(|| self.best_number());
 
-        let dist = end.saturating_sub(start);
-        if dist == 0 {
+        if start > end {
             return Err(BlockchainError::RpcError(RpcError::invalid_params(
                 "invalid block range, ensure that to block is greater than from block".to_string(),
             )));
         }
+
+        let dist = end - start;
         if dist > 300 {
             return Err(BlockchainError::RpcError(RpcError::invalid_params(
                 "block range too large, currently limited to 300".to_string(),

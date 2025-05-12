@@ -4,7 +4,7 @@ use crate::{
 };
 use alloy_network::{EthereumWallet, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{address, hex, map::B256HashSet, Address, Bytes, FixedBytes, U256};
-use alloy_provider::Provider;
+use alloy_provider::{Provider, WsConnect};
 use alloy_rpc_types::{
     state::{AccountOverride, StateOverride},
     AccessList, AccessListItem, BlockId, BlockNumberOrTag, BlockTransactions, TransactionRequest,
@@ -716,6 +716,34 @@ async fn can_get_pending_transaction() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_listen_full_pending_transaction() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    // Disable auto-mining so transactions remain pending
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = alloy_provider::ProviderBuilder::new()
+        .on_ws(WsConnect::new(handle.ws_endpoint()))
+        .await
+        .unwrap();
+
+    // Subscribe to full pending transactions
+    let sub = provider.subscribe_full_pending_transactions().await;
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    let mut stream = sub.expect("Failed to subscribe to pending tx").into_stream().take(5);
+
+    let from = handle.dev_wallets().next().unwrap().address();
+    let tx = TransactionRequest::default().from(from).value(U256::from(1337)).to(Address::random());
+
+    let tx = provider.send_transaction(tx).await.unwrap();
+
+    // Wait for the subscription to yield a transaction
+    let received = stream.next().await.expect("Failed to receive pending tx");
+
+    assert_eq!(received.tx_hash(), *tx.tx_hash());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_get_raw_transaction() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
@@ -872,7 +900,7 @@ async fn test_tx_receipt() {
     let tx = WithOtherFields::new(tx);
     let tx = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-    // `to` field is none if it's a contract creation transaction: https://ethereum.org/developers/docs/apis/json-rpc/#eth_gettransactionreceipt
+    // `to` field is none if it's a contract creation transaction: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_gettransactionreceipt
     assert!(tx.to.is_none());
     assert!(tx.contract_address.is_some());
 }
