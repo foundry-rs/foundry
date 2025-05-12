@@ -10,7 +10,6 @@ use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_transport::TransportError;
 use clap::{Parser, ValueHint};
-use enscribe::NamingArgs;
 use eyre::{Context, Result};
 use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::{
@@ -35,6 +34,7 @@ use foundry_config::{
 };
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc, time::Duration};
+use crate::cmd::name::NameArgs;
 
 merge_impl_figment_convert!(CreateArgs, build, eth);
 
@@ -86,7 +86,7 @@ pub struct CreateArgs {
     pub timeout: Option<u64>,
 
     #[command(flatten)]
-    pub naming: NamingArgs,
+    pub naming: NameArgs,
 
     #[command(flatten)]
     build: BuildOpts,
@@ -403,14 +403,8 @@ impl CreateArgs {
             sh_println!("Transaction hash: {:?}", receipt.transaction_hash)?;
         };
 
-        if !self.naming.ens_name.is_empty() {
-            let naming_args = NamingArgs {
-                ens_name: self.naming.ens_name,
-                contract_address: deployed_contract,
-                reverse_claimer: self.naming.reverse_claimer,
-                secret_key: self.eth.wallet.raw.private_key.unwrap(),
-            };
-            naming_args.run().await?;
+        if self.naming.ens_name.is_some() {
+            self.naming.run().await?;
         }
 
         if !self.verify {

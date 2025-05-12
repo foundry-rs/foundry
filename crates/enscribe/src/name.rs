@@ -39,26 +39,6 @@ pub struct ChainConfigResponse {
     parent_name: String,
 }
 
-#[derive(Clone, Debug, Parser)]
-pub struct NamingArgs {
-    /// The name to set.
-    #[arg(long)]
-    pub ens_name: String,
-
-    // #[arg(long)]
-    // pub auto_name: bool,
-    /// The address of the contract.
-    #[arg(skip)]
-    pub contract_address: Address,
-
-    /// Whether the contract is ReverseClaimable or not.
-    #[arg(long, requires = "ens_name")]
-    pub reverse_claimer: bool,
-
-    #[arg(skip)]
-    pub secret_key: String,
-}
-
 #[derive(Debug, Serialize)]
 struct Metric {
     contract_address: String,
@@ -68,19 +48,6 @@ struct Metric {
     created_at: u64,
     source: String,
     op_type: String,
-}
-
-impl NamingArgs {
-    pub async fn run(self) -> Result<()> {
-        // set_primary_name(
-        //     self.secret_key,
-        //     self.contract_address,
-        //     self.ens_name,
-        //     self.reverse_claimer,
-        // )
-        // .await
-        Ok(())
-    }
 }
 
 pub async fn set_primary_name<P: Provider<AnyNetwork>>(
