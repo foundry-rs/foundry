@@ -230,6 +230,14 @@ impl<'hir> Visit<'hir> for BytecodeDependencyCollector<'hir> {
                     true,
                 ) {
                     self.collect_dependency(dependency);
+                    for clause in stmt_try.clauses {
+                        for &var in clause.args {
+                            self.visit_nested_var(var)?;
+                        }
+                        for stmt in clause.block {
+                            self.visit_stmt(stmt)?;
+                        }
+                    }
                     return ControlFlow::Continue(());
                 }
             }

@@ -1485,7 +1485,9 @@ contract CounterTest is Test {
     }
 
     function test_try_counterC_creation() public {
-        try new CounterC(1) {} catch {
+        try new CounterC(2) {
+            new CounterC(1);
+        } catch {
             revert();
         }
     }
@@ -1533,7 +1535,7 @@ Compiling 1 files with [..]
 
 "#]]);
 
-    // Change CounterC to fail test.
+    // Change CounterC to fail test in try statement.
     prj.add_source(
         "CounterC.sol",
         r#"
@@ -1548,6 +1550,33 @@ contract CounterC {
     )
     .unwrap();
     // Only CounterC should compile.
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+Compiling 1 files with [..]
+...
+[PASS] test_try_counterA_creation() (gas: [..])
+[FAIL: EvmError: Revert] test_try_counterB_creation() (gas: [..])
+[FAIL: EvmError: Revert] test_try_counterB_creation_with_salt() (gas: [..])
+[FAIL: ctor failure] test_try_counterC_creation() (gas: [..])
+...
+
+"#]]);
+
+    // Change CounterC to fail test in try statement.
+    prj.add_source(
+        "CounterC.sol",
+        r#"
+contract CounterC {
+    uint256 number;
+    constructor(uint256 a) {
+        require(a > 2, "ctor failure");
+        number = a;
+    }
+}
+    "#,
+    )
+    .unwrap();
+    // Only CounterC should compile and revert.
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
 Compiling 1 files with [..]
