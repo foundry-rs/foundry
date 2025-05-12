@@ -1,7 +1,7 @@
 use foundry_test_utils::snapbox::IntoData;
 
 use crate::utils::generate_large_init_contract;
-pub const OTHER_RESOLC_VERSION: &str = "resolc:0.1.0-dev.13";
+pub const OTHER_RESOLC_VERSION: &str = "0.1.0-dev.13";
 
 forgetest_init!(can_build_with_resolc, |prj, cmd| {
     cmd.args(["build", "--resolc-compile"]).assert_success();
