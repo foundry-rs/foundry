@@ -706,7 +706,8 @@ impl Cheatcodes {
 
         // Apply EIP-2930 access lists.
         if let Some(access_list) = &self.access_list {
-            ecx.tx.access_list = access_list.clone()
+            ecx.tx.access_list = access_list.clone();
+            ecx.tx.tx_type = 1;
         }
 
         // Apply our broadcast
@@ -1080,7 +1081,8 @@ impl Cheatcodes {
 
         // Apply EIP-2930 access lists.
         if let Some(access_list) = &self.access_list {
-            ecx.tx.access_list = access_list.clone()
+            ecx.tx.access_list = access_list.clone();
+            ecx.tx.tx_type = 1;
         }
 
         // Apply our broadcast
