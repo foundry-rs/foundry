@@ -194,7 +194,7 @@ impl<'hir> Visit<'hir> for BytecodeDependencyCollector<'hir> {
                             // the offset will be used to replace `{value: 333} (  ` with `(`
                             let call_args_offset = if named_args.is_some() && !call_args.is_empty()
                             {
-                                (call_args.span().lo() - ty_new.span.hi()).to_usize()
+                                (call_args.span.lo() - ty_new.span.hi()).to_usize()
                             } else {
                                 0
                             };
@@ -323,9 +323,6 @@ pub(crate) fn remove_bytecode_dependencies(
                             "_args: encodeArgs{id}(DeployHelper{id}.FoundryPpConstructorArgs",
                             id = dep.referenced_contract.get()
                         ));
-                        if *call_args_offset > 0 {
-                            update.push('(');
-                        }
                         updates.insert((dep.loc.start, dep.loc.end + call_args_offset, update));
                         updates.insert((
                             dep.loc.end + args_length,
