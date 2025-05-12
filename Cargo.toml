@@ -378,8 +378,8 @@ idna_adapter = "=1.1.0"
 # alloy-op-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "95f6a8a" }
 
 ## revm
-revm = { git = "https://github.com/bluealloy/revm.git", rev = "346139b" }
-op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "346139b" }
+revm = { git = "https://github.com/bluealloy/revm.git", rev = "b5808253" }
+op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "b5808253" }
 # revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "a625c04" }
 
 ## foundry
