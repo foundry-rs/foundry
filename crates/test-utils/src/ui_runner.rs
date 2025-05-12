@@ -73,7 +73,7 @@ fn config<'a>(
         },
         output_conflict_handling: ui_test::error_on_output_conflict,
         bless_command: Some(format!("cargo nextest run {} -- --bless", module_path!())),
-        out_dir: root.join("target/ui"),
+        out_dir: root.join("target").join("ui"),
         comment_start: "//",
         diagnostic_extractor: ui_test::diagnostics::rustc::rustc_diagnostics_extractor,
         ..ui_test::Config::dummy()
