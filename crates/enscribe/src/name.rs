@@ -1,7 +1,8 @@
 use crate::abi::{
-    EnsRegistry, NameWrapper, NameWrapper::isWrappedCall, PublicResolver, PublicResolver::addrCall,
-    ReverseRegistrar,
+    EnsRegistry, Enscribe, NameWrapper, NameWrapper::isWrappedCall, PublicResolver,
+    PublicResolver::addrCall, ReverseRegistrar,
 };
+use alloy_primitives::U256;
 use alloy_provider::{
     network::{AnyNetwork, EthereumWallet, NetworkWallet},
     Provider, ProviderBuilder, WalletProvider,
@@ -25,6 +26,7 @@ use std::{
 
 // todo abhi: change this to actual url after api deployed
 pub static CONFIG_API_URL: &str = "http://localhost:3001/config";
+pub static AUTO_GEN_NAME_API_URL: &str = "http://localhost:3001/name";
 pub static METRICS_API_URL: &str = "http://localhost:3001/metrics";
 
 #[derive(Debug, Deserialize)]
@@ -33,6 +35,8 @@ pub struct ChainConfigResponse {
     ens_registry_addr: String,
     public_resolver_addr: String,
     name_wrapper_addr: String,
+    enscribe_addr: String,
+    parent_name: String,
 }
 
 #[derive(Clone, Debug, Parser)]
@@ -85,7 +89,7 @@ pub async fn set_primary_name<P: Provider<AnyNetwork>>(
     provider: P,
     sender_addr: Address,
     contract_addr: Address,
-    name: String,
+    name: Option<String>,
     is_reverse_claimer: bool,
 ) -> Result<()> {
     // let signer = key.parse::<PrivateKeySigner>()?;
@@ -110,46 +114,60 @@ pub async fn set_primary_name<P: Provider<AnyNetwork>>(
     let public_resolver_addr: Address = config.public_resolver_addr.parse()?;
     let name_wrapper_addr: Address = config.name_wrapper_addr.parse()?;
 
-    // let provider = Arc::new(provider);
+    if let Some(name) = name {
+        // let provider = Arc::new(provider);
+        let name_splits = name.split('.').collect::<Vec<&str>>();
+        let label = name_splits[0];
+        let parent = name_splits[1];
+        let tld = name_splits[2];
 
-    let name_splits = name.split('.').collect::<Vec<&str>>();
-    let label = name_splits[0];
-    let parent = name_splits[1];
-    let tld = name_splits[2];
+        // todo abhi: the printlns should be removed
+        println!("label: {:?}", label);
+        let parent_name = format!("{}.{}", parent, tld);
+        println!("parent name: {:?}", parent_name);
+        let parent_name_hash = namehash(&parent_name);
+        println!("parent name hash: {:?}", parent_name_hash);
+        let label_hash = keccak256(&label);
+        let complete_name_hash = namehash(&name);
+        println!("sender addr: {:?}", sender_addr);
 
-    // todo abhi: the printlns should be removed
-    println!("label: {:?}", label);
-    let parent_name = format!("{}.{}", parent, tld);
-    println!("parent name: {:?}", parent_name);
-    let parent_name_hash = namehash(&parent_name);
-    println!("parent name hash: {:?}", parent_name_hash);
-    let label_hash = keccak256(&label);
-    let complete_name_hash = namehash(&name);
-    println!("sender addr: {:?}", sender_addr);
+        create_subname(
+            sender_addr,
+            &provider,
+            ens_registry_addr,
+            public_resolver_addr,
+            name_wrapper_addr,
+            label,
+            parent_name_hash,
+            label_hash,
+        )
+        .await?;
 
-    create_subname(
-        sender_addr,
-        &provider,
-        ens_registry_addr,
-        public_resolver_addr,
-        name_wrapper_addr,
-        label,
-        parent_name_hash,
-        label_hash,
-    )
-    .await?;
-
-    set_resolutions(
-        &provider,
-        public_resolver_addr,
-        complete_name_hash,
-        name.clone(),
-        contract_addr,
-        is_reverse_claimer,
-        sender_addr,
-        reverse_registrar_addr,
-    )
-    .await?;
+        set_resolutions(
+            &provider,
+            public_resolver_addr,
+            complete_name_hash,
+            name.clone(),
+            contract_addr,
+            is_reverse_claimer,
+            sender_addr,
+            reverse_registrar_addr,
+        )
+        .await?;
+    } else {
+        print!("auto generating name ... ");
+        stdout().flush()?;
+        let label = get_auto_generated_name().await?;
+        println!("{label}.{}", config.parent_name);
+        enscribe_set_name(
+            &provider,
+            config.enscribe_addr.parse()?,
+            contract_addr,
+            &label,
+            &config.parent_name,
+        )
+        .await?;
+    }
 
     // todo abhi: uncomment this
     // record_metric(Metric {
@@ -157,12 +175,32 @@ pub async fn set_primary_name<P: Provider<AnyNetwork>>(
     //     ens_name: name,
     //     deployer_address: sender_addr.to_string(),
     //     network: provider.get_chain_id().await?.try_into()?,
-    //     created_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs(),
+    //     created_at:
+    // std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs(),
     //     source: "forge".to_string(),
     //     op_type: "set_primary_name".to_string(),
     // })
     // .await;
 
+    Ok(())
+}
+
+async fn enscribe_set_name<P: Provider<AnyNetwork>>(
+    provider: &P,
+    enscribe_addr: Address,
+    contract_addr: Address,
+    label: &str,
+    parent_name: &str,
+) -> Result<()> {
+    print!("setting name via enscribe ... ");
+    stdout().flush()?;
+    let enscribe = Enscribe::new(enscribe_addr, provider);
+    let parentNode = namehash(parent_name);
+    let tx = enscribe
+        .setName(contract_addr, label.to_owned(), parent_name.to_owned(), parentNode)
+        .value(U256::from(100000000000000u64));
+    let result = provider.send_transaction(tx.into_transaction_request()).await?.watch().await?;
+    println!("done (txn hash: {:?})", result);
     Ok(())
 }
 
@@ -288,4 +326,10 @@ async fn get_config(chain_id: u64) -> Result<ChainConfigResponse> {
 async fn record_metric(metric: Metric) {
     let client = reqwest::Client::new();
     let _ = client.post(METRICS_API_URL).json(&metric).send().await;
+}
+
+async fn get_auto_generated_name() -> Result<String> {
+    let client = reqwest::Client::new();
+    let response = client.get(AUTO_GEN_NAME_API_URL).send().await?;
+    Ok(response.text().await?)
 }

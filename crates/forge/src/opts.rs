@@ -1,7 +1,7 @@
 use crate::cmd::{
     bind::BindArgs, bind_json, build::BuildArgs, cache::CacheArgs, clone::CloneArgs,
     compiler::CompilerArgs, config, coverage, create::CreateArgs, doc::DocArgs, eip712, flatten,
-    fmt::FmtArgs, geiger, generate, init::InitArgs, inspect, install::InstallArgs,
+    fmt::FmtArgs, geiger, generate, init::InitArgs, inspect, install::InstallArgs, name::NameArgs,
     remappings::RemappingArgs, remove::RemoveArgs, selectors::SelectorsSubcommands, snapshot,
     soldeer, test, tree, update,
 };
@@ -11,7 +11,6 @@ use forge_verify::{VerifyArgs, VerifyBytecodeArgs, VerifyCheckArgs};
 use foundry_cli::opts::GlobalArgs;
 use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
 use std::path::PathBuf;
-use crate::cmd::name::NameArgs;
 
 /// Build, test, fuzz, debug and deploy Solidity contracts.
 #[derive(Parser)]
@@ -89,7 +88,7 @@ pub enum ForgeSubcommand {
     /// Deploy a smart contract.
     #[command(visible_alias = "c")]
     Create(CreateArgs),
-    
+
     /// Name a smart contract.
     #[command(visible_alias = "n")]
     Name(NameArgs),

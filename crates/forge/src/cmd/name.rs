@@ -19,10 +19,7 @@ merge_impl_figment_convert!(NameArgs, eth);
 pub struct NameArgs {
     /// The name to set.
     #[arg(long)]
-    pub ens_name: String,
-
-    #[arg(long)]
-    pub auto_name: bool,
+    pub ens_name: Option<String>,
 
     /// The address of the contract.
     #[arg(long)]
@@ -38,7 +35,7 @@ pub struct NameArgs {
 
 impl NameArgs {
     pub async fn run(self) -> eyre::Result<()> {
-        println!("args: {:?}", self);
+        // println!("args: {:?}", self);
         let config = self.load_config()?;
         let signer = self.eth.wallet.signer().await?;
         let provider = utils::get_provider(&config)?;
@@ -47,7 +44,7 @@ impl NameArgs {
             .wallet(EthereumWallet::new(signer))
             .on_provider(provider);
         let sender_addr = provider.default_signer_address();
-        
+
         enscribe::set_primary_name(
             provider,
             sender_addr,

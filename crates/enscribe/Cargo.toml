@@ -22,6 +22,7 @@ foundry-wallets.workspace = true
 
 alloy-contract.workspace = true
 alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
+alloy-primitives.workspace = true
 # todo abhi: remove signer local crate
 alloy-signer-local.workspace = true
 alloy-sol-types.workspace = true
