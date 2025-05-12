@@ -1426,13 +1426,6 @@ impl Backend {
             other,
         } = request;
 
-        let FeeDetails {
-            gas_price,
-            max_fee_per_gas,
-            max_priority_fee_per_gas,
-            max_fee_per_blob_gas,
-        } = fee_details;
-
         let tx_type = transaction_type.unwrap_or_else(|| {
             if authorization_list.is_some() {
                 EIP7702_TX_TYPE_ID
@@ -1446,6 +1439,13 @@ impl Backend {
                 LEGACY_TX_TYPE_ID
             }
         });
+
+        let FeeDetails {
+            gas_price,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            max_fee_per_blob_gas,
+        } = fee_details;
 
         let gas_limit = gas.unwrap_or(block_env.gas_limit);
         let mut env = self.env.read().clone();
