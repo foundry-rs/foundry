@@ -172,6 +172,9 @@ impl EthApi {
             EthRequest::EthGetAccount(addr, block) => {
                 self.get_account(addr, block).await.to_rpc_result()
             }
+            EthRequest::EthGetAccountInfo(addr, block) => {
+                self.get_account_info(addr, block).await.to_rpc_result()
+            }
             EthRequest::EthGetBalance(addr, block) => {
                 self.balance(addr, block).await.to_rpc_result()
             }
@@ -724,6 +727,25 @@ impl EthApi {
         self.backend.get_account_at_block(address, Some(block_request)).await
     }
 
+    /// Returns the account information including balance, nonce, code and storage
+    pub async fn get_account_info(
+        &self,
+        address: Address,
+        block_number: Option<BlockId>,
+    ) -> Result<serde_json::Value> {
+        node_info!("eth_getAccountInfo");
+        let account = self
+            .backend
+            .get_account_at_block(address, Some(self.block_request(block_number).await?))
+            .await?;
+        let code =
+            self.backend.get_code(address, Some(self.block_request(block_number).await?)).await?;
+        Ok(serde_json::json!({
+            "balance": account.balance,
+            "nonce": account.nonce,
+            "code": code
+        }))
+    }
     /// Returns content of the storage at given address.
     ///
     /// Handler for ETH RPC call: `eth_getStorageAt`
