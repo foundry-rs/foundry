@@ -40,22 +40,23 @@ confidence-threshold = 0.8
 # See https://spdx.org/licenses/ for list of possible licenses
 # [possible values: any SPDX 3.7 short identifier (+ optional exception)].
 allow = [
-    "MIT",
-    "Apache-2.0",
+    "0BSD",
     "Apache-2.0 WITH LLVM-exception",
+    "Apache-2.0",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDDL-1.0",
+    "CDLA-Permissive-2.0",
     "ISC",
+    "MIT",
+    "MPL-2.0",
+    "OpenSSL",
     "Unicode-3.0",
     "Unlicense",
     "WTFPL",
-    "BSL-1.0",
-    "0BSD",
-    "MPL-2.0",
-    "CDDL-1.0",
     "Zlib",
-    "OpenSSL",
-    "CDLA-Permissive-2.0",
 ]
 
 # Allow 1 or more licenses on a per-crate basis, so that particular licenses
@@ -97,6 +98,7 @@ unknown-registry = "warn"
 unknown-git = "deny"
 allow-git = [
     "https://github.com/alloy-rs/alloy",
+    "https://github.com/foundry-rs/foundry-fork-db",
     "https://github.com/paradigmxyz/revm-inspectors",
     "https://github.com/bluealloy/revm",
 ]

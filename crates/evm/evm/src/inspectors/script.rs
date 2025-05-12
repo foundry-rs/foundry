@@ -32,9 +32,8 @@ where
         // Check if both target and bytecode address are the same as script contract address
         // (allow calling external libraries when bytecode address is different).
         if interpreter.bytecode.opcode() == ADDRESS &&
-            interpreter.input.target_address == self.script_address
-        // TODO: Find REVM 20 equivalent
-        // && interpreter.contract.bytecode_address == self.script_address
+            interpreter.input.target_address == self.script_address &&
+            interpreter.input.bytecode_address == Some(self.script_address)
         {
             // Log the reason for revert
             let _ = sh_err!(

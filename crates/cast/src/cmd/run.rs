@@ -168,7 +168,7 @@ impl RunArgs {
                     evm_version = Some(EvmVersion::Cancun);
                 }
             }
-            apply_chain_and_block_specific_env_changes::<AnyNetwork>(&mut env, block);
+            apply_chain_and_block_specific_env_changes::<AnyNetwork>(env.as_env_mut(), block);
         }
 
         let trace_mode = TraceMode::Call
@@ -187,7 +187,7 @@ impl RunArgs {
             odyssey,
             create2_deployer,
         )?;
-        let mut env = Env::from_with_spec_id(
+        let mut env = Env::new_with_spec_id(
             env.evm_env.cfg_env.clone(),
             env.evm_env.block_env.clone(),
             env.tx.clone(),

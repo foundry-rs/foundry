@@ -80,7 +80,7 @@ pub struct GasRecord {
     /// The total gas used in the gas snapshot.
     pub gas_used: u64,
     /// Depth at which the gas snapshot was taken.
-    pub depth: u64,
+    pub depth: usize,
 }
 
 /// Records `deal` cheatcodes
@@ -644,7 +644,7 @@ impl Cheatcode for coolSlotCall {
 impl Cheatcode for readCallersCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        read_callers(ccx.state, &ccx.ecx.tx.caller, ccx.ecx.journaled_state.depth().try_into()?)
+        read_callers(ccx.state, &ccx.ecx.tx.caller, ccx.ecx.journaled_state.depth())
     }
 }
 
@@ -1028,7 +1028,7 @@ fn inner_start_gas_snapshot(
         group: group.clone(),
         name: name.clone(),
         gas_used: 0,
-        depth: ccx.ecx.journaled_state.depth().try_into()?,
+        depth: ccx.ecx.journaled_state.depth(),
     });
 
     ccx.state.gas_metering.active_gas_snapshot = Some((group, name));
@@ -1124,7 +1124,7 @@ fn derive_snapshot_name(
 /// - If no caller modification is active:
 ///     - caller_mode will be equal to [CallerMode::None],
 ///     - `msg.sender` and `tx.origin` will be equal to the default sender address.
-fn read_callers(state: &Cheatcodes, default_sender: &Address, call_depth: u64) -> Result {
+fn read_callers(state: &Cheatcodes, default_sender: &Address, call_depth: usize) -> Result {
     let mut mode = CallerMode::None;
     let mut new_caller = default_sender;
     let mut new_origin = default_sender;

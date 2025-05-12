@@ -130,7 +130,6 @@ fn sign_delegation(
 fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<()> {
     let authority = auth.recover_authority().map_err(|e| format!("{e}"))?;
     let authority_acc = ccx.ecx.journaled_state.load_account(authority)?;
-
     if authority_acc.data.info.nonce + 1 != auth.nonce {
         return Err("invalid nonce".into());
     }
@@ -208,7 +207,7 @@ pub struct Broadcast {
     /// Original `tx.origin`
     pub original_origin: Address,
     /// Depth of the broadcast
-    pub depth: u64,
+    pub depth: usize,
     /// Whether the prank stops by itself after the next call
     pub single_call: bool,
 }
@@ -278,7 +277,7 @@ impl Wallets {
 
 /// Sets up broadcasting from a script using `new_origin` as the sender.
 fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bool) -> Result {
-    let depth: u64 = ccx.ecx.journaled_state.depth().try_into()?;
+    let depth = ccx.ecx.journaled_state.depth();
     ensure!(
         ccx.state.get_prank(depth).is_none(),
         "you have an active prank; broadcasting and pranks are not compatible"

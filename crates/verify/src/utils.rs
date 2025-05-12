@@ -341,7 +341,7 @@ pub fn deploy_contract(
     spec_id: SpecId,
     to: Option<TxKind>,
 ) -> Result<Address, eyre::ErrReport> {
-    let env = Env::from_with_spec_id(
+    let env = Env::new_with_spec_id(
         env.evm_env.cfg_env.clone(),
         env.evm_env.block_env.clone(),
         env.tx.clone(),

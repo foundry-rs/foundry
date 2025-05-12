@@ -2,6 +2,7 @@ use crate::{
     eth::{
         backend::{
             db::{Db, SerializableState},
+            env::Env,
             fork::{ClientFork, ClientForkConfig},
             genesis::GenesisConfig,
             mem::fork_db::ForkedDatabase,
@@ -37,13 +38,14 @@ use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
     utils::apply_chain_and_block_specific_env_changes,
-    Env,
 };
+use foundry_evm_core::AsEnvMut;
 use itertools::Itertools;
+use op_revm::OpTransaction;
 use parking_lot::RwLock;
 use rand_08::thread_rng;
 use revm::{
-    context::{BlockEnv, TxEnv},
+    context::{BlockEnv, CfgEnv, TxEnv},
     context_interface::block::BlobExcessGasAndPrice,
     primitives::hardfork::SpecId,
 };
@@ -1022,7 +1024,8 @@ impl NodeConfig {
     pub(crate) async fn setup(&mut self) -> Result<mem::Backend> {
         // configure the revm environment
 
-        let mut cfg = Env::default_with_spec_id(self.get_hardfork().into()).evm_env.cfg_env;
+        let mut cfg = CfgEnv::default();
+        cfg.spec = self.get_hardfork().into();
 
         cfg.chain_id = self.get_chain_id();
         cfg.limit_contract_code_size = self.code_size_limit;
@@ -1037,14 +1040,17 @@ impl NodeConfig {
         }
 
         let spec_id = cfg.spec;
-        let mut env = Env::from(
+        let mut env = Env::new(
             cfg,
             BlockEnv {
                 gas_limit: self.gas_limit(),
                 basefee: self.get_base_fee(),
                 ..Default::default()
             },
-            TxEnv { chain_id: Some(self.get_chain_id()), ..Default::default() },
+            OpTransaction {
+                base: TxEnv { chain_id: Some(self.get_chain_id()), ..Default::default() },
+                ..Default::default()
+            },
         );
 
         env.is_optimism = self.enable_optimism;
@@ -1291,12 +1297,12 @@ latest block number: {latest_block}"
             // need to update the dev signers and env with the chain id
             self.set_chain_id(Some(chain_id));
             env.evm_env.cfg_env.chain_id = chain_id;
-            env.tx.chain_id = chain_id.into();
+            env.tx.base.chain_id = chain_id.into();
             chain_id
         };
         let override_chain_id = self.chain_id;
         // apply changes such as difficulty -> prevrandao and chain specifics for current chain id
-        apply_chain_and_block_specific_env_changes::<AnyNetwork>(env, &block);
+        apply_chain_and_block_specific_env_changes::<AnyNetwork>(env.as_env_mut(), &block);
 
         let meta = BlockchainDbMeta::new(env.evm_env.block_env.clone(), eth_rpc_url.clone());
         let block_chain_db = if self.fork_chain_id.is_some() {
@@ -1385,7 +1391,7 @@ async fn derive_block_and_transactions(
         ForkChoice::Block(block_number) => {
             let block_number = *block_number;
             if block_number >= 0 {
-                return Ok((block_number as u64, None))
+                return Ok((block_number as u64, None));
             }
             // subtract from latest block number
             let latest = provider.get_block_number().await?;

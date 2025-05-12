@@ -14,7 +14,7 @@ pub struct Prank {
     /// The address to assign to `tx.origin`
     pub new_origin: Option<Address>,
     /// The depth at which the prank was called
-    pub depth: u64,
+    pub depth: usize,
     /// Whether the prank stops by itself after the next call
     pub single_call: bool,
     /// Whether the prank should be applied to delegate call
@@ -30,7 +30,7 @@ impl Prank {
         prank_origin: Address,
         new_caller: Address,
         new_origin: Option<Address>,
-        depth: u64,
+        depth: usize,
         single_call: bool,
         delegate_call: bool,
     ) -> Self {
@@ -116,7 +116,7 @@ impl Cheatcode for startPrank_3Call {
 impl Cheatcode for stopPrankCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        ccx.state.pranks.remove(&ccx.ecx.journaled_state.depth().try_into()?);
+        ccx.state.pranks.remove(&ccx.ecx.journaled_state.depth());
         Ok(Default::default())
     }
 }
@@ -137,7 +137,7 @@ fn prank(
         ensure!(!code.data.is_empty(), "cannot `prank` delegate call from an EOA");
     }
 
-    let depth: u64 = ccx.ecx.journaled_state.depth().try_into()?;
+    let depth = ccx.ecx.journaled_state.depth();
     if let Some(Prank { used, single_call: current_single_call, .. }) = ccx.state.get_prank(depth) {
         ensure!(used, "cannot overwrite a prank until it is applied at least once");
         // This case can only fail if the user calls `vm.startPrank` and then `vm.prank` later on.

@@ -1,13 +1,13 @@
 //! In-memory blockchain backend.
 
 use self::state::trie_storage;
-use super::executor::evm_with_inspector_ref;
 use crate::{
     config::PruneStateHistoryConfig,
     eth::{
         backend::{
             cheats::CheatsManager,
             db::{Db, MaybeFullDatabase, SerializableState},
+            env::Env,
             executor::{ExecutedTransactions, TransactionExecutor},
             fork::ClientFork,
             genesis::GenesisConfig,
@@ -75,9 +75,9 @@ use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles};
 use anvil_core::eth::{
     block::{Block, BlockInfo},
     transaction::{
-        optimism::DepositTransaction, transaction_request_to_typed, DepositReceipt,
-        MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse, TransactionInfo,
-        TypedReceipt, TypedTransaction,
+        has_optimism_fields, optimism::DepositTransaction, transaction_request_to_typed,
+        DepositReceipt, MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse,
+        TransactionInfo, TypedReceipt, TypedTransaction,
     },
     wallet::{Capabilities, DelegationCapability, WalletCapabilities},
 };
@@ -91,12 +91,13 @@ use foundry_evm::{
     decode::RevertDecoder,
     inspectors::AccessListInspector,
     traces::TracingInspectorConfig,
-    Env,
 };
 use foundry_evm_core::{either_evm::EitherEvm, evm::FoundryPrecompiles};
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
-use op_revm::{OpContext, OpHaltReason};
+use op_revm::{
+    transaction::deposit::DepositTransactionParts, OpContext, OpHaltReason, OpTransaction,
+};
 use parking_lot::{Mutex, RwLock};
 use revm::{
     context::{Block as RevmBlock, BlockEnv, TxEnv},
@@ -121,6 +122,8 @@ use std::{
 };
 use storage::{Blockchain, MinedTransaction, DEFAULT_HISTORY_LIMIT};
 use tokio::sync::RwLock as AsyncRwLock;
+
+use super::executor::new_evm_with_inspector_ref;
 
 pub mod cache;
 pub mod fork_db;
@@ -1051,7 +1054,6 @@ impl Backend {
     }
 
     /// Creates an EVM instance with optionally injected precompiles.
-    #[expect(clippy::type_complexity)]
     fn new_evm_with_inspector_ref<'db, I>(
         &self,
         db: &'db dyn DatabaseRef<Error = DatabaseError>,
@@ -1068,7 +1070,7 @@ impl Backend {
         WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>:
             Database<Error = DatabaseError>,
     {
-        evm_with_inspector_ref(db, env, inspector, self.is_optimism())
+        new_evm_with_inspector_ref(db, env, inspector)
         // TODO(yash): inject precompiles
         // if let Some(factory) = &self.precompile_factory {
         //     inject_precompiles(&mut evm, factory.precompiles());
@@ -1084,17 +1086,17 @@ impl Backend {
         BlockchainError,
     > {
         let mut env = self.next_env();
-        let (tx_env, maybe_deposit) = tx.pending_transaction.to_revm_tx_env();
-        env.tx = tx_env;
+        env.tx = tx.pending_transaction.to_revm_tx_env();
+
+        if env.is_optimism {
+            env.tx.enveloped_tx =
+                Some(alloy_rlp::encode(&tx.pending_transaction.transaction.transaction).into());
+        }
 
         let db = self.db.read().await;
         let mut inspector = self.build_inspector();
         let mut evm = self.new_evm_with_inspector_ref(db.as_dyn(), &env, &mut inspector);
-        let ResultAndState { result, state } = if env.tx.tx_type == DEPOSIT_TX_TYPE_ID {
-            evm.transact_deposit(env.tx, maybe_deposit.unwrap())?
-        } else {
-            evm.transact(env.tx)?
-        };
+        let ResultAndState { result, state } = evm.transact(env.tx)?;
         let (exit_reason, gas_used, out, logs) = match result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
                 (reason.into(), gas_used, Some(output), Some(logs))
@@ -1157,6 +1159,7 @@ impl Backend {
             print_traces: self.print_traces,
             precompile_factory: self.precompile_factory.clone(),
             odyssey: self.odyssey,
+            optimism: self.is_optimism(),
         };
 
         // create a new pending block
@@ -1240,6 +1243,7 @@ impl Backend {
                     print_traces: self.print_traces,
                     odyssey: self.odyssey,
                     precompile_factory: self.precompile_factory.clone(),
+                    optimism: self.is_optimism(),
                 };
                 let executed_tx = executor.execute();
 
@@ -1408,7 +1412,7 @@ impl Backend {
                     transaction_type,
                     .. // Rest of the gas fees related fields are taken from `fee_details`
                 },
-            ..
+            other,
         } = request;
 
         let FeeDetails {
@@ -1438,36 +1442,39 @@ impl Backend {
         let caller = from.unwrap_or_default();
         let to = to.as_ref().and_then(TxKind::to);
         let blob_hashes = blob_versioned_hashes.unwrap_or_default();
-        env.tx = TxEnv {
-            caller,
-            gas_limit,
-            gas_price,
-            gas_priority_fee: max_priority_fee_per_gas,
-            max_fee_per_blob_gas: max_fee_per_blob_gas
-                .or_else(|| {
-                    if !blob_hashes.is_empty() {
-                        env.evm_env.block_env.blob_gasprice()
-                    } else {
-                        Some(0)
-                    }
-                })
-                .unwrap_or_default(),
-            kind: match to {
-                Some(addr) => TxKind::Call(*addr),
-                None => TxKind::Create,
+        env.tx = OpTransaction {
+            base: TxEnv {
+                caller,
+                gas_limit,
+                gas_price,
+                gas_priority_fee: max_priority_fee_per_gas,
+                max_fee_per_blob_gas: max_fee_per_blob_gas
+                    .or_else(|| {
+                        if !blob_hashes.is_empty() {
+                            env.evm_env.block_env.blob_gasprice()
+                        } else {
+                            Some(0)
+                        }
+                    })
+                    .unwrap_or_default(),
+                kind: match to {
+                    Some(addr) => TxKind::Call(*addr),
+                    None => TxKind::Create,
+                },
+                tx_type: transaction_type.unwrap_or_default(),
+                value: value.unwrap_or_default(),
+                data: input.into_input().unwrap_or_default(),
+                chain_id: None,
+                access_list: access_list.unwrap_or_default(),
+                blob_hashes,
+                authorization_list: authorization_list.unwrap_or_default(),
+                ..Default::default()
             },
-            tx_type: transaction_type.unwrap_or_default(),
-            value: value.unwrap_or_default(),
-            data: input.into_input().unwrap_or_default(),
-            chain_id: None,
-            access_list: access_list.unwrap_or_default(),
-            blob_hashes,
-            authorization_list: authorization_list.unwrap_or_default(),
             ..Default::default()
         };
 
         if let Some(nonce) = nonce {
-            env.tx.nonce = nonce;
+            env.tx.base.nonce = nonce;
         } else {
             // Disable nonce check in revm
             env.evm_env.cfg_env.disable_nonce_check = true;
@@ -1477,6 +1484,25 @@ impl Backend {
             // this is an edge case because the evm fails if `tx.effective_gas_price < base_fee`
             // 0 is only possible if it's manually set
             env.evm_env.cfg_env.disable_base_fee = true;
+        }
+
+        // Deposit transaction?
+        if transaction_type == Some(DEPOSIT_TX_TYPE_ID) && has_optimism_fields(&other) {
+            let deposit = DepositTransactionParts {
+                source_hash: other
+                    .get_deserialized::<B256>("sourceHash")
+                    .map(|sh| sh.unwrap_or_default())
+                    .unwrap_or_default(),
+                mint: other
+                    .get_deserialized::<u128>("mint")
+                    .map(|m| m.unwrap_or_default())
+                    .or(None),
+                is_system_transaction: other
+                    .get_deserialized::<bool>("isSystemTx")
+                    .map(|st| st.unwrap_or_default())
+                    .unwrap_or_default(),
+            };
+            env.tx.deposit = deposit;
         }
 
         env
@@ -1595,7 +1621,6 @@ impl Backend {
                             &env,
                             &mut inspector,
                         );
-
                         trace!(target: "backend", env=?env.evm_env, spec=?env.evm_env.spec_id(),"simulate evm env");
                         evm.transact(env.tx)?
                     };

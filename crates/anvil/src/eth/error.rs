@@ -338,6 +338,16 @@ impl From<InvalidTransaction> for InvalidTransactionError {
         }
     }
 }
+
+impl From<OpTransactionError> for InvalidTransactionError {
+    fn from(value: OpTransactionError) -> Self {
+        match value {
+            OpTransactionError::Base(err) => err.into(),
+            OpTransactionError::DepositSystemTxPostRegolith |
+            OpTransactionError::HaltedDepositPostRegolith => Self::DepositTxErrorPostRegolith,
+        }
+    }
+}
 /// Helper trait to easily convert results to rpc results
 pub(crate) trait ToRpcResponseResult {
     fn to_rpc_result(self) -> ResponseResult;

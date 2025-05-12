@@ -1,7 +1,8 @@
 use crate::{
     eth::{
         backend::{
-            db::Db, mem::op_haltreason_to_instruction_result, validate::TransactionValidator,
+            db::Db, env::Env, mem::op_haltreason_to_instruction_result,
+            validate::TransactionValidator,
         },
         error::InvalidTransactionError,
         pool::transactions::PoolTransaction,
@@ -21,12 +22,9 @@ use anvil_core::eth::{
         DepositReceipt, PendingTransaction, TransactionInfo, TypedReceipt, TypedTransaction,
     },
 };
-use foundry_evm::{backend::DatabaseError, traces::CallTraceNode, Env};
+use foundry_evm::{backend::DatabaseError, traces::CallTraceNode};
 use foundry_evm_core::{either_evm::EitherEvm, evm::FoundryPrecompiles};
-use op_revm::{
-    transaction::deposit::DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, OpContext, OpTransaction,
-    OpTransactionError,
-};
+use op_revm::{L1BlockInfo, OpContext};
 use revm::{
     context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm as RevmEvm, JournalTr},
     context_interface::result::{EVMError, ExecutionResult, Output},
@@ -112,6 +110,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     pub blob_gas_used: u64,
     pub enable_steps_tracing: bool,
     pub odyssey: bool,
+    pub optimism: bool,
     pub print_logs: bool,
     pub print_traces: bool,
     /// Precompiles to inject to the EVM.
@@ -246,12 +245,14 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
     }
 
     fn env_for(&self, tx: &PendingTransaction) -> Env {
-        let (tx_env, maybe_deposit) = tx.to_revm_tx_env();
+        let mut tx_env = tx.to_revm_tx_env();
 
-        let mut env = Env::from(self.cfg_env.clone(), self.block_env.clone(), tx_env);
-        if env.tx.tx_type == DEPOSIT_TRANSACTION_TYPE {
-            env = env.with_deposit(maybe_deposit.unwrap());
+        if self.optimism {
+            tx_env.enveloped_tx = Some(alloy_rlp::encode(&tx.transaction.transaction).into());
         }
+
+        let mut env = Env::new(self.cfg_env.clone(), self.block_env.clone(), tx_env);
+        env.is_optimism = self.optimism;
 
         env
     }
@@ -285,7 +286,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         let env = self.env_for(&transaction.pending_transaction);
 
         // check that we comply with the block's gas limit, if not disabled
-        let max_gas = self.gas_used.saturating_add(env.tx.gas_limit);
+        let max_gas = self.gas_used.saturating_add(env.tx.base.gas_limit);
         if !env.evm_env.cfg_env.disable_block_gas_limit && max_gas > env.evm_env.block_env.gas_limit
         {
             return Some(TransactionExecutionOutcome::Exhausted(transaction))
@@ -309,7 +310,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             &env,
         ) {
             warn!(target: "backend", "Skipping invalid tx execution [{:?}] {}", transaction.hash(), err);
-            return Some(TransactionExecutionOutcome::Invalid(transaction, err))
+            return Some(TransactionExecutionOutcome::Invalid(transaction, err));
         }
 
         let nonce = account.nonce;
@@ -325,39 +326,35 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             inspector = inspector.with_trace_printer();
         }
 
-        let mut evm = evm_with_inspector(
-            &mut *self.db,
-            &env,
-            &mut inspector,
-            transaction.tx_type() == DEPOSIT_TRANSACTION_TYPE,
-        );
+        let exec_result = {
+            let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
+            // if let Some(factory) = &self.precompile_factory {
+            //     inject_precompiles(&mut evm, factory.precompiles());
+            // }
 
-        let tx_commit = if transaction.tx_type() == DEPOSIT_TRANSACTION_TYPE {
-            // Unwrap is safe. This should always be set if the transaction is a deposit
-            evm.transact_deposit_commit(env.tx, env.deposit.unwrap())
-        } else {
-            evm.transact_commit(env.tx)
-        };
-        trace!(target: "backend", "[{:?}] executing", transaction.hash());
-        let exec_result = match tx_commit {
-            Ok(exec_result) => exec_result,
-            Err(err) => {
-                warn!(target: "backend", "[{:?}] failed to execute: {:?}", transaction.hash(), err);
-                match err {
-                    EVMError::Database(err) => {
-                        return Some(TransactionExecutionOutcome::DatabaseError(transaction, err))
+            trace!(target: "backend", "[{:?}] executing", transaction.hash());
+            // transact and commit the transaction
+            match evm.transact_commit(env.tx) {
+                Ok(exec_result) => exec_result,
+                Err(err) => {
+                    warn!(target: "backend", "[{:?}] failed to execute: {:?}", transaction.hash(), err);
+                    match err {
+                        EVMError::Database(err) => {
+                            return Some(TransactionExecutionOutcome::DatabaseError(
+                                transaction,
+                                err,
+                            ))
+                        }
+                        EVMError::Transaction(err) => {
+                            return Some(TransactionExecutionOutcome::Invalid(
+                                transaction,
+                                err.into(),
+                            ))
+                        }
+                        // This will correspond to prevrandao not set, and it should never happen.
+                        // If it does, it's a bug.
+                        e => panic!("failed to execute transaction: {e}"),
                     }
-                    EVMError::Transaction(err) => {
-                        let err = match err {
-                            OpTransactionError::Base(err) => err.into(),
-                            OpTransactionError::HaltedDepositPostRegolith |
-                            OpTransactionError::DepositSystemTxPostRegolith => {
-                                InvalidTransactionError::DepositTxErrorPostRegolith
-                            }
-                        };
-                        return Some(TransactionExecutionOutcome::Invalid(transaction, err))
-                    }
-                    e => panic!("failed to execute transaction: {e}"),
                 }
             }
         };
@@ -421,17 +418,16 @@ fn build_logs_bloom(logs: Vec<Log>, bloom: &mut Bloom) {
 }
 
 /// Creates a database with given database and inspector, optionally enabling odyssey features.
-pub fn evm_with_inspector<DB, I>(
+pub fn new_evm_with_inspector<DB, I>(
     db: DB,
     env: &Env,
     inspector: I,
-    is_optimism: bool,
 ) -> EitherEvm<DB, I, FoundryPrecompiles>
 where
     DB: Database<Error = DatabaseError>,
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
 {
-    if is_optimism {
+    if env.is_optimism {
         let op_context = OpContext {
             journaled_state: {
                 let mut journal = Journal::new(db);
@@ -441,7 +437,7 @@ where
             },
             block: env.evm_env.block_env.clone(),
             cfg: env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::BEDROCK),
-            tx: OpTransaction::new(env.tx.clone()),
+            tx: env.tx.clone(),
             chain: L1BlockInfo::default(),
             local: (),
             error: Ok(()),
@@ -466,7 +462,7 @@ where
             },
             block: env.evm_env.block_env.clone(),
             cfg: env.evm_env.cfg_env.clone(),
-            tx: env.tx.clone(),
+            tx: env.tx.base.clone(),
             chain: (),
             local: (),
             error: Ok(()),
@@ -486,11 +482,10 @@ where
 }
 
 /// Creates a new EVM with the given inspector and wraps the database in a `WrapDatabaseRef`.
-pub fn evm_with_inspector_ref<'db, DB, I>(
+pub fn new_evm_with_inspector_ref<'db, DB, I>(
     db: &'db DB,
     env: &Env,
     inspector: &'db mut I,
-    is_optimism: bool,
 ) -> EitherEvm<WrapDatabaseRef<&'db DB>, &'db mut I, FoundryPrecompiles>
 where
     DB: DatabaseRef<Error = DatabaseError> + 'db + ?Sized,
@@ -498,5 +493,5 @@ where
         + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>,
     WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
 {
-    evm_with_inspector(WrapDatabaseRef(db), env, inspector, is_optimism)
+    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector)
 }

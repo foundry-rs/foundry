@@ -81,7 +81,7 @@ pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
     env: Env,
     inspector: &'i mut I,
 ) -> FoundryEvm<'db, &'i mut I> {
-    let evm_context = EthEvmContext {
+    let ctx = EthEvmContext {
         journaled_state: {
             let mut journal = Journal::new(db);
             journal.set_spec_id(env.evm_env.cfg_env.spec);
@@ -96,7 +96,21 @@ pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
 
     FoundryEvm {
         inner: RevmEvm::new_with_inspector(
-            evm_context,
+            ctx,
+            inspector,
+            EthInstructions::default(),
+            FoundryPrecompiles::default(),
+        ),
+    }
+}
+
+pub fn new_evm_with_existing_context<'a>(
+    ctx: EthEvmContext<&'a mut dyn DatabaseExt>,
+    inspector: &'a mut dyn InspectorExt,
+) -> FoundryEvm<'a, &'a mut dyn InspectorExt> {
+    FoundryEvm {
+        inner: RevmEvm::new_with_inspector(
+            ctx,
             inspector,
             EthInstructions::default(),
             FoundryPrecompiles::default(),
@@ -125,7 +139,8 @@ fn get_create2_factory_call_inputs(
 }
 
 pub struct FoundryEvm<'db, I: InspectorExt> {
-    inner: RevmEvm<
+    #[allow(clippy::type_complexity)]
+    pub inner: RevmEvm<
         EthEvmContext<&'db mut dyn DatabaseExt>,
         I,
         EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt>>,
@@ -133,17 +148,21 @@ pub struct FoundryEvm<'db, I: InspectorExt> {
     >,
 }
 
-impl<'db, I: InspectorExt> Deref for FoundryEvm<'db, I> {
-    type Target = Context<BlockEnv, TxEnv, CfgEnv, &'db mut dyn DatabaseExt>;
+impl<I: InspectorExt> FoundryEvm<'_, I> {
+    pub fn run_execution(
+        &mut self,
+        frame: FrameInput,
+    ) -> Result<FrameResult, EVMError<DatabaseError>> {
+        let mut handler = FoundryHandler::<_>::default();
 
-    fn deref(&self) -> &Self::Target {
-        &self.inner.data.ctx
-    }
-}
+        // Create first frame action
+        let frame = handler.inspect_first_frame_init(&mut self.inner, frame)?;
+        let frame_result = match frame {
+            ItemOrResult::Item(frame) => handler.inspect_run_exec_loop(&mut self.inner, frame)?,
+            ItemOrResult::Result(result) => result,
+        };
 
-impl<'db, I: InspectorExt> DerefMut for FoundryEvm<'db, I> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner.data.ctx
+        Ok(frame_result)
     }
 }
 
@@ -198,7 +217,22 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
     }
 }
 
+impl<'db, I: InspectorExt> Deref for FoundryEvm<'db, I> {
+    type Target = Context<BlockEnv, TxEnv, CfgEnv, &'db mut dyn DatabaseExt>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner.data.ctx
+    }
+}
+
+impl<I: InspectorExt> DerefMut for FoundryEvm<'_, I> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner.data.ctx
+    }
+}
+
 pub struct FoundryHandler<'db, I: InspectorExt> {
+    #[allow(clippy::type_complexity)]
     inner: MainnetHandler<
         RevmEvm<
             EthEvmContext<&'db mut dyn DatabaseExt>,
@@ -286,7 +320,7 @@ impl<'db, I: InspectorExt> Handler for FoundryHandler<'db, I> {
     }
 }
 
-impl<'db, I: InspectorExt> InspectorHandler for FoundryHandler<'db, I> {
+impl<I: InspectorExt> InspectorHandler for FoundryHandler<'_, I> {
     type IT = EthInterpreter;
 
     fn inspect_frame_call(

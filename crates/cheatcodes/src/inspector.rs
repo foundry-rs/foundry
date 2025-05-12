@@ -37,8 +37,9 @@ use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use foundry_common::{evm::Breakpoints, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
-    backend::{DatabaseExt, RevertDiagnostic},
+    backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
+    evm::{new_evm_with_existing_context, FoundryEvm},
     InspectorExt,
 };
 use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
@@ -49,16 +50,19 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaChaRng;
 use revm::{
     self,
-    bytecode::opcode as op,
-    context::{BlockEnv, JournalTr},
+    bytecode::{opcode as op, EOF_MAGIC_BYTES},
+    context::{result::EVMError, BlockEnv, JournalTr},
     context_interface::{transaction::SignedAuthorization, CreateScheme},
+    handler::FrameResult,
     interpreter::{
         interpreter_types::{Jumps, LoopControl, MemoryTr},
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInputs, Gas,
-        Host, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInputs,
+        EOFCreateKind, FrameInput, Gas, Host, InstructionResult, Interpreter, InterpreterAction,
+        InterpreterResult,
     },
+    primitives::hardfork::SpecId,
     state::EvmStorageSlot,
-    Inspector,
+    Inspector, Journal,
 };
 use serde_json::Value;
 use std::{
@@ -85,6 +89,41 @@ pub trait CheatcodesExecutor {
     /// [revm::Inspector].
     fn get_inspector<'a>(&'a mut self, cheats: &'a mut Cheatcodes) -> Box<dyn InspectorExt + 'a>;
 
+    /// Obtains [FoundryEvm] instance and executes the given CREATE frame.
+    fn exec_create(
+        &mut self,
+        inputs: CreateInputs,
+        ccx: &mut CheatsCtxt,
+    ) -> Result<CreateOutcome, EVMError<DatabaseError>> {
+        with_evm(self, ccx, |evm| {
+            evm.inner.data.ctx.journaled_state.depth += 1;
+
+            // Handle EOF bytecode
+            let frame = if evm.inner.data.ctx.cfg.spec.is_enabled_in(SpecId::OSAKA) &&
+                inputs.scheme == CreateScheme::Create &&
+                inputs.init_code.starts_with(&EOF_MAGIC_BYTES)
+            {
+                FrameInput::EOFCreate(Box::new(EOFCreateInputs::new(
+                    inputs.caller,
+                    inputs.value,
+                    inputs.gas_limit,
+                    EOFCreateKind::Tx { initdata: inputs.init_code },
+                )))
+            } else {
+                FrameInput::Create(Box::new(inputs))
+            };
+
+            let outcome = match evm.run_execution(frame)? {
+                FrameResult::Call(_) => unreachable!(),
+                FrameResult::Create(create) | FrameResult::EOFCreate(create) => create,
+            };
+
+            evm.inner.data.ctx.journaled_state.depth -= 1;
+
+            Ok(outcome)
+        })
+    }
+
     fn console_log(&mut self, ccx: &mut CheatsCtxt, msg: &str) {
         self.get_inspector(ccx.state).console_log(msg);
     }
@@ -93,6 +132,46 @@ pub trait CheatcodesExecutor {
     fn tracing_inspector(&mut self) -> Option<&mut Option<TracingInspector>> {
         None
     }
+}
+
+/// Constructs [FoundryEvm] and runs a given closure with it.
+fn with_evm<E, F, O>(
+    executor: &mut E,
+    ccx: &mut CheatsCtxt,
+    f: F,
+) -> Result<O, EVMError<DatabaseError>>
+where
+    E: CheatcodesExecutor + ?Sized,
+    F: for<'a, 'b> FnOnce(
+        &mut FoundryEvm<'a, &'b mut dyn InspectorExt>,
+    ) -> Result<O, EVMError<DatabaseError>>,
+{
+    let mut inspector = executor.get_inspector(ccx.state);
+    let error = std::mem::replace(&mut ccx.ecx.error, Ok(()));
+
+    let ctx = EthEvmContext {
+        block: ccx.ecx.block.clone(),
+        cfg: ccx.ecx.cfg.clone(),
+        tx: ccx.ecx.tx.clone(),
+        journaled_state: Journal {
+            inner: ccx.ecx.journaled_state.inner.clone(),
+            database: &mut *ccx.ecx.journaled_state.database as &mut dyn DatabaseExt,
+        },
+        chain: (),
+        error,
+    };
+
+    let mut evm = new_evm_with_existing_context(ctx, &mut *inspector);
+
+    let res = f(&mut evm)?;
+
+    ccx.ecx.journaled_state.inner = evm.inner.data.ctx.journaled_state.inner;
+    ccx.ecx.block = evm.inner.data.ctx.block;
+    ccx.ecx.tx = evm.inner.data.ctx.tx;
+    ccx.ecx.cfg = evm.inner.data.ctx.cfg;
+    ccx.ecx.error = evm.inner.data.ctx.error;
+
+    Ok(res)
 }
 
 /// Basic implementation of [CheatcodesExecutor] that simply returns the [Cheatcodes] instance as an
@@ -325,7 +404,7 @@ pub struct Cheatcodes {
     pub labels: AddressHashMap<String>,
 
     /// Prank information, mapped to the call depth where pranks were added.
-    pub pranks: BTreeMap<u64, Prank>,
+    pub pranks: BTreeMap<usize, Prank>,
 
     /// Expected revert information
     pub expected_revert: Option<ExpectedRevert>,
@@ -495,7 +574,7 @@ impl Cheatcodes {
     /// Returns the configured prank at given depth or the first prank configured at a lower depth.
     /// For example, if pranks configured for depth 1, 3 and 5, the prank for depth 4 is the one
     /// configured at depth 3.
-    pub fn get_prank(&self, depth: u64) -> Option<&Prank> {
+    pub fn get_prank(&self, depth: usize) -> Option<&Prank> {
         self.pranks.range(..=depth).last().map(|(_, prank)| prank)
     }
 
@@ -607,8 +686,7 @@ impl Cheatcodes {
         }
 
         let gas = Gas::new(input.gas_limit());
-        let curr_depth: u64 =
-            ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64");
+        let curr_depth = ecx.journaled_state.depth();
 
         // Apply our prank
         if let Some(prank) = &self.get_prank(curr_depth) {
@@ -691,7 +769,7 @@ impl Cheatcodes {
                 reverted: false,
                 deployedCode: Bytes::new(), // updated on (eof)create_end
                 storageAccesses: vec![],    // updated on (eof)create_end
-                depth: curr_depth,
+                depth: curr_depth as u64,
             }]);
         }
 
@@ -705,8 +783,7 @@ impl Cheatcodes {
         call: Option<&CreateInputs>,
         outcome: &mut CreateOutcome,
     ) {
-        let curr_depth: u64 =
-            ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64");
+        let curr_depth = ecx.journaled_state.depth();
 
         // Clean up pranks
         if let Some(prank) = &self.get_prank(curr_depth) {
@@ -788,12 +865,8 @@ impl Cheatcodes {
                         // changes. Depending on what depth the cheat was called at, there
                         // may not be any pending calls to update if execution has
                         // percolated up to a higher depth.
-                        let depth: u64 = ecx
-                            .journaled_state
-                            .depth()
-                            .try_into()
-                            .expect("journaled state depth exceeds u64");
-                        if create_access.depth == depth {
+                        let depth = ecx.journaled_state.depth();
+                        if create_access.depth == depth as u64 {
                             debug_assert_eq!(
                                 create_access.kind as u8,
                                 crate::Vm::AccountAccessKind::Create as u8
@@ -851,8 +924,7 @@ impl Cheatcodes {
         executor: &mut impl CheatcodesExecutor,
     ) -> Option<CallOutcome> {
         let gas = Gas::new(call.gas_limit);
-        let curr_depth: u64 =
-            ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64");
+        let curr_depth = ecx.journaled_state.depth();
 
         // At the root call to test function or script `run()`/`setUp()` functions, we are
         // decreasing sender nonce to ensure that it matches on-chain nonce once we start
@@ -1241,10 +1313,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
         // `expectRevert`: track the max call depth during `expectRevert`
         if let Some(expected) = &mut self.expected_revert {
-            expected.max_depth = max(
-                ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64"),
-                expected.max_depth,
-            );
+            expected.max_depth = max(ecx.journaled_state.depth(), expected.max_depth);
         }
     }
 
@@ -1335,8 +1404,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         // This should be placed before the revert handling, because we might exit early there
         if !cheatcode_call {
             // Clean up pranks
-            let curr_depth: u64 =
-                ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64");
+            let curr_depth = ecx.journaled_state.depth();
             if let Some(prank) = &self.get_prank(curr_depth) {
                 if curr_depth == prank.depth {
                     ecx.tx.caller = prank.prank_origin;
@@ -1370,8 +1438,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
             }
 
             // allow multiple cheatcode calls at the same depth
-            let curr_depth: u64 =
-                ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64");
+            let curr_depth = ecx.journaled_state.depth();
             if curr_depth <= assume_no_revert.depth && !cheatcode_call {
                 // Discard run if we're at the same depth as cheatcode, call reverted, and no
                 // specific reason was supplied
@@ -1418,8 +1485,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                 }
             }
 
-            let curr_depth: u64 =
-                ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64");
+            let curr_depth = ecx.journaled_state.depth();
             if curr_depth <= expected_revert.depth {
                 let needs_processing = match expected_revert.kind {
                     ExpectedRevertKind::Default => !cheatcode_call,
@@ -1507,12 +1573,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                         // changes. Depending on the depth the cheat was
                         // called at, there may not be any pending
                         // calls to update if execution has percolated up to a higher depth.
-                        let curr_depth: u64 = ecx
-                            .journaled_state
-                            .depth()
-                            .try_into()
-                            .expect("journaled state depth exceeds u64");
-                        if call_access.depth == curr_depth {
+                        let curr_depth = ecx.journaled_state.depth();
+                        if call_access.depth == curr_depth as u64 {
                             if let Ok(acc) = ecx.journaled_state.load_account(call.target_address) {
                                 debug_assert!(access_is_call(call_access.kind));
                                 call_access.newBalance = acc.info.balance;
@@ -1547,8 +1609,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
             .expected_emits
             .iter()
             .any(|(expected, _)| {
-                let curr_depth: u64 =
-                    ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64");
+                let curr_depth = ecx.journaled_state.depth();
                 expected.depth == curr_depth
             }) &&
             // Ignore staticcalls
@@ -1749,8 +1810,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 impl InspectorExt for Cheatcodes {
     fn should_use_create2_factory(&mut self, ecx: Ecx, inputs: &CreateInputs) -> bool {
         if let CreateScheme::Create2 { .. } = inputs.scheme {
-            let depth: u64 =
-                ecx.journaled_state.depth().try_into().expect("journaled state depth exceeds u64");
+            let depth = ecx.journaled_state.depth();
             let target_depth = if let Some(prank) = &self.get_prank(depth) {
                 prank.depth
             } else if let Some(broadcast) = &self.broadcast {
@@ -1776,7 +1836,10 @@ impl Cheatcodes {
     fn meter_gas(&mut self, interpreter: &mut Interpreter) {
         if let Some(paused_gas) = self.gas_metering.paused_frames.last() {
             // Keep gas constant if paused.
+            // Make sure we record the memory changes so that memory expansion is not paused.
+            let memory = interpreter.control.gas.memory;
             interpreter.control.gas = *paused_gas;
+            interpreter.control.gas.memory = memory;
         } else {
             // Record frame paused gas.
             self.gas_metering.paused_frames.push(interpreter.control.gas);
@@ -1787,11 +1850,7 @@ impl Cheatcodes {
     fn meter_gas_record(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
         if matches!(interpreter.control.instruction_result, InstructionResult::Continue) {
             self.gas_metering.gas_records.iter_mut().for_each(|record| {
-                let curr_depth: u64 = ecx
-                    .journaled_state
-                    .depth()
-                    .try_into()
-                    .expect("journaled state depth exceeds u64");
+                let curr_depth = ecx.journaled_state.depth();
                 if curr_depth == record.depth {
                     // Skip the first opcode of the first call frame as it includes the gas cost of
                     // creating the snapshot.
@@ -1970,7 +2029,7 @@ impl Cheatcodes {
                     newValue: present_value.into(),
                     reverted: false,
                 };
-                let curr_depth: u64 = ecx
+                let curr_depth = ecx
                     .journaled_state
                     .depth()
                     .try_into()
@@ -2000,7 +2059,7 @@ impl Cheatcodes {
                     newValue: value.into(),
                     reverted: false,
                 };
-                let curr_depth: u64 = ecx
+                let curr_depth = ecx
                     .journaled_state
                     .depth()
                     .try_into()

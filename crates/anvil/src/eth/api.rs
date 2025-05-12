@@ -80,7 +80,10 @@ use anvil_core::{
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::ProviderBuilder;
 use foundry_evm::{backend::DatabaseError, decode::RevertDecoder};
-use futures::channel::{mpsc::Receiver, oneshot};
+use futures::{
+    channel::{mpsc::Receiver, oneshot},
+    StreamExt,
+};
 use parking_lot::RwLock;
 use revm::{
     bytecode::Bytecode,
