@@ -1419,10 +1419,26 @@ impl Backend {
                     sidecar: _,
                     chain_id,
                     transaction_type,
+                    max_fee_per_gas, 
+                    max_priority_fee_per_gas,
                     .. // Rest of the gas fees related fields are taken from `fee_details`
                 },
             other,
         } = request;
+
+        let tx_type = transaction_type.unwrap_or_else(|| {
+            if authorization_list.is_some() {
+                EIP7702_TX_TYPE_ID
+            } else if blob_versioned_hashes.is_some() {
+                EIP4844_TX_TYPE_ID
+            } else if max_fee_per_gas.is_some() || max_priority_fee_per_gas.is_some() {
+                EIP1559_TX_TYPE_ID
+            } else if access_list.is_some() {
+                EIP2930_TX_TYPE_ID
+            } else {
+                LEGACY_TX_TYPE_ID
+            }
+        });
 
         let FeeDetails {
             gas_price,
