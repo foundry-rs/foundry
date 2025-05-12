@@ -997,7 +997,7 @@ Compiler run successful!
 Ran 1 test for test/Contract.t.sol:PrecompileLabelsTest
 [PASS] testPrecompileLabels() ([GAS])
 Traces:
-  [14048] PrecompileLabelsTest::testPrecompileLabels()
+  [..] PrecompileLabelsTest::testPrecompileLabels()
     ├─ [0] VM::deal(VM: [0x7109709ECfa91a80626fF3989D68f67F5b1DD12D], 1000000000000000000 [1e18])
     │   └─ ← [Return]
     ├─ [0] VM::deal(console: [0x000000000000000000636F6e736F6c652e6c6f67], 1000000000000000000 [1e18])
@@ -1451,10 +1451,10 @@ contract ATest is Test {
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-[PASS] testNormalGas() (gas: 3153)
-[PASS] testWeirdGas1() (gas: 2991)
-[PASS] testWeirdGas2() (gas: 3218)
-[PASS] testWithAssembly() (gas: 3034)
+[PASS] testNormalGas() (gas: 3148)
+[PASS] testWeirdGas1() (gas: 2986)
+[PASS] testWeirdGas2() (gas: 3213)
+[PASS] testWithAssembly() (gas: 3029)
 ...
 "#]]);
 });
@@ -1547,9 +1547,9 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-[PASS] test_GasMeter() (gas: 53102)
+[PASS] test_GasMeter() (gas: 53097)
 Traces:
-  [53102] ATest::test_GasMeter()
+  [53097] ATest::test_GasMeter()
     ├─ [0] VM::pauseGasMetering()
     │   └─ ← [Return]
     ├─ [0] VM::resumeGasMetering()
@@ -3308,9 +3308,9 @@ Traces:
     ├─ [0] VM::label(alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6], "alice")
     │   └─ ← [Return]
     ├─ [0] VM::signDelegation(0x0000000000000000000000000000000000000000, "<pk>")
-    │   └─ ← [Return] (0, 0x3d6ad67cc3dc94101a049f85f96937513a05485ae0f8b27545d25c4f71b12cf9, 0x3c0f2d62834f59d6ef0209e8a935f80a891a236eb18ac0e3700dd8f7ac8ae279, 0, 0x0000000000000000000000000000000000000000)
+    │   └─ ← [Return] (0, 0x38db2a0ada75402af7cd5bdb8248a1a5b4fec65fdafea4f935084f00dc2ff3c5, 0x29ce7b1c82f9ceaec21f12d690ba8fe6ecba65869caf6ab2d85d79890dc42df2, 1, 0x0000000000000000000000000000000000000000)
     ├─ [0] VM::signAndAttachDelegation(0x0000000000000000000000000000000000000000, "<pk>")
-    │   └─ ← [Return] (0, 0x3d6ad67cc3dc94101a049f85f96937513a05485ae0f8b27545d25c4f71b12cf9, 0x3c0f2d62834f59d6ef0209e8a935f80a891a236eb18ac0e3700dd8f7ac8ae279, 0, 0x0000000000000000000000000000000000000000)
+    │   └─ ← [Return] (0, 0x38db2a0ada75402af7cd5bdb8248a1a5b4fec65fdafea4f935084f00dc2ff3c5, 0x29ce7b1c82f9ceaec21f12d690ba8fe6ecba65869caf6ab2d85d79890dc42df2, 1, 0x0000000000000000000000000000000000000000)
     └─ ← [Stop]
 ...
 

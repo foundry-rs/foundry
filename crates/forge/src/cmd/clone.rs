@@ -101,8 +101,10 @@ impl CloneArgs {
         // step 0. get the chain and api key from the config
         let config = etherscan.load_config()?;
         let chain = config.chain.unwrap_or_default();
+        let etherscan_api_version = config.get_etherscan_api_version(Some(chain));
         let etherscan_api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-        let client = Client::new(chain, etherscan_api_key.clone())?;
+        let client =
+            Client::new_with_api_version(chain, etherscan_api_key.clone(), etherscan_api_version)?;
 
         // step 1. get the metadata from client
         sh_println!("Downloading the source code of {address} from Etherscan...")?;
@@ -630,7 +632,7 @@ mod tests {
     use super::*;
     use alloy_primitives::hex;
     use foundry_compilers::CompilerContract;
-    use foundry_test_utils::rpc::next_mainnet_etherscan_api_key;
+    use foundry_test_utils::rpc::next_etherscan_api_key;
     use std::collections::BTreeMap;
 
     #[expect(clippy::disallowed_macros)]
@@ -709,7 +711,7 @@ mod tests {
         // create folder if not exists
         std::fs::create_dir_all(&data_folder).unwrap();
         // create metadata.json and creation_data.json
-        let client = Client::new(Chain::mainnet(), next_mainnet_etherscan_api_key()).unwrap();
+        let client = Client::new(Chain::mainnet(), next_etherscan_api_key()).unwrap();
         let meta = client.contract_source_code(address).await.unwrap();
         // dump json
         let json = serde_json::to_string_pretty(&meta).unwrap();

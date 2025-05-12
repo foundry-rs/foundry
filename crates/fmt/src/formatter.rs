@@ -3252,7 +3252,7 @@ impl<W: Write> Visitor for Formatter<'_, W> {
                 let is_constructor = self.context.is_constructor_function();
                 // we can't make any decisions here regarding trailing `()` because we'd need to
                 // find out if the `base` is a solidity modifier or an
-                // interface/contract therefore we we its raw content.
+                // interface/contract therefore we use its raw content.
 
                 // we can however check if the contract `is` the `base`, this however also does
                 // not cover all cases

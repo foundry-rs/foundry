@@ -62,7 +62,7 @@ use alloy_rpc_types::{
     },
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
     AccessList, AccessListResult, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
-    EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log,
+    EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log, Work,
 };
 use alloy_serde::WithOtherFields;
 use alloy_transport::TransportErrorKind;
@@ -76,7 +76,7 @@ use anvil_core::{
         wallet::{WalletCapabilities, WalletError},
         EthRequest,
     },
-    types::{ReorgOptions, TransactionData, Work},
+    types::{ReorgOptions, TransactionData},
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::ProviderBuilder;
@@ -89,10 +89,14 @@ use foundry_evm::{
         primitives::BlockEnv,
     },
 };
-use futures::channel::{mpsc::Receiver, oneshot};
+use futures::{
+    channel::{mpsc::Receiver, oneshot},
+    StreamExt,
+};
 use parking_lot::RwLock;
 use revm::primitives::Bytecode;
 use std::{future::Future, sync::Arc, time::Duration};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
@@ -170,6 +174,9 @@ impl EthApi {
             EthRequest::Web3Sha3(content) => self.sha3(content).to_rpc_result(),
             EthRequest::EthGetAccount(addr, block) => {
                 self.get_account(addr, block).await.to_rpc_result()
+            }
+            EthRequest::EthGetAccountInfo(addr, block) => {
+                self.get_account_info(addr, block).await.to_rpc_result()
             }
             EthRequest::EthGetBalance(addr, block) => {
                 self.balance(addr, block).await.to_rpc_result()
@@ -723,6 +730,25 @@ impl EthApi {
         self.backend.get_account_at_block(address, Some(block_request)).await
     }
 
+    /// Returns the account information including balance, nonce, code and storage
+    pub async fn get_account_info(
+        &self,
+        address: Address,
+        block_number: Option<BlockId>,
+    ) -> Result<serde_json::Value> {
+        node_info!("eth_getAccountInfo");
+        let account = self
+            .backend
+            .get_account_at_block(address, Some(self.block_request(block_number).await?))
+            .await?;
+        let code =
+            self.backend.get_code(address, Some(self.block_request(block_number).await?)).await?;
+        Ok(serde_json::json!({
+            "balance": account.balance,
+            "nonce": account.nonce,
+            "code": code
+        }))
+    }
     /// Returns content of the storage at given address.
     ///
     /// Handler for ETH RPC call: `eth_getStorageAt`
@@ -1738,15 +1764,18 @@ impl EthApi {
             return Ok(());
         }
 
-        // mine all the blocks
-        for _ in 0..blocks.to::<u64>() {
-            // If we have an interval, jump forwards in time to the "next" timestamp
-            if let Some(interval) = interval {
-                self.backend.time().increase_time(interval);
+        self.on_blocking_task(|this| async move {
+            // mine all the blocks
+            for _ in 0..blocks.to::<u64>() {
+                // If we have an interval, jump forwards in time to the "next" timestamp
+                if let Some(interval) = interval {
+                    this.backend.time().increase_time(interval);
+                }
+                this.mine_one().await;
             }
-
-            self.mine_one().await;
-        }
+            Ok(())
+        })
+        .await?;
 
         Ok(())
     }
@@ -2630,10 +2659,16 @@ impl EthApi {
             }
         }
 
-        // mine all the blocks
-        for _ in 0..blocks_to_mine {
-            self.mine_one().await;
-        }
+        // this can be blocking for a bit, especially in forking mode
+        // <https://github.com/foundry-rs/foundry/issues/6036>
+        self.on_blocking_task(|this| async move {
+            // mine all the blocks
+            for _ in 0..blocks_to_mine {
+                this.mine_one().await;
+            }
+            Ok(())
+        })
+        .await?;
 
         Ok(blocks_to_mine)
     }
@@ -2852,6 +2887,26 @@ impl EthApi {
     /// Returns a new listeners for ready transactions
     pub fn new_ready_transactions(&self) -> Receiver<TxHash> {
         self.pool.add_ready_listener()
+    }
+
+    /// Returns a listener for pending transactions, yielding full transactions
+    pub fn full_pending_transactions(&self) -> UnboundedReceiver<AnyRpcTransaction> {
+        let (tx, rx) = unbounded_channel();
+        let mut hashes = self.new_ready_transactions();
+
+        let this = self.clone();
+
+        tokio::spawn(async move {
+            while let Some(hash) = hashes.next().await {
+                if let Ok(Some(txn)) = this.transaction_by_hash(hash).await {
+                    if tx.send(txn).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+
+        rx
     }
 
     /// Returns a new accessor for certain storage elements

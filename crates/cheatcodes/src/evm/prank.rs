@@ -16,7 +16,7 @@ pub struct Prank {
     pub depth: u64,
     /// Whether the prank stops by itself after the next call
     pub single_call: bool,
-    /// Whether the prank should be be applied to delegate call
+    /// Whether the prank should be applied to delegate call
     pub delegate_call: bool,
     /// Whether the prank has been used yet (false if unused)
     pub used: bool,

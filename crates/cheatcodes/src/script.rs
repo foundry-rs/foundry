@@ -9,7 +9,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
 use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
 use parking_lot::Mutex;
-use revm::primitives::{Bytecode, SignedAuthorization, SpecId};
+use revm::primitives::{Bytecode, SignedAuthorization, SpecId, KECCAK_EMPTY};
 use std::sync::Arc;
 
 impl Cheatcode for broadcast_0Call {
@@ -98,7 +98,8 @@ fn sign_delegation(
     } else {
         let authority_acc =
             ccx.ecx.journaled_state.load_account(signer.address(), &mut ccx.ecx.db)?;
-        authority_acc.data.info.nonce
+        // If we don't have a nonce then use next auth account nonce.
+        authority_acc.data.info.nonce + 1
     };
     let auth = Authorization {
         address: implementation,
@@ -125,12 +126,18 @@ fn sign_delegation(
 fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<()> {
     let authority = auth.recover_authority().map_err(|e| format!("{e}"))?;
     let authority_acc = ccx.ecx.journaled_state.load_account(authority, &mut ccx.ecx.db)?;
-    if authority_acc.data.info.nonce != auth.nonce {
+
+    if authority_acc.data.info.nonce + 1 != auth.nonce {
         return Err("invalid nonce".into());
     }
-    authority_acc.data.info.nonce += 1;
-    let bytecode = Bytecode::new_eip7702(*auth.address());
-    ccx.ecx.journaled_state.set_code(authority, bytecode);
+
+    if auth.address.is_zero() {
+        // Set empty code if the delegation address of authority is 0x.
+        ccx.ecx.journaled_state.set_code_with_hash(authority, Bytecode::default(), KECCAK_EMPTY);
+    } else {
+        let bytecode = Bytecode::new_eip7702(*auth.address());
+        ccx.ecx.journaled_state.set_code(authority, bytecode);
+    }
     Ok(())
 }
 
