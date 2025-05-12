@@ -437,7 +437,8 @@ impl Executor {
         authorization_list: Vec<SignedAuthorization>,
     ) -> eyre::Result<RawCallResult> {
         let mut env = self.build_test_env(from, to.into(), calldata, value);
-        env.tx.authorization_list = authorization_list;
+        env.tx.set_signed_authorization(authorization_list);
+
         self.call_with_env(env)
     }
 

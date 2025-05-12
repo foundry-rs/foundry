@@ -146,7 +146,7 @@ pub fn configure_tx_req_env(
 
     // Type 4, EIP-7702
     if let Some(authorization_list) = authorization_list {
-        env.tx.authorization_list = authorization_list.clone();
+        env.tx.set_signed_authorization(authorization_list.clone());
     }
 
     Ok(())

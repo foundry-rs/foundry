@@ -103,6 +103,8 @@ where
     type Error = EVMError<DB::Error, OpTransactionError>;
     type HaltReason = OpHaltReason;
     type Tx = OpTransaction<TxEnv>;
+    type Inspector = I;
+    type Precompiles = P;
     type Spec = SpecId;
 
     fn chain_id(&self) -> u64 {
@@ -146,6 +148,20 @@ where
                 let (db, env) = evm.finish();
                 (db, map_env(env))
             }
+        }
+    }
+
+    fn precompiles_mut(&mut self) -> &mut Self::Precompiles {
+        match self {
+            Self::Eth(evm) => evm.precompiles_mut(),
+            Self::Op(evm) => evm.precompiles_mut(),
+        }
+    }
+
+    fn inspector_mut(&mut self) -> &mut Self::Inspector {
+        match self {
+            Self::Eth(evm) => evm.inspector_mut(),
+            Self::Op(evm) => evm.inspector_mut(),
         }
     }
 

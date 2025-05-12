@@ -22,11 +22,12 @@ use anvil_core::eth::{
         DepositReceipt, PendingTransaction, TransactionInfo, TypedReceipt, TypedTransaction,
     },
 };
+use chrono::Local;
 use foundry_evm::{backend::DatabaseError, traces::CallTraceNode};
 use foundry_evm_core::{either_evm::EitherEvm, evm::FoundryPrecompiles};
 use op_revm::{L1BlockInfo, OpContext};
 use revm::{
-    context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm as RevmEvm, JournalTr},
+    context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext},
     context_interface::result::{EVMError, ExecutionResult, Output},
     database::WrapDatabaseRef,
     handler::instructions::EthInstructions,
@@ -439,7 +440,7 @@ where
             cfg: env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::BEDROCK),
             tx: env.tx.clone(),
             chain: L1BlockInfo::default(),
-            local: (),
+            local: LocalContext::default(),
             error: Ok(()),
         };
 
@@ -464,7 +465,7 @@ where
             cfg: env.evm_env.cfg_env.clone(),
             tx: env.tx.base.clone(),
             chain: (),
-            local: (),
+            local: LocalContext::default(),
             error: Ok(()),
         };
 

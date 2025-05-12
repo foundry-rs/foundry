@@ -51,7 +51,7 @@ use rand_chacha::ChaChaRng;
 use revm::{
     self,
     bytecode::{opcode as op, EOF_MAGIC_BYTES},
-    context::{result::EVMError, BlockEnv, JournalTr},
+    context::{result::EVMError, BlockEnv, JournalTr, LocalContext},
     context_interface::{transaction::SignedAuthorization, CreateScheme},
     handler::FrameResult,
     interpreter::{
@@ -96,10 +96,10 @@ pub trait CheatcodesExecutor {
         ccx: &mut CheatsCtxt,
     ) -> Result<CreateOutcome, EVMError<DatabaseError>> {
         with_evm(self, ccx, |evm| {
-            evm.inner.data.ctx.journaled_state.depth += 1;
+            evm.inner.ctx.journaled_state.depth += 1;
 
             // Handle EOF bytecode
-            let frame = if evm.inner.data.ctx.cfg.spec.is_enabled_in(SpecId::OSAKA) &&
+            let frame = if evm.inner.ctx.cfg.spec.is_enabled_in(SpecId::OSAKA) &&
                 inputs.scheme == CreateScheme::Create &&
                 inputs.init_code.starts_with(&EOF_MAGIC_BYTES)
             {
@@ -118,7 +118,7 @@ pub trait CheatcodesExecutor {
                 FrameResult::Create(create) | FrameResult::EOFCreate(create) => create,
             };
 
-            evm.inner.data.ctx.journaled_state.depth -= 1;
+            evm.inner.ctx.journaled_state.depth -= 1;
 
             Ok(outcome)
         })
@@ -157,6 +157,7 @@ where
             inner: ccx.ecx.journaled_state.inner.clone(),
             database: &mut *ccx.ecx.journaled_state.database as &mut dyn DatabaseExt,
         },
+        local: LocalContext::default(),
         chain: (),
         error,
     };
@@ -165,11 +166,11 @@ where
 
     let res = f(&mut evm)?;
 
-    ccx.ecx.journaled_state.inner = evm.inner.data.ctx.journaled_state.inner;
-    ccx.ecx.block = evm.inner.data.ctx.block;
-    ccx.ecx.tx = evm.inner.data.ctx.tx;
-    ccx.ecx.cfg = evm.inner.data.ctx.cfg;
-    ccx.ecx.error = evm.inner.data.ctx.error;
+    ccx.ecx.journaled_state.inner = evm.inner.ctx.journaled_state.inner;
+    ccx.ecx.block = evm.inner.ctx.block;
+    ccx.ecx.tx = evm.inner.ctx.tx;
+    ccx.ecx.cfg = evm.inner.ctx.cfg;
+    ccx.ecx.error = evm.inner.ctx.error;
 
     Ok(res)
 }
@@ -596,7 +597,7 @@ impl Cheatcodes {
         executor: &mut dyn CheatcodesExecutor,
     ) -> Result {
         // decode the cheatcode call
-        let decoded = Vm::VmCalls::abi_decode(&call.input).map_err(|e| {
+        let decoded = Vm::VmCalls::abi_decode(&call.input.bytes(ecx)).map_err(|e| {
             if let alloy_sol_types::Error::UnknownSelector { name: _, selector } = e {
                 let msg = format!(
                     "unknown cheatcode with selector {selector}; \
@@ -986,7 +987,7 @@ impl Cheatcodes {
                 // The calldata is at most, as big as this call's input, and
                 if calldata.len() <= call.input.len() &&
                     // Both calldata match, taking the length of the assumed smaller one (which will have at least the selector), and
-                    *calldata == call.input[..calldata.len()] &&
+                    *calldata == call.input.bytes(ecx)[..calldata.len()] &&
                     // The value matches, if provided
                     expected
                         .value.is_none_or(|value| Some(value) == call.transfer_value()) &&
@@ -1002,19 +1003,25 @@ impl Cheatcodes {
 
         // Handle mocked calls
         if let Some(mocks) = self.mocked_calls.get_mut(&call.bytecode_address) {
-            let ctx =
-                MockCallDataContext { calldata: call.input.clone(), value: call.transfer_value() };
+            let ctx = MockCallDataContext {
+                calldata: call.input.bytes(ecx).clone(),
+                value: call.transfer_value(),
+            };
 
-            if let Some(return_data_queue) = match mocks.get_mut(&ctx) {
-                Some(queue) => Some(queue),
-                None => mocks
-                    .iter_mut()
-                    .find(|(mock, _)| {
-                        call.input.get(..mock.calldata.len()) == Some(&mock.calldata[..]) &&
-                            mock.value.is_none_or(|value| Some(value) == call.transfer_value())
-                    })
-                    .map(|(_, v)| v),
-            } {
+            if let Some(return_data_queue) =
+                match mocks.get_mut(&ctx) {
+                    Some(queue) => Some(queue),
+                    None => mocks
+                        .iter_mut()
+                        .find(|(mock, _)| {
+                            call.input.bytes(ecx).get(..mock.calldata.len()) ==
+                                Some(&mock.calldata[..]) &&
+                                mock.value
+                                    .is_none_or(|value| Some(value) == call.transfer_value())
+                        })
+                        .map(|(_, v)| v),
+                }
+            {
                 if let Some(return_data) = if return_data_queue.len() == 1 {
                     // If the mocked calls stack has a single element in it, don't empty it
                     return_data_queue.front().map(|x| x.to_owned())
@@ -1107,6 +1114,8 @@ impl Cheatcodes {
 
                     let is_fixed_gas_limit = check_if_fixed_gas_limit(&ecx, call.gas_limit);
 
+                    let input = TransactionInput::new(call.input.bytes(ecx).clone());
+
                     let account =
                         ecx.journaled_state.inner.state().get_mut(&broadcast.new_origin).unwrap();
 
@@ -1114,7 +1123,7 @@ impl Cheatcodes {
                         from: Some(broadcast.new_origin),
                         to: Some(TxKind::from(Some(call.target_address))),
                         value: call.transfer_value(),
-                        input: TransactionInput::new(call.input.clone()),
+                        input,
                         nonce: Some(account.info.nonce),
                         chain_id: Some(ecx.cfg.chain_id),
                         gas: if is_fixed_gas_limit { Some(call.gas_limit) } else { None },
@@ -1216,7 +1225,7 @@ impl Cheatcodes {
                 oldBalance: old_balance,
                 newBalance: U256::ZERO, // updated on call_end
                 value: call.call_value(),
-                data: call.input.clone(),
+                data: call.input.bytes(ecx).clone(),
                 reverted: false,
                 deployedCode: Bytes::new(),
                 storageAccesses: vec![], // updated on step
@@ -1836,10 +1845,7 @@ impl Cheatcodes {
     fn meter_gas(&mut self, interpreter: &mut Interpreter) {
         if let Some(paused_gas) = self.gas_metering.paused_frames.last() {
             // Keep gas constant if paused.
-            // Make sure we record the memory changes so that memory expansion is not paused.
-            let memory = interpreter.control.gas.memory;
             interpreter.control.gas = *paused_gas;
-            interpreter.control.gas.memory = memory;
         } else {
             // Record frame paused gas.
             self.gas_metering.paused_frames.push(interpreter.control.gas);
