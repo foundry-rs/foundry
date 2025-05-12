@@ -11,8 +11,10 @@ use crate::{
     mem::inspector::AnvilInspector,
     PrecompileFactory,
 };
-use alloy_consensus::{constants::EMPTY_WITHDRAWALS, Receipt, ReceiptWithBloom};
-use alloy_eips::{eip2718::Encodable2718, eip7685::EMPTY_REQUESTS_HASH};
+use alloy_consensus::{
+    constants::EMPTY_WITHDRAWALS, proofs::calculate_receipt_root, Receipt, ReceiptWithBloom,
+};
+use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_evm::{eth::EthEvmContext, EthEvm, Evm};
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{Bloom, BloomInput, Log, B256};
@@ -22,7 +24,6 @@ use anvil_core::eth::{
         DepositReceipt, PendingTransaction, TransactionInfo, TypedReceipt, TypedTransaction,
     },
 };
-use chrono::Local;
 use foundry_evm::{backend::DatabaseError, traces::CallTraceNode};
 use foundry_evm_core::{either_evm::EitherEvm, evm::FoundryPrecompiles};
 use op_revm::{L1BlockInfo, OpContext};

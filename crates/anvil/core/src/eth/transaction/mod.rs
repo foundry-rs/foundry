@@ -510,7 +510,8 @@ impl PendingTransaction {
                     authorization_list,
                     input,
                 } = tx.tx();
-                OpTransaction::new(TxEnv {
+
+                let mut tx = TxEnv {
                     caller,
                     kind: TxKind::Call(*to),
                     data: input.clone(),
@@ -521,10 +522,12 @@ impl PendingTransaction {
                     gas_priority_fee: Some(*max_priority_fee_per_gas),
                     gas_limit: *gas_limit,
                     access_list: access_list.clone(),
-                    authorization_list: authorization_list.clone(),
                     tx_type: 4,
                     ..Default::default()
-                })
+                };
+                tx.set_signed_authorization(authorization_list.clone());
+
+                OpTransaction::new(tx)
             }
             TypedTransaction::Deposit(tx) => {
                 let chain_id = tx.chain_id();

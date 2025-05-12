@@ -1004,7 +1004,7 @@ impl Cheatcodes {
         // Handle mocked calls
         if let Some(mocks) = self.mocked_calls.get_mut(&call.bytecode_address) {
             let ctx = MockCallDataContext {
-                calldata: call.input.bytes(ecx).clone(),
+                calldata: call.input.bytes(ecx),
                 value: call.transfer_value(),
             };
 
@@ -1225,7 +1225,7 @@ impl Cheatcodes {
                 oldBalance: old_balance,
                 newBalance: U256::ZERO, // updated on call_end
                 value: call.call_value(),
-                data: call.input.bytes(ecx).clone(),
+                data: call.input.bytes(ecx),
                 reverted: false,
                 deployedCode: Bytes::new(),
                 storageAccesses: vec![], // updated on step

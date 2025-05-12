@@ -37,8 +37,10 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    transaction::Recovered, Account, BlockHeader, EnvKzgSettings, Header, Receipt,
-    ReceiptWithBloom, Signed, Transaction as TransactionTrait, TxEnvelope,
+    proofs::{calculate_receipt_root, calculate_transaction_root},
+    transaction::Recovered,
+    Account, BlockHeader, EnvKzgSettings, Header, Receipt, ReceiptWithBloom, Signed,
+    Transaction as TransactionTrait, TxEnvelope,
 };
 use alloy_eips::{eip1559::BaseFeeParams, eip7691::MAX_BLOBS_PER_BLOCK_ELECTRA};
 use alloy_evm::{eth::EthEvmContext, Database, Evm};
@@ -47,8 +49,8 @@ use alloy_network::{
     EthereumWallet, UnknownTxEnvelope, UnknownTypedTransaction,
 };
 use alloy_primitives::{
-    address, hex, keccak256, map::HashMap, utils::Unit, Address, Bytes, TxHash, TxKind, B256, U256,
-    U64,
+    address, hex, keccak256, logs_bloom, map::HashMap, utils::Unit, Address, Bytes, TxHash, TxKind,
+    B256, U256, U64,
 };
 use alloy_rpc_types::{
     anvil::Forking,
@@ -1442,36 +1444,34 @@ impl Backend {
         let caller = from.unwrap_or_default();
         let to = to.as_ref().and_then(TxKind::to);
         let blob_hashes = blob_versioned_hashes.unwrap_or_default();
-        env.tx = OpTransaction {
-            base: TxEnv {
-                caller,
-                gas_limit,
-                gas_price,
-                gas_priority_fee: max_priority_fee_per_gas,
-                max_fee_per_blob_gas: max_fee_per_blob_gas
-                    .or_else(|| {
-                        if !blob_hashes.is_empty() {
-                            env.evm_env.block_env.blob_gasprice()
-                        } else {
-                            Some(0)
-                        }
-                    })
-                    .unwrap_or_default(),
-                kind: match to {
-                    Some(addr) => TxKind::Call(*addr),
-                    None => TxKind::Create,
-                },
-                tx_type: transaction_type.unwrap_or_default(),
-                value: value.unwrap_or_default(),
-                data: input.into_input().unwrap_or_default(),
-                chain_id: None,
-                access_list: access_list.unwrap_or_default(),
-                blob_hashes,
-                authorization_list: authorization_list.unwrap_or_default(),
-                ..Default::default()
+        let mut base = TxEnv {
+            caller,
+            gas_limit,
+            gas_price,
+            gas_priority_fee: max_priority_fee_per_gas,
+            max_fee_per_blob_gas: max_fee_per_blob_gas
+                .or_else(|| {
+                    if !blob_hashes.is_empty() {
+                        env.evm_env.block_env.blob_gasprice()
+                    } else {
+                        Some(0)
+                    }
+                })
+                .unwrap_or_default(),
+            kind: match to {
+                Some(addr) => TxKind::Call(*addr),
+                None => TxKind::Create,
             },
+            tx_type: transaction_type.unwrap_or_default(),
+            value: value.unwrap_or_default(),
+            data: input.into_input().unwrap_or_default(),
+            chain_id: None,
+            access_list: access_list.unwrap_or_default(),
+            blob_hashes,
             ..Default::default()
         };
+        base.set_signed_authorization(authorization_list.unwrap_or_default());
+        env.tx = OpTransaction { base, ..Default::default() };
 
         if let Some(nonce) = nonce {
             env.tx.base.nonce = nonce;
@@ -1691,7 +1691,7 @@ impl Backend {
                 .map(|tx| AnyTxEnvelope::from(tx.clone()))
                 .collect();
                 let header = Header {
-                    logs_bloom:logs_bloom(logs.iter()),
+                    logs_bloom: logs_bloom(logs.iter()),
                     transactions_root: calculate_transaction_root(&transactions_envelopes),
                     receipts_root: calculate_receipt_root(&transactions_envelopes),
                     parent_hash: Default::default(),
