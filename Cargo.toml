@@ -195,8 +195,8 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.14.0", default-features = false }
-foundry-compilers = { version = "0.15.0", default-features = false }
+foundry-block-explorers = { version = "0.16.0", default-features = false }
+foundry-compilers = { version = "0.16.0", default-features = false }
 foundry-fork-db = "0.13"
 solang-parser = "=0.3.3"
 solar-parse = { version = "=0.1.3", default-features = false }
@@ -383,6 +383,6 @@ op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "346139b" }
 # revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "a625c04" }
 
 ## foundry
-foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "d05c34a" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "beafa80" }
+# foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "d05c34a" }
+# foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "beafa80" }
 # foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "cdbbe64" }
