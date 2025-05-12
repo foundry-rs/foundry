@@ -14,7 +14,7 @@ use crate::{
 use alloy_consensus::{
     constants::EMPTY_WITHDRAWALS, proofs::calculate_receipt_root, Receipt, ReceiptWithBloom,
 };
-use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
+use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, eip7840::BlobParams};
 use alloy_evm::{eth::EthEvmContext, EthEvm, Evm};
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{Bloom, BloomInput, Log, B256};
@@ -117,6 +117,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     pub print_traces: bool,
     /// Precompiles to inject to the EVM.
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
+    pub blob_params: BlobParams,
 }
 
 impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
@@ -298,10 +299,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         let max_blob_gas = self.blob_gas_used.saturating_add(
             transaction.pending_transaction.transaction.transaction.blob_gas().unwrap_or(0),
         );
-        if max_blob_gas >
-            (alloy_eips::eip4844::DATA_GAS_PER_BLOB *
-                alloy_eips::eip7691::MAX_BLOBS_PER_BLOCK_ELECTRA)
-        {
+        if max_blob_gas > self.blob_params.max_blob_gas_per_block() {
             return Some(TransactionExecutionOutcome::BlobGasExhausted(transaction))
         }
 

@@ -49,6 +49,7 @@ use alloy_eips::{
         LEGACY_TX_TYPE_ID,
     },
     eip4844::MAX_BLOBS_PER_BLOCK_DENCUN,
+    eip7840::BlobParams,
 };
 use alloy_evm::{eth::EthEvmContext, Database, Evm};
 use alloy_network::{
@@ -779,6 +780,15 @@ impl Backend {
         self.env.read().is_optimism
     }
 
+    /// Returns [`BlobParams`] corresponding to the current spec.
+    pub fn blob_params(&self) -> BlobParams {
+        if self.env.read().evm_env.cfg_env.spec >= SpecId::PRAGUE {
+            BlobParams::prague()
+        } else {
+            BlobParams::cancun()
+        }
+    }
+
     /// Returns an error if EIP1559 is not active (pre Berlin)
     pub fn ensure_eip1559_active(&self) -> Result<(), BlockchainError> {
         if self.is_eip1559() {
@@ -1169,6 +1179,7 @@ impl Backend {
             precompile_factory: self.precompile_factory.clone(),
             odyssey: self.odyssey,
             optimism: self.is_optimism(),
+            blob_params: self.blob_params(),
         };
 
         // create a new pending block
@@ -1253,6 +1264,7 @@ impl Backend {
                     odyssey: self.odyssey,
                     precompile_factory: self.precompile_factory.clone(),
                     optimism: self.is_optimism(),
+                    blob_params: self.blob_params(),
                 };
                 let executed_tx = executor.execute();
 
