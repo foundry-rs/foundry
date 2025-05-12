@@ -272,7 +272,7 @@ mod tests {
             "0xe17594de"
             "756688fe00000000000000000000000000000000000000000000000000000000"
         );
-        assert_eq!(decoder.decode(data, None), "ValidationFailed(0x)");
+        assert_eq!(decoder.decode(data, None), "custom error 0xe17594de: 756688fe00000000000000000000000000000000000000000000000000000000");
 
         /*
         abi.encodeWithSelector(ValidationFailed.selector, abi.encodeWithSelector(InvalidNonce.selector))
