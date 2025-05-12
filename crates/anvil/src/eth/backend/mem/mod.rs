@@ -42,7 +42,14 @@ use alloy_consensus::{
     Account, BlockHeader, EnvKzgSettings, Header, Receipt, ReceiptWithBloom, Signed,
     Transaction as TransactionTrait, TxEnvelope,
 };
-use alloy_eips::{eip1559::BaseFeeParams, eip4844::MAX_BLOBS_PER_BLOCK};
+use alloy_eips::{
+    eip1559::BaseFeeParams,
+    eip2718::{
+        EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
+        LEGACY_TX_TYPE_ID,
+    },
+    eip4844::MAX_BLOBS_PER_BLOCK,
+};
 use alloy_evm::{eth::EthEvmContext, Database, Evm};
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
@@ -1410,12 +1417,28 @@ impl Backend {
                     authorization_list,
                     nonce,
                     sidecar: _,
-                    chain_id: _,
+                    chain_id,
                     transaction_type,
+                    max_fee_per_gas, 
+                    max_priority_fee_per_gas,
                     .. // Rest of the gas fees related fields are taken from `fee_details`
                 },
             other,
         } = request;
+
+        let tx_type = transaction_type.unwrap_or_else(|| {
+            if authorization_list.is_some() {
+                EIP7702_TX_TYPE_ID
+            } else if blob_versioned_hashes.is_some() {
+                EIP4844_TX_TYPE_ID
+            } else if max_fee_per_gas.is_some() || max_priority_fee_per_gas.is_some() {
+                EIP1559_TX_TYPE_ID
+            } else if access_list.is_some() {
+                EIP2930_TX_TYPE_ID
+            } else {
+                LEGACY_TX_TYPE_ID
+            }
+        });
 
         let FeeDetails {
             gas_price,
@@ -1463,10 +1486,10 @@ impl Backend {
                     Some(addr) => TxKind::Call(*addr),
                     None => TxKind::Create,
                 },
-                tx_type: transaction_type.unwrap_or_default(),
+                tx_type,
                 value: value.unwrap_or_default(),
                 data: input.into_input().unwrap_or_default(),
-                chain_id: None,
+                chain_id: Some(chain_id.unwrap_or(self.env.read().evm_env.cfg_env.chain_id)),
                 access_list: access_list.unwrap_or_default(),
                 blob_hashes,
                 authorization_list: authorization_list.unwrap_or_default(),

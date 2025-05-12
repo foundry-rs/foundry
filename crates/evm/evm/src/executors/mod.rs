@@ -438,6 +438,7 @@ impl Executor {
     ) -> eyre::Result<RawCallResult> {
         let mut env = self.build_test_env(from, to.into(), calldata, value);
         env.tx.authorization_list = authorization_list;
+        env.tx.tx_type = 4;
         self.call_with_env(env)
     }
 
