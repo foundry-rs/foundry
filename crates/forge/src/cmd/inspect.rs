@@ -1,14 +1,12 @@
-use crate::revm::primitives::Eof;
 use alloy_json_abi::{EventParam, InternalType, JsonAbi, Param};
-use alloy_primitives::{hex, keccak256, Address};
+use alloy_primitives::{hex, keccak256};
 use clap::Parser;
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Table};
-use eyre::{Context, Result};
+use eyre::{Result};
 use foundry_cli::opts::{BuildOpts, CompilerOpts};
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler},
     find_matching_contract_artifact, find_target_path,
-    fmt::pretty_eof,
     shell,
 };
 use foundry_compilers::artifacts::{
@@ -16,7 +14,7 @@ use foundry_compilers::artifacts::{
         BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
         EvmOutputSelection, EwasmOutputSelection,
     },
-    CompactBytecode, StorageLayout,
+    StorageLayout,
 };
 use regex::Regex;
 use serde_json::{Map, Value};
@@ -131,12 +129,6 @@ impl InspectArgs {
             ContractArtifactField::Events => {
                 let out = artifact.abi.as_ref().map_or(Map::new(), parse_events);
                 print_errors_events(&out, false)?;
-            }
-            ContractArtifactField::Eof => {
-                print_eof(artifact.deployed_bytecode.and_then(|b| b.bytecode))?;
-            }
-            ContractArtifactField::EofInit => {
-                print_eof(artifact.bytecode)?;
             }
         };
 
@@ -362,8 +354,6 @@ pub enum ContractArtifactField {
     Ewasm,
     Errors,
     Events,
-    Eof,
-    EofInit,
 }
 
 macro_rules! impl_value_enum {
@@ -451,8 +441,6 @@ impl_value_enum! {
         Ewasm             => "ewasm" | "e-wasm",
         Errors            => "errors" | "er",
         Events            => "events" | "ev",
-        Eof               => "eof" | "eof-container" | "eof-deployed",
-        EofInit           => "eof-init" | "eof-initcode" | "eof-initcontainer",
     }
 }
 
@@ -478,10 +466,6 @@ impl From<ContractArtifactField> for ContractOutputSelection {
             Caf::Ewasm => Self::Ewasm(EwasmOutputSelection::All),
             Caf::Errors => Self::Abi,
             Caf::Events => Self::Abi,
-            Caf::Eof => Self::Evm(EvmOutputSelection::DeployedByteCode(
-                DeployedBytecodeOutputSelection::All,
-            )),
-            Caf::EofInit => Self::Evm(EvmOutputSelection::ByteCode(BytecodeOutputSelection::All)),
         }
     }
 }
@@ -506,9 +490,7 @@ impl PartialEq<ContractOutputSelection> for ContractArtifactField {
                 (Self::IrOptimized, Cos::IrOptimized) |
                 (Self::Metadata, Cos::Metadata) |
                 (Self::UserDoc, Cos::UserDoc) |
-                (Self::Ewasm, Cos::Ewasm(_)) |
-                (Self::Eof, Cos::Evm(Eos::DeployedByteCode(_))) |
-                (Self::EofInit, Cos::Evm(Eos::ByteCode(_)))
+                (Self::Ewasm, Cos::Ewasm(_)) 
         )
     }
 }
@@ -566,30 +548,6 @@ fn get_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<String
         None => format!("{value_ref:#}"),
     };
     Ok(s)
-}
-
-/// Pretty-prints bytecode decoded EOF.
-fn print_eof(bytecode: Option<CompactBytecode>) -> Result<()> {
-    let Some(mut bytecode) = bytecode else { eyre::bail!("No bytecode") };
-
-    // Replace link references with zero address.
-    if bytecode.object.is_unlinked() {
-        for (file, references) in bytecode.link_references.clone() {
-            for (name, _) in references {
-                bytecode.link(&file, &name, Address::ZERO);
-            }
-        }
-    }
-
-    let Some(bytecode) = bytecode.object.into_bytes() else {
-        eyre::bail!("Failed to link bytecode");
-    };
-
-    let eof = Eof::decode(bytecode).wrap_err("Failed to decode EOF")?;
-
-    sh_println!("{}", pretty_eof(&eof)?)?;
-
-    Ok(())
 }
 
 #[cfg(test)]
