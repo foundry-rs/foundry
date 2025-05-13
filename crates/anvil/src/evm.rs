@@ -32,13 +32,13 @@ pub fn inject_precompiles<DB, I>(
 
 #[cfg(test)]
 mod tests {
-    use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap, EthEvm, Evm};
-    use alloy_primitives::{address, Address, Bytes};
+    use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap, EthEvm, Evm, EvmEnv};
+    use alloy_primitives::{address, Address, Bytes, TxKind};
     use foundry_evm::Env;
     use foundry_evm_core::either_evm::EitherEvm;
     use itertools::Itertools;
     use revm::{
-        context::{Evm as RevmEvm, JournalTr, LocalContext},
+        context::{Evm as RevmEvm, JournalTr, LocalContext, TxEnv},
         database::EmptyDB,
         handler::{instructions::EthInstructions, EthPrecompiles},
         inspector::NoOpInspector,
@@ -53,8 +53,10 @@ mod tests {
     fn build_evm_with_extra_precompiles() {
         const PRECOMPILE_ADDR: Address = address!("0x0000000000000000000000000000000000000071");
 
-        fn my_precompile(_input: &[u8], _gas_limit: u64) -> PrecompileResult {
-            Ok(PrecompileOutput { bytes: Bytes::new(), gas_used: 0 })
+        /// Custom precompile that echoes the input data.
+        /// In this example it uses `0xdeadbeef` as the input data, returning it as output.
+        fn custom_echo_precompile(input: &[u8], _gas_limit: u64) -> PrecompileResult {
+            Ok(PrecompileOutput { bytes: Bytes::copy_from_slice(input), gas_used: 0 })
         }
 
         #[derive(Debug)]
@@ -64,12 +66,21 @@ mod tests {
             fn precompiles(&self) -> Vec<PrecompileWithAddress> {
                 vec![PrecompileWithAddress::from((
                     PRECOMPILE_ADDR,
-                    my_precompile as fn(&[u8], u64) -> PrecompileResult,
+                    custom_echo_precompile as fn(&[u8], u64) -> PrecompileResult,
                 ))]
             }
         }
 
-        let env = Env::default();
+        let payload = Bytes::from(vec![0xde, 0xad, 0xbe, 0xef]);
+        let env = Env {
+            evm_env: EvmEnv { block_env: Default::default(), cfg_env: Default::default() },
+            tx: TxEnv {
+                kind: TxKind::Call(PRECOMPILE_ADDR),
+                data: payload.clone(),
+                ..Default::default()
+            },
+        };
+
         let evm_context = EthEvmContext {
             journaled_state: Journal::new(EmptyDB::default()),
             block: env.evm_env.block_env.clone(),
@@ -100,6 +111,8 @@ mod tests {
             EitherEvm::Eth(evm_eth) => evm_eth.transact(env.tx).unwrap(),
             _ => unreachable!(),
         };
+
         assert!(result.result.is_success());
+        assert_eq!(result.result.output(), Some(&payload));
     }
 }
