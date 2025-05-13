@@ -2005,6 +2005,12 @@ impl<W: Write> Visitor for Formatter<'_, W> {
                 );
             }
 
+            if let Some(layout) = &mut contract.layout {
+                write_chunk!(fmt, "layout at ")?;
+                fmt.visit_expr(layout.loc(), layout)?;
+                write_chunk!(fmt, " ")?;
+            }
+
             write_chunk!(fmt, "{{")?;
 
             fmt.indented(1, |fmt| {
