@@ -36,18 +36,15 @@ impl Eip712Args {
         let arena = Arena::new();
 
         let _ = sess.enter(|| -> Result<(), diagnostics::ErrorGuaranteed> {
-            // Initialize the parser and get the AST
+            // Initialize the parser, get the AST, and collect the definitions
             let mut parser = solar_parse::Parser::from_file(&sess, &arena, &target_path)?;
             let ast = parser.parse_file().map_err(|e| e.emit())?;
-
             let mut collector = Collector::default();
             _ = collector.visit_source_unit(&ast);
 
-            let defs = collector.defs;
-
-            let resolver = Resolver::new(&defs);
-
-            for id in &defs.ordered {
+            // Resolve the custom types
+            let resolver = Resolver::new(&collector.defs);
+            for id in &collector.defs.ordered {
                 if let Some(resolved) = resolver.resolve_type_eip712(id) {
                     _ = sh_println!("{resolved}\n");
                 }
