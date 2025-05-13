@@ -318,7 +318,7 @@ impl CompiledState {
             })
             .collect::<BTreeMap<_, _>>();
 
-        todo!();
+        todo!("uncomment and integrate EIP712 resolver");
         // // Resolver for EIP712 schemas
         // let resolver = Resolver::new(&asts);
 

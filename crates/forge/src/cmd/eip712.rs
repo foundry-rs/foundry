@@ -47,7 +47,7 @@ impl Eip712Args {
 
             let resolver = Resolver::new(&defs);
 
-            for id in defs.ordered.iter() {
+            for id in &defs.ordered {
                 if let Some(resolved) = resolver.resolve_type_eip712(id) {
                     _ = sh_println!("{resolved}\n");
                 }
@@ -62,7 +62,7 @@ impl Eip712Args {
 
 /// Holds references to custom type definitions in the AST.
 ///
-/// Each type is uniquely identified by `{contract}_{type}` or just `{type}` for file-level
+/// Each type is uniquely identified by `{contract}.{type}` or just `{type}` for file-level
 /// definitions.
 #[derive(Debug, Default)]
 pub struct Definitions<'ast> {
@@ -89,11 +89,11 @@ pub struct Collector<'ast> {
 }
 
 impl<'ast> Collector<'ast> {
-    /// Generates a unique identifier (`{contract}.{type}`) combining the contract and the type.
-    fn generate_key(&self, item_name: &str) -> String {
+    /// Generates a unique identifier (`{contract}.{ty_name}`) combining the contract and the type.
+    fn generate_key(&self, ty_name: &str) -> String {
         match &self.target_contract {
-            Some(contract_name) => format!("{}.{}", contract_name, item_name),
-            None => item_name.to_string(),
+            Some(contract) => format!("{contract}.{ty_name}"),
+            None => ty_name.to_string(),
         }
     }
 }
@@ -166,7 +166,7 @@ impl ResolutionCtx {
                 }
             }
             i += 1;
-            name = format!("{}_{}", name, i);
+            name = format!("{name}_{i}");
         }
         self.subtypes.insert(name.clone(), key);
         name
@@ -260,7 +260,7 @@ impl<'a, 'ast> Resolver<'a, 'ast> {
     /// Requires all subtypes to already be named in `ctx`.
     fn encode_struct(&self, key: &str, eip712_name: &str, ctx: &ResolutionCtx) -> Option<String> {
         let struct_def = self.defs.structs.get(key)?;
-        let mut result = format!("{}(", eip712_name);
+        let mut result = format!("{eip712_name}(");
         let num_fields = struct_def.fields.len();
 
         for (idx, field) in struct_def.fields.iter().enumerate() {
@@ -286,7 +286,7 @@ impl<'a, 'ast> Resolver<'a, 'ast> {
             TypeKind::Array(arr) => {
                 let inner_type = self.resolve_type(&arr.element, key, ctx)?;
                 let size_str = parse_array_size(&arr.size).unwrap_or_default();
-                Some(format!("{}[{}]", inner_type, size_str))
+                Some(format!("{inner_type}[{size_str}]"))
             }
             TypeKind::Custom(ast_path) => {
                 let segments: Vec<_> =
@@ -309,14 +309,11 @@ impl<'a, 'ast> Resolver<'a, 'ast> {
                 } else if self.defs.contracts.contains(&sub_key.as_str()) {
                     Some("address".to_string())
                 } else {
-                    eprintln!("[WARN] Missing type definition for: {}", key);
-                    None
+                    None // Missing type definition (compiler should fail)
                 }
             }
-            TypeKind::Mapping(_) | TypeKind::Function { .. } => {
-                eprintln!("[WARN] EIP-712 doesn't support functions and mappings");
-                None
-            }
+            // EIP-712 doesn't support functions and mappings
+            TypeKind::Mapping(_) | TypeKind::Function { .. } => None,
         }
     }
 }
