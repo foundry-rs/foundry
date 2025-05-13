@@ -2089,6 +2089,14 @@ impl<W: Write> Visitor for Formatter<'_, W> {
         Ok(())
     }
 
+    fn visit_pragma(
+        &mut self,
+        pragma: &mut PragmaDirective,
+    ) -> std::result::Result<(), Self::Error> {
+        self.visit_source(pragma.loc())?;
+        self.write_semicolon()
+    }
+
     #[instrument(name = "import_plain", skip_all)]
     fn visit_import_plain(&mut self, loc: Loc, import: &mut ImportPath) -> Result<()> {
         return_source_if_disabled!(self, loc, ';');
