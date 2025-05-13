@@ -16,7 +16,6 @@ use foundry_compilers::artifacts::{
     StorageLayout,
 };
 use regex::Regex;
-use revm::bytecode::Eof;
 use serde_json::{Map, Value};
 use std::{collections::BTreeMap, fmt, str::FromStr, sync::LazyLock};
 
