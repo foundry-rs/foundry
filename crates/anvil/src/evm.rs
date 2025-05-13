@@ -1,7 +1,6 @@
 use std::fmt::Debug;
 
-use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap, Database};
-use alloy_primitives::Address;
+use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap, Database, Evm};
 use foundry_evm::backend::DatabaseError;
 use foundry_evm_core::either_evm::EitherEvm;
 use op_revm::OpContext;
@@ -11,7 +10,7 @@ use revm::{precompile::Precompiles, Inspector};
 /// `anvil` as a library.
 pub trait PrecompileFactory: Send + Sync + Unpin + Debug {
     /// Returns a set of precompiles to extend the EVM with.
-    fn precompiles(&self) -> Vec<(Address, Precompiles)>;
+    fn precompiles(&self) -> Precompiles;
 }
 
 /// Appends a handler register to `evm` that injects the given `precompiles`.
@@ -25,6 +24,10 @@ pub fn inject_precompiles<DB, I>(
     DB: Database<Error = DatabaseError>,
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
 {
+    for (precompile_addr, precompile) in precompiles.inner().iter() {
+        evm.precompiles_mut().apply_precompile(precompile_addr, precompile);
+    }
+
     // let precompiles = evm.precompiles_mut();
     // evm.precompiles_mut().extend(precompiles.clone());
 
