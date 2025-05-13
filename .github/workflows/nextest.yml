@@ -72,6 +72,7 @@ jobs:
         with:
           python-version: 3.11
       - name: Install Vyper
+        # Also update vyper version in .devcontainer/Dockerfile.dev
         run: pip --version && pip install vyper==0.4.0
 
       - name: Forge RPC cache

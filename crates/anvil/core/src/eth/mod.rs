@@ -18,7 +18,6 @@ use foundry_common::serde_helpers::{
 };
 
 pub mod block;
-pub mod proof;
 pub mod subscription;
 pub mod transaction;
 pub mod wallet;
@@ -73,6 +72,9 @@ pub enum EthRequest {
 
     #[serde(rename = "eth_getAccount")]
     EthGetAccount(Address, Option<BlockId>),
+
+    #[serde(rename = "eth_getAccountInfo")]
+    EthGetAccountInfo(Address, Option<BlockId>),
 
     #[serde(rename = "eth_getStorageAt")]
     EthGetStorageAt(Address, U256, Option<BlockId>),

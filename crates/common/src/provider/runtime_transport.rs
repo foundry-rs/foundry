@@ -313,9 +313,8 @@ fn url_to_file_path(url: &Url) -> Result<PathBuf, ()> {
 
     let url_str = url.as_str();
 
-    if url_str.starts_with(PREFIX) {
-        let pipe_name = &url_str[PREFIX.len()..];
-        let pipe_path = format!(r"\\.\pipe\{}", pipe_name);
+    if let Some(pipe_name) = url_str.strip_prefix(PREFIX) {
+        let pipe_path = format!(r"\\.\pipe\{pipe_name}");
         return Ok(PathBuf::from(pipe_path));
     }
 
