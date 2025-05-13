@@ -2083,31 +2083,6 @@ impl<W: Write> Visitor for Formatter<'_, W> {
         Ok(())
     }
 
-    #[instrument(name = "pragma", skip_all)]
-    fn visit_pragma(
-        &mut self,
-        loc: Loc,
-        ident: &mut Option<Identifier>,
-        string: &mut Option<StringLiteral>,
-    ) -> Result<()> {
-        let (ident, string) = (ident.safe_unwrap(), string.safe_unwrap());
-        return_source_if_disabled!(self, loc, ';');
-
-        let pragma_descriptor = if ident.name == "solidity" {
-            // There are some issues with parsing Solidity's versions with crates like `semver`:
-            // 1. Ranges like `>=0.4.21<0.6.0` or `>=0.4.21 <0.6.0` are not parseable at all.
-            // 2. Versions like `0.8.10` got transformed into `^0.8.10` which is not the same.
-            // TODO: semver-solidity crate :D
-            &string.string
-        } else {
-            &string.string
-        };
-
-        write_chunk!(self, string.loc.end(), "pragma {} {};", &ident.name, pragma_descriptor)?;
-
-        Ok(())
-    }
-
     #[instrument(name = "import_plain", skip_all)]
     fn visit_import_plain(&mut self, loc: Loc, import: &mut ImportPath) -> Result<()> {
         return_source_if_disabled!(self, loc, ';');
@@ -3306,6 +3281,7 @@ impl<W: Write> Visitor for Formatter<'_, W> {
             VariableAttribute::Visibility(visibility) => Some(visibility.to_string()),
             VariableAttribute::Constant(_) => Some("constant".to_string()),
             VariableAttribute::Immutable(_) => Some("immutable".to_string()),
+            VariableAttribute::StorageType(_) => None, // Unsupported
             VariableAttribute::Override(loc, idents) => {
                 write_chunk!(self, loc.start(), "override")?;
                 if !idents.is_empty() && self.config.override_spacing {
@@ -3314,6 +3290,7 @@ impl<W: Write> Visitor for Formatter<'_, W> {
                 self.visit_list("", idents, Some(loc.start()), Some(loc.end()), false)?;
                 None
             }
+            VariableAttribute::StorageLocation(storage) => Some(storage.to_string()),
         };
         if let Some(token) = token {
             let loc = attribute.loc();

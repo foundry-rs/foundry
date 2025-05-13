@@ -1,5 +1,7 @@
 // config: line_length = 40
 contract Contract {
+    bytes32 transient a;
+
     bytes32 private constant BYTES;
     bytes32
         private

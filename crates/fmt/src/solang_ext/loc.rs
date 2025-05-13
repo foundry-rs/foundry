@@ -111,6 +111,7 @@ impl_delegate! {
     pt::ErrorParameter,
     pt::EventDefinition,
     pt::EventParameter,
+    pt::PragmaDirective,
     // pt::FunctionDefinition,
     pt::HexLiteral,
     pt::Identifier,
