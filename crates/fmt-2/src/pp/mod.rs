@@ -1,15 +1,13 @@
 //! Adapted from [`rustc_ast_pretty`](https://github.com/rust-lang/rust/blob/07d3fd1d9b9c1f07475b96a9d168564bf528db68/compiler/rustc_ast_pretty/src/pp.rs)
 //! and [`prettyplease`](https://github.com/dtolnay/prettyplease/blob/8eb8c14649aea32e810732bd4d64fe519e6b752a/src/algorithm.rs).
 
+use crate::{DEBUG, DEBUG_INDENT};
 use ring::RingBuffer;
 use std::{borrow::Cow, cmp, collections::VecDeque, iter};
 
 mod convenience;
 mod helpers;
 mod ring;
-
-const DEBUG: bool = false || option_env!("FMT_DEBUG").is_some();
-const DEBUG_INDENT: bool = false;
 
 // Every line is allowed at least this much space, even if highly indented.
 const MIN_SPACE: isize = 60;

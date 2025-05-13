@@ -7,7 +7,7 @@ use crate::{iter::IterDelimited, pp::BreakToken, FormatterConfig, InlineConfig};
 use foundry_config::fmt as config;
 use itertools::{Either, Itertools};
 use solar_parse::{
-    ast::{self, token, Span},
+    ast::{self, token, yul, Span},
     interface::{BytePos, SourceMap},
     Cursor,
 };
@@ -353,7 +353,7 @@ impl<'ast> State<'_, 'ast> {
         self.word("pragma ");
         match &pragma.tokens {
             ast::PragmaTokens::Version(ident, semver_req) => {
-                self.print_ident(*ident);
+                self.print_ident(ident);
                 self.nbsp();
                 self.word(semver_req.to_string());
             }
@@ -379,7 +379,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_ast_str_lit(path);
                 if let Some(ident) = items.source_alias() {
                     self.word(" as ");
-                    self.print_ident(ident);
+                    self.print_ident(&ident);
                 }
             }
             ast::ImportItems::Aliases(aliases) => {
@@ -387,10 +387,10 @@ impl<'ast> State<'_, 'ast> {
                 self.word("{");
                 self.braces_break();
                 for (pos, (ident, alias)) in aliases.iter().delimited() {
-                    self.print_ident(*ident);
+                    self.print_ident(ident);
                     if let Some(alias) = alias {
                         self.word(" as ");
-                        self.print_ident(*alias);
+                        self.print_ident(alias);
                     }
                     if !pos.is_last {
                         self.word(",");
@@ -453,7 +453,7 @@ impl<'ast> State<'_, 'ast> {
         self.s.cbox(self.ind);
         self.cbox(0);
         self.word_nbsp(kind.to_str());
-        self.print_ident(*name);
+        self.print_ident(name);
         self.nbsp();
         if !bases.is_empty() {
             self.word("is");
@@ -504,7 +504,7 @@ impl<'ast> State<'_, 'ast> {
         let ast::ItemStruct { name, fields } = strukt;
         self.s.cbox(self.ind);
         self.word("struct ");
-        self.print_ident(*name);
+        self.print_ident(name);
         self.word(" {");
         self.hardbreak_if_nonempty();
         for var in fields.iter() {
@@ -522,11 +522,11 @@ impl<'ast> State<'_, 'ast> {
         let ast::ItemEnum { name, variants } = enm;
         self.s.cbox(self.ind);
         self.word("enum ");
-        self.print_ident(*name);
+        self.print_ident(name);
         self.word(" {");
         self.hardbreak_if_nonempty();
         for (pos, ident) in variants.iter().delimited() {
-            self.print_ident(*ident);
+            self.print_ident(ident);
             if !pos.is_last {
                 self.word(",");
             }
@@ -542,7 +542,7 @@ impl<'ast> State<'_, 'ast> {
     fn print_udvt(&mut self, udvt: &'ast ast::ItemUdvt<'ast>) {
         let ast::ItemUdvt { name, ty } = udvt;
         self.word("type ");
-        self.print_ident(*name);
+        self.print_ident(name);
         self.word(" is ");
         self.print_ty(ty);
         self.word(";");
@@ -566,7 +566,7 @@ impl<'ast> State<'_, 'ast> {
         self.word(kind.to_str());
         if let Some(name) = name {
             self.nbsp();
-            self.print_ident(name);
+            self.print_ident(&name);
         }
         self.print_parameter_list(parameters);
         self.end();
@@ -638,7 +638,7 @@ impl<'ast> State<'_, 'ast> {
     fn print_error(&mut self, err: &'ast ast::ItemError<'ast>) {
         let ast::ItemError { name, parameters } = err;
         self.word("error ");
-        self.print_ident(*name);
+        self.print_ident(name);
         self.print_parameter_list(parameters);
         self.word(";");
     }
@@ -646,7 +646,7 @@ impl<'ast> State<'_, 'ast> {
     fn print_event(&mut self, event: &'ast ast::ItemEvent<'ast>) {
         let ast::ItemEvent { name, parameters, anonymous } = event;
         self.word("event ");
-        self.print_ident(*name);
+        self.print_ident(name);
         self.print_parameter_list(parameters);
         if *anonymous {
             self.word(" anonymous");
@@ -699,7 +699,7 @@ impl<'ast> State<'_, 'ast> {
         }
         if let Some(ident) = name {
             self.nbsp();
-            self.print_ident(*ident);
+            self.print_ident(ident);
         }
         if let Some(initializer) = initializer {
             self.word(" = ");
@@ -719,7 +719,7 @@ impl<'ast> State<'_, 'ast> {
 
     fn print_ident_or_strlit(&mut self, value: &'ast ast::IdentOrStrLit) {
         match value {
-            ast::IdentOrStrLit::Ident(ident) => self.print_ident(*ident),
+            ast::IdentOrStrLit::Ident(ident) => self.print_ident(ident),
             ast::IdentOrStrLit::StrLit(strlit) => self.print_ast_str_lit(strlit),
         }
     }
@@ -730,14 +730,14 @@ impl<'ast> State<'_, 'ast> {
         self.print_span(span);
     }
 
-    fn print_ident(&mut self, ident: ast::Ident) {
+    fn print_ident(&mut self, ident: &ast::Ident) {
         self.print_comments(ident.span.lo());
         self.word(ident.to_string());
     }
 
     fn print_path(&mut self, path: &'ast ast::PathSlice) {
         for (pos, ident) in path.segments().iter().delimited() {
-            self.print_ident(*ident);
+            self.print_ident(ident);
             if !pos.is_last {
                 self.word(".");
             }
@@ -972,13 +972,13 @@ impl<'ast> State<'_, 'ast> {
                 self.print_ty(key);
                 if let Some(ident) = key_name {
                     self.nbsp();
-                    self.print_ident(*ident);
+                    self.print_ident(ident);
                 }
                 self.word(" => ");
                 self.print_ty(value);
                 if let Some(ident) = value_name {
                     self.nbsp();
-                    self.print_ident(*ident);
+                    self.print_ident(ident);
                 }
                 self.word(")");
             }
@@ -1027,10 +1027,11 @@ impl<'ast> State<'_, 'ast> {
                 self.print_expr(lhs);
                 self.end();
                 self.space();
+                self.word(bin_op.kind.to_str());
                 if matches!(kind, ast::ExprKind::Assign(..)) {
                     self.word("=");
                 }
-                self.word_nbsp(bin_op.kind.to_str());
+                self.nbsp();
                 self.print_expr(rhs);
                 self.end();
             }
@@ -1046,7 +1047,7 @@ impl<'ast> State<'_, 'ast> {
                 self.word("delete ");
                 self.print_expr(expr);
             }
-            ast::ExprKind::Ident(ident) => self.print_ident(*ident),
+            ast::ExprKind::Ident(ident) => self.print_ident(ident),
             ast::ExprKind::Index(expr, kind) => {
                 self.print_expr(expr);
                 self.word("[");
@@ -1078,7 +1079,7 @@ impl<'ast> State<'_, 'ast> {
             ast::ExprKind::Member(expr, ident) => {
                 self.print_expr(expr);
                 self.word(".");
-                self.print_ident(*ident);
+                self.print_ident(ident);
             }
             ast::ExprKind::New(ty) => {
                 self.word("new ");
@@ -1166,7 +1167,7 @@ impl<'ast> State<'_, 'ast> {
         self.s.cbox(self.ind);
         self.braces_break();
         for (pos, ast::NamedArg { name, value }) in args.iter().delimited() {
-            self.print_ident(*name);
+            self.print_ident(name);
             self.word(": ");
             self.print_expr(value);
             if pos.is_last {
@@ -1183,7 +1184,6 @@ impl<'ast> State<'_, 'ast> {
 
     /* --- Statements --- */
 
-    #[expect(unused_variables)]
     fn print_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) {
         let ast::Stmt { ref docs, span, ref kind } = *stmt;
         self.print_docs(docs);
@@ -1191,9 +1191,16 @@ impl<'ast> State<'_, 'ast> {
             return;
         }
         match kind {
-            ast::StmtKind::Assembly(asm) => {
-                // TODO(dani): implement yul
-                self.word("<assembly>");
+            ast::StmtKind::Assembly(ast::StmtAssembly { dialect, flags, block }) => {
+                self.word("assembly ");
+                if let Some(dialect) = dialect {
+                    self.print_ast_str_lit(dialect);
+                    self.nbsp();
+                }
+                if !flags.is_empty() {
+                    self.print_tuple(flags, Self::print_ast_str_lit, get_span!());
+                }
+                self.print_yul_block(block, span, false);
             }
             ast::StmtKind::DeclSingle(var) => self.print_var(var),
             ast::StmtKind::DeclMulti(vars, expr) => {
@@ -1258,7 +1265,7 @@ impl<'ast> State<'_, 'ast> {
                     if self.ends_with('}') {
                         self.nbsp();
                     } else {
-                        self.hardbreak();
+                        self.hardbreak_if_not_bol();
                     }
                     self.ibox(0);
                     self.word("else ");
@@ -1281,9 +1288,19 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
             ast::StmtKind::Revert(path, args) => self.print_emit_revert("revert", path, args),
-            ast::StmtKind::Try(stmt_try) => {
-                // TODO(dani): implement try
-                self.word("<try>");
+            ast::StmtKind::Try(ast::StmtTry { expr, clauses }) => {
+                self.word("try ");
+                self.print_expr(expr);
+                for (pos, ast::TryCatchClause { name, args, block }) in clauses.iter().delimited() {
+                    self.word(if pos.is_first { " returns" } else { " catch" });
+                    if let Some(name) = name {
+                        self.nbsp();
+                        self.print_ident(name);
+                    }
+                    self.print_parameter_list(args);
+                    self.nbsp();
+                    self.print_block(block, span);
+                }
             }
             ast::StmtKind::UncheckedBlock(block) => {
                 self.word("unchecked ");
@@ -1314,7 +1331,7 @@ impl<'ast> State<'_, 'ast> {
 
     fn print_if_cond(&mut self, kw: &'static str, cond: &'ast ast::Expr<'ast>) {
         self.word_nbsp(kw);
-        self.print_tuple(std::slice::from_ref(cond), |this, e| this.print_expr(e), get_span!());
+        self.print_tuple(std::slice::from_ref(cond), Self::print_expr, get_span!());
     }
 
     fn print_emit_revert(
@@ -1329,7 +1346,7 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn print_block(&mut self, block: &'ast [ast::Stmt<'ast>], span: Span) {
-        self.print_block_inner(block, span, false, false);
+        self.print_block_inner(block, Self::print_stmt, span, false, false);
     }
 
     // Body of a if/loop.
@@ -1339,18 +1356,28 @@ impl<'ast> State<'_, 'ast> {
         } else {
             std::slice::from_ref(stmt)
         };
-        self.print_block_inner(stmts, stmt.span, attempt_single_line, true)
+        self.print_block_inner(stmts, Self::print_stmt, stmt.span, attempt_single_line, true)
     }
 
-    fn print_block_inner(
+    fn print_yul_block(
         &mut self,
-        block: &'ast [ast::Stmt<'ast>],
+        block: &'ast [yul::Stmt<'ast>],
+        span: Span,
+        attempt_single_line: bool,
+    ) {
+        self.print_block_inner(block, Self::print_yul_stmt, span, attempt_single_line, false);
+    }
+
+    fn print_block_inner<T>(
+        &mut self,
+        block: &'ast [T],
+        mut print: impl FnMut(&mut Self, &'ast T),
         span: Span,
         attempt_single_line: bool,
         attempt_omit_braces: bool,
     ) {
         // TODO(dani): might need to adjust span for `single_line_block` to include the if condition
-        if attempt_single_line && self.single_line_block(block, span) {
+        if attempt_single_line && block.len() == 1 && self.single_line_block(span) {
             self.s.cbox(self.ind);
             if attempt_omit_braces {
                 self.scan_break(BreakToken { pre_break: Some('{'), ..Default::default() });
@@ -1358,13 +1385,13 @@ impl<'ast> State<'_, 'ast> {
                 self.word("{");
                 self.space();
             }
-            self.print_stmt(&block[0]);
+            print(self, &block[0]);
             self.print_comments(span.hi());
             if attempt_omit_braces {
                 self.s.scan_break(BreakToken { post_break: Some('}'), ..Default::default() });
                 self.s.offset(-self.ind);
             } else {
-                self.space();
+                self.space_if_not_bol();
                 self.s.offset(-self.ind);
                 self.word("}");
             }
@@ -1374,8 +1401,8 @@ impl<'ast> State<'_, 'ast> {
             self.s.cbox(self.ind);
             self.hardbreak_if_nonempty();
             for stmt in block {
-                self.print_stmt(stmt);
-                self.hardbreak();
+                print(self, stmt);
+                self.hardbreak_if_not_bol();
             }
             self.print_comments_skip_ws(span.hi());
             self.s.offset(-self.ind);
@@ -1384,15 +1411,140 @@ impl<'ast> State<'_, 'ast> {
         }
     }
 
-    fn single_line_block(&self, block: &'ast [ast::Stmt<'_>], span: Span) -> bool {
-        if block.len() != 1 {
-            return false;
-        }
+    fn single_line_block(&self, span: Span) -> bool {
         match self.config.single_line_statement_blocks {
             config::SingleLineBlockStyle::Preserve => !self.sm.is_multiline(span),
             config::SingleLineBlockStyle::Single => true,
             config::SingleLineBlockStyle::Multi => false,
         }
+    }
+}
+
+/// Yul.
+impl<'ast> State<'_, 'ast> {
+    fn print_yul_stmt(&mut self, stmt: &'ast yul::Stmt<'ast>) {
+        let yul::Stmt { ref docs, span, ref kind } = *stmt;
+        self.print_docs(docs);
+        if self.handle_span(span) {
+            return;
+        }
+
+        match kind {
+            yul::StmtKind::Block(stmts) => self.print_yul_block(stmts, span, false),
+            yul::StmtKind::AssignSingle(path, expr) => {
+                self.print_path(path);
+                self.word(" := ");
+                self.neverbreak();
+                self.print_yul_expr(expr);
+            }
+            yul::StmtKind::AssignMulti(paths, expr_call) => {
+                self.commasep(paths, |this, path| this.print_path(path), get_span!(()));
+                self.word(" := ");
+                self.neverbreak();
+                self.print_yul_expr_call(expr_call);
+            }
+            yul::StmtKind::Expr(expr_call) => self.print_yul_expr_call(expr_call),
+            yul::StmtKind::If(expr, stmts) => {
+                self.word("if ");
+                self.print_yul_expr(expr);
+                self.nbsp();
+                self.print_yul_block(stmts, span, true);
+            }
+            yul::StmtKind::For { init, cond, step, body } => {
+                // TODO(dani): boxes
+                self.ibox(0);
+
+                self.word("for ");
+                self.print_yul_block(init, span, true);
+
+                self.space();
+                self.print_yul_expr(cond);
+
+                self.space();
+                self.print_yul_block(step, span, true);
+
+                self.space();
+                self.print_yul_block(body, span, true);
+
+                self.end();
+            }
+            yul::StmtKind::Switch(yul::StmtSwitch { selector, branches, default_case }) => {
+                self.word("switch ");
+                self.print_yul_expr(selector);
+
+                self.print_trailing_comment(selector.span, None);
+
+                for yul::StmtSwitchCase { constant, body } in branches.iter() {
+                    self.hardbreak_if_not_bol();
+                    self.word("case ");
+                    self.print_lit(constant);
+                    self.nbsp();
+                    self.print_yul_block(body, span, true);
+
+                    self.print_trailing_comment(selector.span, None);
+                }
+
+                if let Some(default_case) = default_case {
+                    self.hardbreak_if_not_bol();
+                    self.word("default ");
+                    self.print_yul_block(default_case, span, true);
+                }
+            }
+            yul::StmtKind::Leave => self.word("leave"),
+            yul::StmtKind::Break => self.word("break"),
+            yul::StmtKind::Continue => self.word("continue"),
+            yul::StmtKind::FunctionDef(yul::Function { name, parameters, returns, body }) => {
+                self.cbox(0);
+                self.ibox(0);
+                self.word("function ");
+                self.print_ident(name);
+                self.print_tuple(parameters, Self::print_ident, get_span!());
+                self.nbsp();
+                if !returns.is_empty() {
+                    self.word("-> ");
+                    self.commasep(returns, Self::print_ident, get_span!());
+                    self.nbsp();
+                }
+                self.end();
+                self.print_yul_block(body, span, false);
+                self.end();
+            }
+            yul::StmtKind::VarDecl(idents, expr) => {
+                self.ibox(0);
+                self.word("let ");
+                self.commasep(idents, Self::print_ident, get_span!());
+                if let Some(expr) = expr {
+                    self.word(" := ");
+                    self.neverbreak();
+                    self.end();
+                    self.print_yul_expr(expr);
+                } else {
+                    self.end();
+                }
+            }
+        }
+        self.print_comments(span.hi());
+        self.print_trailing_comment(span, None);
+        self.hardbreak_if_not_bol();
+    }
+
+    fn print_yul_expr(&mut self, expr: &'ast yul::Expr<'ast>) {
+        let yul::Expr { span, ref kind } = *expr;
+        if self.handle_span(span) {
+            return;
+        }
+
+        match kind {
+            yul::ExprKind::Path(path) => self.print_path(path),
+            yul::ExprKind::Call(call) => self.print_yul_expr_call(call),
+            yul::ExprKind::Lit(lit) => self.print_lit(lit),
+        }
+    }
+
+    fn print_yul_expr_call(&mut self, expr: &'ast yul::ExprCall<'ast>) {
+        let yul::ExprCall { name, arguments } = expr;
+        self.print_ident(name);
+        self.print_tuple(arguments, Self::print_yul_expr, get_span!());
     }
 }
 

@@ -3,6 +3,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![allow(dead_code)] // TODO(dani)
 
+const DEBUG: bool = false || option_env!("FMT_DEBUG").is_some();
+const DEBUG_INDENT: bool = false;
+
 // TODO(dani)
 // #[macro_use]
 // extern crate tracing;
@@ -32,6 +35,7 @@ pub use foundry_config::fmt::*;
 pub type FormatterResult = DiagnosticsResult<String, EmittedDiagnostics>;
 
 /// The result of the formatter.
+#[derive(Debug)]
 pub enum DiagnosticsResult<T, E> {
     /// Everything went well.
     Ok(T),
@@ -112,6 +116,60 @@ pub fn format_source(
 }
 
 fn format_inner(
+    config: FormatterConfig,
+    mk_file: &dyn Fn(&Session) -> solar_parse::interface::Result<Arc<SourceFile>>,
+) -> FormatterResult {
+    // First pass formatting
+    let first_result = format_once(config.clone(), mk_file);
+
+    // If first pass was not successful, return the result
+    if first_result.is_err() {
+        return first_result;
+    }
+    let Some(first_formatted) = first_result.ok_ref() else { return first_result };
+
+    // Second pass formatting
+    let second_result = format_once(config, &|sess| {
+        sess.source_map()
+            .new_source_file(
+                solar_parse::interface::source_map::FileName::Custom("format-again".to_string()),
+                first_formatted,
+            )
+            .map_err(|e| sess.dcx.err(e.to_string()).emit())
+    });
+
+    // Check if the two passes produce the same output (idempotency)
+    match (first_result.ok_ref(), second_result.ok_ref()) {
+        (Some(first), Some(second)) if first != second => {
+            panic!("formatter is not idempotent:\n{}", diff(first, second));
+        }
+        _ => {}
+    }
+
+    if first_result.is_ok() && second_result.is_err() && !DEBUG {
+        panic!("failed to format a second time:\nfirst_result={first_result:#?}\nsecond_result={second_result:#?}");
+        // second_result
+    } else {
+        first_result
+    }
+}
+
+fn diff(first: &str, second: &str) -> impl std::fmt::Display {
+    use std::fmt::Write;
+    let diff = similar::TextDiff::from_lines(first, second);
+    let mut s = String::new();
+    for change in diff.iter_all_changes() {
+        let tag = match change.tag() {
+            similar::ChangeTag::Delete => "-",
+            similar::ChangeTag::Insert => "+",
+            similar::ChangeTag::Equal => " ",
+        };
+        write!(s, "{tag}{change}").unwrap();
+    }
+    s
+}
+
+fn format_once(
     config: FormatterConfig,
     mk_file: &dyn Fn(&Session) -> solar_parse::interface::Result<Arc<SourceFile>>,
 ) -> FormatterResult {

@@ -57,7 +57,7 @@ impl Printer {
     pub fn is_beginning_of_line(&self) -> bool {
         match self.last_token() {
             Some(last_token) => last_token.is_hardbreak(),
-            None => true,
+            None => self.out.is_empty() || self.out.ends_with('\n'),
         }
     }
 
