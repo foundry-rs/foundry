@@ -2093,7 +2093,10 @@ impl<W: Write> Visitor for Formatter<'_, W> {
         &mut self,
         pragma: &mut PragmaDirective,
     ) -> std::result::Result<(), Self::Error> {
-        self.visit_source(pragma.loc())?;
+        let loc = pragma.loc();
+        return_source_if_disabled!(self, loc, ';');
+
+        self.visit_source(loc)?;
         self.write_semicolon()
     }
 
