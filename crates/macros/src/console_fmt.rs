@@ -32,7 +32,7 @@ fn impl_struct(s: &DataStruct) -> Option<TokenStream> {
         return None;
     }
 
-    if s.fields == Fields::Unit {
+    if matches!(s.fields, Fields::Unit) {
         return None;
     }
 
