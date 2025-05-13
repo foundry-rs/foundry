@@ -100,7 +100,7 @@ use foundry_evm::{
     inspectors::AccessListInspector,
     traces::TracingInspectorConfig,
 };
-use foundry_evm_core::{either_evm::EitherEvm, evm::FoundryPrecompiles};
+use foundry_evm_core::either_evm::EitherEvm;
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
 use op_revm::{
@@ -1107,7 +1107,7 @@ impl Backend {
         WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>:
             Database<Error = DatabaseError>,
     {
-        let evm = new_evm_with_inspector_ref(db, env, inspector);
+        let mut evm = new_evm_with_inspector_ref(db, env, inspector);
 
         if let Some(factory) = &self.precompile_factory {
             inject_precompiles(&mut evm, factory.precompiles());
