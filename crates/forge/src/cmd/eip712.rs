@@ -249,16 +249,12 @@ impl<'a, 'ast> Resolver<'a, 'ast> {
 
         // Iterate over subtypes collected during the root struct resolution.
         // The BTreeMap ensures deterministic order.
-        let subtype_keys = context.subtypes.keys().cloned();
-
-        // for (assigned_name, definition_key) in subtype_keys {
-        for definition_key in subtype_keys.into_iter() {
+        let subtype_keys: Vec<(String, String)> = context.subtypes.clone().into_iter().collect();
+        for (assigned_name, definition_key) in subtype_keys {
             // Skip the root struct itself as we already have its definition
             if definition_key == root_struct_unique_key {
                 continue;
             }
-
-            let assigned_name = context.get_assigned_name(&definition_key).unwrap();
 
             // Resolve each subtype
             let subtype_encoded =
