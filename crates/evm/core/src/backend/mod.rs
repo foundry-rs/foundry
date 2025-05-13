@@ -1857,9 +1857,9 @@ pub(crate) fn merge_account_data<ExtDB: DatabaseRef>(
 
     // need to mock empty journal entries in case the current checkpoint is higher than the existing
     // journal entries
-    while active_journaled_state.journal.len() > target_fork.journaled_state.journal.len() {
-        // target_fork.journaled_state.journal.push(Default::default());
-    }
+    // while active_journaled_state.journal.len() > target_fork.journaled_state.journal.len() {
+    // target_fork.journaled_state.journal.push(Default::default());
+    // }
 
     *active_journaled_state = target_fork.journaled_state.clone();
 }
