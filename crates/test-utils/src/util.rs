@@ -237,7 +237,7 @@ pub fn initialize(target: &Path) {
 
     // Initialize the global template if necessary.
     let mut lock = crate::fd_lock::new_lock(TEMPLATE_LOCK.as_path());
-    let mut _read = Some(lock.read().unwrap());
+    let mut _read = lock.read().unwrap();
     if fs::read(&*TEMPLATE_LOCK).unwrap() != b"1" {
         // We are the first to acquire the lock:
         // - initialize a new empty temp project;
@@ -248,7 +248,7 @@ pub fn initialize(target: &Path) {
         // but `TempProject` does not currently allow this: https://github.com/foundry-rs/compilers/issues/22
 
         // Release the read lock and acquire a write lock, initializing the lock file.
-        _read = None;
+        drop(_read);
 
         let mut write = lock.write().unwrap();
 
@@ -291,7 +291,7 @@ pub fn initialize(target: &Path) {
 
         // Release the write lock and acquire a new read lock.
         drop(write);
-        _read = Some(lock.read().unwrap());
+        _read = lock.read().unwrap();
     }
 
     println!("- copying template dir from {}", tpath.display());

@@ -516,7 +516,7 @@ impl ReadyTransactions {
                     }
                 }
 
-                unlocked_tx.extend(to_remove.unlocks.iter().cloned())
+                unlocked_tx.extend(to_remove.unlocks.iter().copied())
             }
         }
 

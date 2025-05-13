@@ -253,7 +253,7 @@ impl Wallets {
 
     /// Locks inner Mutex and returns all signer addresses in the [MultiWallet].
     pub fn signers(&self) -> Result<Vec<Address>> {
-        Ok(self.inner.lock().multi_wallet.signers()?.keys().cloned().collect())
+        Ok(self.inner.lock().multi_wallet.signers()?.keys().copied().collect())
     }
 
     /// Number of signers in the [MultiWallet].
@@ -281,7 +281,7 @@ fn broadcast(ccx: &mut CheatsCtxt, new_origin: Option<&Address>, single_call: bo
     );
     ensure!(ccx.state.broadcast.is_none(), "a broadcast is active already");
 
-    let mut new_origin = new_origin.cloned();
+    let mut new_origin = new_origin.copied();
 
     if new_origin.is_none() {
         let mut wallets = ccx.state.wallets().inner.lock();
