@@ -1029,6 +1029,26 @@ impl Backend {
             }
         }
 
+        if let Some(block) = state.blocks.last() {
+            let header = &block.header;
+            let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
+                header.gas_used,
+                header.gas_limit,
+                header.base_fee_per_gas.unwrap_or_default(),
+            );
+            let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
+                header.excess_blob_gas.unwrap_or_default(),
+                header.blob_gas_used.unwrap_or_default(),
+            );
+
+            // update next base fee
+            self.fees.set_base_fee(next_block_base_fee);
+            self.fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
+                next_block_excess_blob_gas,
+                false,
+            ));
+        }
+
         if !self.db.write().await.load_state(state.clone())? {
             return Err(RpcError::invalid_params(
                 "Loading state not supported with the current configuration",
@@ -1360,8 +1380,8 @@ impl Backend {
             header.base_fee_per_gas.unwrap_or_default(),
         );
         let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
-            header.excess_blob_gas.map(|g| g as u128).unwrap_or_default(),
-            header.blob_gas_used.map(|g| g as u128).unwrap_or_default(),
+            header.excess_blob_gas.unwrap_or_default(),
+            header.blob_gas_used.unwrap_or_default(),
         );
 
         // update next base fee
@@ -3195,7 +3215,7 @@ impl TransactionValidator for Backend {
             }
             _ => {
                 // check sufficient funds: `gas * price + value`
-                let req_funds = max_cost.checked_add(value.to()).ok_or_else(|| {
+                let req_funds = max_cost.checked_add(value.saturating_to()).ok_or_else(|| {
                     warn!(target: "backend", "[{:?}] cost too high", tx.hash());
                     InvalidTransactionError::InsufficientFunds
                 })?;

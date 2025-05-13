@@ -180,12 +180,8 @@ impl FeeManager {
 
     /// Calculates the next block blob excess gas, using the provided parent blob gas used and
     /// parent blob excess gas
-    pub fn get_next_block_blob_excess_gas(
-        &self,
-        blob_gas_used: u128,
-        blob_excess_gas: u128,
-    ) -> u64 {
-        alloy_eips::eip4844::calc_excess_blob_gas(blob_gas_used as u64, blob_excess_gas as u64)
+    pub fn get_next_block_blob_excess_gas(&self, blob_gas_used: u64, blob_excess_gas: u64) -> u64 {
+        alloy_eips::eip4844::calc_excess_blob_gas(blob_gas_used, blob_excess_gas)
     }
 }
 
