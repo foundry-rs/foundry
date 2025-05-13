@@ -9,6 +9,7 @@ use alloy_primitives::{
     map::{hash_map::Entry, HashMap, HashSet},
     Address, LogData, Selector, B256,
 };
+use alloy_sol_types::SolError;
 use foundry_common::{
     abi::get_indexed_event, fmt::format_token, get_contract_name, selectors::SelectorKind,
     ContractsByArtifact, SELECTOR_LEN,
@@ -26,6 +27,7 @@ use foundry_evm_core::{
     },
 };
 use itertools::Itertools;
+use owo_colors::OwoColorize;
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
 use std::{collections::BTreeMap, sync::OnceLock};
 
@@ -321,6 +323,19 @@ impl CallTraceDecoder {
                 log.decoded = self.decode_event(&log.raw_log).await;
             }
 
+            if let Ok(e) = Vm::UnemittedEventError::abi_decode(&node.trace.output, false) {
+                let log_name = node.logs[e.positionExpected as usize]
+                    .decoded
+                    .name
+                    .as_mut()
+                    .expect("already decoded");
+
+                // set color to red for the given event Id
+                node.logs[e.positionExpected as usize].decoded.name =
+                    // TODO: modify to match suggested style
+                    Some("missing expected event >>>>> ".to_string() + &log_name.red().to_string());
+            }
+
             if let Some(debug) = self.debug_identifier.as_ref() {
                 if let Some(identified) = self.contracts.get(&node.trace.address) {
                     debug.identify_node_steps(node, get_contract_name(identified))
@@ -482,7 +497,7 @@ impl CallTraceDecoder {
             "parseJsonBytes32Array" |
             "writeJson" |
             // `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
-            "keyExists" | 
+            "keyExists" |
             "keyExistsJson" |
             "serializeBool" |
             "serializeUint" |
@@ -498,7 +513,7 @@ impl CallTraceDecoder {
                     let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
                     let token = if func.name.as_str() == "parseJson" ||
                         // `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
-                        func.name.as_str() == "keyExists" || 
+                        func.name.as_str() == "keyExists" ||
                         func.name.as_str() == "keyExistsJson"
                     {
                         "<JSON file>"

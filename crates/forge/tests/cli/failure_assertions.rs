@@ -180,6 +180,7 @@ Suite result: FAILED. 0 passed; 8 failed; 0 skipped; [ELAPSED]
 "#]]);
 });
 
+// TODO fix
 forgetest!(expect_emit_tests_should_fail, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
@@ -187,7 +188,7 @@ forgetest!(expect_emit_tests_should_fail, |prj, cmd| {
     let expect_emit_failure_tests = include_str!("../fixtures/ExpectEmitFailures.t.sol");
 
     prj.add_source("ExpectEmitFailures.sol", expect_emit_failure_tests).unwrap();
-
+    cmd.forge_fuse().args(["test", "--mc", "ExpectEmitFailureTest"]).assert_empty_stderr();
     cmd.forge_fuse().args(["test", "--mc", "ExpectEmitFailureTest"]).assert_failure().stdout_eq(str![[r#"
 ...
 [FAIL: log != expected log] testShouldFailCanMatchConsecutiveEvents() ([GAS])
@@ -410,6 +411,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
     ]]);
 });
 
+// TODO fix
 forgetest!(emit_diff_anonymous, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
@@ -447,11 +449,12 @@ forgetest!(emit_diff_anonymous, |prj, cmd| {
     )
     .unwrap();
 
+    cmd.forge_fuse().args(["test", "--mc", "ExpectEmitFailureTest"]).assert_empty_stderr();
     cmd.forge_fuse().args(["test", "--mc", "EmitDiffAnonymousTest"]).assert_failure().stdout_eq(
         str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 ...
-[FAIL: log != expected log] testShouldFailEmitDifferentEventNonIndexed() ([GAS])
+[FAIL: unmatched event] testShouldFailEmitDifferentEventNonIndexed() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]],

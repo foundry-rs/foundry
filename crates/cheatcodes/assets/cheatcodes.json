@@ -4,6 +4,11 @@
       "name": "CheatcodeError",
       "description": "Error thrown by cheatcodes.",
       "declaration": "error CheatcodeError(string message);"
+    },
+    {
+      "name": "UnemittedEventError",
+      "description": "Error thrown by unemitted events",
+      "declaration": "error UnemittedEventError(uint16 positionExpected);"
     }
   ],
   "events": [],

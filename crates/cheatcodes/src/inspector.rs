@@ -32,7 +32,7 @@ use alloy_rpc_types::{
     request::{TransactionInput, TransactionRequest},
     AccessList,
 };
-use alloy_sol_types::{SolCall, SolInterface, SolValue};
+use alloy_sol_types::{SolCall, SolError, SolInterface};
 use foundry_common::{evm::Breakpoints, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_evm_core::{
     abi::Vm::stopExpectSafeMemoryCall,
@@ -451,6 +451,8 @@ pub struct Cheatcodes {
     pub expected_emits: ExpectedEmitTracker,
     /// Expected creates
     pub expected_creates: Vec<ExpectedCreate>,
+    /// counter for expected emits that have been matched and cleared
+    pub expected_emits_offset: u16,
 
     /// Map of context depths to memory offset ranges that may be written to within the call depth.
     pub allowed_mem_writes: HashMap<u64, Vec<Range<u64>>>,
@@ -550,6 +552,7 @@ impl Cheatcodes {
             expected_calls: Default::default(),
             expected_emits: Default::default(),
             expected_creates: Default::default(),
+            expected_emits_offset: Default::default(),
             allowed_mem_writes: Default::default(),
             broadcast: Default::default(),
             broadcastable_transactions: Default::default(),
@@ -1646,9 +1649,21 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                 .collect::<Vec<_>>();
 
             // Not all emits were matched.
-            if self.expected_emits.iter().any(|(expected, _)| !expected.found) {
+            if self.expected_emits.len() > 0 {
+                dbg!(&self.expected_emits);
+            }
+            if let Some((not_found,_)) =
+                self.expected_emits.iter().find(|(expected, _)| !expected.found)
+            {
                 outcome.result.result = InstructionResult::Revert;
-                outcome.result.output = "log != expected log".abi_encode().into();
+
+                // Where the revert is set and where color mode might be
+                // indicated for a given event that wasn't matched
+                outcome.result.output = Vm::UnemittedEventError {
+                    positionExpected: not_found.sequence,
+                }
+                .abi_encode()
+                .into();
                 return outcome;
             }
 
@@ -1670,6 +1685,7 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
             // All emits were found, we're good.
             // Clear the queue, as we expect the user to declare more events for the next call
             // if they wanna match further events.
+            self.expected_emits_offset += self.expected_emits.len() as u16;
             self.expected_emits.clear()
         }
 
