@@ -50,7 +50,8 @@ pub fn transaction_request_to_typed(
                 access_list,
                 sidecar,
                 transaction_type,
-                ..
+                authorization_list,
+                chain_id: _,
             },
         other,
     } = tx;
@@ -68,6 +69,23 @@ pub fn transaction_request_to_typed(
             gas_limit: gas.unwrap_or_default(),
             is_system_transaction: other.get_deserialized::<bool>("isSystemTx")?.ok()?,
             input: input.into_input().unwrap_or_default(),
+        }));
+    }
+
+    // EIP7702
+    if transaction_type == Some(4) || authorization_list.is_some() {
+        return Some(TypedTransactionRequest::EIP7702(TxEip7702 {
+            nonce: nonce.unwrap_or_default(),
+            max_fee_per_gas: max_fee_per_gas.unwrap_or_default(),
+            max_priority_fee_per_gas: max_priority_fee_per_gas.unwrap_or_default(),
+            gas_limit: gas.unwrap_or_default(),
+            value: value.unwrap_or(U256::ZERO),
+            input: input.into_input().unwrap_or_default(),
+            // requires to
+            to: to?.into_to()?,
+            chain_id: 0,
+            access_list: access_list.unwrap_or_default(),
+            authorization_list: authorization_list.unwrap(),
         }));
     }
 
@@ -169,6 +187,7 @@ pub enum TypedTransactionRequest {
     Legacy(TxLegacy),
     EIP2930(TxEip2930),
     EIP1559(TxEip1559),
+    EIP7702(TxEip7702),
     EIP4844(TxEip4844Variant),
     Deposit(TxDeposit),
 }

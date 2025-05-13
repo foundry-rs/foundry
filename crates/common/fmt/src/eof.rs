@@ -1,7 +1,6 @@
 use alloy_primitives::hex;
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, ContentArrangement, Table};
 use revm::bytecode::{
-    eof::{EofBody, EofHeader},
     Eof,
 };
 use std::fmt::{self, Write};

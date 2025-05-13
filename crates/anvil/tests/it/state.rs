@@ -290,16 +290,17 @@ async fn computes_next_base_fee_after_loading_state() {
 
     let provider = handle.http_provider();
 
+    let base_fee_empty_chain = api.backend.fees().base_fee();
+
     let value = Unit::ETHER.wei().saturating_mul(U256::from(1)); // 1 ether
     let tx = TransactionRequest::default().with_to(alice).with_value(value).with_from(bob);
     let tx = WithOtherFields::new(tx);
 
-    let base_fee_empty_chain = api.backend.fees().base_fee();
-    provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let _receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
     let base_fee_after_one_tx = api.backend.fees().base_fee();
     // the test is meaningless if this does not hold
-    assert!(base_fee_empty_chain != base_fee_after_one_tx);
+    assert_ne!(base_fee_empty_chain, base_fee_after_one_tx);
 
     let ser_state = api.serialized_state(true).await.unwrap();
     foundry_common::fs::write_json_file(&state_file, &ser_state).unwrap();
