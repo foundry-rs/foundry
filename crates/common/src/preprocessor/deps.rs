@@ -323,9 +323,6 @@ pub(crate) fn remove_bytecode_dependencies(
                             "_args: encodeArgs{id}(DeployHelper{id}.FoundryPpConstructorArgs",
                             id = dep.referenced_contract.get()
                         ));
-                        if *call_args_offset > 0 {
-                            update.push('(');
-                        }
                         updates.insert((dep.loc.start, dep.loc.end + call_args_offset, update));
                         updates.insert((
                             dep.loc.end + args_length,
