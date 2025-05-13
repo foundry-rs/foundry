@@ -4189,7 +4189,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-solang-parser"
-version = "0.3.3"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7bf43fbdd567b8f65c2db85ce39a38878a14bb77f42461b4212d06ce434a228"
 dependencies = [
  "itertools 0.14.0",
  "lalrpop",
