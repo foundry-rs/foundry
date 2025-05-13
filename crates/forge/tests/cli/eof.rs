@@ -1,4 +1,3 @@
-
 // Ensure we can build and decode EOF bytecode.
 forgetest_init!(test_build_with_eof, |prj, cmd| {
     cmd.forge_fuse()

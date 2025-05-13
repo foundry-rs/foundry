@@ -2,12 +2,11 @@ use alloy_json_abi::{EventParam, InternalType, JsonAbi, Param};
 use alloy_primitives::{hex, keccak256};
 use clap::Parser;
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Table};
-use eyre::{Result};
+use eyre::Result;
 use foundry_cli::opts::{BuildOpts, CompilerOpts};
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler},
-    find_matching_contract_artifact, find_target_path,
-    shell,
+    find_matching_contract_artifact, find_target_path, shell,
 };
 use foundry_compilers::artifacts::{
     output_selection::{
@@ -490,7 +489,7 @@ impl PartialEq<ContractOutputSelection> for ContractArtifactField {
                 (Self::IrOptimized, Cos::IrOptimized) |
                 (Self::Metadata, Cos::Metadata) |
                 (Self::UserDoc, Cos::UserDoc) |
-                (Self::Ewasm, Cos::Ewasm(_)) 
+                (Self::Ewasm, Cos::Ewasm(_))
         )
     }
 }
