@@ -86,7 +86,7 @@ fmt: ## Run all formatters.
 	./.github/scripts/format.sh --check
 
 lint-foundry:
-	RUSTFLAGS="-Dwarnings" cargo clippy --workspace --all-targets --all-features
+	RUSTFLAGS="-Dwarnings" cargo +nightly clippy --workspace --all-targets --all-features
 
 lint-codespell: ensure-codespell
 	codespell --skip "*.json"
