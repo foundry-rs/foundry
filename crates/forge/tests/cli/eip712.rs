@@ -46,7 +46,7 @@ library Structs2 {
         Structs.Foo foo;
         Structs.Bar bar;
         Rec[] recs;
-       Structs.Rec rec;
+        Structs.Rec rec;
     }
 }
 "#,
