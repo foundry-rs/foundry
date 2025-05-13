@@ -2096,8 +2096,31 @@ impl<W: Write> Visitor for Formatter<'_, W> {
         let loc = pragma.loc();
         return_source_if_disabled!(self, loc, ';');
 
-        self.visit_source(loc)?;
-        self.write_semicolon()
+        match pragma {
+            PragmaDirective::Identifier(loc, id1, id2) => {
+                write_chunk!(
+                    self,
+                    loc.start(),
+                    loc.end(),
+                    "pragma {}{}{};",
+                    id1.as_ref().map(|id| id.name.to_string()).unwrap_or_default(),
+                    if id1.is_some() && id2.is_some() { " " } else { "" },
+                    id2.as_ref().map(|id| id.name.to_string()).unwrap_or_default(),
+                )?;
+            }
+            PragmaDirective::StringLiteral(_loc, id, lit) => {
+                write_chunk!(self, "pragma {} ", id.name)?;
+                let StringLiteral { loc, string, .. } = lit;
+                write_chunk!(self, loc.start(), loc.end(), "\"{string}\";")?;
+            }
+            PragmaDirective::Version(loc, id, version) => {
+                write_chunk!(self, loc.start(), id.loc().end(), "pragma {}", id.name)?;
+                let version_loc = loc.with_start(version[0].loc().start());
+                self.visit_source(version_loc)?;
+                self.write_semicolon()?;
+            }
+        }
+        Ok(())
     }
 
     #[instrument(name = "import_plain", skip_all)]
