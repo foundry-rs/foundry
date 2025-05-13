@@ -1022,13 +1022,13 @@ impl Backend {
         if let Some(block) = state.blocks.last() {
             let header = &block.header;
             let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-                header.gas_used as u128,
-                header.gas_limit as u128,
+                header.gas_used,
+                header.gas_limit,
                 header.base_fee_per_gas.unwrap_or_default(),
             );
             let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
-                header.excess_blob_gas.map(|g| g as u128).unwrap_or_default(),
-                header.blob_gas_used.map(|g| g as u128).unwrap_or_default(),
+                header.excess_blob_gas.unwrap_or_default(),
+                header.blob_gas_used.unwrap_or_default(),
             );
 
             // update next base fee
@@ -1368,8 +1368,8 @@ impl Backend {
             header.base_fee_per_gas.unwrap_or_default(),
         );
         let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
-            header.excess_blob_gas.map(|g| g as u128).unwrap_or_default(),
-            header.blob_gas_used.map(|g| g as u128).unwrap_or_default(),
+            header.excess_blob_gas.unwrap_or_default(),
+            header.blob_gas_used.unwrap_or_default(),
         );
 
         // update next base fee

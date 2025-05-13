@@ -1266,8 +1266,8 @@ latest block number: {latest_block}"
             {
                 env.evm_env.block_env.blob_excess_gas_and_price =
                     Some(BlobExcessGasAndPrice::new(blob_excess_gas, false));
-                let next_block_blob_excess_gas = fees
-                    .get_next_block_blob_excess_gas(blob_excess_gas as u128, blob_gas_used as u128);
+                let next_block_blob_excess_gas =
+                    fees.get_next_block_blob_excess_gas(blob_excess_gas, blob_gas_used);
                 fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
                     next_block_blob_excess_gas,
                     false,
