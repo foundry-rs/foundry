@@ -409,13 +409,7 @@ impl BlockchainStorage {
     }
 
     pub fn serialized_blocks(&self) -> Vec<SerializableBlock> {
-        let mut blocks = self
-            .blocks
-            .values()
-            .map(|block| block.clone().into())
-            .collect::<Vec<SerializableBlock>>();
-        blocks.sort_by_key(|block| block.header.number);
-        blocks
+        self.blocks.values().map(|block|block.clone().into()).collect()
     }
 
     pub fn serialized_transactions(&self) -> Vec<SerializableTransaction> {
