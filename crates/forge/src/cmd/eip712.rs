@@ -189,130 +189,132 @@ impl<'a, 'ast> Resolver<'a, 'ast> {
     /// Returns `None` if struct contains any fields that are not supported by EIP-712 (e.g.
     /// mappings or function pointers).
     pub fn resolve_type_eip712(&self, key: &str) -> Option<String> {
-        let def = self.defs.structs.get(key)?;
-
         let mut ctx = ResolutionCtx::new(key.to_string());
-        let name = def.name.as_str();
 
-        // Assign name for the primary struct
-        let eip712_name = ctx.assign_eip712_name(name, key.to_string());
+        // Assign name to the primary struct
+        let eip712_name =
+            ctx.assign_eip712_name(self.defs.structs.get(key)?.name.as_str(), key.to_string());
 
-        // Recursively resolve primary struct to populate the ctx with all the subtypes.
-        let mut result = self.resolve_eip712_inner(key, &eip712_name, &mut ctx)?;
+        // Recursively resolve and assign names to all the secondary types
+        self.resolve_subtype_names(key, &mut ctx);
 
-        // Encode the subtypes
-        let subtype_keys: Vec<(String, String)> =
-            ctx.subtypes.iter().map(|(n, k)| (n.clone(), k.clone())).collect();
-        for (sub_name, sub_key) in subtype_keys {
-            if sub_key == key {
-                continue;
-            }
+        // Encode the primary struct
+        let mut result = self.encode_struct(key, &eip712_name, &ctx)?;
 
-            let subtype_encoded = self.resolve_eip712_inner(&sub_key, &sub_name, &mut ctx)?;
-            result.push_str(&subtype_encoded);
+        // Encode all the secondary types in alphabetical order
+        let subtypes_to_encode: Vec<(&String, &String)> =
+            ctx.subtypes.iter().filter(|(_, k)| **k != key).collect();
+        for (subtype_eip712_name, subtype_key) in subtypes_to_encode {
+            result.push_str(&self.encode_struct(subtype_key, subtype_eip712_name, &ctx)?);
         }
 
         Some(result)
     }
 
-    /// Recursively generates the EIP-712 encoding for the input struct.
-    /// Does NOT append subtype definitions here (that happens in the main function).
-    fn resolve_eip712_inner(
-        &self,
-        key: &str,
-        eip712_name: &str,
-        ctx: &mut ResolutionCtx,
-    ) -> Option<String> {
+    /// Discovers and assigns names to all subtypes of a given struct key.
+    fn resolve_subtype_names(&self, key: &str, ctx: &mut ResolutionCtx) {
+        if let Some(def) = self.defs.structs.get(key) {
+            // Update target contract ctx before resolving subtypes of this struct
+            let old_key = ctx.current_key.clone();
+            ctx.current_key = key.to_string();
+
+            for field in def.fields.iter() {
+                self.resolve_eip712_name(&field.ty, ctx);
+            }
+
+            // Restor target contract ctx
+            ctx.current_key = old_key;
+        }
+    }
+
+    /// Assigns a unique name to the input struct and its subtypes.
+    fn resolve_eip712_name(&self, ty: &'ast Type<'ast>, ctx: &mut ResolutionCtx) {
+        match &ty.kind {
+            TypeKind::Array(arr) => self.resolve_eip712_name(&arr.element, ctx),
+            TypeKind::Custom(ast_path) => {
+                let segments: Vec<_> =
+                    ast_path.segments().iter().map(|s| s.name.as_str()).collect();
+
+                let key = if segments.len() == 1 {
+                    ctx.target_contract()
+                        .map(|contract| format!("{}.{}", contract, segments[0]))
+                        .unwrap_or_else(|| segments[0].to_string())
+                } else {
+                    segments.join(".")
+                };
+
+                // If unnamed, assign a name and resolve subtypes
+                if self.defs.structs.contains_key(&key) && ctx.get_eip712_name(&key).is_none() {
+                    if let Some(def) = self.defs.structs.get(&key) {
+                        ctx.assign_eip712_name(def.name.as_str(), key.clone());
+                        self.resolve_subtype_names(&key, ctx);
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+
+    /// Generates the EIP-712 string representation of the struct.
+    ///
+    /// Requires all subtypes to already be named in `ctx`.
+    fn encode_struct(&self, key: &str, eip712_name: &str, ctx: &ResolutionCtx) -> Option<String> {
         let struct_def = self.defs.structs.get(key)?;
-
-        // Update target contract ctx before resolving subtypes of this struct
-        let old_key = std::mem::replace(&mut ctx.current_key, key.to_string());
-
         let mut result = format!("{}(", eip712_name);
         let num_fields = struct_def.fields.len();
 
         for (idx, field) in struct_def.fields.iter().enumerate() {
-            let field_name = field.name.as_ref()?;
-
             // Resolve the type of the field
-            let type_string = self.resolve_type(&field.ty, ctx)?;
-            _ = write!(result, "{} {}", type_string, field_name);
+            let encoded_type = self.resolve_type(&field.ty, key, ctx)?;
+            _ = write!(result, "{} {}", encoded_type, field.name.as_ref()?);
 
             if idx < num_fields - 1 {
                 result.push(',');
             }
         }
         result.push(')');
-
-        // Restore target contract ctx
-        ctx.current_key = old_key;
-
         Some(result)
     }
 
     /// Converts the given [`solar_parse::ast::Type`] into a type which can be converted to
-    /// [`alloy_dyn_abi::DynSolType`].
+    /// [`alloy_dyn_abi::DynSolType`]. For structs, uses the cached EIP-712 name.
     ///
     /// Returns `None` if the type is not supported for EIP-712 encoding.
-    fn resolve_type(&self, ty: &'ast Type<'ast>, ctx: &mut ResolutionCtx) -> Option<String> {
+    fn resolve_type(&self, ty: &'ast Type<'ast>, key: &str, ctx: &ResolutionCtx) -> Option<String> {
         match &ty.kind {
             TypeKind::Elementary(name) => Some(name.to_abi_str().to_string()),
             TypeKind::Array(arr) => {
-                let Some(inner_type) = self.resolve_type(&arr.element, ctx) else { return None };
-                let size_str = parse_array_size(&arr.size);
-                Some(format!("{}[{}]", inner_type, size_str.unwrap_or(String::new())))
+                let inner_type = self.resolve_type(&arr.element, key, ctx)?;
+                let size_str = parse_array_size(&arr.size).unwrap_or_default();
+                Some(format!("{}[{}]", inner_type, size_str))
             }
             TypeKind::Custom(ast_path) => {
                 let segments: Vec<_> =
                     ast_path.segments().iter().map(|s| s.name.as_str()).collect();
 
-                let key = if segments.len() > 1 {
-                    segments.join(".")
-                } else {
-                    ctx.target_contract()
-                        .map(|contract_name| format!("{}.{}", contract_name, segments[0]))
+                // If single segment, craft subtype key as the contract and the subtype
+                let sub_key = if segments.len() == 1 {
+                    key.split('.')
+                        .next()
+                        .map(|contract| format!("{}.{}", contract, segments[0]))
                         .unwrap_or_else(|| segments[0].to_string())
+                } else {
+                    segments.join(".")
                 };
 
-                if let Some(def) = self.defs.structs.get(&key) {
-                    // Check if the the struct has already been processed. If not, assign it a name
-                    // and resolve it.
-                    if let Some(name) = ctx.get_eip712_name(&key) {
-                        return Some(name.to_string());
-                    } else {
-                        // Update target contract ctx before resolving subtypes of this struct
-                        let prev_key = std::mem::replace(&mut ctx.current_key, key.clone());
-
-                        let name = ctx.assign_eip712_name(def.name.as_str(), key.clone());
-                        for field_in_new_struct in def.fields.iter() {
-                            if self.resolve_type(&field_in_new_struct.ty, ctx).is_none() {
-                                ctx.current_key = prev_key;
-                                return None;
-                            }
-                        }
-
-                        // Restore target contract ctx
-                        ctx.current_key = prev_key;
-
-                        return Some(name);
-                    }
+                if let Some(name) = ctx.get_eip712_name(&sub_key) {
+                    Some(name.to_string())
+                } else if self.defs.enums.contains(&sub_key) {
+                    Some("uint8".to_string())
+                } else if self.defs.contracts.contains(&sub_key.as_str()) {
+                    Some("address".to_string())
+                } else {
+                    eprintln!("[WARN] Missing type definition for: {}", key);
+                    None
                 }
-
-                if self.defs.enums.contains(&key) {
-                    // For now, map enum definitions to `uint8`
-                    return Some("uint8".to_string());
-                }
-
-                if self.defs.contracts.contains(&key.as_str()) {
-                    // For now, map contract definitions to `address`
-                    return Some("address".to_string());
-                }
-
-                eprintln!("[WARN] Could not resolve custom type: {}", key);
-                None
             }
             TypeKind::Mapping(_) | TypeKind::Function { .. } => {
-                eprintln!("[WARN] Unsupported type: Function or Mapping");
+                eprintln!("[WARN] EIP-712 doesn't support functions and mappings");
                 None
             }
         }
