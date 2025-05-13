@@ -347,8 +347,18 @@ impl<'a, 'ast> Resolver<'a, 'ast> {
                         // New subtype encountered during this resolution. Assign a name.
                         let base_name = struct_def.name.as_str();
                         let assigned_name = context.assign_name(base_name, potential_key.clone());
-                        // This call modifies `context` by adding deeper nested types if any.
-                        _ = self.resolve_struct_recursive(&potential_key, &assigned_name, context);
+
+                        let prev_key = std::mem::replace(
+                            &mut context.current_struct_key,
+                            potential_key.clone(),
+                        );
+                        for field_in_new_struct in struct_def.fields.iter() {
+                            if self.resolve_type(&field_in_new_struct.ty, context).is_none() {
+                                context.current_struct_key = prev_key;
+                                return None;
+                            }
+                        }
+                        context.current_struct_key = prev_key;
 
                         // Return the assigned name for the current field's type resolution.
                         return Some(assigned_name);
