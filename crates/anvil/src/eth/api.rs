@@ -175,6 +175,9 @@ impl EthApi {
             EthRequest::EthGetAccount(addr, block) => {
                 self.get_account(addr, block).await.to_rpc_result()
             }
+            EthRequest::EthGetAccountInfo(addr, block) => {
+                self.get_account_info(addr, block).await.to_rpc_result()
+            }
             EthRequest::EthGetBalance(addr, block) => {
                 self.balance(addr, block).await.to_rpc_result()
             }
@@ -727,6 +730,25 @@ impl EthApi {
         self.backend.get_account_at_block(address, Some(block_request)).await
     }
 
+    /// Returns the account information including balance, nonce, code and storage
+    pub async fn get_account_info(
+        &self,
+        address: Address,
+        block_number: Option<BlockId>,
+    ) -> Result<serde_json::Value> {
+        node_info!("eth_getAccountInfo");
+        let account = self
+            .backend
+            .get_account_at_block(address, Some(self.block_request(block_number).await?))
+            .await?;
+        let code =
+            self.backend.get_code(address, Some(self.block_request(block_number).await?)).await?;
+        Ok(serde_json::json!({
+            "balance": account.balance,
+            "nonce": account.nonce,
+            "code": code
+        }))
+    }
     /// Returns content of the storage at given address.
     ///
     /// Handler for ETH RPC call: `eth_getStorageAt`
@@ -2058,55 +2080,58 @@ impl EthApi {
             for pair in pairs {
                 let (tx_data, block_index) = pair;
 
-                let mut tx_req = match tx_data {
-                    TransactionData::JSON(req) => WithOtherFields::new(req),
+                let pending = match tx_data {
                     TransactionData::Raw(bytes) => {
                         let mut data = bytes.as_ref();
                         let decoded = TypedTransaction::decode_2718(&mut data)
                             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
-                        let request =
-                            TransactionRequest::try_from(decoded.clone()).map_err(|_| {
-                                BlockchainError::RpcError(RpcError::invalid_params(
-                                    "Failed to convert raw transaction",
-                                ))
-                            })?;
-                        WithOtherFields::new(request)
+                        PendingTransaction::new(decoded)?
                     }
-                };
 
-                let from = tx_req.from.map(Ok).unwrap_or_else(|| {
-                    self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
-                })?;
+                    TransactionData::JSON(req) => {
+                        let mut tx_req = WithOtherFields::new(req);
+                        let from = tx_req.from.map(Ok).unwrap_or_else(|| {
+                            self.accounts()?
+                                .first()
+                                .cloned()
+                                .ok_or(BlockchainError::NoSignerAvailable)
+                        })?;
 
-                // Get the nonce at the common block
-                let curr_nonce = nonces.entry(from).or_insert(
-                    self.get_transaction_count(from, Some(common_block.header.number.into()))
-                        .await?,
-                );
+                        // Get the nonce at the common block
+                        let curr_nonce = nonces.entry(from).or_insert(
+                            self.get_transaction_count(
+                                from,
+                                Some(common_block.header.number.into()),
+                            )
+                            .await?,
+                        );
 
-                // Estimate gas
-                if tx_req.gas.is_none() {
-                    if let Ok(gas) = self.estimate_gas(tx_req.clone(), None, None).await {
-                        tx_req.gas = Some(gas.to());
+                        // Estimate gas
+                        if tx_req.gas.is_none() {
+                            if let Ok(gas) = self.estimate_gas(tx_req.clone(), None, None).await {
+                                tx_req.gas = Some(gas.to());
+                            }
+                        }
+
+                        // Build typed transaction request
+                        let typed = self.build_typed_tx_request(tx_req, *curr_nonce)?;
+
+                        // Increment nonce
+                        *curr_nonce += 1;
+
+                        // Handle signer and convert to pending transaction
+                        if self.is_impersonated(from) {
+                            let bypass_signature = self.impersonated_signature(&typed);
+                            let transaction =
+                                sign::build_typed_transaction(typed, bypass_signature)?;
+                            self.ensure_typed_transaction_supported(&transaction)?;
+                            PendingTransaction::with_impersonated(transaction, from)
+                        } else {
+                            let transaction = self.sign_request(&from, typed)?;
+                            self.ensure_typed_transaction_supported(&transaction)?;
+                            PendingTransaction::new(transaction)?
+                        }
                     }
-                }
-
-                // Build typed transaction request
-                let typed = self.build_typed_tx_request(tx_req, *curr_nonce)?;
-
-                // Increment nonce
-                *curr_nonce += 1;
-
-                // Handle signer and convert to pending transaction
-                let pending = if self.is_impersonated(from) {
-                    let bypass_signature = self.impersonated_signature(&typed);
-                    let transaction = sign::build_typed_transaction(typed, bypass_signature)?;
-                    self.ensure_typed_transaction_supported(&transaction)?;
-                    PendingTransaction::with_impersonated(transaction, from)
-                } else {
-                    let transaction = self.sign_request(&from, typed)?;
-                    self.ensure_typed_transaction_supported(&transaction)?;
-                    PendingTransaction::new(transaction)?
                 };
 
                 let pooled = PoolTransaction::new(pending);

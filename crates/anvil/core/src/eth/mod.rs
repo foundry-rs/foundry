@@ -73,6 +73,9 @@ pub enum EthRequest {
     #[serde(rename = "eth_getAccount")]
     EthGetAccount(Address, Option<BlockId>),
 
+    #[serde(rename = "eth_getAccountInfo")]
+    EthGetAccountInfo(Address, Option<BlockId>),
+
     #[serde(rename = "eth_getStorageAt")]
     EthGetStorageAt(Address, U256, Option<BlockId>),
 

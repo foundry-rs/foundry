@@ -3116,7 +3116,7 @@ impl TransactionValidator for Backend {
             }
             _ => {
                 // check sufficient funds: `gas * price + value`
-                let req_funds = max_cost.checked_add(value.to()).ok_or_else(|| {
+                let req_funds = max_cost.checked_add(value.saturating_to()).ok_or_else(|| {
                     warn!(target: "backend", "[{:?}] cost too high", tx.hash());
                     InvalidTransactionError::InsufficientFunds
                 })?;
