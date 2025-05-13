@@ -1006,7 +1006,7 @@ impl Backend {
             }
         }
 
-        if let Some(latest) = state.blocks.iter().max_by_key(|b|b.header.number) {
+        if let Some(latest) = state.blocks.iter().max_by_key(|b| b.header.number) {
             let header = &latest.header;
             let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
                 header.gas_used as u128,
