@@ -1,4 +1,4 @@
-contract Contract {
+contract Contract layout at 69 {
     bytes32 transient a;
 
     bytes32 constant private BYTES;
