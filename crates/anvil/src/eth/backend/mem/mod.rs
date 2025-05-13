@@ -26,14 +26,12 @@ use crate::{
         sign::build_typed_transaction,
         util::get_precompiles_for,
     },
-    // inject_precompiles,
+    inject_precompiles,
     mem::{
         inspector::AnvilInspector,
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
     },
-    ForkChoice,
-    NodeConfig,
-    PrecompileFactory,
+    ForkChoice, NodeConfig, PrecompileFactory,
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
@@ -51,7 +49,7 @@ use alloy_eips::{
     eip4844::MAX_BLOBS_PER_BLOCK_DENCUN,
     eip7840::BlobParams,
 };
-use alloy_evm::{eth::EthEvmContext, Database, Evm};
+use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap, Database, Evm};
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
     EthereumWallet, UnknownTxEnvelope, UnknownTypedTransaction,
@@ -1101,7 +1099,7 @@ impl Backend {
     ) -> EitherEvm<
         WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>,
         &'db mut I,
-        FoundryPrecompiles,
+        PrecompilesMap,
     >
     where
         I: Inspector<EthEvmContext<WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>>>
@@ -1109,11 +1107,13 @@ impl Backend {
         WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>:
             Database<Error = DatabaseError>,
     {
-        new_evm_with_inspector_ref(db, env, inspector)
-        // TODO(yash): inject precompiles
-        // if let Some(factory) = &self.precompile_factory {
-        //     inject_precompiles(&mut evm, factory.precompiles());
-        // }
+        let evm = new_evm_with_inspector_ref(db, env, inspector);
+
+        if let Some(factory) = &self.precompile_factory {
+            inject_precompiles(&mut evm, factory.precompiles());
+        }
+
+        evm
     }
 
     /// executes the transactions without writing to the underlying database

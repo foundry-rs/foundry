@@ -4,7 +4,7 @@ use crate::{
     backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, Env, InspectorExt,
 };
 use alloy_consensus::constants::KECCAK_EMPTY;
-use alloy_evm::{eth::EthEvmContext, Evm, EvmEnv};
+use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap, Evm, EvmEnv};
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_fork_db::DatabaseError;
 use revm::{
@@ -14,64 +14,17 @@ use revm::{
     },
     handler::{
         instructions::EthInstructions, EthFrame, EthPrecompiles, FrameInitOrResult, FrameResult,
-        Handler, ItemOrResult, MainnetHandler, PrecompileProvider,
+        Handler, ItemOrResult, MainnetHandler,
     },
     inspector::InspectorHandler,
     interpreter::{
         interpreter::EthInterpreter, return_ok, CallInput, CallInputs, CallOutcome, CallScheme,
-        CallValue, CreateInputs, CreateOutcome, FrameInput, Gas, InputsImpl, InstructionResult,
+        CallValue, CreateInputs, CreateOutcome, FrameInput, Gas, InstructionResult,
         InterpreterResult,
     },
     primitives::hardfork::SpecId,
     Context, ExecuteEvm, Journal,
 };
-
-pub struct FoundryPrecompiles {
-    inner: EthPrecompiles,
-}
-
-impl FoundryPrecompiles {
-    pub fn new() -> Self {
-        Self { inner: EthPrecompiles::default() }
-    }
-}
-
-impl Default for FoundryPrecompiles {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<CTX: ContextTr> PrecompileProvider<CTX> for FoundryPrecompiles {
-    type Output = InterpreterResult;
-
-    /// Set the spec for the precompiles.
-    fn set_spec(&mut self, spec: <<CTX as ContextTr>::Cfg as revm::context::Cfg>::Spec) -> bool {
-        PrecompileProvider::<CTX>::set_spec(&mut self.inner, spec)
-    }
-
-    /// Run the precompile.
-    fn run(
-        &mut self,
-        context: &mut CTX,
-        address: &Address,
-        inputs: &InputsImpl,
-        is_static: bool,
-        gas_limit: u64,
-    ) -> Result<Option<Self::Output>, String> {
-        self.inner.run(context, address, inputs, is_static, gas_limit)
-    }
-
-    /// Get the warm addresses.
-    fn warm_addresses(&self) -> Box<impl Iterator<Item = Address>> {
-        self.inner.warm_addresses()
-    }
-
-    /// Check if the address is a precompile.
-    fn contains(&self, address: &Address) -> bool {
-        self.inner.contains(address)
-    }
-}
 
 pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
     db: &'db mut dyn DatabaseExt,
@@ -97,7 +50,7 @@ pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
             ctx,
             inspector,
             EthInstructions::default(),
-            FoundryPrecompiles::default(),
+            PrecompilesMap::from_static(EthPrecompiles::default().precompiles),
         ),
     }
 }
@@ -111,7 +64,7 @@ pub fn new_evm_with_existing_context<'a>(
             ctx,
             inspector,
             EthInstructions::default(),
-            FoundryPrecompiles::default(),
+            PrecompilesMap::from_static(EthPrecompiles::default().precompiles),
         ),
     }
 }
@@ -142,7 +95,7 @@ pub struct FoundryEvm<'db, I: InspectorExt> {
         EthEvmContext<&'db mut dyn DatabaseExt>,
         I,
         EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt>>,
-        FoundryPrecompiles,
+        PrecompilesMap,
     >,
 }
 
@@ -165,7 +118,7 @@ impl<I: InspectorExt> FoundryEvm<'_, I> {
 }
 
 impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
-    type Precompiles = FoundryPrecompiles;
+    type Precompiles = PrecompilesMap;
     type Inspector = I;
     type DB = &'db mut dyn DatabaseExt;
     type Error = EVMError<DatabaseError>;
@@ -246,7 +199,7 @@ pub struct FoundryHandler<'db, I: InspectorExt> {
             EthEvmContext<&'db mut dyn DatabaseExt>,
             I,
             EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt>>,
-            FoundryPrecompiles,
+            PrecompilesMap,
         >,
         EVMError<DatabaseError>,
         EthFrame<
@@ -254,7 +207,7 @@ pub struct FoundryHandler<'db, I: InspectorExt> {
                 EthEvmContext<&'db mut dyn DatabaseExt>,
                 I,
                 EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt>>,
-                FoundryPrecompiles,
+                PrecompilesMap,
             >,
             EVMError<DatabaseError>,
             EthInterpreter,
@@ -274,7 +227,7 @@ impl<'db, I: InspectorExt> Handler for FoundryHandler<'db, I> {
         EthEvmContext<&'db mut dyn DatabaseExt>,
         I,
         EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt>>,
-        FoundryPrecompiles,
+        PrecompilesMap,
     >;
     type Error = EVMError<DatabaseError>;
     type Frame = EthFrame<
@@ -282,7 +235,7 @@ impl<'db, I: InspectorExt> Handler for FoundryHandler<'db, I> {
             EthEvmContext<&'db mut dyn DatabaseExt>,
             I,
             EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt>>,
-            FoundryPrecompiles,
+            PrecompilesMap,
         >,
         EVMError<DatabaseError>,
         EthInterpreter,

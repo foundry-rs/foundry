@@ -1,7 +1,11 @@
 use std::fmt::Debug;
 
+use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap, Database};
 use alloy_primitives::Address;
-use revm::precompile::Precompiles;
+use foundry_evm::backend::DatabaseError;
+use foundry_evm_core::either_evm::EitherEvm;
+use op_revm::OpContext;
+use revm::{precompile::Precompiles, Inspector};
 
 /// Object-safe trait that enables injecting extra precompiles when using
 /// `anvil` as a library.
@@ -10,24 +14,30 @@ pub trait PrecompileFactory: Send + Sync + Unpin + Debug {
     fn precompiles(&self) -> Vec<(Address, Precompiles)>;
 }
 
-// /// Appends a handler register to `evm` that injects the given `precompiles`.
-// ///
-// /// This will add an additional handler that extends the default precompiles with the given set
-// of /// precompiles.
-// pub fn inject_precompiles<DB: revm::Database, I>(
-//     evm: &mut revm::Evm<'_, I, DB>,
-//     precompiles: Precompiles,
-// ) {
-//     evm.handler.append_handler_register_box(Box::new(move |handler| {
-//         let precompiles = precompiles.clone();
-//         let prev = handler.pre_execution.load_precompiles.clone();
-//         handler.pre_execution.load_precompiles = Arc::new(move || {
-//             let mut cx = prev();
-//             cx.extend(precompiles.iter().cloned().map(|(a, b)| (a, b.into())));
-//             cx
-//         });
-//     }));
-// }
+/// Appends a handler register to `evm` that injects the given `precompiles`.
+///
+/// This will add an additional handler that extends the default precompiles with the given set of
+/// precompiles.
+pub fn inject_precompiles<DB, I>(
+    evm: &mut EitherEvm<DB, I, PrecompilesMap>,
+    precompiles: Precompiles,
+) where
+    DB: Database<Error = DatabaseError>,
+    I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
+{
+    // let precompiles = evm.precompiles_mut();
+    // evm.precompiles_mut().extend(precompiles.clone());
+
+    // evm.handler.append_handler_register_box(Box::new(move |handler| {
+    //     let precompiles = precompiles.clone();
+    //     let prev = handler.pre_execution.load_precompiles.clone();
+    //     handler.pre_execution.load_precompiles = Arc::new(move || {
+    //         let mut cx = prev();
+    //         cx.extend(precompiles.iter().cloned().map(|(a, b)| (a, b.into())));
+    //         cx
+    //     });
+    // }));
+}
 
 // #[cfg(test)]
 // mod tests {
