@@ -51,7 +51,7 @@ use rand_chacha::ChaChaRng;
 use revm::{
     self,
     bytecode::{opcode as op, EOF_MAGIC_BYTES},
-    context::{result::EVMError, BlockEnv, JournalTr, LocalContext},
+    context::{result::EVMError, BlockEnv, JournalTr, LocalContext, TransactionType},
     context_interface::{transaction::SignedAuthorization, CreateScheme},
     handler::FrameResult,
     interpreter::{
@@ -711,8 +711,8 @@ impl Cheatcodes {
             // If the transaction type is legacy we need to upgrade it to EIP-2930 transaction type
             // in order to use access lists. Other transaction types support access lists
             // themselves.
-            if ecx.tx.tx_type == 0 {
-                ecx.tx.tx_type = 1;
+            if ecx.tx.tx_type == TransactionType::Legacy as u8 {
+                ecx.tx.tx_type = TransactionType::Eip2930 as u8;
             }
         }
 
@@ -1092,8 +1092,8 @@ impl Cheatcodes {
             // If the transaction type is legacy we need to upgrade it to EIP-2930 transaction type
             // in order to use access lists. Other transaction types support access lists
             // themselves.
-            if ecx.tx.tx_type == 0 {
-                ecx.tx.tx_type = 1;
+            if ecx.tx.tx_type == TransactionType::Legacy as u8 {
+                ecx.tx.tx_type = TransactionType::Eip2930 as u8;
             }
         }
 
