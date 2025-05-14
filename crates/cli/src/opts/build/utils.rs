@@ -2,8 +2,9 @@ use crate::{opts::BuildOpts, utils::LoadConfig};
 
 use foundry_compilers::{
     artifacts::{Source, Sources},
+    multi::{MultiCompilerLanguage, MultiCompilerParsedSource},
     solc::{SolcLanguage, SolcVersionedInput},
-    CompilerInput,
+    CompilerInput, Graph,
 };
 use solar_sema::{interface::Session, ParsingContext};
 use std::path::PathBuf;
@@ -12,29 +13,49 @@ use std::path::PathBuf;
 ///
 /// Configures include paths, remappings and registers all in-memory sources so
 /// that solar can operate without touching disk.
+///
+/// If no `target_paths` are provided, all project files are processed.
+///
+/// Only processes the subset of sources with the most up-to-date Solitidy version.
 pub fn solar_pcx_from_build_opts<'sess>(
     sess: &'sess Session,
     build: BuildOpts,
-    target_paths: Vec<PathBuf>,
+    target_paths: Option<Vec<PathBuf>>,
 ) -> eyre::Result<ParsingContext<'sess>> {
     // Process build options
     let config = build.load_config()?;
     let project = config.ephemeral_project()?;
 
-    // TODO: ask if taking 0.8.0 as default is fine, or if i should return an error and force
-    // users to either configure the version in the toml or pass the `--use version`
-    // flag
-    let version = match config.solc_version() {
-        Some(version) => version,
-        None => "0.8.0".parse()?,
+    let sources = match target_paths {
+        // If target files are provided, only process those sources
+        Some(targets) => {
+            let mut sources = Sources::new();
+            for t in targets.into_iter() {
+                let path = dunce::canonicalize(t)?;
+                let source = Source::read(&path)?;
+                sources.insert(path, source);
+            }
+            sources
+        }
+        // Otherwise, process all project files
+        None => project.paths.read_input_files()?,
     };
 
-    let mut sources = Sources::new();
-    for t in target_paths.into_iter() {
-        let target_path = dunce::canonicalize(t)?;
-        let source = Source::read(&target_path)?;
-        sources.insert(target_path, source);
-    }
+    // Only process sources with latest Solidity version to avoid conflicts.
+    let graph = Graph::<MultiCompilerParsedSource>::resolve_sources(&project.paths, sources)?;
+    let (version, sources, _) = graph
+        // resolve graph into mapping language -> version -> sources
+        .into_sources_by_version(&project)?
+        .sources
+        .into_iter()
+        // only interested in Solidity sources
+        .find(|(lang, _)| *lang == MultiCompilerLanguage::Solc(SolcLanguage::Solidity))
+        .ok_or_else(|| eyre::eyre!("no Solidity sources"))?
+        .1
+        .into_iter()
+        // always pick the latest version
+        .max_by(|(v1, _, _), (v2, _, _)| v1.cmp(v2))
+        .unwrap();
 
     let solc = SolcVersionedInput::build(
         sources,

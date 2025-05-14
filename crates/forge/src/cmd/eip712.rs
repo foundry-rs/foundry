@@ -31,7 +31,7 @@ impl Eip712Args {
         let _ = sess.enter(|| -> Result<()> {
             // Set up the parsing context with the project paths and sources.
             let parsing_context =
-                solar_pcx_from_build_opts(&sess, self.build, vec![self.target_path])?;
+                solar_pcx_from_build_opts(&sess, self.build, Some(vec![self.target_path]))?;
 
             // Parse and resolve
             let hir_arena = ThreadLocal::new();

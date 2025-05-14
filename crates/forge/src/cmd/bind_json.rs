@@ -1,7 +1,10 @@
 use super::eip712::Resolver;
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
+use foundry_cli::{
+    opts::{solar_pcx_from_build_opts, BuildOpts},
+    utils::LoadConfig,
+};
 use foundry_common::{compile::with_compilation_reporter, fs};
 use foundry_compilers::{
     artifacts::{
