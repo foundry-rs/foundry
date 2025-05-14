@@ -2200,6 +2200,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "chisel2"
+version = "1.2.0"
+dependencies = [
+ "alloy-dyn-abi",
+ "alloy-json-abi",
+ "alloy-primitives",
+ "clap",
+ "dirs",
+ "eyre",
+ "forge-fmt",
+ "foundry-cli",
+ "foundry-common",
+ "foundry-compilers",
+ "foundry-config",
+ "foundry-evm",
+ "regex",
+ "reqwest",
+ "revm",
+ "rustyline",
+ "semver 1.0.26",
+ "serde",
+ "serde_json",
+ "solang-parser",
+ "solar-parse",
+ "strum 0.27.1",
+ "tikv-jemallocator",
+ "time",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "walkdir",
+ "yansi",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"

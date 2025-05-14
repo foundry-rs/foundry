@@ -8,6 +8,7 @@ members = [
     "crates/cheatcodes/",
     "crates/cheatcodes/spec/",
     "crates/chisel/",
+    "crates/chisel2/",
     "crates/cli/",
     "crates/common/",
     "crates/config/",
