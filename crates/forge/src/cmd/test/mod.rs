@@ -3,6 +3,7 @@ use crate::{
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::matches_contract,
+    mutation::{MutationHandler, MutationReporter, MutationsSummary},
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
         debug::{ContractSources, DebugTraceIdentifier},
@@ -19,7 +20,7 @@ use eyre::{bail, Context, OptionExt, Result};
 use foundry_block_explorers::EtherscanApiVersion;
 use foundry_cli::{
     opts::{BuildOpts, GlobalArgs},
-    utils::{self, LoadConfig},
+    utils::{self, FoundryPathExt, LoadConfig},
 };
 use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell, TestFunctionExt};
 use foundry_compilers::{
@@ -198,6 +199,19 @@ pub struct TestArgs {
 
     #[command(flatten)]
     pub watch: WatchArgs,
+
+    /// Enable mutation testing.
+    /// If passed with file paths, only those files will be tested.
+    #[arg(long, num_args(0..), value_name = "PATH")]
+    pub mutate: Option<Vec<PathBuf>>,
+
+    /// Specify which files to mutate with glob pattern matching.
+    #[arg(long, value_name = "PATTERN", requires = "mutate")]
+    pub mutate_path: Option<GlobMatcher>,
+
+    /// Only run tests in contracts matching the specified regex pattern.
+    #[arg(long, value_name = "REGEX", requires = "mutate")]
+    pub mutate_contract: Option<regex::Regex>,
 }
 
 impl TestArgs {
@@ -296,6 +310,13 @@ impl TestArgs {
             config.invariant.gas_report_samples = 0;
         }
 
+        let should_mutate = self.mutate.is_some();
+
+        // Mutation test uses cache to avoid recompiling non-mutated contracts -> force it
+        if should_mutate && !config.cache {
+            config.cache = true;
+        }
+
         // Install missing dependencies.
         if install::install_missing_dependencies(&mut config) && config.auto_detect_remappings {
             // need to re-configure here to also catch additional remappings
@@ -356,10 +377,11 @@ impl TestArgs {
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .enable_isolation(evm_opts.isolate)
             .odyssey(evm_opts.odyssey)
-            .build::<MultiCompiler>(project_root, &output, env, evm_opts)?;
+            .build::<MultiCompiler>(project_root, &output, env.clone(), evm_opts.clone())?;
 
         let libraries = runner.libraries.clone();
-        let mut outcome = self.run_tests(runner, config, verbosity, &filter, &output).await?;
+        let mut outcome =
+            self.run_tests(runner, config.clone(), verbosity, &filter, &output).await?;
 
         if should_draw {
             let (suite_name, test_name, mut test_result) =
@@ -423,11 +445,112 @@ impl TestArgs {
             }
 
             let mut debugger = builder.build();
-            if let Some(dump_path) = self.dump {
+            if let Some(dump_path) = self.dump.clone() {
                 debugger.dump_to_file(&dump_path)?;
             } else {
                 debugger.try_run_tui()?;
             }
+        }
+
+        // All test have been run once before reaching this point
+        if should_mutate {
+            // check outcome here, stop if any test failed
+            // @todo rather set non-allowed failed tests in config and ensure_ok() here?
+            // @todo other checks: no fork (or just exclude based on clap arg?)
+            if outcome.failed() > 0 {
+                eyre::bail!("Cannot run mutation testing with failed tests");
+            }
+
+            let mutate_paths = if let Some(pattern) = &self.mutate_path {
+                // If --mutate-path is provided, use it to filter paths
+                source_files_iter(&project.paths.sources, MultiCompilerLanguage::FILE_EXTENSIONS)
+                    .filter(|entry| {
+                        // @todo filter out interfaces here?
+                        // we do it in lexing for now
+                        entry.is_sol() && !entry.is_sol_test() && pattern.is_match(entry)
+                    })
+                    .collect()
+            } else if let Some(contract_pattern) = &self.mutate_contract {
+                // If --mutate-contract is provided, use it to filter contracts
+                source_files_iter(&project.paths.sources, MultiCompilerLanguage::FILE_EXTENSIONS)
+                    .filter(|entry| {
+                        entry.is_sol() &&
+                            !entry.is_sol_test() &&
+                            output
+                                .artifact_ids()
+                                .find(|(id, _)| id.source == *entry)
+                                .is_some_and(|(id, _)| contract_pattern.is_match(&id.name))
+                    })
+                    .collect()
+            } else if self.mutate.as_ref().unwrap().is_empty() {
+                // If --mutate is passed without arguments, use all Solidity files
+                source_files_iter(&project.paths.sources, MultiCompilerLanguage::FILE_EXTENSIONS)
+                    .filter(|entry| entry.is_sol() && !entry.is_sol_test())
+                    .collect()
+            } else {
+                // If --mutate is passed with arguments, use those paths
+                self.mutate.as_ref().unwrap().clone()
+            };
+
+            sh_println!("Running mutation tests...").unwrap();
+            let mut mutation_summary = MutationsSummary::new();
+
+            for path in mutate_paths {
+                let mut handler = MutationHandler::new(path.clone(), config.clone());
+
+                handler.read_source_contract()?;
+                handler.generate_ast().await;
+                handler.create_mutation_folders();
+
+                sh_println!("Mutating {}", path.display());
+
+                let mutants = handler.generate_and_compile().await;
+
+                // @todo ugly - needs to be refactored
+                for (i, mutant) in mutants.iter().enumerate() {
+                    sh_println!("\rMutant {} out of {}", i + 1, mutants.len());
+                    if let Some(compile_output) = &mutant.1 {
+                        let mutant_path = mutant.0.path.clone();
+
+                        let mut new_config = (*config).clone();
+
+                        new_config.root = mutant_path.clone();
+                        new_config.src = mutant_path.clone().join("src");
+                        new_config.out = mutant_path.clone().join("out");
+                        new_config.test = mutant_path.clone().join("test");
+
+                        new_config.cache_path = mutant_path.clone().join("cache");
+
+                        let new_config = Arc::new(new_config);
+                        let new_filter = self.filter(&new_config).unwrap();
+
+                        let mut runner = MultiContractRunnerBuilder::new(new_config.clone())
+                            .set_debug(false)
+                            .initial_balance(evm_opts.initial_balance)
+                            .evm_spec(config.evm_spec_id())
+                            .sender(evm_opts.sender)
+                            .odyssey(evm_opts.odyssey)
+                            .build::<MultiCompiler>(
+                                &mutant_path,
+                                &compile_output,
+                                env.clone(),
+                                evm_opts.clone(),
+                            )?;
+
+                        let results = runner.test_collect(&new_filter);
+
+                        let outcome = TestOutcome::new(results, self.allow_failure);
+                        mutation_summary.update_valid_mutant(&outcome);
+                    } else {
+                        mutation_summary.update_invalid_mutant();
+                    }
+                }
+                sh_println!("\n");
+            }
+
+            MutationReporter::new().report(&mutation_summary);
+
+            outcome = TestOutcome::empty(true);
         }
 
         Ok(outcome)
