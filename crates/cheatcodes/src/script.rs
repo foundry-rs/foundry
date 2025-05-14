@@ -33,54 +33,81 @@ impl Cheatcode for broadcast_2Call {
     }
 }
 
-impl Cheatcode for attachDelegationCall {
+impl Cheatcode for attachDelegation_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { signedDelegation } = self;
-        let SignedDelegation { v, r, s, nonce, implementation } = signedDelegation;
+        attach_delegation(ccx, signedDelegation, false)
+    }
+}
 
-        let auth = Authorization {
-            address: *implementation,
-            nonce: *nonce,
-            chain_id: U256::from(ccx.ecx.env.cfg.chain_id),
-        };
-        let signed_auth = SignedAuthorization::new_unchecked(
-            auth,
-            *v,
-            U256::from_be_bytes(r.0),
-            U256::from_be_bytes(s.0),
-        );
-        write_delegation(ccx, signed_auth.clone())?;
-        ccx.state.active_delegation = Some(signed_auth);
-        Ok(Default::default())
+impl Cheatcode for attachDelegation_1Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { signedDelegation, crossChain } = self;
+        attach_delegation(ccx, signedDelegation, *crossChain)
     }
 }
 
 impl Cheatcode for signDelegation_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { implementation, privateKey } = *self;
-        sign_delegation(ccx, privateKey, implementation, None, false)
+        sign_delegation(ccx, privateKey, implementation, None, false, false)
     }
 }
 
 impl Cheatcode for signDelegation_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { implementation, privateKey, nonce } = *self;
-        sign_delegation(ccx, privateKey, implementation, Some(nonce), false)
+        sign_delegation(ccx, privateKey, implementation, Some(nonce), false, false)
+    }
+}
+
+impl Cheatcode for signDelegation_2Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { implementation, privateKey, crossChain } = *self;
+        sign_delegation(ccx, privateKey, implementation, None, crossChain, false)
     }
 }
 
 impl Cheatcode for signAndAttachDelegation_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { implementation, privateKey } = *self;
-        sign_delegation(ccx, privateKey, implementation, None, true)
+        sign_delegation(ccx, privateKey, implementation, None, false, true)
     }
 }
 
 impl Cheatcode for signAndAttachDelegation_1Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { implementation, privateKey, nonce } = *self;
-        sign_delegation(ccx, privateKey, implementation, Some(nonce), true)
+        sign_delegation(ccx, privateKey, implementation, Some(nonce), false, true)
     }
+}
+
+impl Cheatcode for signAndAttachDelegation_2Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { implementation, privateKey, crossChain } = *self;
+        sign_delegation(ccx, privateKey, implementation, None, crossChain, true)
+    }
+}
+
+/// Helper function to attach an EIP-7702 delegation.
+fn attach_delegation(
+    ccx: &mut CheatsCtxt,
+    delegation: &SignedDelegation,
+    cross_chain: bool,
+) -> Result {
+    let SignedDelegation { v, r, s, nonce, implementation } = delegation;
+    let chain_id = if cross_chain { U256::from(0) } else { U256::from(ccx.ecx.env.cfg.chain_id) };
+
+    let auth = Authorization { address: *implementation, nonce: *nonce, chain_id };
+    let signed_auth = SignedAuthorization::new_unchecked(
+        auth,
+        *v,
+        U256::from_be_bytes(r.0),
+        U256::from_be_bytes(s.0),
+    );
+    write_delegation(ccx, signed_auth.clone())?;
+    ccx.state.active_delegation = Some(signed_auth);
+    Ok(Default::default())
 }
 
 /// Helper function to sign and attach (if needed) an EIP-7702 delegation.
@@ -90,6 +117,7 @@ fn sign_delegation(
     private_key: Uint<256, 4>,
     implementation: Address,
     nonce: Option<u64>,
+    cross_chain: bool,
     attach: bool,
 ) -> Result<Vec<u8>> {
     let signer = PrivateKeySigner::from_bytes(&B256::from(private_key))?;
@@ -101,11 +129,9 @@ fn sign_delegation(
         // If we don't have a nonce then use next auth account nonce.
         authority_acc.data.info.nonce + 1
     };
-    let auth = Authorization {
-        address: implementation,
-        nonce,
-        chain_id: U256::from(ccx.ecx.env.cfg.chain_id),
-    };
+    let chain_id = if cross_chain { U256::from(0) } else { U256::from(ccx.ecx.env.cfg.chain_id) };
+
+    let auth = Authorization { address: implementation, nonce, chain_id };
     let sig = signer.sign_hash_sync(&auth.signature_hash())?;
     // Attach delegation.
     if attach {
