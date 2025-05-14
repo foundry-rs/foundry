@@ -146,6 +146,8 @@ pub fn configure_tx_req_env(
 
     // EIP-7702
     if let Some(auth) = authorization_list {
+        // It is required that the `to` field is set for EIP-7702 transactions.
+        // It is expected this is handled downstream.
         env.tx.set_signed_authorization(auth.clone());
     }
 
@@ -159,6 +161,8 @@ pub fn configure_tx_req_env(
         }
         // Type 3, EIP-4844, derived from existence of `Some(max_fee_per_blob_gas)`.
         else if max_fee_per_blob_gas.is_some() {
+            // It is required that the `to` field is set for EIP-4844 transactions.
+            // It is expected this is handled downstream.
             TransactionType::Eip4844
         }
         // Type 4, EIP-7702, derived from existence of `Some(authorization_list)`.
