@@ -2372,6 +2372,7 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "regex",
+ "revm",
  "rpassword",
  "semver 1.0.26",
  "serde",
