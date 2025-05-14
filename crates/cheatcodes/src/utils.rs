@@ -1,13 +1,8 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
-use std::collections::HashSet;
-
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
-use alloy_dyn_abi::{
-    eip712_parser::{self, EncodeType},
-    DynSolType, DynSolValue,
-};
-use alloy_primitives::{aliases::B32, keccak256, map::HashMap, B64, U256};
+use alloy_dyn_abi::{DynSolType, DynSolValue};
+use alloy_primitives::{aliases::B32, map::HashMap, B64, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::ens::namehash;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
