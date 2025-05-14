@@ -3,11 +3,12 @@ use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::{AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{Address, Selector, TxKind, B256, U256};
 use alloy_provider::{network::BlockResponse, Network};
-use alloy_rpc_types::{Transaction, TransactionRequest};
+use alloy_rpc_types::{AccessList, Transaction, TransactionRequest};
+use eyre::ensure;
 use foundry_common::is_impersonated_tx;
 use foundry_config::NamedChain;
-use revm::primitives::hardfork::SpecId;
 pub use revm::state::EvmState as StateChangeset;
+use revm::{context::TransactionType, primitives::hardfork::SpecId};
 
 use crate::EnvMut;
 
@@ -116,7 +117,7 @@ pub fn configure_tx_req_env(
         chain_id,
         ref blob_versioned_hashes,
         ref access_list,
-        transaction_type: _,
+        transaction_type,
         ref authorization_list,
         sidecar: _,
     } = *tx;
@@ -133,20 +134,49 @@ pub fn configure_tx_req_env(
     env.tx.data = input.input().cloned().unwrap_or_default();
     env.tx.chain_id = chain_id;
 
-    // Type 1, EIP-2930
-    env.tx.access_list = access_list.clone().unwrap_or_default();
+    // Type 0, Legacy, default transaction type.
+    let mut tx_type = TransactionType::Legacy;
 
-    // Type 2, EIP-1559
+    // Type 1, EIP-2930, derived from existence of `access_list`.
+    if let Some(access_list) = access_list {
+        // If the transaction type is legacy we need to upgrade it to EIP-2930 transaction type
+        // in order to use access lists. Other transaction types support access lists
+        // themselves.
+        tx_type = TransactionType::Eip2930;
+        env.tx.access_list = access_list.clone();
+    } else {
+        env.tx.access_list = AccessList::default();
+    }
+
+    // Type 2, EIP-1559, derived from existence of `Some(max_fee_per_gas)`.
+    if max_fee_per_gas.is_some() {
+        tx_type = TransactionType::Eip1559;
+    }
     env.tx.gas_price = gas_price.or(max_fee_per_gas).unwrap_or_default();
     env.tx.gas_priority_fee = max_priority_fee_per_gas;
 
-    // Type 3, EIP-4844
+    // Type 3, EIP-4844, derived from existence of `Some(max_fee_per_blob_gas)`.
+    if max_fee_per_blob_gas.is_some() {
+        ensure!(to.is_some(), "EIP-4844 transactions must have a `to` field set");
+        tx_type = TransactionType::Eip4844;
+    }
     env.tx.blob_hashes = blob_versioned_hashes.clone().unwrap_or_default();
     env.tx.max_fee_per_blob_gas = max_fee_per_blob_gas.unwrap_or_default();
 
-    // Type 4, EIP-7702
+    // Type 4, EIP-7702, derived from existence of `authorization_list`.
     if let Some(authorization_list) = authorization_list {
+        // If the transaction has an authorization list, we need to set the transaction type to
+        // EIP-7702.
+        ensure!(to.is_some(), "EIP-7702 transactions must have a `to` field set");
+        tx_type = TransactionType::Eip7702;
         env.tx.set_signed_authorization(authorization_list.clone());
+    }
+
+    // If the transaction type is not already set we use the derived transaction type.
+    if let Some(transaction_type) = transaction_type {
+        env.tx.tx_type = transaction_type;
+    } else {
+        env.tx.tx_type = tx_type as u8;
     }
 
     Ok(())
