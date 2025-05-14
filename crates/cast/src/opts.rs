@@ -5,7 +5,7 @@ use crate::cmd::{
     mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs,
     txpool::TxPoolSubcommands, wallet::WalletSubcommands,
 };
-use alloy_primitives::{Address, Bytes, Selector, B256, U256};
+use alloy_primitives::{Address, Selector, B256, U256};
 use alloy_rpc_types::BlockId;
 use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
@@ -435,7 +435,7 @@ pub enum CastSubcommand {
     #[command(visible_alias = "da")]
     Disassemble {
         /// The hex-encoded bytecode.
-        bytecode: Option<Bytes>,
+        bytecode: Option<String>,
     },
 
     /// Build and sign a transaction.
