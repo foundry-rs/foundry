@@ -4,7 +4,6 @@ use alloy_network::{AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{Address, Selector, TxKind, B256, U256};
 use alloy_provider::{network::BlockResponse, Network};
 use alloy_rpc_types::{Transaction, TransactionRequest};
-use eyre::ensure;
 use foundry_common::is_impersonated_tx;
 use foundry_config::NamedChain;
 pub use revm::state::EvmState as StateChangeset;
@@ -147,7 +146,6 @@ pub fn configure_tx_req_env(
 
     // EIP-7702
     if let Some(auth) = authorization_list {
-        ensure!(to.is_some(), "EIP-7702 tx must have `to` set");
         env.tx.set_signed_authorization(auth.clone());
     }
 
@@ -161,7 +159,6 @@ pub fn configure_tx_req_env(
         }
         // Type 3, EIP-4844, derived from existence of `Some(max_fee_per_blob_gas)`.
         else if max_fee_per_blob_gas.is_some() {
-            ensure!(to.is_some(), "EIP-4844 tx must have `to` set");
             TransactionType::Eip4844
         }
         // Type 4, EIP-7702, derived from existence of `Some(authorization_list)`.
