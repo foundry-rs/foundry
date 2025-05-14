@@ -3183,7 +3183,9 @@ impl TransactionValidator for Backend {
             }
 
             // Ensure the tx does not exceed the max blobs per block.
-            if blob_count > MAX_BLOBS_PER_BLOCK_DENCUN {
+            if blob_count > MAX_BLOBS_PER_BLOCK_DENCUN ||
+                blob_count > self.blob_params().max_blob_count as usize
+            {
                 return Err(InvalidTransactionError::TooManyBlobs(
                     blob_count,
                     MAX_BLOBS_PER_BLOCK_DENCUN,
