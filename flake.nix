@@ -5,20 +5,16 @@
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    solc = {
-      url = "github:hellwolf/solc.nix";
-      inputs = { nixpkgs.follows = "nixpkgs"; };
-    };
   };
 
-  outputs = { self, nixpkgs, fenix, solc }:
+  outputs = { self, nixpkgs, fenix }:
     let eachSystem = nixpkgs.lib.genAttrs nixpkgs.lib.systems.flakeExposed;
     in {
       devShells = eachSystem (system:
         let
           pkgs = import nixpkgs {
             inherit system;
-            overlays = [ fenix.overlays.default solc.overlay ];
+            overlays = [ fenix.overlays.default ];
           };
 
           lib = pkgs.lib;
@@ -27,10 +23,12 @@
           default = pkgs.mkShell {
             nativeBuildInputs = with pkgs; [
               pkg-config
-              solc_0_8_27
-              # default for foundry's tests
-              (solc.mkDefault pkgs solc_0_8_27)
               toolchain
+
+              # test dependencies
+              solc
+              vyper
+              nodejs
             ];
             buildInputs = lib.optionals pkgs.stdenv.isDarwin
               [ pkgs.darwin.apple_sdk.frameworks.AppKit ];
