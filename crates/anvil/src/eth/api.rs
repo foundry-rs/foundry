@@ -94,7 +94,7 @@ use futures::{
     StreamExt,
 };
 use parking_lot::RwLock;
-use revm::primitives::Bytecode;
+use revm::primitives::{eip7702::PER_EMPTY_ACCOUNT_COST, Bytecode};
 use std::{future::Future, sync::Arc, time::Duration};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
@@ -3008,6 +3008,15 @@ impl EthApi {
                 }
                 TypedTransactionRequest::EIP1559(m)
             }
+            Some(TypedTransactionRequest::EIP7702(mut m)) => {
+                m.nonce = nonce;
+                m.chain_id = chain_id;
+                m.gas_limit = gas_limit;
+                if max_fee_per_gas.is_none() {
+                    m.max_fee_per_gas = self.gas_price();
+                }
+                TypedTransactionRequest::EIP7702(m)
+            }
             Some(TypedTransactionRequest::EIP4844(m)) => {
                 TypedTransactionRequest::EIP4844(match m {
                     // We only accept the TxEip4844 variant which has the sidecar.
@@ -3075,6 +3084,7 @@ impl EthApi {
             ),
             TypedTransactionRequest::EIP2930(_) |
             TypedTransactionRequest::EIP1559(_) |
+            TypedTransactionRequest::EIP7702(_) |
             TypedTransactionRequest::EIP4844(_) |
             TypedTransactionRequest::Deposit(_) => Signature::from_scalars_and_parity(
                 B256::with_last_byte(1),
@@ -3198,6 +3208,10 @@ fn determine_base_gas_by_kind(request: &WithOtherFields<TransactionRequest>) -> 
                 TxKind::Call(_) => MIN_TRANSACTION_GAS,
                 TxKind::Create => MIN_CREATE_GAS,
             },
+            TypedTransactionRequest::EIP7702(req) => {
+                MIN_TRANSACTION_GAS +
+                    req.authorization_list.len() as u128 * PER_EMPTY_ACCOUNT_COST as u128
+            }
             TypedTransactionRequest::EIP2930(req) => match req.to {
                 TxKind::Call(_) => MIN_TRANSACTION_GAS,
                 TxKind::Create => MIN_CREATE_GAS,

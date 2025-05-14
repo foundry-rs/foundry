@@ -715,10 +715,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 sh_println!("{}", serde_json::to_string_pretty(&tx)?)?;
             }
         }
-        CastSubcommand::DecodeEof { eof } => {
-            let eof = stdin::unwrap_line(eof)?;
-            sh_println!("{}", SimpleCast::decode_eof(&eof)?)?
-        }
         CastSubcommand::TxPool { command } => command.run().await?,
     };
 

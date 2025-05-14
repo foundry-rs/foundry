@@ -1061,10 +1061,6 @@ pub enum CastSubcommand {
         resolve: bool,
     },
 
-    /// Decodes EOF container bytes
-    #[command()]
-    DecodeEof { eof: Option<String> },
-
     /// Inspect the TxPool of a node.
     #[command(visible_alias = "tp")]
     TxPool {

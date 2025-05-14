@@ -276,3 +276,36 @@ async fn test_fork_load_state_with_greater_state_block() {
 
     assert_eq!(new_block_number, block_number);
 }
+
+// <https://github.com/foundry-rs/foundry/issues/10488>
+#[tokio::test(flavor = "multi_thread")]
+async fn computes_next_base_fee_after_loading_state() {
+    let tmp = tempfile::tempdir().unwrap();
+    let state_file = tmp.path().join("state.json");
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let bob = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+    let alice = address!("0x9276449EaC5b4f7Bc17cFC6700f7BeeB86F9bCd0");
+
+    let provider = handle.http_provider();
+
+    let base_fee_empty_chain = api.backend.fees().base_fee();
+
+    let value = Unit::ETHER.wei().saturating_mul(U256::from(1)); // 1 ether
+    let tx = TransactionRequest::default().with_to(alice).with_value(value).with_from(bob);
+    let tx = WithOtherFields::new(tx);
+
+    let _receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    let base_fee_after_one_tx = api.backend.fees().base_fee();
+    // the test is meaningless if this does not hold
+    assert_ne!(base_fee_empty_chain, base_fee_after_one_tx);
+
+    let ser_state = api.serialized_state(true).await.unwrap();
+    foundry_common::fs::write_json_file(&state_file, &ser_state).unwrap();
+
+    let (api, _handle) = spawn(NodeConfig::test().with_init_state_path(state_file)).await;
+    let base_fee_after_reload = api.backend.fees().base_fee();
+    assert_eq!(base_fee_after_reload, base_fee_after_one_tx);
+}
