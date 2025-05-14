@@ -379,7 +379,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Disassemble { bytecode } => {
             let bytecode = stdin::unwrap_line(bytecode)?;
-            sh_println!("{}", SimpleCast::disassemble(&hex::decode(bytecode)?)?)?
+            sh_println!("{}", SimpleCast::disassemble(&bytecode)?)?
         }
         CastSubcommand::Selectors { bytecode, resolve } => {
             let bytecode = stdin::unwrap_line(bytecode)?;
