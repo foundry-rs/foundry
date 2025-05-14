@@ -3522,6 +3522,7 @@ dependencies = [
  "similar-asserts",
  "solang-parser",
  "solar-parse",
+ "solar-sema",
  "soldeer-commands",
  "strum 0.27.1",
  "svm-rs",

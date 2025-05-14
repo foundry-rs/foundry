@@ -73,6 +73,7 @@ serde_json.workspace = true
 similar = { version = "2", features = ["inline"] }
 solang-parser.workspace = true
 solar-parse.workspace = true
+solar-sema.workspace = true
 strum = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
