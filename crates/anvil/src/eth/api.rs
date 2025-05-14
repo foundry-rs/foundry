@@ -91,6 +91,7 @@ use revm::{
     context_interface::{block::BlobExcessGasAndPrice, result::Output},
     database::DatabaseRef,
     interpreter::{return_ok, return_revert, InstructionResult},
+    primitives::eip7702::PER_EMPTY_ACCOUNT_COST,
 };
 use std::{future::Future, sync::Arc, time::Duration};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
@@ -3204,7 +3205,10 @@ fn determine_base_gas_by_kind(request: &WithOtherFields<TransactionRequest>) -> 
                 TxKind::Call(_) => MIN_TRANSACTION_GAS,
                 TxKind::Create => MIN_CREATE_GAS,
             },
-            TypedTransactionRequest::EIP7702(_) => MIN_TRANSACTION_GAS,
+            TypedTransactionRequest::EIP7702(req) => {
+                MIN_TRANSACTION_GAS +
+                    req.authorization_list.len() as u128 * PER_EMPTY_ACCOUNT_COST as u128
+            }
             TypedTransactionRequest::EIP2930(req) => match req.to {
                 TxKind::Call(_) => MIN_TRANSACTION_GAS,
                 TxKind::Create => MIN_CREATE_GAS,
