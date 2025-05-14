@@ -2,7 +2,7 @@ use super::opts::EvmOpts;
 use crate::Env;
 
 mod init;
-pub use init::environment;
+pub use init::{configure_env, environment};
 
 pub mod database;
 

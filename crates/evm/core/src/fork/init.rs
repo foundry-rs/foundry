@@ -46,16 +46,11 @@ pub async fn environment<N: Network, P: Provider<N>>(
         eyre::bail!("failed to get block for block number: {block_number}")
     };
 
-    let mut cfg = CfgEnv::default();
-    cfg.chain_id = override_chain_id.unwrap_or(rpc_chain_id);
-    cfg.memory_limit = memory_limit;
-    cfg.limit_contract_code_size = Some(usize::MAX);
-    // EIP-3607 rejects transactions from senders with deployed code.
-    // If EIP-3607 is enabled it can cause issues during fuzz/invariant tests if the caller
-    // is a contract. So we disable the check by default.
-    cfg.disable_eip3607 = true;
-    cfg.disable_block_gas_limit = disable_block_gas_limit;
-    cfg.disable_nonce_check = true;
+    let cfg = configure_env(
+        override_chain_id.unwrap_or(rpc_chain_id),
+        memory_limit,
+        disable_block_gas_limit,
+    );
 
     let mut env = Env {
         evm_env: EvmEnv {
@@ -83,4 +78,19 @@ pub async fn environment<N: Network, P: Provider<N>>(
     apply_chain_and_block_specific_env_changes::<N>(env.as_env_mut(), &block);
 
     Ok((env, block))
+}
+
+/// Configures the environment for the given chain id and memory limit.
+pub fn configure_env(chain_id: u64, memory_limit: u64, disable_block_gas_limit: bool) -> CfgEnv {
+    let mut cfg = CfgEnv::default();
+    cfg.chain_id = chain_id;
+    cfg.memory_limit = memory_limit;
+    cfg.limit_contract_code_size = Some(usize::MAX);
+    // EIP-3607 rejects transactions from senders with deployed code.
+    // If EIP-3607 is enabled it can cause issues during fuzz/invariant tests if the caller
+    // is a contract. So we disable the check by default.
+    cfg.disable_eip3607 = true;
+    cfg.disable_block_gas_limit = disable_block_gas_limit;
+    cfg.disable_nonce_check = true;
+    cfg
 }
