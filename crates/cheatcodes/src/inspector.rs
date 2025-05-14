@@ -707,7 +707,12 @@ impl Cheatcodes {
         // Apply EIP-2930 access lists.
         if let Some(access_list) = &self.access_list {
             ecx.tx.access_list = access_list.clone();
-            ecx.tx.tx_type = 1;
+
+            // If the transaction type is legacy we need to upgrade it to EIP-2930 transaction type
+            // in order to use access lists. Other transaction types already support access lists.
+            if ecx.tx.tx_type == 0 {
+                ecx.tx.tx_type = 1;
+            }
         }
 
         // Apply our broadcast
@@ -1082,7 +1087,12 @@ impl Cheatcodes {
         // Apply EIP-2930 access lists.
         if let Some(access_list) = &self.access_list {
             ecx.tx.access_list = access_list.clone();
-            ecx.tx.tx_type = 1;
+
+            // If the transaction type is legacy we need to upgrade it to EIP-2930 transaction type
+            // in order to use access lists. Other transaction types already support access lists.
+            if ecx.tx.tx_type == 0 {
+                ecx.tx.tx_type = 1;
+            }
         }
 
         // Apply our broadcast
