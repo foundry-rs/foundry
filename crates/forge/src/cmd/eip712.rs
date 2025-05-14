@@ -1,11 +1,12 @@
 use clap::{Parser, ValueHint};
+use eyre::eyre;
 use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
 use foundry_compilers::{
     artifacts::{Source, Sources},
     solc::{SolcLanguage, SolcVersionedInput},
-    CompilerInput, Language, ProjectPathsConfig,
+    CompilerInput,
 };
-use solar_parse::interface::{diagnostics, Session};
+use solar_parse::interface::Session;
 use solar_sema::{
     ast::LitKind,
     hir::{Expr, ExprKind, ItemId, StructId, Type, TypeKind},
@@ -16,20 +17,46 @@ use std::{collections::BTreeMap, fmt::Write, path::PathBuf};
 
 foundry_config::impl_figment_convert!(Eip712Args, build);
 
-/// Builds a Solar [`ParsingContext`].
+/// Builds a Solar [`ParsingContext`] from [`BuildOpts`].
 ///
 /// Configures include paths, remappings and registers all in-memory sources so
 /// the Solar resolver can operate without touching disk.
-pub fn solar_pcx_from_solc<'sess>(
+pub fn solar_pcx_from_build_opts<'sess>(
     sess: &'sess Session,
-    solc: &SolcVersionedInput,
-    paths: &ProjectPathsConfig<impl Language>,
-) -> ParsingContext<'sess> {
+    build: BuildOpts,
+    target_paths: Vec<PathBuf>,
+) -> eyre::Result<ParsingContext<'sess>> {
+    let config = build.load_config()?;
+    let project = config.ephemeral_project()?;
+
+    let mut sources = Sources::new();
+    for t in target_paths.into_iter() {
+        let target_path = dunce::canonicalize(t)?;
+        let source = Source::read(&target_path)?;
+        sources.insert(target_path, source);
+    }
+
+    // TODO: ask if taking 0.8.0 as default is fine, or if i should return an error and force
+    // users to either configure the version in the toml or pass the `--use version`
+    // flag
+    let version = match config.solc_version() {
+        Some(version) => version,
+        None => "0.8.0".parse()?,
+    };
+
+    let solc = SolcVersionedInput::build(
+        sources.clone(),
+        config.solc_settings()?,
+        SolcLanguage::Solidity,
+        version,
+    );
+
     let mut pcx = ParsingContext::new(sess);
 
     // Configure the paths and remappings
-    pcx.file_resolver.set_current_dir(solc.cli_settings.base_path.as_ref().unwrap_or(&paths.root));
-    for remapping in &paths.remappings {
+    pcx.file_resolver
+        .set_current_dir(solc.cli_settings.base_path.as_ref().unwrap_or(&project.paths.root));
+    for remapping in &project.paths.remappings {
         pcx.file_resolver.add_import_remapping(solar_sema::interface::config::ImportRemapping {
             context: remapping.context.clone().unwrap_or_default(),
             prefix: remapping.name.clone(),
@@ -47,7 +74,7 @@ pub fn solar_pcx_from_solc<'sess>(
         }
     }
 
-    pcx
+    Ok(pcx)
 }
 
 /// CLI arguments for `forge eip712`.
@@ -63,39 +90,19 @@ pub struct Eip712Args {
 
 impl Eip712Args {
     pub fn run(self) -> eyre::Result<()> {
-        let config = self.load_config()?;
-        let project = config.ephemeral_project()?;
-        let target_path = dunce::canonicalize(self.target_path)?;
-
-        let mut sources = Sources::new();
-        let source = Source::read(&target_path)?;
-        sources.insert(target_path, source);
-
-        // TODO: ask if taking 0.8.0 as default is fine, or if i should return an error and force
-        // users to either configure the version in the toml or pass the `--use version`
-        // flag
-        let version = match config.solc_version() {
-            Some(version) => version,
-            None => "0.8.0".parse()?,
-        };
-
-        let input = SolcVersionedInput::build(
-            sources.clone(),
-            config.solc_settings()?,
-            SolcLanguage::Solidity,
-            version,
-        );
-
         let mut sess = Session::builder().with_stderr_emitter().build();
         sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
 
-        let _ = sess.enter(|| -> Result<(), diagnostics::ErrorGuaranteed> {
+        let _ = sess.enter(|| -> eyre::Result<()> {
             // Set up the parsing context with the project paths and sources.
-            let parsing_context = solar_pcx_from_solc(&sess, &input, &project.paths);
+            let parsing_context =
+                solar_pcx_from_build_opts(&sess, self.build, vec![self.target_path])?;
 
             // Parse and resolve
             let hir_arena = ThreadLocal::new();
-            if let Some(gcx) = parsing_context.parse_and_lower(&hir_arena)? {
+            if let Some(gcx) =
+                parsing_context.parse_and_lower(&hir_arena).map_err(|_| eyre!("error parsing"))?
+            {
                 let hir = &gcx.get().hir;
 
                 let resolver = Resolver::new(hir);
