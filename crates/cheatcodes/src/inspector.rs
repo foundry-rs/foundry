@@ -709,7 +709,8 @@ impl Cheatcodes {
             ecx.tx.access_list = access_list.clone();
 
             // If the transaction type is legacy we need to upgrade it to EIP-2930 transaction type
-            // in order to use access lists. Other transaction types already support access lists.
+            // in order to use access lists. Other transaction types support access lists
+            // themselves.
             if ecx.tx.tx_type == 0 {
                 ecx.tx.tx_type = 1;
             }
@@ -1089,7 +1090,8 @@ impl Cheatcodes {
             ecx.tx.access_list = access_list.clone();
 
             // If the transaction type is legacy we need to upgrade it to EIP-2930 transaction type
-            // in order to use access lists. Other transaction types already support access lists.
+            // in order to use access lists. Other transaction types support access lists
+            // themselves.
             if ecx.tx.tx_type == 0 {
                 ecx.tx.tx_type = 1;
             }
