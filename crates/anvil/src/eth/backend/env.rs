@@ -14,8 +14,8 @@ pub struct Env {
 
 /// Helper container type for [`EvmEnv`] and [`OpTransaction<TxEnv>`].
 impl Env {
-    pub fn new(cfg: CfgEnv, block: BlockEnv, tx: OpTransaction<TxEnv>) -> Self {
-        Self { evm_env: EvmEnv { cfg_env: cfg, block_env: block }, tx, is_optimism: false }
+    pub fn new(cfg: CfgEnv, block: BlockEnv, tx: OpTransaction<TxEnv>, is_optimism: bool) -> Self {
+        Self { evm_env: EvmEnv { cfg_env: cfg, block_env: block }, tx, is_optimism }
     }
 }
 
