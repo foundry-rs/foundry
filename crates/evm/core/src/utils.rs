@@ -134,17 +134,29 @@ pub fn configure_tx_req_env(
     env.tx.data = input.input().cloned().unwrap_or_default();
     env.tx.chain_id = chain_id;
 
-    env.tx.access_list = access_list.clone().unwrap_or_default();
+    // EIP-1559
     env.tx.gas_price = gas_price.or(max_fee_per_gas).unwrap_or_default();
     env.tx.gas_priority_fee = max_priority_fee_per_gas;
+
+    // EIP-2930
+    env.tx.access_list = access_list.clone().unwrap_or_default();
+
+    // EIP-4844
     env.tx.blob_hashes = blob_versioned_hashes.clone().unwrap_or_default();
     env.tx.max_fee_per_blob_gas = max_fee_per_blob_gas.unwrap_or_default();
 
+    // EIP-7702
+    if let Some(auth) = authorization_list {
+        ensure!(to.is_some(), "EIP-7702 tx must have `to` set");
+        env.tx.set_signed_authorization(auth.clone());
+    }
+
+    // If the transaction type is not set, derive it from the other fields.
     let tx_type = if let Some(transaction_type) = transaction_type {
         transaction_type
     } else {
         // Type 2, EIP-1559, derived from existence of `Some(max_fee_per_gas)`.
-        let derived = if max_fee_per_gas.is_some() {
+        let derived_tx_type = if max_fee_per_gas.is_some() {
             TransactionType::Eip1559
         }
         // Type 3, EIP-4844, derived from existence of `Some(max_fee_per_blob_gas)`.
@@ -152,13 +164,11 @@ pub fn configure_tx_req_env(
             ensure!(to.is_some(), "EIP-4844 tx must have `to` set");
             TransactionType::Eip4844
         }
-        // Type 4, EIP-7702, derived from existence of `authorization_list`.
-        else if let Some(auth) = authorization_list {
-            ensure!(to.is_some(), "EIP-7702 tx must have `to` set");
-            env.tx.set_signed_authorization(auth.clone());
+        // Type 4, EIP-7702, derived from existence of `Some(authorization_list)`.
+        else if authorization_list.is_some() {
             TransactionType::Eip7702
         }
-        // Type 1, EIP-2930, derived from existence of `access_list`.
+        // Type 1, EIP-2930, derived from existence of `Some(access_list)`.
         else if access_list.is_some() {
             // At this point we know that the transaction is not EIP-1559, EIP-4844 or EIP-7702.
             // If the transaction type is legacy we need to upgrade it to EIP-2930 transaction type
@@ -170,7 +180,7 @@ pub fn configure_tx_req_env(
         else {
             TransactionType::Legacy
         };
-        derived as u8
+        derived_tx_type as u8
     };
 
     env.tx.tx_type = tx_type;
