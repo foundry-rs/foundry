@@ -30,3 +30,4 @@ clap = { version = "4.5.37", features = ["derive"] }
 reqwest.workspace = true
 serde_json.workspace = true
 serde.workspace = true
+uuid = { version = "0.8.2", features = ["v4"] }

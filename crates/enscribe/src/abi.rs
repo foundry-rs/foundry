@@ -54,4 +54,10 @@ sol! {
             bytes32 parentNode
         ) external returns (bool success);
     }
+
+    /// Ownable contract
+    #[sol(rpc)]
+    contract Ownable {
+        function owner() external returns (address);
+    }
 }

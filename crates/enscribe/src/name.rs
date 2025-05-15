@@ -1,33 +1,29 @@
-use crate::abi::{
-    EnsRegistry, Enscribe, NameWrapper, NameWrapper::isWrappedCall, PublicResolver,
-    PublicResolver::addrCall, ReverseRegistrar,
+use crate::{
+    abi::{
+        EnsRegistry, Enscribe, NameWrapper, NameWrapper::isWrappedCall, Ownable, PublicResolver,
+        PublicResolver::addrCall, ReverseRegistrar,
+    },
+    logger::MetricLogger,
 };
 use alloy_primitives::U256;
-use alloy_provider::{
-    network::{AnyNetwork, EthereumWallet, NetworkWallet},
-    Provider, ProviderBuilder, WalletProvider,
-};
-use alloy_signer_local::PrivateKeySigner;
+use alloy_provider::{network::AnyNetwork, Provider};
 use alloy_sol_types::{
     private::{keccak256, Address, B256},
     SolCall,
 };
-use clap::Parser;
 use eyre::Result;
-use foundry_cli::{utils, utils::LoadConfig};
 use foundry_common::ens::namehash;
-use foundry_wallets::WalletSigner;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::{
-    any::Any,
     io::{stdout, Write},
-    sync::Arc,
 };
 
 // todo abhi: change this to actual url after api deployed
-pub static CONFIG_API_URL: &str = "http://localhost:3001/config";
-pub static AUTO_GEN_NAME_API_URL: &str = "http://localhost:3001/name";
-pub static METRICS_API_URL: &str = "http://localhost:3001/metrics";
+pub(crate) static CONFIG_API_URL: &str = "http://localhost:3000/api/v1/config";
+pub(crate) static AUTO_GEN_NAME_API_URL: &str = "http://localhost:3000/api/v1/name";
+
+const _BASE: u32 = 8453;
+const _BASE_SEPOLIA: u32 = 84532;
 
 #[derive(Debug, Deserialize)]
 pub struct ChainConfigResponse {
@@ -39,47 +35,24 @@ pub struct ChainConfigResponse {
     parent_name: String,
 }
 
-#[derive(Debug, Serialize)]
-struct Metric {
-    contract_address: String,
-    ens_name: String,
-    deployer_address: String,
-    network: u32,
-    created_at: u64,
-    source: String,
-    op_type: String,
-}
-
 pub async fn set_primary_name<P: Provider<AnyNetwork>>(
-    // signer: WalletSigner,
-    // key: String,
     provider: P,
     sender_addr: Address,
     contract_addr: Address,
     name: Option<String>,
     is_reverse_claimer: bool,
+    _is_reverse_setter: bool,
+    op_type: &str,
 ) -> Result<()> {
-    // let signer = key.parse::<PrivateKeySigner>()?;
-    // todo abhi: pass in a provider
-    // let provider: Arc<P> = Arc::new(
-    //     ProviderBuilder::<_, _, AnyNetwork>::default()
-    //         .with_recommended_fillers()
-    //         .wallet(EthereumWallet::new(signer))
-    //         .on_provider()
-    //         // .connect("https://sepolia.drpc.org")
-    //         .await?,
-    // );
-
-    let config = get_config(provider.get_chain_id().await?).await?;
-
-    // let sender_addr = provider.default_signer_address();
-    // .on_provider(provider);
-    // .connect_http(rpc_url.parse()?);
-
+    let chain_id = provider.get_chain_id().await?;
+    let config = get_config(chain_id).await?;
     let reverse_registrar_addr: Address = config.reverse_registrar_addr.parse()?;
     let ens_registry_addr: Address = config.ens_registry_addr.parse()?;
     let public_resolver_addr: Address = config.public_resolver_addr.parse()?;
     let name_wrapper_addr: Address = config.name_wrapper_addr.parse()?;
+    let is_ownable = is_ownable(&provider, contract_addr).await;
+
+    println!("contract is ownable?: {is_ownable}");
 
     if let Some(name) = name {
         // let provider = Arc::new(provider);
@@ -87,6 +60,15 @@ pub async fn set_primary_name<P: Provider<AnyNetwork>>(
         let label = name_splits[0];
         let parent = name_splits[1];
         let tld = name_splits[2];
+
+        let logger = MetricLogger::new(
+            sender_addr.to_string(),
+            chain_id,
+            op_type.to_owned(),
+            if is_ownable { "Ownable" } else { "ReverseClaimer" }.to_owned(),
+            contract_addr.to_string(),
+            name.clone()
+        );
 
         // todo abhi: the printlns should be removed
         println!("label: {:?}", label);
@@ -107,6 +89,7 @@ pub async fn set_primary_name<P: Provider<AnyNetwork>>(
             label,
             parent_name_hash,
             label_hash,
+            &logger
         )
         .await?;
 
@@ -119,6 +102,7 @@ pub async fn set_primary_name<P: Provider<AnyNetwork>>(
             is_reverse_claimer,
             sender_addr,
             reverse_registrar_addr,
+            &logger
         )
         .await?;
     } else {
@@ -126,51 +110,60 @@ pub async fn set_primary_name<P: Provider<AnyNetwork>>(
         stdout().flush()?;
         let label = get_auto_generated_name().await?;
         println!("{label}.{}", config.parent_name);
+
+        let logger = MetricLogger::new(
+            sender_addr.to_string(),
+            chain_id,
+            op_type.to_owned(),
+            if is_ownable { "Ownable" } else { "ReverseClaimer" }.to_owned(),
+            contract_addr.to_string(),
+            format!("{}.{}", label, config.parent_name,)
+        );
+
         enscribe_set_name(
             &provider,
             config.enscribe_addr.parse()?,
             contract_addr,
             &label,
             &config.parent_name,
+            &logger
         )
         .await?;
     }
 
-    // todo abhi: uncomment this
-    // record_metric(Metric {
-    //     contract_address: contract_addr.to_string(),
-    //     ens_name: name,
-    //     deployer_address: sender_addr.to_string(),
-    //     network: provider.get_chain_id().await?.try_into()?,
-    //     created_at:
-    // std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs(),
-    //     source: "forge".to_string(),
-    //     op_type: "set_primary_name".to_string(),
-    // })
-    // .await;
-
     Ok(())
 }
 
+/// checks if the given contract address implements Ownable
+async fn is_ownable<P: Provider<AnyNetwork>>(provider: &P, contract_addr: Address) -> bool {
+    let ownable = Ownable::new(contract_addr, provider);
+    let tx = ownable.owner();
+    provider.call(tx.into_transaction_request()).await.is_ok()
+}
+
+/// sets name & resolutions via the enscribe contract
 async fn enscribe_set_name<P: Provider<AnyNetwork>>(
     provider: &P,
     enscribe_addr: Address,
     contract_addr: Address,
     label: &str,
     parent_name: &str,
+    logger: &MetricLogger
 ) -> Result<()> {
     print!("setting name via enscribe ... ");
     stdout().flush()?;
     let enscribe = Enscribe::new(enscribe_addr, provider);
-    let parentNode = namehash(parent_name);
+    let parent_node = namehash(parent_name);
     let tx = enscribe
-        .setName(contract_addr, label.to_owned(), parent_name.to_owned(), parentNode)
+        .setName(contract_addr, label.to_owned(), parent_name.to_owned(), parent_node)
         .value(U256::from(100000000000000u64));
     let result = provider.send_transaction(tx.into_transaction_request()).await?.watch().await?;
     println!("done (txn hash: {:?})", result);
+    logger.log("setName", &result.to_string()).await?;
     Ok(())
 }
 
+/// creates the subname record
 async fn create_subname<P: Provider<AnyNetwork>>(
     sender_addr: Address,
     provider: &P,
@@ -180,6 +173,7 @@ async fn create_subname<P: Provider<AnyNetwork>>(
     label: &str,
     parent_name_hash: B256,
     label_hash: B256,
+    logger: &MetricLogger
 ) -> Result<()> {
     // check if parent domain (e.g. abhi.eth) is wrapped or unwrapped
     let name_wrapper = NameWrapper::new(name_wrapper_addr, provider);
@@ -202,6 +196,7 @@ async fn create_subname<P: Provider<AnyNetwork>>(
         let result =
             provider.send_transaction(tx.into_transaction_request()).await?.watch().await?;
         println!("done (txn hash: {:?})", result);
+        logger.log("createsubname", &result.to_string()).await?;
     } else {
         let ens_registry = EnsRegistry::new(ens_registry_addr, provider);
         let tx = ens_registry.setSubnodeRecord(
@@ -214,10 +209,12 @@ async fn create_subname<P: Provider<AnyNetwork>>(
         let result =
             provider.send_transaction(tx.into_transaction_request()).await?.watch().await?;
         println!("done (txn hash: {:?})", result);
+        logger.log("createsubname", &result.to_string()).await?;
     }
     Ok(())
 }
 
+/// sets forward & reverse resolutions
 async fn set_resolutions<P: Provider<AnyNetwork>>(
     provider: &P,
     public_resolver_addr: Address,
@@ -227,6 +224,7 @@ async fn set_resolutions<P: Provider<AnyNetwork>>(
     is_reverse_claimer: bool,
     sender_addr: Address,
     reverse_registrar_addr: Address,
+    logger: &MetricLogger
 ) -> Result<()> {
     print!("checking if fwd resolution already set ... ");
     stdout().flush()?;
@@ -243,6 +241,7 @@ async fn set_resolutions<P: Provider<AnyNetwork>>(
         let result =
             provider.send_transaction(tx.into_transaction_request()).await?.watch().await?;
         println!("done (txn hash: {:?})", result);
+        logger.log("fwdres::setAddr", &result.to_string()).await?;
     } else {
         println!("fwd resolution already set");
     }
@@ -256,6 +255,7 @@ async fn set_resolutions<P: Provider<AnyNetwork>>(
         let result =
             provider.send_transaction(tx.into_transaction_request()).await?.watch().await?;
         println!("done (txn hash: {:?})", result);
+        logger.log("revres::setAddr", &result.to_string()).await?;
     } else {
         let reverse_registrar = ReverseRegistrar::new(reverse_registrar_addr, provider);
         let tx = reverse_registrar.setNameForAddr(
@@ -267,6 +267,7 @@ async fn set_resolutions<P: Provider<AnyNetwork>>(
         let result =
             provider.send_transaction(tx.into_transaction_request()).await?.watch().await?;
         println!("done (txn hash: {:?})", result);
+        logger.log("revres::setAddr", &result.to_string()).await?;
     }
 
     Ok(())
@@ -288,11 +289,6 @@ async fn get_config(chain_id: u64) -> Result<ChainConfigResponse> {
 
     let text = response.text().await?;
     Ok(serde_json::from_str::<ChainConfigResponse>(&text)?)
-}
-
-async fn record_metric(metric: Metric) {
-    let client = reqwest::Client::new();
-    let _ = client.post(METRICS_API_URL).json(&metric).send().await;
 }
 
 async fn get_auto_generated_name() -> Result<String> {

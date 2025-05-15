@@ -4,7 +4,7 @@ use alloy_dyn_abi::{DynSolValue, JsonAbiExt, Specifier};
 use alloy_json_abi::{Constructor, JsonAbi};
 use alloy_network::{AnyNetwork, AnyTransactionReceipt, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{hex, Address, Bytes};
-use alloy_provider::{PendingTransactionError, Provider, ProviderBuilder};
+use alloy_provider::{PendingTransactionError, Provider, ProviderBuilder, WalletProvider};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
@@ -34,7 +34,6 @@ use foundry_config::{
 };
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc, time::Duration};
-use crate::cmd::name::NameArgs;
 
 merge_impl_figment_convert!(CreateArgs, build, eth);
 
@@ -85,8 +84,19 @@ pub struct CreateArgs {
     #[arg(long, env = "ETH_TIMEOUT")]
     pub timeout: Option<u64>,
 
-    #[command(flatten)]
-    pub naming: NameArgs,
+    // #[command(flatten)]
+    // pub naming: NameArgs,
+    /// The name to set.
+    #[arg(long)]
+    pub ens_name: Option<String>,
+
+    /// Whether the contract is ReverseClaimable or not.
+    #[arg(long, requires = "ens_name")]
+    pub reverse_claimer: bool,
+
+    /// Whether the contract is ReverseSetter or not.
+    #[arg(long, requires = "ens_name")]
+    pub reverse_setter: bool,
 
     #[command(flatten)]
     build: BuildOpts,
@@ -403,8 +413,26 @@ impl CreateArgs {
             sh_println!("Transaction hash: {:?}", receipt.transaction_hash)?;
         };
 
-        if self.naming.ens_name.is_some() {
-            self.naming.run().await?;
+        if self.ens_name.is_some() {
+            // self.naming.run("deployandname").await?;
+            let config = self.load_config()?;
+            let signer = self.eth.wallet.signer().await?;
+            let provider = utils::get_provider(&config)?;
+            let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
+                .with_recommended_fillers()
+                .wallet(EthereumWallet::new(signer))
+                .on_provider(provider);
+            let sender_addr = provider.default_signer_address();
+            enscribe::set_primary_name(
+                provider,
+                sender_addr,
+                deployed_contract,
+                self.ens_name,
+                self.reverse_claimer,
+                self.reverse_setter,
+                "deployandname",
+            )
+                .await?;
         }
 
         if !self.verify {

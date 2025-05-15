@@ -3189,6 +3189,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "uuid 0.8.2",
 ]
 
 [[package]]

@@ -29,6 +29,10 @@ pub struct NameArgs {
     #[arg(long, requires = "ens_name")]
     pub reverse_claimer: bool,
 
+    /// Whether the contract is ReverseSetter or not.
+    #[arg(long, requires = "ens_name")]
+    pub reverse_setter: bool,
+
     #[command(flatten)]
     eth: EthereumOpts,
 }
@@ -51,6 +55,8 @@ impl NameArgs {
             self.contract_address,
             self.ens_name,
             self.reverse_claimer,
+            self.reverse_setter,
+            "nameexisting"
         )
         .await?;
         Ok(())
