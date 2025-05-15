@@ -96,6 +96,8 @@ fn attach_delegation(
     cross_chain: bool,
 ) -> Result {
     let SignedDelegation { v, r, s, nonce, implementation } = delegation;
+    // Set chain id to 0 if universal deployment is preferred.
+    // See https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7702.md#protection-from-malleability-cross-chain
     let chain_id = if cross_chain { U256::from(0) } else { U256::from(ccx.ecx.env.cfg.chain_id) };
 
     let auth = Authorization { address: *implementation, nonce: *nonce, chain_id };
@@ -159,6 +161,7 @@ fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<(
 
     if auth.address.is_zero() {
         // Set empty code if the delegation address of authority is 0x.
+        // See https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7702.md#behavior.
         ccx.ecx.journaled_state.set_code_with_hash(authority, Bytecode::default(), KECCAK_EMPTY);
     } else {
         let bytecode = Bytecode::new_eip7702(*auth.address());
