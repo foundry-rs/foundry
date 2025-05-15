@@ -1,29 +1,27 @@
 use super::eip712::Resolver;
 use clap::{Parser, ValueHint};
-use eyre::Result;
+use eyre::{eyre, Result};
 use foundry_cli::{
-    opts::{solar_pcx_from_build_opts, BuildOpts},
+    opts::{solar_pcx_from_solc_project, BuildOpts},
     utils::LoadConfig,
 };
-use foundry_common::{compile::with_compilation_reporter, fs};
+use foundry_common::fs;
 use foundry_compilers::{
-    artifacts::{
-        output_selection::OutputSelection, ContractDefinitionPart, Source, SourceUnit,
-        SourceUnitPart, Sources,
-    },
+    artifacts::{Source, Sources},
     multi::{MultiCompilerLanguage, MultiCompilerParsedSource},
-    project::ProjectCompiler,
-    solc::SolcLanguage,
-    Graph, Project,
+    solc::{SolcLanguage, SolcVersionedInput},
+    CompilerInput, Graph, Project,
 };
 use foundry_config::Config;
 use itertools::Itertools;
 use rayon::prelude::*;
+use semver::Version;
 use solar_parse::{
     ast::{self, interface::source_map::FileName, visit::Visit, Arena, FunctionKind, Span, VarMut},
     interface::Session,
     Parser as SolarParser,
 };
+use solar_sema::thread_local::ThreadLocal;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::{self, Write},
@@ -47,7 +45,7 @@ pub struct BindJsonArgs {
 
 impl BindJsonArgs {
     pub fn run(self) -> Result<()> {
-        self.preprocess()?.compile()?.find_structs()?.resolve_imports_and_aliases().write()?;
+        self.preprocess()?.find_structs()?.resolve_imports_and_aliases().write()?;
 
         Ok(())
     }
@@ -77,7 +75,7 @@ impl BindJsonArgs {
         let graph = Graph::<MultiCompilerParsedSource>::resolve_sources(&project.paths, sources)?;
 
         // We only generate bindings for a single Solidity version to avoid conflicts.
-        let mut sources = graph
+        let (version, mut sources, _) = graph
             // resolve graph into mapping language -> version -> sources
             .into_sources_by_version(&project)?
             .sources
@@ -89,8 +87,7 @@ impl BindJsonArgs {
             .into_iter()
             // For now, we are always picking the latest version.
             .max_by(|(v1, _, _), (v2, _, _)| v1.cmp(v2))
-            .unwrap()
-            .1;
+            .unwrap();
 
         let sess = Session::builder().with_stderr_emitter().build();
         let result = sess.enter_parallel(|| -> solar_parse::interface::Result<()> {
@@ -118,8 +115,7 @@ impl BindJsonArgs {
 
         // Insert empty bindings file.
         sources.insert(target_path.clone(), Source::new("library JsonBindings {}"));
-
-        Ok(PreprocessedState { sources, target_path, project, config })
+        Ok(PreprocessedState { version, sources, target_path, project, config })
     }
 }
 
@@ -240,8 +236,8 @@ impl StructToWrite {
     }
 }
 
-#[derive(Debug)]
 struct PreprocessedState {
+    version: Version,
     sources: Sources,
     target_path: PathBuf,
     project: Project,
@@ -249,120 +245,85 @@ struct PreprocessedState {
 }
 
 impl PreprocessedState {
-    fn compile(self) -> Result<CompiledState> {
-        let Self { sources, target_path, mut project, config } = self;
-
-        project.update_output_selection(|selection| {
-            *selection = OutputSelection::ast_output_selection();
-        });
-
-        let output = with_compilation_reporter(false, || {
-            ProjectCompiler::with_sources(&project, sources)?.compile()
-        })?;
-
-        if output.has_compiler_errors() {
-            eyre::bail!("{output}");
-        }
-
-        // Collect ASTs by getting them from sources and converting into strongly typed
-        // `SourceUnit`s. Also strips root from paths.
-        let asts = output
-            .into_output()
-            .sources
-            .into_iter()
-            .filter_map(|(path, mut sources)| Some((path, sources.swap_remove(0).source_file.ast?)))
-            .map(|(path, ast)| {
-                Ok((
-                    path.strip_prefix(project.root()).unwrap_or(&path).to_path_buf(),
-                    serde_json::from_str::<SourceUnit>(&serde_json::to_string(&ast)?)?,
-                ))
-            })
-            .collect::<Result<BTreeMap<_, _>>>()?;
-
-        Ok(CompiledState { asts, target_path, config, project })
-    }
-}
-
-#[derive(Debug, Clone)]
-struct CompiledState {
-    asts: BTreeMap<PathBuf, SourceUnit>,
-    target_path: PathBuf,
-    config: Config,
-    project: Project,
-}
-
-impl CompiledState {
     fn find_structs(self) -> Result<StructsState> {
-        let Self { asts, target_path, config, project } = self;
+        let mut structs_to_write = Vec::new();
+        let Self { version, sources, target_path, config, project } = self;
 
-        // construct mapping (file, id) -> (struct definition, optional parent contract name)
-        let structs = asts
-            .iter()
-            .flat_map(|(path, ast)| {
-                let mut structs = Vec::new();
-                // we walk AST directly instead of using visitors because we need to distinguish
-                // between file-level and contract-level struct definitions
-                for node in &ast.nodes {
-                    match node {
-                        SourceUnitPart::StructDefinition(def) => {
-                            structs.push((def, None));
-                        }
-                        SourceUnitPart::ContractDefinition(contract) => {
-                            for node in &contract.nodes {
-                                if let ContractDefinitionPart::StructDefinition(def) = node {
-                                    structs.push((def, Some(contract.name.clone())));
-                                }
-                            }
-                        }
-                        _ => {}
+        let settings = config.solc_settings()?;
+        let include = config.bind_json.include;
+        let exclude = config.bind_json.exclude;
+
+        println!("[DEBUG] version: {:?}", &version);
+        let input = SolcVersionedInput::build(sources, settings, SolcLanguage::Solidity, version);
+
+        let sess = Session::builder().with_stderr_emitter().build();
+        let _ = sess.enter_parallel(|| -> Result<()> {
+            // Set up the parsing context with the project paths, without adding the source files
+            let mut parsing_context = solar_pcx_from_solc_project(&sess, &project, &input, false);
+
+            println!("[DEBUG] adding sources to PCX");
+            let sources = &input.input.sources;
+            for (path, source) in sources.iter() {
+                if !include.is_empty() {
+                    if !include.iter().any(|matcher| matcher.is_match(path)) {
+                        continue;
+                    }
+                } else {
+                    // Exclude library files by default
+                    if project.paths.has_library_ancestor(path) {
+                        continue;
                     }
                 }
-                structs.into_iter().map(|(def, parent)| ((path.as_path(), def.id), (def, parent)))
-            })
-            .collect::<BTreeMap<_, _>>();
 
-        todo!("uncomment and integrate EIP712 resolver");
-        // // Resolver for EIP712 schemas
-        // let resolver = Resolver::new(&asts);
+                if exclude.iter().any(|matcher| matcher.is_match(path)) {
+                    continue;
+                }
 
-        // let mut structs_to_write = Vec::new();
+                println!(" > PATH: {}", path.to_string_lossy());
+                if let Ok(src_file) =
+                    sess.source_map().new_source_file(path.clone(), source.content.as_str())
+                {
+                    parsing_context.add_file(src_file);
+                }
+            }
 
-        // let include = config.bind_json.include;
-        // let exclude = config.bind_json.exclude;
+            // Parse and resolve
+            let hir_arena = ThreadLocal::new();
+            if let Some(gcx) = parsing_context.parse_and_lower(&hir_arena).map_err(|_| {
+                eyre!(
+                    "error
+                   parsing"
+                )
+            })? {
+                let hir = &gcx.get().hir;
+                let resolver = Resolver::new(hir);
+                for id in &resolver.struct_ids() {
+                    if let Some(schema) = resolver.resolve_struct_eip712(*id) {
+                        _ = sh_println!("{schema}\n");
 
-        // for ((path, id), (def, contract_name)) in structs {
-        //     // For some structs there's no schema (e.g. if they contain a mapping), so we just
-        // skip     // those.
-        //     let Some(schema) = resolver.resolve_struct_eip712(id)? else { continue };
+                        let def = hir.strukt(*id);
+                        structs_to_write.push(StructToWrite {
+                            name: def.name.as_str().into(),
+                            contract_name: def
+                                .contract
+                                .and_then(|id| Some(hir.contract(id).name.as_str().into())),
+                            // TODO: figure out path
+                            path: target_path.clone(),
+                            schema,
 
-        //     if !include.is_empty() {
-        //         if !include.iter().any(|matcher| matcher.is_match(path)) {
-        //             continue;
-        //         }
-        //     } else {
-        //         // Exclude library files by default
-        //         if project.paths.has_library_ancestor(path) {
-        //             continue;
-        //         }
-        //     }
+                            // will be filled later
+                            import_alias: None,
+                            name_in_fns: String::new(),
+                        });
+                    }
+                }
+            }
+            Ok(())
+        });
 
-        //     if exclude.iter().any(|matcher| matcher.is_match(path)) {
-        //         continue;
-        //     }
+        println!("[DEBUG] structs to write: {:#?}", structs_to_write);
 
-        //     structs_to_write.push(StructToWrite {
-        //         name: def.name.clone(),
-        //         contract_name,
-        //         path: path.to_path_buf(),
-        //         schema,
-
-        //         // will be filled later
-        //         import_alias: None,
-        //         name_in_fns: String::new(),
-        //     })
-        // }
-
-        // Ok(StructsState { structs_to_write, target_path })
+        Ok(StructsState { structs_to_write, target_path })
     }
 }
 

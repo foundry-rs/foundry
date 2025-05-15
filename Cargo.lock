@@ -3521,6 +3521,7 @@ dependencies = [
  "similar",
  "similar-asserts",
  "solang-parser",
+ "solar-interface",
  "solar-parse",
  "solar-sema",
  "soldeer-commands",

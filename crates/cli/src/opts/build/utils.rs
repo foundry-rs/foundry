@@ -1,27 +1,26 @@
 use crate::{opts::BuildOpts, utils::LoadConfig};
 
+use eyre::Result;
 use foundry_compilers::{
     artifacts::{Source, Sources},
     multi::{MultiCompilerLanguage, MultiCompilerParsedSource},
     solc::{SolcLanguage, SolcVersionedInput},
-    CompilerInput, Graph,
+    CompilerInput, Graph, Project,
 };
 use solar_sema::{interface::Session, ParsingContext};
 use std::path::PathBuf;
 
-/// Builds a Solar [`ParsingContext`] from [`BuildOpts`].
+/// Builds a Solar [`solar_sema::ParsingContext`] from [`BuildOpts`].
 ///
-/// Configures include paths, remappings and registers all in-memory sources so
+/// * Configures include paths, remappings and registers all in-memory sources so
 /// that solar can operate without touching disk.
-///
-/// If no `target_paths` are provided, all project files are processed.
-///
-/// Only processes the subset of sources with the most up-to-date Solitidy version.
+/// * If no `target_paths` are provided, all project files are processed.
+/// * Only processes the subset of sources with the most up-to-date Solitidy version.
 pub fn solar_pcx_from_build_opts<'sess>(
     sess: &'sess Session,
     build: BuildOpts,
     target_paths: Option<Vec<PathBuf>>,
-) -> eyre::Result<ParsingContext<'sess>> {
+) -> Result<ParsingContext<'sess>> {
     // Process build options
     let config = build.load_config()?;
     let project = config.ephemeral_project()?;
@@ -64,27 +63,43 @@ pub fn solar_pcx_from_build_opts<'sess>(
         version,
     );
 
+    Ok(solar_pcx_from_solc_project(sess, &project, &solc, true))
+}
+
+/// Builds a Solar [`solar_sema::ParsingContext`] from a  [`foundry_compilers::Project`] and a
+/// [`SolcVersionedInput`].
+///
+/// * Configures include paths, remappings.
+/// * Soruce files can be manually added if the param `add_source_file` is set to `false`.
+pub fn solar_pcx_from_solc_project<'sess>(
+    sess: &'sess Session,
+    project: &Project,
+    solc: &SolcVersionedInput,
+    add_source_files: bool,
+) -> ParsingContext<'sess> {
     // Configure the parsing context with the paths, remappings and sources
     let mut pcx = ParsingContext::new(sess);
 
     pcx.file_resolver
         .set_current_dir(solc.cli_settings.base_path.as_ref().unwrap_or(&project.paths.root));
-    for remapping in project.paths.remappings.into_iter() {
+    for remapping in project.paths.remappings.iter() {
         pcx.file_resolver.add_import_remapping(solar_sema::interface::config::ImportRemapping {
-            context: remapping.context.unwrap_or_default(),
-            prefix: remapping.name,
+            context: remapping.context.clone().unwrap_or_default(),
+            prefix: remapping.name.clone(),
             path: remapping.path.clone(),
         });
     }
     pcx.file_resolver.add_include_paths(solc.cli_settings.include_paths.iter().cloned());
 
-    for (path, source) in &solc.input.sources {
-        if let Ok(src_file) =
-            sess.source_map().new_source_file(path.clone(), source.content.as_str())
-        {
-            pcx.add_file(src_file);
+    if add_source_files {
+        for (path, source) in &solc.input.sources {
+            if let Ok(src_file) =
+                sess.source_map().new_source_file(path.clone(), source.content.as_str())
+            {
+                pcx.add_file(src_file);
+            }
         }
     }
 
-    Ok(pcx)
+    pcx
 }

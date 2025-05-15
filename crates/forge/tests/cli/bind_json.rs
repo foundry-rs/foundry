@@ -51,7 +51,7 @@ contract BindJsonTest is Test {
     )
     .unwrap();
 
-    cmd.arg("bind-json").assert_success();
+    cmd.arg("bind-json").assert_success().stdout_eq("");
 
     snapbox::assert_data_eq!(
         snapbox::Data::read_from(&prj.root().join("utils/JsonBindings.sol"), None),
