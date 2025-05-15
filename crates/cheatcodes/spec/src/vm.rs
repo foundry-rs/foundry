@@ -2237,7 +2237,7 @@ interface Vm {
     #[cheatcode(group = Scripting)]
     function attachDelegation(SignedDelegation calldata signedDelegation) external;
 
-    /// Designate the next call as an EIP-7702 transaction, with cross chain option.
+    /// Designate the next call as an EIP-7702 transaction, with optional cross-chain validity.
     #[cheatcode(group = Scripting)]
     function attachDelegation(SignedDelegation calldata signedDelegation, bool crossChain) external;
 
