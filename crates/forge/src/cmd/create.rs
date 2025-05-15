@@ -89,6 +89,10 @@ pub struct CreateArgs {
     /// The name to set.
     #[arg(long)]
     pub ens_name: Option<String>,
+    
+    /// The name to set.
+    #[arg(long)]
+    pub auto_name: bool,
 
     /// Whether the contract is ReverseClaimable or not.
     #[arg(long, requires = "ens_name")]
@@ -413,7 +417,7 @@ impl CreateArgs {
             sh_println!("Transaction hash: {:?}", receipt.transaction_hash)?;
         };
 
-        if self.ens_name.is_some() {
+        if self.ens_name.is_some() || self.auto_name {
             // self.naming.run("deployandname").await?;
             let config = self.load_config()?;
             let signer = self.eth.wallet.signer().await?;
