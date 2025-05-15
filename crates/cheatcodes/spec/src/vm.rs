@@ -2229,7 +2229,7 @@ interface Vm {
     #[cheatcode(group = Scripting)]
     function signDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);
 
-    /// Sign an EIP-7702 authorization for delegation,  with cross chain option.
+    /// Sign an EIP-7702 authorization for delegation, with optional cross-chain validity.
     #[cheatcode(group = Scripting)]
     function signDelegation(address implementation, uint256 privateKey, bool crossChain) external returns (SignedDelegation memory signedDelegation);
 
