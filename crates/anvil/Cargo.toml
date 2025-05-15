@@ -98,9 +98,6 @@ ctrlc = { version = "3", optional = true }
 fdlimit = { version = "0.3", optional = true }
 clap_complete_fig = "4"
 
-[target.'cfg(unix)'.dependencies]
-tikv-jemallocator = { workspace = true, optional = true }
-
 [dev-dependencies]
 alloy-provider = { workspace = true, features = ["txpool-api"] }
 alloy-pubsub.workspace = true
@@ -112,7 +109,7 @@ op-alloy-rpc-types.workspace = true
 [features]
 default = ["cli", "jemalloc"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
-jemalloc = ["dep:tikv-jemallocator"]
+jemalloc = ["foundry-cli/jemalloc"]
 cli = ["tokio/full", "cmd"]
 cmd = [
     "clap",
