@@ -22,6 +22,7 @@ use revm::{
         CallValue, CreateInputs, CreateOutcome, FrameInput, Gas, InstructionResult,
         InterpreterResult,
     },
+    precompile::{PrecompileSpecId, Precompiles},
     primitives::hardfork::SpecId,
     Context, ExecuteEvm, Journal,
 };
@@ -44,13 +45,19 @@ pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
         local: LocalContext::default(),
         error: Ok(()),
     };
+    let spec = ctx.cfg.spec;
+    let precompiles = EthPrecompiles {
+        precompiles: Precompiles::new(PrecompileSpecId::from_spec_id(spec)),
+        spec,
+    }
+    .precompiles;
 
     FoundryEvm {
         inner: RevmEvm::new_with_inspector(
             ctx,
             inspector,
             EthInstructions::default(),
-            PrecompilesMap::from_static(EthPrecompiles::default().precompiles),
+            PrecompilesMap::from_static(precompiles),
         ),
     }
 }
@@ -59,12 +66,19 @@ pub fn new_evm_with_existing_context<'a>(
     ctx: EthEvmContext<&'a mut dyn DatabaseExt>,
     inspector: &'a mut dyn InspectorExt,
 ) -> FoundryEvm<'a, &'a mut dyn InspectorExt> {
+    let spec = ctx.cfg.spec;
+    let precompiles = EthPrecompiles {
+        precompiles: Precompiles::new(PrecompileSpecId::from_spec_id(spec)),
+        spec,
+    }
+    .precompiles;
+
     FoundryEvm {
         inner: RevmEvm::new_with_inspector(
             ctx,
             inspector,
             EthInstructions::default(),
-            PrecompilesMap::from_static(EthPrecompiles::default().precompiles),
+            PrecompilesMap::from_static(precompiles),
         ),
     }
 }

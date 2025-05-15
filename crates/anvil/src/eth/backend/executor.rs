@@ -33,6 +33,7 @@ use revm::{
     database::WrapDatabaseRef,
     handler::{instructions::EthInstructions, EthPrecompiles},
     interpreter::InstructionResult,
+    precompile::{PrecompileSpecId, Precompiles},
     primitives::hardfork::SpecId,
     Database, DatabaseRef, Inspector, Journal,
 };
@@ -428,6 +429,7 @@ where
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
 {
     if env.is_optimism {
+        let op_cfg = env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::BEDROCK);
         let op_context = OpContext {
             journaled_state: {
                 let mut journal = Journal::new(db);
@@ -436,28 +438,30 @@ where
                 journal
             },
             block: env.evm_env.block_env.clone(),
-            cfg: env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::BEDROCK),
+            cfg: op_cfg.clone(),
             tx: env.tx.clone(),
             chain: L1BlockInfo::default(),
             local: LocalContext::default(),
             error: Ok(()),
         };
 
-        let evm = op_revm::OpEvm(RevmEvm::new_with_inspector(
+        let op_precompiles = OpPrecompiles::new_with_spec(op_cfg.spec).precompiles();
+        let op_evm = op_revm::OpEvm(RevmEvm::new_with_inspector(
             op_context,
             inspector,
             EthInstructions::default(),
-            PrecompilesMap::from_static(OpPrecompiles::default().precompiles()),
+            PrecompilesMap::from_static(op_precompiles),
         ));
 
-        let op = OpEvm::new(evm, true);
+        let op = OpEvm::new(op_evm, true);
 
         EitherEvm::Op(op)
     } else {
-        let evm_context = EthEvmContext {
+        let spec = env.evm_env.cfg_env.spec;
+        let eth_context = EthEvmContext {
             journaled_state: {
                 let mut journal = Journal::new(db);
-                journal.set_spec_id(env.evm_env.cfg_env.spec);
+                journal.set_spec_id(spec);
                 journal
             },
             block: env.evm_env.block_env.clone(),
@@ -468,14 +472,19 @@ where
             error: Ok(()),
         };
 
-        let evm = RevmEvm::new_with_inspector(
-            evm_context,
+        let eth_precompiles = EthPrecompiles {
+            precompiles: Precompiles::new(PrecompileSpecId::from_spec_id(spec)),
+            spec,
+        }
+        .precompiles;
+        let eth_evm = RevmEvm::new_with_inspector(
+            eth_context,
             inspector,
             EthInstructions::default(),
-            PrecompilesMap::from_static(EthPrecompiles::default().precompiles),
+            PrecompilesMap::from_static(eth_precompiles),
         );
 
-        let eth = EthEvm::new(evm, true);
+        let eth = EthEvm::new(eth_evm, true);
 
         EitherEvm::Eth(eth)
     }
