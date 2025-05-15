@@ -94,7 +94,6 @@ fn make_map<const PC_FIRST: bool>(code: &[u8]) -> FxHashMap<u32, u32> {
 }
 
 /// Represents a single instruction consisting of the opcode and its immediate data.
-#[derive(Debug)]
 pub struct Instruction {
     /// OpCode, if it could be decoded.
     pub op: Option<OpCode>,
