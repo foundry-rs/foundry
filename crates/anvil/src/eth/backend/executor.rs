@@ -429,6 +429,8 @@ where
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
 {
     if env.is_optimism {
+        // TODO: we currently pin to `OpSpecId::BEDROCK` as it is primarily used in the context of
+        // testing deposit transactions. We should make this configurable in the future.
         let op_cfg = env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::BEDROCK);
         let op_context = OpContext {
             journaled_state: {
