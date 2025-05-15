@@ -3610,6 +3610,7 @@ import "forge-std/Test.sol";
 import {Counter} from "../src/Counter.sol";
 
 interface ICounter {
+    function increment() external;
     function number() external returns (uint256);
 }
 
@@ -3623,8 +3624,12 @@ contract NonContractCallRevertTest is Test {
 
     function test_non_contract_call_failure() public {
         console.log("test non contract call failure");
-        uint256 number = ICounter(address(0xdEADBEeF00000000000000000000000000000000)).number();
-        assertEq(number, 1);
+        ICounter(address(0xdEADBEeF00000000000000000000000000000000)).number();
+    }
+
+    function test_non_contract_void_call_failure() public {
+        console.log("test non contract (void) call failure");
+        ICounter(address(0xdEADBEeF00000000000000000000000000000000)).increment();
     }
 }
      "#,
@@ -3638,7 +3643,7 @@ contract NonContractCallRevertTest is Test {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
-Ran 1 test for test/NonContractCallRevertTest.t.sol:NonContractCallRevertTest
+Ran 2 tests for test/NonContractCallRevertTest.t.sol:NonContractCallRevertTest
 [FAIL: EvmError: call to non-contract address `0xdEADBEeF00000000000000000000000000000000`] test_non_contract_call_failure() ([GAS])
 Logs:
   test non contract call failure
@@ -3651,22 +3656,40 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [6352] NonContractCallRevertTest::test_non_contract_call_failure()
+  [6350] NonContractCallRevertTest::test_non_contract_call_failure()
     ├─ [0] console::log("test non contract call failure") [staticcall]
     │   └─ ← [Stop]
     ├─ [0] 0xdEADBEeF00000000000000000000000000000000::number()
     │   └─ ← [Stop]
     └─ ← [Revert] EvmError: Revert
 
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL: EvmError: call to non-contract address `0xdEADBEeF00000000000000000000000000000000`] test_non_contract_void_call_failure() ([GAS])
+Logs:
+  test non contract (void) call failure
 
-Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+Traces:
+  [157143] NonContractCallRevertTest::setUp()
+    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [22492] Counter::setNumber(1)
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+  [3715] NonContractCallRevertTest::test_non_contract_void_call_failure()
+    ├─ [0] console::log("test non contract (void) call failure") [staticcall]
+    │   └─ ← [Stop]
+    └─ ← [Revert] EvmError: Revert
+
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
 
 Failing tests:
-Encountered 1 failing test in test/NonContractCallRevertTest.t.sol:NonContractCallRevertTest
+Encountered 2 failing tests in test/NonContractCallRevertTest.t.sol:NonContractCallRevertTest
 [FAIL: EvmError: call to non-contract address `0xdEADBEeF00000000000000000000000000000000`] test_non_contract_call_failure() ([GAS])
+[FAIL: EvmError: call to non-contract address `0xdEADBEeF00000000000000000000000000000000`] test_non_contract_void_call_failure() ([GAS])
 
-Encountered a total of 1 failing tests, 0 tests succeeded
+Encountered a total of 2 failing tests, 0 tests succeeded
 
 "#]]);
 });

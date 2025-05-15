@@ -818,7 +818,8 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
                 &mut self.coverage,
                 &mut self.cheatcodes,
                 &mut self.script_execution_inspector,
-                &mut self.printer
+                &mut self.printer,
+                &mut self.revert_diag
             ],
             |inspector| inspector.step(interpreter, ecx),
         );
