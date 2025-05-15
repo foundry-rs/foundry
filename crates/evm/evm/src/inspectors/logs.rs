@@ -24,6 +24,28 @@ pub struct LogCollector {
 }
 
 impl LogCollector {
+    #[cold]
+    fn do_hardhat_log<CTX, D>(
+        &mut self,
+        context: &mut CTX,
+        inputs: &CallInputs,
+    ) -> Option<CallOutcome>
+    where
+        D: Database<Error = DatabaseError>,
+        CTX: ContextTr<Db = D>,
+        CTX::Journal: JournalExt,
+    {
+        if let Err(err) = self.hardhat_log(&inputs.input.bytes(context)) {
+            let result = InstructionResult::Revert;
+            let output = err.abi_encode_revert();
+            return Some(CallOutcome {
+                result: InterpreterResult { result, output, gas: Gas::new(inputs.gas_limit) },
+                memory_offset: inputs.return_memory_offset.clone(),
+            })
+        }
+        None
+    }
+
     fn hardhat_log(&mut self, data: &[u8]) -> alloy_sol_types::Result<()> {
         let decoded = console::hh::ConsoleCalls::abi_decode(data)?;
         self.logs.push(hh_to_ds(&decoded));
@@ -43,15 +65,7 @@ where
 
     fn call(&mut self, context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         if inputs.target_address == HARDHAT_CONSOLE_ADDRESS {
-            if let Err(err) = self.hardhat_log(&inputs.input.bytes(context)) {
-                let result = InstructionResult::Revert;
-                let output = err.abi_encode_revert();
-                return Some(CallOutcome {
-                    result: InterpreterResult { result, output, gas: Gas::new(inputs.gas_limit) },
-                    memory_offset: inputs.return_memory_offset.clone(),
-                })
-            }
-            return None
+            return self.do_hardhat_log(context, inputs);
         }
         None
     }
