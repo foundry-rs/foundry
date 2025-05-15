@@ -635,6 +635,21 @@ impl Cheatcodes {
         }
     }
 
+    /// Apply EIP-2930 access list.
+    ///
+    /// If the transaction type is [TransactionType::Legacy] we need to upgrade it to
+    /// [TransactionType::Eip2930] in order to use access lists. Other transaction types support
+    /// access lists themselves.
+    fn apply_accesslist(&mut self, ecx: Ecx) {
+        if let Some(access_list) = &self.access_list {
+            ecx.tx.access_list = access_list.clone();
+
+            if ecx.tx.tx_type == TransactionType::Legacy as u8 {
+                ecx.tx.tx_type = TransactionType::Eip2930 as u8;
+            }
+        }
+    }
+
     /// Called when there was a revert.
     ///
     /// Cleanup any previously applied cheatcodes that altered the state in such a way that revm's
@@ -704,17 +719,8 @@ impl Cheatcodes {
             }
         }
 
-        // Apply EIP-2930 access lists.
-        if let Some(access_list) = &self.access_list {
-            ecx.tx.access_list = access_list.clone();
-
-            // If the transaction type is legacy we need to upgrade it to EIP-2930 transaction type
-            // in order to use access lists. Other transaction types support access lists
-            // themselves.
-            if ecx.tx.tx_type == TransactionType::Legacy as u8 {
-                ecx.tx.tx_type = TransactionType::Eip2930 as u8;
-            }
-        }
+        // Apply EIP-2930 access list
+        self.apply_accesslist(ecx);
 
         // Apply our broadcast
         if let Some(broadcast) = &self.broadcast {
@@ -1085,17 +1091,8 @@ impl Cheatcodes {
             }
         }
 
-        // Apply EIP-2930 access lists.
-        if let Some(access_list) = &self.access_list {
-            ecx.tx.access_list = access_list.clone();
-
-            // If the transaction type is legacy we need to upgrade it to EIP-2930 transaction type
-            // in order to use access lists. Other transaction types support access lists
-            // themselves.
-            if ecx.tx.tx_type == TransactionType::Legacy as u8 {
-                ecx.tx.tx_type = TransactionType::Eip2930 as u8;
-            }
-        }
+        // Apply EIP-2930 access list
+        self.apply_accesslist(ecx);
 
         // Apply our broadcast
         if let Some(broadcast) = &self.broadcast {
