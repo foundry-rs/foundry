@@ -2259,7 +2259,7 @@ forgetest_init!(can_get_script_wallets, |prj, cmd| {
 import "forge-std/Script.sol";
 
 interface Vm {
-    function getWallets() external returns (address[] memory wallets);
+    function getWallets() external view returns (address[] memory wallets);
 }
 
 contract WalletScript is Script {
@@ -2575,7 +2575,7 @@ Chain 31337
 
 accessList           []
 chainId              31337
-gasLimit             228231
+gasLimit             228247
 gasPrice             
 input                [..]
 maxFeePerBlobGas     
