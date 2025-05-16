@@ -62,7 +62,7 @@ impl InspectArgs {
         };
 
         // Get the solc version if specified
-        let solc_version = build.use_solc.as_ref().cloned();
+        let solc_version = build.use_solc.clone();
 
         // Build modified Args
         let modified_build_args = BuildOpts {
