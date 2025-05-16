@@ -84,9 +84,6 @@ tracing.workspace = true
 yansi.workspace = true
 evmole.workspace = true
 
-[target.'cfg(unix)'.dependencies]
-tikv-jemallocator = { workspace = true, optional = true }
-
 [dev-dependencies]
 anvil.workspace = true
 foundry-test-utils.workspace = true
@@ -94,7 +91,7 @@ foundry-test-utils.workspace = true
 [features]
 default = ["jemalloc"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
-jemalloc = ["dep:tikv-jemallocator"]
+jemalloc = ["foundry-cli/jemalloc"]
 aws-kms = ["foundry-wallets/aws-kms", "dep:aws-sdk-kms"]
 gcp-kms = ["foundry-wallets/gcp-kms", "dep:gcloud-sdk"]
 isolate-by-default = ["foundry-config/isolate-by-default"]

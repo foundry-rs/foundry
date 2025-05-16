@@ -696,14 +696,25 @@ impl Cheatcodes {
         // Apply our prank
         if let Some(prank) = &self.get_prank(curr_depth) {
             if curr_depth >= prank.depth && input.caller() == prank.prank_caller {
+                let mut prank_applied = false;
+
                 // At the target depth we set `msg.sender`
                 if ecx.journaled_state.depth() == prank.depth {
                     input.set_caller(prank.new_caller);
+                    prank_applied = true;
                 }
 
                 // At the target depth, or deeper, we set `tx.origin`
                 if let Some(new_origin) = prank.new_origin {
                     ecx.env.tx.caller = new_origin;
+                    prank_applied = true;
+                }
+
+                // If prank applied for first time, then update
+                if prank_applied {
+                    if let Some(applied_prank) = prank.first_time_applied() {
+                        self.pranks.insert(curr_depth, applied_prank);
+                    }
                 }
             }
         }
@@ -1645,8 +1656,9 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                 })
                 .collect::<Vec<_>>();
 
-            // Not all emits were matched.
-            if self.expected_emits.iter().any(|(expected, _)| !expected.found) {
+            // Revert if not all emits expected were matched.
+            if self.expected_emits.iter().any(|(expected, _)| !expected.found && expected.count > 0)
+            {
                 outcome.result.result = InstructionResult::Revert;
                 outcome.result.output = "log != expected log".abi_encode().into();
                 return outcome;
