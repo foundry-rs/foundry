@@ -3572,6 +3572,42 @@ forgetest!(test_inspect_contract_with_same_name, |prj, cmd| {
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/10531>
+forgetest!(inspect_multiple_contracts_with_different_paths, |prj, cmd| {
+    prj.add_source(
+        "Source.sol",
+        r#"
+    contract Source {
+        function foo() public {}
+    }   
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "another/Source.sol",
+        r#"
+    contract Source {
+        function bar() public {}
+    }
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["inspect", "src/another/Source.sol:Source", "methodIdentifiers"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+
+╭--------+------------╮
+| Method | Identifier |
++=====================+
+| bar()  | febb0f7e   |
+╰--------+------------╯
+
+
+"#]]);
+});
+
 forgetest!(inspect_custom_counter_method_identifiers, |prj, cmd| {
     prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
 
