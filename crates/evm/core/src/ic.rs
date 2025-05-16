@@ -98,17 +98,17 @@ fn make_map<const PC_FIRST: bool>(code: &[u8]) -> FxHashMap<u32, u32> {
 }
 
 /// Represents a single instruction consisting of the opcode and its immediate data.
-pub struct Instruction<'a> {
+pub struct Instruction {
     /// OpCode, if it could be decoded.
     pub op: Option<OpCode>,
     /// Immediate data following the opcode.
-    pub immediate: &'a [u8],
+    pub immediate: Box<[u8]>,
     /// Program counter of the opcode.
     pub pc: u32,
 }
 
 /// Decodes raw opcode bytes into [`Instruction`]s.
-pub fn decode_instructions(code: &[u8]) -> Result<Vec<Instruction<'_>>> {
+pub fn decode_instructions(code: &[u8]) -> Result<Vec<Instruction>> {
     assert!(code.len() <= u32::MAX as usize, "bytecode is too big");
 
     let mut pc = 0usize;
@@ -116,16 +116,24 @@ pub fn decode_instructions(code: &[u8]) -> Result<Vec<Instruction<'_>>> {
 
     while pc < code.len() {
         let op = OpCode::new(code[pc]);
-        pc += 1;
-        let immediate_size = op.map(|op| immediate_size(op, &code[pc..])).unwrap_or(0) as usize;
+        let next_pc = pc + 1;
+        let immediate_size =
+            op.map(|op| immediate_size(op, &code[next_pc..])).unwrap_or(0) as usize;
+        let is_normal_push = op.map(|op| op.is_push()).unwrap_or(false);
 
-        if pc + immediate_size > code.len() {
+        if !is_normal_push && next_pc + immediate_size > code.len() {
             eyre::bail!("incomplete sequence of bytecode");
         }
 
-        steps.push(Instruction { op, pc: pc as u32, immediate: &code[pc..pc + immediate_size] });
+        // Ensure immediate is padded if needed.
+        let immediate_end = (next_pc + immediate_size).min(code.len());
+        let mut immediate = vec![0u8; immediate_size];
+        let immediate_part = &code[next_pc..immediate_end];
+        immediate[..immediate_part.len()].copy_from_slice(immediate_part);
 
-        pc += immediate_size;
+        steps.push(Instruction { op, pc: pc as u32, immediate: immediate.into_boxed_slice() });
+
+        pc = next_pc + immediate_size;
     }
 
     Ok(steps)

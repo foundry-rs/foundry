@@ -27,7 +27,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 # Remember to update clippy.toml as well
 rust-version = "1.83"
@@ -188,7 +188,7 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.13.0", default-features = false }
+foundry-block-explorers = { version = "0.13.3", default-features = false }
 foundry-compilers = { version = "0.14.0", default-features = false }
 foundry-fork-db = "0.12"
 solang-parser = "=0.3.3"
@@ -270,6 +270,7 @@ chrono = { version = "0.4", default-features = false, features = [
     "std",
 ] }
 axum = "0.7"
+ciborium = "0.2"
 color-eyre = "0.6"
 comfy-table = "7"
 dirs = "6"
