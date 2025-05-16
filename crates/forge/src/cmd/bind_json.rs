@@ -269,8 +269,7 @@ impl PreprocessedState {
             let mut parsing_context = solar_pcx_from_solc_project(&sess, &project, &input, false);
 
             let mut target_files = HashSet::new();
-            let sources = &input.input.sources;
-            for (path, source) in sources.iter() {
+            for (path, source) in &input.input.sources {
                 if !include.is_empty() {
                     if !include.iter().any(|matcher| matcher.is_match(path)) {
                         continue;
@@ -318,10 +317,10 @@ impl PreprocessedState {
                                 name: def.name.as_str().into(),
                                 contract_name: def
                                     .contract
-                                    .and_then(|id| Some(hir.contract(id).name.as_str().into())),
+                                    .map(|id| hir.contract(id).name.as_str().into()),
                                 path: path
                                     .strip_prefix(&root)
-                                    .unwrap_or_else(|_| &path)
+                                    .unwrap_or_else(|_| path)
                                     .to_path_buf(),
                                 schema,
 

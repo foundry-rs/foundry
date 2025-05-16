@@ -12,8 +12,8 @@ use std::path::PathBuf;
 
 /// Builds a Solar [`solar_sema::ParsingContext`] from [`BuildOpts`].
 ///
-/// * Configures include paths, remappings and registers all in-memory sources so
-/// that solar can operate without touching disk.
+/// * Configures include paths, remappings and registers all in-memory sources so that solar can
+///   operate without touching disk.
 /// * If no `target_paths` are provided, all project files are processed.
 /// * Only processes the subset of sources with the most up-to-date Solitidy version.
 pub fn solar_pcx_from_build_opts<'sess>(
@@ -82,7 +82,7 @@ pub fn solar_pcx_from_solc_project<'sess>(
 
     pcx.file_resolver
         .set_current_dir(solc.cli_settings.base_path.as_ref().unwrap_or(&project.paths.root));
-    for remapping in project.paths.remappings.iter() {
+    for remapping in &project.paths.remappings {
         pcx.file_resolver.add_import_remapping(solar_sema::interface::config::ImportRemapping {
             context: remapping.context.clone().unwrap_or_default(),
             prefix: remapping.name.clone(),
