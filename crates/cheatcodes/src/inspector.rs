@@ -1656,8 +1656,9 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
                 })
                 .collect::<Vec<_>>();
 
-            // Not all emits were matched.
-            if self.expected_emits.iter().any(|(expected, _)| !expected.found) {
+            // Revert if not all emits expected were matched.
+            if self.expected_emits.iter().any(|(expected, _)| !expected.found && expected.count > 0)
+            {
                 outcome.result.result = InstructionResult::Revert;
                 outcome.result.output = "log != expected log".abi_encode().into();
                 return outcome;
