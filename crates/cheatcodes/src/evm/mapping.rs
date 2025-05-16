@@ -7,10 +7,7 @@ use alloy_primitives::{
 use alloy_sol_types::SolValue;
 use revm::{
     bytecode::opcode,
-    interpreter::{
-        interpreter_types::{Jumps, MemoryTr},
-        Interpreter,
-    },
+    interpreter::{interpreter_types::Jumps, Interpreter},
 };
 
 /// Recorded mapping slots.

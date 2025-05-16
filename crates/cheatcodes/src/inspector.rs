@@ -46,11 +46,12 @@ use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
 use foundry_wallets::multi_wallet::MultiWallet;
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
-use rand::Rng;
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaChaRng;
 use revm::{
     self,
     bytecode::{opcode as op, EOF_MAGIC_BYTES},
-    context::{result::EVMError, BlockEnv, JournalTr},
+    context::{result::EVMError, BlockEnv, JournalTr, LocalContext, TransactionType},
     context_interface::{transaction::SignedAuthorization, CreateScheme},
     handler::FrameResult,
     interpreter::{
@@ -95,10 +96,10 @@ pub trait CheatcodesExecutor {
         ccx: &mut CheatsCtxt,
     ) -> Result<CreateOutcome, EVMError<DatabaseError>> {
         with_evm(self, ccx, |evm| {
-            evm.inner.data.ctx.journaled_state.depth += 1;
+            evm.inner.ctx.journaled_state.depth += 1;
 
             // Handle EOF bytecode
-            let frame = if evm.inner.data.ctx.cfg.spec.is_enabled_in(SpecId::OSAKA) &&
+            let frame = if evm.inner.ctx.cfg.spec.is_enabled_in(SpecId::OSAKA) &&
                 inputs.scheme == CreateScheme::Create &&
                 inputs.init_code.starts_with(&EOF_MAGIC_BYTES)
             {
@@ -117,7 +118,7 @@ pub trait CheatcodesExecutor {
                 FrameResult::Create(create) | FrameResult::EOFCreate(create) => create,
             };
 
-            evm.inner.data.ctx.journaled_state.depth -= 1;
+            evm.inner.ctx.journaled_state.depth -= 1;
 
             Ok(outcome)
         })
@@ -156,6 +157,7 @@ where
             inner: ccx.ecx.journaled_state.inner.clone(),
             database: &mut *ccx.ecx.journaled_state.database as &mut dyn DatabaseExt,
         },
+        local: LocalContext::default(),
         chain: (),
         error,
     };
@@ -164,11 +166,11 @@ where
 
     let res = f(&mut evm)?;
 
-    ccx.ecx.journaled_state.inner = evm.inner.data.ctx.journaled_state.inner;
-    ccx.ecx.block = evm.inner.data.ctx.block;
-    ccx.ecx.tx = evm.inner.data.ctx.tx;
-    ccx.ecx.cfg = evm.inner.data.ctx.cfg;
-    ccx.ecx.error = evm.inner.data.ctx.error;
+    ccx.ecx.journaled_state.inner = evm.inner.ctx.journaled_state.inner;
+    ccx.ecx.block = evm.inner.ctx.block;
+    ccx.ecx.tx = evm.inner.ctx.tx;
+    ccx.ecx.cfg = evm.inner.ctx.cfg;
+    ccx.ecx.error = evm.inner.ctx.error;
 
     Ok(res)
 }
@@ -499,6 +501,9 @@ pub struct Cheatcodes {
     /// strategies.
     test_runner: Option<TestRunner>,
 
+    /// Temp Rng since proptest hasn't been updated to rand 0.9
+    rng: Option<ChaChaRng>,
+
     /// Ignored traces.
     pub ignored_traces: IgnoredTraces,
 
@@ -563,6 +568,7 @@ impl Cheatcodes {
             arbitrary_storage: Default::default(),
             deprecated: Default::default(),
             wallets: Default::default(),
+            rng: Default::default(),
         }
     }
 
@@ -591,7 +597,7 @@ impl Cheatcodes {
         executor: &mut dyn CheatcodesExecutor,
     ) -> Result {
         // decode the cheatcode call
-        let decoded = Vm::VmCalls::abi_decode(&call.input, false).map_err(|e| {
+        let decoded = Vm::VmCalls::abi_decode(&call.input.bytes(ecx)).map_err(|e| {
             if let alloy_sol_types::Error::UnknownSelector { name: _, selector } = e {
                 let msg = format!(
                     "unknown cheatcode with selector {selector}; \
@@ -626,6 +632,21 @@ impl Cheatcodes {
             ecx.journaled_state.database.has_cheatcode_access(&caller)
         {
             ecx.journaled_state.database.allow_cheatcode_access(created_address);
+        }
+    }
+
+    /// Apply EIP-2930 access list.
+    ///
+    /// If the transaction type is [TransactionType::Legacy] we need to upgrade it to
+    /// [TransactionType::Eip2930] in order to use access lists. Other transaction types support
+    /// access lists themselves.
+    fn apply_accesslist(&mut self, ecx: Ecx) {
+        if let Some(access_list) = &self.access_list {
+            ecx.tx.access_list = access_list.clone();
+
+            if ecx.tx.tx_type == TransactionType::Legacy as u8 {
+                ecx.tx.tx_type = TransactionType::Eip2930 as u8;
+            }
         }
     }
 
@@ -709,10 +730,8 @@ impl Cheatcodes {
             }
         }
 
-        // Apply EIP-2930 access lists.
-        if let Some(access_list) = &self.access_list {
-            ecx.tx.access_list = access_list.clone()
-        }
+        // Apply EIP-2930 access list
+        self.apply_accesslist(ecx);
 
         // Apply our broadcast
         if let Some(broadcast) = &self.broadcast {
@@ -992,7 +1011,7 @@ impl Cheatcodes {
                 // The calldata is at most, as big as this call's input, and
                 if calldata.len() <= call.input.len() &&
                     // Both calldata match, taking the length of the assumed smaller one (which will have at least the selector), and
-                    *calldata == call.input[..calldata.len()] &&
+                    *calldata == call.input.bytes(ecx)[..calldata.len()] &&
                     // The value matches, if provided
                     expected
                         .value.is_none_or(|value| Some(value) == call.transfer_value()) &&
@@ -1008,19 +1027,25 @@ impl Cheatcodes {
 
         // Handle mocked calls
         if let Some(mocks) = self.mocked_calls.get_mut(&call.bytecode_address) {
-            let ctx =
-                MockCallDataContext { calldata: call.input.clone(), value: call.transfer_value() };
+            let ctx = MockCallDataContext {
+                calldata: call.input.bytes(ecx),
+                value: call.transfer_value(),
+            };
 
-            if let Some(return_data_queue) = match mocks.get_mut(&ctx) {
-                Some(queue) => Some(queue),
-                None => mocks
-                    .iter_mut()
-                    .find(|(mock, _)| {
-                        call.input.get(..mock.calldata.len()) == Some(&mock.calldata[..]) &&
-                            mock.value.is_none_or(|value| Some(value) == call.transfer_value())
-                    })
-                    .map(|(_, v)| v),
-            } {
+            if let Some(return_data_queue) =
+                match mocks.get_mut(&ctx) {
+                    Some(queue) => Some(queue),
+                    None => mocks
+                        .iter_mut()
+                        .find(|(mock, _)| {
+                            call.input.bytes(ecx).get(..mock.calldata.len()) ==
+                                Some(&mock.calldata[..]) &&
+                                mock.value
+                                    .is_none_or(|value| Some(value) == call.transfer_value())
+                        })
+                        .map(|(_, v)| v),
+                }
+            {
                 if let Some(return_data) = if return_data_queue.len() == 1 {
                     // If the mocked calls stack has a single element in it, don't empty it
                     return_data_queue.front().map(|x| x.to_owned())
@@ -1077,10 +1102,8 @@ impl Cheatcodes {
             }
         }
 
-        // Apply EIP-2930 access lists.
-        if let Some(access_list) = &self.access_list {
-            ecx.tx.access_list = access_list.clone()
-        }
+        // Apply EIP-2930 access list
+        self.apply_accesslist(ecx);
 
         // Apply our broadcast
         if let Some(broadcast) = &self.broadcast {
@@ -1113,6 +1136,8 @@ impl Cheatcodes {
 
                     let is_fixed_gas_limit = check_if_fixed_gas_limit(&ecx, call.gas_limit);
 
+                    let input = TransactionInput::new(call.input.bytes(ecx));
+
                     let account =
                         ecx.journaled_state.inner.state().get_mut(&broadcast.new_origin).unwrap();
 
@@ -1120,7 +1145,7 @@ impl Cheatcodes {
                         from: Some(broadcast.new_origin),
                         to: Some(TxKind::from(Some(call.target_address))),
                         value: call.transfer_value(),
-                        input: TransactionInput::new(call.input.clone()),
+                        input,
                         nonce: Some(account.info.nonce),
                         chain_id: Some(ecx.cfg.chain_id),
                         gas: if is_fixed_gas_limit { Some(call.gas_limit) } else { None },
@@ -1222,7 +1247,7 @@ impl Cheatcodes {
                 oldBalance: old_balance,
                 newBalance: U256::ZERO, // updated on call_end
                 value: call.call_value(),
-                data: call.input.clone(),
+                data: call.input.bytes(ecx),
                 reverted: false,
                 deployedCode: Bytes::new(),
                 storageAccesses: vec![], // updated on step
@@ -1238,7 +1263,12 @@ impl Cheatcodes {
     }
 
     pub fn rng(&mut self) -> &mut impl Rng {
-        self.test_runner().rng()
+        // Prop test uses rand 8 whereas alloy-core has been bumped to rand 9
+        // self.test_runner().rng()
+        self.rng.get_or_insert_with(|| match self.config.seed {
+            Some(seed) => ChaChaRng::from_seed(seed.to_be_bytes::<32>()),
+            None => ChaChaRng::from_os_rng(),
+        })
     }
 
     pub fn test_runner(&mut self) -> &mut TestRunner {
@@ -1924,7 +1954,7 @@ impl Cheatcodes {
             self.should_overwrite_arbitrary_storage(&target_address, key)
         {
             if self.has_arbitrary_storage(&target_address) {
-                let arbitrary_value = self.rng().gen();
+                let arbitrary_value = self.rng().random();
                 self.arbitrary_storage.as_mut().unwrap().save(
                     ecx,
                     target_address,
@@ -1932,7 +1962,7 @@ impl Cheatcodes {
                     arbitrary_value,
                 );
             } else if self.is_arbitrary_storage_copy(&target_address) {
-                let arbitrary_value = self.rng().gen();
+                let arbitrary_value = self.rng().random();
                 self.arbitrary_storage.as_mut().unwrap().copy(
                     ecx,
                     target_address,

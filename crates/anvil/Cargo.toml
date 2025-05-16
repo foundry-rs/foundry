@@ -90,6 +90,7 @@ yansi.workspace = true
 tempfile.workspace = true
 itertools.workspace = true
 rand.workspace = true
+rand_08.workspace = true
 eyre.workspace = true
 
 # cli

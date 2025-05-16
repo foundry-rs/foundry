@@ -10,7 +10,7 @@ use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
         result::{EVMError, HaltReason, ResultAndState},
-        BlockEnv, CfgEnv, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr, TxEnv,
+        BlockEnv, CfgEnv, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr, LocalContext, TxEnv,
     },
     handler::{
         instructions::EthInstructions, EthFrame, EthPrecompiles, FrameInitOrResult, FrameResult,
@@ -18,8 +18,8 @@ use revm::{
     },
     inspector::InspectorHandler,
     interpreter::{
-        interpreter::EthInterpreter, return_ok, CallInputs, CallOutcome, CallScheme, CallValue,
-        CreateInputs, CreateOutcome, FrameInput, Gas, InputsImpl, InstructionResult,
+        interpreter::EthInterpreter, return_ok, CallInput, CallInputs, CallOutcome, CallScheme,
+        CallValue, CreateInputs, CreateOutcome, FrameInput, Gas, InputsImpl, InstructionResult,
         InterpreterResult,
     },
     primitives::hardfork::SpecId,
@@ -88,6 +88,7 @@ pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
         cfg: env.evm_env.cfg_env,
         tx: env.tx,
         chain: (),
+        local: LocalContext::default(),
         error: Ok(()),
     };
 
@@ -127,7 +128,7 @@ fn get_create2_factory_call_inputs(
         target_address: deployer,
         scheme: CallScheme::Call,
         value: CallValue::Transfer(inputs.value),
-        input: calldata.into(),
+        input: CallInput::Bytes(calldata.into()),
         gas_limit: inputs.gas_limit,
         is_static: false,
         return_memory_offset: 0..0,
@@ -164,11 +165,17 @@ impl<I: InspectorExt> FoundryEvm<'_, I> {
 }
 
 impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
+    type Precompiles = FoundryPrecompiles;
+    type Inspector = I;
     type DB = &'db mut dyn DatabaseExt;
     type Error = EVMError<DatabaseError>;
     type HaltReason = HaltReason;
     type Spec = SpecId;
     type Tx = TxEnv;
+
+    fn chain_id(&self) -> u64 {
+        self.inner.ctx.cfg.chain_id
+    }
 
     fn block(&self) -> &BlockEnv {
         &self.inner.block
@@ -176,6 +183,14 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
 
     fn db_mut(&mut self) -> &mut Self::DB {
         self.inner.db()
+    }
+
+    fn precompiles_mut(&mut self) -> &mut Self::Precompiles {
+        &mut self.inner.precompiles
+    }
+
+    fn inspector_mut(&mut self) -> &mut Self::Inspector {
+        unimplemented!("Inspector is not mutable")
     }
 
     fn set_inspector_enabled(&mut self, _enabled: bool) {
@@ -204,7 +219,7 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
     where
         Self: Sized,
     {
-        let Context { block: block_env, cfg: cfg_env, journaled_state, .. } = self.inner.data.ctx;
+        let Context { block: block_env, cfg: cfg_env, journaled_state, .. } = self.inner.ctx;
 
         (journaled_state.database, EvmEnv { block_env, cfg_env })
     }
@@ -214,13 +229,13 @@ impl<'db, I: InspectorExt> Deref for FoundryEvm<'db, I> {
     type Target = Context<BlockEnv, TxEnv, CfgEnv, &'db mut dyn DatabaseExt>;
 
     fn deref(&self) -> &Self::Target {
-        &self.inner.data.ctx
+        &self.inner.ctx
     }
 }
 
 impl<I: InspectorExt> DerefMut for FoundryEvm<'_, I> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner.data.ctx
+        &mut self.inner.ctx
     }
 }
 
@@ -329,14 +344,14 @@ impl<I: InspectorExt> InspectorHandler for FoundryHandler<'_, I> {
 
         let CreateScheme::Create2 { salt } = inputs.scheme else { return Ok(frame_or_result) };
 
-        if !evm.data.inspector.should_use_create2_factory(&mut evm.data.ctx, inputs) {
+        if !evm.inspector.should_use_create2_factory(&mut evm.ctx, inputs) {
             return Ok(frame_or_result)
         }
 
         let gas_limit = inputs.gas_limit;
 
         // Get CREATE2 deployer.
-        let create2_deployer = evm.data.inspector.create2_deployer();
+        let create2_deployer = evm.inspector.create2_deployer();
         // Generate call inputs for CREATE2 factory.
         let call_inputs = get_create2_factory_call_inputs(salt, inputs, create2_deployer);
 
@@ -349,7 +364,9 @@ impl<I: InspectorExt> InspectorHandler for FoundryHandler<'_, I> {
             return Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
                 result: InterpreterResult {
                     result: InstructionResult::Revert,
-                    output: format!("missing CREATE2 deployer: {create2_deployer}").into(),
+                    output: Bytes::copy_from_slice(
+                        format!("missing CREATE2 deployer: {create2_deployer}").as_bytes(),
+                    ),
                     gas: Gas::new(gas_limit),
                 },
                 memory_offset: 0..0,

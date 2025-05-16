@@ -11,7 +11,7 @@ use std::sync::{
 };
 
 fn shuffled<T>(mut vec: Vec<T>) -> Vec<T> {
-    vec.shuffle(&mut rand::thread_rng());
+    vec.shuffle(&mut rand::rng());
     vec
 }
 

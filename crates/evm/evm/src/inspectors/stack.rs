@@ -863,10 +863,9 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
             if let Some(mocks) = cheatcodes.mocked_functions.get(&call.target_address) {
                 // Check if any mock function set for call data or if catch-all mock function set
                 // for selector.
-                if let Some(target) = mocks
-                    .get(&call.input)
-                    .or_else(|| call.input.get(..4).and_then(|selector| mocks.get(selector)))
-                {
+                if let Some(target) = mocks.get(&call.input.bytes(ecx)).or_else(|| {
+                    call.input.bytes(ecx).get(..4).and_then(|selector| mocks.get(selector))
+                }) {
                     call.bytecode_address = *target;
                 }
             }
@@ -882,11 +881,12 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
             match call.scheme {
                 // Isolate CALLs
                 CallScheme::Call | CallScheme::ExtCall => {
+                    let input = call.input.bytes(ecx);
                     let (result, _) = self.transact_inner(
                         ecx,
                         TxKind::Call(call.target_address),
                         call.caller,
-                        call.input.clone(),
+                        input,
                         call.gas_limit,
                         call.value.get(),
                     );

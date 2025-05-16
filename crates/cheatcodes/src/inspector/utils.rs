@@ -39,6 +39,7 @@ impl CommonCreateInput for &mut CreateInputs {
         let kind = match scheme {
             CreateScheme::Create => "create",
             CreateScheme::Create2 { .. } => "create2",
+            CreateScheme::Custom { .. } => "custom",
         };
         debug!(target: "cheatcodes", tx=?cheatcode.broadcastable_transactions.back().unwrap(), "broadcastable {kind}");
     }

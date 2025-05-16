@@ -219,14 +219,14 @@ impl<'hir> Visit<'hir> for BytecodeDependencyCollector<'hir> {
 
     fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
         if let StmtKind::Try(stmt_try) = stmt.kind {
-            if let ExprKind::Call(call_expr, call_args, named_args) = stmt_try.expr.kind {
+            if let ExprKind::Call(call_expr, call_args, named_args) = &stmt_try.expr.kind {
                 if let Some(dependency) = handle_call_expr(
                     self.src,
                     self.source_map,
                     &stmt_try.expr,
                     call_expr,
-                    &call_args,
-                    &named_args,
+                    call_args,
+                    named_args,
                     true,
                 ) {
                     self.collect_dependency(dependency);
@@ -266,7 +266,7 @@ fn handle_call_expr(
                 // `new Counter {value: 333} (  address(this))`
                 // the offset will be used to replace `{value: 333} (  ` with `(`
                 let call_args_offset = if named_args.is_some() && !call_args.is_empty() {
-                    (call_args.span().lo() - ty_new.span.hi()).to_usize()
+                    (call_args.span.lo() - ty_new.span.hi()).to_usize()
                 } else {
                     0
                 };
@@ -378,9 +378,6 @@ pub(crate) fn remove_bytecode_dependencies(
                             "_args: encodeArgs{id}(DeployHelper{id}.FoundryPpConstructorArgs",
                             id = dep.referenced_contract.get()
                         ));
-                        if *call_args_offset > 0 {
-                            update.push('(');
-                        }
                         updates.insert((dep.loc.start, dep.loc.end + call_args_offset, update));
 
                         updates.insert((

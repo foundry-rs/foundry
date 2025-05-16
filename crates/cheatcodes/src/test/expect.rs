@@ -140,6 +140,7 @@ impl From<revm::context_interface::CreateScheme> for CreateScheme {
         match scheme {
             revm::context_interface::CreateScheme::Create => Self::Create,
             revm::context_interface::CreateScheme::Create2 { .. } => Self::Create2,
+            _ => unimplemented!("Unsupported create scheme"),
         }
     }
 }

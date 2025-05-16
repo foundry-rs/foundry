@@ -43,7 +43,7 @@ use foundry_evm_core::AsEnvMut;
 use itertools::Itertools;
 use op_revm::OpTransaction;
 use parking_lot::RwLock;
-use rand::thread_rng;
+use rand_08::thread_rng;
 use revm::{
     context::{BlockEnv, CfgEnv, TxEnv},
     context_interface::block::BlobExcessGasAndPrice,

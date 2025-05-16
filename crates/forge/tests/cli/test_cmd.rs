@@ -2916,8 +2916,6 @@ Traces:
     │   └─ ← [Return] 1
     ├─ [0] VM::assertEq(1, 1) [staticcall]
     │   └─ ← [Return]
-    ├─  storage changes:
-    │   @ 0: 0 → 1
     └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]

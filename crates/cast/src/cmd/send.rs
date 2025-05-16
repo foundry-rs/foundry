@@ -183,7 +183,7 @@ impl SendTxArgs {
             let wallet = EthereumWallet::from(signer);
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
                 .wallet(wallet)
-                .on_provider(&provider);
+                .connect_provider(&provider);
 
             cast_send(provider, tx, cast_async, confirmations, timeout).await
         }

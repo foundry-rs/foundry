@@ -116,7 +116,7 @@ impl Cheatcode for randomInt_1Call {
 
 impl Cheatcode for randomBoolCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let rand_bool: bool = state.rng().gen();
+        let rand_bool: bool = state.rng().random();
         Ok(rand_bool.abi_encode())
     }
 }
@@ -287,7 +287,7 @@ fn random_uint(state: &mut Cheatcodes, bits: Option<U256>, bounds: Option<(U256,
         ensure!(min <= max, "min must be less than or equal to max");
         // Generate random between range min..=max
         let exclusive_modulo = max - min;
-        let mut random_number: U256 = state.rng().gen();
+        let mut random_number: U256 = state.rng().random();
         if exclusive_modulo != U256::MAX {
             let inclusive_modulo = exclusive_modulo + U256::from(1);
             random_number %= inclusive_modulo;
