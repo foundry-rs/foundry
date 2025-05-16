@@ -16,7 +16,7 @@ struct TopLevelStruct {
 }
 
 contract BindJsonTest is Test {
-    // using JsonBindings for *;
+    using JsonBindings for *;
 
     struct ContractLevelStruct {
         address[][] param1;
