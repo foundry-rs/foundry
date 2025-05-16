@@ -300,7 +300,7 @@ mod tests {
         assert_eq!(dep.name, "contracts-upgradeable");
         assert_eq!(
             dep.url,
-            Some("https://github.com/openzeppelin/contracts-upgradeable".to_string())
+            Some("https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable".to_string())
         );
         assert_eq!(dep.tag, None);
         assert_eq!(dep.alias, None);
@@ -312,7 +312,7 @@ mod tests {
         assert_eq!(dep.name, "contracts-upgradeable");
         assert_eq!(
             dep.url,
-            Some("https://github.com/openzeppelin/contracts-upgradeable".to_string())
+            Some("https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable".to_string())
         );
         assert_eq!(dep.tag, Some("v1".to_string()));
         assert_eq!(dep.alias, None);
