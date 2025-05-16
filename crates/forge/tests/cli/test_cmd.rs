@@ -997,7 +997,7 @@ Compiler run successful!
 Ran 1 test for test/Contract.t.sol:PrecompileLabelsTest
 [PASS] testPrecompileLabels() ([GAS])
 Traces:
-  [14048] PrecompileLabelsTest::testPrecompileLabels()
+  [11548] PrecompileLabelsTest::testPrecompileLabels()
     ├─ [0] VM::deal(VM: [0x7109709ECfa91a80626fF3989D68f67F5b1DD12D], 1000000000000000000 [1e18])
     │   └─ ← [Return]
     ├─ [0] VM::deal(console: [0x000000000000000000636F6e736F6c652e6c6f67], 1000000000000000000 [1e18])
@@ -1451,10 +1451,10 @@ contract ATest is Test {
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-[PASS] testNormalGas() (gas: 3153)
-[PASS] testWeirdGas1() (gas: 2991)
-[PASS] testWeirdGas2() (gas: 3218)
-[PASS] testWithAssembly() (gas: 3034)
+[PASS] testNormalGas() (gas: 653)
+[PASS] testWeirdGas1() (gas: 491)
+[PASS] testWeirdGas2() (gas: 718)
+[PASS] testWithAssembly() (gas: 534)
 ...
 "#]]);
 });
@@ -1547,9 +1547,9 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-[PASS] test_GasMeter() (gas: 53102)
+[PASS] test_GasMeter() (gas: 50602)
 Traces:
-  [53102] ATest::test_GasMeter()
+  [50602] ATest::test_GasMeter()
     ├─ [0] VM::pauseGasMetering()
     │   └─ ← [Return]
     ├─ [0] VM::resumeGasMetering()
@@ -1639,13 +1639,13 @@ contract PauseTracingTest is DSTest {
     cmd.args(["test", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
 ...
 Traces:
-  [7757] PauseTracingTest::setUp()
+  [5257] PauseTracingTest::setUp()
     ├─ emit DummyEvent(i: 1)
     ├─ [0] VM::pauseTracing() [staticcall]
     │   └─ ← [Return]
     └─ ← [Stop]
 
-  [449649] PauseTracingTest::test()
+  [447149] PauseTracingTest::test()
     ├─ [0] VM::resumeTracing() [staticcall]
     │   └─ ← [Return]
     ├─ [22896] TraceGenerator::generate()
@@ -2907,7 +2907,7 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [31851] CounterTest::test_Increment()
+  [26851] CounterTest::test_Increment()
     ├─ [22418] Counter::increment()
     │   ├─  storage changes:
     │   │   @ 0: 0 → 1
@@ -3053,7 +3053,7 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [35178] SuppressTracesTest::test_increment_failure()
+  [30178] SuppressTracesTest::test_increment_failure()
     ├─ [0] console::log("test increment failure") [staticcall]
     │   └─ ← [Stop]
     ├─ [22418] Counter::increment()
@@ -3098,7 +3098,7 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [35178] SuppressTracesTest::test_increment_failure()
+  [30178] SuppressTracesTest::test_increment_failure()
     ├─ [0] console::log("test increment failure") [staticcall]
     │   └─ ← [Stop]
     ├─ [22418] Counter::increment()
@@ -3114,7 +3114,7 @@ Logs:
   test increment success
 
 Traces:
-  [35229] SuppressTracesTest::test_increment_success()
+  [30229] SuppressTracesTest::test_increment_success()
     ├─ [0] console::log("test increment success") [staticcall]
     │   └─ ← [Stop]
     ├─ [22418] Counter::increment()
@@ -3612,6 +3612,7 @@ import {Counter} from "../src/Counter.sol";
 interface ICounter {
     function increment() external;
     function number() external returns (uint256);
+    function random() external returns (uint256);
 }
 
 contract NonContractCallRevertTest is Test {
@@ -3620,6 +3621,11 @@ contract NonContractCallRevertTest is Test {
     function setUp() public {
         counter = new Counter();
         counter.setNumber(1);
+    }
+
+    function test_non_supported_selector_call_failure() public {
+        console.log("test non supported fn selector call failure");
+        ICounter(address(counter)).random();
     }
 
     function test_non_contract_call_failure() public {
@@ -3643,7 +3649,7 @@ contract NonContractCallRevertTest is Test {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
-Ran 2 tests for test/NonContractCallRevertTest.t.sol:NonContractCallRevertTest
+Ran 3 tests for test/NonContractCallRevertTest.t.sol:NonContractCallRevertTest
 [FAIL: EvmError: call to non-contract address `0xdEADBEeF00000000000000000000000000000000`] test_non_contract_call_failure() ([GAS])
 Logs:
   test non contract call failure
@@ -3680,16 +3686,36 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Revert] EvmError: Revert
 
-Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+[FAIL: EvmError: Revert] test_non_supported_selector_call_failure() ([GAS])
+Logs:
+  test non supported fn selector call failure
 
-Ran 1 test suite [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
+Traces:
+  [157143] NonContractCallRevertTest::setUp()
+    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [22492] Counter::setNumber(1)
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+  [8620] NonContractCallRevertTest::test_non_supported_selector_call_failure()
+    ├─ [0] console::log("test non supported fn selector call failure") [staticcall]
+    │   └─ ← [Stop]
+    ├─ [145] Counter::random()
+    │   └─ ← [Revert] unrecognized function selector 0x5ec01e4d for contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f, which has no fallback function.
+    └─ ← [Revert] EvmError: Revert
+
+Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 3 failed, 0 skipped (3 total tests)
 
 Failing tests:
-Encountered 2 failing tests in test/NonContractCallRevertTest.t.sol:NonContractCallRevertTest
+Encountered 3 failing tests in test/NonContractCallRevertTest.t.sol:NonContractCallRevertTest
 [FAIL: EvmError: call to non-contract address `0xdEADBEeF00000000000000000000000000000000`] test_non_contract_call_failure() ([GAS])
 [FAIL: EvmError: call to non-contract address `0xdEADBEeF00000000000000000000000000000000`] test_non_contract_void_call_failure() ([GAS])
+[FAIL: EvmError: Revert] test_non_supported_selector_call_failure() ([GAS])
 
-Encountered a total of 2 failing tests, 0 tests succeeded
+Encountered a total of 3 failing tests, 0 tests succeeded
 
 "#]]);
 });

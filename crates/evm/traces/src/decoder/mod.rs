@@ -123,6 +123,9 @@ pub struct CallTraceDecoder {
     /// Contract addresses that have fallback functions, mapped to function selectors of that
     /// contract.
     pub fallback_contracts: HashMap<Address, HashSet<Selector>>,
+    /// Contract addresses that have do NOT have fallback functions, mapped to function selectors
+    /// of that contract.
+    pub non_fallback_contracts: HashMap<Address, HashSet<Selector>>,
 
     /// All known functions.
     pub functions: HashMap<Selector, Vec<Function>>,
@@ -176,6 +179,7 @@ impl CallTraceDecoder {
             ]),
             receive_contracts: Default::default(),
             fallback_contracts: Default::default(),
+            non_fallback_contracts: Default::default(),
 
             functions: console::hh::abi::functions()
                 .into_values()
@@ -307,6 +311,9 @@ impl CallTraceDecoder {
             if abi.fallback.is_some() {
                 self.fallback_contracts
                     .insert(address, abi.functions().map(|f| f.selector()).collect());
+            } else {
+                self.non_fallback_contracts
+                    .insert(address, abi.functions().map(|f| f.selector()).collect());
             }
         }
     }
@@ -364,6 +371,45 @@ impl CallTraceDecoder {
                     &functions
                 }
             };
+
+            // Check if unsupported fn selector: calldata dooes NOT point to one of its selectors +
+            // non-fallback contract + no receive
+            if let Some(contract_selectors) = self.non_fallback_contracts.get(&trace.address) {
+                if !contract_selectors.contains(&selector) &&
+                    (!cdata.is_empty() || !self.receive_contracts.contains(&trace.address))
+                {
+                    let return_data = if !trace.success {
+                        let revert_msg =
+                            self.revert_decoder.decode(&trace.output, Some(trace.status), None);
+
+                        if trace.output.is_empty() || revert_msg.contains("EvmError: Revert") {
+                            Some(format!(
+                                "unrecognized function selector {} for contract {}, which has no fallback function.",
+                                selector, trace.address
+                            ))
+                        } else {
+                            Some(revert_msg)
+                        }
+                    } else {
+                        None
+                    };
+
+                    if let Some(func) = functions.first() {
+                        return DecodedCallTrace {
+                            label,
+                            call_data: Some(self.decode_function_input(trace, func)),
+                            return_data,
+                        };
+                    } else {
+                        return DecodedCallTrace {
+                            label,
+                            call_data: self.fallback_call_data(trace),
+                            return_data,
+                        };
+                    };
+                }
+            }
+
             let [func, ..] = &functions[..] else {
                 return DecodedCallTrace {
                     label,
