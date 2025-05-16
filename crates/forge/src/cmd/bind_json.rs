@@ -23,7 +23,7 @@ use solar_parse::{
 };
 use solar_sema::thread_local::ThreadLocal;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     fmt::{self, Write},
     ops::ControlFlow,
     path::PathBuf,
@@ -31,6 +31,8 @@ use std::{
 };
 
 foundry_config::impl_figment_convert!(BindJsonArgs, build);
+
+const JSON_BINDINGS_PLACEHOLDER: &str = "library JsonBindings {}";
 
 /// CLI arguments for `forge bind-json`.
 #[derive(Clone, Debug, Parser)]
@@ -114,7 +116,12 @@ impl BindJsonArgs {
         eyre::ensure!(result.is_ok(), "failed parsing");
 
         // Insert empty bindings file.
-        sources.insert(target_path.clone(), Source::new("library JsonBindings {}"));
+        if let Some(parent) = target_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&target_path, JSON_BINDINGS_PLACEHOLDER)?;
+        sources.insert(target_path.clone(), Source::new(JSON_BINDINGS_PLACEHOLDER));
+
         Ok(PreprocessedState { version, sources, target_path, project, config })
     }
 }
@@ -252,8 +259,8 @@ impl PreprocessedState {
         let settings = config.solc_settings()?;
         let include = config.bind_json.include;
         let exclude = config.bind_json.exclude;
+        let root = config.root;
 
-        println!("[DEBUG] version: {:?}", &version);
         let input = SolcVersionedInput::build(sources, settings, SolcLanguage::Solidity, version);
 
         let sess = Session::builder().with_stderr_emitter().build();
@@ -261,7 +268,7 @@ impl PreprocessedState {
             // Set up the parsing context with the project paths, without adding the source files
             let mut parsing_context = solar_pcx_from_solc_project(&sess, &project, &input, false);
 
-            println!("[DEBUG] adding sources to PCX");
+            let mut target_files = HashSet::new();
             let sources = &input.input.sources;
             for (path, source) in sources.iter() {
                 if !include.is_empty() {
@@ -279,10 +286,10 @@ impl PreprocessedState {
                     continue;
                 }
 
-                println!(" > PATH: {}", path.to_string_lossy());
                 if let Ok(src_file) =
                     sess.source_map().new_source_file(path.clone(), source.content.as_str())
                 {
+                    target_files.insert(src_file.stable_id);
                     parsing_context.add_file(src_file);
                 }
             }
@@ -299,29 +306,35 @@ impl PreprocessedState {
                 let resolver = Resolver::new(hir);
                 for id in &resolver.struct_ids() {
                     if let Some(schema) = resolver.resolve_struct_eip712(*id) {
-                        _ = sh_println!("{schema}\n");
-
                         let def = hir.strukt(*id);
-                        structs_to_write.push(StructToWrite {
-                            name: def.name.as_str().into(),
-                            contract_name: def
-                                .contract
-                                .and_then(|id| Some(hir.contract(id).name.as_str().into())),
-                            // TODO: figure out path
-                            path: target_path.clone(),
-                            schema,
+                        let source = hir.source(def.source);
 
-                            // will be filled later
-                            import_alias: None,
-                            name_in_fns: String::new(),
-                        });
+                        if !target_files.contains(&source.file.stable_id) {
+                            continue;
+                        }
+
+                        if let FileName::Real(ref path) = source.file.name {
+                            structs_to_write.push(StructToWrite {
+                                name: def.name.as_str().into(),
+                                contract_name: def
+                                    .contract
+                                    .and_then(|id| Some(hir.contract(id).name.as_str().into())),
+                                path: path
+                                    .strip_prefix(&root)
+                                    .unwrap_or_else(|_| &path)
+                                    .to_path_buf(),
+                                schema,
+
+                                // will be filled later
+                                import_alias: None,
+                                name_in_fns: String::new(),
+                            });
+                        }
                     }
                 }
             }
             Ok(())
         });
-
-        println!("[DEBUG] structs to write: {:#?}", structs_to_write);
 
         Ok(StructsState { structs_to_write, target_path })
     }

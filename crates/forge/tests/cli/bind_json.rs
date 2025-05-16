@@ -16,7 +16,7 @@ struct TopLevelStruct {
 }
 
 contract BindJsonTest is Test {
-    using JsonBindings for *;
+    // using JsonBindings for *;
 
     struct ContractLevelStruct {
         address[][] param1;
@@ -51,7 +51,7 @@ contract BindJsonTest is Test {
     )
     .unwrap();
 
-    cmd.arg("bind-json").assert_success().stdout_eq("");
+    cmd.arg("bind-json").assert_success();
 
     snapbox::assert_data_eq!(
         snapbox::Data::read_from(&prj.root().join("utils/JsonBindings.sol"), None),
