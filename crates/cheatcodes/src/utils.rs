@@ -313,11 +313,3 @@ fn random_int(state: &mut Cheatcodes, bits: Option<U256>) -> Result {
         .current()
         .abi_encode())
 }
-
-impl Cheatcode for eip712HashTypeCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { typeDefinition } = self;
-
-        todo!("Use EIP712 resolver");
-    }
-}
