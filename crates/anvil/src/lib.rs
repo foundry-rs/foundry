@@ -53,8 +53,7 @@ pub use hardfork::{EthereumHardfork, OptimismHardfork};
 pub mod eth;
 /// Evm related abstractions
 mod evm;
-// pub use evm::{inject_precompiles, PrecompileFactory};
-pub use evm::PrecompileFactory;
+pub use evm::{inject_precompiles, PrecompileFactory};
 
 /// support for polling filters
 pub mod filter;
