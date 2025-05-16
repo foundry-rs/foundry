@@ -1451,10 +1451,10 @@ contract ATest is Test {
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-[PASS] testNormalGas() (gas: 653)
-[PASS] testWeirdGas1() (gas: 491)
-[PASS] testWeirdGas2() (gas: 718)
-[PASS] testWithAssembly() (gas: 534)
+[PASS] testNormalGas() (gas: 3153)
+[PASS] testWeirdGas1() (gas: 2991)
+[PASS] testWeirdGas2() (gas: 3218)
+[PASS] testWithAssembly() (gas: 3034)
 ...
 "#]]);
 });
@@ -3642,7 +3642,7 @@ contract NonContractCallRevertTest is Test {
     )
     .unwrap();
 
-    cmd.args(["test", "--mc", "NonContractCallRevertTest", "-vvvv"])
+    cmd.args(["test", "--mc", "NonContractCallRevertTest", "-vvv"])
         .assert_failure()
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -3655,13 +3655,6 @@ Logs:
   test non contract call failure
 
 Traces:
-  [157143] NonContractCallRevertTest::setUp()
-    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 481 bytes of code
-    ├─ [22492] Counter::setNumber(1)
-    │   └─ ← [Stop]
-    └─ ← [Stop]
-
   [6350] NonContractCallRevertTest::test_non_contract_call_failure()
     ├─ [0] console::log("test non contract call failure") [staticcall]
     │   └─ ← [Stop]
@@ -3674,13 +3667,6 @@ Logs:
   test non contract (void) call failure
 
 Traces:
-  [157143] NonContractCallRevertTest::setUp()
-    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 481 bytes of code
-    ├─ [22492] Counter::setNumber(1)
-    │   └─ ← [Stop]
-    └─ ← [Stop]
-
   [3715] NonContractCallRevertTest::test_non_contract_void_call_failure()
     ├─ [0] console::log("test non contract (void) call failure") [staticcall]
     │   └─ ← [Stop]
@@ -3691,13 +3677,6 @@ Logs:
   test non supported fn selector call failure
 
 Traces:
-  [157143] NonContractCallRevertTest::setUp()
-    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 481 bytes of code
-    ├─ [22492] Counter::setNumber(1)
-    │   └─ ← [Stop]
-    └─ ← [Stop]
-
   [8620] NonContractCallRevertTest::test_non_supported_selector_call_failure()
     ├─ [0] console::log("test non supported fn selector call failure") [staticcall]
     │   └─ ← [Stop]
@@ -3762,7 +3741,7 @@ contract NonContractDelegateCallRevertTest is Test {
     )
     .unwrap();
 
-    cmd.args(["test", "--mc", "NonContractDelegateCallRevertTest", "-vvvv"])
+    cmd.args(["test", "--mc", "NonContractDelegateCallRevertTest", "-vvv"])
         .assert_failure()
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]

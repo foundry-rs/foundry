@@ -41,7 +41,7 @@ pub struct InspectorStackBuilder {
     pub cheatcodes: Option<Arc<CheatsConfig>>,
     /// The fuzzer inspector and its state, if it exists.
     pub fuzzer: Option<Fuzzer>,
-    /// Whether to enable tracing.
+    /// Whether to enable tracing and revert diagnostics.
     pub trace_mode: TraceMode,
     /// Whether logs should be collected.
     pub logs: Option<bool>,
@@ -61,8 +61,6 @@ pub struct InspectorStackBuilder {
     pub wallets: Option<Wallets>,
     /// The CREATE2 deployer address.
     pub create2_deployer: Address,
-    /// Whether to provide diagnostics for EVM reverts.
-    pub revert_diag: Option<bool>,
 }
 
 impl InspectorStackBuilder {
@@ -136,6 +134,7 @@ impl InspectorStackBuilder {
     }
 
     /// Set whether to enable the tracer.
+    /// Revert diagnostic inspector is activated when `mode != TraceMode::None`
     #[inline]
     pub fn trace_mode(mut self, mode: TraceMode) -> Self {
         if self.trace_mode < mode {
@@ -166,13 +165,6 @@ impl InspectorStackBuilder {
         self
     }
 
-    /// Set the revert diagnostic inspector.
-    #[inline]
-    pub fn revert_diagnostic(mut self, yes: bool) -> Self {
-        self.revert_diag = Some(yes);
-        self
-    }
-
     /// Builds the stack of inspectors to use when transacting/committing on the EVM.
     pub fn build(self) -> InspectorStack {
         let Self {
@@ -189,7 +181,6 @@ impl InspectorStackBuilder {
             odyssey,
             wallets,
             create2_deployer,
-            revert_diag,
         } = self;
         let mut stack = InspectorStack::new();
 
@@ -209,14 +200,12 @@ impl InspectorStackBuilder {
         if let Some(chisel_state) = chisel_state {
             stack.set_chisel(chisel_state);
         }
-        if let Some(revert_ctx) = revert_diag {
-            stack.revert_diagnostic(revert_ctx);
-        }
 
         stack.collect_coverage(coverage.unwrap_or(false));
         stack.collect_logs(logs.unwrap_or(true));
         stack.print(print.unwrap_or(false));
         stack.tracing(trace_mode);
+        stack.revert_diagnostic(!trace_mode.is_none());
 
         stack.enable_isolation(enable_isolation);
         stack.odyssey(odyssey);
