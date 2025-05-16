@@ -6,7 +6,7 @@ use foundry_compilers::Updates;
 use itertools::Itertools;
 use solar_parse::interface::Session;
 use solar_sema::{
-    hir::{ContractId, Expr, ExprKind, Hir, NamedArg, TypeKind, Visit},
+    hir::{CallArgs, ContractId, Expr, ExprKind, Hir, NamedArg, Stmt, StmtKind, TypeKind, Visit},
     interface::{data_structures::Never, source_map::FileName, SourceMap},
 };
 use std::{
@@ -105,6 +105,8 @@ enum BytecodeDependencyKind {
         value: Option<String>,
         /// `salt` (if any) used when creating contract.
         salt: Option<String>,
+        /// Whether it's a try contract creation statement.
+        try_stmt: bool,
     },
 }
 
@@ -182,42 +184,17 @@ impl<'hir> Visit<'hir> for BytecodeDependencyCollector<'hir> {
 
     fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
         match &expr.kind {
-            ExprKind::Call(ty, call_args, named_args) => {
-                if let ExprKind::New(ty_new) = &ty.kind {
-                    if let TypeKind::Custom(item_id) = ty_new.kind {
-                        if let Some(contract_id) = item_id.as_contract() {
-                            let name_loc = span_to_range(self.source_map, ty_new.span);
-                            let name = &self.src[name_loc];
-
-                            // Calculate offset to remove named args, e.g. for an expression like
-                            // `new Counter {value: 333} (  address(this))`
-                            // the offset will be used to replace `{value: 333} (  ` with `(`
-                            let call_args_offset = if named_args.is_some() && !call_args.is_empty()
-                            {
-                                (call_args.span().lo() - ty_new.span.hi()).to_usize()
-                            } else {
-                                0
-                            };
-
-                            let args_len = expr.span.hi() - ty_new.span.hi();
-                            self.collect_dependency(BytecodeDependency {
-                                kind: BytecodeDependencyKind::New {
-                                    name: name.to_string(),
-                                    args_length: args_len.to_usize(),
-                                    call_args_offset,
-                                    value: named_arg(
-                                        self.src,
-                                        named_args,
-                                        "value",
-                                        self.source_map,
-                                    ),
-                                    salt: named_arg(self.src, named_args, "salt", self.source_map),
-                                },
-                                loc: span_to_range(self.source_map, ty.span),
-                                referenced_contract: contract_id,
-                            });
-                        }
-                    }
+            ExprKind::Call(call_expr, call_args, named_args) => {
+                if let Some(dependency) = handle_call_expr(
+                    self.src,
+                    self.source_map,
+                    expr,
+                    call_expr,
+                    call_args,
+                    named_args,
+                    false,
+                ) {
+                    self.collect_dependency(dependency);
                 }
             }
             ExprKind::Member(member_expr, ident) => {
@@ -239,6 +216,78 @@ impl<'hir> Visit<'hir> for BytecodeDependencyCollector<'hir> {
         }
         self.walk_expr(expr)
     }
+
+    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
+        if let StmtKind::Try(stmt_try) = stmt.kind {
+            if let ExprKind::Call(call_expr, call_args, named_args) = stmt_try.expr.kind {
+                if let Some(dependency) = handle_call_expr(
+                    self.src,
+                    self.source_map,
+                    &stmt_try.expr,
+                    call_expr,
+                    &call_args,
+                    &named_args,
+                    true,
+                ) {
+                    self.collect_dependency(dependency);
+                    for clause in stmt_try.clauses {
+                        for &var in clause.args {
+                            self.visit_nested_var(var)?;
+                        }
+                        for stmt in clause.block {
+                            self.visit_stmt(stmt)?;
+                        }
+                    }
+                    return ControlFlow::Continue(());
+                }
+            }
+        }
+        self.walk_stmt(stmt)
+    }
+}
+
+/// Helper function to analyze and extract bytecode dependency from a given call expression.
+fn handle_call_expr(
+    src: &str,
+    source_map: &SourceMap,
+    parent_expr: &Expr<'_>,
+    call_expr: &Expr<'_>,
+    call_args: &CallArgs<'_>,
+    named_args: &Option<&[NamedArg<'_>]>,
+    try_stmt: bool,
+) -> Option<BytecodeDependency> {
+    if let ExprKind::New(ty_new) = &call_expr.kind {
+        if let TypeKind::Custom(item_id) = ty_new.kind {
+            if let Some(contract_id) = item_id.as_contract() {
+                let name_loc = span_to_range(source_map, ty_new.span);
+                let name = &src[name_loc];
+
+                // Calculate offset to remove named args, e.g. for an expression like
+                // `new Counter {value: 333} (  address(this))`
+                // the offset will be used to replace `{value: 333} (  ` with `(`
+                let call_args_offset = if named_args.is_some() && !call_args.is_empty() {
+                    (call_args.span().lo() - ty_new.span.hi()).to_usize()
+                } else {
+                    0
+                };
+
+                let args_len = parent_expr.span.hi() - ty_new.span.hi();
+                return Some(BytecodeDependency {
+                    kind: BytecodeDependencyKind::New {
+                        name: name.to_string(),
+                        args_length: args_len.to_usize(),
+                        call_args_offset,
+                        value: named_arg(src, named_args, "value", source_map),
+                        salt: named_arg(src, named_args, "salt", source_map),
+                        try_stmt,
+                    },
+                    loc: span_to_range(source_map, call_expr.span),
+                    referenced_contract: contract_id,
+                })
+            }
+        }
+    }
+    None
 }
 
 /// Helper function to extract value of a given named arg.
@@ -300,8 +349,14 @@ pub(crate) fn remove_bytecode_dependencies(
                     call_args_offset,
                     value,
                     salt,
+                    try_stmt,
                 } => {
-                    let mut update = format!("{name}(payable({vm}.deployCode({{");
+                    let (mut update, closing_seq) = if *try_stmt {
+                        (String::new(), "})")
+                    } else {
+                        (format!("{name}(payable("), "})))")
+                    };
+                    update.push_str(&format!("{vm}.deployCode({{"));
                     update.push_str(&format!("_artifact: \"{artifact}\""));
 
                     if let Some(value) = value {
@@ -327,13 +382,14 @@ pub(crate) fn remove_bytecode_dependencies(
                             update.push('(');
                         }
                         updates.insert((dep.loc.start, dep.loc.end + call_args_offset, update));
+
                         updates.insert((
                             dep.loc.end + args_length,
                             dep.loc.end + args_length,
-                            ")})))".to_string(),
+                            format!("){closing_seq}"),
                         ));
                     } else {
-                        update.push_str("})))");
+                        update.push_str(closing_seq);
                         updates.insert((dep.loc.start, dep.loc.end + args_length, update));
                     }
                 }

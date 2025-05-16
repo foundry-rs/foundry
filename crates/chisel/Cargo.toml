@@ -57,13 +57,10 @@ yansi.workspace = true
 tracing.workspace = true
 walkdir.workspace = true
 
-[target.'cfg(unix)'.dependencies]
-tikv-jemallocator = { workspace = true, optional = true }
-
 [dev-dependencies]
 tracing-subscriber.workspace = true
 
 [features]
 default = ["jemalloc"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
-jemalloc = ["dep:tikv-jemallocator"]
+jemalloc = ["foundry-cli/jemalloc"]
