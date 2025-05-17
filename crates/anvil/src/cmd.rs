@@ -1,8 +1,7 @@
 use crate::{
     config::{ForkChoice, DEFAULT_MNEMONIC},
     eth::{backend::db::SerializableState, pool::transactions::TransactionOrder, EthApi},
-    hardfork::OptimismHardfork,
-    AccountGenerator, EthereumHardfork, NodeConfig, CHAIN_ID,
+    AccountGenerator, EthereumHardfork, NodeConfig, OptimismHardfork, CHAIN_ID,
 };
 use alloy_genesis::Genesis;
 use alloy_primitives::{utils::Unit, B256, U256};
@@ -521,7 +520,7 @@ pub struct AnvilEvmArgs {
 
     /// The block gas limit.
     #[arg(long, alias = "block-gas-limit", help_heading = "Environment config")]
-    pub gas_limit: Option<u128>,
+    pub gas_limit: Option<u64>,
 
     /// Disable the `call.gas_limit <= block.gas_limit` constraint.
     #[arg(
@@ -792,9 +791,8 @@ fn duration_from_secs_f64(s: &str) -> Result<Duration, String> {
 
 #[cfg(test)]
 mod tests {
-    use crate::EthereumHardfork;
-
     use super::*;
+    use crate::{EthereumHardfork, OptimismHardfork};
     use std::{env, net::Ipv4Addr};
 
     #[test]

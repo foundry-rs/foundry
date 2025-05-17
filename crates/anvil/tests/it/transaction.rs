@@ -237,7 +237,7 @@ async fn can_mine_large_gas_limit() {
     let from = accounts[0].address();
     let to = accounts[1].address();
 
-    let gas_limit = anvil::DEFAULT_GAS_LIMIT as u64;
+    let gas_limit = anvil::DEFAULT_GAS_LIMIT;
     let amount = handle.genesis_balance().checked_div(U256::from(3u64)).unwrap();
 
     let tx =

@@ -61,7 +61,7 @@ pub fn fork_config() -> NodeConfig {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_gas_limit_applied_from_config() {
-    let (api, _handle) = spawn(fork_config().with_gas_limit(Some(10_000_000_u128))).await;
+    let (api, _handle) = spawn(fork_config().with_gas_limit(Some(10_000_000))).await;
 
     assert_eq!(api.gas_limit(), uint!(10_000_000_U256));
 }
@@ -1329,6 +1329,7 @@ async fn test_immutable_fork_transaction_hash() {
     use std::str::FromStr;
 
     // Fork to a block with a specific transaction
+    // <https://explorer.immutable.com/tx/0x39d64ebf9eb3f07ede37f8681bc3b61928817276c4c4680b6ef9eac9f88b6786>
     let fork_tx_hash =
         TxHash::from_str("2ac736ce725d628ef20569a1bb501726b42b33f9d171f60b92b69de3ce705845")
             .unwrap();

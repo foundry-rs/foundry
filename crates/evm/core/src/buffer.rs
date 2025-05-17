@@ -1,5 +1,5 @@
 use alloy_primitives::U256;
-use revm::interpreter::opcode;
+use revm::bytecode::opcode;
 
 /// Used to keep track of which buffer is currently active to be drawn by the debugger.
 #[derive(Debug, PartialEq)]

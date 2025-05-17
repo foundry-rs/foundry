@@ -1,10 +1,6 @@
 use alloy_primitives::map::rustc_hash::FxHashMap;
 use eyre::Result;
-use revm::interpreter::{
-    opcode::{PUSH0, PUSH1, PUSH32},
-    OpCode,
-};
-use revm_inspectors::opcode::immediate_size;
+use revm::bytecode::opcode::{OpCode, PUSH0, PUSH1, PUSH32};
 use serde::Serialize;
 
 /// Maps from program counter to instruction counter.
@@ -117,8 +113,7 @@ pub fn decode_instructions(code: &[u8]) -> Result<Vec<Instruction>> {
     while pc < code.len() {
         let op = OpCode::new(code[pc]);
         let next_pc = pc + 1;
-        let immediate_size =
-            op.map(|op| immediate_size(op, &code[next_pc..])).unwrap_or(0) as usize;
+        let immediate_size = op.map(|op| op.info().immediate_size()).unwrap_or(0) as usize;
         let is_normal_push = op.map(|op| op.is_push()).unwrap_or(false);
 
         if !is_normal_push && next_pc + immediate_size > code.len() {
@@ -137,4 +132,52 @@ pub fn decode_instructions(code: &[u8]) -> Result<Vec<Instruction>> {
     }
 
     Ok(steps)
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_push2_and_stop() -> Result<()> {
+        // 0x61 0xAA 0xBB = PUSH2 0xAABB
+        // 0x00           = STOP
+        let code = vec![0x61, 0xAA, 0xBB, 0x00];
+        let insns = decode_instructions(&code)?;
+
+        // PUSH2 then STOP
+        assert_eq!(insns.len(), 2);
+
+        // PUSH2 at pc = 0
+        let i0 = &insns[0];
+        assert_eq!(i0.pc, 0);
+        assert_eq!(i0.op, Some(OpCode::PUSH2));
+        assert_eq!(i0.immediate.as_ref(), &[0xAA, 0xBB]);
+
+        // STOP at pc = 3
+        let i1 = &insns[1];
+        assert_eq!(i1.pc, 3);
+        assert_eq!(i1.op, Some(OpCode::STOP));
+        assert!(i1.immediate.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn decode_arithmetic_ops() -> Result<()> {
+        // 0x01 = ADD, 0x02 = MUL, 0x03 = SUB, 0x04 = DIV
+        let code = vec![0x01, 0x02, 0x03, 0x04];
+        let insns = decode_instructions(&code)?;
+
+        assert_eq!(insns.len(), 4);
+
+        let expected = [(0, OpCode::ADD), (1, OpCode::MUL), (2, OpCode::SUB), (3, OpCode::DIV)];
+        for ((pc, want_op), insn) in expected.iter().zip(insns.iter()) {
+            assert_eq!(insn.pc, *pc);
+            assert_eq!(insn.op, Some(*want_op));
+            assert!(insn.immediate.is_empty());
+        }
+
+        Ok(())
+    }
 }

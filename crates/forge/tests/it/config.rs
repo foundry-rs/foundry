@@ -6,12 +6,12 @@ use forge::{
 };
 use foundry_evm::{
     decode::decode_console_logs,
-    revm::primitives::SpecId,
     traces::{decode_trace_arena, render_trace_arena, CallTraceDecoderBuilder},
 };
 use foundry_test_utils::{init_tracing, Filter};
 use futures::future::join_all;
 use itertools::Itertools;
+use revm::primitives::hardfork::SpecId;
 use std::collections::BTreeMap;
 
 /// How to execute a test run.

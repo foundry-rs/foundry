@@ -4,7 +4,7 @@ use crate::{debugger::DebuggerContext, DebugNode, ExitReason};
 use alloy_primitives::{hex, Address};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use foundry_evm_core::buffer::BufferKind;
-use revm::interpreter::OpCode;
+use revm::bytecode::opcode::OpCode;
 use revm_inspectors::tracing::types::{CallKind, CallTraceStep};
 use std::ops::ControlFlow;
 

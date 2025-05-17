@@ -98,6 +98,11 @@ impl PoolTransaction {
     pub fn gas_price(&self) -> u128 {
         self.pending_transaction.transaction.gas_price()
     }
+
+    /// Returns the type of the transaction
+    pub fn tx_type(&self) -> u8 {
+        self.pending_transaction.transaction.r#type().unwrap_or_default()
+    }
 }
 
 impl fmt::Debug for PoolTransaction {

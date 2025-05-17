@@ -1008,6 +1008,8 @@ fn test_redactions() -> snapbox::Redactions {
             ("[SOLC_VERSION]", r"Solc( version)? \d+.\d+.\d+"),
             ("[ELAPSED]", r"(finished )?in \d+(\.\d+)?\w?s( \(.*?s CPU time\))?"),
             ("[GAS]", r"[Gg]as( used)?: \d+"),
+            ("[GAS_COST]", r"[Gg]as cost\s*\(\d+\)"),
+            ("[GAS_LIMIT]", r"[Gg]as limit\s*\(\d+\)"),
             ("[AVG_GAS]", r"μ: \d+, ~: \d+"),
             ("[FILE]", r"-->.*\.sol"),
             ("[FILE]", r"Location(.|\n)*\.rs(.|\n)*Backtrace"),

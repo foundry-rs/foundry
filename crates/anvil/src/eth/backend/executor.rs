@@ -1,17 +1,22 @@
 use crate::{
     eth::{
-        backend::{db::Db, validate::TransactionValidator},
+        backend::{
+            db::Db, env::Env, mem::op_haltreason_to_instruction_result,
+            validate::TransactionValidator,
+        },
         error::InvalidTransactionError,
         pool::transactions::PoolTransaction,
     },
-    inject_precompiles,
-    mem::inspector::Inspector,
+    // inject_precompiles,
+    mem::inspector::AnvilInspector,
     PrecompileFactory,
 };
 use alloy_consensus::{
     constants::EMPTY_WITHDRAWALS, proofs::calculate_receipt_root, Receipt, ReceiptWithBloom,
 };
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
+use alloy_evm::{eth::EthEvmContext, EthEvm, Evm};
+use alloy_op_evm::OpEvm;
 use alloy_primitives::{Bloom, BloomInput, Log, B256};
 use anvil_core::eth::{
     block::{Block, BlockInfo, PartialHeader},
@@ -19,19 +24,18 @@ use anvil_core::eth::{
         DepositReceipt, PendingTransaction, TransactionInfo, TypedReceipt, TypedTransaction,
     },
 };
-use foundry_evm::{
-    backend::DatabaseError,
-    revm::{
-        interpreter::InstructionResult,
-        primitives::{
-            BlockEnv, CfgEnvWithHandlerCfg, EVMError, EnvWithHandlerCfg, ExecutionResult, Output,
-            SpecId,
-        },
-    },
-    traces::CallTraceNode,
-    utils::odyssey_handler_register,
+use foundry_evm::{backend::DatabaseError, traces::CallTraceNode};
+use foundry_evm_core::{either_evm::EitherEvm, evm::FoundryPrecompiles};
+use op_revm::{L1BlockInfo, OpContext};
+use revm::{
+    context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm as RevmEvm, JournalTr},
+    context_interface::result::{EVMError, ExecutionResult, Output},
+    database::WrapDatabaseRef,
+    handler::instructions::EthInstructions,
+    interpreter::InstructionResult,
+    primitives::hardfork::SpecId,
+    Database, DatabaseRef, Inspector, Journal,
 };
-use revm::db::WrapDatabaseRef;
 use std::sync::Arc;
 
 /// Represents an executed transaction (transacted on the DB)
@@ -100,7 +104,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     pub pending: std::vec::IntoIter<Arc<PoolTransaction>>,
     pub block_env: BlockEnv,
     /// The configuration environment and spec id
-    pub cfg_env: CfgEnvWithHandlerCfg,
+    pub cfg_env: CfgEnv,
     pub parent_hash: B256,
     /// Cumulative gas used by all executed transactions
     pub gas_used: u64,
@@ -108,6 +112,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     pub blob_gas_used: u64,
     pub enable_steps_tracing: bool,
     pub odyssey: bool,
+    pub optimism: bool,
     pub print_logs: bool,
     pub print_traces: bool,
     /// Precompiles to inject to the EVM.
@@ -124,22 +129,22 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
         let mut cumulative_gas_used = 0u64;
         let mut invalid = Vec::new();
         let mut included = Vec::new();
-        let gas_limit = self.block_env.gas_limit.to::<u64>();
+        let gas_limit = self.block_env.gas_limit;
         let parent_hash = self.parent_hash;
-        let block_number = self.block_env.number.to::<u64>();
+        let block_number = self.block_env.number;
         let difficulty = self.block_env.difficulty;
-        let beneficiary = self.block_env.coinbase;
-        let timestamp = self.block_env.timestamp.to::<u64>();
-        let base_fee = if self.cfg_env.handler_cfg.spec_id.is_enabled_in(SpecId::LONDON) {
-            Some(self.block_env.basefee.to::<u64>())
+        let beneficiary = self.block_env.beneficiary;
+        let timestamp = self.block_env.timestamp;
+        let base_fee = if self.cfg_env.spec.is_enabled_in(SpecId::LONDON) {
+            Some(self.block_env.basefee)
         } else {
             None
         };
 
-        let is_shanghai = self.cfg_env.handler_cfg.spec_id >= SpecId::SHANGHAI;
-        let is_cancun = self.cfg_env.handler_cfg.spec_id >= SpecId::CANCUN;
-        let is_prague = self.cfg_env.handler_cfg.spec_id >= SpecId::PRAGUE;
-        let excess_blob_gas = if is_cancun { self.block_env.get_blob_excess_gas() } else { None };
+        let is_shanghai = self.cfg_env.spec >= SpecId::SHANGHAI;
+        let is_cancun = self.cfg_env.spec >= SpecId::CANCUN;
+        let is_prague = self.cfg_env.spec >= SpecId::PRAGUE;
+        let excess_blob_gas = if is_cancun { self.block_env.blob_excess_gas() } else { None };
         let mut cumulative_blob_gas_used = if is_cancun { Some(0u64) } else { None };
 
         for tx in self.into_iter() {
@@ -241,14 +246,14 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
         ExecutedTransactions { block, included, invalid }
     }
 
-    fn env_for(&self, tx: &PendingTransaction) -> EnvWithHandlerCfg {
+    fn env_for(&self, tx: &PendingTransaction) -> Env {
         let mut tx_env = tx.to_revm_tx_env();
-        if self.cfg_env.handler_cfg.is_optimism {
-            tx_env.optimism.enveloped_tx =
-                Some(alloy_rlp::encode(&tx.transaction.transaction).into());
+
+        if self.optimism {
+            tx_env.enveloped_tx = Some(alloy_rlp::encode(&tx.transaction.transaction).into());
         }
 
-        EnvWithHandlerCfg::new_with_cfg_env(self.cfg_env.clone(), self.block_env.clone(), tx_env)
+        Env::new(self.cfg_env.clone(), self.block_env.clone(), tx_env, self.optimism)
     }
 }
 
@@ -280,8 +285,9 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         let env = self.env_for(&transaction.pending_transaction);
 
         // check that we comply with the block's gas limit, if not disabled
-        let max_gas = self.gas_used.saturating_add(env.tx.gas_limit);
-        if !env.cfg.disable_block_gas_limit && max_gas > env.block.gas_limit.to::<u64>() {
+        let max_gas = self.gas_used.saturating_add(env.tx.base.gas_limit);
+        if !env.evm_env.cfg_env.disable_block_gas_limit && max_gas > env.evm_env.block_env.gas_limit
+        {
             return Some(TransactionExecutionOutcome::Exhausted(transaction))
         }
 
@@ -300,13 +306,12 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             &env,
         ) {
             warn!(target: "backend", "Skipping invalid tx execution [{:?}] {}", transaction.hash(), err);
-            return Some(TransactionExecutionOutcome::Invalid(transaction, err))
+            return Some(TransactionExecutionOutcome::Invalid(transaction, err));
         }
 
         let nonce = account.nonce;
 
-        // records all call and step traces
-        let mut inspector = Inspector::default().with_tracing();
+        let mut inspector = AnvilInspector::default().with_tracing();
         if self.enable_steps_tracing {
             inspector = inspector.with_steps_tracing();
         }
@@ -318,14 +323,14 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         }
 
         let exec_result = {
-            let mut evm = new_evm_with_inspector(&mut *self.db, env, &mut inspector, self.odyssey);
-            if let Some(factory) = &self.precompile_factory {
-                inject_precompiles(&mut evm, factory.precompiles());
-            }
+            let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
+            // if let Some(factory) = &self.precompile_factory {
+            //     inject_precompiles(&mut evm, factory.precompiles());
+            // }
 
             trace!(target: "backend", "[{:?}] executing", transaction.hash());
             // transact and commit the transaction
-            match evm.transact_commit() {
+            match evm.transact_commit(env.tx) {
                 Ok(exec_result) => exec_result,
                 Err(err) => {
                     warn!(target: "backend", "[{:?}] failed to execute: {:?}", transaction.hash(), err);
@@ -362,7 +367,9 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             ExecutionResult::Revert { gas_used, output } => {
                 (InstructionResult::Revert, gas_used, Some(Output::Call(output)), None)
             }
-            ExecutionResult::Halt { reason, gas_used } => (reason.into(), gas_used, None, None),
+            ExecutionResult::Halt { reason, gas_used } => {
+                (op_haltreason_to_instruction_result(reason), gas_used, None, None)
+            }
         };
 
         if exit_reason == InstructionResult::OutOfGas {
@@ -407,35 +414,78 @@ fn build_logs_bloom(logs: Vec<Log>, bloom: &mut Bloom) {
 }
 
 /// Creates a database with given database and inspector, optionally enabling odyssey features.
-pub fn new_evm_with_inspector<DB: revm::Database>(
+pub fn new_evm_with_inspector<DB, I>(
     db: DB,
-    env: EnvWithHandlerCfg,
-    inspector: &mut dyn revm::Inspector<DB>,
-    odyssey: bool,
-) -> revm::Evm<'_, &mut dyn revm::Inspector<DB>, DB> {
-    let EnvWithHandlerCfg { env, handler_cfg } = env;
+    env: &Env,
+    inspector: I,
+) -> EitherEvm<DB, I, FoundryPrecompiles>
+where
+    DB: Database<Error = DatabaseError>,
+    I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
+{
+    if env.is_optimism {
+        let op_context = OpContext {
+            journaled_state: {
+                let mut journal = Journal::new(db);
+                // Converting SpecId into OpSpecId
+                journal.set_spec_id(env.evm_env.cfg_env.spec);
+                journal
+            },
+            block: env.evm_env.block_env.clone(),
+            cfg: env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::BEDROCK),
+            tx: env.tx.clone(),
+            chain: L1BlockInfo::default(),
+            error: Ok(()),
+        };
 
-    let mut handler = revm::Handler::new(handler_cfg);
+        let evm = op_revm::OpEvm(RevmEvm::new_with_inspector(
+            op_context,
+            inspector,
+            EthInstructions::default(),
+            FoundryPrecompiles::default(),
+        ));
 
-    handler.append_handler_register_plain(revm::inspector_handle_register);
-    if odyssey {
-        handler.append_handler_register_plain(odyssey_handler_register);
+        let op = OpEvm::new(evm, true);
+
+        EitherEvm::Op(op)
+    } else {
+        let evm_context = EthEvmContext {
+            journaled_state: {
+                let mut journal = Journal::new(db);
+                journal.set_spec_id(env.evm_env.cfg_env.spec);
+                journal
+            },
+            block: env.evm_env.block_env.clone(),
+            cfg: env.evm_env.cfg_env.clone(),
+            tx: env.tx.base.clone(),
+            chain: (),
+            error: Ok(()),
+        };
+
+        let evm = RevmEvm::new_with_inspector(
+            evm_context,
+            inspector,
+            EthInstructions::default(),
+            FoundryPrecompiles::new(),
+        );
+
+        let eth = EthEvm::new(evm, true);
+
+        EitherEvm::Eth(eth)
     }
-
-    let context = revm::Context::new(revm::EvmContext::new_with_env(db, env), inspector);
-
-    revm::Evm::new(context, handler)
 }
 
 /// Creates a new EVM with the given inspector and wraps the database in a `WrapDatabaseRef`.
-pub fn new_evm_with_inspector_ref<'a, DB>(
-    db: DB,
-    env: EnvWithHandlerCfg,
-    inspector: &mut dyn revm::Inspector<WrapDatabaseRef<DB>>,
-    odyssey: bool,
-) -> revm::Evm<'a, &mut dyn revm::Inspector<WrapDatabaseRef<DB>>, WrapDatabaseRef<DB>>
+pub fn new_evm_with_inspector_ref<'db, DB, I>(
+    db: &'db DB,
+    env: &Env,
+    inspector: &'db mut I,
+) -> EitherEvm<WrapDatabaseRef<&'db DB>, &'db mut I, FoundryPrecompiles>
 where
-    DB: revm::DatabaseRef,
+    DB: DatabaseRef<Error = DatabaseError> + 'db + ?Sized,
+    I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>
+        + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>,
+    WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
 {
-    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector, odyssey)
+    new_evm_with_inspector(WrapDatabaseRef(db), env, inspector)
 }

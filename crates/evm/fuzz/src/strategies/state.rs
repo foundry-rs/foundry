@@ -10,9 +10,9 @@ use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::utils::StateChangeset;
 use parking_lot::{lock_api::RwLockReadGuard, RawRwLock, RwLock};
 use revm::{
-    db::{CacheDB, DatabaseRef, DbAccount},
-    interpreter::opcode,
-    primitives::AccountInfo,
+    bytecode::opcode,
+    database::{CacheDB, DatabaseRef, DbAccount},
+    state::AccountInfo,
 };
 use std::{collections::BTreeMap, fmt, sync::Arc};
 
@@ -39,7 +39,7 @@ impl EvmFuzzState {
         deployed_libs: &[Address],
     ) -> Self {
         // Sort accounts to ensure deterministic dictionary generation from the same setUp state.
-        let mut accs = db.accounts.iter().collect::<Vec<_>>();
+        let mut accs = db.cache.accounts.iter().collect::<Vec<_>>();
         accs.sort_by_key(|(address, _)| *address);
 
         // Create fuzz dictionary and insert values from db state.

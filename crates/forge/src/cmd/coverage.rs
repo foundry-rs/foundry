@@ -6,7 +6,6 @@ use crate::{
         BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummaryReporter,
         DebugReporter, ItemAnchor, LcovReporter,
     },
-    utils::IcPcMap,
     MultiContractRunnerBuilder,
 };
 use alloy_primitives::{map::HashMap, Address, Bytes, U256};
@@ -23,6 +22,7 @@ use foundry_compilers::{
 };
 use foundry_config::Config;
 use foundry_evm::opts::EvmOpts;
+use foundry_evm_core::ic::IcPcMap;
 use rayon::prelude::*;
 use semver::{Version, VersionReq};
 use std::{
