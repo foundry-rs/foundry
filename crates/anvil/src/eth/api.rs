@@ -1852,7 +1852,11 @@ impl EthApi {
         let tx = TransactionRequest::default().with_input(calldata);
         let access_list_result = self.create_access_list(WithOtherFields::new(tx), None).await?;
         let access_list = access_list_result.access_list;
-
+        for item in access_list.0 {
+            if item.address != token_address {
+                continue;
+            }
+        }
         Ok(())
     }
 
