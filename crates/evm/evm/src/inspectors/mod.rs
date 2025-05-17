@@ -5,7 +5,7 @@ pub use foundry_evm_coverage::CoverageCollector;
 pub use foundry_evm_fuzz::Fuzzer;
 pub use foundry_evm_traces::{StackSnapshotType, TracingInspector, TracingInspectorConfig};
 
-pub use revm_inspectors::access_list::AccessListInspector;
+pub use revm_inspectors::{access_list::AccessListInspector, transfer::TransferInspector};
 
 mod chisel_state;
 pub use chisel_state::ChiselState;
