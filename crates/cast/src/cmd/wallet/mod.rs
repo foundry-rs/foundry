@@ -454,9 +454,29 @@ impl WalletSubcommands {
                 } else {
                     wallet.sign_message(&Self::hex_str_to_bytes(&message)?).await?
                 };
-                sh_println!("message: {}", message)?;
-                sh_println!("address: {}", wallet.address())?;
-                sh_println!("signature: 0x{}", hex::encode(sig.as_bytes()))?;
+
+                if shell::verbosity() > 0 {
+                    if shell::is_json() {
+                        sh_println!(
+                            "{}",
+                            serde_json::to_string_pretty(&json!({
+                                "message": message,
+                                "address": wallet.address(),
+                                "signature": hex::encode(sig.as_bytes()),
+                            }))?
+                        )?;
+                    } else {
+                        sh_println!(
+                            "Successfully signed!\n   Message: {}\n   Address: {}\n   Signature: 0x{}",
+                            message,
+                            wallet.address(),
+                            hex::encode(sig.as_bytes()),
+                        )?;
+                    }
+                } else {
+                    // Pipe friendly output
+                    sh_println!("0x{}", hex::encode(sig.as_bytes()))?;
+                }
             }
             Self::SignAuth { rpc, nonce, chain, wallet, address } => {
                 let wallet = wallet.signer().await?;
