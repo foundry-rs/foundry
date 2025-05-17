@@ -37,7 +37,30 @@ pub async fn check_tx_status(
                 .get_receipt()
                 .await
             {
-                Ok(receipt) => Ok(receipt.into()),
+                Ok(receipt) => {
+                    // Check if the receipt is pending (missing block information)
+                    let is_pending = receipt.block_number.is_none() || receipt.block_hash.is_none() || receipt.transaction_index.is_none();
+                    
+                    if !is_pending {
+                        return Ok(receipt.into());
+                    }
+
+                    // Receipt is pending, try to sleep and retry a few times
+                    match provider.get_transaction_by_hash(hash).await {
+                        Ok(_) => {
+                            // Sleep for a short time to allow the transaction to be mined
+                            tokio::time::sleep(Duration::from_millis(500)).await;
+                            // Transaction is still known to the node, retry
+                            Err(RetryError::Retry(eyre!(
+                                "Received a pending receipt for {hash}, but transaction is still known to the node, retrying"
+                            )))
+                        }
+                        Err(_) => {
+                            // Transaction is not known to the node, mark it as dropped
+                            Ok(TxStatus::Dropped)
+                        }
+                    }
+                }
                 Err(e) => match provider.get_transaction_by_hash(hash).await {
                     Ok(_) => match e {
                         PendingTransactionError::TxWatcher(WatchTxError::Timeout) => {
