@@ -43,7 +43,7 @@
 </tspan>
     <tspan x="10px" y="226px">
 </tspan>
-    <tspan x="10px" y="244px"><tspan>  [31851] </tspan><tspan class="fg-green">CounterTest</tspan><tspan>::</tspan><tspan class="fg-green">test_Increment</tspan><tspan>()</tspan>
+    <tspan x="10px" y="244px"><tspan>  [26851] </tspan><tspan class="fg-green">CounterTest</tspan><tspan>::</tspan><tspan class="fg-green">test_Increment</tspan><tspan>()</tspan>
 </tspan>
     <tspan x="10px" y="262px"><tspan>    ├─ [22418] </tspan><tspan class="fg-green">Counter</tspan><tspan>::</tspan><tspan class="fg-green">increment</tspan><tspan>()</tspan>
 </tspan>
