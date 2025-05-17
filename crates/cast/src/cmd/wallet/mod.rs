@@ -454,7 +454,9 @@ impl WalletSubcommands {
                 } else {
                     wallet.sign_message(&Self::hex_str_to_bytes(&message)?).await?
                 };
-                sh_println!("0x{}", hex::encode(sig.as_bytes()))?;
+                sh_println!("message: {}", message)?;
+                sh_println!("address: {}", wallet.address())?;
+                sh_println!("signature: 0x{}", hex::encode(sig.as_bytes()))?;
             }
             Self::SignAuth { rpc, nonce, chain, wallet, address } => {
                 let wallet = wallet.signer().await?;
