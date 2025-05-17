@@ -169,7 +169,6 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         transaction_timeout: 120,
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
-        eof: false,
         script_execution_protection: true,
         _non_exhaustive: (),
     };
@@ -1040,7 +1039,6 @@ assertions_revert = true
 legacy_assertions = false
 odyssey = false
 transaction_timeout = 120
-eof = false
 additional_compiler_profiles = []
 compilation_restrictions = []
 script_execution_protection = true
@@ -1300,7 +1298,6 @@ exclude = []
   "legacy_assertions": false,
   "odyssey": false,
   "transaction_timeout": 120,
-  "eof": false,
   "additional_compiler_profiles": [],
   "compilation_restrictions": [],
   "script_execution_protection": true

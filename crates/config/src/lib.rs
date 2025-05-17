@@ -511,9 +511,6 @@ pub struct Config {
     /// Timeout for transactions in seconds.
     pub transaction_timeout: u64,
 
-    /// Use EOF-enabled solc for compilation.
-    pub eof: bool,
-
     /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information.
     #[serde(rename = "__warnings", default, skip_serializing)]
     pub warnings: Vec<Warning>,
@@ -883,8 +880,6 @@ impl Config {
         config.libs.sort_unstable();
         config.libs.dedup();
 
-        config.sanitize_eof_settings();
-
         config
     }
 
@@ -899,26 +894,6 @@ impl Config {
             self.remappings.iter_mut().for_each(|r| {
                 r.path.path = r.path.path.to_slash_lossy().into_owned().into();
             });
-        }
-    }
-
-    /// Adjusts settings if EOF compilation is enabled.
-    ///
-    /// This includes enabling optimizer, via_ir, eof_version and ensuring that evm_version is not
-    /// lower than Osaka.
-    pub fn sanitize_eof_settings(&mut self) {
-        if self.eof {
-            self.optimizer = Some(true);
-            self.normalize_optimizer_settings();
-
-            if self.eof_version.is_none() {
-                self.eof_version = Some(EofVersion::V1);
-            }
-
-            self.via_ir = true;
-            if self.evm_version < EvmVersion::Osaka {
-                self.evm_version = EvmVersion::Osaka;
-            }
         }
     }
 
@@ -2438,7 +2413,6 @@ impl Default for Config {
             transaction_timeout: 120,
             additional_compiler_profiles: Default::default(),
             compilation_restrictions: Default::default(),
-            eof: false,
             script_execution_protection: true,
             _non_exhaustive: (),
         }

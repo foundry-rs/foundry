@@ -16,7 +16,6 @@ mod create;
 mod debug;
 mod doc;
 mod eip712;
-mod eof;
 mod failure_assertions;
 mod geiger;
 mod inline_config;

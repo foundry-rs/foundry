@@ -130,11 +130,6 @@ pub struct BuildOpts {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_info_path: Option<PathBuf>,
 
-    /// Whether to compile contracts to EOF bytecode.
-    #[arg(long)]
-    #[serde(skip)]
-    pub eof: bool,
-
     /// Skip building files whose names contain the given filter.
     ///
     /// `test` and `script` are aliases for `.t.sol` and `.s.sol`.
@@ -280,10 +275,6 @@ impl Provider for BuildOpts {
 
         if let Some(ref revert) = self.revert_strings {
             dict.insert("revert_strings".to_string(), revert.to_string().into());
-        }
-
-        if self.eof {
-            dict.insert("eof".to_string(), true.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
