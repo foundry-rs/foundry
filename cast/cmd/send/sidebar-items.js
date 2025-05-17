@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SendTxSubcommands"],"fn":["cast_send"],"struct":["SendTxArgs"]};
