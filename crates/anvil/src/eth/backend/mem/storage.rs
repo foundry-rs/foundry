@@ -614,13 +614,7 @@ mod tests {
     use alloy_primitives::{hex, Address};
     use alloy_rlp::Decodable;
     use anvil_core::eth::transaction::TypedTransaction;
-    use foundry_evm::{
-        backend::MemDb,
-        revm::{
-            db::DatabaseRef,
-            primitives::{AccountInfo, U256},
-        },
-    };
+    use foundry_evm::revm::{db::DatabaseRef, primitives::AccountInfo};
 
     #[test]
     fn test_interval_update() {
