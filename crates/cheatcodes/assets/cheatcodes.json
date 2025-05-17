@@ -9822,6 +9822,26 @@
     },
     {
       "func": {
+        "id": "signTypedData",
+        "description": "Signs Human-Readable Typed Data with `privateKey` using the secp256k1 curve.",
+        "declaration": "function signTypedData(string calldata jsonData, uint256 privateKey) external pure returns (uint8 v, bytes32 r, bytes32 s);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signTypedData(string,uint256)",
+        "selector": "0x85f00b0d",
+        "selectorBytes": [
+          133,
+          240,
+          11,
+          13
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "sign_0",
         "description": "Signs data with a `Wallet`.",
         "declaration": "function sign(Wallet calldata wallet, bytes32 digest) external returns (uint8 v, bytes32 r, bytes32 s);",
