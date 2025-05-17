@@ -308,9 +308,9 @@ impl TestRunnerConfig {
         self.odyssey = config.odyssey;
         self.isolation = config.isolate;
 
-        // Specific to Forge, not present in config.
-        // TODO: self.evm_opts
-        // TODO: self.env
+        // Update evm_opts and env from the new config
+        self.evm_opts = figment::Figment::from(&*config).extract::<EvmOpts>().expect("Failed to extract EvmOpts from config");
+        self.env = self.evm_opts.local_evm_env();
         // self.coverage = N/A;
         // self.debug = N/A;
         // self.decode_internal = N/A;
@@ -320,10 +320,9 @@ impl TestRunnerConfig {
 
     /// Configures the given executor with this configuration.
     pub fn configure_executor(&self, executor: &mut Executor) {
-        // TODO: See above
-
+        // Apply env and evm_opts to the executor
         let inspector = executor.inspector_mut();
-        // inspector.set_env(&self.env);
+        inspector.set_env(&self.env);
         if let Some(cheatcodes) = inspector.cheatcodes.as_mut() {
             cheatcodes.config =
                 Arc::new(cheatcodes.config.clone_with(&self.config, self.evm_opts.clone()));
@@ -332,11 +331,11 @@ impl TestRunnerConfig {
         inspector.collect_coverage(self.coverage);
         inspector.enable_isolation(self.isolation);
         inspector.odyssey(self.odyssey);
-        // inspector.set_create2_deployer(self.evm_opts.create2_deployer);
+        inspector.set_create2_deployer(self.evm_opts.create2_deployer);
 
-        // executor.env_mut().clone_from(&self.env);
+        executor.env_mut().clone_from(&self.env);
         executor.set_spec_id(self.spec_id);
-        // executor.set_gas_limit(self.evm_opts.gas_limit());
+        executor.set_gas_limit(self.evm_opts.gas_limit());
         executor.set_legacy_assertions(self.config.legacy_assertions);
     }
 
