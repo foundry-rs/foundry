@@ -132,7 +132,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Casts the current writer `w` as a `String` reference. Should only be used for debugging.
     unsafe fn buf_contents(&self) -> &String {
-        *(&self.buf.w as *const W as *const &mut String)
+        *(&raw const self.buf.w as *const &mut String)
     }
 
     /// Casts the current `W` writer or the current temp buffer as a `String` reference.
@@ -2093,15 +2093,7 @@ impl<W: Write> Visitor for Formatter<'_, W> {
         let (ident, string) = (ident.safe_unwrap(), string.safe_unwrap());
         return_source_if_disabled!(self, loc, ';');
 
-        let pragma_descriptor = if ident.name == "solidity" {
-            // There are some issues with parsing Solidity's versions with crates like `semver`:
-            // 1. Ranges like `>=0.4.21<0.6.0` or `>=0.4.21 <0.6.0` are not parseable at all.
-            // 2. Versions like `0.8.10` got transformed into `^0.8.10` which is not the same.
-            // TODO: semver-solidity crate :D
-            &string.string
-        } else {
-            &string.string
-        };
+        let pragma_descriptor = &string.string;
 
         write_chunk!(self, string.loc.end(), "pragma {} {};", &ident.name, pragma_descriptor)?;
 

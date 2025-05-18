@@ -967,8 +967,8 @@ impl Backend {
             // Defaults to block number for compatibility with existing state files.
             let fork_num_and_hash = self.get_fork().map(|f| (f.block_number(), f.block_hash()));
 
+            let best_number = state.best_block_number.unwrap_or(block.number.to::<U64>());
             if let Some((number, hash)) = fork_num_and_hash {
-                let best_number = state.best_block_number.unwrap_or(block.number.to::<U64>());
                 trace!(target: "backend", state_block_number=?best_number, fork_block_number=?number);
                 // If the state.block_number is greater than the fork block number, set best number
                 // to the state block number.
@@ -991,7 +991,6 @@ impl Backend {
                     self.blockchain.storage.write().best_hash = hash;
                 }
             } else {
-                let best_number = state.best_block_number.unwrap_or(block.number.to::<U64>());
                 self.blockchain.storage.write().best_number = best_number;
 
                 // Set the current best block hash;
@@ -1535,7 +1534,6 @@ impl Backend {
                 let mut log_index = 0;
                 let mut gas_used = 0;
                 let mut transactions = Vec::with_capacity(calls.len());
-                let mut receipts = Vec::new();
                 let mut logs= Vec::new();
                 // apply state overrides before executing the transactions
                 if let Some(state_overrides) = state_overrides {
@@ -1659,12 +1657,6 @@ impl Backend {
                             })
                             .collect(),
                     };
-                    let receipt = Receipt {
-                        status: result.is_success().into(),
-                        cumulative_gas_used: result.gas_used(),
-                        logs:sim_res.logs.clone()
-                    };
-                    receipts.push(receipt.with_bloom());
                     logs.extend(sim_res.logs.clone().iter().map(|log| log.inner.clone()));
                     log_index += sim_res.logs.len();
                     call_res.push(sim_res);
@@ -2881,7 +2873,7 @@ impl Backend {
                     .zip(storage_proofs)
                     .map(|(key, proof)| {
                         let storage_key: U256 = key.into();
-                        let value = account.storage.get(&storage_key).cloned().unwrap_or_default();
+                        let value = account.storage.get(&storage_key).copied().unwrap_or_default();
                         StorageProof { key: JsonStorageKey::Hash(key), value, proof }
                     })
                     .collect(),
