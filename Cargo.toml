@@ -257,6 +257,11 @@ async-trait = "0.1"
 derive_more = { version = "2.0", features = ["full"] }
 thiserror = "2"
 
+# allocators
+mimalloc = "0.1"
+tikv-jemallocator = "0.6"
+tracy-client = "0.18"
+
 # misc
 auto_impl = "1"
 aws-config = { version = "1", default-features = true }
@@ -305,7 +310,6 @@ soldeer-commands = "=0.5.4"
 soldeer-core = { version = "=0.5.4", features = ["serde"] }
 strum = "0.27"
 tempfile = "3.13"
-tikv-jemallocator = "0.6"
 tokio = "1"
 toml = "0.8"
 tower = "0.5"

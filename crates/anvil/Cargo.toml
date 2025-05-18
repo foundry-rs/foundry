@@ -110,6 +110,8 @@ op-alloy-rpc-types.workspace = true
 default = ["cli", "jemalloc"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
+mimalloc = ["foundry-cli/mimalloc"]
+tracy-allocator = ["foundry-cli/tracy-allocator"]
 cli = ["tokio/full", "cmd"]
 cmd = [
     "clap",
