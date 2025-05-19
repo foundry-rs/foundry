@@ -14,6 +14,7 @@ use foundry_compilers::{
 };
 use foundry_config::Config;
 use itertools::Itertools;
+use path_slash::PathExt;
 use rayon::prelude::*;
 use semver::Version;
 use solar_parse::{
@@ -459,7 +460,7 @@ impl ResolvedState {
                 result,
                 "import {{{}}} from \"{}\";",
                 names.iter().join(", "),
-                path.display()
+                path.to_slash_lossy()
             )?;
         }
 
