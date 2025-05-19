@@ -86,11 +86,11 @@ pub struct CreateArgs {
 
     // #[command(flatten)]
     // pub naming: NameArgs,
-    /// The name to set.
+    /// The ENS name to set for the contract.
     #[arg(long)]
     pub ens_name: Option<String>,
-    
-    /// The name to set.
+
+    /// Whether an auto-generated ENS name should be set.
     #[arg(long)]
     pub auto_name: bool,
 
@@ -436,7 +436,7 @@ impl CreateArgs {
                 self.reverse_setter,
                 "deployandname",
             )
-                .await?;
+            .await?;
         }
 
         if !self.verify {

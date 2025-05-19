@@ -1,6 +1,7 @@
 use crate::{
     abi::{
-        EnsRegistry, Enscribe, NameWrapper, NameWrapper::isWrappedCall, Ownable, PublicResolver,
+        EnsRegistry, EnsRegistry::recordExistsCall, Enscribe, NameWrapper,
+        NameWrapper::isWrappedCall, Ownable, Ownable::ownerCall, PublicResolver,
         PublicResolver::addrCall, ReverseRegistrar,
     },
     logger::MetricLogger,
@@ -14,13 +15,10 @@ use alloy_sol_types::{
 use eyre::Result;
 use foundry_common::ens::namehash;
 use serde::Deserialize;
-use std::{
-    io::{stdout, Write},
-};
+use std::io::{stdout, Write};
 
-// todo abhi: change this to actual url after api deployed
-pub(crate) static CONFIG_API_URL: &str = "http://localhost:3000/api/v1/config";
-pub(crate) static AUTO_GEN_NAME_API_URL: &str = "http://localhost:3000/api/v1/name";
+pub(crate) static CONFIG_API_URL: &str = "https://app.enscribe.xyz/api/v1/config";
+pub(crate) static AUTO_GEN_NAME_API_URL: &str = "https://app.enscribe.xyz/api/v1/name";
 
 const _BASE: u32 = 8453;
 const _BASE_SEPOLIA: u32 = 84532;
@@ -67,7 +65,7 @@ pub async fn set_primary_name<P: Provider<AnyNetwork>>(
             op_type.to_owned(),
             if is_ownable { "Ownable" } else { "ReverseClaimer" }.to_owned(),
             contract_addr.to_string(),
-            name.clone()
+            name.clone(),
         );
 
         // todo abhi: the printlns should be removed
@@ -80,18 +78,20 @@ pub async fn set_primary_name<P: Provider<AnyNetwork>>(
         let complete_name_hash = namehash(&name);
         println!("sender addr: {:?}", sender_addr);
 
-        create_subname(
-            sender_addr,
-            &provider,
-            ens_registry_addr,
-            public_resolver_addr,
-            name_wrapper_addr,
-            label,
-            parent_name_hash,
-            label_hash,
-            &logger
-        )
-        .await?;
+        if !name_already_registered(&provider, complete_name_hash, ens_registry_addr).await? {
+            create_subname(
+                &provider,
+                sender_addr,
+                ens_registry_addr,
+                public_resolver_addr,
+                name_wrapper_addr,
+                label,
+                parent_name_hash,
+                label_hash,
+                &logger,
+            )
+            .await?;
+        }
 
         set_resolutions(
             &provider,
@@ -102,7 +102,7 @@ pub async fn set_primary_name<P: Provider<AnyNetwork>>(
             is_reverse_claimer,
             sender_addr,
             reverse_registrar_addr,
-            &logger
+            &logger,
         )
         .await?;
     } else {
@@ -117,7 +117,7 @@ pub async fn set_primary_name<P: Provider<AnyNetwork>>(
             op_type.to_owned(),
             if is_ownable { "Ownable" } else { "ReverseClaimer" }.to_owned(),
             contract_addr.to_string(),
-            format!("{}.{}", label, config.parent_name,)
+            format!("{}.{}", label, config.parent_name,),
         );
 
         enscribe_set_name(
@@ -126,7 +126,7 @@ pub async fn set_primary_name<P: Provider<AnyNetwork>>(
             contract_addr,
             &label,
             &config.parent_name,
-            &logger
+            &logger,
         )
         .await?;
     }
@@ -141,6 +141,22 @@ async fn is_ownable<P: Provider<AnyNetwork>>(provider: &P, contract_addr: Addres
     provider.call(tx.into_transaction_request()).await.is_ok()
 }
 
+/// checks if the given contract address implements Ownable
+async fn is_reverse_claimer<P: Provider<AnyNetwork>>(
+    provider: &P,
+    contract_addr: Address,
+    sender_addr: Address,
+    ens_registry_addr: Address,
+) -> Result<bool> {
+    let addr = &(&contract_addr.to_string().to_ascii_lowercase())[2..];
+    let reverse_node = namehash(&format!("{}.addr.reverse", addr));
+    let ens_registry = EnsRegistry::new(ens_registry_addr, provider);
+    let tx = ens_registry.owner(reverse_node);
+    let result = provider.call(tx.into_transaction_request()).await?;
+    let addr = ownerCall::abi_decode_returns(&result, false)?._0;
+    Ok(addr == sender_addr)
+}
+
 /// sets name & resolutions via the enscribe contract
 async fn enscribe_set_name<P: Provider<AnyNetwork>>(
     provider: &P,
@@ -148,7 +164,7 @@ async fn enscribe_set_name<P: Provider<AnyNetwork>>(
     contract_addr: Address,
     label: &str,
     parent_name: &str,
-    logger: &MetricLogger
+    logger: &MetricLogger,
 ) -> Result<()> {
     print!("setting name via enscribe ... ");
     stdout().flush()?;
@@ -163,17 +179,31 @@ async fn enscribe_set_name<P: Provider<AnyNetwork>>(
     Ok(())
 }
 
+/// probes the ens registry to check if the given `name` is already registered on the chain
+async fn name_already_registered<P: Provider<AnyNetwork>>(
+    provider: &P,
+    name: B256,
+    ens_registry_addr: Address,
+) -> Result<bool> {
+    let ens_registry = EnsRegistry::new(ens_registry_addr, provider);
+    let tx = ens_registry.recordExists(name);
+    let result = provider.call(tx.into_transaction_request()).await?;
+    let is_name_exists = recordExistsCall::abi_decode_returns(&result, false)?._0;
+    Ok(is_name_exists)
+}
+
+// todo abhi: reorder params
 /// creates the subname record
 async fn create_subname<P: Provider<AnyNetwork>>(
-    sender_addr: Address,
     provider: &P,
+    sender_addr: Address,
     ens_registry_addr: Address,
     public_resolver_addr: Address,
     name_wrapper_addr: Address,
     label: &str,
     parent_name_hash: B256,
     label_hash: B256,
-    logger: &MetricLogger
+    logger: &MetricLogger,
 ) -> Result<()> {
     // check if parent domain (e.g. abhi.eth) is wrapped or unwrapped
     let name_wrapper = NameWrapper::new(name_wrapper_addr, provider);
@@ -224,7 +254,7 @@ async fn set_resolutions<P: Provider<AnyNetwork>>(
     is_reverse_claimer: bool,
     sender_addr: Address,
     reverse_registrar_addr: Address,
-    logger: &MetricLogger
+    logger: &MetricLogger,
 ) -> Result<()> {
     print!("checking if fwd resolution already set ... ");
     stdout().flush()?;
@@ -295,4 +325,59 @@ async fn get_auto_generated_name() -> Result<String> {
     let client = reqwest::Client::new();
     let response = client.get(AUTO_GEN_NAME_API_URL).send().await?;
     Ok(response.text().await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{bytes::Bytes, hex, Address, U256};
+    use alloy_provider::{network::TransactionBuilder, Provider};
+    use alloy_rpc_types::{
+        serde_helpers::WithOtherFields, Block as AlloyBlock, Filter, TransactionRequest,
+    };
+    use alloy_sol_types::private::alloy_json_abi::JsonAbi;
+    use anvil::{opts::Anvil, EthereumHardfork, NodeConfig};
+    use std::fs;
+
+    fn load_bytecode(path: &str) -> Bytes {
+        let content = std::fs::read_to_string(path).expect("failed to read JSON");
+        let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        let bytecode = json["bytecode"]["object"]
+            .as_str()
+            .expect("no bytecode field")
+            .trim_start_matches("0x");
+
+        hex::decode(bytecode).unwrap().into()
+    }
+
+    #[tokio::test]
+    async fn deploy_ensregistry_alloy() {
+        // Start Anvil
+        let (api, handle) = anvil::spawn(
+            NodeConfig::test().with_hardfork(Some(EthereumHardfork::PragueEOF.into())),
+        )
+        .await;
+
+        let endpoint = handle.http_endpoint();
+
+        let signer = handle.dev_wallets().next().unwrap();
+        let provider = handle.http_provider();
+
+        // Load bytecode
+        let bytecode = load_bytecode("artifacts/ENSRegistry.json");
+
+        let impersonate = Address::random();
+        let funding = U256::from(1e18 as u64);
+        api.anvil_set_balance(impersonate, funding).await.unwrap();
+        api.anvil_impersonate_account(impersonate).await.unwrap();
+
+        // Build and send a contract deployment transaction
+        let tx = TransactionRequest::default().from(impersonate).with_input(bytecode);
+        let tx = WithOtherFields::new(tx);
+        let provider = handle.http_provider();
+        let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+        let contract_address = receipt.contract_address.unwrap();
+        println!("Contract deployed at: {contract_address:?}");
+    }
 }

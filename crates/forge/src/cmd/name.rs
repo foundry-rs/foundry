@@ -56,7 +56,7 @@ impl NameArgs {
             self.ens_name,
             self.reverse_claimer,
             self.reverse_setter,
-            "nameexisting"
+            "nameexisting",
         )
         .await?;
         Ok(())

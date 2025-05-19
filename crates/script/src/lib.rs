@@ -13,11 +13,13 @@ extern crate tracing;
 
 use crate::runner::ScriptRunner;
 use alloy_json_abi::{Function, JsonAbi};
+use alloy_network::{AnyNetwork, AnyTransactionReceipt, EthereumWallet};
 use alloy_primitives::{
     hex,
     map::{AddressHashMap, HashMap},
     Address, Bytes, Log, TxKind, U256,
 };
+use alloy_provider::ProviderBuilder;
 use alloy_signer::Signer;
 use broadcast::next_nonce;
 use build::PreprocessedState;
@@ -28,7 +30,8 @@ use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
 use foundry_block_explorers::EtherscanApiVersion;
 use foundry_cli::{
-    opts::{BuildOpts, GlobalArgs},
+    opts::{BuildOpts, EthereumOpts, EtherscanOpts, GlobalArgs, RpcOpts},
+    utils,
     utils::LoadConfig,
 };
 use foundry_common::{
@@ -55,7 +58,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{TraceMode, Traces},
 };
-use foundry_wallets::MultiWalletOpts;
+use foundry_wallets::{MultiWalletOpts, WalletOpts};
 use serde::Serialize;
 use std::path::PathBuf;
 
@@ -207,6 +210,22 @@ pub struct ScriptArgs {
     #[arg(long, env = "ETH_TIMEOUT")]
     pub timeout: Option<u64>,
 
+    /// The ens name to set for the contract.
+    #[arg(long)]
+    pub ens_name: Option<String>,
+
+    /// The name to set.
+    #[arg(long)]
+    pub auto_name: bool,
+
+    /// Whether the contract is ReverseClaimable or not.
+    #[arg(long, requires = "ens_name")]
+    pub reverse_claimer: bool,
+
+    /// Whether the contract is ReverseSetter or not.
+    #[arg(long, requires = "ens_name")]
+    pub reverse_setter: bool,
+
     #[command(flatten)]
     pub build: BuildOpts,
 
@@ -241,6 +260,9 @@ impl ScriptArgs {
     /// Executes the script
     pub async fn run_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
+
+        let config = self.load_config()?;
+        let ens_name = self.ens_name.clone();
 
         let state = self.preprocess().await?;
         let create2_deployer = state.script_config.evm_opts.create2_deployer;
@@ -328,7 +350,13 @@ impl ScriptArgs {
         }
 
         // Wait for pending txes and broadcast others.
-        let broadcasted = bundled.wait_for_pending().await?.broadcast().await?;
+        let mut broadcasted = bundled.wait_for_pending().await?.broadcast().await?;
+
+        // check if we have to set a name for the deployed contract
+        if broadcasted.args.ens_name.is_some() || broadcasted.args.auto_name {
+            let provider = utils::get_provider(&config)?;
+            broadcasted.set_ens_name(provider).await?;
+        }
 
         if broadcasted.args.verify {
             broadcasted.verify().await?;

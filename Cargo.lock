@@ -3179,8 +3179,10 @@ dependencies = [
  "alloy-contract",
  "alloy-primitives",
  "alloy-provider",
+ "alloy-rpc-types",
  "alloy-signer-local",
  "alloy-sol-types",
+ "anvil",
  "clap",
  "eyre",
  "foundry-cli",
@@ -3189,6 +3191,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "tokio",
  "uuid 0.8.2",
 ]
 
@@ -3605,6 +3608,7 @@ dependencies = [
  "clap",
  "dialoguer",
  "dunce",
+ "enscribe",
  "eyre",
  "forge-script-sequence",
  "forge-verify",

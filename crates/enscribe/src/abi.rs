@@ -12,6 +12,11 @@ sol! {
                 address resolver,
                 uint64 ttl
             ) external;
+
+        /// checks if an ens name record already exists
+        function recordExists(bytes32 node) external returns (bool);
+        /// returns the owner of this node
+        function owner(bytes32 node) external returns (address);
     }
 
     /// ENS Name Wrapper contract
