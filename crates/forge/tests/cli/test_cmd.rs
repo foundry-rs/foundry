@@ -2944,7 +2944,7 @@ contract ContractTest {
 ...
 Failing tests:
 Encountered 1 failing test in test/Foo.t.sol:ContractTest
-[FAIL: EVM error; transaction validation error: call gas cost exceeds the gas limit] setUp() ([GAS])
+[FAIL: EVM error; transaction validation error: call [GAS_COST] exceeds the [GAS_LIMIT]] setUp() ([GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 

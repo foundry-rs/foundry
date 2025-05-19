@@ -2,7 +2,7 @@ use crate::{
     executors::{Executor, RawCallResult},
     inspectors::Fuzzer,
 };
-use alloy_primitives::{Address, Bytes, FixedBytes, Selector, U256};
+use alloy_primitives::{map::HashMap, Address, Bytes, FixedBytes, Selector, U256};
 use alloy_sol_types::{sol, SolCall};
 use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
@@ -30,7 +30,7 @@ use proptest::{
     test_runner::{TestCaseError, TestRunner},
 };
 use result::{assert_after_invariant, assert_invariants, can_continue};
-use revm::primitives::HashMap;
+use revm::state::Account;
 use shrink::shrink_sequence;
 use std::{
     cell::RefCell,
@@ -865,7 +865,7 @@ impl<'a> InvariantExecutor<'a> {
 /// randomly generated addresses.
 fn collect_data(
     invariant_test: &InvariantTest,
-    state_changeset: &mut HashMap<Address, revm::primitives::Account>,
+    state_changeset: &mut HashMap<Address, Account>,
     tx: &BasicTxDetails,
     call_result: &RawCallResult,
     run_depth: u32,

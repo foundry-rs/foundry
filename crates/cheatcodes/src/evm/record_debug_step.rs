@@ -1,7 +1,7 @@
 use alloy_primitives::{Bytes, U256};
 
 use foundry_evm_traces::CallTraceArena;
-use revm::interpreter::{InstructionResult, OpCode};
+use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
 
 use foundry_evm_core::buffer::{get_buffer_accesses, BufferKind};
 use revm_inspectors::tracing::types::{CallTraceStep, RecordedMemory, TraceMemberOrder};
