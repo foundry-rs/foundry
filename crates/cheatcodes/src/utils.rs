@@ -4,7 +4,8 @@ use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{aliases::B32, map::HashMap, B64, U256};
 use alloy_sol_types::SolValue;
-use foundry_common::ens::namehash;
+use foundry_common::{ens::namehash, fs};
+use foundry_config::fs_permissions::FsAccessKind;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
 use proptest::prelude::Strategy;
 use rand::{seq::SliceRandom, Rng, RngCore};
@@ -312,4 +313,55 @@ fn random_int(state: &mut Cheatcodes, bits: Option<U256>) -> Result {
         .unwrap()
         .current()
         .abi_encode())
+}
+
+// `string contant schema_Foo = "Foo(bar uin256)";`
+const TYPE_BINDING_PREFIX: &str = "string constant schema_";
+
+impl Cheatcode for eip712HashTypeCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { typeDefinition } = self;
+
+        let type_def = if typeDefinition.contains('(') {
+            &get_type_def_from_bindings(typeDefinition, state)?
+        } else {
+            typeDefinition
+        };
+
+        todo!()
+    }
+}
+
+fn get_type_def_from_bindings(name: &String, state: &mut Cheatcodes) -> Result<String> {
+    let path = state.config.ensure_path_allowed(
+        &state.config.root.join("utils").join("JsonBindings.sol"),
+        FsAccessKind::Read,
+    )?;
+
+    let content = fs::read_to_string(path)?;
+
+    let mut type_defs = HashMap::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if !line.starts_with(TYPE_BINDING_PREFIX) {
+            continue;
+        }
+
+        let relevant = &line[TYPE_BINDING_PREFIX.len()..];
+        if let Some(idx) = relevant.find('=') {
+            let name = relevant[..idx].trim();
+
+            // relevant value chars are " \"Foo(bar uint256)\";"
+            let def = relevant[idx + 1..].trim();
+            if def.len() > 3 && def.starts_with('"') && def.ends_with("\";") {
+                let value = &def[1..def.len() - 2];
+                type_defs.insert(name, value);
+            }
+        }
+    }
+
+    match type_defs.get(name.as_str()) {
+        Some(value) => Ok(value.to_string()),
+        None => bail!(format!("'{name}' not found in 'utils/JsonBindings.sol'\n{:#?}", type_defs)),
+    }
 }

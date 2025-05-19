@@ -2889,6 +2889,10 @@ interface Vm {
     /// catch (bytes memory interceptedInitcode) { initcode = interceptedInitcode; }
     #[cheatcode(group = Utilities, safety = Unsafe)]
     function interceptInitcode() external;
+
+    /// Randomly shuffles an array.
+    #[cheatcode(group = Utilities)]
+    function eip712HashType(string memory typeDefinition) external pure returns (bytes32 typeHash);
 }
 }
 
