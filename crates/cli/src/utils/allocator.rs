@@ -1,18 +1,41 @@
 //! Abstract global allocator implementation.
 
-// If jemalloc feature is enabled on Unix systems, use jemalloc as the global allocator.
-// Otherwise, explicitly use the system allocator.
+#[cfg(feature = "mimalloc")]
+use mimalloc as _;
+#[cfg(all(feature = "jemalloc", unix))]
+use tikv_jemallocator as _;
+
+// If neither jemalloc nor mimalloc are enabled, use explicitly the system allocator.
+// By default jemalloc is enabled on Unix systems.
 cfg_if::cfg_if! {
     if #[cfg(all(feature = "jemalloc", unix))] {
         type AllocatorInner = tikv_jemallocator::Jemalloc;
+    } else if #[cfg(feature = "mimalloc")] {
+        type AllocatorInner = mimalloc::MiMalloc;
     } else {
         type AllocatorInner = std::alloc::System;
     }
 }
 
-pub type Allocator = AllocatorInner;
+// Wrap the allocator if the `tracy-allocator` feature is enabled.
+cfg_if::cfg_if! {
+    if #[cfg(feature = "tracy-allocator")] {
+        type AllocatorWrapper = tracy_client::ProfiledAllocator<AllocatorInner>;
+        tracy_client::register_demangler!();
+        const fn new_allocator_wrapper() -> AllocatorWrapper {
+            AllocatorWrapper::new(AllocatorInner {}, 100)
+        }
+    } else {
+        type AllocatorWrapper = AllocatorInner;
+        const fn new_allocator_wrapper() -> AllocatorWrapper {
+            AllocatorInner {}
+        }
+    }
+}
+
+pub type Allocator = AllocatorWrapper;
 
 /// Creates a new [allocator][Allocator].
 pub const fn new_allocator() -> Allocator {
-    AllocatorInner {}
+    new_allocator_wrapper()
 }
