@@ -4,7 +4,11 @@ use crate::{
     backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, Env, InspectorExt,
 };
 use alloy_consensus::constants::KECCAK_EMPTY;
-use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap, Evm, EvmEnv};
+use alloy_evm::{
+    eth::EthEvmContext,
+    precompiles::{DynPrecompile, PrecompilesMap},
+    Evm, EvmEnv,
+};
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_fork_db::DatabaseError;
 use revm::{
@@ -22,7 +26,7 @@ use revm::{
         CallValue, CreateInputs, CreateOutcome, FrameInput, Gas, InstructionResult,
         InterpreterResult,
     },
-    precompile::{PrecompileSpecId, Precompiles},
+    precompile::{secp256r1::P256VERIFY, PrecompileSpecId, Precompiles},
     primitives::hardfork::SpecId,
     Context, ExecuteEvm, Journal,
 };
@@ -46,20 +50,20 @@ pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
         error: Ok(()),
     };
     let spec = ctx.cfg.spec;
-    let precompiles = EthPrecompiles {
-        precompiles: Precompiles::new(PrecompileSpecId::from_spec_id(spec)),
-        spec,
-    }
-    .precompiles;
+    let is_odyssey = inspector.is_odyssey();
 
-    FoundryEvm {
+    let mut evm = FoundryEvm {
         inner: RevmEvm::new_with_inspector(
             ctx,
             inspector,
             EthInstructions::default(),
-            PrecompilesMap::from_static(precompiles),
+            get_precompiles(spec),
         ),
-    }
+    };
+
+    inject_precompiles(&mut evm, is_odyssey);
+
+    evm
 }
 
 pub fn new_evm_with_existing_context<'a>(
@@ -67,22 +71,43 @@ pub fn new_evm_with_existing_context<'a>(
     inspector: &'a mut dyn InspectorExt,
 ) -> FoundryEvm<'a, &'a mut dyn InspectorExt> {
     let spec = ctx.cfg.spec;
-    let precompiles = EthPrecompiles {
-        precompiles: Precompiles::new(PrecompileSpecId::from_spec_id(spec)),
-        spec,
-    }
-    .precompiles;
+    let is_odyssey = inspector.is_odyssey();
 
-    FoundryEvm {
+    let mut evm = FoundryEvm {
         inner: RevmEvm::new_with_inspector(
             ctx,
             inspector,
             EthInstructions::default(),
-            PrecompilesMap::from_static(precompiles),
+            get_precompiles(spec),
         ),
+    };
+
+    inject_precompiles(&mut evm, is_odyssey);
+
+    evm
+}
+
+/// Conditionally inject additional precompiles into the EVM context.
+fn inject_precompiles(evm: &mut FoundryEvm<'_, impl InspectorExt>, is_odyssey: bool) {
+    if is_odyssey {
+        evm.precompiles_mut().apply_precompile(P256VERIFY.address(), |_| {
+            Some(DynPrecompile::from(P256VERIFY.precompile()))
+        });
     }
 }
 
+/// Get the precompiles for the given spec.
+fn get_precompiles(spec: SpecId) -> PrecompilesMap {
+    PrecompilesMap::from_static(
+        EthPrecompiles {
+            precompiles: Precompiles::new(PrecompileSpecId::from_spec_id(spec)),
+            spec,
+        }
+        .precompiles,
+    )
+}
+
+/// Get the call inputs for the CREATE2 factory.
 fn get_create2_factory_call_inputs(
     salt: U256,
     inputs: &CreateInputs,
@@ -319,6 +344,7 @@ impl<I: InspectorExt> InspectorHandler for FoundryHandler<'_, I> {
 
         // Get CREATE2 deployer.
         let create2_deployer = evm.inspector.create2_deployer();
+
         // Generate call inputs for CREATE2 factory.
         let call_inputs = get_create2_factory_call_inputs(salt, inputs, create2_deployer);
 
