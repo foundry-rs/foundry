@@ -34,6 +34,7 @@ use foundry_common::{
 };
 use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
+use foundry_evm_core::ic::decode_instructions;
 use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
 use std::{
@@ -46,7 +47,6 @@ use std::{
     time::Duration,
 };
 use tokio::signal::ctrl_c;
-use utils::decode_instructions;
 
 use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
@@ -159,7 +159,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
 
         if let Some(func) = func {
             // decode args into tokens
-            decoded = match func.abi_decode_output(res.as_ref(), false) {
+            decoded = match func.abi_decode_output(res.as_ref()) {
                 Ok(decoded) => decoded,
                 Err(err) => {
                     // ensure the address is a contract
@@ -1099,8 +1099,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             .balanceOf(owner)
             .block(block.unwrap_or_default())
             .call()
-            .await?
-            ._0)
+            .await?)
     }
 }
 

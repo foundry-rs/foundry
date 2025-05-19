@@ -1,8 +1,15 @@
+use alloy_evm::Database;
 use alloy_primitives::Address;
 use foundry_common::sh_err;
+use foundry_evm_core::backend::DatabaseError;
 use revm::{
-    interpreter::{opcode::ADDRESS, InstructionResult, Interpreter},
-    Database, EvmContext, Inspector,
+    bytecode::opcode::ADDRESS,
+    context::ContextTr,
+    inspector::JournalExt,
+    interpreter::{
+        interpreter::EthInterpreter, interpreter_types::Jumps, InstructionResult, Interpreter,
+    },
+    Inspector,
 };
 
 /// An inspector that enforces certain rules during script execution.
@@ -14,21 +21,26 @@ pub struct ScriptExecutionInspector {
     pub script_address: Address,
 }
 
-impl<DB: Database> Inspector<DB> for ScriptExecutionInspector {
+impl<CTX, D> Inspector<CTX, EthInterpreter> for ScriptExecutionInspector
+where
+    D: Database<Error = DatabaseError>,
+    CTX: ContextTr<Db = D>,
+    CTX::Journal: JournalExt,
+{
     #[inline]
-    fn step(&mut self, interpreter: &mut Interpreter, _ecx: &mut EvmContext<DB>) {
+    fn step(&mut self, interpreter: &mut Interpreter, _ecx: &mut CTX) {
         // Check if both target and bytecode address are the same as script contract address
         // (allow calling external libraries when bytecode address is different).
-        if interpreter.current_opcode() == ADDRESS &&
-            interpreter.contract.target_address == self.script_address &&
-            interpreter.contract.bytecode_address.unwrap_or_default() == self.script_address
+        if interpreter.bytecode.opcode() == ADDRESS &&
+            interpreter.input.target_address == self.script_address &&
+            interpreter.input.bytecode_address == Some(self.script_address)
         {
             // Log the reason for revert
             let _ = sh_err!(
                 "Usage of `address(this)` detected in script contract. Script contracts are ephemeral and their addresses should not be relied upon."
             );
             // Set the instruction result to Revert to stop execution
-            interpreter.instruction_result = InstructionResult::Revert;
+            interpreter.control.instruction_result = InstructionResult::Revert;
         }
         // Note: We don't return anything here as step returns void.
         // The original check returned InstructionResult::Continue, but that's the default

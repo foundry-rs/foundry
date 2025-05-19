@@ -55,7 +55,7 @@ Options:
   -j, --threads <THREADS>
           Number of threads to use. Specifying 0 defaults to the number of logical cores
           
-          [aliases: jobs]
+          [aliases: --jobs]
 
   -V, --version
           Print version
@@ -2405,7 +2405,7 @@ forgetest_async!(cast_run_impersonated_tx, |_prj, cmd| {
 
     let http_endpoint = handle.http_endpoint();
 
-    let provider = ProviderBuilder::new().on_http(http_endpoint.parse().unwrap());
+    let provider = ProviderBuilder::new().connect_http(http_endpoint.parse().unwrap());
 
     // send impersonated tx
     let tx = TransactionRequest::default()

@@ -1,8 +1,8 @@
-use crate::revm::primitives::Authorization;
 use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
-use alloy_primitives::{hex, Address, PrimitiveSignature as Signature, B256, U256};
+use alloy_primitives::{hex, Address, Signature, B256, U256};
 use alloy_provider::Provider;
+use alloy_rpc_types::Authorization;
 use alloy_signer::{
     k256::{elliptic_curve::sec1::ToEncodedPoint, SecretKey},
     Signer,
@@ -17,7 +17,7 @@ use foundry_cli::{opts::RpcOpts, utils, utils::LoadConfig};
 use foundry_common::{fs, sh_println, shell};
 use foundry_config::Config;
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
-use rand::thread_rng;
+use rand_08::thread_rng;
 use serde_json::json;
 use std::path::Path;
 use yansi::Paint;
@@ -454,7 +454,29 @@ impl WalletSubcommands {
                 } else {
                     wallet.sign_message(&Self::hex_str_to_bytes(&message)?).await?
                 };
-                sh_println!("0x{}", hex::encode(sig.as_bytes()))?;
+
+                if shell::verbosity() > 0 {
+                    if shell::is_json() {
+                        sh_println!(
+                            "{}",
+                            serde_json::to_string_pretty(&json!({
+                                "message": message,
+                                "address": wallet.address(),
+                                "signature": hex::encode(sig.as_bytes()),
+                            }))?
+                        )?;
+                    } else {
+                        sh_println!(
+                            "Successfully signed!\n   Message: {}\n   Address: {}\n   Signature: 0x{}",
+                            message,
+                            wallet.address(),
+                            hex::encode(sig.as_bytes()),
+                        )?;
+                    }
+                } else {
+                    // Pipe friendly output
+                    sh_println!("0x{}", hex::encode(sig.as_bytes()))?;
+                }
             }
             Self::SignAuth { rpc, nonce, chain, wallet, address } => {
                 let wallet = wallet.signer().await?;
@@ -472,7 +494,31 @@ impl WalletSubcommands {
                 let auth = Authorization { chain_id: U256::from(chain_id), address, nonce };
                 let signature = wallet.sign_hash(&auth.signature_hash()).await?;
                 let auth = auth.into_signed(signature);
-                sh_println!("{}", hex::encode_prefixed(alloy_rlp::encode(&auth)))?;
+
+                if shell::verbosity() > 0 {
+                    if shell::is_json() {
+                        sh_println!(
+                            "{}",
+                            serde_json::to_string_pretty(&json!({
+                                "nonce": nonce,
+                                "chain_id": chain_id,
+                                "address": wallet.address(),
+                                "signature": hex::encode_prefixed(alloy_rlp::encode(&auth)),
+                            }))?
+                        )?;
+                    } else {
+                        sh_println!(
+                            "Successfully signed!\n   Nonce: {}\n   Chain ID: {}\n   Address: {}\n   Signature: 0x{}",
+                            nonce,
+                            chain_id,
+                            wallet.address(),
+                            hex::encode_prefixed(alloy_rlp::encode(&auth)),
+                        )?;
+                    }
+                } else {
+                    // Pipe friendly output
+                    sh_println!("{}", hex::encode_prefixed(alloy_rlp::encode(&auth)))?;
+                }
             }
             Self::Verify { message, signature, address } => {
                 let recovered_address = Self::recover_address_from_message(&message, &signature)?;
