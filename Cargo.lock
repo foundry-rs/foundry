@@ -3469,7 +3469,6 @@ dependencies = [
  "serde_json",
  "similar",
  "similar-asserts",
- "solang-parser",
  "solar-interface",
  "solar-parse",
  "solar-sema",
