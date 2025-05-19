@@ -70,7 +70,7 @@ pub fn solar_pcx_from_build_opts<'sess>(
 /// [`SolcVersionedInput`].
 ///
 /// * Configures include paths, remappings.
-/// * Soruce files can be manually added if the param `add_source_file` is set to `false`.
+/// * Source files can be manually added if the param `add_source_file` is set to `false`.
 pub fn solar_pcx_from_solc_project<'sess>(
     sess: &'sess Session,
     project: &Project,
