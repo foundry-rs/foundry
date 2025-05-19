@@ -367,7 +367,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         let block = self
             .provider
             .get_block(block)
-            .full()
+            .kind(full.into())
             .await?
             .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
 
