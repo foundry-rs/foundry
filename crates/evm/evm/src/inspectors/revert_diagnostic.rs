@@ -103,6 +103,10 @@ impl<DB: Database + DatabaseExt> Inspector<DB> for RevertDiagnostic {
         if EXTCODESIZE == interp.current_opcode() {
             if let Ok(word) = interp.stack().peek(0) {
                 let addr = Address::from_word(word.into());
+                if IGNORE.contains(&addr) || self.is_precompile(ctx.spec_id(), addr) {
+                    return;
+                }
+
                 self.non_contract_size_check = Some((addr, ctx.journaled_state.depth()));
                 self.is_extcodesize_step = true;
             }

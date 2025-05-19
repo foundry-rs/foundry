@@ -820,7 +820,13 @@ impl Inspector<&mut dyn DatabaseExt> for InspectorStackRefMut<'_> {
         ecx: &mut EvmContext<&mut dyn DatabaseExt>,
     ) {
         call_inspectors!(
-            [&mut self.tracer, &mut self.cheatcodes, &mut self.chisel_state, &mut self.printer],
+            [
+                &mut self.tracer,
+                &mut self.cheatcodes,
+                &mut self.chisel_state,
+                &mut self.printer,
+                &mut self.revert_diag
+            ],
             |inspector| inspector.step_end(interpreter, ecx),
         );
     }
