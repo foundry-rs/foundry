@@ -39,7 +39,7 @@ where
         if self.final_pc == interp.bytecode.pc() - 1 {
             self.state = Some((
                 interp.stack.data().clone(),
-                interp.memory.borrow().context_memory().to_vec(),
+                interp.memory.context_memory().to_vec(),
                 interp.control.instruction_result,
             ))
         }

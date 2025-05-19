@@ -7,15 +7,15 @@ use crate::{
         error::InvalidTransactionError,
         pool::transactions::PoolTransaction,
     },
-    // inject_precompiles,
+    inject_precompiles,
     mem::inspector::AnvilInspector,
     PrecompileFactory,
 };
 use alloy_consensus::{
     constants::EMPTY_WITHDRAWALS, proofs::calculate_receipt_root, Receipt, ReceiptWithBloom,
 };
-use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
-use alloy_evm::{eth::EthEvmContext, EthEvm, Evm};
+use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, eip7840::BlobParams};
+use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap, EthEvm, Evm};
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{Bloom, BloomInput, Log, B256};
 use anvil_core::eth::{
@@ -25,14 +25,15 @@ use anvil_core::eth::{
     },
 };
 use foundry_evm::{backend::DatabaseError, traces::CallTraceNode};
-use foundry_evm_core::{either_evm::EitherEvm, evm::FoundryPrecompiles};
-use op_revm::{L1BlockInfo, OpContext};
+use foundry_evm_core::either_evm::EitherEvm;
+use op_revm::{precompiles::OpPrecompiles, L1BlockInfo, OpContext};
 use revm::{
-    context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm as RevmEvm, JournalTr},
+    context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext},
     context_interface::result::{EVMError, ExecutionResult, Output},
     database::WrapDatabaseRef,
-    handler::instructions::EthInstructions,
+    handler::{instructions::EthInstructions, EthPrecompiles},
     interpreter::InstructionResult,
+    precompile::{PrecompileSpecId, Precompiles},
     primitives::hardfork::SpecId,
     Database, DatabaseRef, Inspector, Journal,
 };
@@ -117,6 +118,7 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     pub print_traces: bool,
     /// Precompiles to inject to the EVM.
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
+    pub blob_params: BlobParams,
 }
 
 impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
@@ -295,7 +297,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         let max_blob_gas = self.blob_gas_used.saturating_add(
             transaction.pending_transaction.transaction.transaction.blob_gas().unwrap_or(0),
         );
-        if max_blob_gas > alloy_eips::eip4844::MAX_DATA_GAS_PER_BLOCK {
+        if max_blob_gas > self.blob_params.max_blob_gas_per_block() {
             return Some(TransactionExecutionOutcome::BlobGasExhausted(transaction))
         }
 
@@ -324,9 +326,9 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
 
         let exec_result = {
             let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
-            // if let Some(factory) = &self.precompile_factory {
-            //     inject_precompiles(&mut evm, factory.precompiles());
-            // }
+            if let Some(factory) = &self.precompile_factory {
+                inject_precompiles(&mut evm, factory.precompiles());
+            }
 
             trace!(target: "backend", "[{:?}] executing", transaction.hash());
             // transact and commit the transaction
@@ -418,12 +420,15 @@ pub fn new_evm_with_inspector<DB, I>(
     db: DB,
     env: &Env,
     inspector: I,
-) -> EitherEvm<DB, I, FoundryPrecompiles>
+) -> EitherEvm<DB, I, PrecompilesMap>
 where
     DB: Database<Error = DatabaseError>,
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
 {
     if env.is_optimism {
+        // TODO: we currently pin to `OpSpecId::BEDROCK` as it is primarily used in the context of
+        // testing deposit transactions. We should make this configurable in the future.
+        let op_cfg = env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::BEDROCK);
         let op_context = OpContext {
             journaled_state: {
                 let mut journal = Journal::new(db);
@@ -432,44 +437,53 @@ where
                 journal
             },
             block: env.evm_env.block_env.clone(),
-            cfg: env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::BEDROCK),
+            cfg: op_cfg.clone(),
             tx: env.tx.clone(),
             chain: L1BlockInfo::default(),
+            local: LocalContext::default(),
             error: Ok(()),
         };
 
-        let evm = op_revm::OpEvm(RevmEvm::new_with_inspector(
+        let op_precompiles = OpPrecompiles::new_with_spec(op_cfg.spec).precompiles();
+        let op_evm = op_revm::OpEvm(RevmEvm::new_with_inspector(
             op_context,
             inspector,
             EthInstructions::default(),
-            FoundryPrecompiles::default(),
+            PrecompilesMap::from_static(op_precompiles),
         ));
 
-        let op = OpEvm::new(evm, true);
+        let op = OpEvm::new(op_evm, true);
 
         EitherEvm::Op(op)
     } else {
-        let evm_context = EthEvmContext {
+        let spec = env.evm_env.cfg_env.spec;
+        let eth_context = EthEvmContext {
             journaled_state: {
                 let mut journal = Journal::new(db);
-                journal.set_spec_id(env.evm_env.cfg_env.spec);
+                journal.set_spec_id(spec);
                 journal
             },
             block: env.evm_env.block_env.clone(),
             cfg: env.evm_env.cfg_env.clone(),
             tx: env.tx.base.clone(),
             chain: (),
+            local: LocalContext::default(),
             error: Ok(()),
         };
 
-        let evm = RevmEvm::new_with_inspector(
-            evm_context,
+        let eth_precompiles = EthPrecompiles {
+            precompiles: Precompiles::new(PrecompileSpecId::from_spec_id(spec)),
+            spec,
+        }
+        .precompiles;
+        let eth_evm = RevmEvm::new_with_inspector(
+            eth_context,
             inspector,
             EthInstructions::default(),
-            FoundryPrecompiles::new(),
+            PrecompilesMap::from_static(eth_precompiles),
         );
 
-        let eth = EthEvm::new(evm, true);
+        let eth = EthEvm::new(eth_evm, true);
 
         EitherEvm::Eth(eth)
     }
@@ -480,7 +494,7 @@ pub fn new_evm_with_inspector_ref<'db, DB, I>(
     db: &'db DB,
     env: &Env,
     inspector: &'db mut I,
-) -> EitherEvm<WrapDatabaseRef<&'db DB>, &'db mut I, FoundryPrecompiles>
+) -> EitherEvm<WrapDatabaseRef<&'db DB>, &'db mut I, PrecompilesMap>
 where
     DB: DatabaseRef<Error = DatabaseError> + 'db + ?Sized,
     I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>

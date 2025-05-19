@@ -26,14 +26,12 @@ use crate::{
         sign::build_typed_transaction,
         util::get_precompiles_for,
     },
-    // inject_precompiles,
+    inject_precompiles,
     mem::{
         inspector::AnvilInspector,
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
     },
-    ForkChoice,
-    NodeConfig,
-    PrecompileFactory,
+    ForkChoice, NodeConfig, PrecompileFactory,
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
@@ -48,9 +46,9 @@ use alloy_eips::{
         EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
         LEGACY_TX_TYPE_ID,
     },
-    eip4844::MAX_BLOBS_PER_BLOCK,
+    eip7840::BlobParams,
 };
-use alloy_evm::{eth::EthEvmContext, Database, Evm};
+use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap, Database, Evm};
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
     EthereumWallet, UnknownTxEnvelope, UnknownTypedTransaction,
@@ -101,7 +99,7 @@ use foundry_evm::{
     inspectors::AccessListInspector,
     traces::TracingInspectorConfig,
 };
-use foundry_evm_core::{either_evm::EitherEvm, evm::FoundryPrecompiles};
+use foundry_evm_core::either_evm::EitherEvm;
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
 use op_revm::{
@@ -779,6 +777,15 @@ impl Backend {
         self.env.read().is_optimism
     }
 
+    /// Returns [`BlobParams`] corresponding to the current spec.
+    pub fn blob_params(&self) -> BlobParams {
+        if self.env.read().evm_env.cfg_env.spec >= SpecId::PRAGUE {
+            BlobParams::prague()
+        } else {
+            BlobParams::cancun()
+        }
+    }
+
     /// Returns an error if EIP1559 is not active (pre Berlin)
     pub fn ensure_eip1559_active(&self) -> Result<(), BlockchainError> {
         if self.is_eip1559() {
@@ -1091,7 +1098,7 @@ impl Backend {
     ) -> EitherEvm<
         WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>,
         &'db mut I,
-        FoundryPrecompiles,
+        PrecompilesMap,
     >
     where
         I: Inspector<EthEvmContext<WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>>>
@@ -1099,11 +1106,13 @@ impl Backend {
         WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>:
             Database<Error = DatabaseError>,
     {
-        new_evm_with_inspector_ref(db, env, inspector)
-        // TODO(yash): inject precompiles
-        // if let Some(factory) = &self.precompile_factory {
-        //     inject_precompiles(&mut evm, factory.precompiles());
-        // }
+        let mut evm = new_evm_with_inspector_ref(db, env, inspector);
+
+        if let Some(factory) = &self.precompile_factory {
+            inject_precompiles(&mut evm, factory.precompiles());
+        }
+
+        evm
     }
 
     /// executes the transactions without writing to the underlying database
@@ -1189,6 +1198,7 @@ impl Backend {
             precompile_factory: self.precompile_factory.clone(),
             odyssey: self.odyssey,
             optimism: self.is_optimism(),
+            blob_params: self.blob_params(),
         };
 
         // create a new pending block
@@ -1273,6 +1283,7 @@ impl Backend {
                     odyssey: self.odyssey,
                     precompile_factory: self.precompile_factory.clone(),
                     optimism: self.is_optimism(),
+                    blob_params: self.blob_params(),
                 };
                 let executed_tx = executor.execute();
 
@@ -1487,36 +1498,34 @@ impl Backend {
         let caller = from.unwrap_or_default();
         let to = to.as_ref().and_then(TxKind::to);
         let blob_hashes = blob_versioned_hashes.unwrap_or_default();
-        env.tx = OpTransaction {
-            base: TxEnv {
-                caller,
-                gas_limit,
-                gas_price,
-                gas_priority_fee: max_priority_fee_per_gas,
-                max_fee_per_blob_gas: max_fee_per_blob_gas
-                    .or_else(|| {
-                        if !blob_hashes.is_empty() {
-                            env.evm_env.block_env.blob_gasprice()
-                        } else {
-                            Some(0)
-                        }
-                    })
-                    .unwrap_or_default(),
-                kind: match to {
-                    Some(addr) => TxKind::Call(*addr),
-                    None => TxKind::Create,
-                },
-                tx_type,
-                value: value.unwrap_or_default(),
-                data: input.into_input().unwrap_or_default(),
-                chain_id: Some(chain_id.unwrap_or(self.env.read().evm_env.cfg_env.chain_id)),
-                access_list: access_list.unwrap_or_default(),
-                blob_hashes,
-                authorization_list: authorization_list.unwrap_or_default(),
-                ..Default::default()
+        let mut base = TxEnv {
+            caller,
+            gas_limit,
+            gas_price,
+            gas_priority_fee: max_priority_fee_per_gas,
+            max_fee_per_blob_gas: max_fee_per_blob_gas
+                .or_else(|| {
+                    if !blob_hashes.is_empty() {
+                        env.evm_env.block_env.blob_gasprice()
+                    } else {
+                        Some(0)
+                    }
+                })
+                .unwrap_or_default(),
+            kind: match to {
+                Some(addr) => TxKind::Call(*addr),
+                None => TxKind::Create,
             },
+            tx_type,
+            value: value.unwrap_or_default(),
+            data: input.into_input().unwrap_or_default(),
+            chain_id: Some(chain_id.unwrap_or(self.env.read().evm_env.cfg_env.chain_id)),
+            access_list: access_list.unwrap_or_default(),
+            blob_hashes,
             ..Default::default()
         };
+        base.set_signed_authorization(authorization_list.unwrap_or_default());
+        env.tx = OpTransaction { base, ..Default::default() };
 
         if let Some(nonce) = nonce {
             env.tx.base.nonce = nonce;
@@ -1736,7 +1745,7 @@ impl Backend {
                 .map(|tx| AnyTxEnvelope::from(tx.clone()))
                 .collect();
                 let header = Header {
-                    logs_bloom:logs_bloom(logs.iter()),
+                    logs_bloom: logs_bloom(logs.iter()),
                     transactions_root: calculate_transaction_root(&transactions_envelopes),
                     receipts_root: calculate_receipt_root(&transactions_envelopes),
                     parent_hash: Default::default(),
@@ -3173,8 +3182,9 @@ impl TransactionValidator for Backend {
             }
 
             // Ensure the tx does not exceed the max blobs per block.
-            if blob_count > MAX_BLOBS_PER_BLOCK {
-                return Err(InvalidTransactionError::TooManyBlobs(blob_count, MAX_BLOBS_PER_BLOCK))
+            let max_blob_count = self.blob_params().max_blob_count as usize;
+            if blob_count > max_blob_count {
+                return Err(InvalidTransactionError::TooManyBlobs(blob_count, max_blob_count))
             }
 
             // Check for any blob validation errors if not impersonating.

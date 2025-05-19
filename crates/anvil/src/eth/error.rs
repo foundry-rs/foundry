@@ -334,7 +334,9 @@ impl From<InvalidTransaction> for InvalidTransactionError {
             InvalidTransaction::Eip4844NotSupported |
             InvalidTransaction::Eip7702NotSupported |
             InvalidTransaction::EofCreateShouldHaveToAddress |
-            InvalidTransaction::EmptyAuthorizationList => Self::Revm(err),
+            InvalidTransaction::EmptyAuthorizationList |
+            InvalidTransaction::Eip7873NotSupported |
+            InvalidTransaction::Eip7873MissingTarget => Self::Revm(err),
         }
     }
 }

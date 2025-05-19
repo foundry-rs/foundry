@@ -1,6 +1,12 @@
 use alloy_consensus::BlockHeader;
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_network::{AnyTxEnvelope, TransactionResponse};
+use alloy_network::{
+    eip2718::{
+        EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
+        LEGACY_TX_TYPE_ID,
+    },
+    AnyTxEnvelope, TransactionResponse,
+};
 use alloy_primitives::{Address, Selector, TxKind, B256, U256};
 use alloy_provider::{network::BlockResponse, Network};
 use alloy_rpc_types::{Transaction, TransactionRequest};
@@ -116,10 +122,26 @@ pub fn configure_tx_req_env(
         chain_id,
         ref blob_versioned_hashes,
         ref access_list,
-        transaction_type: _,
+        transaction_type,
         ref authorization_list,
         sidecar: _,
     } = *tx;
+
+    // If no transaction type is provided, we need to infer it from the other fields.
+    let tx_type = transaction_type.unwrap_or_else(|| {
+        if authorization_list.is_some() {
+            EIP7702_TX_TYPE_ID
+        } else if blob_versioned_hashes.is_some() {
+            EIP4844_TX_TYPE_ID
+        } else if max_fee_per_gas.is_some() || max_priority_fee_per_gas.is_some() {
+            EIP1559_TX_TYPE_ID
+        } else if access_list.is_some() {
+            EIP2930_TX_TYPE_ID
+        } else {
+            LEGACY_TX_TYPE_ID
+        }
+    });
+    env.tx.tx_type = tx_type;
 
     // If no `to` field then set create kind: https://eips.ethereum.org/EIPS/eip-2470#deployment-transaction
     env.tx.kind = to.unwrap_or(TxKind::Create);
@@ -146,7 +168,7 @@ pub fn configure_tx_req_env(
 
     // Type 4, EIP-7702
     if let Some(authorization_list) = authorization_list {
-        env.tx.authorization_list = authorization_list.clone();
+        env.tx.set_signed_authorization(authorization_list.clone());
     }
 
     Ok(())

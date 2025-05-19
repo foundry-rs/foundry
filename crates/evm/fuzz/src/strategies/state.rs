@@ -179,7 +179,7 @@ impl FuzzDictionary {
         if let Some(function) = function {
             if !function.outputs.is_empty() {
                 // Decode result and collect samples to be used in subsequent fuzz runs.
-                if let Ok(decoded_result) = function.abi_decode_output(result, false) {
+                if let Ok(decoded_result) = function.abi_decode_output(result) {
                     self.insert_sample_values(decoded_result, run_depth);
                 }
             }
@@ -195,7 +195,7 @@ impl FuzzDictionary {
             // Try to decode log with events from contract abi.
             if let Some(abi) = abi {
                 for event in abi.events() {
-                    if let Ok(decoded_event) = event.decode_log(log, false) {
+                    if let Ok(decoded_event) = event.decode_log(log) {
                         samples.extend(decoded_event.indexed);
                         samples.extend(decoded_event.body);
                         log_decoded = true;

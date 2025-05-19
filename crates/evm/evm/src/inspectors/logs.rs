@@ -25,8 +25,11 @@ pub struct LogCollector {
 
 impl LogCollector {
     #[cold]
-    fn do_hardhat_log(&mut self, inputs: &CallInputs) -> Option<CallOutcome> {
-        if let Err(err) = self.hardhat_log(&inputs.input) {
+    fn do_hardhat_log<CTX>(&mut self, context: &mut CTX, inputs: &CallInputs) -> Option<CallOutcome>
+    where
+        CTX: ContextTr<Db: Database<Error = DatabaseError>, Journal: JournalExt>,
+    {
+        if let Err(err) = self.hardhat_log(&inputs.input.bytes(context)) {
             let result = InstructionResult::Revert;
             let output = err.abi_encode_revert();
             return Some(CallOutcome {
@@ -38,7 +41,7 @@ impl LogCollector {
     }
 
     fn hardhat_log(&mut self, data: &[u8]) -> alloy_sol_types::Result<()> {
-        let decoded = console::hh::ConsoleCalls::abi_decode(data, false)?;
+        let decoded = console::hh::ConsoleCalls::abi_decode(data)?;
         self.logs.push(hh_to_ds(&decoded));
         Ok(())
     }
@@ -54,9 +57,9 @@ where
         self.logs.push(log);
     }
 
-    fn call(&mut self, _context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
+    fn call(&mut self, context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         if inputs.target_address == HARDHAT_CONSOLE_ADDRESS {
-            return self.do_hardhat_log(inputs);
+            return self.do_hardhat_log(context, inputs);
         }
         None
     }

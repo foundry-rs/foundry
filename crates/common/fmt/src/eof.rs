@@ -1,8 +1,6 @@
 use alloy_primitives::hex;
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, ContentArrangement, Table};
-use revm::bytecode::{
-    Eof,
-};
+use revm::bytecode::Eof;
 use std::fmt::{self, Write};
 
 pub fn pretty_eof(eof: &Eof) -> Result<String, fmt::Error> {
@@ -49,7 +47,7 @@ pub fn pretty_eof(eof: &Eof) -> Result<String, fmt::Error> {
                 &idx.to_string(),
                 &type_section.inputs.to_string(),
                 &type_section.outputs.to_string(),
-                &type_section.max_stack_size.to_string(),
+                &type_section.max_stack_increase.to_string(),
                 &hex::encode_prefixed(body.code(idx).unwrap_or_default()),
             ]);
         }
