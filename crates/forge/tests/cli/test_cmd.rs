@@ -1547,7 +1547,6 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-
 [PASS] test_GasMeter() (gas: 53097)
 Traces:
   [53097] ATest::test_GasMeter()
@@ -1556,6 +1555,7 @@ Traces:
     ├─ [0] VM::resumeGasMetering()
     │   └─ ← [Return]
     └─ ← [Stop]
+
 ...
 "#]]);
 });
@@ -1640,13 +1640,13 @@ contract PauseTracingTest is DSTest {
     cmd.args(["test", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
 ...
 Traces:
-  [5257] PauseTracingTest::setUp()
+  [7757] PauseTracingTest::setUp()
     ├─ emit DummyEvent(i: 1)
     ├─ [0] VM::pauseTracing() [staticcall]
     │   └─ ← [Return]
     └─ ← [Stop]
 
-  [447149] PauseTracingTest::test()
+  [449649] PauseTracingTest::test()
     ├─ [0] VM::resumeTracing() [staticcall]
     │   └─ ← [Return]
     ├─ [22896] TraceGenerator::generate()
@@ -2908,7 +2908,7 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [26851] CounterTest::test_Increment()
+  [31851] CounterTest::test_Increment()
     ├─ [22418] Counter::increment()
     │   ├─  storage changes:
     │   │   @ 0: 0 → 1
@@ -3054,7 +3054,7 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [30178] SuppressTracesTest::test_increment_failure()
+  [35178] SuppressTracesTest::test_increment_failure()
     ├─ [0] console::log("test increment failure") [staticcall]
     │   └─ ← [Stop]
     ├─ [22418] Counter::increment()
@@ -3099,7 +3099,7 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-  [30178] SuppressTracesTest::test_increment_failure()
+  [35178] SuppressTracesTest::test_increment_failure()
     ├─ [0] console::log("test increment failure") [staticcall]
     │   └─ ← [Stop]
     ├─ [22418] Counter::increment()
@@ -3115,7 +3115,7 @@ Logs:
   test increment success
 
 Traces:
-  [30229] SuppressTracesTest::test_increment_success()
+  [35229] SuppressTracesTest::test_increment_success()
     ├─ [0] console::log("test increment success") [staticcall]
     │   └─ ← [Stop]
     ├─ [22418] Counter::increment()
@@ -3668,7 +3668,7 @@ Logs:
   test non contract (void) call failure
 
 Traces:
-  [3715] NonContractCallRevertTest::test_non_contract_void_call_failure()
+  [6215] NonContractCallRevertTest::test_non_contract_void_call_failure()
     ├─ [0] console::log("test non contract (void) call failure") [staticcall]
     │   └─ ← [Stop]
     └─ ← [Revert] EvmError: Revert

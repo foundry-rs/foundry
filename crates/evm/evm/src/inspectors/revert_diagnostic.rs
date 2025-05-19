@@ -1,4 +1,4 @@
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use foundry_evm_core::{
     backend::DatabaseExt,
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
@@ -19,10 +19,12 @@ const IGNORE: [Address; 2] = [HARDHAT_CONSOLE_ADDRESS, CHEATCODE_ADDRESS];
 /// Useful for understanding reverts that are not linked to custom errors or revert strings.
 #[derive(Clone, Debug, Default)]
 pub struct RevertDiagnostic {
-    /// Tracks calls with calldata that target an address without executable code
+    /// Tracks calls with calldata that target an address without executable code.
     pub non_contract_call: Option<(Address, CallScheme, u64)>,
-    /// Tracks EXTCODESIZE checks that target an address without executable code
+    /// Tracks EXTCODESIZE checks that target an address without executable code.
     pub non_contract_size_check: Option<(Address, u64)>,
+    /// Whether the step opcode is EXTCODESIZE or not.
+    pub is_extcodesize_step: bool,
     /// Tracks whether a failed call has been spotted or not.
     pub reverted: bool,
 }
@@ -88,9 +90,8 @@ impl<DB: Database + DatabaseExt> Inspector<DB> for RevertDiagnostic {
         None
     }
 
-    /// Tracks `EXTCODESIZE` targeted to addresses without code. Clears the cache when the call
-    /// stack depth changes.
-    fn step(&mut self, interpreter: &mut Interpreter, ctx: &mut EvmContext<DB>) {
+    /// Tracks `EXTCODESIZE` opcodes. Clears the cache when the call stack depth changes.
+    fn step(&mut self, interp: &mut Interpreter, ctx: &mut EvmContext<DB>) {
         if let Some((_, depth)) = self.non_contract_size_check {
             if depth != ctx.journaled_state.depth() {
                 self.non_contract_size_check = None;
@@ -99,15 +100,25 @@ impl<DB: Database + DatabaseExt> Inspector<DB> for RevertDiagnostic {
             return;
         }
 
-        if EXTCODESIZE == interpreter.current_opcode() {
-            if let Ok(word) = interpreter.stack().peek(0) {
+        if EXTCODESIZE == interp.current_opcode() {
+            if let Ok(word) = interp.stack().peek(0) {
                 let addr = Address::from_word(word.into());
-                if let Ok(state) = ctx.code(addr) {
-                    if state.is_empty() {
-                        self.non_contract_size_check = Some((addr, ctx.journaled_state.depth()));
-                    }
+                self.non_contract_size_check = Some((addr, ctx.journaled_state.depth()));
+                self.is_extcodesize_step = true;
+            }
+        }
+    }
+
+    /// Tracks `EXTCODESIZE` output. If the bytecode size is 0, clears the cache.
+    fn step_end(&mut self, interp: &mut Interpreter, _ctx: &mut EvmContext<DB>) {
+        if self.is_extcodesize_step {
+            if let Ok(size) = interp.stack().peek(0) {
+                if size != U256::ZERO {
+                    self.non_contract_size_check = None;
                 }
             }
+
+            self.is_extcodesize_step = false;
         }
     }
 
