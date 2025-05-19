@@ -2005,6 +2005,12 @@ impl<W: Write> Visitor for Formatter<'_, W> {
                 );
             }
 
+            if let Some(layout) = &mut contract.layout {
+                write_chunk!(fmt, "layout at ")?;
+                fmt.visit_expr(layout.loc(), layout)?;
+                write_chunk!(fmt, " ")?;
+            }
+
             write_chunk!(fmt, "{{")?;
 
             fmt.indented(1, |fmt| {
@@ -2083,28 +2089,37 @@ impl<W: Write> Visitor for Formatter<'_, W> {
         Ok(())
     }
 
-    #[instrument(name = "pragma", skip_all)]
     fn visit_pragma(
         &mut self,
-        loc: Loc,
-        ident: &mut Option<Identifier>,
-        string: &mut Option<StringLiteral>,
-    ) -> Result<()> {
-        let (ident, string) = (ident.safe_unwrap(), string.safe_unwrap());
+        pragma: &mut PragmaDirective,
+    ) -> std::result::Result<(), Self::Error> {
+        let loc = pragma.loc();
         return_source_if_disabled!(self, loc, ';');
 
-        let pragma_descriptor = if ident.name == "solidity" {
-            // There are some issues with parsing Solidity's versions with crates like `semver`:
-            // 1. Ranges like `>=0.4.21<0.6.0` or `>=0.4.21 <0.6.0` are not parseable at all.
-            // 2. Versions like `0.8.10` got transformed into `^0.8.10` which is not the same.
-            // TODO: semver-solidity crate :D
-            &string.string
-        } else {
-            &string.string
-        };
-
-        write_chunk!(self, string.loc.end(), "pragma {} {};", &ident.name, pragma_descriptor)?;
-
+        match pragma {
+            PragmaDirective::Identifier(loc, id1, id2) => {
+                write_chunk!(
+                    self,
+                    loc.start(),
+                    loc.end(),
+                    "pragma {}{}{};",
+                    id1.as_ref().map(|id| id.name.to_string()).unwrap_or_default(),
+                    if id1.is_some() && id2.is_some() { " " } else { "" },
+                    id2.as_ref().map(|id| id.name.to_string()).unwrap_or_default(),
+                )?;
+            }
+            PragmaDirective::StringLiteral(_loc, id, lit) => {
+                write_chunk!(self, "pragma {} ", id.name)?;
+                let StringLiteral { loc, string, .. } = lit;
+                write_chunk!(self, loc.start(), loc.end(), "\"{string}\";")?;
+            }
+            PragmaDirective::Version(loc, id, version) => {
+                write_chunk!(self, loc.start(), id.loc().end(), "pragma {}", id.name)?;
+                let version_loc = loc.with_start(version[0].loc().start());
+                self.visit_source(version_loc)?;
+                self.write_semicolon()?;
+            }
+        }
         Ok(())
     }
 
@@ -3306,6 +3321,7 @@ impl<W: Write> Visitor for Formatter<'_, W> {
             VariableAttribute::Visibility(visibility) => Some(visibility.to_string()),
             VariableAttribute::Constant(_) => Some("constant".to_string()),
             VariableAttribute::Immutable(_) => Some("immutable".to_string()),
+            VariableAttribute::StorageType(_) => None, // Unsupported
             VariableAttribute::Override(loc, idents) => {
                 write_chunk!(self, loc.start(), "override")?;
                 if !idents.is_empty() && self.config.override_spacing {
@@ -3314,6 +3330,7 @@ impl<W: Write> Visitor for Formatter<'_, W> {
                 self.visit_list("", idents, Some(loc.start()), Some(loc.end()), false)?;
                 None
             }
+            VariableAttribute::StorageLocation(storage) => Some(storage.to_string()),
         };
         if let Some(token) = token {
             let loc = attribute.loc();

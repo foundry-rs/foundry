@@ -1,4 +1,4 @@
-<svg width="852px" height="542px" xmlns="http://www.w3.org/2000/svg">
+<svg width="852px" height="506px" xmlns="http://www.w3.org/2000/svg">
   <style>
     .fg { fill: #AAAAAA }
     .bg { background: #000000 }
@@ -61,21 +61,17 @@
 </tspan>
     <tspan x="10px" y="388px"><tspan>    │   └─ </tspan><tspan class="fg-blue">← [Return]</tspan>
 </tspan>
-    <tspan x="10px" y="406px"><tspan>    ├─  storage changes:</tspan>
+    <tspan x="10px" y="406px"><tspan>    └─ </tspan><tspan class="fg-green">← [Stop]</tspan>
 </tspan>
-    <tspan x="10px" y="424px"><tspan>    │   @ 0: 0 → 1</tspan>
+    <tspan x="10px" y="424px">
 </tspan>
-    <tspan x="10px" y="442px"><tspan>    └─ </tspan><tspan class="fg-green">← [Stop]</tspan>
+    <tspan x="10px" y="442px"><tspan>Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]</tspan>
 </tspan>
     <tspan x="10px" y="460px">
 </tspan>
-    <tspan x="10px" y="478px"><tspan>Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]</tspan>
+    <tspan x="10px" y="478px"><tspan>Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)</tspan>
 </tspan>
     <tspan x="10px" y="496px">
-</tspan>
-    <tspan x="10px" y="514px"><tspan>Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)</tspan>
-</tspan>
-    <tspan x="10px" y="532px">
 </tspan>
   </text>
 

@@ -1,6 +1,6 @@
 //! Visitor helpers to traverse the [solang Solidity Parse Tree](solang_parser::pt).
 
-use crate::solang_ext::pt::*;
+use crate::solang_ext::{pt::*, CodeLocationExt};
 
 /// A trait that is invoked while traversing the Solidity Parse Tree.
 /// Each method of the [Visitor] trait is a hook that can be potentially overridden.
@@ -25,13 +25,8 @@ pub trait Visitor {
         self.visit_source(annotation.loc)
     }
 
-    fn visit_pragma(
-        &mut self,
-        loc: Loc,
-        _ident: &mut Option<Identifier>,
-        _str: &mut Option<StringLiteral>,
-    ) -> Result<(), Self::Error> {
-        self.visit_source(loc)
+    fn visit_pragma(&mut self, pragma: &mut PragmaDirective) -> Result<(), Self::Error> {
+        self.visit_source(pragma.loc())
     }
 
     fn visit_import_plain(
@@ -331,7 +326,7 @@ pub trait Visitor {
         _expr: &mut Option<&mut YulExpression>,
     ) -> Result<(), Self::Error>
     where
-        T: Visitable + CodeLocation,
+        T: Visitable + CodeLocationExt,
     {
         self.visit_source(loc)
     }
@@ -459,7 +454,7 @@ impl Visitable for SourceUnitPart {
     {
         match self {
             Self::ContractDefinition(contract) => v.visit_contract(contract),
-            Self::PragmaDirective(loc, ident, str) => v.visit_pragma(*loc, ident, str),
+            Self::PragmaDirective(pragma) => v.visit_pragma(pragma),
             Self::ImportDirective(import) => import.visit(v),
             Self::EnumDefinition(enumeration) => v.visit_enum(enumeration),
             Self::StructDefinition(structure) => v.visit_struct(structure),

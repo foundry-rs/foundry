@@ -27,7 +27,6 @@ use crate::{
     },
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
-    revm::primitives::{BlobExcessGasAndPrice, Output},
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
 use alloy_consensus::{
@@ -42,7 +41,7 @@ use alloy_network::{
 };
 use alloy_primitives::{
     map::{HashMap, HashSet},
-    Address, Bytes, PrimitiveSignature as Signature, TxHash, TxKind, B256, B64, U256, U64,
+    Address, Bytes, Signature, TxHash, TxKind, B256, B64, U256, U64,
 };
 use alloy_provider::utils::{
     eip1559_default_estimator, EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
@@ -80,21 +79,20 @@ use anvil_core::{
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::ProviderBuilder;
-use foundry_evm::{
-    backend::DatabaseError,
-    decode::RevertDecoder,
-    revm::{
-        db::DatabaseRef,
-        interpreter::{return_ok, return_revert, InstructionResult},
-        primitives::BlockEnv,
-    },
-};
+use foundry_evm::{backend::DatabaseError, decode::RevertDecoder};
 use futures::{
     channel::{mpsc::Receiver, oneshot},
     StreamExt,
 };
 use parking_lot::RwLock;
-use revm::primitives::Bytecode;
+use revm::{
+    bytecode::Bytecode,
+    context::BlockEnv,
+    context_interface::{block::BlobExcessGasAndPrice, result::Output},
+    database::DatabaseRef,
+    interpreter::{return_ok, return_revert, InstructionResult},
+    primitives::eip7702::PER_EMPTY_ACCOUNT_COST,
+};
 use std::{future::Future, sync::Arc, time::Duration};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
@@ -1965,11 +1963,11 @@ impl EthApi {
         let env = self.backend.env().read();
         let fork_config = self.backend.get_fork();
         let tx_order = self.transaction_order.read();
-        let hard_fork: &str = env.handler_cfg.spec_id.into();
+        let hard_fork: &str = env.evm_env.cfg_env.spec.into();
 
         Ok(NodeInfo {
             current_block_number: self.backend.best_number(),
-            current_block_timestamp: env.block.timestamp.try_into().unwrap_or(u64::MAX),
+            current_block_timestamp: env.evm_env.block_env.timestamp,
             current_block_hash: self.backend.best_hash(),
             hard_fork: hard_fork.to_string(),
             transaction_order: match *tx_order {
@@ -2080,55 +2078,58 @@ impl EthApi {
             for pair in pairs {
                 let (tx_data, block_index) = pair;
 
-                let mut tx_req = match tx_data {
-                    TransactionData::JSON(req) => WithOtherFields::new(req),
+                let pending = match tx_data {
                     TransactionData::Raw(bytes) => {
                         let mut data = bytes.as_ref();
                         let decoded = TypedTransaction::decode_2718(&mut data)
                             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
-                        let request =
-                            TransactionRequest::try_from(decoded.clone()).map_err(|_| {
-                                BlockchainError::RpcError(RpcError::invalid_params(
-                                    "Failed to convert raw transaction",
-                                ))
-                            })?;
-                        WithOtherFields::new(request)
+                        PendingTransaction::new(decoded)?
                     }
-                };
 
-                let from = tx_req.from.map(Ok).unwrap_or_else(|| {
-                    self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
-                })?;
+                    TransactionData::JSON(req) => {
+                        let mut tx_req = WithOtherFields::new(req);
+                        let from = tx_req.from.map(Ok).unwrap_or_else(|| {
+                            self.accounts()?
+                                .first()
+                                .cloned()
+                                .ok_or(BlockchainError::NoSignerAvailable)
+                        })?;
 
-                // Get the nonce at the common block
-                let curr_nonce = nonces.entry(from).or_insert(
-                    self.get_transaction_count(from, Some(common_block.header.number.into()))
-                        .await?,
-                );
+                        // Get the nonce at the common block
+                        let curr_nonce = nonces.entry(from).or_insert(
+                            self.get_transaction_count(
+                                from,
+                                Some(common_block.header.number.into()),
+                            )
+                            .await?,
+                        );
 
-                // Estimate gas
-                if tx_req.gas.is_none() {
-                    if let Ok(gas) = self.estimate_gas(tx_req.clone(), None, None).await {
-                        tx_req.gas = Some(gas.to());
+                        // Estimate gas
+                        if tx_req.gas.is_none() {
+                            if let Ok(gas) = self.estimate_gas(tx_req.clone(), None, None).await {
+                                tx_req.gas = Some(gas.to());
+                            }
+                        }
+
+                        // Build typed transaction request
+                        let typed = self.build_typed_tx_request(tx_req, *curr_nonce)?;
+
+                        // Increment nonce
+                        *curr_nonce += 1;
+
+                        // Handle signer and convert to pending transaction
+                        if self.is_impersonated(from) {
+                            let bypass_signature = self.impersonated_signature(&typed);
+                            let transaction =
+                                sign::build_typed_transaction(typed, bypass_signature)?;
+                            self.ensure_typed_transaction_supported(&transaction)?;
+                            PendingTransaction::with_impersonated(transaction, from)
+                        } else {
+                            let transaction = self.sign_request(&from, typed)?;
+                            self.ensure_typed_transaction_supported(&transaction)?;
+                            PendingTransaction::new(transaction)?
+                        }
                     }
-                }
-
-                // Build typed transaction request
-                let typed = self.build_typed_tx_request(tx_req, *curr_nonce)?;
-
-                // Increment nonce
-                *curr_nonce += 1;
-
-                // Handle signer and convert to pending transaction
-                let pending = if self.is_impersonated(from) {
-                    let bypass_signature = self.impersonated_signature(&typed);
-                    let transaction = sign::build_typed_transaction(typed, bypass_signature)?;
-                    self.ensure_typed_transaction_supported(&transaction)?;
-                    PendingTransaction::with_impersonated(transaction, from)
-                } else {
-                    let transaction = self.sign_request(&from, typed)?;
-                    self.ensure_typed_transaction_supported(&transaction)?;
-                    PendingTransaction::new(transaction)?
                 };
 
                 let pooled = PoolTransaction::new(pending);
@@ -2324,7 +2325,7 @@ impl EthApi {
     /// Sets the reported block number
     ///
     /// Handler for ETH RPC call: `anvil_setBlock`
-    pub fn anvil_set_block(&self, block_number: U256) -> Result<()> {
+    pub fn anvil_set_block(&self, block_number: u64) -> Result<()> {
         node_info!("anvil_setBlock");
         self.backend.set_block_number(block_number);
         Ok(())
@@ -2750,8 +2751,7 @@ impl EthApi {
 
         // get the highest possible gas limit, either the request's set value or the currently
         // configured gas limit
-        let mut highest_gas_limit =
-            request.gas.map_or(block_env.gas_limit.to::<u128>(), |g| g as u128);
+        let mut highest_gas_limit = request.gas.map_or(block_env.gas_limit.into(), |g| g as u128);
 
         let gas_price = fees.gas_price.unwrap_or_default();
         // If we have non-zero gas price, cap gas limit by sender balance
@@ -3005,6 +3005,15 @@ impl EthApi {
                 }
                 TypedTransactionRequest::EIP1559(m)
             }
+            Some(TypedTransactionRequest::EIP7702(mut m)) => {
+                m.nonce = nonce;
+                m.chain_id = chain_id;
+                m.gas_limit = gas_limit;
+                if max_fee_per_gas.is_none() {
+                    m.max_fee_per_gas = self.gas_price();
+                }
+                TypedTransactionRequest::EIP7702(m)
+            }
             Some(TypedTransactionRequest::EIP4844(m)) => {
                 TypedTransactionRequest::EIP4844(match m {
                     // We only accept the TxEip4844 variant which has the sidecar.
@@ -3072,6 +3081,7 @@ impl EthApi {
             ),
             TypedTransactionRequest::EIP2930(_) |
             TypedTransactionRequest::EIP1559(_) |
+            TypedTransactionRequest::EIP7702(_) |
             TypedTransactionRequest::EIP4844(_) |
             TypedTransactionRequest::Deposit(_) => Signature::from_scalars_and_parity(
                 B256::with_last_byte(1),
@@ -3195,6 +3205,10 @@ fn determine_base_gas_by_kind(request: &WithOtherFields<TransactionRequest>) -> 
                 TxKind::Call(_) => MIN_TRANSACTION_GAS,
                 TxKind::Create => MIN_CREATE_GAS,
             },
+            TypedTransactionRequest::EIP7702(req) => {
+                MIN_TRANSACTION_GAS +
+                    req.authorization_list.len() as u128 * PER_EMPTY_ACCOUNT_COST as u128
+            }
             TypedTransactionRequest::EIP2930(req) => match req.to {
                 TxKind::Call(_) => MIN_TRANSACTION_GAS,
                 TxKind::Create => MIN_CREATE_GAS,
@@ -3239,7 +3253,8 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 InstructionResult::MemoryOOG |
                 InstructionResult::MemoryLimitOOG |
                 InstructionResult::PrecompileOOG |
-                InstructionResult::InvalidOperandOOG => Ok(Self::OutOfGas),
+                InstructionResult::InvalidOperandOOG |
+                InstructionResult::ReentrancySentryOOG => Ok(Self::OutOfGas),
 
                 InstructionResult::OpcodeNotFound |
                 InstructionResult::CallNotAllowedInsideStatic |
@@ -3266,7 +3281,7 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 // Handle Revm EOF InstructionResults: Not supported yet
                 InstructionResult::ReturnContractInNotInitEOF |
                 InstructionResult::EOFOpcodeDisabledInLegacy |
-                InstructionResult::EOFFunctionStackOverflow |
+                InstructionResult::SubRoutineStackOverflow |
                 InstructionResult::CreateInitCodeStartingEF00 |
                 InstructionResult::InvalidEOFInitCode |
                 InstructionResult::EofAuxDataOverflow |

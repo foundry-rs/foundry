@@ -29,6 +29,7 @@ foundry-common.workspace = true
 foundry-compilers = { workspace = true, features = ["full"] }
 foundry-config.workspace = true
 foundry-evm.workspace = true
+foundry-evm-core.workspace = true
 foundry-wallets.workspace = true
 foundry-linking.workspace = true
 forge-script-sequence.workspace = true
@@ -62,6 +63,8 @@ alloy-rpc-types.workspace = true
 alloy-serde.workspace = true
 alloy-signer.workspace = true
 alloy-transport.workspace = true
+
+revm.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete = "4"
@@ -100,9 +103,6 @@ opener = "0.7"
 soldeer-commands.workspace = true
 quick-junit = "0.5.0"
 
-[target.'cfg(unix)'.dependencies]
-tikv-jemallocator = { workspace = true, optional = true }
-
 [dev-dependencies]
 anvil.workspace = true
 foundry-test-utils.workspace = true
@@ -122,7 +122,7 @@ alloy-signer-local.workspace = true
 [features]
 default = ["jemalloc"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
-jemalloc = ["dep:tikv-jemallocator"]
+jemalloc = ["foundry-cli/jemalloc"]
 aws-kms = ["foundry-wallets/aws-kms"]
 gcp-kms = ["foundry-wallets/gcp-kms"]
 isolate-by-default = ["foundry-config/isolate-by-default"]
