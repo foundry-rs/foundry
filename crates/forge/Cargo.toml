@@ -24,6 +24,7 @@ foundry-common.workspace = true
 foundry-compilers = { workspace = true, features = ["full"] }
 foundry-config.workspace = true
 foundry-evm.workspace = true
+foundry-evm-core.workspace = true
 foundry-wallets.workspace = true
 foundry-linking.workspace = true
 forge-script-sequence.workspace = true
@@ -56,6 +57,8 @@ alloy-rpc-types.workspace = true
 alloy-serde.workspace = true
 alloy-signer.workspace = true
 alloy-transport.workspace = true
+
+revm.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete = "4"
