@@ -1,6 +1,6 @@
 use super::eip712::Resolver;
 use clap::{Parser, ValueHint};
-use eyre::{eyre, Result};
+use eyre::Result;
 use foundry_cli::{
     opts::{solar_pcx_from_solc_project, BuildOpts},
     utils::LoadConfig,
@@ -264,8 +264,10 @@ impl PreprocessedState {
 
         let input = SolcVersionedInput::build(sources, settings, SolcLanguage::Solidity, version);
 
-        let sess = Session::builder().with_stderr_emitter().build();
-        let _ = sess.enter_parallel(|| -> Result<()> {
+        let mut sess = Session::builder().with_stderr_emitter().build();
+        sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
+
+        let result = sess.enter_parallel(|| -> Result<()> {
             // Set up the parsing context with the project paths, without adding the source files
             let mut parsing_context = solar_pcx_from_solc_project(&sess, &project, &input, false);
 
@@ -296,14 +298,9 @@ impl PreprocessedState {
 
             // Parse and resolve
             let hir_arena = ThreadLocal::new();
-            if let Some(gcx) = parsing_context.parse_and_lower(&hir_arena).map_err(|_| {
-                eyre!(
-                    "error
-                   parsing"
-                )
-            })? {
+            if let Ok(Some(gcx)) = parsing_context.parse_and_lower(&hir_arena) {
                 let hir = &gcx.get().hir;
-                let resolver = Resolver::new(hir);
+                let resolver = Resolver::new(gcx);
                 for id in &resolver.struct_ids() {
                     if let Some(schema) = resolver.resolve_struct_eip712(*id) {
                         let def = hir.strukt(*id);
@@ -335,6 +332,8 @@ impl PreprocessedState {
             }
             Ok(())
         });
+
+        eyre::ensure!(result.is_ok() && sess.dcx.has_errors().is_ok(), "failed parsing");
 
         Ok(StructsState { structs_to_write, target_path })
     }
