@@ -314,7 +314,7 @@ impl MultiForkHandler {
             Request::CreateFork(fork, sender) => self.create_fork(*fork, sender),
             Request::GetFork(fork_id, sender) => {
                 let fork = self.forks.get(&fork_id).map(|f| f.backend.clone());
-                let _ = sender.send(fork.into());
+                let _ = sender.send(fork);
             }
             Request::RollFork(fork_id, block, sender) => {
                 if let Some(fork) = self.forks.get(&fork_id) {
