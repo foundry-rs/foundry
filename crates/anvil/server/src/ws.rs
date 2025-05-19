@@ -45,7 +45,7 @@ impl Sink<String> for SocketConn {
     }
 
     fn start_send(self: Pin<&mut Self>, item: String) -> Result<(), Self::Error> {
-        self.project().0.start_send(Message::Text(item))
+        self.project().0.start_send(Message::Text(item.into()))
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {

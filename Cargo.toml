@@ -285,7 +285,7 @@ chrono = { version = "0.4", default-features = false, features = [
     "clock",
     "std",
 ] }
-axum = "0.7"
+axum = "0.8"
 ciborium = "0.2"
 color-eyre = "0.6"
 comfy-table = "7"
@@ -335,10 +335,14 @@ yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 path-slash = "0.2"
 jiff = "0.2"
 
+## Pinned dependencies. Enabled for the workspace in crates/test-utils.
+
 # Use unicode-rs which has a smaller binary size than the default ICU4X as the IDNA backend, used
 # by the `url` crate.
 # See the `idna_adapter` README.md for more details: https://docs.rs/crate/idna_adapter/latest
 idna_adapter = "=1.1.0"
+# Avoid duplicating `zip 2` and `zip 3`. Remove once all `zip` dependencies are updated to `zip 3`.
+zip-extract = "=0.2.1"
 
 [patch.crates-io]
 ## alloy-core
