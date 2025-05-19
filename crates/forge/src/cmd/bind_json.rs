@@ -116,7 +116,10 @@ impl BindJsonArgs {
         });
         eyre::ensure!(result.is_ok(), "failed parsing");
 
-        // Insert empty bindings file.
+        // Insert empty file, overriding any previous bindings.
+        //
+        // Solar only parses files present on disk, so the placeholder file has to be written and
+        // and then registered in `sources`.
         if let Some(parent) = target_path.parent() {
             fs::create_dir_all(parent)?;
         }
