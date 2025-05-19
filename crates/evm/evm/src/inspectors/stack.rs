@@ -205,7 +205,6 @@ impl InspectorStackBuilder {
         stack.collect_logs(logs.unwrap_or(true));
         stack.print(print.unwrap_or(false));
         stack.tracing(trace_mode);
-        stack.revert_diagnostic(!trace_mode.is_none());
 
         stack.enable_isolation(enable_isolation);
         stack.odyssey(odyssey);
@@ -436,8 +435,15 @@ impl InspectorStack {
     }
 
     /// Set whether to enable the tracer.
+    /// Revert diagnostic inspector is activated when `mode != TraceMode::None`
     #[inline]
     pub fn tracing(&mut self, mode: TraceMode) {
+        if mode.is_none() {
+            self.revert_diag = None;
+        } else {
+            self.revert_diag = Some(RevertDiagnostic::default());
+        }
+
         if let Some(config) = mode.into_config() {
             *self.tracer.get_or_insert_with(Default::default).config_mut() = config;
         } else {
@@ -450,12 +456,6 @@ impl InspectorStack {
     pub fn script(&mut self, script_address: Address) {
         self.script_execution_inspector.get_or_insert_with(Default::default).script_address =
             script_address;
-    }
-
-    /// Set the revert diagnostic inspector.
-    #[inline]
-    pub fn revert_diagnostic(&mut self, yes: bool) {
-        self.revert_diag = yes.then(RevertDiagnostic::default)
     }
 
     /// Collects all the data gathered during inspection into a single struct.

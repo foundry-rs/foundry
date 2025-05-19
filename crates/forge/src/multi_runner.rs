@@ -332,7 +332,6 @@ impl TestRunnerConfig {
         inspector.collect_coverage(self.coverage);
         inspector.enable_isolation(self.isolation);
         inspector.odyssey(self.odyssey);
-        inspector.revert_diagnostic(true);
         // inspector.set_create2_deployer(self.evm_opts.create2_deployer);
 
         // executor.env_mut().clone_from(&self.env);
