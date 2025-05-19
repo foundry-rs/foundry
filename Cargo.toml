@@ -338,7 +338,7 @@ jiff = "0.2"
 # See the `idna_adapter` README.md for more details: https://docs.rs/crate/idna_adapter/latest
 idna_adapter = "=1.1.0"
 # Avoid duplicating `zip 2` and `zip 3`. Remove once all `zip` dependencies are updated to `zip 3`.
-zip-extract = "=0.2.2"
+zip-extract = "=0.2.1"
 
 [patch.crates-io]
 ## alloy-core
