@@ -50,7 +50,6 @@ pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
         error: Ok(()),
     };
     let spec = ctx.cfg.spec;
-    let is_odyssey = inspector.is_odyssey();
 
     let mut evm = FoundryEvm {
         inner: RevmEvm::new_with_inspector(
@@ -61,7 +60,7 @@ pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
         ),
     };
 
-    inject_precompiles(&mut evm, is_odyssey);
+    inject_precompiles(&mut evm);
 
     evm
 }
@@ -71,7 +70,6 @@ pub fn new_evm_with_existing_context<'a>(
     inspector: &'a mut dyn InspectorExt,
 ) -> FoundryEvm<'a, &'a mut dyn InspectorExt> {
     let spec = ctx.cfg.spec;
-    let is_odyssey = inspector.is_odyssey();
 
     let mut evm = FoundryEvm {
         inner: RevmEvm::new_with_inspector(
@@ -82,14 +80,14 @@ pub fn new_evm_with_existing_context<'a>(
         ),
     };
 
-    inject_precompiles(&mut evm, is_odyssey);
+    inject_precompiles(&mut evm);
 
     evm
 }
 
 /// Conditionally inject additional precompiles into the EVM context.
-fn inject_precompiles(evm: &mut FoundryEvm<'_, impl InspectorExt>, is_odyssey: bool) {
-    if is_odyssey {
+fn inject_precompiles(evm: &mut FoundryEvm<'_, impl InspectorExt>) {
+    if evm.inspector_mut().is_odyssey() {
         evm.precompiles_mut().apply_precompile(P256VERIFY.address(), |_| {
             Some(DynPrecompile::from(P256VERIFY.precompile()))
         });
@@ -182,7 +180,7 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
     }
 
     fn inspector_mut(&mut self) -> &mut Self::Inspector {
-        unimplemented!("Inspector is not mutable")
+        &mut self.inner.inspector
     }
 
     fn set_inspector_enabled(&mut self, _enabled: bool) {
