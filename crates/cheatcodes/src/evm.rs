@@ -588,7 +588,7 @@ impl Cheatcode for coolCall {
         let Self { target } = self;
         if let Some(account) = ccx.ecx.journaled_state.state.get_mut(target) {
             account.unmark_touch();
-            account.storage.clear();
+            account.storage.values_mut().for_each(|slot| slot.mark_cold());
         }
         Ok(Default::default())
     }
