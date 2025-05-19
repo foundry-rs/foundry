@@ -283,6 +283,7 @@ impl_from!(
     alloy_sol_types::Error,
     alloy_dyn_abi::Error,
     alloy_primitives::SignatureError,
+    alloy_consensus::crypto::RecoveryError,
     eyre::Report,
     FsPathError,
     hex::FromHexError,
