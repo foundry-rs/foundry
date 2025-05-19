@@ -48,7 +48,6 @@ use alloy_eips::{
         EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
         LEGACY_TX_TYPE_ID,
     },
-    eip4844::MAX_BLOBS_PER_BLOCK_DENCUN,
     eip7840::BlobParams,
 };
 use alloy_evm::{eth::EthEvmContext, Database, Evm};
@@ -3183,13 +3182,9 @@ impl TransactionValidator for Backend {
             }
 
             // Ensure the tx does not exceed the max blobs per block.
-            if blob_count > MAX_BLOBS_PER_BLOCK_DENCUN ||
-                blob_count > self.blob_params().max_blob_count as usize
-            {
-                return Err(InvalidTransactionError::TooManyBlobs(
-                    blob_count,
-                    MAX_BLOBS_PER_BLOCK_DENCUN,
-                ))
+            let max_blob_count = self.blob_params().max_blob_count as usize;
+            if blob_count > max_blob_count {
+                return Err(InvalidTransactionError::TooManyBlobs(blob_count, max_blob_count))
             }
 
             // Check for any blob validation errors if not impersonating.
