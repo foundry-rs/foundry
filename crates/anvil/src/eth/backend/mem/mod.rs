@@ -26,14 +26,12 @@ use crate::{
         sign::build_typed_transaction,
         util::get_precompiles_for,
     },
-    // inject_precompiles,
+    inject_precompiles,
     mem::{
         inspector::AnvilInspector,
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
     },
-    ForkChoice,
-    NodeConfig,
-    PrecompileFactory,
+    ForkChoice, NodeConfig, PrecompileFactory,
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
@@ -50,7 +48,7 @@ use alloy_eips::{
     },
     eip7840::BlobParams,
 };
-use alloy_evm::{eth::EthEvmContext, Database, Evm};
+use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap, Database, Evm};
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
     EthereumWallet, UnknownTxEnvelope, UnknownTypedTransaction,
@@ -101,7 +99,7 @@ use foundry_evm::{
     inspectors::AccessListInspector,
     traces::TracingInspectorConfig,
 };
-use foundry_evm_core::{either_evm::EitherEvm, evm::FoundryPrecompiles};
+use foundry_evm_core::either_evm::EitherEvm;
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
 use op_revm::{
@@ -1100,7 +1098,7 @@ impl Backend {
     ) -> EitherEvm<
         WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>,
         &'db mut I,
-        FoundryPrecompiles,
+        PrecompilesMap,
     >
     where
         I: Inspector<EthEvmContext<WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>>>
@@ -1108,11 +1106,13 @@ impl Backend {
         WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>:
             Database<Error = DatabaseError>,
     {
-        new_evm_with_inspector_ref(db, env, inspector)
-        // TODO(yash): inject precompiles
-        // if let Some(factory) = &self.precompile_factory {
-        //     inject_precompiles(&mut evm, factory.precompiles());
-        // }
+        let mut evm = new_evm_with_inspector_ref(db, env, inspector);
+
+        if let Some(factory) = &self.precompile_factory {
+            inject_precompiles(&mut evm, factory.precompiles());
+        }
+
+        evm
     }
 
     /// executes the transactions without writing to the underlying database
