@@ -179,7 +179,10 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                     NamedChain::Moonbeam |
                     NamedChain::MoonbeamDev |
                     NamedChain::Moonriver |
-                    NamedChain::Metis
+                    NamedChain::Metis |
+                    NamedChain::Abstract |
+                    NamedChain::ZkSync |
+                    NamedChain::ZkSyncTestnet
             );
     }
     false
