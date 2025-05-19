@@ -834,12 +834,7 @@ impl Default for RawCallResult {
             coverage: None,
             transactions: None,
             state_changeset: HashMap::default(),
-            env: Env::new_with_spec_id(
-                Default::default(),
-                Default::default(),
-                Default::default(),
-                SpecId::default(),
-            ),
+            env: Env::default(),
             cheatcodes: Default::default(),
             out: None,
             chisel_state: None,

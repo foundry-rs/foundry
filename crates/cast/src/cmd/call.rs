@@ -30,6 +30,7 @@ use foundry_evm::{
     traces::{InternalTraceMode, TraceMode},
 };
 use regex::Regex;
+use revm::context::TransactionType;
 use std::{str::FromStr, sync::LazyLock};
 
 // matches override pattern <address>:<slot>:<value>
@@ -265,9 +266,18 @@ impl CallArgs {
             let value = tx.value.unwrap_or_default();
             let input = tx.inner.input.into_input().unwrap_or_default();
             let tx_kind = tx.inner.to.expect("set by builder");
+            let env_tx = &mut executor.env_mut().tx;
+
+            if let Some(tx_type) = tx.inner.transaction_type {
+                env_tx.tx_type = tx_type;
+            }
 
             if let Some(access_list) = tx.inner.access_list {
-                executor.env_mut().tx.access_list = access_list;
+                env_tx.access_list = access_list;
+
+                if env_tx.tx_type == TransactionType::Legacy as u8 {
+                    env_tx.tx_type = TransactionType::Eip2930 as u8;
+                }
             }
 
             let trace = match tx_kind {

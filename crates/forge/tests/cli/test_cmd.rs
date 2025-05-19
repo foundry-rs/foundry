@@ -3598,3 +3598,47 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
 });
+
+// <https://github.com/foundry-rs/foundry/issues/10544>
+forgetest_init!(should_not_panic_on_cool, |prj, cmd| {
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CounterTest is Test {
+    Counter counter = new Counter();
+
+    function testCoolPanic() public {
+        address alice = makeAddr("alice");
+        vm.deal(alice, 10000 ether);
+        counter.setNumber(1);
+        vm.cool(address(counter));
+        vm.prank(alice);
+        payable(address(counter)).transfer(1 ether);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mc", "CounterTest"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Counter.t.sol:CounterTest
+[FAIL: EvmError: Revert] testCoolPanic() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/Counter.t.sol:CounterTest
+[FAIL: EvmError: Revert] testCoolPanic() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+"#]]);
+});

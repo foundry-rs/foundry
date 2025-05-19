@@ -140,9 +140,11 @@ where
     }
 
     fn call(&mut self, ecx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
-        call_inspectors!([&mut self.tracer, &mut self.log_collector], |inspector| inspector
-            .call(ecx, inputs)
-            .map(Some),);
+        call_inspectors!(
+            #[ret]
+            [&mut self.tracer, &mut self.log_collector],
+            |inspector| inspector.call(ecx, inputs).map(Some),
+        );
         None
     }
 

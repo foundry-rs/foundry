@@ -1,11 +1,15 @@
 use super::fork::environment;
-use crate::{constants::DEFAULT_CREATE2_DEPLOYER, fork::CreateFork, EvmEnv};
+use crate::{
+    constants::DEFAULT_CREATE2_DEPLOYER,
+    fork::{configure_env, CreateFork},
+    EvmEnv,
+};
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{network::AnyRpcBlock, Provider};
 use eyre::WrapErr;
 use foundry_common::{provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS};
 use foundry_config::{Chain, Config, GasLimit};
-use revm::context::{BlockEnv, CfgEnv, TxEnv};
+use revm::context::{BlockEnv, TxEnv};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use url::Url;
@@ -143,16 +147,11 @@ impl EvmOpts {
 
     /// Returns the `revm::Env` configured with only local settings
     pub fn local_evm_env(&self) -> crate::Env {
-        let mut cfg = CfgEnv::default();
-        cfg.chain_id = self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID);
-        cfg.limit_contract_code_size = self.env.code_size_limit.or(Some(usize::MAX));
-        cfg.memory_limit = self.memory_limit;
-        // EIP-3607 rejects transactions from senders with deployed code.
-        // If EIP-3607 is enabled it can cause issues during fuzz/invariant tests if the
-        // caller is a contract. So we disable the check by default.
-        cfg.disable_eip3607 = true;
-        cfg.disable_block_gas_limit = self.disable_block_gas_limit;
-        cfg.disable_nonce_check = true;
+        let cfg = configure_env(
+            self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID),
+            self.memory_limit,
+            self.disable_block_gas_limit,
+        );
 
         crate::Env {
             evm_env: EvmEnv {
