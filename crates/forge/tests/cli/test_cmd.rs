@@ -3551,6 +3551,13 @@ contract CounterTest is Test {
     mapping(uint256 => SomeStruct) internal data;
 
     function setUp() public {
+        // Temporary workaround for `https://eth.llamarpc.com/` being down
+        setChain("mainnet", ChainData({
+            name: "mainnet",
+            rpcUrl: "https://reth-ethereum.ithaca.xyz/rpc",
+            chainId: 1
+        }));
+
         StdChains.Chain memory chain1 = getChain("mainnet");
         StdChains.Chain memory chain2 = getChain("base");
         Domain memory domain1 = Domain(chain1, vm.createFork(chain1.rpcUrl, 22253716));
