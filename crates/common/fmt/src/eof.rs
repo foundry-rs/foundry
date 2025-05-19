@@ -1,8 +1,6 @@
 use alloy_primitives::hex;
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, ContentArrangement, Table};
-use revm::bytecode::{
-    Eof,
-};
+use revm::bytecode::Eof;
 use std::fmt::{self, Write};
 
 pub fn pretty_eof(eof: &Eof) -> Result<String, fmt::Error> {
