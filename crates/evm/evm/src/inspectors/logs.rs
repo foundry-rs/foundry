@@ -25,15 +25,13 @@ pub struct LogCollector {
 
 impl LogCollector {
     #[cold]
-    fn do_hardhat_log<CTX, D>(
+    fn do_hardhat_log<CTX>(
         &mut self,
         context: &mut CTX,
         inputs: &CallInputs,
     ) -> Option<CallOutcome>
     where
-        D: Database<Error = DatabaseError>,
-        CTX: ContextTr<Db = D>,
-        CTX::Journal: JournalExt,
+        CTX: ContextTr<Db: Database<Error = DatabaseError>, Journal: JournalExt>,
     {
         if let Err(err) = self.hardhat_log(&inputs.input.bytes(context)) {
             let result = InstructionResult::Revert;
