@@ -64,3 +64,5 @@ tracing-subscriber.workspace = true
 default = ["jemalloc"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
+mimalloc = ["foundry-cli/mimalloc"]
+tracy-allocator = ["foundry-cli/tracy-allocator"]
