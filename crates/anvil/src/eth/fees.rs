@@ -1,17 +1,3 @@
-use crate::eth::{
-    backend::{info::StorageInfo, notifications::NewBlockNotifications},
-    error::BlockchainError,
-};
-use alloy_consensus::Header;
-use alloy_eips::{
-    calc_next_block_base_fee, eip1559::BaseFeeParams, eip4844::MAX_DATA_GAS_PER_BLOCK,
-    eip7840::BlobParams,
-};
-use alloy_primitives::B256;
-use anvil_core::eth::transaction::TypedTransaction;
-use foundry_evm::revm::primitives::{BlobExcessGasAndPrice, SpecId};
-use futures::StreamExt;
-use parking_lot::{Mutex, RwLock};
 use std::{
     collections::BTreeMap,
     fmt,
@@ -19,6 +5,22 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
+};
+
+use alloy_consensus::Header;
+use alloy_eips::{
+    calc_next_block_base_fee, eip1559::BaseFeeParams, eip7691::MAX_BLOBS_PER_BLOCK_ELECTRA,
+    eip7840::BlobParams,
+};
+use alloy_primitives::B256;
+use anvil_core::eth::transaction::TypedTransaction;
+use futures::StreamExt;
+use parking_lot::{Mutex, RwLock};
+use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork::SpecId};
+
+use crate::eth::{
+    backend::{info::StorageInfo, notifications::NewBlockNotifications},
+    error::BlockchainError,
 };
 
 /// Maximum number of entries in the fee history cache
@@ -54,7 +56,7 @@ pub struct FeeManager {
     /// Tracks the excess blob gas, and the base fee, for the next block post Cancun
     ///
     /// This value will be updated after a new block was mined
-    blob_excess_gas_and_price: Arc<RwLock<foundry_evm::revm::primitives::BlobExcessGasAndPrice>>,
+    blob_excess_gas_and_price: Arc<RwLock<BlobExcessGasAndPrice>>,
     /// The base price to use Pre London
     ///
     /// This will be constant value unless changed manually
@@ -121,7 +123,7 @@ impl FeeManager {
 
     pub fn excess_blob_gas_and_price(&self) -> Option<BlobExcessGasAndPrice> {
         if self.is_eip4844() {
-            Some(self.blob_excess_gas_and_price.read().clone())
+            Some(*self.blob_excess_gas_and_price.read())
         } else {
             None
         }
@@ -158,8 +160,8 @@ impl FeeManager {
     /// Calculates the base fee for the next block
     pub fn get_next_block_base_fee_per_gas(
         &self,
-        gas_used: u128,
-        gas_limit: u128,
+        gas_used: u64,
+        gas_limit: u64,
         last_fee_per_gas: u64,
     ) -> u64 {
         // It's naturally impossible for base fee to be 0;
@@ -178,18 +180,14 @@ impl FeeManager {
 
     /// Calculates the next block blob excess gas, using the provided parent blob gas used and
     /// parent blob excess gas
-    pub fn get_next_block_blob_excess_gas(
-        &self,
-        blob_gas_used: u128,
-        blob_excess_gas: u128,
-    ) -> u64 {
-        alloy_eips::eip4844::calc_excess_blob_gas(blob_gas_used as u64, blob_excess_gas as u64)
+    pub fn get_next_block_blob_excess_gas(&self, blob_gas_used: u64, blob_excess_gas: u64) -> u64 {
+        alloy_eips::eip4844::calc_excess_blob_gas(blob_gas_used, blob_excess_gas)
     }
 }
 
 /// Calculate base fee for next block. [EIP-1559](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1559.md) spec
-pub fn calculate_next_block_base_fee(gas_used: u128, gas_limit: u128, base_fee: u64) -> u64 {
-    calc_next_block_base_fee(gas_used as u64, gas_limit as u64, base_fee, BaseFeeParams::ethereum())
+pub fn calculate_next_block_base_fee(gas_used: u64, gas_limit: u64, base_fee: u64) -> u64 {
+    calc_next_block_base_fee(gas_used, gas_limit, base_fee, BaseFeeParams::ethereum())
 }
 
 /// An async service that takes care of the `FeeHistory` cache
@@ -268,7 +266,7 @@ impl FeeHistoryService {
             let blob_gas_used = block.header.blob_gas_used.map(|g| g as f64);
             item.gas_used_ratio = gas_used / block.header.gas_limit as f64;
             item.blob_gas_used_ratio =
-                blob_gas_used.map(|g| g / MAX_DATA_GAS_PER_BLOCK as f64).unwrap_or(0 as f64);
+                blob_gas_used.map(|g| g / MAX_BLOBS_PER_BLOCK_ELECTRA as f64).unwrap_or(0 as f64);
 
             // extract useful tx info (gas_used, effective_reward)
             let mut transactions: Vec<(_, _)> = receipts
