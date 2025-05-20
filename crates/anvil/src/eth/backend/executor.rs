@@ -33,7 +33,7 @@ use revm::{
     database::WrapDatabaseRef,
     handler::{instructions::EthInstructions, EthPrecompiles},
     interpreter::InstructionResult,
-    precompile::{PrecompileSpecId, Precompiles},
+    precompile::{secp256r1::P256VERIFY, PrecompileSpecId, Precompiles},
     primitives::hardfork::SpecId,
     Database, DatabaseRef, Inspector, Journal,
 };
@@ -326,6 +326,11 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
 
         let exec_result = {
             let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
+
+            if self.odyssey {
+                inject_precompiles(&mut evm, vec![P256VERIFY]);
+            }
+
             if let Some(factory) = &self.precompile_factory {
                 inject_precompiles(&mut evm, factory.precompiles());
             }
@@ -426,9 +431,7 @@ where
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
 {
     if env.is_optimism {
-        // TODO: we currently pin to `OpSpecId::BEDROCK` as it is primarily used in the context of
-        // testing deposit transactions. We should make this configurable in the future.
-        let op_cfg = env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::BEDROCK);
+        let op_cfg = env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::ISTHMUS);
         let op_context = OpContext {
             journaled_state: {
                 let mut journal = Journal::new(db);
