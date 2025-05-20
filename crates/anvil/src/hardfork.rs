@@ -104,8 +104,6 @@ impl FromStr for EthereumHardfork {
             "paris" | "merge" | "15" => Self::Paris,
             "shanghai" | "16" => Self::Shanghai,
             "cancun" | "17" => Self::Cancun,
-            "prague" | "18" => Self::Prague,
-            "pragueeof" | "19" | "prague-eof" => Self::PragueEOF,
             "latest" => Self::Latest,
             _ => bail!("Unknown hardfork {s}"),
         };
@@ -134,9 +132,6 @@ impl From<EthereumHardfork> for SpecId {
             EthereumHardfork::Shanghai => Self::SHANGHAI,
             EthereumHardfork::Cancun | EthereumHardfork::Latest => Self::CANCUN,
             EthereumHardfork::Prague => Self::PRAGUE,
-            // TODO: switch to latest after activation
-            // EOF is included in OSAKA from Revm 16.0.0
-            EthereumHardfork::PragueEOF => Self::OSAKA,
         }
     }
 }

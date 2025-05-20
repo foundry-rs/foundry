@@ -21,7 +21,7 @@ use foundry_compilers::{
     artifacts::{
         output_selection::{ContractOutputSelection, OutputSelection},
         remappings::{RelativeRemapping, Remapping},
-        serde_helpers, BytecodeHash, DebuggingSettings, EofVersion, EvmVersion, Libraries,
+        serde_helpers, BytecodeHash, DebuggingSettings, EvmVersion, Libraries,
         ModelCheckerSettings, ModelCheckerTarget, Optimizer, OptimizerDetails, RevertStrings,
         Settings, SettingsMetadata, Severity,
     },
@@ -1524,6 +1524,7 @@ impl Config {
             remappings: Vec::new(),
             // Set with `with_extra_output` below.
             output_selection: Default::default(),
+            eof_version: None,
         }
         .with_extra_output(self.configured_artifacts_handler().output_selection());
 

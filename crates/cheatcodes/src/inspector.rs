@@ -99,7 +99,7 @@ pub trait CheatcodesExecutor {
             let frame = FrameInput::Create(Box::new(inputs));
 
             let outcome = match evm.run_execution(frame)? {
-                FrameResult::Call(_) | FrameResult::EOFCreate(create) => unreachable!(),
+                FrameResult::Call(_) | FrameResult::EOFCreate(_) => unreachable!(),
                 FrameResult::Create(create) => create,
             };
 
