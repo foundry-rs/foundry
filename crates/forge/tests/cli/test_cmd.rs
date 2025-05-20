@@ -3696,7 +3696,7 @@ contract NonContractCallRevertTest is Test {
 Compiler run successful!
 
 Ran 3 tests for test/NonContractCallRevertTest.t.sol:NonContractCallRevertTest
-[FAIL: EvmError: call to non-contract address `0xdEADBEeF00000000000000000000000000000000`] test_non_contract_call_failure() ([GAS])
+[FAIL: call to non-contract address 0xdEADBEeF00000000000000000000000000000000] test_non_contract_call_failure() ([GAS])
 Logs:
   test non contract call failure
 
@@ -3706,9 +3706,9 @@ Traces:
     │   └─ ← [Stop]
     ├─ [0] 0xdEADBEeF00000000000000000000000000000000::number()
     │   └─ ← [Stop]
-    └─ ← [Revert] EvmError: Revert
+    └─ ← [Revert] call to non-contract address 0xdEADBEeF00000000000000000000000000000000
 
-[FAIL: EvmError: call to non-contract address `0xdEADBEeF00000000000000000000000000000000`] test_non_contract_void_call_failure() ([GAS])
+[FAIL: call to non-contract address 0xdEADBEeF00000000000000000000000000000000] test_non_contract_void_call_failure() ([GAS])
 Logs:
   test non contract (void) call failure
 
@@ -3716,7 +3716,7 @@ Traces:
   [6215] NonContractCallRevertTest::test_non_contract_void_call_failure()
     ├─ [0] console::log("test non contract (void) call failure") [staticcall]
     │   └─ ← [Stop]
-    └─ ← [Revert] EvmError: Revert
+    └─ ← [Revert] call to non-contract address 0xdEADBEeF00000000000000000000000000000000
 
 [FAIL: EvmError: Revert] test_non_supported_selector_call_failure() ([GAS])
 Logs:
@@ -3736,8 +3736,8 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 3 failed, 0 skipped (3 total tests)
 
 Failing tests:
 Encountered 3 failing tests in test/NonContractCallRevertTest.t.sol:NonContractCallRevertTest
-[FAIL: EvmError: call to non-contract address `0xdEADBEeF00000000000000000000000000000000`] test_non_contract_call_failure() ([GAS])
-[FAIL: EvmError: call to non-contract address `0xdEADBEeF00000000000000000000000000000000`] test_non_contract_void_call_failure() ([GAS])
+[FAIL: call to non-contract address 0xdEADBEeF00000000000000000000000000000000] test_non_contract_call_failure() ([GAS])
+[FAIL: call to non-contract address 0xdEADBEeF00000000000000000000000000000000] test_non_contract_void_call_failure() ([GAS])
 [FAIL: EvmError: Revert] test_non_supported_selector_call_failure() ([GAS])
 
 Encountered a total of 3 failing tests, 0 tests succeeded
@@ -3795,12 +3795,12 @@ contract NonContractDelegateCallRevertTest is Test {
 Compiler run successful!
 
 Ran 1 test for test/NonContractDelegateCallRevertTest.t.sol:NonContractDelegateCallRevertTest
-[FAIL: EvmError: delegatecall to non-contract address `0xdEADBEeF00000000000000000000000000000000` (usually an unliked library)] test_unlinked_library_call_failure() ([GAS])
+[FAIL: delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)] test_unlinked_library_call_failure() ([GAS])
 Logs:
   Test: Simulating call to unlinked library
 
 Traces:
-  [255285] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
+  [255303] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
     ├─ [0] console::log("Test: Simulating call to unlinked library") [staticcall]
     │   └─ ← [Stop]
     ├─ [214746] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
@@ -3808,8 +3808,8 @@ Traces:
     ├─ [3896] LibraryCaller::foobar(10)
     │   ├─ [0] 0xdEADBEeF00000000000000000000000000000000::foo(10) [delegatecall]
     │   │   └─ ← [Stop]
-    │   └─ ← [Revert] EvmError: Revert
-    └─ ← [Revert] EvmError: Revert
+    │   └─ ← [Revert] delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)
+    └─ ← [Revert] delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
@@ -3817,7 +3817,7 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/NonContractDelegateCallRevertTest.t.sol:NonContractDelegateCallRevertTest
-[FAIL: EvmError: delegatecall to non-contract address `0xdEADBEeF00000000000000000000000000000000` (usually an unliked library)] test_unlinked_library_call_failure() ([GAS])
+[FAIL: delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)] test_unlinked_library_call_failure() ([GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 

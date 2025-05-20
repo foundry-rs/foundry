@@ -4,7 +4,7 @@ use super::{
 };
 use alloy_primitives::{map::AddressHashMap, Address, Bytes, Log, TxKind, U256};
 use foundry_cheatcodes::{CheatcodesExecutor, Wallets};
-use foundry_evm_core::{backend::DatabaseExt, decode::DetailedRevertReason, InspectorExt};
+use foundry_evm_core::{backend::DatabaseExt, InspectorExt};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
@@ -252,9 +252,6 @@ pub struct InspectorData {
     pub coverage: Option<HitMaps>,
     pub cheatcodes: Option<Cheatcodes>,
     pub chisel_state: Option<(Vec<U256>, Vec<u8>, InstructionResult)>,
-    /// Fallback reason for reverts.
-    /// Should only be used if no custom errors, or string errors can be decoded.
-    pub maybe_reason: Option<DetailedRevertReason>,
 }
 
 /// Contains data about the state of outer/main EVM which created and invoked the inner EVM context.
@@ -463,10 +460,7 @@ impl InspectorStack {
     pub fn collect(self) -> InspectorData {
         let Self {
             mut cheatcodes,
-            inner:
-                InspectorStackInner {
-                    chisel_state, coverage, log_collector, tracer, revert_diag, ..
-                },
+            inner: InspectorStackInner { chisel_state, coverage, log_collector, tracer, .. },
         } = self;
 
         let traces = tracer.map(|tracer| tracer.into_traces()).map(|arena| {
@@ -497,7 +491,6 @@ impl InspectorStack {
             coverage: coverage.map(|coverage| coverage.finish()),
             cheatcodes,
             chisel_state: chisel_state.and_then(|state| state.state),
-            maybe_reason: revert_diag.and_then(|diag| diag.reason()),
         }
     }
 

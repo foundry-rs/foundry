@@ -380,7 +380,7 @@ impl CallTraceDecoder {
                 {
                     let return_data = if !trace.success {
                         let revert_msg =
-                            self.revert_decoder.decode(&trace.output, Some(trace.status), None);
+                            self.revert_decoder.decode(&trace.output, Some(trace.status));
 
                         if trace.output.is_empty() || revert_msg.contains("EvmError: Revert") {
                             Some(format!(
@@ -467,7 +467,7 @@ impl CallTraceDecoder {
     /// Custom decoding for cheatcode inputs.
     fn decode_cheatcode_inputs(&self, func: &Function, data: &[u8]) -> Option<Vec<String>> {
         match func.name.as_str() {
-            "expectRevert" => Some(vec![self.revert_decoder.decode(data, None, None)]),
+            "expectRevert" => Some(vec![self.revert_decoder.decode(data, None)]),
             "addr" | "createWallet" | "deriveKey" | "rememberKey" => {
                 // Redact private key in all cases
                 Some(vec!["<pk>".to_string()])
@@ -528,7 +528,7 @@ impl CallTraceDecoder {
             "parseJsonBytes32Array" |
             "writeJson" |
             // `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
-            "keyExists" | 
+            "keyExists" |
             "keyExistsJson" |
             "serializeBool" |
             "serializeUint" |
@@ -544,7 +544,7 @@ impl CallTraceDecoder {
                     let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
                     let token = if func.name.as_str() == "parseJson" ||
                         // `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
-                        func.name.as_str() == "keyExists" || 
+                        func.name.as_str() == "keyExists" ||
                         func.name.as_str() == "keyExistsJson"
                     {
                         "<JSON file>"
@@ -654,8 +654,7 @@ impl CallTraceDecoder {
 
     /// The default decoded return data for a trace.
     fn default_return_data(&self, trace: &CallTrace) -> Option<String> {
-        (!trace.success)
-            .then(|| self.revert_decoder.decode(&trace.output, Some(trace.status), None))
+        (!trace.success).then(|| self.revert_decoder.decode(&trace.output, Some(trace.status)))
     }
 
     /// Decodes an event.

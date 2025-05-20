@@ -2301,7 +2301,7 @@ impl EthApi {
                                 .coerce_status()
                             {
                                 if let Some(reason) =
-                                    RevertDecoder::new().maybe_decode(&output, None, None)
+                                    RevertDecoder::new().maybe_decode(&output, None)
                                 {
                                     tx.other.insert(
                                         "revertReason".to_string(),
