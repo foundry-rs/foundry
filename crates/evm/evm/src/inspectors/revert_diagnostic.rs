@@ -1,18 +1,20 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolValue;
 use foundry_evm_core::{
-    backend::DatabaseExt,
+    backend::DatabaseError,
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
 };
 use revm::{
+    bytecode::opcode::{EXTCODESIZE, REVERT},
+    context::{Cfg, ContextTr, JournalTr},
+    inspector::JournalExt,
     interpreter::{
-        opcode::{EXTCODESIZE, REVERT},
-        CallInputs, CallOutcome, CallScheme, InstructionResult, Interpreter, InterpreterAction,
-        InterpreterResult,
+        interpreter::EthInterpreter, interpreter_types::Jumps, CallInputs, CallOutcome, CallScheme,
+        InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
     },
     precompile::{PrecompileSpecId, Precompiles},
-    primitives::SpecId,
-    Database, EvmContext, Inspector,
+    primitives::hardfork::SpecId,
+    Database, Inspector,
 };
 use std::fmt;
 
@@ -62,9 +64,9 @@ impl fmt::Display for DetailedRevertReason {
 #[derive(Clone, Debug, Default)]
 pub struct RevertDiagnostic {
     /// Tracks calls with calldata that target an address without executable code.
-    pub non_contract_call: Option<(Address, CallScheme, u64)>,
+    pub non_contract_call: Option<(Address, CallScheme, usize)>,
     /// Tracks EXTCODESIZE checks that target an address without executable code.
-    pub non_contract_size_check: Option<(Address, u64)>,
+    pub non_contract_size_check: Option<(Address, usize)>,
     /// Whether the step opcode is EXTCODESIZE or not.
     pub is_extcodesize_step: bool,
 }
@@ -109,11 +111,11 @@ impl RevertDiagnostic {
     /// Injects the revert diagnostic into the debug traces. Should only be called after a revert.
     fn handle_revert_diagnostic(&self, interp: &mut Interpreter) {
         if let Some(reason) = self.reason() {
-            interp.instruction_result = InstructionResult::Revert;
-            interp.next_action = InterpreterAction::Return {
+            interp.control.instruction_result = InstructionResult::Revert;
+            interp.control.next_action = InterpreterAction::Return {
                 result: InterpreterResult {
                     output: reason.to_string().abi_encode().into(),
-                    gas: interp.gas,
+                    gas: interp.control.gas,
                     result: InstructionResult::Revert,
                 },
             };
@@ -121,19 +123,24 @@ impl RevertDiagnostic {
     }
 }
 
-impl<DB: Database + DatabaseExt> Inspector<DB> for RevertDiagnostic {
+impl<CTX, D> Inspector<CTX, EthInterpreter> for RevertDiagnostic
+where
+    D: Database<Error = DatabaseError>,
+    CTX: ContextTr<Db = D>,
+    CTX::Journal: JournalExt,
+{
     /// Tracks the first call with non-zero calldata that targets a non-contract address. Excludes
     /// precompiles and test addresses.
-    fn call(&mut self, ctx: &mut EvmContext<DB>, inputs: &mut CallInputs) -> Option<CallOutcome> {
+    fn call(&mut self, ctx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         let target = self.code_target_address(inputs);
 
-        if IGNORE.contains(&target) || self.is_precompile(ctx.spec_id(), target) {
+        if IGNORE.contains(&target) || self.is_precompile(ctx.cfg().spec().into(), target) {
             return None;
         }
 
-        if let Ok(state) = ctx.code(target) {
+        if let Ok(state) = ctx.journal().code(target) {
             if state.is_empty() && !inputs.input.is_empty() {
-                self.non_contract_call = Some((target, inputs.scheme, ctx.journaled_state.depth()));
+                self.non_contract_call = Some((target, inputs.scheme, ctx.journal().depth()));
             }
         }
         None
@@ -150,14 +157,14 @@ impl<DB: Database + DatabaseExt> Inspector<DB> for RevertDiagnostic {
     /// When an `EXTCODESIZE` opcode occurs:
     ///  - Optimistically caches the target address and current depth in `non_contract_size_check`,
     ///    pending later validation.
-    fn step(&mut self, interp: &mut Interpreter, ctx: &mut EvmContext<DB>) {
+    fn step(&mut self, interp: &mut Interpreter, ctx: &mut CTX) {
         // REVERT (offset, size)
-        if REVERT == interp.current_opcode() {
-            if let Ok(size) = interp.stack().peek(1) {
+        if REVERT == interp.bytecode.opcode() {
+            if let Ok(size) = interp.stack.peek(1) {
                 if size == U256::ZERO {
                     // Check empty revert with same depth as a non-contract call
                     if let Some((_, _, depth)) = self.non_contract_call {
-                        if ctx.journaled_state.depth() == depth {
+                        if ctx.journal().depth() == depth {
                             self.handle_revert_diagnostic(interp);
                         } else {
                             self.non_contract_call = None;
@@ -167,7 +174,7 @@ impl<DB: Database + DatabaseExt> Inspector<DB> for RevertDiagnostic {
 
                     // Check empty revert with same depth as a non-contract size check
                     if let Some((_, depth)) = self.non_contract_size_check {
-                        if depth == ctx.journaled_state.depth() {
+                        if depth == ctx.journal().depth() {
                             self.handle_revert_diagnostic(interp);
                         } else {
                             self.non_contract_size_check = None;
@@ -177,24 +184,24 @@ impl<DB: Database + DatabaseExt> Inspector<DB> for RevertDiagnostic {
             }
         }
         // EXTCODESIZE (address)
-        else if EXTCODESIZE == interp.current_opcode() {
-            if let Ok(word) = interp.stack().peek(0) {
+        else if EXTCODESIZE == interp.bytecode.opcode() {
+            if let Ok(word) = interp.stack.peek(0) {
                 let addr = Address::from_word(word.into());
-                if IGNORE.contains(&addr) || self.is_precompile(ctx.spec_id(), addr) {
+                if IGNORE.contains(&addr) || self.is_precompile(ctx.cfg().spec().into(), addr) {
                     return;
                 }
 
                 // Optimistically cache --> validated and cleared (if necessary) at `fn step_end()`
-                self.non_contract_size_check = Some((addr, ctx.journaled_state.depth()));
+                self.non_contract_size_check = Some((addr, ctx.journal().depth()));
                 self.is_extcodesize_step = true;
             }
         }
     }
 
     /// Tracks `EXTCODESIZE` output. If the bytecode size is 0, clears the cache.
-    fn step_end(&mut self, interp: &mut Interpreter, _ctx: &mut EvmContext<DB>) {
+    fn step_end(&mut self, interp: &mut Interpreter, _ctx: &mut CTX) {
         if self.is_extcodesize_step {
-            if let Ok(size) = interp.stack().peek(0) {
+            if let Ok(size) = interp.stack.peek(0) {
                 if size != U256::ZERO {
                     self.non_contract_size_check = None;
                 }
