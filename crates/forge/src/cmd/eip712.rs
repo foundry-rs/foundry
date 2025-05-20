@@ -1,12 +1,12 @@
 use clap::{Parser, ValueHint};
-use eyre::{eyre, Result};
+use eyre::Result;
 use foundry_cli::opts::{solar_pcx_from_build_opts, BuildOpts};
 use solar_parse::interface::Session;
 use solar_sema::{
-    ast::LitKind,
-    hir::{Expr, ExprKind, ItemId, StructId, Type, TypeKind},
+    hir::StructId,
     thread_local::ThreadLocal,
-    Hir,
+    ty::{Ty, TyKind},
+    GcxWrapper, Hir,
 };
 use std::{collections::BTreeMap, fmt::Write, path::PathBuf};
 
@@ -28,19 +28,15 @@ impl Eip712Args {
         let mut sess = Session::builder().with_stderr_emitter().build();
         sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
 
-        let _ = sess.enter(|| -> Result<()> {
+        let result = sess.enter(|| -> Result<()> {
             // Set up the parsing context with the project paths and sources.
             let parsing_context =
                 solar_pcx_from_build_opts(&sess, self.build, Some(vec![self.target_path]))?;
 
             // Parse and resolve
             let hir_arena = ThreadLocal::new();
-            if let Some(gcx) =
-                parsing_context.parse_and_lower(&hir_arena).map_err(|_| eyre!("error parsing"))?
-            {
-                let hir = &gcx.get().hir;
-
-                let resolver = Resolver::new(hir);
+            if let Ok(Some(gcx)) = parsing_context.parse_and_lower(&hir_arena) {
+                let resolver = Resolver::new(gcx);
                 for id in &resolver.struct_ids() {
                     if let Some(resolved) = resolver.resolve_struct_eip712(*id) {
                         _ = sh_println!("{resolved}\n");
@@ -51,6 +47,8 @@ impl Eip712Args {
             Ok(())
         });
 
+        eyre::ensure!(result.is_ok() && sess.dcx.has_errors().is_ok(), "failed parsing");
+
         Ok(())
     }
 }
@@ -58,15 +56,15 @@ impl Eip712Args {
 /// Generates the EIP-712 `encodeType` string for a given struct.
 ///
 /// Requires a reference to the source HIR.
-#[derive(Debug)]
 pub struct Resolver<'hir> {
     hir: &'hir Hir<'hir>,
+    gcx: GcxWrapper<'hir>,
 }
 
 impl<'hir> Resolver<'hir> {
     /// Constructs a new [`Resolver`] for the supplied [`Hir`] instance.
-    pub fn new(hir: &'hir Hir<'hir>) -> Self {
-        Self { hir }
+    pub fn new(gcx: GcxWrapper<'hir>) -> Self {
+        Self { hir: &gcx.get().hir, gcx }
     }
 
     /// Returns the [`StructId`]s of every user-defined struct in source order.
@@ -96,7 +94,7 @@ impl<'hir> Resolver<'hir> {
 
         for (idx, field_id) in def.fields.iter().enumerate() {
             let field = self.hir.variable(*field_id);
-            let ty = self.resolve_type(&field.ty, subtypes)?;
+            let ty = self.resolve_type(self.gcx.get().type_of_hir_ty(&field.ty), subtypes)?;
 
             write!(result, "{ty} {name}", name = field.name?.as_str()).ok()?;
 
@@ -126,68 +124,55 @@ impl<'hir> Resolver<'hir> {
 
     fn resolve_type(
         &self,
-        ty: &'hir Type<'hir>,
+        ty: Ty<'hir>,
         subtypes: &mut BTreeMap<String, StructId>,
     ) -> Option<String> {
+        let ty = ty.peel_refs();
         match ty.kind {
-            TypeKind::Elementary(ty) => Some(ty.to_abi_str().to_string()),
-            TypeKind::Array(arr) => {
-                let inner_type = self.resolve_type(&arr.element, subtypes)?;
-                let size_str = arr.size.and_then(|expr| parse_array_size(expr)).unwrap_or_default();
-                Some(format!("{inner_type}[{size_str}]"))
+            TyKind::Elementary(elem_ty) => Some(elem_ty.to_abi_str().to_string()),
+            TyKind::Array(element_ty, size) => {
+                let inner_type = self.resolve_type(element_ty, subtypes)?;
+                let size = size.to_string();
+                Some(format!("{inner_type}[{size}]"))
             }
-            TypeKind::Custom(item_id) => {
-                match item_id {
-                    // For now, map enums to `uint8`
-                    ItemId::Enum(_) => Some("uint8".into()),
-                    // For now, map contracts to `address`
-                    ItemId::Contract(_) => Some("address".into()),
-                    // Resolve user-defined type alias to the original type
-                    ItemId::Udvt(id) => self.resolve_type(&self.hir.udvt(id).ty, subtypes),
-                    // Recursively resolve structs
-                    ItemId::Struct(id) => {
-                        let def = self.hir.strukt(id);
-                        let name =
-                            // If the struct was already resolved, use its previously assigned name
-                            if let Some((name, _)) = subtypes.iter().find(|(_, cached_id)| id == **cached_id) {
-                                name.to_string()
-                            } else {
-                                // Otherwise, assign new name
-                                let mut i = 0;
-                                let mut name = def.name.as_str().into();
-                                while subtypes.contains_key(&name) {
-                                    i += 1;
-                                    name = format!("{}_{i}", def.name.as_str());
-                                }
+            TyKind::DynArray(element_ty) => {
+                let inner_type = self.resolve_type(element_ty, subtypes)?;
+                Some(format!("{inner_type}[]"))
+            }
+            TyKind::Udvt(ty, _) => self.resolve_type(ty, subtypes),
+            TyKind::Struct(id) => {
+                let def = self.hir.strukt(id);
+                let name = match subtypes.iter().find(|(_, cached_id)| id == **cached_id) {
+                    Some((name, _)) => name.to_string(),
+                    None => {
+                        // Otherwise, assign new name
+                        let mut i = 0;
+                        let mut name = def.name.as_str().into();
+                        while subtypes.contains_key(&name) {
+                            i += 1;
+                            name = format!("{}_{i}", def.name.as_str());
+                        }
 
-                                subtypes.insert(name.clone(), id);
+                        subtypes.insert(name.clone(), id);
 
-                                // Recursively resolve fields to populate subtypes
-                                for field_id in def.fields {
-                                    let field_ty = &self.hir.variable(*field_id).ty;
-                                    self.resolve_type(field_ty, subtypes)?;
-                                }
-                                name
-                            };
-
-                        Some(name)
+                        // Recursively resolve fields to populate subtypes
+                        for field_id in def.fields {
+                            let field_ty =
+                                self.gcx.get().type_of_hir_ty(&self.hir.variable(*field_id).ty);
+                            self.resolve_type(field_ty, subtypes)?;
+                        }
+                        name
                     }
-                    // Rest of `ItemId` are not supported by EIP-712
-                    _ => None,
-                }
+                };
+
+                Some(name)
             }
-            // EIP-712 doesn't support functions, mappings, nor errors
-            TypeKind::Mapping(_) | TypeKind::Function { .. } | TypeKind::Err(_) => None,
+            // For now, map enums to `uint8`
+            TyKind::Enum(_) => Some("uint8".to_string()),
+            // For now, map contracts to `address`
+            TyKind::Contract(_) => Some("address".to_string()),
+            // EIP-712 doesn't support tuples (should use structs), functions, mappings, nor errors
+            _ => None,
         }
     }
-}
-
-fn parse_array_size<'hir>(expr: &Expr<'hir>) -> Option<String> {
-    if let ExprKind::Lit(lit) = &expr.kind {
-        if let LitKind::Number(int) = &lit.kind {
-            return Some(int.to_string());
-        }
-    }
-
-    None
 }

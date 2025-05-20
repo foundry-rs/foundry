@@ -17,7 +17,7 @@ use revm::{
     inspector::JournalExt,
     interpreter::{
         interpreter::EthInterpreter, CallInputs, CallOutcome, CreateInputs, CreateOutcome,
-        EOFCreateInputs, Interpreter,
+        Interpreter,
     },
     Database, Inspector,
 };
@@ -166,28 +166,6 @@ where
     fn create_end(&mut self, ecx: &mut CTX, inputs: &CreateInputs, outcome: &mut CreateOutcome) {
         if let Some(tracer) = &mut self.tracer {
             tracer.create_end(ecx, inputs, outcome);
-        }
-    }
-
-    #[inline]
-    fn eofcreate(&mut self, ecx: &mut CTX, inputs: &mut EOFCreateInputs) -> Option<CreateOutcome> {
-        if let Some(tracer) = &mut self.tracer {
-            if let Some(out) = tracer.eofcreate(ecx, inputs) {
-                return Some(out);
-            }
-        }
-        None
-    }
-
-    #[inline]
-    fn eofcreate_end(
-        &mut self,
-        ecx: &mut CTX,
-        inputs: &EOFCreateInputs,
-        outcome: &mut CreateOutcome,
-    ) {
-        if let Some(tracer) = &mut self.tracer {
-            tracer.eofcreate_end(ecx, inputs, outcome);
         }
     }
 
