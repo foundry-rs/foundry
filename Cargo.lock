@@ -4291,7 +4291,6 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-serde 1.0.4",
  "chrono",
- "comfy-table",
  "foundry-macros",
  "revm",
  "serde",
