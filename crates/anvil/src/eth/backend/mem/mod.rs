@@ -73,7 +73,7 @@ use alloy_rpc_types::{
     },
     AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
     EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
-    FilteredParams, Header as AlloyHeader, Index, Log, Transaction, TransactionReceipt,
+    Header as AlloyHeader, Index, Log, Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
 use alloy_signer::Signature;
@@ -2001,53 +2001,40 @@ impl Backend {
 
     /// Returns all `Log`s mined by the node that were emitted in the `block` and match the `Filter`
     fn mined_logs_for_block(&self, filter: Filter, block: Block) -> Vec<Log> {
-        let params = FilteredParams::new(Some(filter.clone()));
-        let mut all_logs = Vec::new();
-        let block_hash = block.header.hash_slow();
-        let mut block_log_index = 0u32;
+    let mut all_logs = Vec::new();
+    let block_hash = block.header.hash_slow();
+    let mut block_log_index = 0u32;
 
-        let storage = self.blockchain.storage.read();
+    let storage = self.blockchain.storage.read();
 
-        for tx in block.transactions {
-            let Some(tx) = storage.transactions.get(&tx.hash()) else {
-                continue;
-            };
-            let logs = tx.receipt.logs();
-            let transaction_hash = tx.info.transaction_hash;
+    for tx in block.transactions {
+        let Some(tx) = storage.transactions.get(&tx.hash()) else {
+            continue;
+        };
 
-            for log in logs {
-                let mut is_match: bool = true;
-                if !filter.address.is_empty() && filter.has_topics() {
-                    if !params.filter_address(&log.address) || !params.filter_topics(log.topics()) {
-                        is_match = false;
-                    }
-                } else if !filter.address.is_empty() {
-                    if !params.filter_address(&log.address) {
-                        is_match = false;
-                    }
-                } else if filter.has_topics() && !params.filter_topics(log.topics()) {
-                    is_match = false;
-                }
+        let logs = tx.receipt.logs();
+        let transaction_hash = tx.info.transaction_hash;
 
-                if is_match {
-                    let log = Log {
-                        inner: log.clone(),
-                        block_hash: Some(block_hash),
-                        block_number: Some(block.header.number),
-                        block_timestamp: Some(block.header.timestamp),
-                        transaction_hash: Some(transaction_hash),
-                        transaction_index: Some(tx.info.transaction_index),
-                        log_index: Some(block_log_index as u64),
-                        removed: false,
-                    };
-                    all_logs.push(log);
-                }
-                block_log_index += 1;
+        for log in logs {
+            if filter.matches(log) {
+                all_logs.push(Log {
+                    inner: log.clone(),
+                    block_hash: Some(block_hash),
+                    block_number: Some(block.header.number),
+                    block_timestamp: Some(block.header.timestamp),
+                    transaction_hash: Some(transaction_hash),
+                    transaction_index: Some(tx.info.transaction_index),
+                    log_index: Some(block_log_index as u64),
+                    removed: false,
+                });
             }
+            block_log_index += 1;
         }
-
-        all_logs
     }
+
+    all_logs
+}
+
 
     /// Returns the logs that match the filter in the given range of blocks
     async fn logs_for_range(
