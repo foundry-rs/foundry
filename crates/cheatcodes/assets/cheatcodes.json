@@ -4297,7 +4297,7 @@
     {
       "func": {
         "id": "eip712HashType",
-        "description": "Randomly shuffles an array.",
+        "description": "Generates the hash of the canonical EIP-712 type representation.\nSupports 2 different inputs:\n * Name of the type (i.e. \"Transaction\") --> requires previous binding generation with `forge bind-json`\n * String representation of the type (i.e. \"Foo(Bar bar) Bar(uint256 baz)\") --> the cheatcode\n   will output the canonical type even if the input is malformated (wrong order or whitespaces)",
         "declaration": "function eip712HashType(string memory typeDefinition) external pure returns (bytes32 typeHash);",
         "visibility": "external",
         "mutability": "pure",
