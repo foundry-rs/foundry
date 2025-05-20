@@ -323,7 +323,7 @@ impl Cheatcode for eip712HashTypeCall {
         let type_def = if !typeDefinition.contains('(') {
             get_type_def_from_bindings(typeDefinition, state)?
         } else {
-            EncodeType::parse(&typeDefinition).and_then(|parsed| parsed.canonicalize())?
+            EncodeType::parse(typeDefinition).and_then(|parsed| parsed.canonicalize())?
         };
 
         Ok(keccak256(type_def.as_bytes()).to_vec())
@@ -358,7 +358,7 @@ fn get_type_def_from_bindings(name: &String, state: &mut Cheatcodes) -> Result<S
                 if bindings.is_empty() {
                     String::new()
                 } else {
-                    format!("\nAvailable bindings:\n{}\n", bindings)
+                    format!("\nAvailable bindings:\n{bindings}\n")
                 }
             );
         }

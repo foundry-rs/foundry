@@ -3717,7 +3717,7 @@ contract Eip712Test is DSTest {
     cmd.forge_fuse().args(["bind-json"]).assert_success();
 
     let bindings = prj.root().join("utils").join("JsonBindings.sol");
-    assert!(bindings.exists(), "'JsonBindings.sol' was not generated at {:?}", bindings);
+    assert!(bindings.exists(), "'JsonBindings.sol' was not generated at {bindings:?}");
 
     prj.update_config(|config| config.fs_permissions.add(PathPermission::read(bindings)));
     cmd.forge_fuse().args(["test", "--mc", "Eip712Test", "-vvvv"]).assert_success();

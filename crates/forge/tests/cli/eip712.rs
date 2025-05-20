@@ -4,21 +4,34 @@ forgetest!(test_eip712, |prj, cmd| {
             "Structs",
             r#"
 library Structs {
-    struct Foo { Bar bar; }
-    struct Bar { Art art; }
-    struct Art { uint256 id; }
+    struct Foo {
+        Bar bar;
+    }
+    struct Bar {
+        Art art;
+    }
+    struct Art {
+        uint256 id;
+    }
     struct Complex {
         Structs2.Foo foo2;
         Foo[] foos;
         Rec[][] recs;
     }
-    struct Rec { Rec[] rec; }
+    struct Rec {
+        Rec[] rec;
+    }
 }
-
 library Structs2 {
-    struct Foo { uint256 id; }
-    struct Rec { Bar[] bar; }
-    struct Bar { Rec rec; }
+    struct Foo {
+        uint256 id;
+    }
+    struct Rec {
+        Bar[] bar;
+    }
+    struct Bar {
+        Rec rec;
+    }
     struct FooBar {
         Foo[] foos;
         Bar[] bars;
@@ -28,7 +41,7 @@ library Structs2 {
         Structs.Rec rec;
     }
 }
-    "#,
+"#,
         )
         .unwrap();
 
@@ -51,6 +64,7 @@ Rec(Bar[] bar)Bar(Rec rec)
 Bar(Rec rec)Rec(Bar[] bar)
 
 FooBar(Foo[] foos,Bar[] bars,Foo_1 foo,Bar_1 bar,Rec[] recs,Rec_1 rec)Art(uint256 id)Bar(Rec rec)Bar_1(Art art)Foo(uint256 id)Foo_1(Bar_1 bar)Rec(Bar[] bar)Rec_1(Rec_1[] rec)
+
 
 "#]],
     );
