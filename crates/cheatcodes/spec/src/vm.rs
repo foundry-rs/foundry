@@ -2228,9 +2228,17 @@ interface Vm {
     #[cheatcode(group = Scripting)]
     function signDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);
 
+    /// Sign an EIP-7702 authorization for delegation, with optional cross-chain validity.
+    #[cheatcode(group = Scripting)]
+    function signDelegation(address implementation, uint256 privateKey, bool crossChain) external returns (SignedDelegation memory signedDelegation);
+
     /// Designate the next call as an EIP-7702 transaction
     #[cheatcode(group = Scripting)]
     function attachDelegation(SignedDelegation calldata signedDelegation) external;
+
+    /// Designate the next call as an EIP-7702 transaction, with optional cross-chain validity.
+    #[cheatcode(group = Scripting)]
+    function attachDelegation(SignedDelegation calldata signedDelegation, bool crossChain) external;
 
     /// Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction
     #[cheatcode(group = Scripting)]
@@ -2239,6 +2247,10 @@ interface Vm {
     /// Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction for specific nonce
     #[cheatcode(group = Scripting)]
     function signAndAttachDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);
+
+    /// Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction, with optional cross-chain validity.
+    #[cheatcode(group = Scripting)]
+    function signAndAttachDelegation(address implementation, uint256 privateKey, bool crossChain) external returns (SignedDelegation memory signedDelegation);
 
     /// Attach an EIP-4844 blob to the next call
     #[cheatcode(group = Scripting)]

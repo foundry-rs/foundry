@@ -2,7 +2,7 @@
 
 use crate::abi::Greeter;
 use alloy_network::{ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{address, utils::Unit, Bytes, Uint, U256, U64};
+use alloy_primitives::{address, utils::Unit, Bytes, Uint, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
@@ -149,12 +149,12 @@ async fn can_preserve_historical_states_between_dump_and_load() {
     let greeter = Greeter::new(*address, provider);
 
     let greeting_at_init =
-        greeter.greet().block(BlockId::number(deploy_blk_num)).call().await.unwrap()._0;
+        greeter.greet().block(BlockId::number(deploy_blk_num)).call().await.unwrap();
 
     assert_eq!(greeting_at_init, "Hello");
 
     let greeting_after_change =
-        greeter.greet().block(BlockId::number(change_greeting_blk_num)).call().await.unwrap()._0;
+        greeter.greet().block(BlockId::number(change_greeting_blk_num)).call().await.unwrap();
 
     assert_eq!(greeting_after_change, "World!");
 }
@@ -262,7 +262,7 @@ async fn test_fork_load_state_with_greater_state_block() {
 
     let serialized_state = api.serialized_state(false).await.unwrap();
 
-    assert_eq!(serialized_state.best_block_number, Some(block_number.to::<U64>()));
+    assert_eq!(serialized_state.best_block_number, Some(block_number.to::<u64>()));
 
     let (api, _handle) = spawn(
         NodeConfig::test()
@@ -290,16 +290,17 @@ async fn computes_next_base_fee_after_loading_state() {
 
     let provider = handle.http_provider();
 
+    let base_fee_empty_chain = api.backend.fees().base_fee();
+
     let value = Unit::ETHER.wei().saturating_mul(U256::from(1)); // 1 ether
     let tx = TransactionRequest::default().with_to(alice).with_value(value).with_from(bob);
     let tx = WithOtherFields::new(tx);
 
-    let base_fee_empty_chain = api.backend.fees().base_fee();
-    provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let _receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
     let base_fee_after_one_tx = api.backend.fees().base_fee();
     // the test is meaningless if this does not hold
-    assert!(base_fee_empty_chain != base_fee_after_one_tx);
+    assert_ne!(base_fee_empty_chain, base_fee_after_one_tx);
 
     let ser_state = api.serialized_state(true).await.unwrap();
     foundry_common::fs::write_json_file(&state_file, &ser_state).unwrap();
