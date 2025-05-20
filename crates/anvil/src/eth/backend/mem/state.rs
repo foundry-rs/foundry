@@ -1,16 +1,16 @@
 //! Support for generating the state root for memdb storage
 
 use crate::eth::error::BlockchainError;
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{keccak256, map::HashMap, Address, B256, U256};
 use alloy_rlp::Encodable;
 use alloy_rpc_types::{state::StateOverride, BlockOverrides};
 use alloy_trie::{HashBuilder, Nibbles};
-use foundry_evm::{
-    backend::DatabaseError,
-    revm::{
-        db::{CacheDB, DatabaseRef, DbAccount},
-        primitives::{AccountInfo, BlockEnv, Bytecode, HashMap},
-    },
+use foundry_evm::backend::DatabaseError;
+use revm::{
+    bytecode::Bytecode,
+    context::BlockEnv,
+    database::{CacheDB, DatabaseRef, DbAccount},
+    state::AccountInfo,
 };
 
 pub fn build_root(values: impl IntoIterator<Item = (Nibbles, Vec<u8>)>) -> B256 {
@@ -142,29 +142,30 @@ pub fn apply_block_overrides<DB>(
     if let Some(block_hashes) = block_hash {
         // override block hashes
         cache_db
+            .cache
             .block_hashes
             .extend(block_hashes.into_iter().map(|(num, hash)| (U256::from(num), hash)))
     }
 
     if let Some(number) = number {
-        env.number = number;
+        env.number = number.saturating_to();
     }
     if let Some(difficulty) = difficulty {
         env.difficulty = difficulty;
     }
     if let Some(time) = time {
-        env.timestamp = U256::from(time);
+        env.timestamp = time;
     }
     if let Some(gas_limit) = gas_limit {
-        env.gas_limit = U256::from(gas_limit);
+        env.gas_limit = gas_limit;
     }
     if let Some(coinbase) = coinbase {
-        env.coinbase = coinbase;
+        env.beneficiary = coinbase;
     }
     if let Some(random) = random {
         env.prevrandao = Some(random);
     }
     if let Some(base_fee) = base_fee {
-        env.basefee = base_fee;
+        env.basefee = base_fee.saturating_to();
     }
 }

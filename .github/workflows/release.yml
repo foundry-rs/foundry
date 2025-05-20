@@ -15,7 +15,7 @@ env:
   CARGO_TERM_COLOR: always
   IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
   PROFILE: maxperf
-  STABLE_VERSION: "v1.0.0"
+  STABLE_VERSION: "v1.1.0"
 
 jobs:
   prepare:

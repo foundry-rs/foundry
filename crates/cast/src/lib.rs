@@ -34,9 +34,9 @@ use foundry_common::{
 };
 use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
+use foundry_evm_core::ic::decode_instructions;
 use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
-use revm::primitives::Eof;
 use std::{
     borrow::Cow,
     fmt::Write,
@@ -47,7 +47,6 @@ use std::{
     time::Duration,
 };
 use tokio::signal::ctrl_c;
-use utils::decode_instructions;
 
 use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
@@ -160,7 +159,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
 
         if let Some(func) = func {
             // decode args into tokens
-            decoded = match func.abi_decode_output(res.as_ref(), false) {
+            decoded = match func.abi_decode_output(res.as_ref()) {
                 Ok(decoded) => decoded,
                 Err(err) => {
                     // ensure the address is a contract
@@ -368,7 +367,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         let block = self
             .provider
             .get_block(block)
-            .full()
+            .kind(full.into())
             .await?
             .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
 
@@ -1100,8 +1099,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             .balanceOf(owner)
             .block(block.unwrap_or_default())
             .call()
-            .await?
-            ._0)
+            .await?)
     }
 }
 
@@ -2216,24 +2214,6 @@ impl SimpleCast {
         let tx = TxEnvelope::decode_2718(&mut tx_hex.as_slice())?;
         Ok(tx)
     }
-
-    /// Decodes EOF container bytes
-    /// Pretty prints the decoded EOF container contents
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// let eof = "0xef0001010004020001005604002000008000046080806040526004361015e100035f80fd5f3560e01c63773d45e01415e1ffee6040600319360112e10028600435906024358201809211e100066020918152f3634e487b7160e01b5f52601160045260245ffd5f80fd0000000000000000000000000124189fc71496f8660db5189f296055ed757632";
-    /// let decoded = Cast::decode_eof(&eof)?;
-    /// println!("{}", decoded);
-    /// # Ok::<(), eyre::Report>(())
-    pub fn decode_eof(eof: &str) -> Result<String> {
-        let eof_hex = hex::decode(eof)?;
-        let eof = Eof::decode(eof_hex.into())?;
-        Ok(pretty_eof(&eof)?)
-    }
 }
 
 fn strip_0x(s: &str) -> &str {
@@ -2406,16 +2386,21 @@ mod tests {
     #[test]
     fn disassemble_incomplete_sequence() {
         let incomplete = &hex!("60"); // PUSH1
-        let disassembled = Cast::disassemble(incomplete);
-        assert!(disassembled.is_err());
+        let disassembled = Cast::disassemble(incomplete).unwrap();
+        assert_eq!(disassembled, "00000000: PUSH1 0x00\n");
 
         let complete = &hex!("6000"); // PUSH1 0x00
         let disassembled = Cast::disassemble(complete);
         assert!(disassembled.is_ok());
 
         let incomplete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 31 bytes
-        let disassembled = Cast::disassemble(incomplete);
-        assert!(disassembled.is_err());
+
+        let disassembled = Cast::disassemble(incomplete).unwrap();
+
+        assert_eq!(
+            disassembled,
+            "00000000: PUSH32 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00\n"
+        );
 
         let complete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 32 bytes
         let disassembled = Cast::disassemble(complete);
