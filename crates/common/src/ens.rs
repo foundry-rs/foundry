@@ -116,21 +116,16 @@ pub trait ProviderEnsExt<N: Network, P: Provider<N>> {
         &self,
         node: B256,
         error_name: &str,
-    ) -> Result<EnsResolverInstance<(), &P, N>, EnsError>;
+    ) -> Result<EnsResolverInstance<&P, N>, EnsError>;
 
     /// Performs a forward lookup of an ENS name to an address.
     async fn resolve_name(&self, name: &str) -> Result<Address, EnsError> {
         let node = namehash(name);
         let resolver = self.get_resolver(node, name).await?;
-        let addr = resolver
-            .addr(node)
-            .call()
-            .await
-            .map_err(EnsError::Resolve)
-            .inspect_err(|e| {
+        let addr =
+            resolver.addr(node).call().await.map_err(EnsError::Resolve).inspect_err(|e| {
                 let _ = sh_eprintln!("{e:?}");
-            })?
-            ._0;
+            })?;
         Ok(addr)
     }
 
@@ -139,7 +134,7 @@ pub trait ProviderEnsExt<N: Network, P: Provider<N>> {
         let name = reverse_address(address);
         let node = namehash(&name);
         let resolver = self.get_resolver(node, &name).await?;
-        let name = resolver.name(node).call().await.map_err(EnsError::Lookup)?._0;
+        let name = resolver.name(node).call().await.map_err(EnsError::Lookup)?;
         Ok(name)
     }
 }
@@ -154,9 +149,9 @@ where
         &self,
         node: B256,
         error_name: &str,
-    ) -> Result<EnsResolverInstance<(), &P, N>, EnsError> {
+    ) -> Result<EnsResolverInstance<&P, N>, EnsError> {
         let registry = EnsRegistry::new(ENS_ADDRESS, self);
-        let address = registry.resolver(node).call().await.map_err(EnsError::Resolver)?._0;
+        let address = registry.resolver(node).call().await.map_err(EnsError::Resolver)?;
         if address == Address::ZERO {
             return Err(EnsError::ResolverNotFound(error_name.to_string()));
         }

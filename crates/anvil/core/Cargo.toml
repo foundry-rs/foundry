@@ -21,6 +21,7 @@ revm = { workspace = true, default-features = false, features = [
     "memory_limit",
     "c-kzg",
 ] }
+op-revm.workspace = true
 
 alloy-primitives = { workspace = true, features = ["serde", "rlp"] }
 alloy-rpc-types = { workspace = true, features = ["anvil", "trace"] }
