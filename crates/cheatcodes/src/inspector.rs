@@ -49,7 +49,6 @@ use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaChaRng;
 use revm::{
-    self,
     bytecode::{opcode as op, EOF_MAGIC_BYTES},
     context::{result::EVMError, BlockEnv, JournalTr, LocalContext, TransactionType},
     context_interface::{transaction::SignedAuthorization, CreateScheme},

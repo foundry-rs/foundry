@@ -184,6 +184,11 @@ edition = "2021"
         let alloy_dep = Self::get_alloy_dep(alloy_version, alloy_rev);
         write!(toml_contents, "{alloy_dep}")?;
 
+        if all_derives {
+            let serde_dep = r#"serde = { version = "1.0", features = ["derive"] }"#;
+            write!(toml_contents, "\n{serde_dep}")?;
+        }
+
         fs::write(cargo_toml_path, toml_contents).wrap_err("Failed to write Cargo.toml")?;
 
         let mut lib_contents = String::new();
