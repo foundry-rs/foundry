@@ -2889,7 +2889,12 @@ interface Vm {
     #[cheatcode(group = Utilities, safety = Unsafe)]
     function interceptInitcode() external;
 
-    /// Randomly shuffles an array.
+    /// Generates the hash of the canonical EIP-712 type representation.
+    ///
+    /// Supports 2 different inputs:
+    ///  * Name of the type (i.e. "Transaction") --> requires previous binding generation with `forge bind-json`
+    ///  * String representation of the type (i.e. "Foo(Bar bar) Bar(uint256 baz)") --> the cheatcode
+    ///    will output the canonical type even if the input is malformated (wrong order or whitespaces)
     #[cheatcode(group = Utilities)]
     function eip712HashType(string memory typeDefinition) external pure returns (bytes32 typeHash);
 }

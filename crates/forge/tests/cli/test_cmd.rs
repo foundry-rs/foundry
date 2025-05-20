@@ -3651,7 +3651,81 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 "#]]);
 });
 
-forgetest!(test_eip712_cheatcode, |prj, cmd| {
+forgetest!(test_eip712_cheatcode_simple, |prj, cmd| {
+    prj.add_source(
+        "Eip712",
+        r#"
+contract Eip712Structs {
+    struct EIP712Domain {
+        string name;
+        string version;
+        uint256 chainId;
+        address verifyingContract;
+    }
+}
+    "#,
+    )
+    .unwrap();
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.insert_console();
+
+    prj.add_source("Eip712Cheat.sol", r#"
+import "./test.sol";
+import "./Vm.sol";
+import "./console.sol";
+
+string constant CANONICAL = "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)";
+
+contract Eip712Test is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function testEip712HashType() public {
+        bytes32 canonicalHash = keccak256(bytes(CANONICAL));
+        console.logBytes32(canonicalHash);
+
+        // Can figure out the canonical type from a messy string representation of the type,
+        // with an invalid order and extra whitespaces
+        bytes32 fromTypeDef = vm.eip712HashType(
+            "EIP712Domain(string name, string version, uint256 chainId, address verifyingContract)"
+        );
+        assertEq(fromTypeDef, canonicalHash);
+
+        // Can figure out the canonical type from the previously generated bindings
+        bytes32 fromTypeName = vm.eip712HashType("EIP712Domain");
+        assertEq(fromTypeName, canonicalHash);
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse().args(["bind-json"]).assert_success();
+
+    let bindings = prj.root().join("utils").join("JsonBindings.sol");
+    assert!(bindings.exists(), "'JsonBindings.sol' was not generated at {bindings:?}");
+
+    prj.update_config(|config| config.fs_permissions.add(PathPermission::read(bindings)));
+    cmd.forge_fuse().args(["test", "--mc", "Eip712Test", "-vv"]).assert_success().stdout_eq(str![
+        [r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for src/Eip712Cheat.sol:Eip712Test
+[PASS] testEip712HashType() ([GAS])
+Logs:
+  0x8b73c3c69bb8fe3d512ecc4cf759cc79239f7b179b0ffacaa9a75d522b39400f
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]
+    ]);
+});
+
+forgetest!(test_eip712_cheatcode_nested, |prj, cmd| {
     prj.add_source(
         "Eip712",
         r#"
@@ -3678,13 +3752,8 @@ contract Eip712Structs {
     prj.insert_console();
 
     prj.add_source("Eip712Cheat.sol", r#"
-// Note Used in forge-cli tests to assert failures.
-// SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity ^0.8.18;
-
 import "./test.sol";
 import "./Vm.sol";
-import "./console.sol";
 
 string constant CANONICAL = "Transaction(Person from,Person to,Asset tx)Asset(address token,uint256 amount)Person(address wallet,string name)";
 
