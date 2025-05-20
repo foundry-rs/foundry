@@ -48,10 +48,7 @@ async fn test_deposits_not_supported_if_optimism_disabled() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_send_value_deposit_transaction() {
     // enable the Optimism flag
-    let (api, handle) = spawn(
-        NodeConfig::test().with_optimism(true).with_hardfork(Some(EthereumHardfork::Paris.into())),
-    )
-    .await;
+    let (api, handle) = spawn(NodeConfig::test().with_optimism(true)).await;
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let signer: EthereumWallet = accounts[0].clone().into();
@@ -98,10 +95,7 @@ async fn test_send_value_deposit_transaction() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_send_value_raw_deposit_transaction() {
     // enable the Optimism flag
-    let (api, handle) = spawn(
-        NodeConfig::test().with_optimism(true).with_hardfork(Some(EthereumHardfork::Paris.into())),
-    )
-    .await;
+    let (api, handle) = spawn(NodeConfig::test().with_optimism(true)).await;
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let signer: EthereumWallet = accounts[0].clone().into();
@@ -157,10 +151,7 @@ async fn test_send_value_raw_deposit_transaction() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_deposit_transaction_hash_matches_sepolia() {
     // enable the Optimism flag
-    let (_api, handle) = spawn(
-        NodeConfig::test().with_optimism(true).with_hardfork(Some(EthereumHardfork::Paris.into())),
-    )
-    .await;
+    let (_api, handle) = spawn(NodeConfig::test().with_optimism(true)).await;
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let signer: EthereumWallet = accounts[0].clone().into();
@@ -191,10 +182,7 @@ async fn test_deposit_transaction_hash_matches_sepolia() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_deposit_tx_checks_sufficient_funds_after_applying_deposited_value() {
     // enable the Optimism flag
-    let (_api, handle) = spawn(
-        NodeConfig::test().with_optimism(true).with_hardfork(Some(EthereumHardfork::Paris.into())),
-    )
-    .await;
+    let (_api, handle) = spawn(NodeConfig::test().with_optimism(true)).await;
 
     let provider = http_provider(&handle.http_endpoint());
 
