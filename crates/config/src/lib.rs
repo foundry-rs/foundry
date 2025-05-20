@@ -2563,7 +2563,7 @@ mod tests {
     use super::*;
     use crate::{
         cache::{CachedChains, CachedEndpoints},
-        endpoints::{RpcEndpoint, RpcEndpointType},
+        endpoints::RpcEndpointType,
         etherscan::ResolvedEtherscanConfigs,
     };
     use endpoints::{RpcAuth, RpcEndpointConfig};
@@ -2573,7 +2573,7 @@ mod tests {
     };
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
-    use std::{collections::BTreeMap, fs::File, io::Write};
+    use std::{fs::File, io::Write};
     use tempfile::tempdir;
     use NamedChain::Moonbeam;
 
