@@ -76,9 +76,10 @@ impl EthereumHardfork {
             Self::GrayGlacier => 15050000,
             Self::Paris => 15537394,
             Self::Shanghai => 17034870,
-            Self::Cancun | Self::Latest => 19426587,
+            Self::Cancun => 19426587,
+            Self::Prague | Self::Latest => 22431084,
             // TODO: add block after activation
-            Self::Prague | Self::PragueEOF => unreachable!(),
+            Self::PragueEOF => unreachable!(),
         }
     }
 }
@@ -134,8 +135,8 @@ impl From<EthereumHardfork> for SpecId {
             EthereumHardfork::GrayGlacier => Self::GRAY_GLACIER,
             EthereumHardfork::Paris => Self::MERGE,
             EthereumHardfork::Shanghai => Self::SHANGHAI,
-            EthereumHardfork::Cancun | EthereumHardfork::Latest => Self::CANCUN,
-            EthereumHardfork::Prague => Self::PRAGUE,
+            EthereumHardfork::Cancun => Self::CANCUN,
+            EthereumHardfork::Prague | EthereumHardfork::Latest => Self::PRAGUE,
             // TODO: switch to latest after activation
             // EOF is included in OSAKA from Revm 16.0.0
             EthereumHardfork::PragueEOF => Self::OSAKA,

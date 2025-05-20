@@ -779,11 +779,17 @@ impl Backend {
 
     /// Returns [`BlobParams`] corresponding to the current spec.
     pub fn blob_params(&self) -> BlobParams {
-        if self.env.read().evm_env.cfg_env.spec >= SpecId::PRAGUE {
-            BlobParams::prague()
-        } else {
-            BlobParams::cancun()
+        let spec_id = self.env.read().evm_env.cfg_env.spec;
+
+        if spec_id >= SpecId::OSAKA {
+            return BlobParams::osaka();
         }
+
+        if spec_id >= SpecId::PRAGUE {
+            return BlobParams::prague();
+        }
+
+        BlobParams::cancun()
     }
 
     /// Returns an error if EIP1559 is not active (pre Berlin)
