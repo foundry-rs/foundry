@@ -9,7 +9,7 @@
 extern crate tracing;
 
 use crate::cache::StorageCachingConfig;
-use alloy_primitives::{address, Address, B256, U256};
+use alloy_primitives::{address, map::AddressHashMap, Address, FixedBytes, B256, U256};
 use eyre::{ContextCompat, WrapErr};
 use figment::{
     providers::{Env, Format, Serialized, Toml},
@@ -39,7 +39,7 @@ use foundry_compilers::{
     RestrictionsWithVersion, VyperLanguage,
 };
 use regex::Regex;
-use revm_primitives::{map::AddressHashMap, FixedBytes, SpecId};
+use revm::primitives::hardfork::SpecId;
 use semver::Version;
 use serde::{Deserialize, Serialize, Serializer};
 use std::{
@@ -2594,7 +2594,7 @@ mod tests {
     use super::*;
     use crate::{
         cache::{CachedChains, CachedEndpoints},
-        endpoints::{RpcEndpoint, RpcEndpointType},
+        endpoints::RpcEndpointType,
         etherscan::ResolvedEtherscanConfigs,
     };
     use endpoints::{RpcAuth, RpcEndpointConfig};
@@ -2604,7 +2604,7 @@ mod tests {
     };
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
-    use std::{collections::BTreeMap, fs::File, io::Write};
+    use std::{fs::File, io::Write};
     use tempfile::tempdir;
     use NamedChain::Moonbeam;
 
