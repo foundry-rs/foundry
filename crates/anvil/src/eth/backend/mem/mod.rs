@@ -1604,7 +1604,7 @@ impl Backend {
                 let mut transactions = Vec::with_capacity(calls.len());
                 let mut receipts = Vec::new();
                 let mut logs= Vec::new();
-                
+
                 // apply state overrides before executing the transactions
                 if let Some(state_overrides) = state_overrides {
                     state::apply_state_overrides(state_overrides, &mut cache_db)?;
@@ -1781,7 +1781,7 @@ impl Backend {
 
                 block_res.push(simulated_block);
             }
-        
+
             Ok(block_res)
         })
         .await?
