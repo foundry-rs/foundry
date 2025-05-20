@@ -52,7 +52,6 @@ pub enum EthereumHardfork {
     Shanghai,
     Cancun,
     Prague,
-    PragueEOF,
     #[default]
     Latest,
 }
@@ -76,9 +75,8 @@ impl EthereumHardfork {
             Self::GrayGlacier => 15050000,
             Self::Paris => 15537394,
             Self::Shanghai => 17034870,
-            Self::Cancun | Self::Latest => 19426587,
-            // TODO: add block after activation
-            Self::Prague | Self::PragueEOF => unreachable!(),
+            Self::Cancun => 19426587,
+            Self::Prague | Self::Latest => 22431084,
         }
     }
 }

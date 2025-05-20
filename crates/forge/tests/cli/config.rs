@@ -164,7 +164,6 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         assertions_revert: true,
         legacy_assertions: false,
         extra_args: vec![],
-        eof_version: None,
         odyssey: false,
         transaction_timeout: 120,
         additional_compiler_profiles: Default::default(),
