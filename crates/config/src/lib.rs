@@ -1268,7 +1268,14 @@ impl Config {
 
     /// Returns configured [MultiCompilerSettings].
     pub fn compiler_settings(&self) -> Result<MultiCompilerSettings, SolcError> {
-        Ok(MultiCompilerSettings { solc: self.solc_settings()?, vyper: self.vyper_settings()? })
+        Ok(MultiCompilerSettings {
+            solc: if self.resolc.resolc_compile {
+                ResolcConfig::resolc_settings(self)?
+            } else {
+                self.solc_settings()?
+            },
+            vyper: self.vyper_settings()?,
+        })
     }
 
     /// Returns all configured remappings.
@@ -1600,7 +1607,7 @@ impl Config {
         let cli_settings =
             CliSettings { extra_args: self.extra_args.clone(), ..Default::default() };
 
-        Ok(SolcSettings { settings, cli_settings })
+        Ok(SolcSettings { settings, cli_settings, ..Default::default() })
     }
 
     /// Returns the configured [VyperSettings] that includes:

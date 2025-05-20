@@ -528,7 +528,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-serde",
  "alloy-sol-types",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "serde",
  "serde_json",
  "thiserror 2.0.12",
@@ -2004,7 +2004,7 @@ dependencies = [
  "bitflags 2.9.0",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools 0.11.0",
  "lazy_static",
  "lazycell",
  "log",
@@ -4310,7 +4310,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#a0c9902102d50b5f1d0cbe42a88471667e0c7f43"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#069136c5aeb6645a001c9f0d65ee25f01b05e84d"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4323,7 +4323,7 @@ dependencies = [
  "fs_extra",
  "futures-util",
  "home",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "md-5",
  "path-slash",
  "rand 0.8.5",
@@ -4348,7 +4348,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#a0c9902102d50b5f1d0cbe42a88471667e0c7f43"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#069136c5aeb6645a001c9f0d65ee25f01b05e84d"
 dependencies = [
  "foundry-compilers-artifacts-resolc",
  "foundry-compilers-artifacts-solc",
@@ -4358,7 +4358,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-resolc"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#a0c9902102d50b5f1d0cbe42a88471667e0c7f43"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#069136c5aeb6645a001c9f0d65ee25f01b05e84d"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4379,7 +4379,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#a0c9902102d50b5f1d0cbe42a88471667e0c7f43"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#069136c5aeb6645a001c9f0d65ee25f01b05e84d"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4402,7 +4402,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#a0c9902102d50b5f1d0cbe42a88471667e0c7f43"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#069136c5aeb6645a001c9f0d65ee25f01b05e84d"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4416,7 +4416,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#a0c9902102d50b5f1d0cbe42a88471667e0c7f43"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#069136c5aeb6645a001c9f0d65ee25f01b05e84d"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -5928,15 +5928,6 @@ name = "itertools"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
 dependencies = [
  "either",
 ]
@@ -7721,7 +7712,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.11.0",
  "proc-macro2",
  "quote",
  "syn 2.0.101",
@@ -9527,7 +9518,7 @@ dependencies = [
  "derive_builder",
  "derive_more 2.0.1",
  "dunce",
- "itertools 0.14.0",
+ "itertools 0.11.0",
  "itoa",
  "lasso",
  "match_cfg",
@@ -9563,7 +9554,7 @@ dependencies = [
  "alloy-primitives",
  "bitflags 2.9.0",
  "bumpalo",
- "itertools 0.14.0",
+ "itertools 0.11.0",
  "memchr",
  "num-bigint",
  "num-rational",

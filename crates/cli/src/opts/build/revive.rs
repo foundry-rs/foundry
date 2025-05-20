@@ -22,11 +22,36 @@ pub struct ResolcOpts {
         long = "use-resolc",
         help = "Use resolc version",
         alias = "resolc-compiler-version",
-        help = "Use compiler version",
         value_name = "RESOLC_VERSION"
     )]
     #[serde(skip)]
     pub use_resolc: Option<String>,
+
+    /// Set the LLVM optimization parameter `-O[0 | 1 | 2 | 3 | s | z]`.
+    /// Use `3` for best performance and `z` for minimal size.
+    #[clap(
+        short = 'O',
+        long = "resolc-optimizer-mode",
+        help = "Set the resolc optimization mode `-O[0 | 1 | 2 | 3 | s | z]`",
+        visible_alias = "resolc-optimization",
+        value_name = "LEVEL"
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub optimizer_mode: Option<String>,
+
+    /// The emulated EVM linear heap memory static buffer size in bytes.
+    #[clap(long = "heap-size", help = "Set the contracts heap size in bytes", value_name = "SIZE")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heap_size: Option<u32>,
+
+    /// The contracts total stack size in bytes.
+    #[clap(
+        long = "stack-size",
+        help = "Set the contracts total stack size in bytes",
+        value_name = "SIZE"
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stack_size: Option<u32>,
 }
 
 impl ResolcOpts {
@@ -45,6 +70,13 @@ impl ResolcOpts {
         );
 
         set_if_some!(self.resolc_compile, resolc.resolc_compile);
+        set_if_some!(
+            self.optimizer_mode.as_ref().and_then(|mode| mode.parse::<char>().ok()),
+            resolc.optimizer_mode
+        );
+        set_if_some!(self.heap_size, resolc.heap_size);
+        set_if_some!(self.stack_size, resolc.stack_size);
+
         resolc
     }
 }

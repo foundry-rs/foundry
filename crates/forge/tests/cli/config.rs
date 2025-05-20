@@ -1308,7 +1308,10 @@ exclude = []
   "script_execution_protection": true,
   "resolc": {
     "resolc_compile": false,
-    "resolc": null
+    "resolc": null,
+    "optimizer_mode": null,
+    "heap_size": null,
+    "stack_size": null
   }
 }
 
