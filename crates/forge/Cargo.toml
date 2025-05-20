@@ -24,7 +24,6 @@ foundry-common.workspace = true
 foundry-compilers = { workspace = true, features = ["full"] }
 foundry-config.workspace = true
 foundry-evm.workspace = true
-foundry-evm-core.workspace = true
 foundry-wallets.workspace = true
 foundry-linking.workspace = true
 forge-script-sequence.workspace = true
@@ -58,8 +57,6 @@ alloy-serde.workspace = true
 alloy-signer.workspace = true
 alloy-transport.workspace = true
 
-revm.workspace = true
-
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete = "4"
 clap_complete_fig = "4"
@@ -81,9 +78,9 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
 toml = { workspace = true, features = ["preserve_order"] }
 toml_edit = "0.22"
-watchexec = "8.0"
-watchexec-events = "6.0"
-watchexec-signals = "5.0"
+watchexec = "6.0"
+watchexec-events = "5.0"
+watchexec-signals = "4.0"
 clearscreen = "4.0"
 evm-disassembler.workspace = true
 
@@ -95,6 +92,8 @@ opener = "0.7"
 # soldeer
 soldeer-commands.workspace = true
 quick-junit = "0.5.0"
+
+figment = "0.10"
 
 [dev-dependencies]
 anvil.workspace = true
@@ -116,8 +115,6 @@ alloy-signer-local.workspace = true
 default = ["jemalloc"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
-mimalloc = ["foundry-cli/mimalloc"]
-tracy-allocator = ["foundry-cli/tracy-allocator"]
 aws-kms = ["foundry-wallets/aws-kms"]
 gcp-kms = ["foundry-wallets/gcp-kms"]
 isolate-by-default = ["foundry-config/isolate-by-default"]
