@@ -609,10 +609,9 @@ pub struct MinedTransactionReceipt {
 mod tests {
     use super::*;
     use crate::eth::backend::db::Db;
-    use alloy_primitives::{hex, Address, U256};
+    use alloy_primitives::{hex, Address};
     use alloy_rlp::Decodable;
     use anvil_core::eth::transaction::TypedTransaction;
-    use foundry_evm::backend::MemDb;
     use revm::{database::DatabaseRef, state::AccountInfo};
 
     #[test]
