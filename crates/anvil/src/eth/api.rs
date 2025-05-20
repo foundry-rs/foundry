@@ -3278,7 +3278,7 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 InstructionResult::OutOfFunds |
                 InstructionResult::CallTooDeep => Ok(Self::EvmError(exit)),
 
-                // Handle Revm EOF InstructionResults: Not supported yet
+                // Handle Revm EOF InstructionResults: not supported
                 InstructionResult::ReturnContractInNotInitEOF |
                 InstructionResult::EOFOpcodeDisabledInLegacy |
                 InstructionResult::SubRoutineStackOverflow |
