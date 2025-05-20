@@ -114,6 +114,7 @@ use revm::{
     },
     database::{CacheDB, DatabaseRef, WrapDatabaseRef},
     interpreter::InstructionResult,
+    precompile::secp256r1::P256VERIFY,
     primitives::{hardfork::SpecId, KECCAK_EMPTY},
     state::AccountInfo,
     DatabaseCommit, Inspector,
@@ -1107,6 +1108,10 @@ impl Backend {
             Database<Error = DatabaseError>,
     {
         let mut evm = new_evm_with_inspector_ref(db, env, inspector);
+
+        if self.odyssey {
+            inject_precompiles(&mut evm, vec![P256VERIFY]);
+        }
 
         if let Some(factory) = &self.precompile_factory {
             inject_precompiles(&mut evm, factory.precompiles());

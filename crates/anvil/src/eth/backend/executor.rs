@@ -33,7 +33,7 @@ use revm::{
     database::WrapDatabaseRef,
     handler::{instructions::EthInstructions, EthPrecompiles},
     interpreter::InstructionResult,
-    precompile::{PrecompileSpecId, Precompiles},
+    precompile::{secp256r1::P256VERIFY, PrecompileSpecId, Precompiles},
     primitives::hardfork::SpecId,
     Database, DatabaseRef, Inspector, Journal,
 };
@@ -326,6 +326,11 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
 
         let exec_result = {
             let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
+
+            if self.odyssey {
+                inject_precompiles(&mut evm, vec![P256VERIFY]);
+            }
+
             if let Some(factory) = &self.precompile_factory {
                 inject_precompiles(&mut evm, factory.precompiles());
             }
