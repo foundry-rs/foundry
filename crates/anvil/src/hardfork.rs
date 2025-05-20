@@ -75,8 +75,8 @@ impl EthereumHardfork {
             Self::GrayGlacier => 15050000,
             Self::Paris => 15537394,
             Self::Shanghai => 17034870,
-            Self::Cancun => 19426587,
-            Self::Prague | Self::Latest => 22431084,
+            Self::Cancun | Self::Latest => 19426587,
+            Self::Prague => 22431084,
         }
     }
 }
@@ -104,6 +104,7 @@ impl FromStr for EthereumHardfork {
             "paris" | "merge" | "15" => Self::Paris,
             "shanghai" | "16" => Self::Shanghai,
             "cancun" | "17" => Self::Cancun,
+            "prague" | "18" => Self::Prague,
             "latest" => Self::Latest,
             _ => bail!("Unknown hardfork {s}"),
         };
