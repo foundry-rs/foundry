@@ -398,11 +398,7 @@ impl PreSimulationState {
         if !self.execution_result.success {
             return Err(eyre::eyre!(
                 "script failed: {}",
-                &self
-                    .execution_artifacts
-                    .decoder
-                    .revert_decoder
-                    .decode(&result.returned[..], None,)
+                &self.execution_artifacts.decoder.revert_decoder.decode(&result.returned[..], None)
             ));
         }
 

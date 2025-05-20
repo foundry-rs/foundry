@@ -20,3 +20,4 @@ mod stack;
 pub use stack::{InspectorData, InspectorStack, InspectorStackBuilder};
 
 mod revert_diagnostic;
+pub use revert_diagnostic::RevertDiagnostic;

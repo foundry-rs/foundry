@@ -1555,7 +1555,6 @@ Traces:
     ├─ [0] VM::resumeGasMetering()
     │   └─ ← [Return]
     └─ ← [Stop]
-
 ...
 "#]]);
 });

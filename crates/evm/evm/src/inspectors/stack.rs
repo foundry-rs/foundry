@@ -1,6 +1,6 @@
 use super::{
-    revert_diagnostic::RevertDiagnostic, Cheatcodes, CheatsConfig, ChiselState, CoverageCollector,
-    Fuzzer, LogCollector, ScriptExecutionInspector, TracingInspector,
+    Cheatcodes, CheatsConfig, ChiselState, CoverageCollector, Fuzzer, LogCollector,
+    RevertDiagnostic, ScriptExecutionInspector, TracingInspector,
 };
 use alloy_primitives::{map::AddressHashMap, Address, Bytes, Log, TxKind, U256};
 use foundry_cheatcodes::{CheatcodesExecutor, Wallets};
