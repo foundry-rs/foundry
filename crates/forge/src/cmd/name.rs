@@ -39,19 +39,12 @@ pub struct NameArgs {
 
 impl NameArgs {
     pub async fn run(self) -> eyre::Result<()> {
-        // println!("args: {:?}", self);
         let config = self.load_config()?;
         let signer = self.eth.wallet.signer().await?;
-        let provider = utils::get_provider(&config)?;
-        let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
-            .with_recommended_fillers()
-            .wallet(EthereumWallet::new(signer))
-            .on_provider(provider);
-        let sender_addr = provider.default_signer_address();
 
         enscribe::set_primary_name(
-            provider,
-            sender_addr,
+            &config,
+            EthereumWallet::new(signer),
             self.contract_address,
             self.ens_name,
             self.reverse_claimer,

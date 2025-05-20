@@ -3187,6 +3187,8 @@ dependencies = [
  "eyre",
  "foundry-cli",
  "foundry-common",
+ "foundry-config",
+ "foundry-test-utils",
  "foundry-wallets",
  "reqwest",
  "serde",
@@ -3473,6 +3475,7 @@ name = "forge"
 version = "1.1.0"
 dependencies = [
  "alloy-chains",
+ "alloy-contract",
  "alloy-dyn-abi",
  "alloy-json-abi",
  "alloy-network",

@@ -1,9 +1,11 @@
 //! Contains various tests related to `forge script`.
 
-use crate::constants::TEMPLATE_CONTRACT;
+use crate::{abi::ENSRegistry, constants::TEMPLATE_CONTRACT};
+use alloy_network::EthereumWallet;
 use alloy_primitives::{address, hex, Address, Bytes};
 use anvil::{spawn, NodeConfig};
 use forge_script_sequence::ScriptSequence;
+use foundry_common::{ens::EnsRegistry, provider::ProviderBuilder};
 use foundry_test_utils::{
     rpc::{self, next_http_archive_rpc_url},
     snapbox::IntoData,
@@ -2719,4 +2721,220 @@ Warning: No transactions to broadcast.
 
 "#
     ]);
+});
+
+forgetest_async!(can_set_name, |prj, cmd| {
+    cmd.args(["init", "--force"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std[..]
+    Initialized forge project
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
+
+"#]]);
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let signer: EthereumWallet = wallet.clone().into();
+    let account = wallet.address();
+    let provider = ProviderBuilder::new(&handle.http_endpoint())
+        .build_with_wallet(signer)
+        .expect("failed to build Alloy HTTP provider with signer");
+
+    // deploy ENSRegistry contract
+    let ens_registry = ENSRegistry::deploy(&provider, account).await.unwrap();
+
+    let script = prj.add_script(
+                "ENSNameSetting.s.sol",
+                r#"
+import "forge-std/Script.sol";
+import "@openzeppelin/openzeppelin-contracts/contracts/access/Ownable.sol";
+import "@ensdomains/ens-contracts/contracts/registry/ENSRegistry.sol";
+import "@ensdomains/ens-contracts/contracts/resolvers/PublicResolver.sol";
+import "@ensdomains/ens-contracts/contracts/ethregistrar/BaseRegistrarImplementation.sol";
+import "@ensdomains/ens-contracts/contracts/ethregistrar/ETHRegistrarController.sol";
+
+contract HelloWorld is Ownable {
+    string greetings;
+    uint256 count;
+
+    constructor(string memory greet, uint256 initialCount) Ownable (msg.sender) {
+        greetings = greet;
+        count = initialCount;
+    }
+
+    function set(string memory greet) public {
+        greetings = greet;
+    }
+
+    function retrieve() public view returns (string memory) {
+        return greetings;
+    }
+}
+
+contract FullENSRegisterScript is Script {
+    function run() external {
+        uint256 pk = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+        vm.startBroadcast(pk); // 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+
+        // 1. Deploy ENSRegistry
+        ENSRegistry registry = new ENSRegistry();
+        console2.log("ENSRegistry:", address(registry));
+
+        // 2. Deploy BaseRegistrar for .eth
+        bytes32 ethLabel = keccak256("eth");
+        BaseRegistrarImplementation baseRegistrar = new BaseRegistrarImplementation(address(registry), ethLabel);
+        console2.log("BaseRegistrar:", address(baseRegistrar));
+
+        // Set .eth ownership in ENS to registrar
+        registry.setSubnodeOwner(bytes32(0), ethLabel, address(baseRegistrar));
+
+        // 3. Deploy dummy resolver
+        PublicResolver resolver = new PublicResolver(
+            address(registry),
+            INameWrapper(address(0)),
+            address(0),
+            address(0)
+        );
+        console2.log("PublicResolver:", address(resolver));
+
+        // 4. Deploy dummy price oracle (address(0) for now)
+        address dummyOracle = address(0x123456);
+
+        // 5. Deploy ETHRegistrarController
+        ETHRegistrarController controller = new ETHRegistrarController(
+            address(baseRegistrar),
+            address(resolver),
+            dummyOracle,
+            60,
+            86400
+        );
+        console2.log("ETHRegistrarController:", address(controller));
+
+        // Grant controller permission in BaseRegistrar
+        baseRegistrar.addController(address(controller));
+
+        // 6. Register name `forge.eth`
+        string memory name = "forge";
+        bytes32 secret = bytes32(0);
+        uint256 duration = 365 days;
+
+        bytes32 commitment = controller.makeCommitment(name, msg.sender, secret);
+        controller.commit(commitment);
+        // In production, you'd wait for commitment period to pass
+        controller.register(name, msg.sender, duration, secret);
+
+        console2.log("Registered forge.eth to:", msg.sender);
+
+        new HelloWorld("hi forge!", 0);
+        
+        vm.stopBroadcast();
+    }
+}
+   "#,
+            )
+            .unwrap();
+
+    prj.create_file(
+        "foundry.toml",
+        r#"
+        [profile.default]
+        src = "src"
+        out = "out"
+        libs = ["lib"]
+        remappings = [
+            '@ensdomains/ens-contracts/=lib/ens-contracts/',
+            '@ensdomains/buffer/=lib/buffer/',
+            '@openzeppelin/openzeppelin-contracts/=lib/openzeppelin-contracts/'
+        ]
+        "#,
+    );
+
+    // install dependencies
+    cmd.forge_fuse().args(["install", "ensdomains/ens-contracts@v1.4.0"]).assert_success().stdout_eq(
+            str![[r#"
+Installing ens-contracts in [..] (url: Some("https://github.com/ensdomains/ens-contracts"), tag: Some("v1.4.0"))
+    Installed ens-contracts [..]
+
+"#]],
+        );
+    cmd.forge_fuse().args(["install", "ensdomains/buffer"]).assert_success().stdout_eq(
+            str![[r#"
+Installing buffer in [..] (url: Some("https://github.com/ensdomains/buffer"), tag: None)
+    Installed buffer
+
+"#]],
+        );
+    cmd.forge_fuse().args(["install", "openzeppelin/openzeppelin-contracts@v4.9.6"]).assert_success().stdout_eq(
+            str![[r#"
+Installing openzeppelin-contracts in [..] (url: Some("https://github.com/openzeppelin/openzeppelin-contracts"), tag: Some("v4.9.6"))
+    Installed openzeppelin-contracts [..]
+
+"#]],
+        );
+    // build 
+    /*
+    cmd.forge_fuse().args(["build"]).assert_success().stdout_eq(
+            str![[r#"
+Installing openzeppelin-contracts in [..] (url: Some("https://github.com/openzeppelin/openzeppelin-contracts"), tag: None)
+    Installed openzeppelin-contracts [..]
+
+"#]],
+        );
+     */
+
+    cmd.forge_fuse()
+        .arg("script")
+        .arg(script)
+        .args([
+            "--tc",
+            "FullENSRegisterScript",
+            "--sender",
+            account.to_string().as_str(),
+            "--rpc-url",
+            handle.http_endpoint().as_str(),
+            "--broadcast",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+...
+Script ran successfully.
+
+## Setting up 1 EVM.
+
+==========================
+
+Chain 31337
+
+[ESTIMATED_GAS_PRICE]
+
+[ESTIMATED_TOTAL_GAS_USED]
+
+[ESTIMATED_AMOUNT_REQUIRED]
+
+==========================
+
+
+==========================
+
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+[SAVED_TRANSACTIONS]
+
+[SAVED_SENSITIVE_VALUES]
+
+
+"#]]);
 });
