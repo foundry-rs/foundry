@@ -116,14 +116,7 @@ impl BindJsonArgs {
         });
         eyre::ensure!(result.is_ok(), "failed parsing");
 
-        // Insert empty file, overriding any previous bindings.
-        //
-        // Solar only parses files present on disk, so the placeholder file has to be written and
-        // and then registered in `sources`.
-        if let Some(parent) = target_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(&target_path, JSON_BINDINGS_PLACEHOLDER)?;
+        // Insert empty bindings file.
         sources.insert(target_path.clone(), Source::new(JSON_BINDINGS_PLACEHOLDER));
 
         Ok(PreprocessedState { version, sources, target_path, project, config })
