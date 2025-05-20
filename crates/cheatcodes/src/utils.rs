@@ -1,8 +1,8 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
-use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{aliases::B32, map::HashMap, B64, U256};
+use alloy_dyn_abi::{eip712_parser::EncodeType, DynSolType, DynSolValue, Resolver};
+use alloy_primitives::{aliases::B32, keccak256, map::HashMap, B64, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::{ens::namehash, fs};
 use foundry_config::fs_permissions::FsAccessKind;
@@ -322,13 +322,17 @@ impl Cheatcode for eip712HashTypeCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { typeDefinition } = self;
 
-        let type_def = if typeDefinition.contains('(') {
+        let type_def = if !typeDefinition.contains('(') {
             &get_type_def_from_bindings(typeDefinition, state)?
         } else {
             typeDefinition
+            // let canonical = EncodeType::parse(typeDefinition).and_then(|parsed|
+            // parsed.canonicalize())?;
         };
 
-        todo!()
+        // let hash = keccak256(type_def.as_bytes());
+        // bail!("type: {type_def}, hash: {hash}");
+        Ok(keccak256(type_def.as_bytes()).to_vec())
     }
 }
 

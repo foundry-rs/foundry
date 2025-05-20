@@ -1,36 +1,26 @@
 use foundry_config::fs_permissions::PathPermission;
 
-const STRUCTS: &str = r#"
+forgetest!(test_eip712, |prj, cmd| {
+    let path = prj
+        .add_source(
+            "Structs",
+            r#"
 library Structs {
-    struct Foo {
-        Bar bar;
-    }
-    struct Bar {
-        Art art;
-    }
-    struct Art {
-        uint256 id;
-    }
+    struct Foo { Bar bar; }
+    struct Bar { Art art; }
+    struct Art { uint256 id; }
     struct Complex {
         Structs2.Foo foo2;
         Foo[] foos;
         Rec[][] recs;
     }
-    struct Rec {
-        Rec[] rec;
-    }
+    struct Rec { Rec[] rec; }
 }
 
 library Structs2 {
-    struct Foo {
-        uint256 id;
-    }
-    struct Rec {
-        Bar[] bar;
-    }
-    struct Bar {
-        Rec rec;
-    }
+    struct Foo { uint256 id; }
+    struct Rec { Bar[] bar; }
+    struct Bar { Rec rec; }
     struct FooBar {
         Foo[] foos;
         Bar[] bars;
@@ -40,10 +30,9 @@ library Structs2 {
         Structs.Rec rec;
     }
 }
-"#;
-
-forgetest!(test_eip712, |prj, cmd| {
-    let path = prj.add_source("Structs", STRUCTS).unwrap();
+    "#,
+        )
+        .unwrap();
 
     cmd.forge_fuse().args(["eip712", path.to_string_lossy().as_ref()]).assert_success().stdout_eq(
         str![[r#"
@@ -65,31 +54,59 @@ Bar(Rec rec)Rec(Bar[] bar)
 
 FooBar(Foo[] foos,Bar[] bars,Foo_1 foo,Bar_1 bar,Rec[] recs,Rec_1 rec)Art(uint256 id)Bar(Rec rec)Bar_1(Art art)Foo(uint256 id)Foo_1(Bar_1 bar)Rec(Bar[] bar)Rec_1(Rec_1[] rec)
 
-
 "#]],
     );
 });
 
-forgetest!(test_eip712_cheacode, |prj, cmd| {
-    prj.add_source("Structs", STRUCTS).unwrap();
+forgetest!(test_eip712_cheatcode, |prj, cmd| {
+    prj.add_source(
+        "Eip712",
+        r#"
+contract Eip712 {
+    struct Transaction {
+        Person from;
+        Person to;
+        Asset tx;
+    }
+    struct Person {
+        address wallet;
+        string name;
+    }
+    struct Asset {
+        address token;
+        uint256 amount;
+    }
+}
+    "#,
+    )
+    .unwrap();
     prj.insert_ds_test();
     prj.insert_vm();
+    prj.insert_console();
 
-    prj.add_source(
-        "Eip712Cheat.sol",
-        r#"
+    prj.add_source("Eip712Cheat.sol", r#"
 // Note Used in forge-cli tests to assert failures.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.18;
 
 import "./test.sol";
 import "./Vm.sol";
+import "./console.sol";
+
+string constant CANONICAL = "Transaction(Person from,Person to,Asset tx)Asset(address token,uint256 amount)Person(address wallet,string name)";
+string constant MESSY = "Person(address wallet, string name) Asset(address token, uint256 amount) Transaction(Person from, Person to, Asset tx)";
 
 contract Eip712Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
-    function testReadUtils() public pure {
-        vm.eip712HashType("Foo_0");
+    function testEip712HashType() public {
+        bytes32 hashCanonical = keccak256(bytes(CANONICAL));
+
+        bytes32 hashTypeName = vm.eip712HashType("Transaction");
+        assertEq(hashTypeName, hashCanonical);
+
+        bytes32 hashTypeDef = vm.eip712HashType(MESSY);
+        assertEq(hashTypeDef, hashCanonical);
     }
 }
 "#,
