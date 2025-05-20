@@ -2753,7 +2753,7 @@ contract EIP7702Script is Script {
         )
         .unwrap();
 
-    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::PragueEOF.into()));
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
     let (_api, handle) = spawn(node_config).await;
 
     cmd.args([
