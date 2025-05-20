@@ -10,18 +10,14 @@ use alloy_rpc_types::BlockId;
 use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
 use foundry_cli::opts::{EtherscanOpts, GlobalArgs, RpcOpts};
-use foundry_common::{
-    ens::NameOrAddress,
-    version::{LONG_VERSION, SHORT_VERSION},
-};
+use foundry_common::{ens::NameOrAddress, version::VERSION};
 use std::{path::PathBuf, str::FromStr};
 
 /// A Swiss Army knife for interacting with Ethereum applications from the command line.
 #[derive(Parser)]
 #[command(
     name = "cast",
-    version = SHORT_VERSION,
-    long_version = LONG_VERSION,
+    version = VERSION,
     after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html",
     next_display_order = None,
 )]

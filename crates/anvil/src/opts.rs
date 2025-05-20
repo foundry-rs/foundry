@@ -1,11 +1,11 @@
 use crate::cmd::NodeArgs;
 use clap::{Parser, Subcommand};
 use foundry_cli::opts::GlobalArgs;
-use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
+use foundry_common::version::VERSION;
 
 /// A fast local Ethereum development node.
 #[derive(Parser)]
-#[command(name = "anvil", version = SHORT_VERSION, long_version = LONG_VERSION, next_display_order = None)]
+#[command(name = "anvil", version = VERSION, next_display_order = None)]
 pub struct Anvil {
     /// Include the global arguments.
     #[command(flatten)]

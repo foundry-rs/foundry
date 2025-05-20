@@ -9,15 +9,14 @@ use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
 use forge_verify::{VerifyArgs, VerifyBytecodeArgs, VerifyCheckArgs};
 use foundry_cli::opts::GlobalArgs;
-use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
+use foundry_common::version::VERSION;
 use std::path::PathBuf;
 
 /// Build, test, fuzz, debug and deploy Solidity contracts.
 #[derive(Parser)]
 #[command(
     name = "forge",
-    version = SHORT_VERSION,
-    long_version = LONG_VERSION,
+    version = VERSION,
     after_help = "Find more information in the book: http://book.getfoundry.sh/reference/forge/forge.html",
     next_display_order = None,
 )]

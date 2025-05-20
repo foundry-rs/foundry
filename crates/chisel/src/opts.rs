@@ -1,9 +1,6 @@
 use clap::{Parser, Subcommand};
 use foundry_cli::opts::{BuildOpts, GlobalArgs};
-use foundry_common::{
-    evm::EvmArgs,
-    version::{LONG_VERSION, SHORT_VERSION},
-};
+use foundry_common::{evm::EvmArgs, version::VERSION};
 use std::path::PathBuf;
 
 // Loads project's figment and merges the build cli arguments into it
@@ -11,7 +8,7 @@ foundry_config::merge_impl_figment_convert!(Chisel, build, evm);
 
 /// Fast, utilitarian, and verbose Solidity REPL.
 #[derive(Debug, Parser)]
-#[command(name = "chisel", version = SHORT_VERSION, long_version = LONG_VERSION)]
+#[command(name = "chisel", version = VERSION)]
 pub struct Chisel {
     /// Include the global arguments.
     #[command(flatten)]
