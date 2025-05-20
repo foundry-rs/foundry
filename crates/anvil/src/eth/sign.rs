@@ -2,7 +2,7 @@ use crate::eth::error::BlockchainError;
 use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
 use alloy_network::TxSignerSync;
-use alloy_primitives::{map::AddressHashMap, Address, PrimitiveSignature as Signature, B256};
+use alloy_primitives::{map::AddressHashMap, Address, Signature, B256};
 use alloy_signer::Signer as AlloySigner;
 use alloy_signer_local::PrivateKeySigner;
 use anvil_core::eth::transaction::{TypedTransaction, TypedTransactionRequest};
@@ -101,6 +101,7 @@ impl Signer for DevSigner {
             TypedTransactionRequest::Legacy(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
             TypedTransactionRequest::EIP2930(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
             TypedTransactionRequest::EIP1559(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            TypedTransactionRequest::EIP7702(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
             TypedTransactionRequest::EIP4844(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
             TypedTransactionRequest::Deposit(_) => {
                 unreachable!("op deposit txs should not be signed")
@@ -125,6 +126,9 @@ pub fn build_typed_transaction(
         }
         TypedTransactionRequest::EIP1559(tx) => {
             TypedTransaction::EIP1559(tx.into_signed(signature))
+        }
+        TypedTransactionRequest::EIP7702(tx) => {
+            TypedTransaction::EIP7702(tx.into_signed(signature))
         }
         TypedTransactionRequest::EIP4844(tx) => {
             TypedTransaction::EIP4844(tx.into_signed(signature))

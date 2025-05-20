@@ -18,7 +18,6 @@ use foundry_common::serde_helpers::{
 };
 
 pub mod block;
-pub mod proof;
 pub mod subscription;
 pub mod transaction;
 pub mod wallet;
@@ -36,7 +35,6 @@ pub struct Params<T: Default> {
 /// Represents ethereum JSON-RPC API
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(tag = "method", content = "params")]
-#[expect(clippy::large_enum_variant)]
 pub enum EthRequest {
     #[serde(rename = "web3_clientVersion", with = "empty_params")]
     Web3ClientVersion(()),
@@ -73,6 +71,9 @@ pub enum EthRequest {
 
     #[serde(rename = "eth_getAccount")]
     EthGetAccount(Address, Option<BlockId>),
+
+    #[serde(rename = "eth_getAccountInfo")]
+    EthGetAccountInfo(Address, Option<BlockId>),
 
     #[serde(rename = "eth_getStorageAt")]
     EthGetStorageAt(Address, U256, Option<BlockId>),

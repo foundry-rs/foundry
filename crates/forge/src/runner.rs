@@ -826,14 +826,10 @@ impl<'a> FunctionRunner<'a> {
         if self.cr.contract.abi.functions().filter(|func| func.name.is_before_test_setup()).count() ==
             1
         {
-            for calldata in self
-                .executor
-                .call_sol_default(
-                    address,
-                    &ITest::beforeTestSetupCall { testSelector: func.selector() },
-                )
-                .beforeTestCalldata
-            {
+            for calldata in self.executor.call_sol_default(
+                address,
+                &ITest::beforeTestSetupCall { testSelector: func.selector() },
+            ) {
                 // Apply before test configured calldata.
                 match self.executor.to_mut().transact_raw(
                     self.tcfg.sender,
