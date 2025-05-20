@@ -7,7 +7,7 @@ use alloy_primitives::{b256, Address, TxHash, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
-use anvil::{spawn, EthereumHardfork, NodeConfig};
+use anvil::{spawn, NodeConfig};
 use anvil_core::eth::transaction::optimism::DepositTransaction;
 use op_alloy_rpc_types::OpTransactionFields;
 
