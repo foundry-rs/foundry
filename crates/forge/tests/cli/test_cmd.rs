@@ -2916,8 +2916,6 @@ Traces:
     │   └─ ← [Return] 1
     ├─ [0] VM::assertEq(1, 1) [staticcall]
     │   └─ ← [Return]
-    ├─  storage changes:
-    │   @ 0: 0 → 1
     └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
@@ -2944,7 +2942,7 @@ contract ContractTest {
 ...
 Failing tests:
 Encountered 1 failing test in test/Foo.t.sol:ContractTest
-[FAIL: EVM error; transaction validation error: call gas cost exceeds the gas limit] setUp() ([GAS])
+[FAIL: EVM error; transaction validation error: call [GAS_COST] exceeds the [GAS_LIMIT]] setUp() ([GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -3551,6 +3549,13 @@ contract CounterTest is Test {
     mapping(uint256 => SomeStruct) internal data;
 
     function setUp() public {
+        // Temporary workaround for `https://eth.llamarpc.com/` being down
+        setChain("mainnet", ChainData({
+            name: "mainnet",
+            rpcUrl: "https://reth-ethereum.ithaca.xyz/rpc",
+            chainId: 1
+        }));
+
         StdChains.Chain memory chain1 = getChain("mainnet");
         StdChains.Chain memory chain2 = getChain("base");
         Domain memory domain1 = Domain(chain1, vm.createFork(chain1.rpcUrl, 22253716));

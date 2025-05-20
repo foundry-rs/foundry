@@ -217,6 +217,7 @@ test_directories! {
     TryStatement,
     ConditionalOperatorExpression,
     NamedFunctionCallExpression,
+    NonKeywords,
     ArrayExpressions,
     UnitExpression,
     ThisExpression,

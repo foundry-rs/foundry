@@ -5,7 +5,7 @@ use foundry_compilers::{
     artifacts::sourcemap::{Jump, SourceElement},
     multi::MultiCompilerLanguage,
 };
-use foundry_evm_core::utils::PcIcMap;
+use foundry_evm_core::ic::PcIcMap;
 use foundry_evm_traces::debug::{ArtifactData, ContractSources, SourceData};
 use serde::Serialize;
 use std::{collections::HashMap, path::Path};
