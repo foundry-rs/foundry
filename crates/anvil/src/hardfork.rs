@@ -52,7 +52,6 @@ pub enum EthereumHardfork {
     Shanghai,
     Cancun,
     Prague,
-    PragueEOF,
     #[default]
     Latest,
 }
@@ -78,8 +77,6 @@ impl EthereumHardfork {
             Self::Shanghai => 17034870,
             Self::Cancun => 19426587,
             Self::Prague | Self::Latest => 22431084,
-            // TODO: add block after activation
-            Self::PragueEOF => unreachable!(),
         }
     }
 }
@@ -108,7 +105,6 @@ impl FromStr for EthereumHardfork {
             "shanghai" | "16" => Self::Shanghai,
             "cancun" | "17" => Self::Cancun,
             "prague" | "18" => Self::Prague,
-            "pragueeof" | "19" | "prague-eof" => Self::PragueEOF,
             "latest" => Self::Latest,
             _ => bail!("Unknown hardfork {s}"),
         };
@@ -137,9 +133,6 @@ impl From<EthereumHardfork> for SpecId {
             EthereumHardfork::Shanghai => Self::SHANGHAI,
             EthereumHardfork::Cancun => Self::CANCUN,
             EthereumHardfork::Prague | EthereumHardfork::Latest => Self::PRAGUE,
-            // TODO: switch to latest after activation
-            // EOF is included in OSAKA from Revm 16.0.0
-            EthereumHardfork::PragueEOF => Self::OSAKA,
         }
     }
 }
