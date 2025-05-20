@@ -1,7 +1,7 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
-use alloy_dyn_abi::{eip712_parser::EncodeType, DynSolType, DynSolValue, Resolver};
+use alloy_dyn_abi::{eip712_parser::EncodeType, DynSolType, DynSolValue};
 use alloy_primitives::{aliases::B32, keccak256, map::HashMap, B64, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::{ens::namehash, fs};
@@ -316,57 +316,51 @@ fn random_int(state: &mut Cheatcodes, bits: Option<U256>) -> Result {
         .abi_encode())
 }
 
-// `string contant schema_Foo = "Foo(bar uin256)";`
-const TYPE_BINDING_PREFIX: &str = "string constant schema_";
-
 impl Cheatcode for eip712HashTypeCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { typeDefinition } = self;
 
         let type_def = if !typeDefinition.contains('(') {
-            &get_type_def_from_bindings(typeDefinition, state)?
+            get_type_def_from_bindings(typeDefinition, state)?
         } else {
-            typeDefinition
-            // let canonical = EncodeType::parse(typeDefinition).and_then(|parsed|
-            // parsed.canonicalize())?;
+            EncodeType::parse(&typeDefinition).and_then(|parsed| parsed.canonicalize())?
         };
 
-        // let hash = keccak256(type_def.as_bytes());
-        // bail!("type: {type_def}, hash: {hash}");
         Ok(keccak256(type_def.as_bytes()).to_vec())
     }
 }
 
 fn get_type_def_from_bindings(name: &String, state: &mut Cheatcodes) -> Result<String> {
-    let path = state.config.ensure_path_allowed(
-        &state.config.root.join("utils").join("JsonBindings.sol"),
-        FsAccessKind::Read,
-    )?;
+    const TYPE_BINDING_PREFIX: &str = "string constant schema_";
 
-    let content = fs::read_to_string(path)?;
+    let path = state.config.root.join("utils").join("JsonBindings.sol");
+    let path = state.config.ensure_path_allowed(&path, FsAccessKind::Read)?;
+    let content = fs::read_to_string(&path)?;
 
-    let mut type_defs = HashMap::new();
-    for line in content.lines() {
-        let line = line.trim();
-        if !line.starts_with(TYPE_BINDING_PREFIX) {
-            continue;
-        }
-
-        let relevant = &line[TYPE_BINDING_PREFIX.len()..];
-        if let Some(idx) = relevant.find('=') {
-            let name = relevant[..idx].trim();
-
-            // relevant value chars are " \"Foo(bar uint256)\";"
-            let def = relevant[idx + 1..].trim();
-            if def.len() > 3 && def.starts_with('"') && def.ends_with("\";") {
-                let value = &def[1..def.len() - 2];
-                type_defs.insert(name, value);
-            }
-        }
-    }
+    let type_defs: HashMap<&str, &str> = content
+        .lines()
+        .filter_map(|line| {
+            let relevant = line.trim().strip_prefix(TYPE_BINDING_PREFIX)?;
+            let (name, def) = relevant.split_once('=')?;
+            Some((name.trim(), def.trim().strip_prefix('"')?.strip_suffix("\";")?))
+        })
+        .collect();
 
     match type_defs.get(name.as_str()) {
         Some(value) => Ok(value.to_string()),
-        None => bail!(format!("'{name}' not found in 'utils/JsonBindings.sol'\n{:#?}", type_defs)),
+        None => {
+            let bindings =
+                type_defs.keys().map(|k| format!(" - {k}")).collect::<Vec<String>>().join("\n");
+
+            bail!(
+                "'{}' not found in 'utils/JsonBindings.sol'.{}",
+                name,
+                if bindings.is_empty() {
+                    String::new()
+                } else {
+                    format!("\nAvailable bindings:\n{}\n", bindings)
+                }
+            );
+        }
     }
 }

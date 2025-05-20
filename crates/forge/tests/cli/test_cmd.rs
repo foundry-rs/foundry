@@ -2,6 +2,7 @@
 
 use alloy_primitives::U256;
 use anvil::{spawn, NodeConfig};
+use foundry_config::fs_permissions::PathPermission;
 use foundry_test_utils::{
     rpc, str,
     util::{OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION},
@@ -3648,4 +3649,76 @@ Encountered 1 failing test in test/Counter.t.sol:CounterTest
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 "#]]);
+});
+
+forgetest!(test_eip712_cheatcode, |prj, cmd| {
+    prj.add_source(
+        "Eip712",
+        r#"
+contract Eip712Structs {
+    struct Transaction {
+        Person from;
+        Person to;
+        Asset tx;
+    }
+    struct Person {
+        address wallet;
+        string name;
+    }
+    struct Asset {
+        address token;
+        uint256 amount;
+    }
+}
+    "#,
+    )
+    .unwrap();
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.insert_console();
+
+    prj.add_source("Eip712Cheat.sol", r#"
+// Note Used in forge-cli tests to assert failures.
+// SPDX-License-Identifier: MIT OR Apache-2.0
+pragma solidity ^0.8.18;
+
+import "./test.sol";
+import "./Vm.sol";
+import "./console.sol";
+
+string constant CANONICAL = "Transaction(Person from,Person to,Asset tx)Asset(address token,uint256 amount)Person(address wallet,string name)";
+
+contract Eip712Test is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function testEip712HashType() public {
+        bytes32 canonicalHash = keccak256(bytes(CANONICAL));
+
+        // Can figure out the canonical type from a messy string representation of the type,
+        // with an invalid order and extra whitespaces
+        bytes32 fromTypeDef = vm.eip712HashType(
+            "Person(address wallet, string name) Asset(address token, uint256 amount) Transaction(Person from, Person to, Asset tx)"
+        );
+        assertEq(fromTypeDef, canonicalHash);
+
+        // Can figure out the canonical type from the previously generated bindings
+        bytes32 fromTypeName = vm.eip712HashType("Transaction");
+        assertEq(fromTypeName, canonicalHash);
+
+        // Reverts if the input type is not found in the bindings
+        vm._expectCheatcodeRevert();
+        fromTypeName = vm.eip712HashType("InvalidTypeName");
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse().args(["bind-json"]).assert_success();
+
+    let bindings = prj.root().join("utils").join("JsonBindings.sol");
+    assert!(bindings.exists(), "'JsonBindings.sol' was not generated at {:?}", bindings);
+
+    prj.update_config(|config| config.fs_permissions.add(PathPermission::read(bindings)));
+    cmd.forge_fuse().args(["test", "--mc", "Eip712Test", "-vvvv"]).assert_success();
 });

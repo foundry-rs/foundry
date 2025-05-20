@@ -1,5 +1,3 @@
-use foundry_config::fs_permissions::PathPermission;
-
 forgetest!(test_eip712, |prj, cmd| {
     let path = prj
         .add_source(
@@ -56,68 +54,4 @@ FooBar(Foo[] foos,Bar[] bars,Foo_1 foo,Bar_1 bar,Rec[] recs,Rec_1 rec)Art(uint25
 
 "#]],
     );
-});
-
-forgetest!(test_eip712_cheatcode, |prj, cmd| {
-    prj.add_source(
-        "Eip712",
-        r#"
-contract Eip712 {
-    struct Transaction {
-        Person from;
-        Person to;
-        Asset tx;
-    }
-    struct Person {
-        address wallet;
-        string name;
-    }
-    struct Asset {
-        address token;
-        uint256 amount;
-    }
-}
-    "#,
-    )
-    .unwrap();
-    prj.insert_ds_test();
-    prj.insert_vm();
-    prj.insert_console();
-
-    prj.add_source("Eip712Cheat.sol", r#"
-// Note Used in forge-cli tests to assert failures.
-// SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity ^0.8.18;
-
-import "./test.sol";
-import "./Vm.sol";
-import "./console.sol";
-
-string constant CANONICAL = "Transaction(Person from,Person to,Asset tx)Asset(address token,uint256 amount)Person(address wallet,string name)";
-string constant MESSY = "Person(address wallet, string name) Asset(address token, uint256 amount) Transaction(Person from, Person to, Asset tx)";
-
-contract Eip712Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
-    function testEip712HashType() public {
-        bytes32 hashCanonical = keccak256(bytes(CANONICAL));
-
-        bytes32 hashTypeName = vm.eip712HashType("Transaction");
-        assertEq(hashTypeName, hashCanonical);
-
-        bytes32 hashTypeDef = vm.eip712HashType(MESSY);
-        assertEq(hashTypeDef, hashCanonical);
-    }
-}
-"#,
-    )
-    .unwrap();
-
-    cmd.forge_fuse().args(["bind-json"]).assert_success();
-
-    let bindings = prj.root().join("utils").join("JsonBindings.sol");
-    assert!(bindings.exists(), "JsonBindings.sol was not generated at {:?}", bindings);
-
-    prj.update_config(|config| config.fs_permissions.add(PathPermission::read(bindings)));
-    cmd.forge_fuse().args(["test", "--mc", "Eip712Test", "-vvvv"]).assert_success();
 });
