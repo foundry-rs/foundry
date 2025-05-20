@@ -3662,6 +3662,7 @@ interface ICounter {
 
 contract NonContractCallRevertTest is Test {
     Counter public counter;
+    address constant ADDRESS = 0xdEADBEeF00000000000000000000000000000000;
 
     function setUp() public {
         counter = new Counter();
@@ -3675,12 +3676,12 @@ contract NonContractCallRevertTest is Test {
 
     function test_non_contract_call_failure() public {
         console.log("test non contract call failure");
-        ICounter(address(0xdEADBEeF00000000000000000000000000000000)).number();
+        ICounter(ADDRESS).number();
     }
 
     function test_non_contract_void_call_failure() public {
         console.log("test non contract (void) call failure");
-        ICounter(address(0xdEADBEeF00000000000000000000000000000000)).increment();
+        ICounter(ADDRESS).increment();
     }
 }
      "#,
