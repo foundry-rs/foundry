@@ -49,18 +49,15 @@ use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaChaRng;
 use revm::{
-    self,
-    bytecode::{opcode as op, EOF_MAGIC_BYTES},
+    bytecode::opcode as op,
     context::{result::EVMError, BlockEnv, JournalTr, LocalContext, TransactionType},
     context_interface::{transaction::SignedAuthorization, CreateScheme},
     handler::FrameResult,
     interpreter::{
         interpreter_types::{Jumps, LoopControl, MemoryTr},
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInputs,
-        EOFCreateKind, FrameInput, Gas, Host, InstructionResult, Interpreter, InterpreterAction,
-        InterpreterResult,
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas, Host,
+        InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
     },
-    primitives::hardfork::SpecId,
     state::EvmStorageSlot,
     Inspector, Journal,
 };
@@ -98,24 +95,11 @@ pub trait CheatcodesExecutor {
         with_evm(self, ccx, |evm| {
             evm.inner.ctx.journaled_state.depth += 1;
 
-            // Handle EOF bytecode
-            let frame = if evm.inner.ctx.cfg.spec.is_enabled_in(SpecId::OSAKA) &&
-                inputs.scheme == CreateScheme::Create &&
-                inputs.init_code.starts_with(&EOF_MAGIC_BYTES)
-            {
-                FrameInput::EOFCreate(Box::new(EOFCreateInputs::new(
-                    inputs.caller,
-                    inputs.value,
-                    inputs.gas_limit,
-                    EOFCreateKind::Tx { initdata: inputs.init_code },
-                )))
-            } else {
-                FrameInput::Create(Box::new(inputs))
-            };
+            let frame = FrameInput::Create(Box::new(inputs));
 
             let outcome = match evm.run_execution(frame)? {
-                FrameResult::Call(_) => unreachable!(),
-                FrameResult::Create(create) | FrameResult::EOFCreate(create) => create,
+                FrameResult::Call(_) | FrameResult::EOFCreate(_) => unreachable!(),
+                FrameResult::Create(create) => create,
             };
 
             evm.inner.ctx.journaled_state.depth -= 1;
@@ -1828,14 +1812,6 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
     fn create_end(&mut self, ecx: Ecx, call: &CreateInputs, outcome: &mut CreateOutcome) {
         self.create_end_common(ecx, Some(call), outcome)
-    }
-
-    fn eofcreate(&mut self, ecx: Ecx, call: &mut EOFCreateInputs) -> Option<CreateOutcome> {
-        self.create_common(ecx, call)
-    }
-
-    fn eofcreate_end(&mut self, ecx: Ecx, _call: &EOFCreateInputs, outcome: &mut CreateOutcome) {
-        self.create_end_common(ecx, None, outcome)
     }
 }
 

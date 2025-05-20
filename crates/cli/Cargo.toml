@@ -40,6 +40,7 @@ eyre.workspace = true
 futures.workspace = true
 indicatif.workspace = true
 itertools.workspace = true
+mimalloc = { workspace = true, optional = true }
 rayon.workspace = true
 regex = { workspace = true, default-features = false }
 serde_json.workspace = true
@@ -49,6 +50,7 @@ strum = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros"] }
 tracing-subscriber = { workspace = true, features = ["registry", "env-filter"] }
 tracing.workspace = true
+tracy-client = { workspace = true, optional = true, features = ["demangle"] }
 yansi.workspace = true
 rustls = { workspace = true, features = ["ring"] }
 dunce.workspace = true
@@ -63,4 +65,6 @@ tikv-jemallocator = { workspace = true, optional = true }
 
 [features]
 tracy = ["dep:tracing-tracy"]
+tracy-allocator = ["dep:tracy-client", "tracy"]
 jemalloc = ["dep:tikv-jemallocator"]
+mimalloc = ["dep:mimalloc"]

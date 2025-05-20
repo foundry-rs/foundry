@@ -26,7 +26,6 @@ serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
 revm.workspace = true
-comfy-table.workspace = true
 yansi.workspace = true
 
 [dev-dependencies]
