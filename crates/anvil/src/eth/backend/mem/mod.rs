@@ -2034,7 +2034,6 @@ impl Backend {
         all_logs
     }
 
-
     /// Returns the logs that match the filter in the given range of blocks
     async fn logs_for_range(
         &self,
