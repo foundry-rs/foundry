@@ -62,7 +62,7 @@ use alloy_rpc_types::{
     request::TransactionRequest,
     serde_helpers::JsonStorageKey,
     simulate::{SimBlock, SimCallResult, SimulatePayload, SimulatedBlock},
-    state::StateOverride,
+    state::EvmOverrides,
     trace::{
         filter::TraceFilter,
         geth::{
@@ -1411,16 +1411,19 @@ impl Backend {
         request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_request: Option<BlockRequest>,
-        overrides: Option<StateOverride>,
+        overrides: EvmOverrides,
     ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
-        self.with_database_at(block_request, |state, block| {
+        self.with_database_at(block_request, |state, mut block| {
             let block_number = block.number;
-            let (exit, out, gas, state) = match overrides {
-                None => self.call_with_state(state.as_dyn(), request, fee_details, block),
-                Some(overrides) => {
-                    let state = state::apply_state_override(overrides.into_iter().collect(), state)?;
-                    self.call_with_state(state.as_dyn(), request, fee_details, block)
-                },
+            let (exit, out, gas, state) = {
+                let mut cache_db = CacheDB::new(state);
+                if let Some(state_overrides) = overrides.state {
+                    state::apply_state_overrides(state_overrides.into_iter().collect(), &mut cache_db)?;
+                }
+                if let Some(block_overrides) = overrides.block {
+                    state::apply_block_overrides(*block_overrides, &mut cache_db, &mut block);
+                }
+                self.call_with_state(cache_db.as_dyn(), request, fee_details, block)
             }?;
             trace!(target: "backend", "call return {:?} out: {:?} gas {} on block {}", exit, out, gas, block_number);
             Ok((exit, out, gas, state))
@@ -1606,34 +1609,13 @@ impl Backend {
                 let mut transactions = Vec::with_capacity(calls.len());
                 let mut receipts = Vec::new();
                 let mut logs= Vec::new();
+
                 // apply state overrides before executing the transactions
                 if let Some(state_overrides) = state_overrides {
-                    state::apply_cached_db_state_override(state_overrides, &mut cache_db)?;
+                    state::apply_state_overrides(state_overrides, &mut cache_db)?;
                 }
-
-                // apply block overrides
-                if let Some(overrides) = block_overrides {
-                    if let Some(number) = overrides.number {
-                        block_env.number = number.saturating_to();
-                    }
-                    if let Some(difficulty) = overrides.difficulty {
-                        block_env.difficulty = difficulty;
-                    }
-                    if let Some(time) = overrides.time {
-                        block_env.timestamp = time;
-                    }
-                    if let Some(gas_limit) = overrides.gas_limit {
-                        block_env.gas_limit = gas_limit;
-                    }
-                    if let Some(coinbase) = overrides.coinbase {
-                        block_env.beneficiary = coinbase;
-                    }
-                    if let Some(random) = overrides.random {
-                        block_env.prevrandao = Some(random);
-                    }
-                    if let Some(base_fee) = overrides.base_fee {
-                        block_env.basefee = base_fee.saturating_to();
-                    }
+                if let Some(block_overrides) = block_overrides {
+                    state::apply_block_overrides(block_overrides, &mut cache_db, &mut block_env);
                 }
 
                 // execute all calls in that block
@@ -1850,19 +1832,20 @@ impl Backend {
         block_request: Option<BlockRequest>,
         opts: GethDebugTracingCallOptions,
     ) -> Result<GethTrace, BlockchainError> {
-        let GethDebugTracingCallOptions { tracing_options, block_overrides: _, state_overrides } =
+        let GethDebugTracingCallOptions { tracing_options, block_overrides, state_overrides } =
             opts;
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = tracing_options;
 
-        self.with_database_at(block_request, |state, block| {
+        self.with_database_at(block_request, |state, mut block| {
             let block_number = block.number;
 
-            let state = if let Some(overrides) = state_overrides {
-                Box::new(state::apply_state_override(overrides, state)?)
-                    as Box<dyn MaybeFullDatabase>
-            } else {
-                state
-            };
+            let mut cache_db = CacheDB::new(state);
+            if let Some(state_overrides) = state_overrides {
+                state::apply_state_overrides(state_overrides, &mut cache_db)?;
+            }
+            if let Some(block_overrides) = block_overrides {
+                state::apply_block_overrides(block_overrides, &mut cache_db, &mut block);
+            }
 
             if let Some(tracer) = tracer {
                 return match tracer {
@@ -1878,7 +1861,7 @@ impl Backend {
 
                             let env = self.build_call_env(request, fee_details, block);
                             let mut evm = self.new_evm_with_inspector_ref(
-                                state.as_dyn(),
+                                cache_db.as_dyn(),
                                 &env,
                                 &mut inspector,
                             );
@@ -1913,7 +1896,7 @@ impl Backend {
                 .with_tracing_config(TracingInspectorConfig::from_geth_config(&config));
 
             let env = self.build_call_env(request, fee_details, block);
-            let mut evm = self.new_evm_with_inspector_ref(state.as_dyn(), &env, &mut inspector);
+            let mut evm = self.new_evm_with_inspector_ref(cache_db.as_dyn(), &env, &mut inspector);
             let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
 
             let (exit_reason, gas_used, out) = match result {

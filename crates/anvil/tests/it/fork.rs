@@ -11,6 +11,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{
     anvil::Forking,
     request::{TransactionInput, TransactionRequest},
+    state::EvmOverrides,
     BlockId, BlockNumberOrTag,
 };
 use alloy_serde::WithOtherFields;
@@ -870,7 +871,7 @@ async fn test_fork_call() {
                 ..Default::default()
             }),
             None,
-            None,
+            EvmOverrides::default(),
         )
         .await
         .unwrap();
@@ -1313,7 +1314,7 @@ async fn test_fork_execution_reverted() {
                 ..Default::default()
             }),
             Some(target.into()),
-            None,
+            EvmOverrides::default(),
         )
         .await;
 
