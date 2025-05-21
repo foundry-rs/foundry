@@ -4,14 +4,12 @@
 //! of both builtin commands and Solidity snippets.
 
 use crate::{
-    prelude::{
-        ChiselCommand, ChiselResult, ChiselSession, CmdCategory, CmdDescriptor,
-        SessionSourceConfig, SolidityHelper,
-    },
+    prelude::{ChiselCommand, ChiselResult, ChiselSession, SessionSourceConfig, SolidityHelper},
     session_source::SessionSource,
 };
 use alloy_json_abi::{InternalType, JsonAbi};
 use alloy_primitives::{hex, Address};
+use clap::Parser;
 use forge_fmt::FormatterConfig;
 use foundry_config::RpcEndpointUrl;
 use foundry_evm::{
@@ -34,7 +32,6 @@ use std::{
     process::Command,
     sync::LazyLock,
 };
-use strum::IntoEnumIterator;
 use tracing::debug;
 use yansi::Paint;
 
@@ -191,45 +188,13 @@ impl ChiselDispatcher {
     /// ### Returns
     ///
     /// A [DispatchResult] containing feedback on the dispatch's execution.
-    pub async fn dispatch_command(&mut self, cmd: ChiselCommand, args: &[&str]) -> DispatchResult {
+    pub async fn dispatch_command(&mut self, cmd: ChiselCommand) -> DispatchResult {
         match cmd {
             ChiselCommand::Help => {
-                let all_descriptors =
-                    ChiselCommand::iter().map(CmdDescriptor::from).collect::<Vec<CmdDescriptor>>();
-                DispatchResult::CommandSuccess(Some(format!(
-                    "{}\n{}",
-                    format!("{CHISEL_CHAR} Chisel help\n=============").cyan(),
-                    CmdCategory::iter()
-                        .map(|cat| {
-                            // Get commands in the current category
-                            let cat_cmds = &all_descriptors
-                                .iter()
-                                .filter(|(_, _, c)| {
-                                    std::mem::discriminant(c) == std::mem::discriminant(&cat)
-                                })
-                                .collect::<Vec<&CmdDescriptor>>();
-
-                            // Format the help menu for the current category
-                            format!(
-                                "{}\n{}\n",
-                                cat.magenta(),
-                                cat_cmds
-                                    .iter()
-                                    .map(|(cmds, desc, _)| format!(
-                                        "\t{} - {}",
-                                        cmds.iter()
-                                            .map(|cmd| format!("!{}", cmd.green()))
-                                            .collect::<Vec<_>>()
-                                            .join(" | "),
-                                        desc
-                                    ))
-                                    .collect::<Vec<String>>()
-                                    .join("\n")
-                            )
-                        })
-                        .collect::<Vec<String>>()
-                        .join("\n")
-                )))
+                use clap::CommandFactory;
+                DispatchResult::CommandSuccess(Some(
+                    ChiselCommand::command().render_help().ansi().to_string(),
+                ))
             }
             ChiselCommand::Quit => {
                 // Exit the process with status code `0` for success.
@@ -241,39 +206,24 @@ impl ChiselDispatcher {
                 self.source_mut().drain_top_level_code();
                 DispatchResult::CommandSuccess(Some(String::from("Cleared session!")))
             }
-            ChiselCommand::Save => {
-                if args.len() <= 1 {
-                    // If a new name was supplied, overwrite the ID of the current session.
-                    if args.len() == 1 {
-                        // TODO: Should we delete the old cache file if the id of the session
-                        // changes?
-                        self.session.id = Some(args[0].to_owned());
-                    }
-
-                    if let Err(e) = self.session.write() {
-                        return DispatchResult::FileIoError(e.into())
-                    }
-                    DispatchResult::CommandSuccess(Some(format!(
-                        "Saved session to cache with ID = {}",
-                        self.session.id.as_ref().unwrap()
-                    )))
-                } else {
-                    DispatchResult::CommandFailed(Self::make_error(format!(
-                        "Too many arguments supplied: [{}]. Please check command syntax.",
-                        args.join(", ")
-                    )))
+            ChiselCommand::Save { id } => {
+                // If a new name was supplied, overwrite the ID of the current session.
+                if let Some(id) = id {
+                    // TODO: Should we delete the old cache file if the id of the session
+                    // changes?
+                    self.session.id = Some(id);
                 }
+
+                if let Err(e) = self.session.write() {
+                    return DispatchResult::FileIoError(e.into())
+                }
+                DispatchResult::CommandSuccess(Some(format!(
+                    "Saved session to cache with ID = {}",
+                    self.session.id.as_ref().unwrap()
+                )))
             }
-            ChiselCommand::Load => {
-                if args.len() != 1 {
-                    // Must supply a session ID as the argument.
-                    return DispatchResult::CommandFailed(Self::make_error(
-                        "Must supply a session ID as the argument.",
-                    ))
-                }
-
-                // Use args as the name
-                let name = args[0];
+            ChiselCommand::Load { id } => {
+                let name = id.as_str();
                 // Try to save the current session before loading another
                 // Don't save an empty session
                 if !self.source().run_code.is_empty() {
@@ -340,19 +290,14 @@ impl ChiselDispatcher {
                     "Failed to clear cache! Check file permissions or disk space.",
                 )),
             },
-            ChiselCommand::Fork => {
-                if args.is_empty() || args[0].trim().is_empty() {
+            ChiselCommand::Fork { url } => {
+                let Some(url) = url else {
                     self.source_mut().config.evm_opts.fork_url = None;
                     return DispatchResult::CommandSuccess(Some(
                         "Now using local environment.".to_string(),
                     ))
-                }
-                if args.len() != 1 {
-                    return DispatchResult::CommandFailed(Self::make_error(
-                        "Must supply a session ID as the argument.",
-                    ))
-                }
-                let arg = *args.first().unwrap();
+                };
+                let arg = &*url;
 
                 // If the argument is an RPC alias designated in the
                 // `[rpc_endpoints]` section of the `foundry.toml` within
@@ -401,10 +346,10 @@ impl ChiselDispatcher {
                     if self.source_mut().config.traces { "Enabled" } else { "Disabled" }
                 )))
             }
-            ChiselCommand::Calldata => {
+            ChiselCommand::Calldata { data } => {
                 // remove empty space, double quotes, and 0x prefix
-                let arg = args
-                    .first()
+                let arg = data
+                    .as_deref()
                     .map(|s| s.trim_matches(|c: char| c.is_whitespace() || c == '"' || c == '\''))
                     .map(|s| s.strip_prefix("0x").unwrap_or(s))
                     .unwrap_or("");
@@ -496,16 +441,10 @@ impl ChiselDispatcher {
                     )),
                 }
             }
-            ChiselCommand::Fetch => {
-                if args.len() != 2 {
-                    return DispatchResult::CommandFailed(Self::make_error(
-                        "Incorrect number of arguments supplied. Expected: <address> <name>",
-                    ))
-                }
-
+            ChiselCommand::Fetch { addr, name } => {
                 let request_url = format!(
                     "https://api.etherscan.io/api?module=contract&action=getabi&address={}{}",
-                    args[0],
+                    addr,
                     if let Some(api_key) =
                         self.source().config.foundry_config.etherscan_api_key.as_ref()
                     {
@@ -525,10 +464,8 @@ impl ChiselDispatcher {
                             let abi = json.result.unwrap();
                             let abi: serde_json::Result<JsonAbi> = serde_json::from_str(&abi);
                             if let Ok(abi) = abi {
-                                let mut interface = format!(
-                                    "// Interface of {}\ninterface {} {{\n",
-                                    args[0], args[1]
-                                );
+                                let mut interface =
+                                    format!("// Interface of {addr}\ninterface {name} {{\n");
 
                                 // Add error definitions
                                 abi.errors().for_each(|err| {
@@ -615,8 +552,7 @@ impl ChiselDispatcher {
                                 self.source_mut().with_global_code(&interface);
 
                                 DispatchResult::CommandSuccess(Some(format!(
-                                    "Added {}'s interface to source as `{}`",
-                                    args[0], args[1]
+                                    "Added {addr}'s interface to source as `{name}`"
                                 )))
                             } else {
                                 DispatchResult::CommandFailed(Self::make_error(
@@ -639,18 +575,9 @@ impl ChiselDispatcher {
                     ))),
                 }
             }
-            ChiselCommand::Exec => {
-                if args.is_empty() {
-                    return DispatchResult::CommandFailed(Self::make_error(
-                        "No command supplied! Please provide a valid command after '!'.",
-                    ))
-                }
-
-                let mut cmd = Command::new(args[0]);
-                if args.len() > 1 {
-                    cmd.args(args[1..].iter().copied());
-                }
-
+            ChiselCommand::Exec { command, args } => {
+                let mut cmd = Command::new(command);
+                cmd.args(args);
                 match cmd.output() {
                     Ok(output) => {
                         std::io::stdout().write_all(&output.stdout).unwrap();
@@ -750,18 +677,9 @@ impl ChiselDispatcher {
                     }
                 }
             }
-            ChiselCommand::RawStack => {
-                let len = args.len();
-                if len != 1 {
-                    let msg = match len {
-                        0 => "No variable supplied!",
-                        _ => "!rawstack only takes one argument.",
-                    };
-                    return DispatchResult::CommandFailed(Self::make_error(msg))
-                }
-
+            ChiselCommand::RawStack { var } => {
                 // Store the variable that we want to inspect
-                let to_inspect = args.first().unwrap();
+                let to_inspect = var.as_str();
 
                 // Get a mutable reference to the session source
                 let source = self.source_mut();
@@ -788,13 +706,10 @@ impl ChiselDispatcher {
     pub async fn dispatch(&mut self, mut input: &str) -> DispatchResult {
         // Check if the input is a builtin command.
         // Commands are denoted with a `!` leading character.
-        if input.starts_with(COMMAND_LEADER) {
-            let split: Vec<&str> = input.split_whitespace().collect();
-            let raw_cmd = &split[0][1..];
-
-            return match raw_cmd.parse::<ChiselCommand>() {
-                Ok(cmd) => self.dispatch_command(cmd, &split[1..]).await,
-                Err(e) => DispatchResult::UnrecognizedCommand(e),
+        if let Some(command) = input.strip_prefix(COMMAND_LEADER) {
+            return match ChiselCommand::try_parse_from(command.split_whitespace()) {
+                Ok(cmd) => self.dispatch_command(cmd).await,
+                Err(e) => DispatchResult::UnrecognizedCommand(e.into()),
             }
         }
         if input.trim().is_empty() {

@@ -69,7 +69,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
     // Check for chisel subcommands
     match &args.cmd {
         Some(ChiselSubcommand::List) => {
-            let sessions = dispatcher.dispatch_command(ChiselCommand::ListSessions, &[]).await;
+            let sessions = dispatcher.dispatch_command(ChiselCommand::ListSessions).await;
             match sessions {
                 DispatchResult::CommandSuccess(Some(session_list)) => {
                     sh_println!("{session_list}")?;
@@ -81,7 +81,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
         }
         Some(ChiselSubcommand::Load { id }) | Some(ChiselSubcommand::View { id }) => {
             // For both of these subcommands, we need to attempt to load the session from cache
-            match dispatcher.dispatch_command(ChiselCommand::Load, &[id]).await {
+            match dispatcher.dispatch_command(ChiselCommand::Load { id: id.clone() }).await {
                 DispatchResult::CommandSuccess(_) => { /* Continue */ }
                 DispatchResult::CommandFailed(e) => {
                     sh_err!("{e}")?;
@@ -92,7 +92,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
 
             // If the subcommand was `view`, print the source and exit.
             if matches!(args.cmd, Some(ChiselSubcommand::View { .. })) {
-                match dispatcher.dispatch_command(ChiselCommand::Source, &[]).await {
+                match dispatcher.dispatch_command(ChiselCommand::Source).await {
                     DispatchResult::CommandSuccess(Some(source)) => {
                         sh_println!("{source}")?;
                     }
@@ -102,7 +102,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
             }
         }
         Some(ChiselSubcommand::ClearCache) => {
-            match dispatcher.dispatch_command(ChiselCommand::ClearCache, &[]).await {
+            match dispatcher.dispatch_command(ChiselCommand::ClearCache).await {
                 DispatchResult::CommandSuccess(Some(msg)) => sh_println!("{}", msg.green())?,
                 DispatchResult::CommandFailed(e) => sh_err!("{e}")?,
                 _ => panic!("Unexpected result! Please report this bug."),

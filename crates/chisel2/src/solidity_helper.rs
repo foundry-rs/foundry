@@ -7,6 +7,7 @@ use crate::{
     dispatcher::PROMPT_ARROW,
     prelude::{ChiselCommand, COMMAND_LEADER, PROMPT_ARROW_STR},
 };
+use clap::Parser;
 use rustyline::{
     completion::Completer,
     highlight::{CmdKind, Highlighter},
@@ -19,7 +20,7 @@ use solar_parse::{
     token::{Token, TokenKind},
     Lexer,
 };
-use std::{borrow::Cow, ops::Range, str::FromStr};
+use std::{borrow::Cow, ops::Range};
 use yansi::{Color, Style};
 
 /// The maximum length of an ANSI prefix + suffix characters using [SolidityHelper].
@@ -86,7 +87,7 @@ impl SolidityHelper {
 
             // cmd
             out.push(COMMAND_LEADER);
-            let cmd_res = ChiselCommand::from_str(cmd);
+            let cmd_res = ChiselCommand::try_parse_from(input.split_whitespace());
             let style = (if cmd_res.is_ok() { Color::Green } else { Color::Red }).foreground();
             Self::paint_unchecked(cmd, style, &mut out);
 
