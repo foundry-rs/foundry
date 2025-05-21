@@ -3523,6 +3523,7 @@ contract InterceptInitcodeTest is DSTest {
 });
 
 // <https://github.com/foundry-rs/foundry/issues/10296>
+// <https://github.com/foundry-rs/foundry/issues/10552>
 forgetest_init!(should_preserve_fork_state_setup, |prj, cmd| {
     prj.wipe_contracts();
     prj.add_test(
@@ -3551,6 +3552,13 @@ contract CounterTest is Test {
     mapping(uint256 => SomeStruct) internal data;
 
     function setUp() public {
+        // Temporary workaround for `https://eth.llamarpc.com/` being down
+        setChain("mainnet", ChainData({
+            name: "mainnet",
+            rpcUrl: "https://reth-ethereum.ithaca.xyz/rpc",
+            chainId: 1
+        }));
+
         StdChains.Chain memory chain1 = getChain("mainnet");
         StdChains.Chain memory chain2 = getChain("base");
         Domain memory domain1 = Domain(chain1, vm.createFork(chain1.rpcUrl, 22253716));
