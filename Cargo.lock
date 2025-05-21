@@ -883,7 +883,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-serde 0.11.1",
  "alloy-sol-types",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "serde",
  "serde_json",
  "thiserror 2.0.12",
@@ -903,7 +903,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-serde 0.12.6",
  "alloy-sol-types",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "serde",
  "serde_json",
  "thiserror 2.0.12",
@@ -1754,7 +1754,7 @@ dependencies = [
 [[package]]
 name = "assertion-da-client"
 version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git#a1b32aa91e6768125112415844d2328b015f2ab3"
+source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=cc1b26e#cc1b26eed4a76c14a080033651972e0767382f8f"
 dependencies = [
  "alloy",
  "assertion-da-core",
@@ -1768,7 +1768,7 @@ dependencies = [
 [[package]]
 name = "assertion-da-core"
 version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git#a1b32aa91e6768125112415844d2328b015f2ab3"
+source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=cc1b26e#cc1b26eed4a76c14a080033651972e0767382f8f"
 dependencies = [
  "alloy",
  "serde",
@@ -1777,7 +1777,7 @@ dependencies = [
 [[package]]
 name = "assertion-executor"
 version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-executor.git?branch=tracing#a90070801800155b5ffc7b8e3089e368efc8942e"
+source = "git+ssh://git@github.com/phylaxsystems/assertion-executor.git#b50f1e4f71c2661f9ae6f82144cbc33d711ecdaf"
 dependencies = [
  "alloy",
  "alloy-consensus 0.11.1",
@@ -2457,7 +2457,7 @@ dependencies = [
  "bitflags 2.9.0",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools 0.11.0",
  "lazy_static",
  "lazycell",
  "log",
@@ -4604,7 +4604,7 @@ dependencies = [
  "fs_extra",
  "futures-util",
  "home",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "md-5",
  "path-slash",
  "rand 0.8.5",
@@ -5903,7 +5903,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.61.0",
+ "windows-core 0.59.0",
 ]
 
 [[package]]
@@ -6295,15 +6295,6 @@ name = "itertools"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
 dependencies = [
  "either",
 ]
@@ -6729,7 +6720,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -8156,7 +8147,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.11.0",
  "proc-macro2",
  "quote",
  "syn 2.0.100",
@@ -9895,7 +9886,7 @@ dependencies = [
  "derive_builder",
  "derive_more 2.0.1",
  "dunce",
- "itertools 0.14.0",
+ "itertools 0.11.0",
  "itoa",
  "lasso",
  "match_cfg",
@@ -9931,7 +9922,7 @@ dependencies = [
  "alloy-primitives",
  "bitflags 2.9.0",
  "bumpalo",
- "itertools 0.14.0",
+ "itertools 0.11.0",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -10992,7 +10983,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69fff37da548239c3bf9e64a12193d261e8b22b660991c6fd2df057c168f435f"
 dependencies = [
  "cc",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -11619,7 +11610,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -11675,19 +11666,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "windows-core"
-version = "0.61.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4763c1de310c86d75a878046489e2e5ba02c649d185f21c67d4cf8a56d098980"
-dependencies = [
- "windows-implement 0.60.0",
- "windows-interface 0.59.1",
- "windows-link",
- "windows-result 0.3.2",
- "windows-strings 0.4.0",
-]
-
-[[package]]
 name = "windows-implement"
 version = "0.58.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11703,17 +11681,6 @@ name = "windows-implement"
 version = "0.59.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83577b051e2f49a058c308f17f273b570a6a758386fc291b5f6a934dd84e48c1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.100",
-]
-
-[[package]]
-name = "windows-implement"
-version = "0.60.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a47fddd13af08290e67f4acabf4b459f647552718f683a7b415d290ac744a836"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -11792,15 +11759,6 @@ name = "windows-strings"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "87fa48cc5d406560701792be122a10132491cff9d0aeb23583cc2dcafc847319"
-dependencies = [
- "windows-link",
-]
-
-[[package]]
-name = "windows-strings"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a2ba9642430ee452d5a7aa78d72907ebe8cfda358e8cb7918a2050581322f97"
 dependencies = [
  "windows-link",
 ]
