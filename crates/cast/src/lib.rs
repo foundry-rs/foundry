@@ -34,6 +34,7 @@ use foundry_common::{
 };
 use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
+use foundry_evm_core::ic::decode_instructions;
 use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
 use std::{
@@ -46,7 +47,6 @@ use std::{
     time::Duration,
 };
 use tokio::signal::ctrl_c;
-use utils::decode_instructions;
 
 use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
@@ -159,7 +159,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
 
         if let Some(func) = func {
             // decode args into tokens
-            decoded = match func.abi_decode_output(res.as_ref(), false) {
+            decoded = match func.abi_decode_output(res.as_ref()) {
                 Ok(decoded) => decoded,
                 Err(err) => {
                     // ensure the address is a contract
@@ -367,7 +367,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         let block = self
             .provider
             .get_block(block)
-            .full()
+            .kind(full.into())
             .await?
             .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
 
@@ -1099,8 +1099,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             .balanceOf(owner)
             .block(block.unwrap_or_default())
             .call()
-            .await?
-            ._0)
+            .await?)
     }
 }
 
@@ -2387,16 +2386,21 @@ mod tests {
     #[test]
     fn disassemble_incomplete_sequence() {
         let incomplete = &hex!("60"); // PUSH1
-        let disassembled = Cast::disassemble(incomplete);
-        assert!(disassembled.is_err());
+        let disassembled = Cast::disassemble(incomplete).unwrap();
+        assert_eq!(disassembled, "00000000: PUSH1 0x00\n");
 
         let complete = &hex!("6000"); // PUSH1 0x00
         let disassembled = Cast::disassemble(complete);
         assert!(disassembled.is_ok());
 
         let incomplete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 31 bytes
-        let disassembled = Cast::disassemble(incomplete);
-        assert!(disassembled.is_err());
+
+        let disassembled = Cast::disassemble(incomplete).unwrap();
+
+        assert_eq!(
+            disassembled,
+            "00000000: PUSH32 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00\n"
+        );
 
         let complete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 32 bytes
         let disassembled = Cast::disassemble(complete);
