@@ -13,7 +13,7 @@
 [tg-support-badge]: https://img.shields.io/endpoint?color=neon&logo=telegram&label=support&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Ffoundry_support
 [tg-support-url]: https://t.me/foundry_support
 
-**[Install](https://book.getfoundry.sh/getting-started/installation)**
+**[Install](https://paritytech.github.io/foundry-book-polkadot/getting-started/installation)**
 | [User Book][foundry-book]
 | [Developer Docs](./docs/dev/README.md)
 | [Contributing](./CONTRIBUTING.md)
@@ -69,12 +69,12 @@ Getting started is very easy:
 Install `foundryup`:
 
 ```
-curl -L https://foundry.paradigm.xyz | bash
+curl -L https://raw.githubusercontent.com/paritytech/foundry-polkadot/refs/heads/master/foundryup/install | bash
 ```
 
 Next, run `foundryup`.
 
-It will automatically install the latest version of the precompiled binaries: [`forge`](#forge), [`cast`](#cast), [`anvil`](#anvil), and [`chisel`](#chisel).
+It will automatically install the latest version of the precompiled binaries: [`forge`](#forge), [`cast`](#cast).
 
 ```
 foundryup
@@ -82,9 +82,9 @@ foundryup
 
 **Done!**
 
-For additional details see the [installation guide](https://book.getfoundry.sh/getting-started/installation) in the [Foundry Book][foundry-book].
+For additional details see the [installation guide](https://paritytech.github.io/foundry-book-polkadot/getting-started/installation) in the [Foundry Book][foundry-book].
 
-If you're experiencing any issues while installing, check out [Getting Help](#getting-help) and the [FAQ](https://book.getfoundry.sh/faq).
+If you're experiencing any issues while installing, check out [Getting Help](#getting-help) and the [FAQ](https://paritytech.github.io/foundry-book-polkadot/faq).
 
 ## How Fast?
 
@@ -151,7 +151,7 @@ forge build
 Compiler run successful!
 ```
 
-Let's [test](https://book.getfoundry.sh/forge/tests#tests) our contracts:
+Let's [test](https://paritytech.github.io/foundry-book-polkadot/forge/tests#tests) our contracts:
 
 ```sh
 forge test
@@ -342,26 +342,24 @@ shall be dual licensed as above, without any additional terms or conditions.
 - All the other [contributors](https://github.com/foundry-rs/foundry/graphs/contributors) to the [ethers-rs](https://github.com/gakonst/ethers-rs), [alloy][alloy] & [foundry](https://github.com/foundry-rs/foundry) repositories and chatrooms.
 
 [solidity]: https://soliditylang.org/
-[foundry-book]: https://book.getfoundry.sh
-[foundry-book-config]: https://book.getfoundry.sh/config/
-[foundry-book-forge]: https://book.getfoundry.sh/reference/forge/
-[foundry-book-anvil]: https://book.getfoundry.sh/reference/anvil/
-[foundry-book-cast]: https://book.getfoundry.sh/reference/cast/
-[foundry-book-chisel]: https://book.getfoundry.sh/reference/chisel/
+[foundry-book]: https://paritytech.github.io/foundry-book-polkadot
+[foundry-book-config]: https://paritytech.github.io/foundry-book-polkadot/config/
+[foundry-book-forge]: https://paritytech.github.io/foundry-book-polkadot/reference/forge/
+[foundry-book-anvil]: https://paritytech.github.io/foundry-book-polkadot/reference/anvil/
+[foundry-book-cast]: https://paritytech.github.io/foundry-book-polkadot/reference/cast/
+[foundry-book-chisel]: https://paritytech.github.io/foundry-book-polkadot/reference/chisel/
 [foundry-gha]: https://github.com/foundry-rs/foundry-toolchain
 [foundry-compilers]: https://github.com/foundry-rs/compilers
 [ethers-solc]: https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/
 [solady]: https://github.com/Vectorized/solady
 [openzeppelin]: https://github.com/OpenZeppelin/openzeppelin-contracts/tree/release-v5.1
 [morpho-blue]: https://github.com/morpho-org/morpho-blue
-[foundry-compilers]: https://github.com/foundry-rs/compilers
+[foundry-compilers]: https://github.com/paritytech/foundry-compilers-polkadot
 [solmate]: https://github.com/transmissions11/solmate/
 [geb]: https://github.com/reflexer-labs/geb
 [benchmark-post]: https://www.paradigm.xyz/2022/03/foundry-02#blazing-fast-compilation--testing
 [convex]: https://github.com/mds1/convex-shutdown-simulation
-[vscode-setup]: https://book.getfoundry.sh/config/vscode.html
-[shell-setup]: https://book.getfoundry.sh/config/shell-autocompletion.html
-[foundry-0.2]: https://github.com/foundry-rs/foundry/releases/tag/nightly-5b7e4cb3c882b28f3c32ba580de27ce7381f415a
-[foundry-1.0]: https://github.com/foundry-rs/foundry/releases/tag/nightly-59f354c179f4e7f6d7292acb3d068815c79286d1
+[vscode-setup]: https://paritytech.github.io/foundry-book-polkadot/config/vscode.html
+[shell-setup]: https://paritytech.github.io/foundry-book-polkadot/config/shell-autocompletion.html
 [dapptools]: https://github.com/dapphub/dapptools
 [alloy]: https://github.com/alloy-rs/alloy

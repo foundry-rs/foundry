@@ -7,7 +7,7 @@ Update or revert to a specific Foundry branch with ease.
 ## Installing
 
 ```sh
-curl -L https://foundry.paradigm.xyz | bash
+curl -L https://raw.githubusercontent.com/paritytech/foundry-polkadot/refs/heads/master/foundryup/foundryup | bash
 ```
 
 ## Usage

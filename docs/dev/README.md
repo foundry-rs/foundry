@@ -78,6 +78,6 @@ We use [cargo-nextest][nextest] as the test runner.
 
 If `make test` passes locally, that's a good sign that CI will be green as well.
 
-[foundry-book]: https://book.getfoundry.sh
+[foundry-book]: https://paritytech.github.io/foundry-book-polkadot
 [cargo-workspace]: https://doc.rust-lang.org/book/ch14-03-cargo-workspaces.html
 [nextest]: https://nexte.st/

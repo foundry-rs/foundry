@@ -425,7 +425,7 @@ banner() {
 .xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx
 
 Repo       : https://github.com/paritytech/foundry-polkadot
-Book       : https://book.getfoundry.sh/
+Book       : https://paritytech.github.io/foundry-book-polkadot/
 Contribute : https://github.com/paritytech/foundry-polkadot/blob/master/CONTRIBUTING.md
 
 .xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx
