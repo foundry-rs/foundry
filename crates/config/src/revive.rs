@@ -9,9 +9,6 @@ use crate::{Config, SolcReq};
 /// Filename for resolc cache
 pub const RESOLC_SOLIDITY_FILES_CACHE_FILENAME: &str = "resolc-solidity-files-cache.json";
 
-/// Directory for resolc artifacts
-pub const RESOLC_ARTIFACTS_DIR: &str = "resolc-out";
-
 pub const CONTRACT_SIZE_LIMIT: usize = 250_000;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Default, Deserialize)]
@@ -41,13 +38,13 @@ impl ResolcConfig {
             .sources(&config.src)
             .tests(&config.test)
             .scripts(&config.script)
-            .artifacts(config.root.join(RESOLC_ARTIFACTS_DIR))
             .libs(config.libs.iter())
             .remappings(config.get_all_remappings())
             .allowed_path(&config.root)
             .allowed_paths(&config.libs)
             .allowed_paths(&config.allow_paths)
-            .include_paths(&config.include_paths);
+            .include_paths(&config.include_paths)
+            .artifacts(&config.out);
 
         builder.build_with_root(&config.root)
     }

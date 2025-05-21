@@ -25,7 +25,7 @@ forgetest_init!(can_clean_config, |prj, cmd| {
     // prj.update_config(|config| config.out = "custom-out".into());
     cmd.args(["build", "--resolc"]).assert_success();
 
-    let artifact = prj.root().join(format!("resolc-out/{TEMPLATE_TEST_CONTRACT_ARTIFACT_JSON}"));
+    let artifact = prj.artifacts().join(TEMPLATE_TEST_CONTRACT_ARTIFACT_JSON);
     assert!(artifact.exists());
 
     cmd.forge_fuse().arg("clean").assert_empty_stdout();
@@ -43,14 +43,14 @@ contract Foo {}
     .unwrap();
 
     // compile with solc
-    cmd.args(["build", "--out=resolc-out"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["build"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
 "#]]);
 
-    let artifact = prj.root().join("resolc-out/");
+    let artifact = prj.artifacts();
     assert!(artifact.exists());
 
     // compile with resolc to the same output dir (resolc has hardcoded output dir)
@@ -62,7 +62,7 @@ Compiler run successful!
 "#]]);
 
     // compile again with solc to the same output dir
-    cmd.forge_fuse().args(["build", "--out=resolc-out"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse().args(["build"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -84,7 +84,7 @@ Compiler run successful!
 "#]
     ]);
 
-    let artifact_path = prj.root().join(format!("resolc-out/{CONTRACT_ARTIFACT_JSON}"));
+    let artifact_path = prj.artifacts().join(CONTRACT_ARTIFACT_JSON);
     let artifact: ConfigurableContractArtifact =
         foundry_compilers::utils::read_json_file(&artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
@@ -100,8 +100,7 @@ Compiler run successful!
 
 "#]]);
 
-    let metadata_path =
-        prj.root().join(format!("resolc-out/{CONTRACT_ARTIFACT_BASE}.metadata.json"));
+    let metadata_path = prj.artifacts().join(format!("{CONTRACT_ARTIFACT_BASE}.metadata.json"));
     let _artifact: Metadata = foundry_compilers::utils::read_json_file(&metadata_path).unwrap();
 });
 
@@ -125,7 +124,7 @@ Compiler run successful!
 
 "#]]);
 
-    let artifact_path = prj.root().join(format!("resolc-out/{CONTRACT_ARTIFACT_JSON}"));
+    let artifact_path = prj.artifacts().join(CONTRACT_ARTIFACT_JSON);
     let artifact: ConfigurableContractArtifact =
         foundry_compilers::utils::read_json_file(&artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
@@ -151,14 +150,13 @@ Compiler run successful!
 
 "#]]);
 
-    let metadata_path =
-        prj.root().join(format!("resolc-out/{CONTRACT_ARTIFACT_BASE}.metadata.json"));
+    let metadata_path = prj.artifacts().join(format!("{CONTRACT_ARTIFACT_BASE}.metadata.json"));
     let _artifact: Metadata = foundry_compilers::utils::read_json_file(&metadata_path).unwrap();
 
-    let iropt = prj.root().join(format!("resolc-out/{CONTRACT_ARTIFACT_BASE}.iropt"));
+    let iropt = prj.artifacts().join(format!("{CONTRACT_ARTIFACT_BASE}.iropt"));
     std::fs::read_to_string(iropt).unwrap();
 
-    let ir = prj.root().join(format!("resolc-out/{CONTRACT_ARTIFACT_BASE}.ir"));
+    let ir = prj.artifacts().join(format!("{CONTRACT_ARTIFACT_BASE}.ir"));
     std::fs::read_to_string(ir).unwrap();
 });
 
@@ -389,7 +387,7 @@ Compiler run successful!
 
 "#]]);
 
-    let artifact = prj.root().join(format!("resolc-out/{CONTRACT_ARTIFACT_JSON}"));
+    let artifact = prj.artifacts().join(CONTRACT_ARTIFACT_JSON);
     assert!(artifact.exists());
     let cache = prj.root().join("cache/resolc-solidity-files-cache.json");
     assert!(cache.exists());
@@ -892,8 +890,7 @@ forgetest!(inspect_custom_counter_method_identifiers_for_resolc, |prj, cmd| {
 forgetest!(can_bind_for_resolc, |prj, cmd| {
     init_prj(&prj);
 
-    //TODO: bind command is looking for artifacts in wrong directory
-    cmd.args(["bind", "--resolc", "--out", "resolc-out"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["bind", "--resolc"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [RESOLC_VERSION]
 [RESOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -927,13 +924,13 @@ forgetest!(can_bind_enum_modules_for_resolc, |prj, cmd| {
     .unwrap();
 
     //TODO: bind command is looking for artifacts in wrong directory
-    cmd.args(["bind", "--resolc", "--out", "resolc-out", "--select", "^Enum$"])
-        .assert_success()
-        .stdout_eq(str![[r#"[COMPILING_FILES] with [RESOLC_VERSION]
+    cmd.args(["bind", "--resolc", "--select", "^Enum$"]).assert_success().stdout_eq(str![[
+        r#"[COMPILING_FILES] with [RESOLC_VERSION]
 [RESOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Generating bindings for 1 contracts
-Bindings have been generated to [..]"#]]);
+Bindings have been generated to [..]"#
+    ]]);
 });
 
 // Tests that direct import paths are handled correctly

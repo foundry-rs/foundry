@@ -105,13 +105,9 @@ pub fn run_command(args: Forge) -> Result<()> {
             Ok(())
         }
         ForgeSubcommand::Clean { root } => {
-            let mut config = utils::load_config_with_root(root.as_deref())?;
+            let config = utils::load_config_with_root(root.as_deref())?;
             let project = config.project()?;
             config.cleanup(&project)?;
-
-            config.resolc.resolc_compile = true;
-            let resolc_project = config.project()?;
-            config.cleanup(&resolc_project)?;
 
             Ok(())
         }

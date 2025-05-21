@@ -7,6 +7,7 @@ use foundry_common::{compile::ProjectCompiler, fs::json_files};
 use foundry_config::impl_figment_convert;
 use regex::Regex;
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
 };
@@ -112,31 +113,58 @@ pub struct BindArgs {
 }
 
 impl BindArgs {
-    pub fn run(self) -> Result<()> {
+    pub fn run(mut self) -> Result<()> {
         if self.ethers {
             eyre::bail!("`--ethers` bindings have been removed. Use `--alloy` (default) instead.");
         }
-
         if !self.skip_build {
             let project = self.build.project()?;
-            let _ = ProjectCompiler::new().compile(&project)?;
+            let old_builds: BTreeSet<String> = {
+                if let Ok(entries) = std::fs::read_dir(&project.paths.build_infos) {
+                    entries
+                        .filter_map(|x| x.ok())
+                        .filter_map(|f| {
+                            let path = f.path();
+                            if path.is_file() {
+                                path.file_stem().map(|x| x.to_string_lossy().into_owned())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                } else {
+                    BTreeSet::new()
+                }
+            };
+            let output = ProjectCompiler::new().compile(&project)?;
+
+            let new_builds: BTreeSet<String> =
+                output.builds().map(|(key, _)| key).cloned().collect();
+
+            // if build_infos got overwritten => different compiler was used.
+            // in case of other possible errors(e.g. modified file we go as usual)
+            if old_builds.is_disjoint(&new_builds) {
+                self.overwrite = true;
+            }
         }
 
         let config = self.load_config()?;
-        let artifacts = config.out;
+        let project = config.project()?;
+
+        let artifacts = project.artifacts_path();
         let bindings_root = self.bindings.clone().unwrap_or_else(|| artifacts.join("bindings"));
 
         if bindings_root.exists() {
             if !self.overwrite {
                 sh_println!("Bindings found. Checking for consistency.")?;
-                return self.check_existing_bindings(&artifacts, &bindings_root);
+                return self.check_existing_bindings(artifacts, &bindings_root);
             }
 
             trace!(?artifacts, "Removing existing bindings");
             fs::remove_dir_all(&bindings_root)?;
         }
 
-        self.generate_bindings(&artifacts, &bindings_root)?;
+        self.generate_bindings(artifacts, &bindings_root)?;
 
         sh_println!("Bindings have been generated to {}", bindings_root.display())?;
         Ok(())
