@@ -392,4 +392,5 @@ op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "b5808253" }
 # revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "a625c04" }
 
 ## foundry
+foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "898bcbb" }
 # foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "811a61a" }
