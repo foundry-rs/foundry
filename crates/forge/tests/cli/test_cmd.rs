@@ -3521,6 +3521,7 @@ contract InterceptInitcodeTest is DSTest {
 });
 
 // <https://github.com/foundry-rs/foundry/issues/10296>
+// <https://github.com/foundry-rs/foundry/issues/10552>
 forgetest_init!(should_preserve_fork_state_setup, |prj, cmd| {
     prj.wipe_contracts();
     prj.add_test(
