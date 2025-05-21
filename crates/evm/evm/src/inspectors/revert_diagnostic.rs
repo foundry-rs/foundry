@@ -6,14 +6,12 @@ use foundry_evm_core::{
 };
 use revm::{
     bytecode::opcode::{EXTCODESIZE, REVERT},
-    context::{Cfg, ContextTr, JournalTr},
+    context::{ContextTr, JournalTr},
     inspector::JournalExt,
     interpreter::{
         interpreter::EthInterpreter, interpreter_types::Jumps, CallInputs, CallOutcome, CallScheme,
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
     },
-    precompile::{PrecompileSpecId, Precompiles},
-    primitives::hardfork::SpecId,
     Database, Inspector,
 };
 use std::fmt;
@@ -72,12 +70,6 @@ pub struct RevertDiagnostic {
 }
 
 impl RevertDiagnostic {
-    /// Checks if the `target` address is a precompile for the given `spec_id`.
-    fn is_precompile(&self, spec_id: SpecId, target: Address) -> bool {
-        let precompiles = Precompiles::new(PrecompileSpecId::from_spec_id(spec_id));
-        precompiles.contains(&target)
-    }
-
     /// Returns the effective target address whose code would be executed.
     /// For delegate calls, this is the `bytecode_address`. Otherwise, it's the `target_address`.
     fn code_target_address(&self, inputs: &mut CallInputs) -> Address {
@@ -134,13 +126,13 @@ where
     fn call(&mut self, ctx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         let target = self.code_target_address(inputs);
 
-        if IGNORE.contains(&target) || self.is_precompile(ctx.cfg().spec().into(), target) {
+        if IGNORE.contains(&target) || ctx.journal_ref().precompile_addresses().contains(&target) {
             return None;
         }
 
         if let Ok(state) = ctx.journal().code(target) {
             if state.is_empty() && !inputs.input.is_empty() {
-                self.non_contract_call = Some((target, inputs.scheme, ctx.journal().depth()));
+                self.non_contract_call = Some((target, inputs.scheme, ctx.journal_ref().depth()));
             }
         }
         None
@@ -161,10 +153,10 @@ where
         // REVERT (offset, size)
         if REVERT == interp.bytecode.opcode() {
             if let Ok(size) = interp.stack.peek(1) {
-                if size == U256::ZERO {
+                if size.is_zero() {
                     // Check empty revert with same depth as a non-contract call
                     if let Some((_, _, depth)) = self.non_contract_call {
-                        if ctx.journal().depth() == depth {
+                        if ctx.journal_ref().depth() == depth {
                             self.handle_revert_diagnostic(interp);
                         } else {
                             self.non_contract_call = None;
@@ -174,7 +166,7 @@ where
 
                     // Check empty revert with same depth as a non-contract size check
                     if let Some((_, depth)) = self.non_contract_size_check {
-                        if depth == ctx.journal().depth() {
+                        if depth == ctx.journal_ref().depth() {
                             self.handle_revert_diagnostic(interp);
                         } else {
                             self.non_contract_size_check = None;
@@ -187,12 +179,14 @@ where
         else if EXTCODESIZE == interp.bytecode.opcode() {
             if let Ok(word) = interp.stack.peek(0) {
                 let addr = Address::from_word(word.into());
-                if IGNORE.contains(&addr) || self.is_precompile(ctx.cfg().spec().into(), addr) {
+                if IGNORE.contains(&addr) ||
+                    ctx.journal_ref().precompile_addresses().contains(&addr)
+                {
                     return;
                 }
 
                 // Optimistically cache --> validated and cleared (if necessary) at `fn step_end()`
-                self.non_contract_size_check = Some((addr, ctx.journal().depth()));
+                self.non_contract_size_check = Some((addr, ctx.journal_ref().depth()));
                 self.is_extcodesize_step = true;
             }
         }
