@@ -2592,9 +2592,9 @@ dependencies = [
 name = "chisel2"
 version = "1.2.0"
 dependencies = [
- "alloy-dyn-abi",
- "alloy-json-abi",
- "alloy-primitives",
+ "alloy-dyn-abi 1.1.0",
+ "alloy-json-abi 1.1.0",
+ "alloy-primitives 1.1.0",
  "clap",
  "dirs",
  "eyre",
@@ -2604,6 +2604,7 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "foundry-evm",
+ "foundry-solang-parser",
  "regex",
  "reqwest",
  "revm",
@@ -2611,14 +2612,13 @@ dependencies = [
  "semver 1.0.26",
  "serde",
  "serde_json",
- "solang-parser",
  "solar-parse",
  "strum 0.27.1",
  "tikv-jemallocator",
  "time",
  "tokio",
  "tracing",
- "tracing-subscriber",
+ "tracing-subscriber 0.3.19",
  "walkdir",
  "yansi",
 ]
