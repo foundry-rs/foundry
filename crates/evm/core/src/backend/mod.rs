@@ -1109,8 +1109,9 @@ impl DatabaseExt for Backend {
             // select a different fork, then the persistent contract state won't reflect changes
             // done in `setUp` for the other fork.
             // See <https://github.com/foundry-rs/foundry/issues/10296> and <https://github.com/foundry-rs/foundry/issues/10552>.
-            for addr in self.inner.persistent_accounts.clone() {
-                if let Some(db) = self.active_fork_db_mut() {
+            let persistent_accounts = self.inner.persistent_accounts.clone();
+            if let Some(db) = self.active_fork_db_mut() {
+                for addr in persistent_accounts {
                     let Ok(db_account) = db.load_account(addr) else { continue };
 
                     let Some(fork_account) = fork.journaled_state.state.get_mut(&addr) else {
@@ -1118,7 +1119,7 @@ impl DatabaseExt for Backend {
                     };
 
                     for (key, val) in &db_account.storage {
-                        if let Some(fork_storage) = fork_account.storage.get_mut(&key) {
+                        if let Some(fork_storage) = fork_account.storage.get_mut(key) {
                             fork_storage.present_value = *val;
                         }
                     }
