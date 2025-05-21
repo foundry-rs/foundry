@@ -189,13 +189,13 @@ mod tests {
         let (env, mut evm) = create_eth_evm(SpecId::default());
 
         // Check that the Prague precompile IS present when using the default spec.
-        assert!(evm.precompiles_mut().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
+        assert!(evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
 
-        assert!(!evm.precompiles_mut().addresses().contains(&PRECOMPILE_ADDR));
+        assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
         inject_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
 
-        assert!(evm.precompiles_mut().addresses().contains(&PRECOMPILE_ADDR));
+        assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
         let result = match &mut evm {
             EitherEvm::Eth(eth_evm) => eth_evm.transact(env.tx).unwrap(),
@@ -211,13 +211,13 @@ mod tests {
         let (env, mut evm) = create_eth_evm(SpecId::LONDON);
 
         // Check that the Prague precompile IS NOT present when using the London spec.
-        assert!(!evm.precompiles_mut().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
+        assert!(!evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
 
-        assert!(!evm.precompiles_mut().addresses().contains(&PRECOMPILE_ADDR));
+        assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
         inject_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
 
-        assert!(evm.precompiles_mut().addresses().contains(&PRECOMPILE_ADDR));
+        assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
         let result = match &mut evm {
             EitherEvm::Eth(eth_evm) => eth_evm.transact(env.tx).unwrap(),
@@ -230,19 +230,19 @@ mod tests {
 
     #[test]
     fn build_op_evm_with_extra_precompiles_default_spec() {
-        let (env, mut evm) = create_op_evm(SpecId::default(), OpSpecId::ISTHMUS);
+        let (env, mut evm) = create_op_evm(SpecId::default(), OpSpecId::default());
 
         // Check that the Isthmus precompile IS present when using the default spec.
-        assert!(evm.precompiles_mut().addresses().contains(&OP_ISTHMUS_PRECOMPILE));
+        assert!(evm.precompiles().addresses().contains(&OP_ISTHMUS_PRECOMPILE));
 
         // Check that the Prague precompile IS present when using the default spec.
-        assert!(evm.precompiles_mut().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
+        assert!(evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
 
-        assert!(!evm.precompiles_mut().addresses().contains(&PRECOMPILE_ADDR));
+        assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
         inject_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
 
-        assert!(evm.precompiles_mut().addresses().contains(&PRECOMPILE_ADDR));
+        assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
         let result = match &mut evm {
             EitherEvm::Op(op_evm) => op_evm.transact(env.tx).unwrap(),
@@ -258,16 +258,16 @@ mod tests {
         let (env, mut evm) = create_op_evm(SpecId::default(), OpSpecId::BEDROCK);
 
         // Check that the Isthmus precompile IS NOT present when using the `OpSpecId::BEDROCK` spec.
-        assert!(!evm.precompiles_mut().addresses().contains(&OP_ISTHMUS_PRECOMPILE));
+        assert!(!evm.precompiles().addresses().contains(&OP_ISTHMUS_PRECOMPILE));
 
         // Check that the Prague precompile IS NOT present when using the `OpSpecId::BEDROCK` spec.
-        assert!(!evm.precompiles_mut().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
+        assert!(!evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
 
-        assert!(!evm.precompiles_mut().addresses().contains(&PRECOMPILE_ADDR));
+        assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
         inject_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
 
-        assert!(evm.precompiles_mut().addresses().contains(&PRECOMPILE_ADDR));
+        assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
         let result = match &mut evm {
             EitherEvm::Op(op_evm) => op_evm.transact(env.tx).unwrap(),

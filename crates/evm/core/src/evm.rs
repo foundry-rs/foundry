@@ -87,7 +87,7 @@ pub fn new_evm_with_existing_context<'a>(
 
 /// Conditionally inject additional precompiles into the EVM context.
 fn inject_precompiles(evm: &mut FoundryEvm<'_, impl InspectorExt>) {
-    if evm.inspector_mut().is_odyssey() {
+    if evm.inspector().is_odyssey() {
         evm.precompiles_mut().apply_precompile(P256VERIFY.address(), |_| {
             Some(DynPrecompile::from(P256VERIFY.precompile()))
         });
@@ -175,8 +175,16 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
         self.inner.db()
     }
 
+    fn precompiles(&self) -> &Self::Precompiles {
+        &self.inner.precompiles
+    }
+
     fn precompiles_mut(&mut self) -> &mut Self::Precompiles {
         &mut self.inner.precompiles
+    }
+
+    fn inspector(&self) -> &Self::Inspector {
+        &self.inner.inspector
     }
 
     fn inspector_mut(&mut self) -> &mut Self::Inspector {
