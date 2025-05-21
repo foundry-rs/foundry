@@ -191,10 +191,7 @@ impl ChiselDispatcher {
     pub async fn dispatch_command(&mut self, cmd: ChiselCommand) -> DispatchResult {
         match cmd {
             ChiselCommand::Help => {
-                use clap::CommandFactory;
-                DispatchResult::CommandSuccess(Some(
-                    ChiselCommand::command().render_help().ansi().to_string(),
-                ))
+                DispatchResult::CommandSuccess(Some(ChiselCommand::format_help()))
             }
             ChiselCommand::Quit => {
                 // Exit the process with status code `0` for success.
