@@ -82,9 +82,9 @@ use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles};
 use anvil_core::eth::{
     block::{Block, BlockInfo},
     transaction::{
-        has_optimism_fields, optimism::DepositTransaction, transaction_request_to_typed,
-        DepositReceipt, MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse,
-        TransactionInfo, TypedReceipt, TypedTransaction,
+        has_optimism_fields, transaction_request_to_typed, DepositReceipt,
+        MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse, TransactionInfo,
+        TypedReceipt, TypedTransaction,
     },
     wallet::{Capabilities, DelegationCapability, WalletCapabilities},
 };
@@ -101,7 +101,7 @@ use foundry_evm::{
 };
 use foundry_evm_core::either_evm::EitherEvm;
 use futures::channel::mpsc::{unbounded, UnboundedSender};
-use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
+use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
 use op_revm::{
     transaction::deposit::DepositTransactionParts, OpContext, OpHaltReason, OpTransaction,
 };
@@ -3195,8 +3195,8 @@ impl TransactionValidator for Backend {
                 // 1. no gas cost check required since already have prepaid gas from L1
                 // 2. increment account balance by deposited amount before checking for sufficient
                 //    funds `tx.value <= existing account value + deposited value`
-                if value > account.balance + deposit_tx.mint {
-                    warn!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance + deposit_tx.mint, value, *pending.sender());
+                if value > account.balance + U256::from(deposit_tx.mint.unwrap_or_default()) {
+                    warn!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance + U256::from(deposit_tx.mint.unwrap_or_default()), value, *pending.sender());
                     return Err(InvalidTransactionError::InsufficientFunds);
                 }
             }
@@ -3239,30 +3239,9 @@ pub fn transaction_build(
     base_fee: Option<u64>,
 ) -> AnyRpcTransaction {
     if let TypedTransaction::Deposit(ref deposit_tx) = eth_transaction.transaction {
-        let DepositTransaction {
-            nonce,
-            source_hash,
-            from: deposit_from,
-            kind,
-            mint,
-            gas_limit,
-            is_system_tx,
-            input,
-            value,
-        } = deposit_tx.clone();
+        let dep_tx = deposit_tx;
 
-        let dep_tx = TxDeposit {
-            source_hash,
-            input,
-            from: deposit_from,
-            mint: Some(mint.to()),
-            to: kind,
-            is_system_transaction: is_system_tx,
-            value,
-            gas_limit,
-        };
-
-        let ser = serde_json::to_value(&dep_tx).expect("could not serialize TxDeposit");
+        let ser = serde_json::to_value(dep_tx).expect("could not serialize TxDeposit");
         let maybe_deposit_fields = OtherFields::try_from(ser);
 
         match maybe_deposit_fields {
@@ -3272,10 +3251,7 @@ pub fn transaction_build(
                 fields.insert("v".to_string(), serde_json::to_value("0x0").unwrap());
                 fields.insert("r".to_string(), serde_json::to_value(B256::ZERO).unwrap());
                 fields.insert(String::from("s"), serde_json::to_value(B256::ZERO).unwrap());
-                fields.insert(
-                    String::from("nonce"),
-                    serde_json::to_value(format!("0x{nonce}")).unwrap(),
-                );
+                fields.insert(String::from("nonce"), serde_json::to_value("0x0").unwrap());
 
                 let inner = UnknownTypedTransaction {
                     ty: AnyTxType(DEPOSIT_TX_TYPE_ID),
@@ -3289,7 +3265,7 @@ pub fn transaction_build(
                 });
 
                 let tx = Transaction {
-                    inner: Recovered::new_unchecked(envelope, deposit_from),
+                    inner: Recovered::new_unchecked(envelope, deposit_tx.from),
                     block_hash: block
                         .as_ref()
                         .map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header)))),
