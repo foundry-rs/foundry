@@ -6,10 +6,12 @@ use alloy_network::{EthereumWallet, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{address, hex, map::B256HashSet, Address, Bytes, FixedBytes, U256};
 use alloy_provider::{Provider, WsConnect};
 use alloy_rpc_types::{
-    state::{AccountOverride, EvmOverrides, StateOverride},
-    AccessList, AccessListItem, BlockId, BlockNumberOrTag, BlockTransactions, TransactionRequest,
+    state::{AccountOverride, EvmOverrides, StateOverride, StateOverridesBuilder},
+    AccessList, AccessListItem, BlockId, BlockNumberOrTag, BlockOverrides, BlockTransactions,
+    TransactionRequest,
 };
 use alloy_serde::WithOtherFields;
+use alloy_sol_types::SolValue;
 use anvil::{spawn, EthereumHardfork, NodeConfig};
 use eyre::Ok;
 use futures::{future::join_all, FutureExt, StreamExt};
@@ -1150,6 +1152,45 @@ async fn test_estimate_gas() {
 
     // Assert the gas estimate meets the expected minimum.
     assert!(gas_estimate >= U256::from(21000), "Gas estimate is lower than expected minimum");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_block_override() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let sender = wallet.address();
+    let recipient = Address::random();
+
+    let tx = TransactionRequest::default()
+        .from(sender)
+        .to(recipient)
+        .input(Bytes::from(hex!("42cbb15c").to_vec()).into());
+
+    //     function getBlockNumber() external view returns (uint256) {
+    //         return block.number;
+    //     }
+    let code = hex!("6080604052348015600e575f5ffd5b50600436106026575f3560e01c806342cbb15c14602a575b5f5ffd5b60306044565b604051603b91906061565b60405180910390f35b5f43905090565b5f819050919050565b605b81604b565b82525050565b5f60208201905060725f8301846054565b9291505056fea26469706673582212207741266d8151c5e7d1a96fc1697f8fc94e60e730b3f2861d398339c74a2180d464736f6c634300081e0033");
+
+    let account_override =
+        AccountOverride { balance: Some(U256::from(1e18)), ..Default::default() };
+    let state_override = StateOverridesBuilder::default()
+        .append(sender, account_override)
+        .append(recipient, AccountOverride::default().with_code(code.to_vec()))
+        .build();
+
+    let block_override = BlockOverrides { number: Some(U256::from(99)), ..Default::default() };
+
+    let output = api
+        .call(
+            WithOtherFields::new(tx),
+            None,
+            EvmOverrides::new(Some(state_override), Some(Box::new(block_override))),
+        )
+        .await
+        .expect("Failed to estimate gas with state override");
+
+    assert_eq!(output, U256::from(99).abi_encode());
 }
 
 #[tokio::test(flavor = "multi_thread")]
