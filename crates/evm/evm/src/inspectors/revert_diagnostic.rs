@@ -5,7 +5,7 @@ use foundry_evm_core::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
 };
 use revm::{
-    bytecode::opcode::{EXTCODESIZE, REVERT},
+    bytecode::opcode,
     context::{ContextTr, JournalTr},
     inspector::JournalExt,
     interpreter::{
@@ -101,7 +101,7 @@ impl RevertDiagnostic {
     }
 
     /// Injects the revert diagnostic into the debug traces. Should only be called after a revert.
-    fn handle_revert_diagnostic(&self, interp: &mut Interpreter) {
+    fn broadcast_diagnostic(&self, interp: &mut Interpreter) {
         if let Some(reason) = self.reason() {
             interp.control.instruction_result = InstructionResult::Revert;
             interp.control.next_action = InterpreterAction::Return {
@@ -112,6 +112,76 @@ impl RevertDiagnostic {
                 },
             };
         }
+    }
+
+    /// When a `REVERT` opcode with zero data size occurs:
+    ///  - if `non_contract_call` was set at the current depth, `broadcast_diagnostic` is called.
+    ///    Otherwise, it is cleared.
+    ///  - if `non_contract_size_check` was set at the current depth, `broadcast_diagnostic` is
+    ///    called. Otherwise, it is cleared.
+    fn handle_revert<CTX, D>(&mut self, interp: &mut Interpreter, ctx: &mut CTX)
+    where
+        D: Database<Error = DatabaseError>,
+        CTX: ContextTr<Db = D>,
+        CTX::Journal: JournalExt,
+    {
+        // REVERT (offset, size)
+        if let Ok(size) = interp.stack.peek(1) {
+            if size.is_zero() {
+                // Check empty revert with same depth as a non-contract call
+                if let Some((_, _, depth)) = self.non_contract_call {
+                    if ctx.journal_ref().depth() == depth {
+                        self.broadcast_diagnostic(interp);
+                    } else {
+                        self.non_contract_call = None;
+                    }
+                    return;
+                }
+
+                // Check empty revert with same depth as a non-contract size check
+                if let Some((_, depth)) = self.non_contract_size_check {
+                    if depth == ctx.journal_ref().depth() {
+                        self.broadcast_diagnostic(interp);
+                    } else {
+                        self.non_contract_size_check = None;
+                    }
+                }
+            }
+        }
+    }
+
+    /// When an `EXTCODESIZE` opcode occurs:
+    ///  - Optimistically caches the target address and current depth in `non_contract_size_check`,
+    ///    pending later validation.
+    fn handle_extcodesize<CTX, D>(&mut self, interp: &mut Interpreter, ctx: &mut CTX)
+    where
+        D: Database<Error = DatabaseError>,
+        CTX: ContextTr<Db = D>,
+        CTX::Journal: JournalExt,
+    {
+        // EXTCODESIZE (address)
+        if let Ok(word) = interp.stack.peek(0) {
+            let addr = Address::from_word(word.into());
+            if IGNORE.contains(&addr) || ctx.journal_ref().precompile_addresses().contains(&addr) {
+                return;
+            }
+
+            // Optimistically cache --> validated and cleared (if necessary) at `fn
+            // step_end()`
+            self.non_contract_size_check = Some((addr, ctx.journal_ref().depth()));
+            self.is_extcodesize_step = true;
+        }
+    }
+
+    /// Tracks `EXTCODESIZE` output. If the bytecode size is NOT 0, clears the cache.
+    fn handle_extcodesize_output(&mut self, interp: &mut Interpreter) {
+        if let Ok(size) = interp.stack.peek(0) {
+            if size != U256::ZERO {
+                self.non_contract_size_check = None;
+            }
+        }
+
+        self.is_extcodesize_step = false;
     }
 }
 
@@ -139,69 +209,17 @@ where
     }
 
     /// Handles `REVERT` and `EXTCODESIZE` opcodes for diagnostics.
-    ///
-    /// When a `REVERT` opcode with zero data size occurs:
-    ///  - if `non_contract_call` was set at the current depth, `handle_revert_diagnostic` is
-    ///    called. Otherwise, it is cleared.
-    ///  - if `non_contract_call` was set at the current depth, `handle_revert_diagnostic` is
-    ///    called. Otherwise, it is cleared.
-    ///
-    /// When an `EXTCODESIZE` opcode occurs:
-    ///  - Optimistically caches the target address and current depth in `non_contract_size_check`,
-    ///    pending later validation.
     fn step(&mut self, interp: &mut Interpreter, ctx: &mut CTX) {
-        // REVERT (offset, size)
-        if REVERT == interp.bytecode.opcode() {
-            if let Ok(size) = interp.stack.peek(1) {
-                if size.is_zero() {
-                    // Check empty revert with same depth as a non-contract call
-                    if let Some((_, _, depth)) = self.non_contract_call {
-                        if ctx.journal_ref().depth() == depth {
-                            self.handle_revert_diagnostic(interp);
-                        } else {
-                            self.non_contract_call = None;
-                        }
-                        return;
-                    }
-
-                    // Check empty revert with same depth as a non-contract size check
-                    if let Some((_, depth)) = self.non_contract_size_check {
-                        if depth == ctx.journal_ref().depth() {
-                            self.handle_revert_diagnostic(interp);
-                        } else {
-                            self.non_contract_size_check = None;
-                        }
-                    }
-                }
-            }
-        }
-        // EXTCODESIZE (address)
-        else if EXTCODESIZE == interp.bytecode.opcode() {
-            if let Ok(word) = interp.stack.peek(0) {
-                let addr = Address::from_word(word.into());
-                if IGNORE.contains(&addr) ||
-                    ctx.journal_ref().precompile_addresses().contains(&addr)
-                {
-                    return;
-                }
-
-                // Optimistically cache --> validated and cleared (if necessary) at `fn step_end()`
-                self.non_contract_size_check = Some((addr, ctx.journal_ref().depth()));
-                self.is_extcodesize_step = true;
-            }
+        match interp.bytecode.opcode() {
+            opcode::REVERT => self.handle_revert(interp, ctx),
+            opcode::EXTCODESIZE => self.handle_extcodesize(interp, ctx),
+            _ => {}
         }
     }
 
-    /// Tracks `EXTCODESIZE` output. If the bytecode size is 0, clears the cache.
     fn step_end(&mut self, interp: &mut Interpreter, _ctx: &mut CTX) {
         if self.is_extcodesize_step {
-            if let Ok(size) = interp.stack.peek(0) {
-                if size != U256::ZERO {
-                    self.non_contract_size_check = None;
-                }
-            }
-
-            self.is_extcodesize_step = false;
+            self.handle_extcodesize_output(interp);
         }
     }
 }
