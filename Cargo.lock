@@ -3475,6 +3475,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c34f04666d835ff5d62e058c3995147c06f42fe86ff053337632bca83e42702d"
 
 [[package]]
+name = "enscribe"
+version = "1.2.1"
+dependencies = [
+ "alloy-contract",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types",
+ "alloy-signer-local",
+ "alloy-sol-types",
+ "anvil",
+ "clap",
+ "eyre",
+ "foundry-cli",
+ "foundry-common",
+ "foundry-config",
+ "foundry-wallets",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid 0.8.2",
+]
+
+[[package]]
 name = "enum-ordinalize"
 version = "4.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3760,6 +3784,7 @@ dependencies = [
  "alloy-serde 1.0.5",
  "alloy-signer",
  "alloy-signer-local",
+ "alloy-sol-types",
  "alloy-transport",
  "anvil",
  "axum",
@@ -3770,6 +3795,7 @@ dependencies = [
  "clearscreen",
  "comfy-table",
  "dunce",
+ "enscribe",
  "evm-disassembler",
  "eyre",
  "forge-doc",
@@ -3885,6 +3911,7 @@ dependencies = [
  "clap",
  "dialoguer",
  "dunce",
+ "enscribe",
  "eyre",
  "forge-script-sequence",
  "forge-verify",
