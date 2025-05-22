@@ -48,7 +48,7 @@ pub struct ChiselResult {
     /// Called address
     pub address: Option<Address>,
     /// EVM State at the final instruction of the `run()` function
-    pub state: Option<(Vec<U256>, Vec<u8>, InstructionResult)>,
+    pub state: Option<(Vec<U256>, Vec<u8>)>,
 }
 
 /// ChiselRunner implementation
@@ -202,7 +202,7 @@ impl ChiselRunner {
             traces: traces.map(|traces| vec![(TraceKind::Execution, traces)]).unwrap_or_default(),
             labeled_addresses: labels,
             address: None,
-            state: chisel_state,
+            state: chisel_state.map(|(a, b, _c)| (a, b)), // TODO(dani)
         })
     }
 }

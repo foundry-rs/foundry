@@ -16,6 +16,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use solang_parser::pt;
 use solar_parse::interface::diagnostics::EmittedDiagnostics;
+use solar_sema::{hir, ty::Gcx};
 use std::path::PathBuf;
 use walkdir::WalkDir;
 
@@ -29,9 +30,9 @@ static VM_SOURCE: &str = include_str!("../../../testdata/cheats/Vm.sol");
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct IntermediateOutput {
     /// All expressions within the REPL contract's run function and top level scope.
-    pub repl_contract_expressions: HashMap<String, pt::Expression>,
+    repl_contract_expressions: HashMap<String, pt::Expression>,
     /// Intermediate contracts
-    pub intermediate_contracts: IntermediateContracts,
+    intermediate_contracts: IntermediateContracts,
 }
 
 /// A refined intermediate parse tree for a contract that enables easy lookups
@@ -58,7 +59,7 @@ pub struct GeneratedOutput {
     #[serde(skip)]
     pub intermediate: IntermediateOutput,
     /// The [CompilerOutput] component
-    pub compiler_output: CompilerOutput,
+    pub compiler: CompilerOutput,
 }
 
 /// Configuration for the [SessionSource]
@@ -115,7 +116,7 @@ pub struct SessionSource {
     /// Code existing within the "run()" function's scope
     pub run_code: String,
     /// The generated output
-    pub generated_output: Option<GeneratedOutput>,
+    pub output: Option<GeneratedOutput>,
     /// Session Source configuration
     pub config: SessionSourceConfig,
 }
@@ -150,7 +151,7 @@ impl SessionSource {
             global_code: Default::default(),
             top_level_code: Default::default(),
             run_code: Default::default(),
-            generated_output: None,
+            output: None,
         }
     }
 
@@ -168,7 +169,7 @@ impl SessionSource {
             global_code: self.global_code.clone(),
             top_level_code: self.top_level_code.clone(),
             run_code: self.run_code.clone(),
-            generated_output: None,
+            output: None,
             config: self.config.clone(),
         }
     }
@@ -215,7 +216,7 @@ impl SessionSource {
     pub fn with_global_code(&mut self, content: &str) -> &mut Self {
         self.global_code.push_str(content.trim());
         self.global_code.push('\n');
-        self.generated_output = None;
+        self.output = None;
         self
     }
 
@@ -223,7 +224,7 @@ impl SessionSource {
     pub fn with_top_level_code(&mut self, content: &str) -> &mut Self {
         self.top_level_code.push_str(content.trim());
         self.top_level_code.push('\n');
-        self.generated_output = None;
+        self.output = None;
         self
     }
 
@@ -231,7 +232,7 @@ impl SessionSource {
     pub fn with_run_code(&mut self, content: &str) -> &mut Self {
         self.run_code.push_str(content.trim());
         self.run_code.push('\n');
-        self.generated_output = None;
+        self.output = None;
         self
     }
 
@@ -240,21 +241,21 @@ impl SessionSource {
     /// Clears global code from the source
     pub fn drain_global_code(&mut self) -> &mut Self {
         String::clear(&mut self.global_code);
-        self.generated_output = None;
+        self.output = None;
         self
     }
 
     /// Clears top-level code from the source
     pub fn drain_top_level_code(&mut self) -> &mut Self {
         String::clear(&mut self.top_level_code);
-        self.generated_output = None;
+        self.output = None;
         self
     }
 
     /// Clears the "run()" function's code
     pub fn drain_run(&mut self) -> &mut Self {
         String::clear(&mut self.run_code);
-        self.generated_output = None;
+        self.output = None;
         self
     }
 
@@ -325,8 +326,8 @@ impl SessionSource {
         let compiler_output = self.compile()?;
         let intermediate_output = self.analyze()?;
         let generated_output =
-            GeneratedOutput { intermediate: intermediate_output, compiler_output };
-        Ok(self.generated_output.insert(generated_output))
+            GeneratedOutput { intermediate: intermediate_output, compiler: compiler_output };
+        Ok(self.output.insert(generated_output))
     }
 
     /// Convert the [SessionSource] to a valid Script contract
@@ -433,6 +434,18 @@ contract {contract_name} {{
 }
 
 impl IntermediateOutput {
+    pub fn gcx<'gcx>(&self) -> Gcx<'gcx> {
+        todo!()
+    }
+
+    pub fn get_event(&self, name: &str) -> Option<hir::EventId> {
+        todo!()
+    }
+
+    pub fn get_var(&self, name: &str) -> Option<hir::VariableId> {
+        todo!()
+    }
+
     /// Helper function that returns the body of the REPL contract's "run" function.
     ///
     /// ### Returns

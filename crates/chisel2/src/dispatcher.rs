@@ -373,7 +373,7 @@ impl ChiselDispatcher {
             ChiselCommand::MemDump | ChiselCommand::StackDump => {
                 match self.source_mut().execute().await {
                     Ok((_, res)) => {
-                        if let Some((stack, mem, _)) = res.state.as_ref() {
+                        if let Some((stack, mem)) = res.state.as_ref() {
                             if matches!(cmd, ChiselCommand::MemDump) {
                                 // Print memory by word
                                 (0..mem.len()).step_by(32).for_each(|i| {

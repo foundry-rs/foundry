@@ -26,6 +26,9 @@ foundry-compilers = { workspace = true, features = ["project-util", "full"] }
 foundry-config.workspace = true
 foundry-evm.workspace = true
 
+solar-parse.workspace = true
+solar-sema.workspace = true
+
 alloy-dyn-abi = { workspace = true, features = ["arbitrary"] }
 alloy-primitives = { workspace = true, features = [
     "serde",
@@ -42,11 +45,11 @@ regex.workspace = true
 reqwest.workspace = true
 revm.workspace = true
 rustyline = "15"
+itertools.workspace = true
 semver.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 solang-parser.workspace = true
-solar-parse.workspace = true
 strum = { workspace = true, features = ["derive"] }
 time = { version = "0.3", features = ["formatting"] }
 tokio = { workspace = true, features = ["full"] }
