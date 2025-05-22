@@ -3548,7 +3548,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cea14ef9355e3beab063703aa9dab15afd25f0667c341310c1e5274bb1d0da18"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3813,7 +3813,9 @@ dependencies = [
  "serde_json",
  "similar",
  "similar-asserts",
+ "solar-interface",
  "solar-parse",
+ "solar-sema",
  "soldeer-commands",
  "strum 0.27.1",
  "svm-rs",
@@ -4084,6 +4086,7 @@ dependencies = [
  "clap",
  "color-eyre",
  "dotenvy",
+ "dunce",
  "eyre",
  "forge-fmt",
  "foundry-block-explorers",
@@ -4102,6 +4105,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "solar-sema",
  "strsim",
  "strum 0.27.1",
  "tempfile",
@@ -5416,7 +5420,7 @@ checksum = "e04d7f318608d35d4b61ddd75cbdaee86b023ebe2bd5a66ee0915f0bf93095a9"
 dependencies = [
  "hermit-abi 0.5.1",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5479,7 +5483,7 @@ dependencies = [
  "portable-atomic",
  "portable-atomic-util",
  "serde",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7188,7 +7192,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7826,7 +7830,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7839,7 +7843,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.9.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -8494,8 +8498,7 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7960f42b73c63b78df9e223ea88ca87b7aaef91e3b5084b89d79ec31ad9fc8e3"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fresolver-absolute-paths#97e8dd947e20b5530edbad1422393ef9ca5678d2"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -8513,8 +8516,7 @@ dependencies = [
 [[package]]
 name = "solar-config"
 version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00ff62c74517305ddee6fdfa741bac8195826d2820586659341063c991fa4a9e"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fresolver-absolute-paths#97e8dd947e20b5530edbad1422393ef9ca5678d2"
 dependencies = [
  "strum 0.27.1",
 ]
@@ -8522,8 +8524,7 @@ dependencies = [
 [[package]]
 name = "solar-data-structures"
 version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3c5934e613b60cfb0b2eadc035bac1fb57641026e4c2fb3683e9580391bd109"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fresolver-absolute-paths#97e8dd947e20b5530edbad1422393ef9ca5678d2"
 dependencies = [
  "bumpalo",
  "index_vec",
@@ -8537,8 +8538,7 @@ dependencies = [
 [[package]]
 name = "solar-interface"
 version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a614174b9fa673b0a01cc8308d18578f32dd091359786368964bbd19e94e59f7"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fresolver-absolute-paths#97e8dd947e20b5530edbad1422393ef9ca5678d2"
 dependencies = [
  "annotate-snippets",
  "anstream",
@@ -8547,7 +8547,7 @@ dependencies = [
  "derive_builder",
  "derive_more 2.0.1",
  "dunce",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "itoa",
  "lasso",
  "match_cfg",
@@ -8557,7 +8557,7 @@ dependencies = [
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 2.0.12",
+ "thiserror 1.0.69",
  "tracing",
  "unicode-width 0.2.0",
 ]
@@ -8565,8 +8565,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ccbdb5d9ecd4127af47279f99475f9fbff6ad3d03afc98ba78e1998bc07c0d46"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fresolver-absolute-paths#97e8dd947e20b5530edbad1422393ef9ca5678d2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8576,13 +8575,12 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7965e27a45ca85135ffd45839f9623131175fb43d2ad3526d32de0946f250f1b"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fresolver-absolute-paths#97e8dd947e20b5530edbad1422393ef9ca5678d2"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.9.1",
  "bumpalo",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -8597,8 +8595,7 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7e695824aaf984aa01493ebd5e7e83ddf84629d4a2667a0adf25cb6b65fa63e"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fresolver-absolute-paths#97e8dd947e20b5530edbad1422393ef9ca5678d2"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -8883,7 +8880,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
- "thiserror 2.0.12",
+ "thiserror 1.0.69",
  "url",
  "zip",
 ]
@@ -10163,7 +10160,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

@@ -55,9 +55,6 @@ library Structs2 {
 
     cmd.forge_fuse().args(["eip712", path.to_string_lossy().as_ref()]).assert_success().stdout_eq(
         str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-No files changed, compilation skipped
 Foo(Bar bar)Art(uint256 id)Bar(Art art)
 
 Bar(Art art)Art(uint256 id)
