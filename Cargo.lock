@@ -227,6 +227,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-ens"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e75be61b140796044420ad1d5b31b415150c46e0a6e59c155d6f0e10e307b9ac"
+dependencies = [
+ "alloy-contract",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-sol-types",
+ "async-trait",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "alloy-evm"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2337,6 +2351,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-contract",
  "alloy-dyn-abi",
+ "alloy-ens",
  "alloy-json-abi",
  "alloy-json-rpc",
  "alloy-network",
@@ -3996,6 +4011,7 @@ dependencies = [
  "alloy-chains",
  "alloy-consensus",
  "alloy-dyn-abi",
+ "alloy-ens",
  "alloy-evm",
  "alloy-genesis",
  "alloy-json-abi",
@@ -4057,6 +4073,7 @@ dependencies = [
  "alloy-chains",
  "alloy-dyn-abi",
  "alloy-eips 1.0.5",
+ "alloy-ens",
  "alloy-json-abi",
  "alloy-primitives",
  "alloy-provider",
@@ -4100,7 +4117,6 @@ name = "foundry-common"
 version = "1.2.1"
 dependencies = [
  "alloy-consensus",
- "alloy-contract",
  "alloy-dyn-abi",
  "alloy-eips 1.0.5",
  "alloy-json-abi",
@@ -4119,7 +4135,6 @@ dependencies = [
  "alloy-transport-ws",
  "anstream",
  "anstyle",
- "async-trait",
  "axum",
  "chrono",
  "ciborium",

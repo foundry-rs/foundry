@@ -4,6 +4,7 @@
 
 use alloy_consensus::TxEnvelope;
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
+use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
 use alloy_network::{AnyNetwork, AnyRpcTransaction};
 use alloy_primitives::{
@@ -28,7 +29,6 @@ use foundry_block_explorers::Client;
 use foundry_common::{
     abi::{encode_function_args, get_func},
     compile::etherscan_project,
-    ens::NameOrAddress,
     fmt::*,
     fs, get_pretty_tx_receipt_attr, shell, TransactionReceiptWithRevertReason,
 };
