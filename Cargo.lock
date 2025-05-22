@@ -2386,6 +2386,8 @@ dependencies = [
  "futures",
  "gcloud-sdk",
  "itertools 0.14.0",
+ "op-alloy-consensus",
+ "op-alloy-flz",
  "rand 0.8.5",
  "rand 0.9.1",
  "rayon",
@@ -6407,13 +6409,21 @@ checksum = "6f318b09e24148f07392c5e011bae047a0043851f9041145df5f3b01e4fedd1e"
 dependencies = [
  "alloy-consensus",
  "alloy-eips 1.0.5",
+ "alloy-network",
  "alloy-primitives",
  "alloy-rlp",
+ "alloy-rpc-types-eth",
  "alloy-serde 1.0.5",
  "derive_more 2.0.1",
  "serde",
  "thiserror 2.0.12",
 ]
+
+[[package]]
+name = "op-alloy-flz"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ef71f23a8caf6f2a2d5cafbdc44956d44e6014dcb9aa58abf7e4e6481c6ec34"
 
 [[package]]
 name = "op-alloy-rpc-types"
