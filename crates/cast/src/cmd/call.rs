@@ -3,6 +3,7 @@ use crate::{
     tx::{CastTxBuilder, SenderKind},
     Cast,
 };
+use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types::{
     state::{StateOverride, StateOverridesBuilder},
@@ -14,7 +15,7 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, handle_traces, parse_ether_value, TraceResult},
 };
-use foundry_common::{ens::NameOrAddress, shell};
+use foundry_common::shell;
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
     figment::{
