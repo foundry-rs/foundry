@@ -1,14 +1,16 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
-use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{aliases::B32, map::HashMap, B64, U256};
+use alloy_dyn_abi::{eip712_parser::EncodeType, DynSolType, DynSolValue};
+use alloy_primitives::{aliases::B32, keccak256, map::HashMap, B64, U256};
 use alloy_sol_types::SolValue;
-use foundry_common::ens::namehash;
+use foundry_common::{ens::namehash, fs, TYPE_BINDING_PREFIX};
+use foundry_config::fs_permissions::FsAccessKind;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
 use proptest::prelude::Strategy;
 use rand::{seq::SliceRandom, Rng, RngCore};
 use revm::context::JournalTr;
+use std::path::PathBuf;
 
 /// Contains locations of traces ignored via cheatcodes.
 ///
@@ -313,4 +315,68 @@ fn random_int(state: &mut Cheatcodes, bits: Option<U256>) -> Result {
         .unwrap()
         .current()
         .abi_encode())
+}
+
+impl Cheatcode for eip712HashType_0Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { typeNameOrDefinition } = self;
+
+        let type_def = if typeNameOrDefinition.contains('(') {
+            // If the input contains '(', it must be the type definition
+            EncodeType::parse(typeNameOrDefinition).and_then(|parsed| parsed.canonicalize())?
+        } else {
+            // Otherwise, it must be the type name
+            let path = state
+                .config
+                .ensure_path_allowed(&state.config.bind_json_path, FsAccessKind::Read)?;
+            get_type_def_from_bindings(typeNameOrDefinition, path, &state.config.root)?
+        };
+
+        Ok(keccak256(type_def.as_bytes()).to_vec())
+    }
+}
+
+impl Cheatcode for eip712HashType_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { bindingsPath, typeName } = self;
+
+        let path = state.config.ensure_path_allowed(bindingsPath, FsAccessKind::Read)?;
+        let type_def = get_type_def_from_bindings(typeName, path, &state.config.root)?;
+
+        Ok(keccak256(type_def.as_bytes()).to_vec())
+    }
+}
+
+/// Gets the type definition from the bindings in the provided path. Assumes that read validation
+/// for the path has already been checked.
+fn get_type_def_from_bindings(name: &String, path: PathBuf, root: &PathBuf) -> Result<String> {
+    let content = fs::read_to_string(&path)?;
+
+    let type_defs: HashMap<&str, &str> = content
+        .lines()
+        .filter_map(|line| {
+            let relevant = line.trim().strip_prefix(TYPE_BINDING_PREFIX)?;
+            let (name, def) = relevant.split_once('=')?;
+            Some((name.trim(), def.trim().strip_prefix('"')?.strip_suffix("\";")?))
+        })
+        .collect();
+
+    match type_defs.get(name.as_str()) {
+        Some(value) => Ok(value.to_string()),
+        None => {
+            let bindings =
+                type_defs.keys().map(|k| format!(" - {k}")).collect::<Vec<String>>().join("\n");
+
+            bail!(
+                "'{}' not found in '{}'.{}",
+                name,
+                path.strip_prefix(root).unwrap_or(&path).to_string_lossy(),
+                if bindings.is_empty() {
+                    String::new()
+                } else {
+                    format!("\nAvailable bindings:\n{bindings}\n")
+                }
+            );
+        }
+    }
 }

@@ -2,6 +2,7 @@
 
 use alloy_primitives::U256;
 use anvil::{spawn, NodeConfig};
+use foundry_config::fs_permissions::PathPermission;
 use foundry_test_utils::{
     rpc, str,
     util::{OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION},
@@ -3648,4 +3649,237 @@ Encountered 1 failing test in test/Counter.t.sol:CounterTest
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 "#]]);
+});
+
+forgetest!(test_eip712_cheatcode_simple, |prj, cmd| {
+    prj.add_source(
+        "Eip712",
+        r#"
+contract Eip712Structs {
+    struct EIP712Domain {
+        string name;
+        string version;
+        uint256 chainId;
+        address verifyingContract;
+    }
+}
+    "#,
+    )
+    .unwrap();
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.insert_console();
+
+    prj.add_source("Eip712Cheat.sol", r#"
+import "./test.sol";
+import "./Vm.sol";
+import "./console.sol";
+
+string constant CANONICAL = "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)";
+
+contract Eip712Test is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function testEip712HashType() public {
+        bytes32 canonicalHash = keccak256(bytes(CANONICAL));
+        console.logBytes32(canonicalHash);
+
+        // Can figure out the canonical type from a messy string representation of the type,
+        // with an invalid order and extra whitespaces
+        bytes32 fromTypeDef = vm.eip712HashType(
+            "EIP712Domain(string name, string version, uint256 chainId, address verifyingContract)"
+        );
+        assertEq(fromTypeDef, canonicalHash);
+
+        // Can figure out the canonical type from the previously generated bindings
+        bytes32 fromTypeName = vm.eip712HashType("EIP712Domain");
+        assertEq(fromTypeName, canonicalHash);
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse().args(["bind-json"]).assert_success();
+
+    let bindings = prj.root().join("utils").join("JsonBindings.sol");
+    assert!(bindings.exists(), "'JsonBindings.sol' was not generated at {bindings:?}");
+
+    prj.update_config(|config| config.fs_permissions.add(PathPermission::read(bindings)));
+    cmd.forge_fuse().args(["test", "--mc", "Eip712Test", "-vv"]).assert_success().stdout_eq(str![
+        [r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for src/Eip712Cheat.sol:Eip712Test
+[PASS] testEip712HashType() ([GAS])
+Logs:
+  0x8b73c3c69bb8fe3d512ecc4cf759cc79239f7b179b0ffacaa9a75d522b39400f
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]
+    ]);
+});
+
+forgetest!(test_eip712_cheatcode_nested, |prj, cmd| {
+    prj.add_source(
+        "Eip712",
+        r#"
+contract Eip712Structs {
+    struct Transaction {
+        Person from;
+        Person to;
+        Asset tx;
+    }
+    struct Person {
+        address wallet;
+        string name;
+    }
+    struct Asset {
+        address token;
+        uint256 amount;
+    }
+}
+    "#,
+    )
+    .unwrap();
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.insert_console();
+
+    prj.add_source("Eip712Cheat.sol", r#"
+import "./test.sol";
+import "./Vm.sol";
+
+string constant CANONICAL = "Transaction(Person from,Person to,Asset tx)Asset(address token,uint256 amount)Person(address wallet,string name)";
+
+contract Eip712Test is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function testEip712HashType_byDefinition() public {
+        bytes32 canonicalHash = keccak256(bytes(CANONICAL));
+
+        // Can figure out the canonical type from a messy string representation of the type,
+        // with an invalid order and extra whitespaces
+        bytes32 fromTypeDef = vm.eip712HashType(
+            "Person(address wallet, string name) Asset(address token, uint256 amount) Transaction(Person from, Person to, Asset tx)"
+        );
+        assertEq(fromTypeDef, canonicalHash);
+    }
+
+    function testEip712HashType_byTypeName() public {
+        bytes32 canonicalHash = keccak256(bytes(CANONICAL));
+
+        // Can figure out the canonical type from the previously generated bindings
+        bytes32 fromTypeName = vm.eip712HashType("Transaction");
+        assertEq(fromTypeName, canonicalHash);
+    }
+
+    function testReverts_Eip712HashType_invalidName() public {
+        // Reverts if the input type is not found in the bindings
+        vm._expectCheatcodeRevert();
+        bytes32 fromTypeName = vm.eip712HashType("InvalidTypeName");
+    }
+
+    function testEip712HashType_byCustomPathAndTypeName() public {
+        bytes32 canonicalHash = keccak256(bytes(CANONICAL));
+
+        // Can figure out the canonical type from the previously generated bindings
+        bytes32 fromTypeName = vm.eip712HashType("utils/CustomJsonBindings.sol", "Transaction");
+        assertEq(fromTypeName, canonicalHash);
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    // cheatcode by type definition can run without bindings
+    cmd.forge_fuse()
+        .args(["test", "--mc", "Eip712Test", "--match-test", "testEip712HashType_byDefinition"])
+        .assert_success();
+
+    let bindings = prj.root().join("utils").join("JsonBindings.sol");
+    prj.update_config(|config| config.fs_permissions.add(PathPermission::read(&bindings)));
+
+    // cheatcode by type name fails if bindings haven't been generated
+    cmd.forge_fuse()
+        .args(["test", "--mc", "Eip712Test", "--match-test", "testEip712HashType_byTypeName"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for src/Eip712Cheat.sol:Eip712Test
+[FAIL: vm.eip712HashType: failed to read from [..] testEip712HashType_byTypeName() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in src/Eip712Cheat.sol:Eip712Test
+[FAIL: vm.eip712HashType: failed to read from [..] testEip712HashType_byTypeName() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+"#]]);
+
+    cmd.forge_fuse().args(["bind-json"]).assert_success();
+    assert!(bindings.exists(), "'JsonBindings.sol' was not generated at {bindings:?}");
+
+    // with generated bindings, cheatcode by type name works
+    cmd.forge_fuse()
+        .args(["test", "--mc", "Eip712Test", "--match-test", "testEip712HashType_byTypeName"])
+        .assert_success();
+
+    // even with generated bindings, cheatcode by type name fails if name is not present
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "Eip712Test",
+            "--match-test",
+            "testReverts_Eip712HashType_invalidName",
+        ])
+        .assert_success();
+
+    let bindings_2 = prj.root().join("utils").join("CustomJsonBindings.sol");
+    prj.update_config(|config| {
+        config.fs_permissions.add(PathPermission::read(&bindings_2));
+    });
+
+    // cheatcode by custom path and type name fails if bindings haven't been generated for that path
+    cmd.forge_fuse()
+        .args(["test", "--mc", "Eip712Test", "--match-test", "testEip712HashType_byCustomPathAndTypeName"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for src/Eip712Cheat.sol:Eip712Test
+[FAIL: vm.eip712HashType: failed to read from [..] testEip712HashType_byCustomPathAndTypeName() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in src/Eip712Cheat.sol:Eip712Test
+[FAIL: vm.eip712HashType: failed to read from [..] testEip712HashType_byCustomPathAndTypeName() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+"#]]);
+
+    cmd.forge_fuse().args(["bind-json", "utils/CustomJsonBindings.sol"]).assert_success();
+    assert!(bindings_2.exists(), "'CustomJsonBindings.sol' was not generated at {bindings_2:?}");
+
+    // with generated bindings, cheatcode by custom path and type name works
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "Eip712Test",
+            "--match-test",
+            "testEip712HashType_byCustomPathAndTypeName",
+        ])
+        .assert_success();
 });
