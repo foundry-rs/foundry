@@ -215,10 +215,6 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub auto_name: bool,
 
-    /// Whether the contract is ReverseClaimable or not.
-    #[arg(long, requires = "ens_name")]
-    pub reverse_claimer: bool,
-
     /// Whether the contract is ReverseSetter or not.
     #[arg(long, requires = "ens_name")]
     pub reverse_setter: bool,
@@ -768,6 +764,29 @@ mod tests {
         assert_eq!(args.evm.env.code_size_limit, Some(50000));
     }
 
+    #[test]
+    fn can_extract_ens_name() {
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "script",
+            "script/Test.s.sol:TestScript",
+            "--ens-name",
+            "test.abhi.eth",
+        ]);
+        assert_eq!(args.ens_name, Some("test.abhi.eth".to_owned()));
+    }
+
+    #[test]
+    fn can_extract_auto_name() {
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "script",
+            "script/Test.s.sol:TestScript",
+            "--auto-name",
+        ]);
+        assert!(args.auto_name);
+    }
+    
     #[test]
     fn can_extract_script_etherscan_key() {
         let temp = tempdir().unwrap();

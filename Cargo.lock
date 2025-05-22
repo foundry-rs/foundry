@@ -3479,6 +3479,7 @@ name = "enscribe"
 version = "1.2.1"
 dependencies = [
  "alloy-contract",
+ "alloy-ens",
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types",
@@ -3784,7 +3785,6 @@ dependencies = [
  "alloy-serde 1.0.5",
  "alloy-signer",
  "alloy-signer-local",
- "alloy-sol-types",
  "alloy-transport",
  "anvil",
  "axum",

@@ -60,3 +60,22 @@ impl figment::Provider for NameArgs {
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_parse_contract_and_name_args() {
+        let args: NameArgs = NameArgs::parse_from([
+            "foundry-cli",
+            "--contract-address",
+            "0x3fAB184622Dc19b6109349B94811493BF2a45362",
+            "--ens-name",
+            "test.abhi.eth",
+        ]);
+        
+        assert_eq!(args.contract_address, "0x3fAB184622Dc19b6109349B94811493BF2a45362".parse::<Address>().unwrap());
+        assert_eq!(args.ens_name, Some("test.abhi.eth".to_owned()));
+    }
+}

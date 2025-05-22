@@ -6,6 +6,7 @@ use crate::{
     },
     logger::MetricLogger,
 };
+use alloy_ens::namehash;
 use alloy_primitives::U256;
 use alloy_provider::{
     network::{AnyNetwork, EthereumWallet},
@@ -17,7 +18,7 @@ use alloy_sol_types::{
 };
 use eyre::Result;
 use foundry_cli::utils;
-use foundry_common::{ens::namehash, sh_println};
+use foundry_common::sh_println;
 use foundry_config::Config;
 use serde::Deserialize;
 
@@ -49,7 +50,7 @@ pub async fn set_primary_name(
     let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
         .with_recommended_fillers()
         .wallet(wallet)
-        .on_provider(provider);
+        .connect_provider(provider);
 
     let sender_addr = provider.default_signer_address();
     let chain_id = provider.get_chain_id().await?;
@@ -65,6 +66,7 @@ pub async fn set_primary_name(
 
     // we can't name a contract that isn't Ownable or ReverseClaimer
     if !is_ownable && !is_reverse_claimer {
+        sh_println!("Contract doesn't seem to implement Ownable or ReverseClaimer interfaces.")?;
         return Ok(())
     }
 
@@ -165,7 +167,7 @@ async fn is_contract_reverse_claimer<P: Provider<AnyNetwork>>(
     let ens_registry = EnsRegistry::new(ens_registry_addr, provider);
     let tx = ens_registry.owner(reverse_node);
     let result = provider.call(tx.into_transaction_request()).await?;
-    let addr = ownerCall::abi_decode_returns(&result, false)?._0;
+    let addr = ownerCall::abi_decode_returns(&result)?;
     Ok(addr == sender_addr)
 }
 
@@ -199,7 +201,7 @@ async fn name_already_registered<P: Provider<AnyNetwork>>(
     let ens_registry = EnsRegistry::new(ens_registry_addr, provider);
     let tx = ens_registry.recordExists(name);
     let result = provider.call(tx.into_transaction_request()).await?;
-    let is_name_exists = recordExistsCall::abi_decode_returns(&result, false)?._0;
+    let is_name_exists = recordExistsCall::abi_decode_returns(&result)?;
     Ok(is_name_exists)
 }
 
@@ -238,7 +240,7 @@ async fn create_subname<P: Provider<AnyNetwork>>(
     let name_wrapper = NameWrapper::new(name_wrapper_addr, provider);
     let tx = name_wrapper.isWrapped(parent_name_hash);
     let result = provider.call(tx.into_transaction_request()).await?;
-    let is_wrapped = isWrappedCall::abi_decode_returns(&result, false)?._0;
+    let is_wrapped = isWrappedCall::abi_decode_returns(&result)?;
     sh_println!("creating subname ... ")?;
     if is_wrapped {
         let tx = name_wrapper.setSubnodeRecord(
@@ -288,7 +290,7 @@ async fn set_resolutions<P: Provider<AnyNetwork>>(
     let public_resolver = PublicResolver::new(public_resolver_addr, provider);
     let tx = public_resolver.addr(complete_name_hash);
     let result = provider.call(tx.into_transaction_request()).await?;
-    let result = addrCall::abi_decode_returns(&result, false)?._0;
+    let result = addrCall::abi_decode_returns(&result)?;
 
     if result == Address::ZERO {
         sh_println!("setting fwd resolution ({} -> {}) ... ", name, contract_addr)?;
@@ -353,5 +355,9 @@ async fn get_auto_generated_name() -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    // todo abhi: add some tests?
+    use super::*;
+
+    #[test]
+    fn can_parse_verify_contract() {
+    }
 }

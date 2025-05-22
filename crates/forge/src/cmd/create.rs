@@ -711,4 +711,16 @@ mod tests {
         let params = args.parse_constructor_args(&constructor, &args.constructor_args).unwrap();
         assert_eq!(params, vec![DynSolValue::Int(I256::unchecked_from(-5), 256)]);
     }
+    
+    #[test]
+    fn can_parse_ens_name() {
+        let args: CreateArgs = CreateArgs::parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--ens-name",
+            "test.abhi.eth",
+        ]);
+
+        assert_eq!(args.ens_name, Some("test.abhi.eth".to_owned()));
+    }
 }
