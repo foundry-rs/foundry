@@ -532,7 +532,17 @@ impl Cheatcode for ffiCall {
         let Self { commandInput: input } = self;
 
         let output = ffi(state, input)?;
-        // TODO: check exit code?
+
+        if output.exitCode != 0 {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(fmt_err!(
+                "FFI command {:?} failed with exit code {}: {}",
+                input,
+                output.exitCode,
+                stderr
+            ));
+        }
+
         if !output.stderr.is_empty() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             error!(target: "cheatcodes", ?input, ?stderr, "non-empty stderr");
