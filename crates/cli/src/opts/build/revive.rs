@@ -5,12 +5,12 @@ use serde::Serialize;
 #[clap(next_help_heading = "Resolc configuration")]
 /// Compiler options for resolc
 pub struct ResolcOpts {
-    #[clap(
+    #[arg(
         value_name = "RESOLC_COMPILE",
         help = "Enable compiling with resolc",
         long = "resolc-compile",
         visible_alias = "resolc",
-        action = clap::ArgAction::SetTrue,
+        action = clap::ArgAction::SetTrue
     )]
     pub resolc_compile: Option<bool>,
 
@@ -29,7 +29,7 @@ pub struct ResolcOpts {
 
     /// Set the LLVM optimization parameter `-O[0 | 1 | 2 | 3 | s | z]`.
     /// Use `3` for best performance and `z` for minimal size.
-    #[clap(
+    #[arg(
         short = 'O',
         long = "resolc-optimizer-mode",
         help = "Set the resolc optimization mode `-O[0 | 1 | 2 | 3 | s | z]`",
@@ -40,12 +40,12 @@ pub struct ResolcOpts {
     pub optimizer_mode: Option<String>,
 
     /// The emulated EVM linear heap memory static buffer size in bytes.
-    #[clap(long = "heap-size", help = "Set the contracts heap size in bytes", value_name = "SIZE")]
+    #[arg(long = "heap-size", help = "Set the contracts heap size in bytes", value_name = "SIZE")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub heap_size: Option<u32>,
 
     /// The contracts total stack size in bytes.
-    #[clap(
+    #[arg(
         long = "stack-size",
         help = "Set the contracts total stack size in bytes",
         value_name = "SIZE"
@@ -65,11 +65,13 @@ impl ResolcOpts {
         }
 
         set_if_some!(
+            self.resolc_compile.and_then(|v| if v { Some(true) } else { None }),
+            resolc.resolc_compile
+        );
+        set_if_some!(
             self.use_resolc.as_ref().map(|v| SolcReq::from(v.trim_start_matches("resolc:"))),
             resolc.resolc
         );
-
-        set_if_some!(self.resolc_compile, resolc.resolc_compile);
         set_if_some!(
             self.optimizer_mode.as_ref().and_then(|mode| mode.parse::<char>().ok()),
             resolc.optimizer_mode

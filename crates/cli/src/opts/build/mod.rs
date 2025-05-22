@@ -59,7 +59,7 @@ pub struct CompilerOpts {
     pub extra_output_files: Vec<ContractOutputSelection>,
 
     /// Compiler settings for resolc.
-    #[clap(flatten)]
+    #[command(flatten)]
     #[serde(skip)]
     pub resolc_opts: ResolcOpts,
 }

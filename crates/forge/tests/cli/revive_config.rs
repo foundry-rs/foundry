@@ -46,3 +46,33 @@ Error: `resolc` this/resolc/does/not/exist does not exist
 
 "#]]);
 });
+
+// checks that we can set various config values
+forgetest_init!(can_set_resolc_config_values, |prj, _cmd| {
+    let config = prj.config_from_output(["--resolc", "--resolc-optimization", "z"]);
+    assert!(config.resolc.resolc_compile);
+    assert_eq!(config.resolc.optimizer_mode, Some('z'));
+});
+
+// tests that resolc can be explicitly enabled
+forgetest!(enable_resolc_explicitly, |prj, cmd| {
+    prj.add_source(
+        "Foo",
+        r"
+pragma solidity *;
+contract Greeter {}
+   ",
+    )
+    .unwrap();
+
+    prj.update_config(|config| {
+        config.resolc.resolc_compile = true;
+    });
+
+    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [RESOLC_VERSION]
+[RESOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
+});
