@@ -3,21 +3,15 @@ use crate::{
     sequence::{get_commit_hash, ScriptSequenceKind},
     ScriptArgs, ScriptConfig,
 };
-use alloy_network::{AnyNetwork, EthereumWallet};
+use alloy_network::EthereumWallet;
 use alloy_primitives::{hex, Address};
-use alloy_provider::{Provider, ProviderBuilder};
 use eyre::{eyre, Result};
 use forge_script_sequence::{AdditionalContract, ScriptSequence};
 use forge_verify::{provider::VerificationProviderType, RetryArgs, VerifierArgs, VerifyArgs};
-use foundry_cli::{
-    opts::{EthereumOpts, EtherscanOpts, ProjectPathOpts, RpcOpts},
-    utils,
-    utils::LoadConfig,
-};
+use foundry_cli::opts::{EtherscanOpts, ProjectPathOpts};
 use foundry_common::ContractsByArtifact;
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo, Project};
 use foundry_config::{Chain, Config};
-use foundry_wallets::WalletOpts;
 use semver::Version;
 
 /// State after we have broadcasted the script.
@@ -49,21 +43,21 @@ impl BroadcastedState {
         Ok(())
     }
 
-    pub async fn set_ens_name<P: Provider<AnyNetwork>>(&mut self, provider: P) -> Result<()> {
-        let Self { args, script_config, build_data, sequence, .. } = self;
-
-        let contract_deployment_receipt = sequence
+    /// sets an ENS name for the deployed contract
+    pub async fn set_ens_name(&mut self, config: &Config) -> Result<()> {
+        let contract_deployment_receipt = self
+            .sequence
             .sequences()
             .iter()
             .filter_map(|s| {
                 let contract_deployment_receipt =
-                    s.receipts.iter().filter(|r| r.contract_address.is_some()).next();
+                    s.receipts.iter().find(|r| r.contract_address.is_some());
                 contract_deployment_receipt
             })
             .next();
 
         if let Some(receipt) = contract_deployment_receipt {
-            let signers = args.wallets.get_multi_wallet().await?.into_signers()?;
+            let signers = self.args.wallets.get_multi_wallet().await?.into_signers()?;
             // todo abhi: simplify this instead of checking key via signers.filter() ...
             if signers.contains_key(&receipt.from) {
                 let wallet = signers
@@ -73,18 +67,12 @@ impl BroadcastedState {
                     .next()
                     .unwrap();
 
-                let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
-                    .with_recommended_fillers()
-                    .wallet(wallet)
-                    .on_provider(provider);
-
                 enscribe::set_primary_name(
-                    provider,
-                    receipt.from,
+                    config,
+                    wallet,
                     receipt.contract_address.unwrap(),
-                    args.ens_name.clone(),
-                    args.reverse_claimer,
-                    args.reverse_setter,
+                    self.args.ens_name.clone(),
+                    self.args.reverse_setter,
                     "deployandname",
                 )
                 .await?;

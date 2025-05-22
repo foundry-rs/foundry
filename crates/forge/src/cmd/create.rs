@@ -4,7 +4,7 @@ use alloy_dyn_abi::{DynSolValue, JsonAbiExt, Specifier};
 use alloy_json_abi::{Constructor, JsonAbi};
 use alloy_network::{AnyNetwork, AnyTransactionReceipt, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{hex, Address, Bytes};
-use alloy_provider::{PendingTransactionError, Provider, ProviderBuilder, WalletProvider};
+use alloy_provider::{PendingTransactionError, Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
@@ -94,10 +94,6 @@ pub struct CreateArgs {
     #[arg(long)]
     pub auto_name: bool,
 
-    /// Whether the contract is ReverseClaimable or not.
-    #[arg(long, requires = "ens_name")]
-    pub reverse_claimer: bool,
-
     /// Whether the contract is ReverseSetter or not.
     #[arg(long, requires = "ens_name")]
     pub reverse_setter: bool,
@@ -181,10 +177,7 @@ impl CreateArgs {
         // Whether to broadcast the transaction or not
         let dry_run = !self.broadcast;
 
-        // todo abhi: remove this
-        self.unlocked = false;
         if self.unlocked {
-            println!("Deploying with unlocked account...");
             // Deploy with unlocked account
             let sender = self.eth.wallet.from.expect("required");
             self.deploy(
@@ -201,8 +194,6 @@ impl CreateArgs {
             .await
         } else {
             // Deploy with signer
-            println!("Deploying with signer...");
-
             let signer = self.eth.wallet.signer().await?;
             let deployer = signer.address();
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
@@ -421,18 +412,11 @@ impl CreateArgs {
             // self.naming.run("deployandname").await?;
             let config = self.load_config()?;
             let signer = self.eth.wallet.signer().await?;
-            let provider = utils::get_provider(&config)?;
-            let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
-                .with_recommended_fillers()
-                .wallet(EthereumWallet::new(signer))
-                .on_provider(provider);
-            let sender_addr = provider.default_signer_address();
             enscribe::set_primary_name(
-                provider,
-                sender_addr,
+                &config,
+                EthereumWallet::new(signer),
                 deployed_contract,
                 self.ens_name,
-                self.reverse_claimer,
                 self.reverse_setter,
                 "deployandname",
             )
