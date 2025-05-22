@@ -233,9 +233,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e75be61b140796044420ad1d5b31b415150c46e0a6e59c155d6f0e10e307b9ac"
 dependencies = [
  "alloy-contract",
- "alloy-primitives 1.1.0",
+ "alloy-primitives",
  "alloy-provider",
- "alloy-sol-types 1.1.0",
+ "alloy-sol-types",
  "async-trait",
  "thiserror 2.0.12",
 ]
@@ -2350,8 +2350,8 @@ dependencies = [
  "alloy-chains",
  "alloy-consensus",
  "alloy-contract",
- "alloy-ens",
  "alloy-dyn-abi",
+ "alloy-ens",
  "alloy-json-abi",
  "alloy-json-rpc",
  "alloy-network",
@@ -4010,8 +4010,8 @@ version = "1.2.1"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
- "alloy-ens",
  "alloy-dyn-abi",
+ "alloy-ens",
  "alloy-evm",
  "alloy-genesis",
  "alloy-json-abi",
