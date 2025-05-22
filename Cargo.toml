@@ -207,6 +207,7 @@ solar-sema = { version = "=0.1.3", default-features = false }
 alloy-consensus = { version = "1.0.5", default-features = false }
 alloy-contract = { version = "1.0.5", default-features = false }
 alloy-eips = { version = "1.0.5", default-features = false }
+alloy-ens = { version = "1.0.5", default-features = false }
 alloy-genesis = { version = "1.0.5", default-features = false }
 alloy-json-rpc = { version = "1.0.5", default-features = false }
 alloy-network = { version = "1.0.5", default-features = false }

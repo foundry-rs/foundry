@@ -5,15 +5,13 @@ use crate::cmd::{
     mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs,
     txpool::TxPoolSubcommands, wallet::WalletSubcommands,
 };
+use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, Selector, B256, U256};
 use alloy_rpc_types::BlockId;
 use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
 use foundry_cli::opts::{EtherscanOpts, GlobalArgs, RpcOpts};
-use foundry_common::{
-    ens::NameOrAddress,
-    version::{LONG_VERSION, SHORT_VERSION},
-};
+use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
 use std::{path::PathBuf, str::FromStr};
 
 /// A Swiss Army knife for interacting with Ethereum applications from the command line.
