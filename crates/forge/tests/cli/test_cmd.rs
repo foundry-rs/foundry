@@ -3847,7 +3847,6 @@ Encountered a total of 1 failing tests, 0 tests succeeded
     let bindings_2 = prj.root().join("utils").join("CustomJsonBindings.sol");
     prj.update_config(|config| {
         config.fs_permissions.add(PathPermission::read(&bindings_2));
-        config.bind_json.out = bindings_2.clone();
     });
 
     // cheatcode by custom path and type name fails if bindings haven't been generated for that path
@@ -3870,7 +3869,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 
 "#]]);
 
-    cmd.forge_fuse().args(["bind-json"]).assert_success();
+    cmd.forge_fuse().args(["bind-json", "utils/CustomJsonBindings.sol"]).assert_success();
     assert!(bindings_2.exists(), "'CustomJsonBindings.sol' was not generated at {bindings_2:?}");
 
     // with generated bindings, cheatcode by custom path and type name works
