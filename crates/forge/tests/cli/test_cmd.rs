@@ -3799,25 +3799,19 @@ contract Eip712Test is DSTest {
 
     // cheatcode by type name fails if bindings haven't been generated
     cmd.forge_fuse()
-        .args([
-            "test",
-            "--mc",
-            "Eip712Test",
-            "--match-test",
-            "testEip712HashType_byTypeName",
-        ])
+        .args(["test", "--mc", "Eip712Test", "--match-test", "testEip712HashType_byTypeName"])
         .assert_failure()
         .stdout_eq(str![[r#"
 ...
 Ran 1 test for src/Eip712Cheat.sol:Eip712Test
-[FAIL: vm.eip712HashType: failed to read from [..] No such file or directory (os error 2)] testEip712HashType_byTypeName() ([GAS])
+[FAIL: vm.eip712HashType: failed to read from [..] testEip712HashType_byTypeName() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in src/Eip712Cheat.sol:Eip712Test
-[FAIL: vm.eip712HashType: failed to read from [..] No such file or directory (os error 2)] testEip712HashType_byTypeName() ([GAS])
+[FAIL: vm.eip712HashType: failed to read from [..] testEip712HashType_byTypeName() ([GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
