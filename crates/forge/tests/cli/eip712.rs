@@ -7,31 +7,39 @@ library Structs {
     struct Foo {
         Bar bar;
     }
+
     struct Bar {
         Art art;
     }
+
     struct Art {
         uint256 id;
     }
+
     struct Complex {
         Structs2.Foo foo2;
         Foo[] foos;
         Rec[][] recs;
     }
+
     struct Rec {
         Rec[] rec;
     }
 }
+
 library Structs2 {
     struct Foo {
         uint256 id;
     }
+
     struct Rec {
         Bar[] bar;
     }
+
     struct Bar {
         Rec rec;
     }
+
     struct FooBar {
         Foo[] foos;
         Bar[] bars;
