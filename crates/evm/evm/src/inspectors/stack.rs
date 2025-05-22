@@ -666,8 +666,8 @@ impl InspectorStackRefMut<'_> {
             *env.cfg = evm.cfg.clone();
             *env.block = evm.block.clone();
 
-            ecx.tx = cached_env.tx;
-            ecx.block.basefee = cached_env.evm_env.block_env.basefee;
+            *env.tx = cached_env.tx;
+            env.block.basefee = cached_env.evm_env.block_env.basefee;
 
             res
         });
