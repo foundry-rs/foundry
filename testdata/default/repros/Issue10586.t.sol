@@ -7,8 +7,6 @@ import "cheats/Vm.sol";
 contract Target is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
-    event ChainId(uint256 indexed chainId);
-
     function setChainId() public {
         vm.chainId(123);
     }
