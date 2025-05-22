@@ -392,5 +392,10 @@ revm = { git = "https://github.com/bluealloy/revm.git", rev = "b5808253" }
 op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "b5808253" }
 # revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "a625c04" }
 
+## solar
+solar-parse = { git = "https://github.com/paradigmxyz/solar.git", branch = "dani/resolver-absolute-paths" }
+solar-sema = { git = "https://github.com/paradigmxyz/solar.git", branch = "dani/resolver-absolute-paths" }
+solar-interface = { git = "https://github.com/paradigmxyz/solar.git", branch = "dani/resolver-absolute-paths" }
+
 ## foundry
 # foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "811a61a" }
