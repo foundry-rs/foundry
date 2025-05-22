@@ -23,7 +23,7 @@ contract Issue10586Test is DSTest {
         target = new Target();
     }
 
-    function testGetChainIdAfterSet() public {
+    function runTest() internal {
         // By default, the chainId is 31337 during testing.
         assertEq(block.chainid, 31337);
 
@@ -45,5 +45,14 @@ contract Issue10586Test is DSTest {
         // The last call to chainId() will be the one that is set
         // in the block, so it should be 123.
         assertEq(block.chainid, 123);
+    }
+
+    function testGetChainIdAfterSet() public {
+        runTest();
+    }
+
+    /// forge-config: default.isolate = true
+    function testGetChainIdAfterSetIsolated() public {
+        runTest();
     }
 }
