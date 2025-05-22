@@ -1,6 +1,7 @@
 //! Tests for the `forge compiler` command.
 
 use foundry_test_utils::snapbox::IntoData;
+pub const OTHER_RESOLC_VERSION: &str = "0.1.0-dev.13";
 
 const CONTRACT_A: &str = r#"
 // SPDX-license-identifier: MIT
@@ -30,64 +31,50 @@ pragma solidity 0.8.27;
 contract ContractD {}
 "#;
 
-const VYPER_INTERFACE: &str = r#"
-# pragma version >=0.4.0
-
-@external
-@view
-def number() -> uint256:
-    return empty(uint256)
-
-@external
-def set_number(new_number: uint256):
-    pass
-
-@external
-def increment() -> uint256:
-    return empty(uint256)
-"#;
-
-const VYPER_CONTRACT: &str = r#"
-import ICounter
-implements: ICounter
-
-number: public(uint256)
-
-@external
-def set_number(new_number: uint256):
-    self.number = new_number
-
-@external
-def increment() -> uint256:
-    self.number += 1
-    return self.number
-"#;
-
 forgetest!(can_resolve_path, |prj, cmd| {
+    prj.update_config(|config| {
+        config.resolc.resolc = Some(foundry_config::SolcReq::Version(
+            semver::Version::parse(OTHER_RESOLC_VERSION).unwrap(),
+        ));
+        config.resolc.resolc_compile = true;
+    });
+
     prj.add_source("ContractA", CONTRACT_A).unwrap();
 
     cmd.args(["compiler", "resolve", "--root", prj.root().to_str().unwrap()])
         .assert_success()
         .stdout_eq(str![[r#"
 Solidity:
-- Solc v0.8.4
+- [RESOLC_VERSION]
 
 
 "#]]);
 });
 
 forgetest!(can_list_resolved_compiler_versions, |prj, cmd| {
+    prj.update_config(|config| {
+        config.resolc.resolc = Some(foundry_config::SolcReq::Version(
+            semver::Version::parse(OTHER_RESOLC_VERSION).unwrap(),
+        ));
+        config.resolc.resolc_compile = true;
+    });
     prj.add_source("ContractA", CONTRACT_A).unwrap();
 
     cmd.args(["compiler", "resolve"]).assert_success().stdout_eq(str![[r#"
 Solidity:
-- Solc v0.8.4
+- [RESOLC_VERSION]
 
 
 "#]]);
 });
 
 forgetest!(can_list_resolved_compiler_versions_json, |prj, cmd| {
+    prj.update_config(|config| {
+        config.resolc.resolc = Some(foundry_config::SolcReq::Version(
+            semver::Version::parse(OTHER_RESOLC_VERSION).unwrap(),
+        ));
+        config.resolc.resolc_compile = true;
+    });
     prj.add_source("ContractA", CONTRACT_A).unwrap();
 
     cmd.args(["compiler", "resolve", "--json"]).assert_success().stdout_eq(
@@ -95,8 +82,12 @@ forgetest!(can_list_resolved_compiler_versions_json, |prj, cmd| {
 {
   "Solidity": [
     {
-      "name": "Solc",
-      "version": "0.8.4"
+      "name": "Resolc",
+      "version": "0.1.0-dev.13",
+      "dependency": {
+        "name": "Solc",
+        "version": "0.8.4"
+      }
     }
   ]
 }
@@ -106,13 +97,19 @@ forgetest!(can_list_resolved_compiler_versions_json, |prj, cmd| {
 });
 
 forgetest!(can_list_resolved_compiler_versions_verbose, |prj, cmd| {
+    prj.update_config(|config| {
+        config.resolc.resolc = Some(foundry_config::SolcReq::Version(
+            semver::Version::parse(OTHER_RESOLC_VERSION).unwrap(),
+        ));
+        config.resolc.resolc_compile = true;
+    });
     prj.add_source("ContractC", CONTRACT_C).unwrap();
     prj.add_source("ContractD", CONTRACT_D).unwrap();
 
     cmd.args(["compiler", "resolve", "-v"]).assert_success().stdout_eq(str![[r#"
 Solidity:
 
-Solc v0.8.27:
+[RESOLC_VERSION]:
 ├── src/ContractC.sol
 └── src/ContractD.sol
 
@@ -121,6 +118,12 @@ Solc v0.8.27:
 });
 
 forgetest!(can_list_resolved_compiler_versions_verbose_json, |prj, cmd| {
+    prj.update_config(|config| {
+        config.resolc.resolc = Some(foundry_config::SolcReq::Version(
+            semver::Version::parse(OTHER_RESOLC_VERSION).unwrap(),
+        ));
+        config.resolc.resolc_compile = true;
+    });
     prj.add_source("ContractC", CONTRACT_C).unwrap();
     prj.add_source("ContractD", CONTRACT_D).unwrap();
 
@@ -129,12 +132,16 @@ forgetest!(can_list_resolved_compiler_versions_verbose_json, |prj, cmd| {
 {
   "Solidity": [
     {
-      "name": "Solc",
-      "version": "0.8.27",
+      "name": "Resolc",
+      "version": "0.1.0-dev.13",
       "paths": [
         "src/ContractC.sol",
         "src/ContractD.sol"
-      ]
+      ],
+      "dependency": {
+        "name": "Solc",
+        "version": "0.8.27"
+      }
     }
   ]
 }
@@ -144,54 +151,38 @@ forgetest!(can_list_resolved_compiler_versions_verbose_json, |prj, cmd| {
 });
 
 forgetest!(can_list_resolved_multiple_compiler_versions, |prj, cmd| {
+    prj.update_config(|config| {
+        config.resolc.resolc = Some(foundry_config::SolcReq::Version(
+            semver::Version::parse(OTHER_RESOLC_VERSION).unwrap(),
+        ));
+        config.resolc.resolc_compile = true;
+    });
     prj.add_source("ContractA", CONTRACT_A).unwrap();
     prj.add_source("ContractB", CONTRACT_B).unwrap();
     prj.add_source("ContractC", CONTRACT_C).unwrap();
     prj.add_source("ContractD", CONTRACT_D).unwrap();
-    prj.add_raw_source("ICounter.vyi", VYPER_INTERFACE).unwrap();
-    prj.add_raw_source("Counter.vy", VYPER_CONTRACT).unwrap();
 
     cmd.args(["compiler", "resolve"]).assert_success().stdout_eq(str![[r#"
 Solidity:
-- Solc v0.8.4
-- Solc v0.8.11
-- Solc v0.8.27
-
-Vyper:
-- Vyper v0.4.0
+- [RESOLC_VERSION]
+- [RESOLC_VERSION]
+- [RESOLC_VERSION]
 
 
 "#]]);
 });
 
-forgetest!(can_list_resolved_multiple_compiler_versions_skipped, |prj, cmd| {
-    prj.add_source("ContractA", CONTRACT_A).unwrap();
-    prj.add_source("ContractB", CONTRACT_B).unwrap();
-    prj.add_source("ContractC", CONTRACT_C).unwrap();
-    prj.add_source("ContractD", CONTRACT_D).unwrap();
-    prj.add_raw_source("ICounter.vyi", VYPER_INTERFACE).unwrap();
-    prj.add_raw_source("Counter.vy", VYPER_CONTRACT).unwrap();
-
-    cmd.args(["compiler", "resolve", "--skip", ".sol", "-v"]).assert_success().stdout_eq(str![[
-        r#"
-Vyper:
-
-Vyper v0.4.0:
-├── src/Counter.vy
-└── src/ICounter.vyi
-
-
-"#
-    ]]);
-});
-
 forgetest!(can_list_resolved_multiple_compiler_versions_skipped_json, |prj, cmd| {
+    prj.update_config(|config| {
+        config.resolc.resolc = Some(foundry_config::SolcReq::Version(
+            semver::Version::parse(OTHER_RESOLC_VERSION).unwrap(),
+        ));
+        config.resolc.resolc_compile = true;
+    });
     prj.add_source("ContractA", CONTRACT_A).unwrap();
     prj.add_source("ContractB", CONTRACT_B).unwrap();
     prj.add_source("ContractC", CONTRACT_C).unwrap();
     prj.add_source("ContractD", CONTRACT_D).unwrap();
-    prj.add_raw_source("ICounter.vyi", VYPER_INTERFACE).unwrap();
-    prj.add_raw_source("Counter.vy", VYPER_CONTRACT).unwrap();
 
     cmd.args(["compiler", "resolve", "--skip", "Contract(A|B|C)", "--json", "-v"])
         .assert_success()
@@ -200,21 +191,15 @@ forgetest!(can_list_resolved_multiple_compiler_versions_skipped_json, |prj, cmd|
 {
   "Solidity": [
     {
-      "name": "Solc",
-      "version": "0.8.27",
+      "name": "Resolc",
+      "version": "0.1.0-dev.13",
       "paths": [
         "src/ContractD.sol"
-      ]
-    }
-  ],
-  "Vyper": [
-    {
-      "name": "Vyper",
-      "version": "0.4.0",
-      "paths": [
-        "src/Counter.vy",
-        "src/ICounter.vyi"
-      ]
+      ],
+      "dependency": {
+        "name": "Solc",
+        "version": "0.8.27"
+      }
     }
   ]
 }
@@ -224,83 +209,86 @@ forgetest!(can_list_resolved_multiple_compiler_versions_skipped_json, |prj, cmd|
 });
 
 forgetest!(can_list_resolved_multiple_compiler_versions_verbose, |prj, cmd| {
+    prj.update_config(|config| {
+        config.resolc.resolc = Some(foundry_config::SolcReq::Version(
+            semver::Version::parse(OTHER_RESOLC_VERSION).unwrap(),
+        ));
+        config.resolc.resolc_compile = true;
+    });
     prj.add_source("ContractA", CONTRACT_A).unwrap();
     prj.add_source("ContractB", CONTRACT_B).unwrap();
     prj.add_source("ContractC", CONTRACT_C).unwrap();
     prj.add_source("ContractD", CONTRACT_D).unwrap();
-    prj.add_raw_source("ICounter.vyi", VYPER_INTERFACE).unwrap();
-    prj.add_raw_source("Counter.vy", VYPER_CONTRACT).unwrap();
 
     cmd.args(["compiler", "resolve", "-vv"]).assert_success().stdout_eq(str![[r#"
 Solidity:
 
-Solc v0.8.4 (<= istanbul):
+[RESOLC_VERSION] (<= istanbul):
 └── src/ContractA.sol
 
-Solc v0.8.11 (<= london):
+[RESOLC_VERSION] (<= london):
 └── src/ContractB.sol
 
-Solc v0.8.27 (<= cancun):
+[RESOLC_VERSION] (<= cancun):
 ├── src/ContractC.sol
 └── src/ContractD.sol
-
-Vyper:
-
-Vyper v0.4.0 (<= cancun):
-├── src/Counter.vy
-└── src/ICounter.vyi
 
 
 "#]]);
 });
 
 forgetest!(can_list_resolved_multiple_compiler_versions_verbose_json, |prj, cmd| {
+    prj.update_config(|config| {
+        config.resolc.resolc = Some(foundry_config::SolcReq::Version(
+            semver::Version::parse(OTHER_RESOLC_VERSION).unwrap(),
+        ));
+        config.resolc.resolc_compile = true;
+    });
     prj.add_source("ContractA", CONTRACT_A).unwrap();
     prj.add_source("ContractB", CONTRACT_B).unwrap();
     prj.add_source("ContractC", CONTRACT_C).unwrap();
     prj.add_source("ContractD", CONTRACT_D).unwrap();
-    prj.add_raw_source("ICounter.vyi", VYPER_INTERFACE).unwrap();
-    prj.add_raw_source("Counter.vy", VYPER_CONTRACT).unwrap();
 
     cmd.args(["compiler", "resolve", "--json", "-vv"]).assert_success().stdout_eq(
         str![[r#"
 {
   "Solidity": [
     {
-      "name": "Solc",
-      "version": "0.8.4",
+      "name": "Resolc",
+      "version": "0.1.0-dev.13",
       "evm_version": "Istanbul",
       "paths": [
         "src/ContractA.sol"
-      ]
+      ],
+      "dependency": {
+        "name": "Solc",
+        "version": "0.8.4"
+      }
     },
     {
-      "name": "Solc",
-      "version": "0.8.11",
+      "name": "Resolc",
+      "version": "0.1.0-dev.13",
       "evm_version": "London",
       "paths": [
         "src/ContractB.sol"
-      ]
+      ],
+      "dependency": {
+        "name": "Solc",
+        "version": "0.8.11"
+      }
     },
     {
-      "name": "Solc",
-      "version": "0.8.27",
-      "evm_version": "[..]",
+      "name": "Resolc",
+      "version": "0.1.0-dev.13",
+      "evm_version": "Cancun",
       "paths": [
         "src/ContractC.sol",
         "src/ContractD.sol"
-      ]
-    }
-  ],
-  "Vyper": [
-    {
-      "name": "Vyper",
-      "version": "0.4.0",
-      "evm_version": "[..]",
-      "paths": [
-        "src/Counter.vy",
-        "src/ICounter.vyi"
-      ]
+      ],
+      "dependency": {
+        "name": "Solc",
+        "version": "0.8.27"
+      }
     }
   ]
 }

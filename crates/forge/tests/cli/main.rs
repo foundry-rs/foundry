@@ -23,6 +23,7 @@ mod inline_config;
 mod multi_script;
 mod revive_build;
 mod revive_cmd;
+mod revive_compiler;
 mod revive_config;
 mod revive_create;
 mod revive_inspect;
