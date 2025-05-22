@@ -2900,7 +2900,7 @@ interface Vm {
     ///     * Note: the cheatcode will output the canonical type even if the input is malformated
     ///             with the wrong order of elements or with extra whitespaces.
     #[cheatcode(group = Utilities)]
-    function eip712HashType(string memory typeNameOrDefinition) external pure returns (bytes32 typeHash);
+    function eip712HashType(string calldata typeNameOrDefinition) external pure returns (bytes32 typeHash);
 
     /// Generates the hash of the canonical EIP-712 type representation.
     /// Requires previous binding generation with `forge bind-json`.
@@ -2909,7 +2909,7 @@ interface Vm {
     ///  * `bindingsPath`: path where the output of `forge bind-json` is stored.
     ///  * `typeName`: Name of the type (i.e. "Transaction").
     #[cheatcode(group = Utilities)]
-    function eip712HashType(string calldata bindingsPath, string memory typeName) external pure returns (bytes32 typeHash);
+    function eip712HashType(string calldata bindingsPath, string calldata typeName) external pure returns (bytes32 typeHash);
 }
 }
 
