@@ -1,4 +1,5 @@
 use crate::tx::{CastTxBuilder, SenderKind};
+use alloy_ens::NameOrAddress;
 use alloy_primitives::U256;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
@@ -8,7 +9,6 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, parse_ether_value, LoadConfig},
 };
-use foundry_common::ens::NameOrAddress;
 use std::str::FromStr;
 
 /// CLI arguments for `cast estimate`.

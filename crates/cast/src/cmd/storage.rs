@@ -1,4 +1,5 @@
 use crate::{opts::parse_slot, Cast};
+use alloy_ens::NameOrAddress;
 use alloy_network::AnyNetwork;
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::Provider;
@@ -15,7 +16,6 @@ use foundry_cli::{
 use foundry_common::{
     abi::find_source,
     compile::{etherscan_project, ProjectCompiler},
-    ens::NameOrAddress,
     shell,
 };
 use foundry_compilers::{
