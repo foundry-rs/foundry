@@ -3784,6 +3784,14 @@ contract Eip712Test is DSTest {
         vm._expectCheatcodeRevert();
         bytes32 fromTypeName = vm.eip712HashType("InvalidTypeName");
     }
+
+    function testEip712HashType_byCustomPathAndTypeName() public {
+        bytes32 canonicalHash = keccak256(bytes(CANONICAL));
+
+        // Can figure out the canonical type from the previously generated bindings
+        bytes32 fromTypeName = vm.eip712HashType("utils/CustomJsonBindings.sol", "Transaction");
+        assertEq(fromTypeName, canonicalHash);
+    }
 }
 "#,
     )
@@ -3820,6 +3828,59 @@ Encountered a total of 1 failing tests, 0 tests succeeded
     cmd.forge_fuse().args(["bind-json"]).assert_success();
     assert!(bindings.exists(), "'JsonBindings.sol' was not generated at {bindings:?}");
 
-    // with generated bindings, everything works
-    cmd.forge_fuse().args(["test", "--mc", "Eip712Test"]).assert_success();
+    // with generated bindings, cheatcode by type name works
+    cmd.forge_fuse()
+        .args(["test", "--mc", "Eip712Test", "--match-test", "testEip712HashType_byTypeName"])
+        .assert_success();
+
+    // even with generated bindings, cheatcode by type name fails if name is not present
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "Eip712Test",
+            "--match-test",
+            "testReverts_Eip712HashType_invalidName",
+        ])
+        .assert_success();
+
+    let bindings_2 = prj.root().join("utils").join("CustomJsonBindings.sol");
+    prj.update_config(|config| {
+        config.fs_permissions.add(PathPermission::read(&bindings_2));
+        config.bind_json.out = bindings_2.clone();
+    });
+
+    // cheatcode by custom path and type name fails if bindings haven't been generated for that path
+    cmd.forge_fuse()
+        .args(["test", "--mc", "Eip712Test", "--match-test", "testEip712HashType_byCustomPathAndTypeName"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for src/Eip712Cheat.sol:Eip712Test
+[FAIL: vm.eip712HashType: failed to read from [..] testEip712HashType_byCustomPathAndTypeName() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in src/Eip712Cheat.sol:Eip712Test
+[FAIL: vm.eip712HashType: failed to read from [..] testEip712HashType_byCustomPathAndTypeName() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+"#]]);
+
+    cmd.forge_fuse().args(["bind-json"]).assert_success();
+    assert!(bindings_2.exists(), "'CustomJsonBindings.sol' was not generated at {bindings_2:?}");
+
+    // with generated bindings, cheatcode by custom path and type name works
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "Eip712Test",
+            "--match-test",
+            "testEip712HashType_byCustomPathAndTypeName",
+        ])
+        .assert_success();
 });
