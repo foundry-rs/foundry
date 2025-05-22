@@ -7,18 +7,13 @@ use crate::{
     logger::MetricLogger,
 };
 use alloy_primitives::U256;
-use alloy_provider::{
-    network::{AnyNetwork, EthereumWallet},
-    Provider, ProviderBuilder, WalletProvider,
-};
+use alloy_provider::{network::AnyNetwork, Provider};
 use alloy_sol_types::{
     private::{keccak256, Address, B256},
     SolCall,
 };
 use eyre::Result;
-use foundry_cli::utils;
 use foundry_common::ens::namehash;
-use foundry_config::Config;
 use serde::Deserialize;
 use std::io::{stdout, Write};
 
@@ -38,22 +33,15 @@ pub struct ChainConfigResponse {
     parent_name: String,
 }
 
-pub async fn set_primary_name(
-    config: &Config,
-    wallet: EthereumWallet,
+pub async fn set_primary_name<P: Provider<AnyNetwork>>(
+    provider: P,
+    sender_addr: Address,
     contract_addr: Address,
     name: Option<String>,
     is_reverse_claimer: bool,
     _is_reverse_setter: bool,
     op_type: &str,
 ) -> Result<()> {
-    let provider = utils::get_provider(config)?;
-    let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
-        .with_recommended_fillers()
-        .wallet(wallet)
-        .on_provider(provider);
-
-    let sender_addr = provider.default_signer_address();
     let chain_id = provider.get_chain_id().await?;
     let config = get_config(chain_id).await?;
     let reverse_registrar_addr: Address = config.reverse_registrar_addr.parse()?;
@@ -347,8 +335,7 @@ mod tests {
         serde_helpers::WithOtherFields, Block as AlloyBlock, Filter, TransactionRequest,
     };
     use alloy_sol_types::private::alloy_json_abi::JsonAbi;
-    use anvil::{opts::Anvil, spawn, EthereumHardfork, NodeConfig};
-    use foundry_test_utils::{forgetest_async, str};
+    use anvil::{opts::Anvil, EthereumHardfork, NodeConfig};
     use std::fs;
 
     fn load_bytecode(path: &str) -> Bytes {

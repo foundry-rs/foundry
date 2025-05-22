@@ -18,7 +18,6 @@ eyre.workspace = true
 
 foundry-cli.workspace = true
 foundry-common.workspace = true
-foundry-config.workspace = true
 foundry-wallets.workspace = true
 
 alloy-contract.workspace = true
@@ -34,7 +33,5 @@ serde.workspace = true
 uuid = { version = "0.8.2", features = ["v4"] }
 alloy-rpc-types = { workspace = true, features = ["anvil", "trace", "txpool"] }
 
-[dev-dependencies]
-anvil.workspace = true
-foundry-test-utils.workspace = true
 tokio = "1.44.2"
+anvil.workspace = true

@@ -49,11 +49,7 @@ impl BroadcastedState {
         Ok(())
     }
 
-    pub async fn set_ens_name<P: Provider<AnyNetwork>>(
-        &mut self,
-        provider: P,
-        config: &Config,
-    ) -> Result<()> {
+    pub async fn set_ens_name<P: Provider<AnyNetwork>>(&mut self, provider: P) -> Result<()> {
         let Self { args, script_config, build_data, sequence, .. } = self;
 
         let contract_deployment_receipt = sequence
@@ -77,9 +73,14 @@ impl BroadcastedState {
                     .next()
                     .unwrap();
 
+                let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
+                    .with_recommended_fillers()
+                    .wallet(wallet)
+                    .on_provider(provider);
+
                 enscribe::set_primary_name(
-                    config,
-                    wallet,
+                    provider,
+                    receipt.from,
                     receipt.contract_address.unwrap(),
                     args.ens_name.clone(),
                     args.reverse_claimer,

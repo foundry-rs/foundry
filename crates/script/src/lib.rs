@@ -355,7 +355,7 @@ impl ScriptArgs {
         // check if we have to set a name for the deployed contract
         if broadcasted.args.ens_name.is_some() || broadcasted.args.auto_name {
             let provider = utils::get_provider(&config)?;
-            broadcasted.set_ens_name(provider, &config).await?;
+            broadcasted.set_ens_name(provider).await?;
         }
 
         if broadcasted.args.verify {
