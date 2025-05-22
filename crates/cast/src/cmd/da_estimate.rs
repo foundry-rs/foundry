@@ -41,7 +41,7 @@ impl DAEstimateArgs {
             da_estimate += op_alloy_flz::tx_estimated_size_fjord(&tx.encoded_2718());
         }
 
-        println!("Estimated data availability size for block {block_number} with {tx_count} transactions: {da_estimate}");
+        sh_println!("Estimated data availability size for block {block_number} with {tx_count} transactions: {da_estimate}")?;
 
         Ok(())
     }
