@@ -715,6 +715,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             }
         }
         CastSubcommand::TxPool { command } => command.run().await?,
+        CastSubcommand::DAEstimate(cmd) => {
+            cmd.run().await?;
+        }
     };
 
     /// Prints slice of tokens using [`format_tokens`] or [`format_tokens_raw`] depending whether

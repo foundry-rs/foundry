@@ -1,9 +1,9 @@
 use crate::cmd::{
     access_list::AccessListArgs, artifact::ArtifactArgs, bind::BindArgs, call::CallArgs,
     constructor_args::ConstructorArgsArgs, create2::Create2Args, creation_code::CreationCodeArgs,
-    estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs,
-    mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs,
-    txpool::TxPoolSubcommands, wallet::WalletSubcommands,
+    da_estimate::DAEstimateArgs, estimate::EstimateArgs, find_block::FindBlockArgs,
+    interface::InterfaceArgs, logs::LogsArgs, mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs,
+    send::SendTxArgs, storage::StorageArgs, txpool::TxPoolSubcommands, wallet::WalletSubcommands,
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, Selector, B256, U256};
@@ -1065,6 +1065,9 @@ pub enum CastSubcommand {
         #[command(subcommand)]
         command: TxPoolSubcommands,
     },
+    /// Estimates the data availability size of a given opstack block.
+    #[command(name = "da-estimate")]
+    DAEstimate(DAEstimateArgs),
 }
 
 /// CLI arguments for `cast --to-base`.
