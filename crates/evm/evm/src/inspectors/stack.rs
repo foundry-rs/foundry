@@ -616,6 +616,7 @@ impl InspectorStackRefMut<'_> {
         let cached_env = Env::from(ecx.cfg.clone(), ecx.block.clone(), ecx.tx.clone());
 
         ecx.block.basefee = 0;
+        ecx.tx.chain_id = Some(ecx.cfg.chain_id);
         ecx.tx.caller = caller;
         ecx.tx.kind = kind;
         ecx.tx.data = input;
@@ -633,8 +634,8 @@ impl InspectorStackRefMut<'_> {
         self.inner_context_data = Some(InnerContextData { original_origin: cached_env.tx.caller });
         self.in_inner_context = true;
 
+        let (db, journal, env) = ecx.as_db_env_and_journal();
         let res = self.with_stack(|inspector| {
-            let (db, journal, env) = ecx.as_db_env_and_journal();
             let mut evm = new_evm_with_inspector(db, env.to_owned(), inspector);
 
             evm.journaled_state.state = {
@@ -659,20 +660,14 @@ impl InspectorStackRefMut<'_> {
             // set depth to 1 to make sure traces are collected correctly
             evm.journaled_state.depth = 1;
 
-            let res = evm.transact(env.tx.clone());
-
-            // need to reset the env in case it was modified via cheatcodes during execution
-            *env.cfg = evm.cfg.clone();
-            *env.block = evm.block.clone();
-
-            *env.tx = cached_env.tx;
-            env.block.basefee = cached_env.evm_env.block_env.basefee;
-
-            res
+            evm.transact(env.tx.clone())
         });
 
         self.in_inner_context = false;
         self.inner_context_data = None;
+
+        ecx.tx = cached_env.tx;
+        ecx.block.basefee = cached_env.evm_env.block_env.basefee;
 
         let mut gas = Gas::new(gas_limit);
 
