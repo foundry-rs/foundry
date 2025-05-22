@@ -1,6 +1,7 @@
 use super::{IdentifiedAddress, TraceIdentifier};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::JsonAbi;
+use alloy_primitives::{map::HashMap, Address, Bytes};
 use foundry_common::contracts::{bytecode_diff_score, ContractsByArtifact};
 use foundry_compilers::ArtifactId;
 use revm_inspectors::tracing::types::CallTraceNode;
@@ -12,6 +13,8 @@ pub struct LocalTraceIdentifier<'a> {
     known_contracts: &'a ContractsByArtifact,
     /// Vector of pairs of artifact ID and the runtime code length of the given artifact.
     ordered_ids: Vec<(&'a ArtifactId, usize)>,
+    /// The contracts bytecode.
+    contracts_bytecode: Option<&'a HashMap<Address, Bytes>>,
 }
 
 impl<'a> LocalTraceIdentifier<'a> {
@@ -24,7 +27,12 @@ impl<'a> LocalTraceIdentifier<'a> {
             .map(|(id, bytecode)| (id, bytecode.len()))
             .collect::<Vec<_>>();
         ordered_ids.sort_by_key(|(_, len)| *len);
-        Self { known_contracts, ordered_ids }
+        Self { known_contracts, ordered_ids, contracts_bytecode: None }
+    }
+
+    pub fn with_bytecodes(mut self, contracts_bytecode: &'a HashMap<Address, Bytes>) -> Self {
+        self.contracts_bytecode = Some(contracts_bytecode);
+        self
     }
 
     /// Returns the known contracts.
@@ -161,7 +169,18 @@ impl TraceIdentifier for LocalTraceIdentifier<'_> {
                 let _span =
                     trace_span!(target: "evm::traces::local", "identify", %address).entered();
 
-                let (id, abi) = self.identify_code(runtime_code?, creation_code?)?;
+                // In order to identify the addresses, we need at least the runtime code. It can be
+                // obtained from the trace itself (if it's a CREATE* call), or from the fetched
+                // bytecodes.
+                let (runtime_code, creation_code) = match (runtime_code, creation_code) {
+                    (Some(runtime_code), Some(creation_code)) => (runtime_code, creation_code),
+                    (Some(runtime_code), _) => (runtime_code, &[] as &[u8]),
+                    _ => {
+                        let code = self.contracts_bytecode?.get(&address)?;
+                        (code.as_ref(), &[] as &[u8])
+                    }
+                };
+                let (id, abi) = self.identify_code(runtime_code, creation_code)?;
                 trace!(target: "evm::traces::local", id=%id.identifier(), "identified");
 
                 Some(IdentifiedAddress {

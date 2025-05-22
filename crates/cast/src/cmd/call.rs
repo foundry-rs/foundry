@@ -34,6 +34,8 @@ use regex::Regex;
 use revm::context::TransactionType;
 use std::{str::FromStr, sync::LazyLock};
 
+use super::run::fetch_contracts_bytecode_from_trace;
+
 // matches override pattern <address>:<slot>:<value>
 // e.g. 0x123:0x1:0x1234
 static OVERRIDE_PATTERN: LazyLock<Regex> =
@@ -301,10 +303,12 @@ impl CallArgs {
                 ),
             };
 
+            let contracts_bytecode = fetch_contracts_bytecode_from_trace(&provider, &trace).await?;
             handle_traces(
                 trace,
                 &config,
                 chain,
+                &contracts_bytecode,
                 labels,
                 with_local_artifacts,
                 debug,
