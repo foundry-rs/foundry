@@ -119,6 +119,7 @@ impl RevertDiagnostic {
     ///    Otherwise, it is cleared.
     ///  - if `non_contract_size_check` was set at the current depth, `broadcast_diagnostic` is
     ///    called. Otherwise, it is cleared.
+    #[cold]
     fn handle_revert<CTX, D>(&mut self, interp: &mut Interpreter, ctx: &mut CTX)
     where
         D: Database<Error = DatabaseError>,
@@ -153,6 +154,7 @@ impl RevertDiagnostic {
     /// When an `EXTCODESIZE` opcode occurs:
     ///  - Optimistically caches the target address and current depth in `non_contract_size_check`,
     ///    pending later validation.
+    #[cold]
     fn handle_extcodesize<CTX, D>(&mut self, interp: &mut Interpreter, ctx: &mut CTX)
     where
         D: Database<Error = DatabaseError>,
@@ -174,6 +176,7 @@ impl RevertDiagnostic {
     }
 
     /// Tracks `EXTCODESIZE` output. If the bytecode size is NOT 0, clears the cache.
+    #[cold]
     fn handle_extcodesize_output(&mut self, interp: &mut Interpreter) {
         if let Ok(size) = interp.stack.peek(0) {
             if size != U256::ZERO {
