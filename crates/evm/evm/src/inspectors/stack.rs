@@ -634,8 +634,8 @@ impl InspectorStackRefMut<'_> {
         self.inner_context_data = Some(InnerContextData { original_origin: cached_env.tx.caller });
         self.in_inner_context = true;
 
-        let (db, journal, env) = ecx.as_db_env_and_journal();
         let res = self.with_stack(|inspector| {
+            let (db, journal, env) = ecx.as_db_env_and_journal();
             let mut evm = new_evm_with_inspector(db, env.to_owned(), inspector);
 
             evm.journaled_state.state = {
@@ -666,14 +666,14 @@ impl InspectorStackRefMut<'_> {
             *env.cfg = evm.cfg.clone();
             *env.block = evm.block.clone();
 
+            ecx.tx = cached_env.tx;
+            ecx.block.basefee = cached_env.evm_env.block_env.basefee;
+
             res
         });
 
         self.in_inner_context = false;
         self.inner_context_data = None;
-
-        ecx.tx = cached_env.tx;
-        ecx.block.basefee = cached_env.evm_env.block_env.basefee;
 
         let mut gas = Gas::new(gas_limit);
 
