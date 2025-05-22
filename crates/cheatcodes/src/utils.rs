@@ -4,12 +4,13 @@ use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*
 use alloy_dyn_abi::{eip712_parser::EncodeType, DynSolType, DynSolValue};
 use alloy_primitives::{aliases::B32, keccak256, map::HashMap, B64, U256};
 use alloy_sol_types::SolValue;
-use foundry_common::{ens::namehash, fs};
+use foundry_common::{ens::namehash, fs, TYPE_BINDING_PREFIX};
 use foundry_config::fs_permissions::FsAccessKind;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
 use proptest::prelude::Strategy;
 use rand::{seq::SliceRandom, Rng, RngCore};
 use revm::context::JournalTr;
+use std::path::PathBuf;
 
 /// Contains locations of traces ignored via cheatcodes.
 ///
@@ -316,25 +317,39 @@ fn random_int(state: &mut Cheatcodes, bits: Option<U256>) -> Result {
         .abi_encode())
 }
 
-impl Cheatcode for eip712HashTypeCall {
+impl Cheatcode for eip712HashType_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self { typeDefinition } = self;
+        let Self { typeNameOrDefinition } = self;
 
-        let type_def = if !typeDefinition.contains('(') {
-            get_type_def_from_bindings(typeDefinition, state)?
+        let type_def = if typeNameOrDefinition.contains('(') {
+            // If the input contains '(', it must be the type definition
+            EncodeType::parse(typeNameOrDefinition).and_then(|parsed| parsed.canonicalize())?
         } else {
-            EncodeType::parse(typeDefinition).and_then(|parsed| parsed.canonicalize())?
+            // Otherwise, it must be the type name
+            let path = state
+                .config
+                .ensure_path_allowed(&state.config.bind_json_path, FsAccessKind::Read)?;
+            get_type_def_from_bindings(typeNameOrDefinition, path, &state.config.root)?
         };
 
         Ok(keccak256(type_def.as_bytes()).to_vec())
     }
 }
 
-fn get_type_def_from_bindings(name: &String, state: &mut Cheatcodes) -> Result<String> {
-    const TYPE_BINDING_PREFIX: &str = "string constant schema_";
+impl Cheatcode for eip712HashType_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { bindingsPath, typeName } = self;
 
-    let path = state.config.root.join("utils").join("JsonBindings.sol");
-    let path = state.config.ensure_path_allowed(&path, FsAccessKind::Read)?;
+        let path = state.config.ensure_path_allowed(bindingsPath, FsAccessKind::Read)?;
+        let type_def = get_type_def_from_bindings(typeName, path, &state.config.root)?;
+
+        Ok(keccak256(type_def.as_bytes()).to_vec())
+    }
+}
+
+/// Gets the type definition from the bindings in the provided path. Assumes that read validation
+/// for the path has already been checked.
+fn get_type_def_from_bindings(name: &String, path: PathBuf, root: &PathBuf) -> Result<String> {
     let content = fs::read_to_string(&path)?;
 
     let type_defs: HashMap<&str, &str> = content
@@ -353,8 +368,9 @@ fn get_type_def_from_bindings(name: &String, state: &mut Cheatcodes) -> Result<S
                 type_defs.keys().map(|k| format!(" - {k}")).collect::<Vec<String>>().join("\n");
 
             bail!(
-                "'{}' not found in 'utils/JsonBindings.sol'.{}",
+                "'{}' not found in '{}'.{}",
                 name,
+                path.strip_prefix(root).unwrap_or(&path).to_string_lossy(),
                 if bindings.is_empty() {
                     String::new()
                 } else {

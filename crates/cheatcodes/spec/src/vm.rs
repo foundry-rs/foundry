@@ -2892,11 +2892,24 @@ interface Vm {
     /// Generates the hash of the canonical EIP-712 type representation.
     ///
     /// Supports 2 different inputs:
-    ///  * Name of the type (i.e. "Transaction") --> requires previous binding generation with `forge bind-json`
-    ///  * String representation of the type (i.e. "Foo(Bar bar) Bar(uint256 baz)") --> the cheatcode
-    ///    will output the canonical type even if the input is malformated (wrong order or whitespaces)
+    ///  1. Name of the type (i.e. "Transaction"):
+    ///     * requires previous binding generation with `forge bind-json`.
+    ///     * bindings will be retrieved from the path configured in `foundry.toml`.
+    ///
+    ///  2. String representation of the type (i.e. "Foo(Bar bar) Bar(uint256 baz)").
+    ///     * Note: the cheatcode will output the canonical type even if the input is malformated
+    ///             with the wrong order of elements or with extra whitespaces.
     #[cheatcode(group = Utilities)]
-    function eip712HashType(string memory typeDefinition) external pure returns (bytes32 typeHash);
+    function eip712HashType(string memory typeNameOrDefinition) external pure returns (bytes32 typeHash);
+
+    /// Generates the hash of the canonical EIP-712 type representation.
+    /// Requires previous binding generation with `forge bind-json`.
+    ///
+    /// Params:
+    ///  * `bindingsPath`: path where the output of `forge bind-json` is stored.
+    ///  * `typeName`: Name of the type (i.e. "Transaction").
+    #[cheatcode(group = Utilities)]
+    function eip712HashType(string calldata bindingsPath, string memory typeName) external pure returns (bytes32 typeHash);
 }
 }
 

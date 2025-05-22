@@ -3760,7 +3760,7 @@ string constant CANONICAL = "Transaction(Person from,Person to,Asset tx)Asset(ad
 contract Eip712Test is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
 
-    function testEip712HashType() public {
+    function testEip712HashType_byDefinition() public {
         bytes32 canonicalHash = keccak256(bytes(CANONICAL));
 
         // Can figure out the canonical type from a messy string representation of the type,
@@ -3769,25 +3769,63 @@ contract Eip712Test is DSTest {
             "Person(address wallet, string name) Asset(address token, uint256 amount) Transaction(Person from, Person to, Asset tx)"
         );
         assertEq(fromTypeDef, canonicalHash);
+    }
+
+    function testEip712HashType_byTypeName() public {
+        bytes32 canonicalHash = keccak256(bytes(CANONICAL));
 
         // Can figure out the canonical type from the previously generated bindings
         bytes32 fromTypeName = vm.eip712HashType("Transaction");
         assertEq(fromTypeName, canonicalHash);
+    }
 
+    function testReverts_Eip712HashType_invalidName() public {
         // Reverts if the input type is not found in the bindings
         vm._expectCheatcodeRevert();
-        fromTypeName = vm.eip712HashType("InvalidTypeName");
+        bytes32 fromTypeName = vm.eip712HashType("InvalidTypeName");
     }
 }
 "#,
     )
     .unwrap();
 
-    cmd.forge_fuse().args(["bind-json"]).assert_success();
+    // cheatcode by type definition can run without bindings
+    cmd.forge_fuse()
+        .args(["test", "--mc", "Eip712Test", "--match-test", "testEip712HashType_byDefinition"])
+        .assert_success();
 
     let bindings = prj.root().join("utils").join("JsonBindings.sol");
+    prj.update_config(|config| config.fs_permissions.add(PathPermission::read(&bindings)));
+
+    // cheatcode by type name fails if bindings haven't been generated
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "Eip712Test",
+            "--match-test",
+            "testEip712HashType_byTypeName",
+        ])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for src/Eip712Cheat.sol:Eip712Test
+[FAIL: vm.eip712HashType: failed to read from [..] No such file or directory (os error 2)] testEip712HashType_byTypeName() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in src/Eip712Cheat.sol:Eip712Test
+[FAIL: vm.eip712HashType: failed to read from [..] No such file or directory (os error 2)] testEip712HashType_byTypeName() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+"#]]);
+
+    cmd.forge_fuse().args(["bind-json"]).assert_success();
     assert!(bindings.exists(), "'JsonBindings.sol' was not generated at {bindings:?}");
 
-    prj.update_config(|config| config.fs_permissions.add(PathPermission::read(bindings)));
-    cmd.forge_fuse().args(["test", "--mc", "Eip712Test", "-vvvv"]).assert_success();
+    // with generated bindings, everything works
+    cmd.forge_fuse().args(["test", "--mc", "Eip712Test"]).assert_success();
 });
