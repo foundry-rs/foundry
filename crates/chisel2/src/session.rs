@@ -29,7 +29,7 @@ impl ChiselSession {
     /// ### Returns
     ///
     /// A new instance of [ChiselSession]
-    pub fn new(config: SessionSourceConfig) -> Result<Self> {
+    pub fn new(mut config: SessionSourceConfig) -> Result<Self> {
         let solc = config.solc()?;
         // Return initialized ChiselSession with set solc version
         Ok(Self { session_source: SessionSource::new(solc, config), id: None })

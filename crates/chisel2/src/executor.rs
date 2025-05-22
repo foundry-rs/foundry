@@ -35,115 +35,113 @@ impl SessionSource {
     pub async fn execute(&mut self) -> Result<(Address, ChiselResult)> {
         // Recompile the project and ensure no errors occurred.
         let compiled = self.build()?;
-        if let Some((_, contract)) =
-            compiled.clone().compiler_output.contracts_into_iter().find(|(name, _)| name == "REPL")
-        {
-            // These *should* never panic after a successful compilation.
-            let bytecode = contract
-                .get_bytecode_bytes()
-                .ok_or_else(|| eyre::eyre!("No bytecode found for `REPL` contract"))?;
-            let deployed_bytecode = contract
-                .get_deployed_bytecode_bytes()
-                .ok_or_else(|| eyre::eyre!("No deployed bytecode found for `REPL` contract"))?;
 
-            // Fetch the run function's body statement
-            let run_func_statements = compiled.intermediate.run_func_body()?;
+        let (_, contract) = compiled
+            .compiler_output
+            .contracts_iter()
+            .find(|&(name, _)| name == "REPL")
+            .ok_or_else(|| eyre::eyre!("failed to find REPL contract"))?;
 
-            // Record loc of first yul block return statement (if any).
-            // This is used to decide which is the final statement within the `run()` method.
-            // see <https://github.com/foundry-rs/foundry/issues/4617>.
-            let last_yul_return = run_func_statements.iter().find_map(|statement| {
-                if let pt::Statement::Assembly { loc: _, dialect: _, flags: _, block } = statement {
-                    if let Some(statement) = block.statements.last() {
-                        if let pt::YulStatement::FunctionCall(yul_call) = statement {
-                            if yul_call.id.name == "return" {
-                                return Some(statement.loc())
-                            }
+        // These *should* never panic after a successful compilation.
+        let bytecode = contract
+            .get_bytecode_bytes()
+            .ok_or_else(|| eyre::eyre!("No bytecode found for `REPL` contract"))?;
+        let deployed_bytecode = contract
+            .get_deployed_bytecode_bytes()
+            .ok_or_else(|| eyre::eyre!("No deployed bytecode found for `REPL` contract"))?;
+
+        // Fetch the run function's body statement
+        let run_func_statements = compiled.intermediate.run_func_body()?;
+
+        // Record loc of first yul block return statement (if any).
+        // This is used to decide which is the final statement within the `run()` method.
+        // see <https://github.com/foundry-rs/foundry/issues/4617>.
+        let last_yul_return = run_func_statements.iter().find_map(|statement| {
+            if let pt::Statement::Assembly { loc: _, dialect: _, flags: _, block } = statement {
+                if let Some(statement) = block.statements.last() {
+                    if let pt::YulStatement::FunctionCall(yul_call) = statement {
+                        if yul_call.id.name == "return" {
+                            return Some(statement.loc())
                         }
                     }
                 }
-                None
-            });
-
-            // Find the last statement within the "run()" method and get the program
-            // counter via the source map.
-            if let Some(final_statement) = run_func_statements.last() {
-                // If the final statement is some type of block (assembly, unchecked, or regular),
-                // we need to find the final statement within that block. Otherwise, default to
-                // the source loc of the final statement of the `run()` function's block.
-                //
-                // There is some code duplication within the arms due to the difference between
-                // the [pt::Statement] type and the [pt::YulStatement] types.
-                let mut source_loc = match final_statement {
-                    pt::Statement::Assembly { loc: _, dialect: _, flags: _, block } => {
-                        // Select last non variable declaration statement, see <https://github.com/foundry-rs/foundry/issues/4938>.
-                        let last_statement = block.statements.iter().rev().find(|statement| {
-                            !matches!(statement, pt::YulStatement::VariableDeclaration(_, _, _))
-                        });
-                        if let Some(statement) = last_statement {
-                            statement.loc()
-                        } else {
-                            // In the case where the block is empty, attempt to grab the statement
-                            // before the asm block. Because we use saturating sub to get the second
-                            // to last index, this can always be safely unwrapped.
-                            run_func_statements
-                                .get(run_func_statements.len().saturating_sub(2))
-                                .unwrap()
-                                .loc()
-                        }
-                    }
-                    pt::Statement::Block { loc: _, unchecked: _, statements } => {
-                        if let Some(statement) = statements.last() {
-                            statement.loc()
-                        } else {
-                            // In the case where the block is empty, attempt to grab the statement
-                            // before the block. Because we use saturating sub to get the second to
-                            // last index, this can always be safely unwrapped.
-                            run_func_statements
-                                .get(run_func_statements.len().saturating_sub(2))
-                                .unwrap()
-                                .loc()
-                        }
-                    }
-                    _ => final_statement.loc(),
-                };
-
-                // Consider yul return statement as final statement (if it's loc is lower) .
-                if let Some(yul_return) = last_yul_return {
-                    if yul_return.end() < source_loc.start() {
-                        source_loc = yul_return;
-                    }
-                }
-
-                // Map the source location of the final statement of the `run()` function to its
-                // corresponding runtime program counter
-                let final_pc = {
-                    let offset = source_loc.start() as u32;
-                    let length = (source_loc.end() - source_loc.start()) as u32;
-                    contract
-                        .get_source_map_deployed()
-                        .unwrap()
-                        .unwrap()
-                        .into_iter()
-                        .zip(InstructionIter::new(&deployed_bytecode))
-                        .filter(|(s, _)| s.offset() == offset && s.length() == length)
-                        .map(|(_, i)| i.pc)
-                        .max()
-                        .unwrap_or_default()
-                };
-
-                // Create a new runner
-                let mut runner = self.prepare_runner(final_pc).await?;
-
-                // Return [ChiselResult] or bubble up error
-                runner.run(bytecode.into_owned())
-            } else {
-                // Return a default result if no statements are present.
-                Ok((Address::ZERO, ChiselResult::default()))
             }
-        } else {
-            eyre::bail!("Failed to find REPL contract!")
+            None
+        });
+
+        // Find the last statement within the "run()" method and get the program
+        // counter via the source map.
+        let Some(last_stmt) = run_func_statements.last() else {
+            return Ok((Address::ZERO, ChiselResult::default()));
+        };
+
+        // If the final statement is some type of block (assembly, unchecked, or regular),
+        // we need to find the final statement within that block. Otherwise, default to
+        // the source loc of the final statement of the `run()` function's block.
+        //
+        // There is some code duplication within the arms due to the difference between
+        // the [pt::Statement] type and the [pt::YulStatement] types.
+        let mut source_loc = match last_stmt {
+            pt::Statement::Assembly { loc: _, dialect: _, flags: _, block } => {
+                // Select last non variable declaration statement, see <https://github.com/foundry-rs/foundry/issues/4938>.
+                let last_statement = block.statements.iter().rev().find(|statement| {
+                    !matches!(statement, pt::YulStatement::VariableDeclaration(_, _, _))
+                });
+                if let Some(statement) = last_statement {
+                    statement.loc()
+                } else {
+                    // In the case where the block is empty, attempt to grab the statement
+                    // before the asm block. Because we use saturating sub to get the second
+                    // to last index, this can always be safely unwrapped.
+                    run_func_statements
+                        .get(run_func_statements.len().saturating_sub(2))
+                        .unwrap()
+                        .loc()
+                }
+            }
+            pt::Statement::Block { loc: _, unchecked: _, statements } => {
+                if let Some(statement) = statements.last() {
+                    statement.loc()
+                } else {
+                    // In the case where the block is empty, attempt to grab the statement
+                    // before the block. Because we use saturating sub to get the second to
+                    // last index, this can always be safely unwrapped.
+                    run_func_statements
+                        .get(run_func_statements.len().saturating_sub(2))
+                        .unwrap()
+                        .loc()
+                }
+            }
+            _ => last_stmt.loc(),
+        };
+
+        // Consider yul return statement as final statement (if it's loc is lower) .
+        if let Some(yul_return) = last_yul_return {
+            if yul_return.end() < source_loc.start() {
+                source_loc = yul_return;
+            }
         }
+
+        // Map the source location of the final statement of the `run()` function to its
+        // corresponding runtime program counter
+        let final_pc = {
+            let offset = source_loc.start() as u32;
+            let length = (source_loc.end() - source_loc.start()) as u32;
+            contract
+                .get_source_map_deployed()
+                .unwrap()
+                .unwrap()
+                .into_iter()
+                .zip(InstructionIter::new(&deployed_bytecode))
+                .filter(|(s, _)| s.offset() == offset && s.length() == length)
+                .map(|(_, i)| i.pc)
+                .max()
+                .unwrap_or_default()
+        };
+
+        let bytecode = bytecode.into_owned();
+        let mut runner = self.prepare_runner(final_pc).await?;
+        runner.run(bytecode)
     }
 
     /// Inspect a contract element inside of the current session
@@ -248,9 +246,8 @@ impl SessionSource {
         let function_call_return_type =
             Type::get_function_return_type(contract_expr, &generated_output.intermediate);
 
-        let (contract_expr, ty) = if let Some(function_call_return_type) = function_call_return_type
-        {
-            (function_call_return_type.0, function_call_return_type.1)
+        let (contract_expr, ty) = if let Some(r) = function_call_return_type {
+            r
         } else {
             match contract_expr.and_then(|e| {
                 Type::ethabi(e, Some(&generated_output.intermediate)).map(|ty| (e, ty))
@@ -285,21 +282,8 @@ impl SessionSource {
     ///
     /// Optionally, a [Type]
     fn infer_inner_expr_type(&self) -> Option<&pt::Expression> {
-        let out = self.generated_output.as_ref()?;
-        let run = out.intermediate.run_func_body().ok()?.last();
-        match run {
-            Some(pt::Statement::VariableDefinition(
-                _,
-                _,
-                Some(pt::Expression::FunctionCall(_, _, args)),
-            )) => {
-                // We can safely unwrap the first expression because this function
-                // will only be called on a session source that has just had an
-                // `inspectoor` variable appended to it.
-                Some(args.first().unwrap())
-            }
-            _ => None,
-        }
+        // TODO(dani)
+        None
     }
 
     /// Prepare a runner for the Chisel REPL environment
@@ -1750,13 +1734,11 @@ mod tests {
         let s = &mut _s;
 
         if let Err(e) = s.parse() {
-            for err in e {
-                let _ = sh_eprintln!("{}:{}: {}", err.loc.start(), err.loc.end(), err.message);
-            }
+            eprintln!("{e}");
             let source = s.to_repl_source();
             panic!("could not parse input:\n{source}")
         }
-        s.generate_intermediate_output().expect("could not generate intermediate output")
+        s.analyze().expect("could not generate intermediate output")
     }
 
     fn expr(stmts: &[pt::Statement]) -> pt::Expression {

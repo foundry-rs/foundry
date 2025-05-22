@@ -17,8 +17,9 @@ use rustyline::{
 };
 use solar_parse::{
     interface::{Session, SessionGlobals},
-    token::{Token, TokenKind},
-    Lexer,
+    lexer::token::{RawLiteralKind, RawTokenKind},
+    token::Token,
+    Cursor, Lexer,
 };
 use std::{borrow::Cow, ops::Range};
 use yansi::{Color, Style};
@@ -134,25 +135,48 @@ impl SolidityHelper {
 
     /// Validate that a source snippet is closed (i.e., all braces and parenthesis are matched).
     fn validate_closed(&self, input: &str) -> ValidationResult {
-        let mut depth = [0usize; 3];
-        self.enter(|sess| {
-            for token in Lexer::new(sess, input) {
-                match token.kind {
-                    TokenKind::OpenDelim(delim) => {
-                        depth[delim as usize] += 1;
+        use RawLiteralKind::*;
+        use RawTokenKind::*;
+        let mut stack = vec![];
+        for token in Cursor::new(input) {
+            match token.kind {
+                OpenParen | OpenBrace | OpenBracket => stack.push(token.kind),
+                CloseParen | CloseBrace | CloseBracket => match (stack.pop(), token.kind) {
+                    (Some(OpenParen), CloseParen) |
+                    (Some(OpenBrace), CloseBrace) |
+                    (Some(OpenBracket), CloseBracket) => {}
+                    (Some(wanted), _) => {
+                        return ValidationResult::Invalid(Some(format!(
+                            "Mismatched brackets: {wanted:?} is not properly closed"
+                        )))
                     }
-                    TokenKind::CloseDelim(delim) => {
-                        depth[delim as usize] = depth[delim as usize].saturating_sub(1);
+                    (None, c) => {
+                        return ValidationResult::Invalid(Some(format!(
+                            "Mismatched brackets: {c:?} is unpaired"
+                        )))
                     }
-                    _ => {}
+                },
+
+                Literal { kind: Str { terminated, .. } | HexStr { terminated, .. } } => {
+                    if !terminated {
+                        return ValidationResult::Invalid(Some(
+                            "Unterminated string literal".to_string(),
+                        ))
+                    }
                 }
+
+                BlockComment { terminated, .. } => {
+                    if !terminated {
+                        return ValidationResult::Invalid(Some(
+                            "Unterminated block comment".to_string(),
+                        ))
+                    }
+                }
+
+                _ => {}
             }
-        });
-        if depth == [0; 3] {
-            ValidationResult::Valid(None)
-        } else {
-            ValidationResult::Incomplete
         }
+        ValidationResult::Valid(None)
     }
 
     /// Formats `input` with `style` into `out`, without checking `style.wrapping` or

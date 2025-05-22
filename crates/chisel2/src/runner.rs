@@ -199,13 +199,7 @@ impl ChiselRunner {
             success: !reverted,
             gas_used,
             logs,
-            traces: traces
-                .map(|traces| {
-                    // Manually adjust gas for the trace to add back the stipend/real used gas
-
-                    vec![(TraceKind::Execution, traces)]
-                })
-                .unwrap_or_default(),
+            traces: traces.map(|traces| vec![(TraceKind::Execution, traces)]).unwrap_or_default(),
             labeled_addresses: labels,
             address: None,
             state: chisel_state,

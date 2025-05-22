@@ -6,7 +6,6 @@
 
 use alloy_primitives::map::HashMap;
 use eyre::Result;
-use forge_fmt::solang_ext::SafeUnwrap;
 use foundry_compilers::{
     artifacts::{CompilerOutput, Settings, SolcInput, Source, Sources},
     compilers::solc::Solc,
@@ -15,10 +14,10 @@ use foundry_config::{Config, SolcReq};
 use foundry_evm::{backend::Backend, opts::EvmOpts};
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use solang_parser::{diagnostics::Diagnostic, pt};
-use std::{fs, path::PathBuf};
+use solang_parser::pt;
+use solar_parse::interface::diagnostics::EmittedDiagnostics;
+use std::path::PathBuf;
 use walkdir::WalkDir;
-use yansi::Paint;
 
 /// The minimum Solidity version of the `Vm` interface.
 pub const MIN_VM_VERSION: Version = Version::new(0, 6, 2);
@@ -27,31 +26,25 @@ pub const MIN_VM_VERSION: Version = Version::new(0, 6, 2);
 static VM_SOURCE: &str = include_str!("../../../testdata/cheats/Vm.sol");
 
 /// Intermediate output for the compiled [SessionSource]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct IntermediateOutput {
     /// All expressions within the REPL contract's run function and top level scope.
-    #[serde(skip)]
     pub repl_contract_expressions: HashMap<String, pt::Expression>,
     /// Intermediate contracts
-    #[serde(skip)]
     pub intermediate_contracts: IntermediateContracts,
 }
 
 /// A refined intermediate parse tree for a contract that enables easy lookups
 /// of definitions.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct IntermediateContract {
     /// All function definitions within the contract
-    #[serde(skip)]
     pub function_definitions: HashMap<String, Box<pt::FunctionDefinition>>,
     /// All event definitions within the contract
-    #[serde(skip)]
     pub event_definitions: HashMap<String, Box<pt::EventDefinition>>,
     /// All struct definitions within the contract
-    #[serde(skip)]
     pub struct_definitions: HashMap<String, Box<pt::StructDefinition>>,
     /// All variable definitions within the top level scope of the contract
-    #[serde(skip)]
     pub variable_definitions: HashMap<String, Box<pt::VariableDefinition>>,
 }
 
@@ -62,6 +55,7 @@ type IntermediateContracts = HashMap<String, IntermediateContract>;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GeneratedOutput {
     /// The [IntermediateOutput] component
+    #[serde(skip)]
     pub intermediate: IntermediateOutput,
     /// The [CompilerOutput] component
     pub compiler_output: CompilerOutput,
@@ -76,8 +70,8 @@ pub struct SessionSourceConfig {
     pub evm_opts: EvmOpts,
     /// Disable the default `Vm` import.
     pub no_vm: bool,
-    #[serde(skip)]
     /// In-memory REVM db for the session's runner.
+    #[serde(skip)]
     pub backend: Option<Backend>,
     /// Optionally enable traces for the REPL contract execution
     pub traces: bool,
@@ -86,44 +80,14 @@ pub struct SessionSourceConfig {
 }
 
 impl SessionSourceConfig {
-    /// Returns the solc version to use
-    ///
-    /// Solc version precedence
-    /// - Foundry configuration / `--use` flag
-    /// - Latest installed version via SVM
-    /// - Default: Latest 0.8.19
-    pub(crate) fn solc(&self) -> Result<Solc> {
-        let solc_req = if let Some(solc_req) = self.foundry_config.solc.clone() {
-            solc_req
-        } else if let Some(version) = Solc::installed_versions().into_iter().max() {
-            SolcReq::Version(version)
-        } else {
-            if !self.foundry_config.offline {
-                sh_print!("{}", "No solidity versions installed! ".green())?;
-            }
-            // use default
-            SolcReq::Version(Version::new(0, 8, 19))
-        };
-
-        match solc_req {
-            SolcReq::Version(version) => {
-                let solc = if let Some(solc) = Solc::find_svm_installed_version(&version)? {
-                    solc
-                } else {
-                    if self.foundry_config.offline {
-                        eyre::bail!("can't install missing solc {version} in offline mode")
-                    }
-                    sh_println!("{}", format!("Installing solidity version {version}...").green())?;
-                    Solc::blocking_install(&version)?
-                };
-                Ok(solc)
-            }
-            SolcReq::Local(solc) => {
-                if !solc.is_file() {
-                    eyre::bail!("`solc` {} does not exist", solc.display());
-                }
-                Ok(Solc::new(solc)?)
-            }
+    /// Returns the solc version to use as defined in the config, or the default (0.8.19).
+    pub(crate) fn solc(&mut self) -> Result<Solc> {
+        if self.foundry_config.solc.is_none() {
+            self.foundry_config.solc = Some(SolcReq::Version(Version::new(0, 8, 19)));
+        }
+        match self.foundry_config.solc_compiler()? {
+            foundry_compilers::solc::SolcCompiler::AutoDetect => unreachable!(),
+            foundry_compilers::solc::SolcCompiler::Specific(solc) => Ok(solc),
         }
     }
 }
@@ -329,63 +293,6 @@ impl SessionSource {
             .expect("Solidity source not found")
     }
 
-    /// Compiles the source using [solang_parser]
-    ///
-    /// ### Returns
-    ///
-    /// A [pt::SourceUnit] if successful.
-    /// A vec of [solang_parser::diagnostics::Diagnostic]s if unsuccessful.
-    pub fn parse(&self) -> Result<pt::SourceUnit, Vec<solang_parser::diagnostics::Diagnostic>> {
-        solang_parser::parse(&self.to_repl_source(), 0).map(|(pt, _)| pt)
-    }
-
-    /// Generate intermediate contracts for all contract definitions in the compilation source.
-    ///
-    /// ### Returns
-    ///
-    /// Optionally, a map of contract names to a vec of [IntermediateContract]s.
-    pub fn generate_intermediate_contracts(&self) -> Result<HashMap<String, IntermediateContract>> {
-        let mut res_map = HashMap::default();
-        let parsed_map = self.compiler_input().sources;
-        for source in parsed_map.values() {
-            Self::get_intermediate_contract(&source.content, &mut res_map);
-        }
-        Ok(res_map)
-    }
-
-    /// Generate intermediate output for the REPL contract
-    pub fn generate_intermediate_output(&self) -> Result<IntermediateOutput> {
-        // Parse generate intermediate contracts
-        let intermediate_contracts = self.generate_intermediate_contracts()?;
-
-        // Construct variable definitions
-        let variable_definitions = intermediate_contracts
-            .get("REPL")
-            .ok_or_else(|| eyre::eyre!("Could not find intermediate REPL contract!"))?
-            .variable_definitions
-            .clone()
-            .into_iter()
-            .map(|(k, v)| (k, v.ty))
-            .collect::<HashMap<String, pt::Expression>>();
-        // Construct intermediate output
-        let mut intermediate_output = IntermediateOutput {
-            repl_contract_expressions: variable_definitions,
-            intermediate_contracts,
-        };
-
-        // Add all statements within the run function to the repl_contract_expressions map
-        for (key, val) in intermediate_output
-            .run_func_body()?
-            .clone()
-            .iter()
-            .flat_map(Self::get_statement_definitions)
-        {
-            intermediate_output.repl_contract_expressions.insert(key, val);
-        }
-
-        Ok(intermediate_output)
-    }
-
     /// Compile the contract
     ///
     /// ### Returns
@@ -414,18 +321,12 @@ impl SessionSource {
     ///
     /// Optionally, a [GeneratedOutput] object containing both the [CompilerOutput] and the
     /// [IntermediateOutput].
-    pub fn build(&mut self) -> Result<GeneratedOutput> {
-        // Compile
+    pub fn build(&mut self) -> Result<&GeneratedOutput> {
         let compiler_output = self.compile()?;
-
-        // Generate intermediate output
-        let intermediate_output = self.generate_intermediate_output()?;
-
-        // Construct generated output
+        let intermediate_output = self.analyze()?;
         let generated_output =
             GeneratedOutput { intermediate: intermediate_output, compiler_output };
-        self.generated_output = Some(generated_output.clone()); // ehhh, need to not clone this.
-        Ok(generated_output)
+        Ok(self.generated_output.insert(generated_output))
     }
 
     /// Convert the [SessionSource] to a valid Script contract
@@ -450,7 +351,7 @@ pragma solidity ^{major}.{minor}.{patch};
 
 contract {contract_name} is Script {{
     {top_level_code}
-  
+
     /// @notice Script entry point
     function run() public {{
         {run_code}
@@ -499,7 +400,7 @@ pragma solidity ^{major}.{minor}.{patch};
 contract {contract_name} {{
     {vm_constant}
     {top_level_code}
-  
+
     /// @notice REPL contract entry point
     function run() public {{
         {run_code}
@@ -508,106 +409,26 @@ contract {contract_name} {{
         )
     }
 
-    /// Gets the [IntermediateContract] for a Solidity source string and inserts it into the
-    /// passed `res_map`. In addition, recurses on any imported files as well.
-    ///
-    /// ### Takes
-    /// - `content` - A Solidity source string
-    /// - `res_map` - A mutable reference to a map of contract names to [IntermediateContract]s
-    pub fn get_intermediate_contract(
-        content: &str,
-        res_map: &mut HashMap<String, IntermediateContract>,
-    ) {
-        if let Ok((pt::SourceUnit(source_unit_parts), _)) = solang_parser::parse(content, 0) {
-            let func_defs = source_unit_parts
-                .into_iter()
-                .filter_map(|sup| match sup {
-                    pt::SourceUnitPart::ImportDirective(i) => match i {
-                        pt::Import::Plain(s, _) |
-                        pt::Import::Rename(s, _, _) |
-                        pt::Import::GlobalSymbol(s, _, _) => {
-                            let s = match s {
-                                pt::ImportPath::Filename(s) => s.string,
-                                pt::ImportPath::Path(p) => p.to_string(),
-                            };
-                            let path = PathBuf::from(s);
-
-                            match fs::read_to_string(path) {
-                                Ok(source) => {
-                                    Self::get_intermediate_contract(&source, res_map);
-                                    None
-                                }
-                                Err(_) => None,
-                            }
-                        }
-                    },
-                    pt::SourceUnitPart::ContractDefinition(cd) => {
-                        let mut intermediate = IntermediateContract::default();
-
-                        cd.parts.into_iter().for_each(|part| match part {
-                            pt::ContractPart::FunctionDefinition(def) => {
-                                // Only match normal function definitions here.
-                                if matches!(def.ty, pt::FunctionTy::Function) {
-                                    intermediate
-                                        .function_definitions
-                                        .insert(def.name.clone().unwrap().name, def);
-                                }
-                            }
-                            pt::ContractPart::EventDefinition(def) => {
-                                let event_name = def.name.safe_unwrap().name.clone();
-                                intermediate.event_definitions.insert(event_name, def);
-                            }
-                            pt::ContractPart::StructDefinition(def) => {
-                                let struct_name = def.name.safe_unwrap().name.clone();
-                                intermediate.struct_definitions.insert(struct_name, def);
-                            }
-                            pt::ContractPart::VariableDefinition(def) => {
-                                let var_name = def.name.safe_unwrap().name.clone();
-                                intermediate.variable_definitions.insert(var_name, def);
-                            }
-                            _ => {}
-                        });
-                        Some((cd.name.safe_unwrap().name.clone(), intermediate))
-                    }
-                    _ => None,
-                })
-                .collect::<HashMap<String, IntermediateContract>>();
-            res_map.extend(func_defs);
-        }
+    pub fn parse(&self) -> Result<(), EmittedDiagnostics> {
+        let sess = self.make_session();
+        let _ = sess.enter(|| -> solar_parse::interface::Result<()> {
+            let arena = solar_parse::ast::Arena::new();
+            let filename = self.file_name.clone().into();
+            let src = self.to_repl_source();
+            let mut parser = solar_parse::Parser::from_source_code(&sess, &arena, filename, src)?;
+            let _ast = parser.parse_file().map_err(|e| e.emit())?;
+            Ok(())
+        });
+        sess.dcx.emitted_errors().unwrap()
     }
 
-    /// Helper to deconstruct a statement
-    ///
-    /// ### Takes
-    ///
-    /// A reference to a [pt::Statement]
-    ///
-    /// ### Returns
-    ///
-    /// A vector containing tuples of the inner expressions' names, types, and storage locations.
-    pub fn get_statement_definitions(statement: &pt::Statement) -> Vec<(String, pt::Expression)> {
-        match statement {
-            pt::Statement::VariableDefinition(_, def, _) => {
-                vec![(def.name.safe_unwrap().name.clone(), def.ty.clone())]
-            }
-            pt::Statement::Expression(_, pt::Expression::Assign(_, left, _)) => {
-                if let pt::Expression::List(_, list) = left.as_ref() {
-                    list.iter()
-                        .filter_map(|(_, param)| {
-                            param.as_ref().and_then(|param| {
-                                param
-                                    .name
-                                    .as_ref()
-                                    .map(|name| (name.name.clone(), param.ty.clone()))
-                            })
-                        })
-                        .collect()
-                } else {
-                    Vec::default()
-                }
-            }
-            _ => Vec::default(),
-        }
+    pub fn analyze(&self) -> Result<IntermediateOutput, EmittedDiagnostics> {
+        todo!()
+    }
+
+    fn make_session(&self) -> solar_parse::interface::Session {
+        // TODO(dani): use future common utilities for solc input -> solar session
+        solar_parse::interface::Session::builder().with_buffer_emitter(Default::default()).build()
     }
 }
 
@@ -617,7 +438,7 @@ impl IntermediateOutput {
     /// ### Returns
     ///
     /// Optionally, the last statement within the "run" function of the REPL contract.
-    pub fn run_func_body(&self) -> Result<&Vec<pt::Statement>> {
+    pub fn run_func_body(&self) -> Result<&[pt::Statement]> {
         match self
             .intermediate_contracts
             .get("REPL")
@@ -640,7 +461,7 @@ impl IntermediateOutput {
 /// Used to determine whether an input will go to the "run()" function,
 /// the top level of the contract, or in global scope.
 #[derive(Debug)]
-pub enum ParseTreeFragment {
+enum ParseTreeFragment {
     /// Code for the global scope
     Source,
     /// Code for the top level of the contract
@@ -651,7 +472,7 @@ pub enum ParseTreeFragment {
 
 /// Parses a fragment of solidity code with solang_parser and assigns
 /// it a scope within the [SessionSource].
-pub fn parse_fragment(
+fn parse_fragment(
     solc: Solc,
     config: SessionSourceConfig,
     buffer: &str,
@@ -674,12 +495,7 @@ pub fn parse_fragment(
     None
 }
 
-fn debug_errors(errors: &[Diagnostic]) {
-    if !tracing::enabled!(tracing::Level::DEBUG) {
-        return;
-    }
-
-    for error in errors {
-        tracing::debug!("error: {}", error.message);
-    }
+#[track_caller]
+fn debug_errors(errors: &EmittedDiagnostics) {
+    tracing::debug!("{errors}");
 }
