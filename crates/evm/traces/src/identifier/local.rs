@@ -56,9 +56,9 @@ impl<'a> LocalTraceIdentifier<'a> {
             let contract = self.known_contracts.get(id)?;
             // Select bytecodes to compare based on `is_creation` flag.
             let (contract_bytecode, current_bytecode) = if is_creation {
-                (contract.bytecode(), creation_code)
+                (contract.bytecode_without_placeholders(), creation_code)
             } else {
-                (contract.deployed_bytecode(), runtime_code)
+                (contract.deployed_bytecode_without_placeholders(), runtime_code)
             };
 
             if let Some(bytecode) = contract_bytecode {
@@ -75,7 +75,7 @@ impl<'a> LocalTraceIdentifier<'a> {
                     }
                 }
 
-                let score = bytecode_diff_score(bytecode, current_bytecode);
+                let score = bytecode_diff_score(&bytecode, current_bytecode);
                 if score == 0.0 {
                     trace!(target: "evm::traces::local", "found exact match");
                     return Some((id, &contract.abi));
