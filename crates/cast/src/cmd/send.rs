@@ -2,6 +2,7 @@ use crate::{
     tx::{self, CastTxBuilder},
     Cast,
 };
+use alloy_ens::NameOrAddress;
 use alloy_network::{AnyNetwork, EthereumWallet};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
@@ -14,7 +15,6 @@ use foundry_cli::{
     utils,
     utils::LoadConfig,
 };
-use foundry_common::ens::NameOrAddress;
 use std::{path::PathBuf, str::FromStr};
 
 /// CLI arguments for `cast send`.
@@ -183,7 +183,7 @@ impl SendTxArgs {
             let wallet = EthereumWallet::from(signer);
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
                 .wallet(wallet)
-                .on_provider(&provider);
+                .connect_provider(&provider);
 
             cast_send(provider, tx, cast_async, confirmations, timeout).await
         }

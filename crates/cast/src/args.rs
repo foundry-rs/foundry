@@ -3,8 +3,9 @@ use crate::{
     traces::identifier::SignaturesIdentifier,
     Cast, SimpleCast,
 };
-use alloy_consensus::transaction::Recovered;
+use alloy_consensus::transaction::{Recovered, SignerRecoverable};
 use alloy_dyn_abi::{DynSolValue, ErrorExt, EventExt};
+use alloy_ens::{namehash, ProviderEnsExt};
 use alloy_primitives::{eip191_hash_message, hex, keccak256, Address, B256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
@@ -14,7 +15,6 @@ use eyre::Result;
 use foundry_cli::{handler, utils, utils::LoadConfig};
 use foundry_common::{
     abi::{get_error, get_event},
-    ens::{namehash, ProviderEnsExt},
     fmt::{format_tokens, format_tokens_raw, format_uint_exp},
     fs,
     selectors::{
@@ -215,20 +215,19 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::DecodeEvent { sig, data } => {
             let decoded_event = if let Some(event_sig) = sig {
-                get_event(event_sig.as_str())?.decode_log_parts(None, &hex::decode(data)?, false)?
+                let event = get_event(event_sig.as_str())?;
+                event.decode_log_parts(core::iter::once(event.selector()), &hex::decode(data)?)?
             } else {
                 let data = data.strip_prefix("0x").unwrap_or(data.as_str());
                 let selector = data.get(..64).unwrap_or_default();
+                let selector = selector.parse()?;
                 let identified_event =
-                    SignaturesIdentifier::new(false)?.identify_event(selector.parse()?).await;
+                    SignaturesIdentifier::new(false)?.identify_event(selector).await;
                 if let Some(event) = identified_event {
                     let _ = sh_println!("{}", event.signature());
                     let data = data.get(64..).unwrap_or_default();
-                    get_event(event.signature().as_str())?.decode_log_parts(
-                        None,
-                        &hex::decode(data)?,
-                        false,
-                    )?
+                    get_event(event.signature().as_str())?
+                        .decode_log_parts(core::iter::once(selector), &hex::decode(data)?)?
                 } else {
                     eyre::bail!("No matching event signature found for selector `{selector}`")
                 }
@@ -714,10 +713,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             } else {
                 sh_println!("{}", serde_json::to_string_pretty(&tx)?)?;
             }
-        }
-        CastSubcommand::DecodeEof { eof } => {
-            let eof = stdin::unwrap_line(eof)?;
-            sh_println!("{}", SimpleCast::decode_eof(&eof)?)?
         }
         CastSubcommand::TxPool { command } => command.run().await?,
     };

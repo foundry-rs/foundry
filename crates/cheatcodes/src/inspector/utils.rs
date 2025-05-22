@@ -1,4 +1,4 @@
-use super::InnerEcx;
+use super::Ecx;
 use crate::inspector::Cheatcodes;
 use alloy_primitives::{Address, Bytes, U256};
 use revm::interpreter::{CreateInputs, CreateScheme, EOFCreateInputs, EOFCreateKind};
@@ -12,7 +12,7 @@ pub(crate) trait CommonCreateInput {
     fn scheme(&self) -> Option<CreateScheme>;
     fn set_caller(&mut self, caller: Address);
     fn log_debug(&self, cheatcode: &mut Cheatcodes, scheme: &CreateScheme);
-    fn allow_cheatcodes(&self, cheatcodes: &mut Cheatcodes, ecx: InnerEcx) -> Address;
+    fn allow_cheatcodes(&self, cheatcodes: &mut Cheatcodes, ecx: Ecx) -> Address;
     fn computed_created_address(&self) -> Option<Address>;
 }
 
@@ -39,10 +39,11 @@ impl CommonCreateInput for &mut CreateInputs {
         let kind = match scheme {
             CreateScheme::Create => "create",
             CreateScheme::Create2 { .. } => "create2",
+            CreateScheme::Custom { .. } => "custom",
         };
         debug!(target: "cheatcodes", tx=?cheatcode.broadcastable_transactions.back().unwrap(), "broadcastable {kind}");
     }
-    fn allow_cheatcodes(&self, cheatcodes: &mut Cheatcodes, ecx: InnerEcx) -> Address {
+    fn allow_cheatcodes(&self, cheatcodes: &mut Cheatcodes, ecx: Ecx) -> Address {
         let old_nonce = ecx
             .journaled_state
             .state
@@ -83,7 +84,7 @@ impl CommonCreateInput for &mut EOFCreateInputs {
     fn log_debug(&self, cheatcode: &mut Cheatcodes, _scheme: &CreateScheme) {
         debug!(target: "cheatcodes", tx=?cheatcode.broadcastable_transactions.back().unwrap(), "broadcastable eofcreate");
     }
-    fn allow_cheatcodes(&self, cheatcodes: &mut Cheatcodes, ecx: InnerEcx) -> Address {
+    fn allow_cheatcodes(&self, cheatcodes: &mut Cheatcodes, ecx: Ecx) -> Address {
         let created_address =
             <&mut EOFCreateInputs as CommonCreateInput>::computed_created_address(self)
                 .unwrap_or_default();
