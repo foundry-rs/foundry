@@ -243,9 +243,7 @@ impl SessionSource {
             .or_else(|| {
                 // TODO(dani): type_of_expr() of the abi.encode argument
                 // source.infer_inner_expr_type()
-                let expr = source
-                    .infer_inner_expr_type()
-                    .and_then(|e| output.intermediate.get_expr(e));
+                let expr = source.infer_inner_expr_type();
                 (None)
             });
 
