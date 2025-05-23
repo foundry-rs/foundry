@@ -1,11 +1,10 @@
-use solar_ast::{ItemFunction, VariableDefinition};
-
 use super::{MixedCaseFunction, MixedCaseVariable};
 use crate::{
     declare_forge_lint,
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
+use solar_ast::{ItemFunction, VariableDefinition};
 
 declare_forge_lint!(
     MIXED_CASE_FUNCTION,
@@ -18,9 +17,8 @@ declare_forge_lint!(
 impl<'ast> EarlyLintPass<'ast> for MixedCaseFunction {
     fn check_item_function(&mut self, ctx: &LintContext<'_>, func: &'ast ItemFunction<'ast>) {
         if let Some(name) = func.header.name {
-            let name = name.as_str();
-            if !is_mixed_case(name, true) {
-                ctx.emit(&MIXED_CASE_FUNCTION, func.body_span);
+            if !is_mixed_case(name.as_str(), true) {
+                ctx.emit(&MIXED_CASE_FUNCTION, name.span);
             }
         }
     }
@@ -41,9 +39,8 @@ impl<'ast> EarlyLintPass<'ast> for MixedCaseVariable {
     ) {
         if var.mutability.is_none() {
             if let Some(name) = var.name {
-                let name = name.as_str();
-                if !is_mixed_case(name, false) {
-                    ctx.emit(&MIXED_CASE_VARIABLE, var.span);
+                if !is_mixed_case(name.as_str(), false) {
+                    ctx.emit(&MIXED_CASE_VARIABLE, name.span);
                 }
             }
         }
