@@ -2575,7 +2575,7 @@ Chain 31337
 
 accessList           []
 chainId              31337
-gasLimit             228231
+gasLimit             [..]
 gasPrice             
 input                [..]
 maxFeePerBlobGas     
