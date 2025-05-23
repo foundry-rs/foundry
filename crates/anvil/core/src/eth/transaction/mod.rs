@@ -1679,7 +1679,7 @@ mod tests {
     fn deser_to_type_tx() {
         let tx = r#"
         {
-            "EIP1559": { 
+            "EIP1559": {
                 "chainId": "0x7a69",
                 "nonce": "0x0",
                 "gas": "0x5209",
