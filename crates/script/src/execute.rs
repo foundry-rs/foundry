@@ -389,7 +389,7 @@ impl PreSimulationState {
         let decoder = &self.execution_artifacts.decoder;
 
         for (_, trace) in &mut result.traces {
-            decode_trace_arena(trace, decoder).await?;
+            decode_trace_arena(trace, decoder).await;
         }
 
         let json_result = JsonResult {
