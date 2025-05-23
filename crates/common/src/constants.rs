@@ -45,11 +45,11 @@ pub const SYSTEM_TRANSACTION_TYPE: u8 = 126;
 /// Default user agent set as the header for requests that don't specify one.
 pub const DEFAULT_USER_AGENT: &str = concat!("foundry/", env!("CARGO_PKG_VERSION"));
 
-/// Returns whether the sender is a known L2 system sender that is the first tx in every block.
+/// Returns whether the sender is a known system sender that is the first tx in every block.
 ///
-/// Transactions from these senders usually don't have a any fee information.
+/// Transactions from these senders usually don't have a any fee information OR set absurdly high fees that exceed the gas limit (See: https://github.com/foundry-rs/foundry/pull/10608)
 ///
-/// See: [ARBITRUM_SENDER], [OPTIMISM_SYSTEM_ADDRESS]
+/// See: [ARBITRUM_SENDER], [OPTIMISM_SYSTEM_ADDRESS] and [Address::ZERO]
 #[inline]
 pub fn is_known_system_sender(sender: Address) -> bool {
     [ARBITRUM_SENDER, OPTIMISM_SYSTEM_ADDRESS, Address::ZERO].contains(&sender)
