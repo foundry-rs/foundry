@@ -32,4 +32,5 @@ contract MixedCaseTest {
     function testFuzz_CanHaveUnderscores() public {}
     function testRevert_CanHaveUnderscores() public {}
     function invariant_CanHaveUnderscores() public {}
+    function statefulFuzz_CanHaveUnderscores() public {}
 }
