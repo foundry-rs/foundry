@@ -31,9 +31,32 @@ contract MixedCaseTest {
     // mixedCase checks are disabled for functions that starting with:
     // `test`, `invariant`, and `statefulFuzz`
     function test_MixedCase_Disabled() public {}
+    function test_mixedcase_disabled() public {}
+    function testMixedCaseDisabled() public {}
+    function testmixedcasedisabled() public {}
+    
     function testFuzz_MixedCase_Disabled() public {}
+    function testFuzz_mixedcase_disabled() public {}
+    function testFuzzMixedCaseDisabled() public {}
+    function testfuzzmixedcasedisabled() public {}
+    
     function testRevert_MixedCase_Disabled() public {}
+    function testRevert_mixedcase_disabled() public {}
+    function testRevertMixedCaseDisabled() public {}
+    function testrevertmixedcasedisabled() public {}
+    
     function invariant_MixedCase_Disabled() public {}
+    function invariant_mixedcase_disabled() public {}
+    function invariantMixedCaseDisabled() public {}
+    function invariantmixedcasedisabled() public {}
+    
     function invariantBalance_MixedCase_Disabled() public {}
+    function invariantbalance_mixedcase_disabled() public {}
+    function invariantBalanceMixedCaseDisabled() public {}
+    function invariantbalancemixedcasedisabled() public {}
+    
     function statefulFuzz_MixedCase_Disabled() public {}
+    function statefulFuzz_mixedcase_disabled() public {}
+    function statefulFuzzMixedCaseDisabled() public {}
+    function statefulFuzzmixedcasedisabled() public {}
 }
