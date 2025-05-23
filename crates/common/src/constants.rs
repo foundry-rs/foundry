@@ -52,7 +52,7 @@ pub const DEFAULT_USER_AGENT: &str = concat!("foundry/", env!("CARGO_PKG_VERSION
 /// See: [ARBITRUM_SENDER], [OPTIMISM_SYSTEM_ADDRESS]
 #[inline]
 pub fn is_known_system_sender(sender: Address) -> bool {
-    [ARBITRUM_SENDER, OPTIMISM_SYSTEM_ADDRESS].contains(&sender)
+    [ARBITRUM_SENDER, OPTIMISM_SYSTEM_ADDRESS, Address::ZERO].contains(&sender)
 }
 
 pub fn is_impersonated_tx(tx: &AnyTxEnvelope) -> bool {
