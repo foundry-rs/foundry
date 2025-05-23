@@ -96,7 +96,7 @@ use futures::{
 };
 use parking_lot::RwLock;
 use revm::primitives::Bytecode;
-use std::{collections::BTreeMap, future::Future, sync::Arc, time::Duration};
+use std::{future::Future, sync::Arc, time::Duration};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
@@ -350,9 +350,8 @@ impl EthApi {
             EthRequest::SetBalance(addr, val) => {
                 self.anvil_set_balance(addr, val).await.to_rpc_result()
             }
-            EthRequest::DealERC20(addr, val, _token_addr) => {
-                //this is a placeholder
-                self.anvil_set_balance(addr, val).await.to_rpc_result()
+            EthRequest::DealERC20(addr, token_addr, val) => {
+                self.anvil_deal_erc20(addr, token_addr, val).await.to_rpc_result()
             }
             EthRequest::SetCode(addr, code) => {
                 self.anvil_set_code(addr, code).await.to_rpc_result()
@@ -1836,8 +1835,8 @@ impl EthApi {
     pub async fn anvil_deal_erc20(
         &self,
         address: Address,
-        balance: U256,
         token_address: Address,
+        balance: U256,
     ) -> Result<()> {
         node_info!("anvil_dealERC20");
 
@@ -1849,12 +1848,40 @@ impl EthApi {
         }
 
         let calldata = IERC20::balanceOfCall { target: address }.abi_encode();
-        let tx = TransactionRequest::default().with_input(calldata);
+        let tx = TransactionRequest::default().with_input(calldata.clone());
         let access_list_result = self.create_access_list(WithOtherFields::new(tx), None).await?;
         let access_list = access_list_result.access_list;
         for item in access_list.0 {
             if item.address != token_address {
                 continue;
+            };
+            for slot in item.storage_keys.iter() {
+                let tx = alloy_rpc_types::transaction::TransactionRequest::default()
+                    .with_input(calldata.clone());
+
+                let account_override = alloy_rpc_types::state::AccountOverride::default()
+                    .with_state_diff(std::iter::once((*slot, B256::from(balance.to_be_bytes()))));
+
+                let mut state_override = alloy_primitives::map::AddressHashMap::default();
+                state_override.insert(token_address, account_override);
+
+                let block_number = BlockId::from(self.block_number()?.to::<u64>());
+
+                let result = self
+                    .call(WithOtherFields::new(tx), Some(block_number), Some(state_override))
+                    .await?;
+
+                let result_balnce =
+                    U256::from_be_bytes::<32>(result.to_vec().try_into().unwrap_or([0u8; 32]));
+
+                if result_balnce == balance {
+                    self.anvil_set_storage_at(
+                        address,
+                        U256::from_be_bytes::<32>(**slot),
+                        B256::from(balance.to_be_bytes()),
+                    )
+                    .await?;
+                }
             }
         }
         Ok(())

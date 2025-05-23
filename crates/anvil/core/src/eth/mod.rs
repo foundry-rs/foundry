@@ -361,7 +361,7 @@ pub enum EthRequest {
 
     /// Modifies the ERC20 balance of an account.
     #[serde(rename = "anvil_dealERC20", alias = "hardhat_dealERC20")]
-    DealERC20(Address, #[serde(deserialize_with = "deserialize_number")] U256, Address),
+    DealERC20(Address, Address, #[serde(deserialize_with = "deserialize_number")] U256),
 
     /// Sets the code of a contract
     #[serde(rename = "anvil_setCode", alias = "hardhat_setCode")]
