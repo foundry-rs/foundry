@@ -616,6 +616,7 @@ impl InspectorStackRefMut<'_> {
         let cached_env = Env::from(ecx.cfg.clone(), ecx.block.clone(), ecx.tx.clone());
 
         ecx.block.basefee = 0;
+        ecx.tx.chain_id = Some(ecx.cfg.chain_id);
         ecx.tx.caller = caller;
         ecx.tx.kind = kind;
         ecx.tx.data = input;
