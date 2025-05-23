@@ -64,7 +64,7 @@ pub fn is_mixed_case(s: &str, is_fn: bool) -> bool {
         return true
     }
 
-    // Ignore `fn test*`, `fn invariant*`, and `fn statefulFuzz` patterns, as they usually contain
+    // Ignore `fn test*`, `fn invariant_*`, and `fn statefulFuzz*` patterns, as they usually contain
     // (allowed) underscores.
-    is_fn && (s.starts_with("test") || s.starts_with("invariant") || s.starts_with("statefulFuzz"))
+    is_fn && (s.starts_with("test") || s.starts_with("invariant_") || s.starts_with("statefulFuzz"))
 }

@@ -72,3 +72,19 @@ note[mixed-case-function]: function names should use mixedCase
    |
    = help: https://docs.soliditylang.org/en/latest/style-guide.html#function-names
 
+note[mixed-case-function]: function names should use mixedCase
+  --> ROOT/testdata/MixedCase.sol:LL:CC
+   |
+53 |     function invariantBalance_MixedCase_Enabled() public {}
+   |                                                          --
+   |
+   = help: https://docs.soliditylang.org/en/latest/style-guide.html#function-names
+
+note[mixed-case-function]: function names should use mixedCase
+  --> ROOT/testdata/MixedCase.sol:LL:CC
+   |
+54 |     function invariantbalance_mixedcase_enabled() public {}
+   |                                                          --
+   |
+   = help: https://docs.soliditylang.org/en/latest/style-guide.html#function-names
+
