@@ -22,7 +22,7 @@ jobs:
     secrets: inherit
 
   docs:
-    runs-on: ubuntu-latest
+    runs-on: foundry-runner
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -43,7 +43,7 @@ jobs:
           force_orphan: true
 
   doctest:
-    runs-on: ubuntu-latest
+    runs-on: foundry-runner
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -54,7 +54,7 @@ jobs:
       - run: cargo test --workspace --doc
 
   codespell:
-    runs-on: ubuntu-latest
+    runs-on: foundry-runner
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -63,7 +63,7 @@ jobs:
           skip: "*.json"
 
   clippy:
-    runs-on: ubuntu-latest
+    runs-on: foundry-runner
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -76,7 +76,7 @@ jobs:
           RUSTFLAGS: -Dwarnings
 
   rustfmt:
-    runs-on: ubuntu-latest
+    runs-on: foundry-runner
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -87,7 +87,7 @@ jobs:
       - run: cargo fmt --all --check
 
   forge-fmt:
-    runs-on: ubuntu-latest
+    runs-on: foundry-runner
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -100,7 +100,7 @@ jobs:
         run: ./.github/scripts/format.sh --check
 
   crate-checks:
-    runs-on: ubuntu-latest
+    runs-on: foundry-runner
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -115,7 +115,7 @@ jobs:
     uses: ithacaxyz/ci/.github/workflows/deny.yml@main
 
   ci-success:
-    runs-on: ubuntu-latest
+    runs-on: foundry-runner
     if: always()
     needs:
       - nextest
