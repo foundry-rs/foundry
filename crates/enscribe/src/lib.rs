@@ -1,3 +1,4 @@
+#[allow(clippy::too_many_arguments)]
 mod abi;
 pub(crate) mod logger;
 pub mod name;

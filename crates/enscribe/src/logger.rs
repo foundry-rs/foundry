@@ -2,7 +2,7 @@ use eyre::Result;
 use serde_json::json;
 use uuid::Uuid;
 
-static METRICS_API_URL: &str = "http://localhost:3000/api/v1/metrics";
+static METRICS_API_URL: &str = "https://app.enscribe.xyz/api/v1/config";
 
 pub(crate) struct MetricLogger {
     corelation_id: String,

@@ -18,22 +18,14 @@ eyre.workspace = true
 
 foundry-cli.workspace = true
 foundry-common.workspace = true
-foundry-wallets.workspace = true
 foundry-config.workspace = true
 
 alloy-ens = { workspace = true, features = ["provider"] }
 alloy-contract.workspace = true
 alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
 alloy-primitives.workspace = true
-# todo abhi: remove signer local crate
-alloy-signer-local.workspace = true
 alloy-sol-types.workspace = true
-clap = { version = "4.5.37", features = ["derive"] }
 reqwest.workspace = true
 serde_json.workspace = true
 serde.workspace = true
-uuid = { version = "0.8.2", features = ["v4"] }
-alloy-rpc-types = { workspace = true, features = ["anvil", "trace", "txpool"] }
-
-tokio = "1.44.2"
-anvil.workspace = true
+uuid = { version = "1.16.0", features = ["v4"] }

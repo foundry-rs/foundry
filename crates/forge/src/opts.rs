@@ -89,7 +89,7 @@ pub enum ForgeSubcommand {
     #[command(visible_alias = "c")]
     Create(CreateArgs),
 
-    /// Name a smart contract.
+    /// Set an ENS name for a smart contract.
     #[command(visible_alias = "n")]
     Name(NameArgs),
 

@@ -3482,21 +3482,15 @@ dependencies = [
  "alloy-ens",
  "alloy-primitives",
  "alloy-provider",
- "alloy-rpc-types",
- "alloy-signer-local",
  "alloy-sol-types",
- "anvil",
- "clap",
  "eyre",
  "foundry-cli",
  "foundry-common",
  "foundry-config",
- "foundry-wallets",
  "reqwest",
  "serde",
  "serde_json",
- "tokio",
- "uuid 0.8.2",
+ "uuid 1.16.0",
 ]
 
 [[package]]

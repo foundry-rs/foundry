@@ -70,6 +70,9 @@ pub async fn set_primary_name(
         return Ok(())
     }
 
+    let contract_type = if is_ownable { "Ownable" } else { "ReverseClaimer" }.to_owned();
+    sh_println!("Contract is {contract_type} contract.")?;
+
     if let Some(name) = name {
         let name_splits = name.split('.').collect::<Vec<&str>>();
         let label = name_splits[0];
@@ -80,7 +83,7 @@ pub async fn set_primary_name(
             sender_addr.to_string(),
             chain_id,
             op_type.to_owned(),
-            if is_ownable { "Ownable" } else { "ReverseClaimer" }.to_owned(),
+            contract_type,
             contract_addr.to_string(),
             name.clone(),
         );
@@ -126,7 +129,7 @@ pub async fn set_primary_name(
             sender_addr.to_string(),
             chain_id,
             op_type.to_owned(),
-            if is_ownable { "Ownable" } else { "ReverseClaimer" }.to_owned(),
+            contract_type,
             contract_addr.to_string(),
             format!("{}.{}", label, config.parent_name,),
         );
@@ -329,6 +332,7 @@ async fn set_resolutions<P: Provider<AnyNetwork>>(
     Ok(())
 }
 
+/// fetches the chain config for `chaind_id` from the Enscribe API
 async fn get_config(chain_id: u64) -> Result<ChainConfigResponse> {
     let client = reqwest::Client::new();
     let response = client.get(format!("{CONFIG_API_URL}/{chain_id}")).send().await?;
@@ -347,17 +351,9 @@ async fn get_config(chain_id: u64) -> Result<ChainConfigResponse> {
     Ok(serde_json::from_str::<ChainConfigResponse>(&text)?)
 }
 
+/// fetches a random name from the Enscribe API
 async fn get_auto_generated_name() -> Result<String> {
     let client = reqwest::Client::new();
     let response = client.get(AUTO_GEN_NAME_API_URL).send().await?;
     Ok(response.text().await?)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn can_parse_verify_contract() {
-    }
 }

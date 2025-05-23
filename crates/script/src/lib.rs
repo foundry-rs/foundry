@@ -786,7 +786,7 @@ mod tests {
         ]);
         assert!(args.auto_name);
     }
-    
+
     #[test]
     fn can_extract_script_etherscan_key() {
         let temp = tempdir().unwrap();
