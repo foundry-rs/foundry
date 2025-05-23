@@ -36,7 +36,7 @@ mod tests {
 
     use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap, EthEvm, Evm, EvmEnv};
     use alloy_op_evm::OpEvm;
-    use alloy_primitives::{address, Address, Bytes, TxKind};
+    use alloy_primitives::{address, Address, Bytes, TxKind, U256};
     use foundry_evm_core::either_evm::EitherEvm;
     use itertools::Itertools;
     use op_revm::{precompiles::OpPrecompiles, L1BlockInfo, OpContext, OpSpecId, OpTransaction};
@@ -59,8 +59,8 @@ mod tests {
     // A precompile activated in the `Prague` spec.
     const ETH_PRAGUE_PRECOMPILE: Address = address!("0x0000000000000000000000000000000000000011");
 
-    // A precompile activated in the `Fjord` spec.
-    const OP_FROJD_PRECOMPILE: Address = address!("0x0000000000000000000000000000000000000100");
+    // A precompile activated in the `Isthmus` spec.
+    const OP_ISTHMUS_PRECOMPILE: Address = address!("0x0000000000000000000000000000000000000100");
 
     // A custom precompile address and payload for testing.
     const PRECOMPILE_ADDR: Address = address!("0x0000000000000000000000000000000000000071");
@@ -147,6 +147,13 @@ mod tests {
             is_optimism: true,
         };
 
+        let mut chain = L1BlockInfo::default();
+
+        if op_spec == OpSpecId::ISTHMUS {
+            chain.operator_fee_constant = Some(U256::from(0));
+            chain.operator_fee_scalar = Some(U256::from(0));
+        }
+
         let op_cfg = op_env.evm_env.cfg_env.clone().with_spec(op_spec);
         let op_evm_context = OpContext {
             journaled_state: {
@@ -158,7 +165,7 @@ mod tests {
             block: op_env.evm_env.block_env.clone(),
             cfg: op_cfg.clone(),
             tx: op_env.tx.clone(),
-            chain: L1BlockInfo::default(),
+            chain,
             local: LocalContext::default(),
             error: Ok(()),
         };
@@ -182,13 +189,13 @@ mod tests {
         let (env, mut evm) = create_eth_evm(SpecId::default());
 
         // Check that the Prague precompile IS present when using the default spec.
-        assert!(evm.precompiles_mut().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
+        assert!(evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
 
-        assert!(!evm.precompiles_mut().addresses().contains(&PRECOMPILE_ADDR));
+        assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
         inject_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
 
-        assert!(evm.precompiles_mut().addresses().contains(&PRECOMPILE_ADDR));
+        assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
         let result = match &mut evm {
             EitherEvm::Eth(eth_evm) => eth_evm.transact(env.tx).unwrap(),
@@ -204,13 +211,13 @@ mod tests {
         let (env, mut evm) = create_eth_evm(SpecId::LONDON);
 
         // Check that the Prague precompile IS NOT present when using the London spec.
-        assert!(!evm.precompiles_mut().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
+        assert!(!evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
 
-        assert!(!evm.precompiles_mut().addresses().contains(&PRECOMPILE_ADDR));
+        assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
         inject_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
 
-        assert!(evm.precompiles_mut().addresses().contains(&PRECOMPILE_ADDR));
+        assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
         let result = match &mut evm {
             EitherEvm::Eth(eth_evm) => eth_evm.transact(env.tx).unwrap(),
@@ -223,24 +230,19 @@ mod tests {
 
     #[test]
     fn build_op_evm_with_extra_precompiles_default_spec() {
-        let (env, mut evm) = create_op_evm(
-            SpecId::default(),
-            // TODO: OpSpecId::ISTHMUS is not yet supported, fails with: `Missing operator fee
-            // scalar for isthmus L1 Block`.
-            OpSpecId::HOLOCENE,
-        );
+        let (env, mut evm) = create_op_evm(SpecId::default(), OpSpecId::default());
 
-        // Check that the Fjord precompile IS present when using the default spec.
-        assert!(evm.precompiles_mut().addresses().contains(&OP_FROJD_PRECOMPILE));
+        // Check that the Isthmus precompile IS present when using the default spec.
+        assert!(evm.precompiles().addresses().contains(&OP_ISTHMUS_PRECOMPILE));
 
-        // Check that the Prague precompile is NOT present when using the default spec.
-        assert!(!evm.precompiles_mut().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
+        // Check that the Prague precompile IS present when using the default spec.
+        assert!(evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
 
-        assert!(!evm.precompiles_mut().addresses().contains(&PRECOMPILE_ADDR));
+        assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
         inject_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
 
-        assert!(evm.precompiles_mut().addresses().contains(&PRECOMPILE_ADDR));
+        assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
         let result = match &mut evm {
             EitherEvm::Op(op_evm) => op_evm.transact(env.tx).unwrap(),
@@ -255,17 +257,17 @@ mod tests {
     fn build_op_evm_with_extra_precompiles_bedrock_spec() {
         let (env, mut evm) = create_op_evm(SpecId::default(), OpSpecId::BEDROCK);
 
-        // Check that the Fjord precompile IS NOT present when using the `OpSpecId::BEDROCK` spec.
-        assert!(!evm.precompiles_mut().addresses().contains(&OP_FROJD_PRECOMPILE));
+        // Check that the Isthmus precompile IS NOT present when using the `OpSpecId::BEDROCK` spec.
+        assert!(!evm.precompiles().addresses().contains(&OP_ISTHMUS_PRECOMPILE));
 
         // Check that the Prague precompile IS NOT present when using the `OpSpecId::BEDROCK` spec.
-        assert!(!evm.precompiles_mut().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
+        assert!(!evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
 
-        assert!(!evm.precompiles_mut().addresses().contains(&PRECOMPILE_ADDR));
+        assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
         inject_precompiles(&mut evm, CustomPrecompileFactory.precompiles());
 
-        assert!(evm.precompiles_mut().addresses().contains(&PRECOMPILE_ADDR));
+        assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
         let result = match &mut evm {
             EitherEvm::Op(op_evm) => op_evm.transact(env.tx).unwrap(),

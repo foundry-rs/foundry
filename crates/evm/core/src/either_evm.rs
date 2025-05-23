@@ -151,10 +151,24 @@ where
         }
     }
 
+    fn precompiles(&self) -> &Self::Precompiles {
+        match self {
+            Self::Eth(evm) => evm.precompiles(),
+            Self::Op(evm) => evm.precompiles(),
+        }
+    }
+
     fn precompiles_mut(&mut self) -> &mut Self::Precompiles {
         match self {
             Self::Eth(evm) => evm.precompiles_mut(),
             Self::Op(evm) => evm.precompiles_mut(),
+        }
+    }
+
+    fn inspector(&self) -> &Self::Inspector {
+        match self {
+            Self::Eth(evm) => evm.inspector(),
+            Self::Op(evm) => evm.inspector(),
         }
     }
 

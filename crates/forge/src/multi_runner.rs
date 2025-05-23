@@ -21,7 +21,6 @@ use foundry_evm::{
     fork::CreateFork,
     inspectors::CheatsConfig,
     opts::EvmOpts,
-    revm,
     traces::{InternalTraceMode, TraceMode},
     Env,
 };

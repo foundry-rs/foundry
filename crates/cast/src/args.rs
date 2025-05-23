@@ -5,6 +5,7 @@ use crate::{
 };
 use alloy_consensus::transaction::{Recovered, SignerRecoverable};
 use alloy_dyn_abi::{DynSolValue, ErrorExt, EventExt};
+use alloy_ens::{namehash, ProviderEnsExt};
 use alloy_primitives::{eip191_hash_message, hex, keccak256, Address, B256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
@@ -14,7 +15,6 @@ use eyre::Result;
 use foundry_cli::{handler, utils, utils::LoadConfig};
 use foundry_common::{
     abi::{get_error, get_event},
-    ens::{namehash, ProviderEnsExt},
     fmt::{format_tokens, format_tokens_raw, format_uint_exp},
     fs,
     selectors::{
@@ -715,6 +715,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             }
         }
         CastSubcommand::TxPool { command } => command.run().await?,
+        CastSubcommand::DAEstimate(cmd) => {
+            cmd.run().await?;
+        }
     };
 
     /// Prints slice of tokens using [`format_tokens`] or [`format_tokens_raw`] depending whether

@@ -21,7 +21,7 @@ use foundry_compilers::{
     artifacts::{
         output_selection::{ContractOutputSelection, OutputSelection},
         remappings::{RelativeRemapping, Remapping},
-        serde_helpers, BytecodeHash, DebuggingSettings, EofVersion, EvmVersion, Libraries,
+        serde_helpers, BytecodeHash, DebuggingSettings, EvmVersion, Libraries,
         ModelCheckerSettings, ModelCheckerTarget, Optimizer, OptimizerDetails, RevertStrings,
         Settings, SettingsMetadata, Severity,
     },
@@ -505,19 +505,12 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_args: Vec<String>,
 
-    /// Optional EOF version.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub eof_version: Option<EofVersion>,
-
     /// Whether to enable Odyssey features.
     #[serde(alias = "alphanet")]
     pub odyssey: bool,
 
     /// Timeout for transactions in seconds.
     pub transaction_timeout: u64,
-
-    /// Use EOF-enabled solc for compilation.
-    pub eof: bool,
 
     /// Warnings gathered when loading the Config. See [`WarningsProvider`] for more information.
     #[serde(rename = "__warnings", default, skip_serializing)]
@@ -889,8 +882,6 @@ impl Config {
         config.libs.sort_unstable();
         config.libs.dedup();
 
-        config.sanitize_eof_settings();
-
         config
     }
 
@@ -905,26 +896,6 @@ impl Config {
             self.remappings.iter_mut().for_each(|r| {
                 r.path.path = r.path.path.to_slash_lossy().into_owned().into();
             });
-        }
-    }
-
-    /// Adjusts settings if EOF compilation is enabled.
-    ///
-    /// This includes enabling optimizer, via_ir, eof_version and ensuring that evm_version is not
-    /// lower than Osaka.
-    pub fn sanitize_eof_settings(&mut self) {
-        if self.eof {
-            self.optimizer = Some(true);
-            self.normalize_optimizer_settings();
-
-            if self.eof_version.is_none() {
-                self.eof_version = Some(EofVersion::V1);
-            }
-
-            self.via_ir = true;
-            if self.evm_version < EvmVersion::Osaka {
-                self.evm_version = EvmVersion::Osaka;
-            }
         }
     }
 
@@ -1559,7 +1530,7 @@ impl Config {
             remappings: Vec::new(),
             // Set with `with_extra_output` below.
             output_selection: Default::default(),
-            eof_version: self.eof_version,
+            eof_version: None,
         }
         .with_extra_output(self.configured_artifacts_handler().output_selection());
 
@@ -2440,12 +2411,10 @@ impl Default for Config {
             legacy_assertions: false,
             warnings: vec![],
             extra_args: vec![],
-            eof_version: None,
             odyssey: false,
             transaction_timeout: 120,
             additional_compiler_profiles: Default::default(),
             compilation_restrictions: Default::default(),
-            eof: false,
             script_execution_protection: true,
             _non_exhaustive: (),
         }
@@ -2601,7 +2570,7 @@ mod tests {
     use super::*;
     use crate::{
         cache::{CachedChains, CachedEndpoints},
-        endpoints::{RpcEndpoint, RpcEndpointType},
+        endpoints::RpcEndpointType,
         etherscan::ResolvedEtherscanConfigs,
     };
     use endpoints::{RpcAuth, RpcEndpointConfig};
@@ -2611,7 +2580,7 @@ mod tests {
     };
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
-    use std::{collections::BTreeMap, fs::File, io::Write};
+    use std::{fs::File, io::Write};
     use tempfile::tempdir;
     use NamedChain::Moonbeam;
 
