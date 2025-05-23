@@ -41,6 +41,3 @@ zip-extract.workspace = true
 [dev-dependencies]
 tokio.workspace = true
 foundry-block-explorers.workspace = true
-
-[patch.crates-io]
-ui_test = { git = "https://github.com/oli-obk/ui_test", branch = "main" }
