@@ -305,9 +305,18 @@ impl WalletSubcommands {
                         )?;
                         let identifier = account_name_ref.as_deref().unwrap_or(&uuid);
 
+                        let public_key = hex::encode(
+                            &SecretKey::from_slice(&wallet.credential().to_bytes())
+                                .map_err(|e| eyre::eyre!("Invalid private key: {}", e))?
+                                .public_key()
+                                .to_encoded_point(false)
+                                .as_bytes()[1..],
+                        );
+
                         if let Some(json) = json_values.as_mut() {
                             json.push(json!({
                                 "address": wallet.address().to_checksum(None),
+                                "public_key": format!("0x{}", public_key),
                                 "path": format!("{}", path.join(identifier).display()),
                             }));
                         } else {
@@ -315,7 +324,8 @@ impl WalletSubcommands {
                                 "Created new encrypted keystore file: {}",
                                 path.join(identifier).display()
                             )?;
-                            sh_println!("Address: {}", wallet.address().to_checksum(None))?;
+                            sh_println!("Address:    {}", wallet.address().to_checksum(None))?;
+                            sh_println!("Public key: 0x{}", public_key)?;
                         }
                     }
 
@@ -326,14 +336,24 @@ impl WalletSubcommands {
                     for _ in 0..number {
                         let wallet = PrivateKeySigner::random_with(&mut rng);
 
+                        let public_key = hex::encode(
+                            &SecretKey::from_slice(&wallet.credential().to_bytes())
+                                .map_err(|e| eyre::eyre!("Invalid private key: {}", e))?
+                                .public_key()
+                                .to_encoded_point(false)
+                                .as_bytes()[1..],
+                        );
+
                         if let Some(json) = json_values.as_mut() {
                             json.push(json!({
                                 "address": wallet.address().to_checksum(None),
+                                "public_key": format!("0x{}", public_key),
                                 "private_key": format!("0x{}", hex::encode(wallet.credential().to_bytes())),
                             }))
                         } else {
                             sh_println!("Successfully created new keypair.")?;
                             sh_println!("Address:     {}", wallet.address().to_checksum(None))?;
+                            sh_println!("Public key:  0x{}", public_key)?;
                             sh_println!(
                                 "Private key: 0x{}",
                                 hex::encode(wallet.credential().to_bytes())
@@ -377,15 +397,24 @@ impl WalletSubcommands {
 
                 let mut accounts = json!([]);
                 for (i, wallet) in wallets.iter().enumerate() {
+                    let public_key = hex::encode(
+                        &SecretKey::from_slice(&wallet.credential().to_bytes())
+                            .map_err(|e| eyre::eyre!("Invalid private key: {}", e))?
+                            .public_key()
+                            .to_encoded_point(false)
+                            .as_bytes()[1..],
+                    );
                     let private_key = hex::encode(wallet.credential().to_bytes());
                     if format_json {
                         accounts.as_array_mut().unwrap().push(json!({
                             "address": format!("{}", wallet.address()),
+                            "public_key": format!("0x{}", public_key),
                             "private_key": format!("0x{}", private_key),
                         }));
                     } else {
                         sh_println!("- Account {i}:")?;
                         sh_println!("Address:     {}", wallet.address())?;
+                        sh_println!("Public key:  0x{}", public_key)?;
                         sh_println!("Private key: 0x{private_key}\n")?;
                     }
                 }
