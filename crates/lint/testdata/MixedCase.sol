@@ -26,4 +26,10 @@ contract MixedCaseTest {
     function Functionmixedcase() public {} //~NOTE: function names should use mixedCase
     function FUNCTION_MIXED_CASE() public {} //~NOTE: function names should use mixedCase
     function FunctionMixedCase() public {} //~NOTE: function names should use mixedCase
+    function function_mixed_case() public {} //~NOTE: function names should use mixedCase
+
+    function test_CanHaveUnderscores() public {}
+    function testFuzz_CanHaveUnderscores() public {}
+    function testRevert_CanHaveUnderscores() public {}
+    function invariant_CanHaveUnderscores() public {}
 }

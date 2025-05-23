@@ -64,3 +64,11 @@ note[mixed-case-function]: function names should use mixedCase
    |
    = help: https://docs.soliditylang.org/en/latest/style-guide.html#function-names
 
+note[mixed-case-function]: function names should use mixedCase
+  --> ROOT/testdata/MixedCase.sol:LL:CC
+   |
+29 |     function function_mixed_case() public {}
+   |                                           --
+   |
+   = help: https://docs.soliditylang.org/en/latest/style-guide.html#function-names
+
