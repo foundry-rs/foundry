@@ -70,10 +70,10 @@ forgetest!(can_use_config_ignore, |prj, cmd| {
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
 note[mixed-case-variable]: mutable variables should use mixedCase
- [FILE]:6:9
+ [FILE]:6:17
   |
 6 |         uint256 VARIABLE_MIXED_CASE_INFO;
-  |         ---------------------------------
+  |                 ------------------------
   |
 
 
@@ -104,10 +104,10 @@ forgetest!(can_override_config_severity, |prj, cmd| {
     });
     cmd.arg("lint").args(["--severity", "info"]).assert_success().stderr_eq(str![[r#"
 note[mixed-case-variable]: mutable variables should use mixedCase
- [FILE]:6:9
+ [FILE]:6:17
   |
 6 |         uint256 VARIABLE_MIXED_CASE_INFO;
-  |         ---------------------------------
+  |                 ------------------------
   |
 
 
