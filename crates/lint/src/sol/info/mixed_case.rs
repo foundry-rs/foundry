@@ -19,7 +19,7 @@ impl<'ast> EarlyLintPass<'ast> for MixedCaseFunction {
     fn check_item_function(&mut self, ctx: &LintContext<'_>, func: &'ast ItemFunction<'ast>) {
         if let Some(name) = func.header.name {
             let name = name.as_str();
-            if !is_mixed_case(name) && name.len() > 1 {
+            if !is_mixed_case(name, true) {
                 ctx.emit(&MIXED_CASE_FUNCTION, func.body_span);
             }
         }
@@ -42,7 +42,7 @@ impl<'ast> EarlyLintPass<'ast> for MixedCaseVariable {
         if var.mutability.is_none() {
             if let Some(name) = var.name {
                 let name = name.as_str();
-                if !is_mixed_case(name) {
+                if !is_mixed_case(name, false) {
                     ctx.emit(&MIXED_CASE_VARIABLE, var.span);
                 }
             }
@@ -54,11 +54,17 @@ impl<'ast> EarlyLintPass<'ast> for MixedCaseVariable {
 ///
 /// To avoid false positives like `fn increment()` or `uint256 counter`,
 /// lowercase strings are treated as mixedCase.
-pub fn is_mixed_case(s: &str) -> bool {
+pub fn is_mixed_case(s: &str, is_fn: bool) -> bool {
     if s.len() <= 1 {
         return true;
     }
 
     // Remove leading/trailing underscores like `heck` does
-    s.trim_matches('_') == format!("{}", heck::AsLowerCamelCase(s)).as_str()
+    if s.trim_matches('_') == format!("{}", heck::AsLowerCamelCase(s)).as_str() {
+        return true
+    }
+
+    // Ignore `fn test*`, `fn invariant_*`, and `fn statefulFuzz*` patterns, as they usually contain
+    // (allowed) underscores.
+    is_fn && (s.starts_with("test") || s.starts_with("invariant_") || s.starts_with("statefulFuzz"))
 }
