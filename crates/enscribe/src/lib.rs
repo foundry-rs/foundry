@@ -1,3 +1,5 @@
+//! enscribe does ENS name setting for contracts.
+
 #[allow(clippy::too_many_arguments)]
 mod abi;
 pub(crate) mod logger;
