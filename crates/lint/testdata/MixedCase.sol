@@ -28,9 +28,12 @@ contract MixedCaseTest {
     function FunctionMixedCase() public {} //~NOTE: function names should use mixedCase
     function function_mixed_case() public {} //~NOTE: function names should use mixedCase
 
-    function test_CanHaveUnderscores() public {}
-    function testFuzz_CanHaveUnderscores() public {}
-    function testRevert_CanHaveUnderscores() public {}
-    function invariant_CanHaveUnderscores() public {}
-    function statefulFuzz_CanHaveUnderscores() public {}
+    // mixedCase checks are disabled for functions that starting with:
+    // `test`, `invariant`, and `statefulFuzz`
+    function test_MixedCase_Disabled() public {}
+    function testFuzz_MixedCase_Disabled() public {}
+    function testRevert_MixedCase_Disabled() public {}
+    function invariant_MixedCase_Disabled() public {}
+    function invariantBalance_MixedCase_Disabled() public {}
+    function statefulFuzz_MixedCase_Disabled() public {}
 }
