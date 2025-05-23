@@ -73,46 +73,51 @@ docker-build-prepare: ## Prepare the Docker build environment.
 		docker buildx use cross-builder; \
 	fi
 
-##@ Other
+##@ Test
 
-.PHONY: clean
-clean: ## Clean the project.
-	cargo clean
+.PHONY: test-unit
+test-unit: ## Run unit tests.
+	cargo nextest run -E 'kind(test) & !test(/\b(issue|ext_integration)/)'
 
-## Linting
+.PHONY: test-doc
+test-doc: ## Run doc tests.
+	cargo test --doc --workspace
+
+.PHONY: test
+test: ## Run all tests.
+	make test-unit && \
+	make test-doc
+
+##@ Linting
 
 fmt: ## Run all formatters.
 	cargo +nightly fmt
 	./.github/scripts/format.sh --check
 
-clippy:
-	RUSTFLAGS="-Dwarnings" cargo +nightly clippy --workspace --all-targets --all-features
+lint-clippy: ## Run clippy on the codebase.
+	cargo +nightly clippy \
+	--workspace \
+	--all-targets \
+	--all-features \
+	-- -D warnings
 
-codespell: ensure-codespell
-	codespell --skip "*.json"
-
-ensure-codespell:
-	@if ! command -v codespell &> /dev/null; then \
-		echo "codespell not found. Please install it by running the command `pip install codespell` or refer to the following link for more information: https://github.com/codespell-project/codespell" \
+lint-codespell: ## Run codespell on the codebase.
+	@command -v codespell >/dev/null || { \
+		echo "codespell not found. Please install it by running the command `pipx install codespell` or refer to the following link for more information: https://github.com/codespell-project/codespell" \
 		exit 1; \
-    fi
+	}
+	codespell --skip "*.json"
 
 lint: ## Run all linters.
 	make fmt && \
-	make clippy && \
-	make codespell
+	make lint-clippy && \
+	make lint-codespell
 
-## Testing
+##@ Other
 
-test-unit:
-	cargo nextest run -E 'kind(test) & !test(/\b(issue|ext_integration)/)'
-
-test-doc:
-	cargo test --doc --workspace
-
-test: ## Run all tests.
-	make test-unit && \
-	make test-doc
+.PHONY: clean
+clean: ## Clean the project.
+	cargo clean
 
 pr: ## Run all tests and linters in preparation for a PR.
 	make lint && \
