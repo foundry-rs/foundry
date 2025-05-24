@@ -371,10 +371,10 @@ pub struct Cheatcodes {
     /// execution block environment.
     pub block: Option<BlockEnv>,
 
-    /// Currently active EIP-7702 delegation that will be consumed when building the next
+    /// Currently active EIP-7702 delegations that will be consumed when building the next
     /// transaction. Set by `vm.attachDelegation()` and consumed via `.take()` during
     /// transaction construction.
-    pub active_delegation: Option<SignedAuthorization>,
+    pub active_delegations: Option<Vec<SignedAuthorization>>,
 
     /// The active EIP-4844 blob that will be attached to the next call.
     pub active_blob_sidecar: Option<BlobTransactionSidecar>,
@@ -517,7 +517,7 @@ impl Cheatcodes {
             labels: config.labels.clone(),
             config,
             block: Default::default(),
-            active_delegation: Default::default(),
+            active_delegations: Default::default(),
             active_blob_sidecar: Default::default(),
             gas_price: Default::default(),
             pranks: Default::default(),
@@ -571,6 +571,11 @@ impl Cheatcodes {
     /// Sets the unlocked wallets.
     pub fn set_wallets(&mut self, wallets: Wallets) {
         self.wallets = Some(wallets);
+    }
+
+    /// Adds a delegation to the active delegations list.
+    pub fn add_delegation(&mut self, authorization: SignedAuthorization) {
+        self.active_delegations.get_or_insert_with(|| vec![]).push(authorization);
     }
 
     /// Decodes the input data and applies the cheatcode.
@@ -1136,7 +1141,7 @@ impl Cheatcodes {
                         ..Default::default()
                     };
 
-                    match (self.active_delegation.take(), self.active_blob_sidecar.take()) {
+                    match (self.active_delegations.take(), self.active_blob_sidecar.take()) {
                         (Some(_), Some(_)) => {
                             let msg = "both delegation and blob are active; `attachBlob` and `attachDelegation` are not compatible";
                             return Some(CallOutcome {
@@ -1149,11 +1154,12 @@ impl Cheatcodes {
                             });
                         }
                         (Some(auth_list), None) => {
-                            tx_req.authorization_list = Some(vec![auth_list]);
+                            let auth_count = auth_list.len() as u64;
+                            tx_req.authorization_list = Some(auth_list);
                             tx_req.sidecar = None;
 
-                            // Increment nonce to reflect the signed authorization.
-                            account.info.nonce += 1;
+                            // Increment nonce to reflect the signed authorizations.
+                            account.info.nonce += auth_count;
                         }
                         (None, Some(blob_sidecar)) => {
                             tx_req.set_blob_sidecar(blob_sidecar);

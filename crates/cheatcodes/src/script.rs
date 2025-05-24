@@ -113,7 +113,7 @@ fn attach_delegation(
         U256::from_be_bytes(s.0),
     );
     write_delegation(ccx, signed_auth.clone())?;
-    ccx.state.active_delegation = Some(signed_auth);
+    ccx.state.add_delegation(signed_auth);
     Ok(Default::default())
 }
 
@@ -143,7 +143,7 @@ fn sign_delegation(
     if attach {
         let signed_auth = SignedAuthorization::new_unchecked(auth, sig.v() as u8, sig.r(), sig.s());
         write_delegation(ccx, signed_auth.clone())?;
-        ccx.state.active_delegation = Some(signed_auth);
+        ccx.state.add_delegation(signed_auth);
     }
     Ok(SignedDelegation {
         v: sig.v() as u8,
