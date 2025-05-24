@@ -54,9 +54,10 @@ impl Default for FuzzConfig {
 impl FuzzConfig {
     /// Creates fuzz configuration to write failures in `{PROJECT_ROOT}/cache/fuzz` dir.
     pub fn new(cache_dir: PathBuf) -> Self {
+        let cache_dir = cache_dir.display();
         Self {
-            corpus_dir: Some(cache_dir.join("fuzz/corpus")),
-            failure_persist_dir: Some(cache_dir.join("fuzz")),
+            corpus_dir: Some(format!("{cache_dir}/fuzz/corpus").into()),
+            failure_persist_dir: Some(format!("{cache_dir}/fuzz").into()),
             failure_persist_file: Some("failures".to_string()),
             ..Default::default()
         }
