@@ -50,6 +50,8 @@ use std::{
     str::FromStr,
 };
 
+use tracing::warn;
+
 mod macros;
 
 pub mod utils;
@@ -641,6 +643,23 @@ impl Config {
     }
 
     fn from_figment(figment: Figment) -> Result<Self, ExtractConfigError> {
+        let file_path = Path::new("foundry.toml");
+        if let Ok(raw) = fs::read_to_string(&file_path) {
+            let deserializer = toml::Deserializer::new(&raw);
+            let mut ignored = Vec::new();
+            let _: Result<Self, _> = serde_ignored::deserialize(deserializer, |path| {
+                ignored.push(path.to_string());
+            });
+
+            if !ignored.is_empty() {
+                warn!(
+                    "Found unknown config keys in {}: {}",
+                    file_path.display(),
+                    ignored.join(", ")
+                );
+            }
+        }
+
         let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
         config.profile = figment.profile().clone();
 
