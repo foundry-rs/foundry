@@ -21,12 +21,12 @@ use foundry_evm::{
     fork::CreateFork,
     inspectors::CheatsConfig,
     opts::EvmOpts,
-    revm,
     traces::{InternalTraceMode, TraceMode},
+    Env,
 };
 use foundry_linking::{LinkOutput, Linker};
 use rayon::prelude::*;
-use revm::primitives::SpecId;
+use revm::primitives::hardfork::SpecId;
 use std::{
     borrow::Borrow,
     collections::BTreeMap,
@@ -249,10 +249,11 @@ impl MultiContractRunner {
 
         debug!("start executing all tests in contract");
 
+        let executor = self.tcfg.executor(self.known_contracts.clone(), artifact_id, db.clone());
         let runner = ContractRunner::new(
             &identifier,
             contract,
-            self.tcfg.executor(self.known_contracts.clone(), artifact_id, db.clone()),
+            executor,
             progress,
             tokio_handle,
             span,
@@ -279,7 +280,7 @@ pub struct TestRunnerConfig {
     /// EVM configuration.
     pub evm_opts: EvmOpts,
     /// EVM environment.
-    pub env: revm::primitives::Env,
+    pub env: Env,
     /// EVM version.
     pub spec_id: SpecId,
     /// The address which will be used to deploy the initial contracts and send all transactions.
@@ -472,7 +473,7 @@ impl MultiContractRunnerBuilder {
         self,
         root: &Path,
         output: &ProjectCompileOutput,
-        env: revm::primitives::Env,
+        env: Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner> {
         let contracts = output

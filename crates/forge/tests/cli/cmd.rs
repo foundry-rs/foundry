@@ -7,7 +7,7 @@ use foundry_config::{
 };
 use foundry_test_utils::{
     foundry_compilers::PathStyle,
-    rpc::next_mainnet_etherscan_api_key,
+    rpc::next_etherscan_api_key,
     snapbox::IntoData,
     util::{pretty_err, read_string, OutputExt, TestCommand},
 };
@@ -36,7 +36,7 @@ Options:
   -j, --threads <THREADS>
           Number of threads to use. Specifying 0 defaults to the number of logical cores
           
-          [aliases: jobs]
+          [aliases: --jobs]
 
   -V, --version
           Print version
@@ -619,7 +619,7 @@ forgetest!(can_clone, |prj, cmd| {
     cmd.args([
         "clone",
         "--etherscan-api-key",
-        next_mainnet_etherscan_api_key().as_str(),
+        next_etherscan_api_key().as_str(),
         "0x044b75f554b886A065b9567891e45c79542d7357",
     ])
     .arg(prj.root())
@@ -648,7 +648,7 @@ forgetest!(can_clone_quiet, |prj, cmd| {
     cmd.args([
         "clone",
         "--etherscan-api-key",
-        next_mainnet_etherscan_api_key().as_str(),
+        next_etherscan_api_key().as_str(),
         "--quiet",
         "0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec",
     ])
@@ -666,7 +666,7 @@ forgetest!(can_clone_no_remappings_txt, |prj, cmd| {
     cmd.args([
         "clone",
         "--etherscan-api-key",
-        next_mainnet_etherscan_api_key().as_str(),
+        next_etherscan_api_key().as_str(),
         "--no-remappings-txt",
         "0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf",
     ])
@@ -701,7 +701,7 @@ forgetest!(can_clone_keep_directory_structure, |prj, cmd| {
         .args([
             "clone",
             "--etherscan-api-key",
-            next_mainnet_etherscan_api_key().as_str(),
+            next_etherscan_api_key().as_str(),
             "--keep-directory-structure",
             "0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf",
         ])
@@ -739,7 +739,7 @@ forgetest!(can_clone_with_node_modules, |prj, cmd| {
     cmd.args([
         "clone",
         "--etherscan-api-key",
-        next_mainnet_etherscan_api_key().as_str(),
+        next_etherscan_api_key().as_str(),
         "0xA3E217869460bEf59A1CfD0637e2875F9331e823",
     ])
     .arg(prj.root())
@@ -3572,6 +3572,42 @@ forgetest!(test_inspect_contract_with_same_name, |prj, cmd| {
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/10531>
+forgetest!(inspect_multiple_contracts_with_different_paths, |prj, cmd| {
+    prj.add_source(
+        "Source.sol",
+        r#"
+    contract Source {
+        function foo() public {}
+    }   
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "another/Source.sol",
+        r#"
+    contract Source {
+        function bar() public {}
+    }
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["inspect", "src/another/Source.sol:Source", "methodIdentifiers"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+
+╭--------+------------╮
+| Method | Identifier |
++=====================+
+| bar()  | febb0f7e   |
+╰--------+------------╯
+
+
+"#]]);
+});
+
 forgetest!(inspect_custom_counter_method_identifiers, |prj, cmd| {
     prj.add_source("Counter.sol", CUSTOM_COUNTER).unwrap();
 
@@ -3595,6 +3631,53 @@ forgetest!(inspect_custom_counter_method_identifiers, |prj, cmd| {
 | square()                   | d742cb01   |
 ╰----------------------------+------------╯
 
+
+"#]]);
+});
+
+forgetest_init!(can_inspect_standard_json, |prj, cmd| {
+    cmd.args(["inspect", "src/Counter.sol:Counter", "standard-json"]).assert_success().stdout_eq(str![[r#"
+{
+  "language": "Solidity",
+  "sources": {
+    "src/Counter.sol": {
+      "content": "// SPDX-License-Identifier: UNLICENSED/npragma solidity ^0.8.13;/n/ncontract Counter {/n    uint256 public number;/n/n    function setNumber(uint256 newNumber) public {/n        number = newNumber;/n    }/n/n    function increment() public {/n        number++;/n    }/n}/n"
+    }
+  },
+  "settings": {
+    "remappings": [
+      "forge-std/=lib/forge-std/src/"
+    ],
+    "optimizer": {
+      "enabled": false,
+      "runs": 200
+    },
+    "metadata": {
+      "useLiteralContent": false,
+      "bytecodeHash": "ipfs",
+      "appendCBOR": true
+    },
+    "outputSelection": {
+      "*": {
+        "*": [
+          "abi",
+          "evm.bytecode.object",
+          "evm.bytecode.sourceMap",
+          "evm.bytecode.linkReferences",
+          "evm.deployedBytecode.object",
+          "evm.deployedBytecode.sourceMap",
+          "evm.deployedBytecode.linkReferences",
+          "evm.deployedBytecode.immutableReferences",
+          "evm.methodIdentifiers",
+          "metadata"
+        ]
+      }
+    },
+    "evmVersion": "cancun",
+    "viaIR": false,
+    "libraries": {}
+  }
+}
 
 "#]]);
 });

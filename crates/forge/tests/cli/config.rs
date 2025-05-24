@@ -121,6 +121,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         eth_rpc_timeout: None,
         eth_rpc_headers: None,
         etherscan_api_key: None,
+        etherscan_api_version: None,
         etherscan: Default::default(),
         verbosity: 4,
         remappings: vec![Remapping::from_str("forge-std/=lib/forge-std/").unwrap().into()],
@@ -149,6 +150,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         build_info: false,
         build_info_path: None,
         fmt: Default::default(),
+        lint: Default::default(),
         doc: Default::default(),
         bind_json: Default::default(),
         fs_permissions: Default::default(),
@@ -165,12 +167,11 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         assertions_revert: true,
         legacy_assertions: false,
         extra_args: vec![],
-        eof_version: None,
         odyssey: false,
         transaction_timeout: 120,
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
-        eof: false,
+        script_execution_protection: true,
         _non_exhaustive: (),
     };
     prj.write_config(input.clone());
@@ -1040,17 +1041,17 @@ assertions_revert = true
 legacy_assertions = false
 odyssey = false
 transaction_timeout = 120
-eof = false
 additional_compiler_profiles = []
 compilation_restrictions = []
-
-[[profile.default.fs_permissions]]
-access = "read"
-path = "out"
+script_execution_protection = true
 
 [profile.default.rpc_storage_caching]
 chains = "all"
 endpoints = "all"
+
+[[profile.default.fs_permissions]]
+access = "read"
+path = "out"
 
 [fmt]
 line_length = 120
@@ -1067,6 +1068,11 @@ wrap_comments = false
 ignore = []
 contract_new_lines = false
 sort_imports = false
+
+[lint]
+severity = []
+exclude_lints = []
+ignore = []
 
 [doc]
 out = "docs"
@@ -1163,6 +1169,7 @@ exclude = []
   "eth_rpc_timeout": null,
   "eth_rpc_headers": null,
   "etherscan_api_key": null,
+  "etherscan_api_version": null,
   "ignored_error_codes": [
     "license",
     "code-size",
@@ -1271,6 +1278,11 @@ exclude = []
     "contract_new_lines": false,
     "sort_imports": false
   },
+  "lint": {
+    "severity": [],
+    "exclude_lints": [],
+    "ignore": []
+  },
   "doc": {
     "out": "docs",
     "title": "",
@@ -1302,9 +1314,9 @@ exclude = []
   "legacy_assertions": false,
   "odyssey": false,
   "transaction_timeout": 120,
-  "eof": false,
   "additional_compiler_profiles": [],
-  "compilation_restrictions": []
+  "compilation_restrictions": [],
+  "script_execution_protection": true
 }
 
 "#]]);

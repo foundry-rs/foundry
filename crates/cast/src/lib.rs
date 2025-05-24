@@ -4,19 +4,22 @@
 
 use alloy_consensus::TxEnvelope;
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
+use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
-use alloy_network::AnyNetwork;
+use alloy_network::{AnyNetwork, AnyRpcTransaction};
 use alloy_primitives::{
     hex,
     utils::{keccak256, ParseUnits, Unit},
-    Address, Keccak256, TxHash, TxKind, B256, I256, U256,
+    Address, Keccak256, Selector, TxHash, TxKind, B256, I256, U256, U64,
 };
 use alloy_provider::{
     network::eip2718::{Decodable2718, Encodable2718},
     PendingTransactionBuilder, Provider,
 };
 use alloy_rlp::Decodable;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, TransactionRequest};
+use alloy_rpc_types::{
+    state::StateOverride, BlockId, BlockNumberOrTag, Filter, TransactionRequest,
+};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
 use base::{Base, NumberWithBase, ToBase};
@@ -31,9 +34,9 @@ use foundry_common::{
 };
 use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
+use foundry_evm_core::ic::decode_instructions;
 use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
-use revm::primitives::Eof;
 use std::{
     borrow::Cow,
     fmt::Write,
@@ -44,7 +47,6 @@ use std::{
     time::Duration,
 };
 use tokio::signal::ctrl_c;
-use utils::decode_instructions;
 
 use foundry_common::abi::encode_function_args_packed;
 pub use foundry_evm::*;
@@ -106,11 +108,12 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::{Address, U256, Bytes};
-    /// use alloy_rpc_types::{TransactionRequest};
+    /// use alloy_rpc_types::{TransactionRequest, state::{StateOverride, AccountOverride}};
     /// use alloy_serde::WithOtherFields;
     /// use cast::Cast;
     /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
-    /// use std::str::FromStr;
+    /// use std::{str::FromStr, collections::HashMap};
+    /// use alloy_rpc_types::state::StateOverridesBuilder;
     /// use alloy_sol_types::{sol, SolCall};
     ///
     /// sol!(
@@ -118,14 +121,22 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// );
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let alloy_provider = ProviderBuilder::<_,_, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;;
+    /// let alloy_provider = ProviderBuilder::<_,_, AnyNetwork>::default().connect("http://localhost:8545").await?;;
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let greeting = greetingCall { i: U256::from(5) }.abi_encode();
     /// let bytes = Bytes::from_iter(greeting.iter());
     /// let tx = TransactionRequest::default().to(to).input(bytes.into());
     /// let tx = WithOtherFields::new(tx);
+    ///
+    /// // Create state overrides
+    /// let mut state_override = StateOverride::default();
+    /// let mut account_override = AccountOverride::default();
+    /// account_override.balance = Some(U256::from(1000));
+    /// state_override.insert(to, account_override);
+    /// let state_override_object = StateOverridesBuilder::default().build();
+    ///
     /// let cast = Cast::new(alloy_provider);
-    /// let data = cast.call(&tx, None, None).await?;
+    /// let data = cast.call(&tx, None, None, state_override_object).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
@@ -135,14 +146,20 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         req: &WithOtherFields<TransactionRequest>,
         func: Option<&Function>,
         block: Option<BlockId>,
+        state_override: StateOverride,
     ) -> Result<String> {
-        let res = self.provider.call(req.clone()).block(block.unwrap_or_default()).await?;
+        let res = self
+            .provider
+            .call(req.clone())
+            .block(block.unwrap_or_default())
+            .overrides(state_override)
+            .await?;
 
         let mut decoded = vec![];
 
         if let Some(func) = func {
             // decode args into tokens
-            decoded = match func.abi_decode_output(res.as_ref(), false) {
+            decoded = match func.abi_decode_output(res.as_ref()) {
                 Ok(decoded) => decoded,
                 Err(err) => {
                     // ensure the address is a contract
@@ -350,7 +367,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         let block = self
             .provider
             .get_block(block)
-            .full()
+            .kind(full.into())
             .await?
             .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
 
@@ -367,22 +384,16 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     }
 
     async fn block_field_as_num<B: Into<BlockId>>(&self, block: B, field: String) -> Result<U256> {
-        let block = block.into();
-        let block_field = Self::block(
+        Self::block(
             self,
-            block,
+            block.into(),
             false,
             // Select only select field
             Some(field),
         )
-        .await?;
-
-        let ret = if block_field.starts_with("0x") {
-            U256::from_str_radix(strip_0x(&block_field), 16).expect("Unable to convert hex to U256")
-        } else {
-            U256::from_str_radix(&block_field, 10).expect("Unable to convert decimal to U256")
-        };
-        Ok(ret)
+        .await?
+        .parse()
+        .map_err(Into::into)
     }
 
     pub async fn base_fee<B: Into<BlockId>>(&self, block: B) -> Result<U256> {
@@ -737,26 +748,45 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().on_builtin("http://localhost:8545").await?;
+    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let tx = cast.transaction(tx_hash.to_string(), None, false).await?;
+    /// let tx = cast.transaction(Some(tx_hash.to_string()), None, None, None, false).await?;
     /// println!("{}", tx);
     /// # Ok(())
     /// # }
     /// ```
     pub async fn transaction(
         &self,
-        tx_hash: String,
+        tx_hash: Option<String>,
+        from: Option<NameOrAddress>,
+        nonce: Option<u64>,
         field: Option<String>,
         raw: bool,
     ) -> Result<String> {
-        let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
-        let tx = self
-            .provider
-            .get_transaction_by_hash(tx_hash)
-            .await?
-            .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
+        let tx = if let Some(tx_hash) = tx_hash {
+            let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
+            self.provider
+                .get_transaction_by_hash(tx_hash)
+                .await?
+                .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?
+        } else if let Some(from) = from {
+            // If nonce is not provided, uses 0.
+            let nonce = U64::from(nonce.unwrap_or_default());
+            let from = from.resolve(self.provider.root()).await?;
+
+            self.provider
+                .raw_request::<_, Option<AnyRpcTransaction>>(
+                    "eth_getTransactionBySenderAndNonce".into(),
+                    (from, nonce),
+                )
+                .await?
+                .ok_or_else(|| {
+                    eyre::eyre!("tx not found for sender {from} and nonce {:?}", nonce.to::<u64>())
+                })?
+        } else {
+            eyre::bail!("tx hash or from address is required")
+        };
 
         Ok(if raw {
             format!("0x{}", hex::encode(tx.inner.inner.encoded_2718()))
@@ -1069,8 +1099,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             .balanceOf(owner)
             .block(block.unwrap_or_default())
             .call()
-            .await?
-            ._0)
+            .await?)
     }
 }
 
@@ -2132,15 +2161,16 @@ impl SimpleCast {
     /// # Example
     ///
     /// ```
+    /// use alloy_primitives::fixed_bytes;
     /// use cast::SimpleCast as Cast;
     ///
     /// let bytecode = "6080604052348015600e575f80fd5b50600436106026575f3560e01c80632125b65b14602a575b5f80fd5b603a6035366004603c565b505050565b005b5f805f60608486031215604d575f80fd5b833563ffffffff81168114605f575f80fd5b925060208401356001600160a01b03811681146079575f80fd5b915060408401356001600160e01b03811681146093575f80fd5b80915050925092509256";
     /// let functions = Cast::extract_functions(bytecode)?;
-    /// assert_eq!(functions, vec![("0x2125b65b".to_string(), "uint32,address,uint224".to_string(), "pure")]);
+    /// assert_eq!(functions, vec![(fixed_bytes!("0x2125b65b"), "uint32,address,uint224".to_string(), "pure")]);
     /// # Ok::<(), eyre::Report>(())
     /// ```
-    pub fn extract_functions(bytecode: &str) -> Result<Vec<(String, String, &str)>> {
-        let code = hex::decode(strip_0x(bytecode))?;
+    pub fn extract_functions(bytecode: &str) -> Result<Vec<(Selector, String, &str)>> {
+        let code = hex::decode(bytecode)?;
         let info = evmole::contract_info(
             evmole::ContractInfoArgs::new(&code)
                 .with_selectors()
@@ -2153,7 +2183,7 @@ impl SimpleCast {
             .into_iter()
             .map(|f| {
                 (
-                    hex::encode_prefixed(f.selector),
+                    f.selector.into(),
                     f.arguments
                         .expect("arguments extraction was requested")
                         .into_iter()
@@ -2180,27 +2210,9 @@ impl SimpleCast {
     /// let tx_envelope = Cast::decode_raw_transaction(&tx)?;
     /// # Ok::<(), eyre::Report>(())
     pub fn decode_raw_transaction(tx: &str) -> Result<TxEnvelope> {
-        let tx_hex = hex::decode(strip_0x(tx))?;
+        let tx_hex = hex::decode(tx)?;
         let tx = TxEnvelope::decode_2718(&mut tx_hex.as_slice())?;
         Ok(tx)
-    }
-
-    /// Decodes EOF container bytes
-    /// Pretty prints the decoded EOF container contents
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// let eof = "0xef0001010004020001005604002000008000046080806040526004361015e100035f80fd5f3560e01c63773d45e01415e1ffee6040600319360112e10028600435906024358201809211e100066020918152f3634e487b7160e01b5f52601160045260245ffd5f80fd0000000000000000000000000124189fc71496f8660db5189f296055ed757632";
-    /// let decoded = Cast::decode_eof(&eof)?;
-    /// println!("{}", decoded);
-    /// # Ok::<(), eyre::Report>(())
-    pub fn decode_eof(eof: &str) -> Result<String> {
-        let eof_hex = hex::decode(eof)?;
-        let eof = Eof::decode(eof_hex.into())?;
-        Ok(pretty_eof(&eof)?)
     }
 }
 
@@ -2374,16 +2386,21 @@ mod tests {
     #[test]
     fn disassemble_incomplete_sequence() {
         let incomplete = &hex!("60"); // PUSH1
-        let disassembled = Cast::disassemble(incomplete);
-        assert!(disassembled.is_err());
+        let disassembled = Cast::disassemble(incomplete).unwrap();
+        assert_eq!(disassembled, "00000000: PUSH1 0x00\n");
 
         let complete = &hex!("6000"); // PUSH1 0x00
         let disassembled = Cast::disassemble(complete);
         assert!(disassembled.is_ok());
 
         let incomplete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 31 bytes
-        let disassembled = Cast::disassemble(incomplete);
-        assert!(disassembled.is_err());
+
+        let disassembled = Cast::disassemble(incomplete).unwrap();
+
+        assert_eq!(
+            disassembled,
+            "00000000: PUSH32 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00\n"
+        );
 
         let complete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 32 bytes
         let disassembled = Cast::disassemble(complete);

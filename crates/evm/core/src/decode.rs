@@ -55,7 +55,7 @@ pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
 /// This function returns [None] if it is not a DSTest log or the result of a Hardhat
 /// `console.log`.
 pub fn decode_console_log(log: &Log) -> Option<String> {
-    console::ds::ConsoleEvents::decode_log(log, false).ok().map(|decoded| decoded.to_string())
+    console::ds::ConsoleEvents::decode_log(log).ok().map(|decoded| decoded.to_string())
 }
 
 /// Decodes revert data.
@@ -151,7 +151,7 @@ impl RevertDecoder {
         }
 
         // Solidity's `Panic(uint256)` and `Vm`'s custom errors.
-        if let Ok(e) = alloy_sol_types::ContractError::<Vm::VmErrors>::abi_decode(err, false) {
+        if let Ok(e) = alloy_sol_types::ContractError::<Vm::VmErrors>::abi_decode(err) {
             return Some(e.to_string());
         }
 
@@ -163,7 +163,7 @@ impl RevertDecoder {
                 for error in errors {
                     // If we don't decode, don't return an error, try to decode as a string
                     // later.
-                    if let Ok(decoded) = error.abi_decode_input(data, false) {
+                    if let Ok(decoded) = error.abi_decode_input(data) {
                         return Some(format!(
                             "{}({})",
                             error.name,
@@ -211,7 +211,7 @@ impl RevertDecoder {
 /// Helper function that decodes provided error as an ABI encoded or an ASCII string (if not empty).
 fn decode_as_non_empty_string(err: &[u8]) -> Option<String> {
     // ABI-encoded `string`.
-    if let Ok(s) = String::abi_decode(err, true) {
+    if let Ok(s) = String::abi_decode(err) {
         if !s.is_empty() {
             return Some(s);
         }
@@ -245,6 +245,7 @@ fn trimmed_hex(s: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn test_trimmed_hex() {
         assert_eq!(trimmed_hex(&hex::decode("1234567890").unwrap()), "1234567890");
@@ -252,5 +253,36 @@ mod tests {
             trimmed_hex(&hex::decode("492077697368207275737420737570706F72746564206869676865722D6B696E646564207479706573").unwrap()),
             "49207769736820727573742073757070…6865722d6b696e646564207479706573 (41 bytes)"
         );
+    }
+
+    // https://github.com/foundry-rs/foundry/issues/10162
+    #[test]
+    fn partial_decode() {
+        /*
+        error ValidationFailed(bytes);
+        error InvalidNonce();
+        */
+        let mut decoder = RevertDecoder::default();
+        decoder.push_error("ValidationFailed(bytes)".parse().unwrap());
+
+        /*
+        abi.encodeWithSelector(ValidationFailed.selector, InvalidNonce.selector)
+        */
+        let data = &hex!(
+            "0xe17594de"
+            "756688fe00000000000000000000000000000000000000000000000000000000"
+        );
+        assert_eq!(decoder.decode(data, None), "custom error 0xe17594de: 756688fe00000000000000000000000000000000000000000000000000000000");
+
+        /*
+        abi.encodeWithSelector(ValidationFailed.selector, abi.encodeWithSelector(InvalidNonce.selector))
+        */
+        let data = &hex!(
+            "0xe17594de"
+            "0000000000000000000000000000000000000000000000000000000000000020"
+            "0000000000000000000000000000000000000000000000000000000000000004"
+            "756688fe00000000000000000000000000000000000000000000000000000000"
+        );
+        assert_eq!(decoder.decode(data, None), "ValidationFailed(0x756688fe)");
     }
 }

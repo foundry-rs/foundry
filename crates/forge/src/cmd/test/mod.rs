@@ -16,6 +16,7 @@ use alloy_primitives::U256;
 use chrono::Utc;
 use clap::{Parser, ValueHint};
 use eyre::{bail, Context, OptionExt, Result};
+use foundry_block_explorers::EtherscanApiVersion;
 use foundry_cli::{
     opts::{BuildOpts, GlobalArgs},
     utils::{self, LoadConfig},
@@ -145,6 +146,10 @@ pub struct TestArgs {
     /// The Etherscan (or equivalent) API key.
     #[arg(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     etherscan_api_key: Option<String>,
+
+    /// The Etherscan API version.
+    #[arg(long, env = "ETHERSCAN_API_VERSION", value_name = "VERSION")]
+    etherscan_api_version: Option<EtherscanApiVersion>,
 
     /// List tests instead of running them.
     #[arg(long, short, conflicts_with_all = ["show_progress", "decode_internal", "summary"], help_heading = "Display options")]
@@ -368,7 +373,7 @@ impl TestArgs {
 
             // Decode traces.
             let decoder = outcome.last_run_decoder.as_ref().unwrap();
-            decode_trace_arena(arena, decoder).await?;
+            decode_trace_arena(arena, decoder).await;
             let mut fst = folded_stack_trace::build(arena);
 
             let label = if self.flamegraph { "flamegraph" } else { "flamechart" };
@@ -524,10 +529,8 @@ impl TestArgs {
             .with_verbosity(verbosity);
         // Signatures are of no value for gas reports.
         if !self.gas_report {
-            builder = builder.with_signature_identifier(SignaturesIdentifier::new(
-                Config::foundry_cache_dir(),
-                config.offline,
-            )?);
+            builder =
+                builder.with_signature_identifier(SignaturesIdentifier::from_config(&config)?);
         }
 
         if self.decode_internal {
@@ -637,7 +640,7 @@ impl TestArgs {
                     };
 
                     if should_include {
-                        decode_trace_arena(arena, &decoder).await?;
+                        decode_trace_arena(arena, &decoder).await;
                         decoded_traces.push(render_trace_arena_inner(arena, false, verbosity > 4));
                     }
                 }
@@ -873,6 +876,10 @@ impl Provider for TestArgs {
             self.etherscan_api_key.as_ref().filter(|s| !s.trim().is_empty())
         {
             dict.insert("etherscan_api_key".to_string(), etherscan_api_key.to_string().into());
+        }
+
+        if let Some(api_version) = &self.etherscan_api_version {
+            dict.insert("etherscan_api_version".to_string(), api_version.to_string().into());
         }
 
         if self.show_progress {

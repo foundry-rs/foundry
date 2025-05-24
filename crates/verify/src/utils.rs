@@ -1,6 +1,6 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, TxKind};
 use alloy_provider::{network::AnyRpcBlock, Provider};
 use alloy_rpc_types::BlockId;
 use clap::ValueEnum;
@@ -9,19 +9,18 @@ use foundry_block_explorers::{
     contract::{ContractCreationData, ContractMetadata, Metadata},
     errors::EtherscanError,
 };
-use foundry_common::{abi::encode_args, compile::ProjectCompiler, provider::RetryProvider, shell};
+use foundry_common::{
+    abi::encode_args, compile::ProjectCompiler, ignore_metadata_hash, provider::RetryProvider,
+    shell,
+};
 use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, opts::EvmOpts,
-    traces::TraceMode,
+    traces::TraceMode, Env, EnvMut,
 };
 use reqwest::Url;
-use revm_primitives::{
-    db::Database,
-    env::{EnvWithHandlerCfg, HandlerCfg},
-    Bytecode, Env, SpecId, TxKind,
-};
+use revm::{bytecode::Bytecode, database::Database, primitives::hardfork::SpecId};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use yansi::Paint;
@@ -197,32 +196,11 @@ fn is_partial_match(
 }
 
 fn try_extract_and_compare_bytecode(mut local_bytecode: &[u8], mut bytecode: &[u8]) -> bool {
-    local_bytecode = extract_metadata_hash(local_bytecode);
-    bytecode = extract_metadata_hash(bytecode);
+    local_bytecode = ignore_metadata_hash(local_bytecode);
+    bytecode = ignore_metadata_hash(bytecode);
 
     // Now compare the local code and bytecode
     local_bytecode == bytecode
-}
-
-/// @dev This assumes that the metadata is at the end of the bytecode
-fn extract_metadata_hash(bytecode: &[u8]) -> &[u8] {
-    // Get the last two bytes of the bytecode to find the length of CBOR metadata
-    let metadata_len = &bytecode[bytecode.len() - 2..];
-    let metadata_len = u16::from_be_bytes([metadata_len[0], metadata_len[1]]);
-
-    if metadata_len as usize <= bytecode.len() {
-        if ciborium::from_reader::<ciborium::Value, _>(
-            &bytecode[bytecode.len() - 2 - metadata_len as usize..bytecode.len() - 2],
-        )
-        .is_ok()
-        {
-            &bytecode[..bytecode.len() - 2 - metadata_len as usize]
-        } else {
-            bytecode
-        }
-    } else {
-        bytecode
-    }
 }
 
 fn find_mismatch_in_settings(
@@ -348,13 +326,13 @@ pub async fn get_tracing_executor(
     Ok((env, executor))
 }
 
-pub fn configure_env_block(env: &mut Env, block: &AnyRpcBlock) {
-    env.block.timestamp = U256::from(block.header.timestamp);
-    env.block.coinbase = block.header.beneficiary;
+pub fn configure_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock) {
+    env.block.timestamp = block.header.timestamp;
+    env.block.beneficiary = block.header.beneficiary;
     env.block.difficulty = block.header.difficulty;
     env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
-    env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
-    env.block.gas_limit = U256::from(block.header.gas_limit);
+    env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
+    env.block.gas_limit = block.header.gas_limit;
 }
 
 pub fn deploy_contract(
@@ -363,14 +341,19 @@ pub fn deploy_contract(
     spec_id: SpecId,
     to: Option<TxKind>,
 ) -> Result<Address, eyre::ErrReport> {
-    let env_with_handler = EnvWithHandlerCfg::new(Box::new(env.clone()), HandlerCfg::new(spec_id));
+    let env = Env::new_with_spec_id(
+        env.evm_env.cfg_env.clone(),
+        env.evm_env.block_env.clone(),
+        env.tx.clone(),
+        spec_id,
+    );
 
     if to.is_some_and(|to| to.is_call()) {
         let TxKind::Call(to) = to.unwrap() else { unreachable!() };
         if to != DEFAULT_CREATE2_DEPLOYER {
             eyre::bail!("Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx.");
         }
-        let result = executor.transact_with_env(env_with_handler)?;
+        let result = executor.transact_with_env(env)?;
 
         trace!(transact_result = ?result.exit_reason);
         if result.result.len() != 20 {
@@ -381,7 +364,7 @@ pub fn deploy_contract(
 
         Ok(Address::from_slice(&result.result))
     } else {
-        let deploy_result = executor.deploy_with_env(env_with_handler, None)?;
+        let deploy_result = executor.deploy_with_env(env, None)?;
         trace!(deploy_result = ?deploy_result.raw.exit_reason);
         Ok(deploy_result.address)
     }

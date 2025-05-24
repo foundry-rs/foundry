@@ -16,6 +16,7 @@ pub fn run() -> Result<()> {
 
 /// Setup the exception handler and other utilities.
 pub fn setup() -> Result<()> {
+    utils::install_crypto_provider();
     handler::install();
     utils::load_dotenv();
     utils::enable_paint();

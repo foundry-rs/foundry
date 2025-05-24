@@ -6,12 +6,12 @@ use forge::{
 };
 use foundry_evm::{
     decode::decode_console_logs,
-    revm::primitives::SpecId,
     traces::{decode_trace_arena, render_trace_arena, CallTraceDecoderBuilder},
 };
 use foundry_test_utils::{init_tracing, Filter};
 use futures::future::join_all;
 use itertools::Itertools;
+use revm::primitives::hardfork::SpecId;
 use std::collections::BTreeMap;
 
 /// How to execute a test run.
@@ -77,9 +77,7 @@ impl TestConfig {
                     let decoded_traces = join_all(result.traces.iter_mut().map(|(_, arena)| {
                         let decoder = &call_trace_decoder;
                         async move {
-                            decode_trace_arena(arena, decoder)
-                                .await
-                                .expect("Failed to decode traces");
+                            decode_trace_arena(arena, decoder).await;
                             render_trace_arena(arena)
                         }
                     }))

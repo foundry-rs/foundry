@@ -2,6 +2,7 @@ use crate::{
     eth::{
         backend::{
             db::{Db, SerializableState},
+            env::Env,
             fork::{ClientFork, ClientForkConfig},
             genesis::GenesisConfig,
             mem::fork_db::ForkedDatabase,
@@ -10,9 +11,9 @@ use crate::{
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
         pool::transactions::{PoolTransaction, TransactionOrder},
     },
-    hardfork::{ChainHardfork, OptimismHardfork},
+    hardfork::ChainHardfork,
     mem::{self, in_memory_db::MemDb},
-    EthereumHardfork, FeeManager, PrecompileFactory,
+    EthereumHardfork, FeeManager, OptimismHardfork, PrecompileFactory,
 };
 use alloy_consensus::BlockHeader;
 use alloy_genesis::Genesis;
@@ -36,13 +37,18 @@ use foundry_config::Config;
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
-    revm::primitives::{BlockEnv, CfgEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg, SpecId, TxEnv},
     utils::apply_chain_and_block_specific_env_changes,
 };
+use foundry_evm_core::AsEnvMut;
 use itertools::Itertools;
+use op_revm::OpTransaction;
 use parking_lot::RwLock;
-use rand::thread_rng;
-use revm::primitives::BlobExcessGasAndPrice;
+use rand_08::thread_rng;
+use revm::{
+    context::{BlockEnv, CfgEnv, TxEnv},
+    context_interface::block::BlobExcessGasAndPrice,
+    primitives::hardfork::SpecId,
+};
 use serde_json::{json, Value};
 use std::{
     fmt::Write as FmtWrite,
@@ -63,7 +69,7 @@ pub const NODE_PORT: u16 = 8545;
 /// Default chain id of the node
 pub const CHAIN_ID: u64 = 31337;
 /// The default gas limit for all transactions
-pub const DEFAULT_GAS_LIMIT: u128 = 30_000_000;
+pub const DEFAULT_GAS_LIMIT: u64 = 30_000_000;
 /// Default mnemonic for dev accounts
 pub const DEFAULT_MNEMONIC: &str = "test test test test test test test test test test test junk";
 
@@ -86,7 +92,7 @@ pub struct NodeConfig {
     /// Chain ID of the EVM chain
     pub chain_id: Option<u64>,
     /// Default gas limit for all txs
-    pub gas_limit: Option<u128>,
+    pub gas_limit: Option<u64>,
     /// If set to `true`, disables the block gas limit
     pub disable_block_gas_limit: bool,
     /// Default gas price for all txs
@@ -505,7 +511,7 @@ impl NodeConfig {
 
     pub fn get_blob_excess_gas_and_price(&self) -> BlobExcessGasAndPrice {
         if let Some(blob_excess_gas_and_price) = &self.blob_excess_gas_and_price {
-            blob_excess_gas_and_price.clone()
+            *blob_excess_gas_and_price
         } else if let Some(excess_blob_gas) = self.genesis.as_ref().and_then(|g| g.excess_blob_gas)
         {
             BlobExcessGasAndPrice::new(excess_blob_gas, false)
@@ -518,7 +524,7 @@ impl NodeConfig {
     /// Returns the hardfork to use
     pub fn get_hardfork(&self) -> ChainHardfork {
         if self.odyssey {
-            return ChainHardfork::Ethereum(EthereumHardfork::PragueEOF);
+            return ChainHardfork::Ethereum(EthereumHardfork::Prague);
         }
         if let Some(hardfork) = self.hardfork {
             return hardfork;
@@ -587,7 +593,7 @@ impl NodeConfig {
 
     /// Sets the gas limit
     #[must_use]
-    pub fn with_gas_limit(mut self, gas_limit: Option<u128>) -> Self {
+    pub fn with_gas_limit(mut self, gas_limit: Option<u64>) -> Self {
         self.gas_limit = gas_limit;
         self
     }
@@ -1018,8 +1024,9 @@ impl NodeConfig {
     pub(crate) async fn setup(&mut self) -> Result<mem::Backend> {
         // configure the revm environment
 
-        let mut cfg =
-            CfgEnvWithHandlerCfg::new_with_spec_id(CfgEnv::default(), self.get_hardfork().into());
+        let mut cfg = CfgEnv::default();
+        cfg.spec = self.get_hardfork().into();
+
         cfg.chain_id = self.get_chain_id();
         cfg.limit_contract_code_size = self.code_size_limit;
         // EIP-3607 rejects transactions from senders with deployed code.
@@ -1027,25 +1034,28 @@ impl NodeConfig {
         // caller is a contract. So we disable the check by default.
         cfg.disable_eip3607 = true;
         cfg.disable_block_gas_limit = self.disable_block_gas_limit;
-        cfg.handler_cfg.is_optimism = self.enable_optimism;
 
         if let Some(value) = self.memory_limit {
             cfg.memory_limit = value;
         }
 
-        let env = revm::primitives::Env {
-            cfg: cfg.cfg_env,
-            block: BlockEnv {
-                gas_limit: U256::from(self.gas_limit()),
-                basefee: U256::from(self.get_base_fee()),
+        let spec_id = cfg.spec;
+        let mut env = Env::new(
+            cfg,
+            BlockEnv {
+                gas_limit: self.gas_limit(),
+                basefee: self.get_base_fee(),
                 ..Default::default()
             },
-            tx: TxEnv { chain_id: self.get_chain_id().into(), ..Default::default() },
-        };
-        let mut env = EnvWithHandlerCfg::new(Box::new(env), cfg.handler_cfg);
+            OpTransaction {
+                base: TxEnv { chain_id: Some(self.get_chain_id()), ..Default::default() },
+                ..Default::default()
+            },
+            self.enable_optimism,
+        );
 
         let fees = FeeManager::new(
-            cfg.handler_cfg.spec_id,
+            spec_id,
             self.get_base_fee(),
             !self.disable_min_priority_fee,
             self.get_gas_price(),
@@ -1064,16 +1074,16 @@ impl NodeConfig {
             // --chain-id flag gets precedence over the genesis.json chain id
             // <https://github.com/foundry-rs/foundry/issues/10059>
             if self.chain_id.is_none() {
-                env.cfg.chain_id = genesis.config.chain_id;
+                env.evm_env.cfg_env.chain_id = genesis.config.chain_id;
             }
-            env.block.timestamp = U256::from(genesis.timestamp);
+            env.evm_env.block_env.timestamp = genesis.timestamp;
             if let Some(base_fee) = genesis.base_fee_per_gas {
-                env.block.basefee = U256::from(base_fee);
+                env.evm_env.block_env.basefee = base_fee.try_into()?;
             }
             if let Some(number) = genesis.number {
-                env.block.number = U256::from(number);
+                env.evm_env.block_env.number = number;
             }
-            env.block.coinbase = genesis.coinbase;
+            env.evm_env.block_env.beneficiary = genesis.coinbase;
         }
 
         let genesis = GenesisConfig {
@@ -1129,7 +1139,7 @@ impl NodeConfig {
     pub async fn setup_fork_db(
         &mut self,
         eth_rpc_url: String,
-        env: &mut EnvWithHandlerCfg,
+        env: &mut Env,
         fees: &FeeManager,
     ) -> Result<(Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>)> {
         let (db, config) = self.setup_fork_db_config(eth_rpc_url, env, fees).await?;
@@ -1146,10 +1156,10 @@ impl NodeConfig {
     pub async fn setup_fork_db_config(
         &mut self,
         eth_rpc_url: String,
-        env: &mut EnvWithHandlerCfg,
+        env: &mut Env,
         fees: &FeeManager,
     ) -> Result<(ForkedDatabase, ClientForkConfig)> {
-        // TODO make provider agnostic
+        debug!(target: "node", ?eth_rpc_url, "setting up fork db");
         let provider = Arc::new(
             ProviderBuilder::new(&eth_rpc_url)
                 .timeout(self.fork_request_timeout)
@@ -1177,7 +1187,7 @@ impl NodeConfig {
                     provider.get_chain_id().await.wrap_err("failed to fetch network chain ID")?;
                 if alloy_chains::NamedChain::Mainnet == chain_id {
                     let hardfork: EthereumHardfork = fork_block_number.into();
-                    env.handler_cfg.spec_id = hardfork.into();
+                    env.evm_env.cfg_env.spec = hardfork.into();
                     self.hardfork = Some(ChainHardfork::Ethereum(hardfork));
                 }
                 Some(U256::from(chain_id))
@@ -1221,16 +1231,16 @@ latest block number: {latest_block}"
         let gas_limit = self.fork_gas_limit(&block);
         self.gas_limit = Some(gas_limit);
 
-        env.block = BlockEnv {
-            number: U256::from(fork_block_number),
-            timestamp: U256::from(block.header.timestamp),
+        env.evm_env.block_env = BlockEnv {
+            number: fork_block_number,
+            timestamp: block.header.timestamp,
             difficulty: block.header.difficulty,
             // ensures prevrandao is set
             prevrandao: Some(block.header.mix_hash.unwrap_or_default()),
-            gas_limit: U256::from(gas_limit),
+            gas_limit,
             // Keep previous `coinbase` and `basefee` value
-            coinbase: env.block.coinbase,
-            basefee: env.block.basefee,
+            beneficiary: env.evm_env.block_env.beneficiary,
+            basefee: env.evm_env.block_env.basefee,
             ..Default::default()
         };
 
@@ -1238,11 +1248,11 @@ latest block number: {latest_block}"
         if self.base_fee.is_none() {
             if let Some(base_fee) = block.header.base_fee_per_gas {
                 self.base_fee = Some(base_fee);
-                env.block.basefee = U256::from(base_fee);
+                env.evm_env.block_env.basefee = base_fee;
                 // this is the base fee of the current block, but we need the base fee of
                 // the next block
                 let next_block_base_fee = fees.get_next_block_base_fee_per_gas(
-                    block.header.gas_used as u128,
+                    block.header.gas_used,
                     gas_limit,
                     block.header.base_fee_per_gas.unwrap_or_default(),
                 );
@@ -1253,10 +1263,10 @@ latest block number: {latest_block}"
             if let (Some(blob_excess_gas), Some(blob_gas_used)) =
                 (block.header.excess_blob_gas, block.header.blob_gas_used)
             {
-                env.block.blob_excess_gas_and_price =
+                env.evm_env.block_env.blob_excess_gas_and_price =
                     Some(BlobExcessGasAndPrice::new(blob_excess_gas, false));
-                let next_block_blob_excess_gas = fees
-                    .get_next_block_blob_excess_gas(blob_excess_gas as u128, blob_gas_used as u128);
+                let next_block_blob_excess_gas =
+                    fees.get_next_block_blob_excess_gas(blob_excess_gas, blob_gas_used);
                 fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
                     next_block_blob_excess_gas,
                     false,
@@ -1285,15 +1295,15 @@ latest block number: {latest_block}"
 
             // need to update the dev signers and env with the chain id
             self.set_chain_id(Some(chain_id));
-            env.cfg.chain_id = chain_id;
-            env.tx.chain_id = chain_id.into();
+            env.evm_env.cfg_env.chain_id = chain_id;
+            env.tx.base.chain_id = chain_id.into();
             chain_id
         };
         let override_chain_id = self.chain_id;
         // apply changes such as difficulty -> prevrandao and chain specifics for current chain id
-        apply_chain_and_block_specific_env_changes::<AnyNetwork>(env, &block);
+        apply_chain_and_block_specific_env_changes::<AnyNetwork>(env.as_env_mut(), &block);
 
-        let meta = BlockchainDbMeta::new(*env.env.clone(), eth_rpc_url.clone());
+        let meta = BlockchainDbMeta::new(env.evm_env.block_env.clone(), eth_rpc_url.clone());
         let block_chain_db = if self.fork_chain_id.is_some() {
             BlockchainDb::new_skip_check(meta, self.block_cache_path(fork_block_number))
         } else {
@@ -1324,9 +1334,11 @@ latest block number: {latest_block}"
             compute_units_per_second: self.compute_units_per_second,
             total_difficulty: block.header.total_difficulty.unwrap_or_default(),
             blob_gas_used: block.header.blob_gas_used.map(|g| g as u128),
-            blob_excess_gas_and_price: env.block.blob_excess_gas_and_price.clone(),
+            blob_excess_gas_and_price: env.evm_env.block_env.blob_excess_gas_and_price,
             force_transactions,
         };
+
+        debug!(target: "node", fork_number=config.block_number, fork_hash=%config.block_hash, "set up fork db");
 
         let mut db = ForkedDatabase::new(backend, block_chain_db);
 
@@ -1342,24 +1354,24 @@ latest block number: {latest_block}"
     pub(crate) fn fork_gas_limit<T: TransactionResponse, H: BlockHeader>(
         &self,
         block: &Block<T, H>,
-    ) -> u128 {
+    ) -> u64 {
         if !self.disable_block_gas_limit {
             if let Some(gas_limit) = self.gas_limit {
                 return gas_limit;
             } else if block.header.gas_limit() > 0 {
-                return block.header.gas_limit() as u128;
+                return block.header.gas_limit();
             }
         }
 
-        u64::MAX as u128
+        u64::MAX
     }
 
     /// Returns the gas limit for a non forked anvil instance
     ///
     /// Checks the config for the `disable_block_gas_limit` flag
-    pub(crate) fn gas_limit(&self) -> u128 {
+    pub(crate) fn gas_limit(&self) -> u64 {
         if self.disable_block_gas_limit {
-            return u64::MAX as u128;
+            return u64::MAX;
         }
 
         self.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT)
@@ -1378,7 +1390,7 @@ async fn derive_block_and_transactions(
         ForkChoice::Block(block_number) => {
             let block_number = *block_number;
             if block_number >= 0 {
-                return Ok((block_number as u64, None))
+                return Ok((block_number as u64, None));
             }
             // subtract from latest block number
             let latest = provider.get_block_number().await?;
@@ -1420,14 +1432,14 @@ async fn derive_block_and_transactions(
     }
 }
 
-/// Fork delimiter used to specify which block or transaction to fork from
+/// Fork delimiter used to specify which block or transaction to fork from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ForkChoice {
     /// Block number to fork from.
     ///
-    /// f a negative the the given value is subtracted from the `latest` block number.
+    /// If negative, the given value is subtracted from the `latest` block number.
     Block(i128),
-    /// Transaction hash to fork from
+    /// Transaction hash to fork from.
     Transaction(TxHash),
 }
 

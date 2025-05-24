@@ -21,6 +21,7 @@ pub fn run() -> Result<()> {
 
 /// Setup the global logger and other utilities.
 pub fn setup() -> Result<()> {
+    utils::install_crypto_provider();
     handler::install();
     utils::load_dotenv();
     utils::subscriber();
@@ -150,5 +151,6 @@ pub fn run_command(args: Forge) -> Result<()> {
         ForgeSubcommand::Soldeer(cmd) => utils::block_on(cmd.run()),
         ForgeSubcommand::Eip712(cmd) => cmd.run(),
         ForgeSubcommand::BindJson(cmd) => cmd.run(),
+        ForgeSubcommand::Lint(cmd) => cmd.run(),
     }
 }

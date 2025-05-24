@@ -141,13 +141,13 @@ impl ContractData {
     /// import "lib/openzeppelin-contracts/contracts/token/ERC20.sol";
     ///
     /// abstract contract DeployHelper335 is ERC20 {
-    ///     struct ConstructorArgs {
+    ///     struct FoundryPpConstructorArgs {
     ///         string name;
     ///         string symbol;
     ///     }
     /// }
     ///
-    /// function encodeArgs335(DeployHelper335.ConstructorArgs memory args) pure returns (bytes memory) {
+    /// function encodeArgs335(DeployHelper335.FoundryPpConstructorArgs memory args) pure returns (bytes memory) {
     ///     return abi.encode(args.name, args.symbol);
     /// }
     /// ```
@@ -158,7 +158,7 @@ impl ContractData {
     /// ```
     /// becomes
     /// ```solidity
-    /// vm.deployCode("artifact path", encodeArgs335(DeployHelper335.ConstructorArgs(name, symbol)))
+    /// vm.deployCode("artifact path", encodeArgs335(DeployHelper335.FoundryPpConstructorArgs(name, symbol)))
     /// ```
     /// With named arguments:
     /// ```solidity
@@ -166,7 +166,7 @@ impl ContractData {
     /// ```
     /// becomes
     /// ```solidity
-    /// vm.deployCode("artifact path", encodeArgs335(DeployHelper335.ConstructorArgs({name: name, symbol: symbol})))
+    /// vm.deployCode("artifact path", encodeArgs335(DeployHelper335.FoundryPpConstructorArgs({name: name, symbol: symbol})))
     /// ```
     pub fn build_helper(&self) -> Option<String> {
         let Self { contract_id, path, name, constructor_data, artifact: _ } = self;
@@ -183,12 +183,12 @@ pragma solidity >=0.4.0;
 import "{path}";
 
 abstract contract DeployHelper{contract_id} is {name} {{
-    struct ConstructorArgs {{
+    struct FoundryPpConstructorArgs {{
         {struct_fields};
     }}
 }}
 
-function encodeArgs{contract_id}(DeployHelper{contract_id}.ConstructorArgs memory args) pure returns (bytes memory) {{
+function encodeArgs{contract_id}(DeployHelper{contract_id}.FoundryPpConstructorArgs memory args) pure returns (bytes memory) {{
     return abi.encode({abi_encode_args});
 }}
         "#,

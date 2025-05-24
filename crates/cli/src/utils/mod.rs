@@ -26,6 +26,9 @@ pub use suggestions::*;
 mod abi;
 pub use abi::*;
 
+mod allocator;
+pub use allocator::*;
+
 // reexport all `foundry_config::utils`
 #[doc(hidden)]
 pub use foundry_config::utils::*;
@@ -203,6 +206,23 @@ pub fn load_dotenv() {
 pub fn enable_paint() {
     let enable = yansi::Condition::os_support() && yansi::Condition::tty_and_color_live();
     yansi::whenever(yansi::Condition::cached(enable));
+}
+
+/// This force installs the default crypto provider.
+///
+/// This is necessary in case there are more than one available backends enabled in rustls (ring,
+/// aws-lc-rs).
+///
+/// This should be called high in the main fn.
+///
+/// See also:
+///   <https://github.com/snapview/tokio-tungstenite/issues/353#issuecomment-2455100010>
+///   <https://github.com/awslabs/aws-sdk-rust/discussions/1257>
+pub fn install_crypto_provider() {
+    // https://github.com/snapview/tokio-tungstenite/issues/353
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install default rustls crypto provider");
 }
 
 /// Useful extensions to [`std::process::Command`].
@@ -556,6 +576,10 @@ ignore them in the `.gitignore` file."
 
     pub fn submodule_init(self) -> Result<()> {
         self.cmd().stderr(self.stderr()).args(["submodule", "init"]).exec().map(drop)
+    }
+
+    pub fn submodule_sync(self) -> Result<()> {
+        self.cmd().stderr(self.stderr()).args(["submodule", "sync"]).exec().map(drop)
     }
 
     pub fn cmd(self) -> Command {

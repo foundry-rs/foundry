@@ -7,7 +7,7 @@ use crate::{
     },
     verify::VerifierArgs,
 };
-use alloy_primitives::{hex, Address, Bytes, U256};
+use alloy_primitives::{hex, Address, Bytes, TxKind, U256};
 use alloy_provider::{
     network::{AnyTxEnvelope, TransactionBuilder},
     Provider,
@@ -23,7 +23,8 @@ use foundry_common::shell;
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{figment, impl_figment_convert, Config};
 use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, utils::configure_tx_req_env};
-use revm_primitives::{AccountInfo, TxKind};
+use foundry_evm_core::AsEnvMut;
+use revm::state::AccountInfo;
 use std::path::PathBuf;
 
 impl_figment_convert!(VerifyBytecodeArgs);
@@ -105,6 +106,10 @@ impl figment::Provider for VerifyBytecodeArgs {
             dict.insert("etherscan_api_key".into(), api_key.as_str().into());
         }
 
+        if let Some(api_version) = &self.verifier.verifier_api_version {
+            dict.insert("etherscan_api_version".into(), api_version.to_string().into());
+        }
+
         if let Some(block) = &self.block {
             dict.insert("block".into(), figment::value::Value::serialize(block)?);
         }
@@ -136,13 +141,8 @@ impl VerifyBytecodeArgs {
         self.etherscan.key = config.get_etherscan_config_with_chain(Some(chain))?.map(|c| c.key);
 
         // Etherscan client
-        let etherscan = EtherscanVerificationProvider.client(
-            self.etherscan.chain.unwrap_or_default(),
-            &self.verifier.verifier,
-            self.verifier.verifier_url.as_deref(),
-            self.etherscan.key().as_deref(),
-            &config,
-        )?;
+        let etherscan =
+            EtherscanVerificationProvider.client(&self.etherscan, &self.verifier, &config)?;
 
         // Get the bytecode at the address, bailing if it doesn't exist.
         let code = provider.get_code_at(self.address).await?;
@@ -243,7 +243,7 @@ impl VerifyBytecodeArgs {
             )
             .await?;
 
-            env.block.number = U256::ZERO; // Genesis block
+            env.evm_env.block_env.number = 0;
             let genesis_block = provider.get_block(gen_blk_num.into()).full().await?;
 
             // Setup genesis tx and env.
@@ -254,15 +254,13 @@ impl VerifyBytecodeArgs {
                 .into_create();
 
             if let Some(ref block) = genesis_block {
-                configure_env_block(&mut env, block);
+                configure_env_block(&mut env.as_env_mut(), block);
                 gen_tx_req.max_fee_per_gas = block.header.base_fee_per_gas.map(|g| g as u128);
                 gen_tx_req.gas = Some(block.header.gas_limit);
                 gen_tx_req.gas_price = block.header.base_fee_per_gas.map(|g| g as u128);
             }
 
-            // configure_tx_rq_env(&mut env, &gen_tx);
-
-            configure_tx_req_env(&mut env, &gen_tx_req, None)
+            configure_tx_req_env(&mut env.as_env_mut(), &gen_tx_req, None)
                 .wrap_err("Failed to configure tx request env")?;
 
             // Seed deployer account with funds
@@ -291,7 +289,7 @@ impl VerifyBytecodeArgs {
             .await?;
 
             let match_type = crate::utils::match_bytecodes(
-                &deployed_bytecode.original_bytes(),
+                deployed_bytecode.original_byte_slice(),
                 &onchain_runtime_code,
                 &constructor_args,
                 true,
@@ -445,7 +443,7 @@ impl VerifyBytecodeArgs {
                 evm_opts,
             )
             .await?;
-            env.block.number = U256::from(simulation_block);
+            env.evm_env.block_env.number = simulation_block;
             let block = provider.get_block(simulation_block.into()).full().await?;
 
             // Workaround for the NonceTooHigh issue as we're not simulating prior txs of the same
@@ -461,7 +459,7 @@ impl VerifyBytecodeArgs {
             transaction.set_nonce(prev_block_nonce);
 
             if let Some(ref block) = block {
-                configure_env_block(&mut env, block)
+                configure_env_block(&mut env.as_env_mut(), block)
             }
 
             // Replace the `input` with local creation code in the creation tx.
@@ -479,7 +477,7 @@ impl VerifyBytecodeArgs {
             }
 
             // configure_req__env(&mut env, &transaction.inner);
-            configure_tx_req_env(&mut env, &transaction, None)
+            configure_tx_req_env(&mut env.as_env_mut(), &transaction, None)
                 .wrap_err("Failed to configure tx request env")?;
 
             let fork_address = crate::utils::deploy_contract(
@@ -501,7 +499,7 @@ impl VerifyBytecodeArgs {
 
             // Compare the onchain runtime bytecode with the runtime code from the fork.
             let match_type = crate::utils::match_bytecodes(
-                &fork_runtime_code.original_bytes(),
+                fork_runtime_code.original_byte_slice(),
                 &onchain_runtime_code,
                 &constructor_args,
                 true,

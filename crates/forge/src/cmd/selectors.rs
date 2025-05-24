@@ -95,7 +95,7 @@ impl SelectorsSubcommands {
                 // compile the project to get the artifacts/abis
                 let project = build_args.project()?;
                 let outcome = ProjectCompiler::new().quiet(true).compile(&project)?;
-                cache_local_signatures(&outcome, Config::foundry_cache_dir().unwrap())?
+                cache_local_signatures(&outcome, &Config::foundry_cache_dir().unwrap())?
             }
             Self::Upload { contract, all, project_paths } => {
                 let build_args = BuildOpts {

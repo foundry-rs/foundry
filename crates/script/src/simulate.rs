@@ -11,7 +11,7 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{map::HashMap, utils::format_units, Address, Bytes, TxKind, U256};
+use alloy_primitives::{map::HashMap, utils::format_units, Address, Bytes, TxKind};
 use dialoguer::Confirm;
 use eyre::{Context, Result};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
@@ -139,7 +139,7 @@ impl PreSimulationState {
 
                 // Simulate mining the transaction if the user passes `--slow`.
                 if self.args.slow {
-                    runner.executor.env_mut().block.number += U256::from(1);
+                    runner.executor.env_mut().evm_env.block_env.number += 1;
                 }
 
                 let is_noop_tx = if let Some(to) = to {
@@ -168,7 +168,7 @@ impl PreSimulationState {
             // Transaction will be `None`, if execution didn't pass.
             if tx.is_none() || self.script_config.evm_opts.verbosity > 3 {
                 for (_, trace) in &mut traces {
-                    decode_trace_arena(trace, &self.execution_artifacts.decoder).await?;
+                    decode_trace_arena(trace, &self.execution_artifacts.decoder).await;
                     sh_println!("{}", render_trace_arena(trace))?;
                 }
             }

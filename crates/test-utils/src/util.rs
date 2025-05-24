@@ -774,7 +774,7 @@ pub struct TestCommand {
     /// The actual command we use to control the process.
     cmd: Command,
     // initial: Command,
-    current_dir_lock: Option<parking_lot::lock_api::MutexGuard<'static, parking_lot::RawMutex, ()>>,
+    current_dir_lock: Option<parking_lot::MutexGuard<'static, ()>>,
     stdin_fun: Option<Box<dyn FnOnce(ChildStdin)>>,
     /// If true, command output is redacted.
     redact_output: bool,
@@ -1008,6 +1008,8 @@ fn test_redactions() -> snapbox::Redactions {
             ("[SOLC_VERSION]", r"Solc( version)? \d+.\d+.\d+"),
             ("[ELAPSED]", r"(finished )?in \d+(\.\d+)?\w?s( \(.*?s CPU time\))?"),
             ("[GAS]", r"[Gg]as( used)?: \d+"),
+            ("[GAS_COST]", r"[Gg]as cost\s*\(\d+\)"),
+            ("[GAS_LIMIT]", r"[Gg]as limit\s*\(\d+\)"),
             ("[AVG_GAS]", r"μ: \d+, ~: \d+"),
             ("[FILE]", r"-->.*\.sol"),
             ("[FILE]", r"Location(.|\n)*\.rs(.|\n)*Backtrace"),

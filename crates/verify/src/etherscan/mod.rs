@@ -1,7 +1,8 @@
 use crate::{
-    provider::{VerificationContext, VerificationProvider, VerificationProviderType},
+    provider::{VerificationContext, VerificationProvider},
     retry::RETRY_CHECK_ON_VERIFY,
     verify::{VerifyArgs, VerifyCheckArgs},
+    VerifierArgs,
 };
 use alloy_json_abi::Function;
 use alloy_primitives::hex;
@@ -12,12 +13,15 @@ use foundry_block_explorers::{
     errors::EtherscanError,
     utils::lookup_compiler_version,
     verify::{CodeFormat, VerifyContract},
-    Client,
+    Client, EtherscanApiVersion,
 };
-use foundry_cli::utils::{get_provider, read_constructor_args_file, LoadConfig};
+use foundry_cli::{
+    opts::EtherscanOpts,
+    utils::{get_provider, read_constructor_args_file, LoadConfig},
+};
 use foundry_common::{abi::encode_function_args, retry::RetryError};
 use foundry_compilers::{artifacts::BytecodeObject, Artifact};
-use foundry_config::{Chain, Config};
+use foundry_config::Config;
 use foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER;
 use regex::Regex;
 use semver::{BuildMetadata, Version};
@@ -150,13 +154,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
     /// Executes the command to check verification status on Etherscan
     async fn check(&self, args: VerifyCheckArgs) -> Result<()> {
         let config = args.load_config()?;
-        let etherscan = self.client(
-            args.etherscan.chain.unwrap_or_default(),
-            &args.verifier.verifier,
-            args.verifier.verifier_url.as_deref(),
-            args.etherscan.key().as_deref(),
-            &config,
-        )?;
+        let etherscan = self.client(&args.etherscan, &args.verifier, &config)?;
         args.retry
             .into_retry()
             .run_async_until_break(|| async {
@@ -219,13 +217,7 @@ impl EtherscanVerificationProvider {
         context: &VerificationContext,
     ) -> Result<(Client, VerifyContract)> {
         let config = args.load_config()?;
-        let etherscan = self.client(
-            args.etherscan.chain.unwrap_or_default(),
-            &args.verifier.verifier,
-            args.verifier.verifier_url.as_deref(),
-            args.etherscan.key().as_deref(),
-            &config,
-        )?;
+        let etherscan = self.client(&args.etherscan, &args.verifier, &config)?;
         let verify_args = self.create_verify_request(args, context).await?;
 
         Ok((etherscan, verify_args))
@@ -252,16 +244,37 @@ impl EtherscanVerificationProvider {
     /// Create an Etherscan client.
     pub(crate) fn client(
         &self,
-        chain: Chain,
-        verifier_type: &VerificationProviderType,
-        verifier_url: Option<&str>,
-        etherscan_key: Option<&str>,
+        etherscan_opts: &EtherscanOpts,
+        verifier_args: &VerifierArgs,
         config: &Config,
     ) -> Result<Client> {
+        let chain = etherscan_opts.chain.unwrap_or_default();
+        let etherscan_key = etherscan_opts.key();
+        let verifier_type = &verifier_args.verifier;
+        let verifier_url = verifier_args.verifier_url.as_deref();
+
+        // Verifier is etherscan if explicitly set or if no verifier set (default sourcify) but
+        // API key passed.
+        let is_etherscan = verifier_type.is_etherscan() ||
+            (verifier_type.is_sourcify() && etherscan_key.is_some());
         let etherscan_config = config.get_etherscan_config_with_chain(Some(chain))?;
 
+        let api_version = verifier_args.verifier_api_version.unwrap_or_else(|| {
+            if is_etherscan {
+                etherscan_config.as_ref().map(|c| c.api_version).unwrap_or_default()
+            } else {
+                EtherscanApiVersion::V1
+            }
+        });
+
         let etherscan_api_url = verifier_url
-            .or_else(|| etherscan_config.as_ref().map(|c| c.api_url.as_str()))
+            .or_else(|| {
+                if api_version == EtherscanApiVersion::V2 {
+                    None
+                } else {
+                    etherscan_config.as_ref().map(|c| c.api_url.as_str())
+                }
+            })
             .map(str::to_owned);
 
         let api_url = etherscan_api_url.as_deref();
@@ -269,20 +282,14 @@ impl EtherscanVerificationProvider {
             .as_ref()
             .and_then(|c| c.browser_url.as_deref())
             .or_else(|| chain.etherscan_urls().map(|(_, url)| url));
-
         let etherscan_key =
-            etherscan_key.or_else(|| etherscan_config.as_ref().map(|c| c.key.as_str()));
+            etherscan_key.or_else(|| etherscan_config.as_ref().map(|c| c.key.clone()));
 
-        let mut builder = Client::builder();
+        let mut builder = Client::builder().with_api_version(api_version);
 
         builder = if let Some(api_url) = api_url {
             // we don't want any trailing slashes because this can cause cloudflare issues: <https://github.com/foundry-rs/foundry/pull/6079>
             let api_url = api_url.trim_end_matches('/');
-
-            // Verifier is etherscan if explicitly set or if no verifier set (default sourcify) but
-            // API key passed.
-            let is_etherscan = verifier_type.is_etherscan() ||
-                (verifier_type.is_sourcify() && etherscan_key.is_some());
             let base_url = if !is_etherscan {
                 // If verifier is not Etherscan then set base url as api url without /api suffix.
                 api_url.strip_prefix("/api").unwrap_or(api_url)
@@ -392,13 +399,7 @@ impl EtherscanVerificationProvider {
         context: &VerificationContext,
     ) -> Result<String> {
         let provider = get_provider(&context.config)?;
-        let client = self.client(
-            args.etherscan.chain.unwrap_or_default(),
-            &args.verifier.verifier,
-            args.verifier.verifier_url.as_deref(),
-            args.etherscan.key.as_deref(),
-            &context.config,
-        )?;
+        let client = self.client(&args.etherscan, &args.verifier, &context.config)?;
 
         let creation_data = client.contract_creation_data(args.address).await?;
         let transaction = provider
@@ -465,6 +466,7 @@ async fn ensure_solc_build_metadata(version: Version) -> Result<Version> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::VerificationProviderType;
     use clap::Parser;
     use foundry_common::fs;
     use foundry_test_utils::{forgetest_async, str};
@@ -498,15 +500,7 @@ mod tests {
         let config = args.load_config().unwrap();
 
         let etherscan = EtherscanVerificationProvider::default();
-        let client = etherscan
-            .client(
-                args.etherscan.chain.unwrap_or_default(),
-                &args.verifier.verifier,
-                args.verifier.verifier_url.as_deref(),
-                args.etherscan.key().as_deref(),
-                &config,
-            )
-            .unwrap();
+        let client = etherscan.client(&args.etherscan, &args.verifier, &config).unwrap();
         assert_eq!(client.etherscan_api_url().as_str(), "https://api-testnet.polygonscan.com/");
 
         assert!(format!("{client:?}").contains("dummykey"));
@@ -526,16 +520,69 @@ mod tests {
         let config = args.load_config().unwrap();
 
         let etherscan = EtherscanVerificationProvider::default();
-        let client = etherscan
-            .client(
-                args.etherscan.chain.unwrap_or_default(),
-                &args.verifier.verifier,
-                args.verifier.verifier_url.as_deref(),
-                args.etherscan.key().as_deref(),
-                &config,
-            )
-            .unwrap();
+        let client = etherscan.client(&args.etherscan, &args.verifier, &config).unwrap();
         assert_eq!(client.etherscan_api_url().as_str(), "https://verifier-url.com/");
+        assert!(format!("{client:?}").contains("dummykey"));
+    }
+
+    #[test]
+    fn can_extract_etherscan_v2_verify_config() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+
+        let config = r#"
+                [profile.default]
+
+                [etherscan]
+                mumbai = { key = "dummykey", chain = 80001, url = "https://api-testnet.polygonscan.com/" }
+            "#;
+
+        let toml_file = root.join(Config::FILE_NAME);
+        fs::write(toml_file, config).unwrap();
+
+        let args: VerifyArgs = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0xd8509bee9c9bf012282ad33aba0d87241baf5064",
+            "src/Counter.sol:Counter",
+            "--verifier",
+            "etherscan",
+            "--chain",
+            "mumbai",
+            "--root",
+            root.as_os_str().to_str().unwrap(),
+        ]);
+
+        let config = args.load_config().unwrap();
+
+        let etherscan = EtherscanVerificationProvider::default();
+
+        let client = etherscan.client(&args.etherscan, &args.verifier, &config).unwrap();
+
+        assert_eq!(client.etherscan_api_url().as_str(), "https://api.etherscan.io/v2/api");
+        assert!(format!("{client:?}").contains("dummykey"));
+
+        let args: VerifyArgs = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0xd8509bee9c9bf012282ad33aba0d87241baf5064",
+            "src/Counter.sol:Counter",
+            "--verifier",
+            "etherscan",
+            "--chain",
+            "mumbai",
+            "--verifier-url",
+            "https://verifier-url.com/",
+            "--root",
+            root.as_os_str().to_str().unwrap(),
+        ]);
+
+        let config = args.load_config().unwrap();
+
+        assert_eq!(args.verifier.verifier, VerificationProviderType::Etherscan);
+
+        let etherscan = EtherscanVerificationProvider::default();
+        let client = etherscan.client(&args.etherscan, &args.verifier, &config).unwrap();
+        assert_eq!(client.etherscan_api_url().as_str(), "https://verifier-url.com/");
+        assert_eq!(*client.etherscan_api_version(), EtherscanApiVersion::V2);
         assert!(format!("{client:?}").contains("dummykey"));
     }
 
