@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+use alloy_chains::Chain;
 use alloy_hardforks::ethereum::mainnet::*;
 use alloy_rpc_types::BlockNumberOrTag;
 use eyre::bail;
@@ -60,26 +61,29 @@ pub enum EthereumHardfork {
 impl EthereumHardfork {
     /// Get the first block number of the hardfork.
     pub fn fork_block(&self) -> u64 {
-        match *self {
-            Self::Frontier => MAINNET_FRONTIER_BLOCK,
-            Self::Homestead => MAINNET_HOMESTEAD_BLOCK,
-            Self::Dao => MAINNET_DAO_BLOCK,
-            Self::Tangerine => MAINNET_TANGERINE_BLOCK,
-            Self::SpuriousDragon => MAINNET_SPURIOUS_DRAGON_BLOCK,
-            Self::Byzantium => MAINNET_BYZANTIUM_BLOCK,
-            Self::Constantinople => MAINNET_CONSTANTINOPLE_BLOCK,
-            Self::Petersburg => MAINNET_PETERSBURG_BLOCK,
-            Self::Istanbul => MAINNET_ISTANBUL_BLOCK,
-            Self::Muirglacier => MAINNET_MUIR_GLACIER_BLOCK,
-            Self::Berlin => MAINNET_BERLIN_BLOCK,
-            Self::London => MAINNET_LONDON_BLOCK,
-            Self::ArrowGlacier => MAINNET_ARROW_GLACIER_BLOCK,
-            Self::GrayGlacier => MAINNET_GRAY_GLACIER_BLOCK,
-            Self::Paris => MAINNET_PARIS_BLOCK,
-            Self::Shanghai => MAINNET_SHANGHAI_BLOCK,
-            Self::Cancun | Self::Latest => MAINNET_CANCUN_BLOCK,
-            Self::Prague => MAINNET_PRAGUE_BLOCK,
-        }
+        let alloy_fork = match self {
+            Self::Frontier => alloy_hardforks::EthereumHardfork::Frontier,
+            Self::Homestead => alloy_hardforks::EthereumHardfork::Homestead,
+            Self::Dao => alloy_hardforks::EthereumHardfork::Dao,
+            Self::Tangerine => alloy_hardforks::EthereumHardfork::Tangerine,
+            Self::SpuriousDragon => alloy_hardforks::EthereumHardfork::SpuriousDragon,
+            Self::Byzantium => alloy_hardforks::EthereumHardfork::Byzantium,
+            Self::Constantinople => alloy_hardforks::EthereumHardfork::Constantinople,
+            Self::Petersburg => alloy_hardforks::EthereumHardfork::Petersburg,
+            Self::Istanbul => alloy_hardforks::EthereumHardfork::Istanbul,
+            Self::Muirglacier => alloy_hardforks::EthereumHardfork::MuirGlacier,
+            Self::Berlin => alloy_hardforks::EthereumHardfork::Berlin,
+            Self::London => alloy_hardforks::EthereumHardfork::London,
+            Self::ArrowGlacier => alloy_hardforks::EthereumHardfork::ArrowGlacier,
+            Self::GrayGlacier => alloy_hardforks::EthereumHardfork::GrayGlacier,
+            Self::Paris => alloy_hardforks::EthereumHardfork::Paris,
+            Self::Shanghai => alloy_hardforks::EthereumHardfork::Shanghai,
+            Self::Cancun => alloy_hardforks::EthereumHardfork::Cancun,
+            Self::Prague => alloy_hardforks::EthereumHardfork::Prague,
+            Self::Latest => alloy_hardforks::EthereumHardfork::Osaka,
+        };
+        alloy_hardforks::EthereumHardfork::activation_block(&alloy_fork, Chain::mainnet())
+            .unwrap_or(u64::MAX)
     }
     pub fn from_block_number(block: u64) -> Option<Self> {
         Some(match block {
