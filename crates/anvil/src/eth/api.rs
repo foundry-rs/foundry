@@ -1880,13 +1880,8 @@ impl EthApi {
         let access_list_result =
             self.create_access_list(WithOtherFields::new(tx.clone()), None).await?;
         let access_list = access_list_result.access_list;
-        println!("> Access list contains {} entries", access_list.0.len());
-        println!("{}", address);
 
-        dbg!(&access_list);
         for item in access_list.0 {
-            println!("entry address = {:?}", item.address);
-            println!("storage_keys: {:?}", item.storage_keys);
             if item.address != token_address {
                 continue;
             };
@@ -1908,31 +1903,20 @@ impl EthApi {
                     continue;
                 };
 
-                println!("raw eth_call result = 0x{}", alloy_primitives::hex::encode(&result));
                 let decoded_result =
                     <B256 as alloy_sol_types::SolValue>::abi_decode(&result).unwrap();
 
                 let result_balance = U256::from_be_bytes::<32>(
                     decoded_result.to_vec().try_into().unwrap_or([0u8; 32]),
                 );
-                println!("decoded balance = {} (expected {})", result_balance, balance);
 
                 if result_balance == balance {
-                    println!(
-                        "balance matches {} ! writing storage slot {:?} to {}",
-                        balance, slot, balance
-                    );
                     self.anvil_set_storage_at(
                         token_address,
                         U256::from_be_bytes::<32>(**slot),
                         B256::from(balance.to_be_bytes()),
                     )
                     .await?;
-                } else {
-                    println!(
-                        "balance mismatch — skipping write. got {}, expected {}",
-                        result_balance, balance
-                    );
                 }
             }
         }
