@@ -2,12 +2,13 @@
 
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
+use alloy_ens::namehash;
 use alloy_primitives::{aliases::B32, map::HashMap, B64, U256};
 use alloy_sol_types::SolValue;
-use foundry_common::ens::namehash;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
 use proptest::prelude::Strategy;
 use rand::{seq::SliceRandom, Rng, RngCore};
+use revm::context::JournalTr;
 
 /// Contains locations of traces ignored via cheatcodes.
 ///
@@ -115,7 +116,7 @@ impl Cheatcode for randomInt_1Call {
 
 impl Cheatcode for randomBoolCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let rand_bool: bool = state.rng().gen();
+        let rand_bool: bool = state.rng().random();
         Ok(rand_bool.abi_encode())
     }
 }
@@ -232,9 +233,9 @@ impl Cheatcode for copyStorageCall {
             "target address cannot have arbitrary storage"
         );
 
-        if let Ok(from_account) = ccx.load_account(*from) {
+        if let Ok(from_account) = ccx.ecx.journaled_state.load_account(*from) {
             let from_storage = from_account.storage.clone();
-            if let Ok(mut to_account) = ccx.load_account(*to) {
+            if let Ok(mut to_account) = ccx.ecx.journaled_state.load_account(*to) {
                 to_account.storage = from_storage;
                 if let Some(ref mut arbitrary_storage) = &mut ccx.state.arbitrary_storage {
                     arbitrary_storage.mark_copy(from, to);
@@ -286,7 +287,7 @@ fn random_uint(state: &mut Cheatcodes, bits: Option<U256>, bounds: Option<(U256,
         ensure!(min <= max, "min must be less than or equal to max");
         // Generate random between range min..=max
         let exclusive_modulo = max - min;
-        let mut random_number: U256 = state.rng().gen();
+        let mut random_number: U256 = state.rng().random();
         if exclusive_modulo != U256::MAX {
             let inclusive_modulo = exclusive_modulo + U256::from(1);
             random_number %= inclusive_modulo;
