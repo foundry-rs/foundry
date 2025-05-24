@@ -1882,15 +1882,16 @@ impl EthApi {
             if item.address != token_address {
                 continue;
             };
-            for slot in item.storage_keys.iter() {
+            for slot in &item.storage_keys {
                 let tx = alloy_rpc_types::transaction::TransactionRequest::default()
                     .with_input(calldata.clone());
 
                 let account_override = alloy_rpc_types::state::AccountOverride::default()
                     .with_state_diff(std::iter::once((*slot, B256::from(balance.to_be_bytes()))));
 
-                let mut state_override = alloy_primitives::map::AddressHashMap::default();
-                state_override.insert(token_address, account_override);
+                let state_override = alloy_rpc_types::state::StateOverridesBuilder::default()
+                    .append(token_address, account_override)
+                    .build();
 
                 let evm_override = EvmOverrides::state(Some(state_override));
 
