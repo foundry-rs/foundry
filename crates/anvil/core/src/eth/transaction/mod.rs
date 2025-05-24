@@ -60,7 +60,7 @@ pub fn transaction_request_to_typed(
             from: from.unwrap_or_default(),
             source_hash: other.get_deserialized::<B256>("sourceHash")?.ok()?,
             to: to.unwrap_or_default(),
-            mint: Some(mint),
+            mint,
             value: value.unwrap_or_default(),
             gas_limit: gas.unwrap_or_default(),
             is_system_transaction: other.get_deserialized::<bool>("isSystemTx")?.ok()?,
@@ -574,7 +574,7 @@ impl PendingTransaction {
 
                 let deposit = DepositTransactionParts {
                     source_hash: *source_hash,
-                    mint: *mint,
+                    mint: Some(*mint),
                     is_system_transaction: *is_system_transaction,
                 };
 
