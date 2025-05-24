@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SolLintError"],"mod":["gas","high","info","macros","med"],"struct":["SolLint","SolidityLinter"]};
