@@ -243,7 +243,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, ToState> {
                 self.etherscan_api_key.as_deref(),
                 self.etherscan_api_version,
             )
-                .await?
+            .await?
         } else {
             (Vec::new(), None)
         };
