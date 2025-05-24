@@ -2,8 +2,8 @@ use crate::cmd::{
     bind::BindArgs, bind_json, build::BuildArgs, cache::CacheArgs, clone::CloneArgs,
     compiler::CompilerArgs, config, coverage, create::CreateArgs, doc::DocArgs, eip712, flatten,
     fmt::FmtArgs, geiger, generate, init::InitArgs, inspect, install::InstallArgs, lint::LintArgs,
-    remappings::RemappingArgs, remove::RemoveArgs, selectors::SelectorsSubcommands, snapshot,
-    soldeer, test, tree, update,
+    name::NameArgs, remappings::RemappingArgs, remove::RemoveArgs, selectors::SelectorsSubcommands,
+    snapshot, soldeer, test, tree, update,
 };
 use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
@@ -88,6 +88,10 @@ pub enum ForgeSubcommand {
     /// Deploy a smart contract.
     #[command(visible_alias = "c")]
     Create(CreateArgs),
+
+    /// Set an ENS name for a smart contract.
+    #[command(visible_alias = "n")]
+    Name(NameArgs),
 
     /// Create a new Forge project.
     Init(InitArgs),

@@ -33,6 +33,7 @@ foundry-evm-core.workspace = true
 foundry-wallets.workspace = true
 foundry-linking.workspace = true
 forge-script-sequence.workspace = true
+enscribe.workspace = true
 
 comfy-table.workspace = true
 eyre.workspace = true

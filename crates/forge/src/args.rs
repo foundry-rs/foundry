@@ -86,6 +86,7 @@ pub fn run_command(args: Forge) -> Result<()> {
             CacheSubcommands::Ls(cmd) => cmd.run(),
         },
         ForgeSubcommand::Create(cmd) => utils::block_on(cmd.run()),
+        ForgeSubcommand::Name(cmd) => utils::block_on(cmd.run()),
         ForgeSubcommand::Update(cmd) => cmd.run(),
         ForgeSubcommand::Install(cmd) => cmd.run(),
         ForgeSubcommand::Remove(cmd) => cmd.run(),
