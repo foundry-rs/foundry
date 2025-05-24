@@ -5,7 +5,7 @@ use serde::Serialize;
 
 /// A wrapper for the raw data options for `Wallet`, extracted to also be used standalone.
 /// The raw wallet options can either be:
-/// 1. Private Key (cleartext in CLI)
+/// 1. Private Key (cleartext in CLI or as `PRIVATE_KEY` env var)
 /// 2. Private Key (interactively via secure prompt)
 /// 3. Mnemonic (via file path)
 #[derive(Clone, Debug, Default, Serialize, Parser)]
@@ -16,7 +16,7 @@ pub struct RawWalletOpts {
     pub interactive: bool,
 
     /// Use the provided private key.
-    #[arg(long, value_name = "RAW_PRIVATE_KEY")]
+    #[arg(long, value_name = "RAW_PRIVATE_KEY", env = "PRIVATE_KEY")]
     pub private_key: Option<String>,
 
     /// Use the mnemonic phrase of mnemonic file at the specified path.
