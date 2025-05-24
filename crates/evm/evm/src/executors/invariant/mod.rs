@@ -448,7 +448,7 @@ impl<'a> InvariantExecutor<'a> {
             if !corpus_dir.is_dir() {
                 foundry_common::fs::create_dir_all(corpus_dir)?;
             }
-            // TOOD rerun corpus and initialize history map
+            // TODO rerun corpus and initialize history map
             // let mut corpus =
             //     TxCorpusManager::new(self.config.corpus_dir.clone().unwrap(), generator.clone());
 
