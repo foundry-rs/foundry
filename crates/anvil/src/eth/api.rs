@@ -56,7 +56,7 @@ use alloy_rpc_types::{
     },
     request::TransactionRequest,
     simulate::{SimulatePayload, SimulatedBlock},
-    state::EvmOverrides,
+    state::{AccountOverride, EvmOverrides, StateOverridesBuilder},
     trace::{
         filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
@@ -67,7 +67,7 @@ use alloy_rpc_types::{
     EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log, Work,
 };
 use alloy_serde::WithOtherFields;
-use alloy_sol_types::{sol, SolCall};
+use alloy_sol_types::{sol, SolCall, SolValue};
 use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
@@ -1885,10 +1885,10 @@ impl EthApi {
                 continue;
             };
             for slot in &item.storage_keys {
-                let account_override = alloy_rpc_types::state::AccountOverride::default()
+                let account_override = AccountOverride::default()
                     .with_state_diff(std::iter::once((*slot, B256::from(balance.to_be_bytes()))));
 
-                let state_override = alloy_rpc_types::state::StateOverridesBuilder::default()
+                let state_override = StateOverridesBuilder::default()
                     .append(token_address, account_override)
                     .build();
 
@@ -1901,8 +1901,7 @@ impl EthApi {
                     continue;
                 };
 
-                let decoded_result =
-                    <B256 as alloy_sol_types::SolValue>::abi_decode(&result).unwrap();
+                let decoded_result = B256::abi_decode(&result).unwrap();
 
                 let result_balance = U256::from_be_bytes::<32>(
                     decoded_result.to_vec().try_into().unwrap_or([0u8; 32]),
