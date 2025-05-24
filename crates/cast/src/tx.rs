@@ -138,6 +138,7 @@ pub struct InputState {
 pub struct CastTxBuilder<P, S> {
     provider: P,
     tx: WithOtherFields<TransactionRequest>,
+    /// Whether the transaction should be sent as a legacy transaction.
     legacy: bool,
     blob: bool,
     auth: Option<CliAuthorizationList>,
@@ -157,7 +158,8 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
         let chain = utils::get_chain(config.chain, &provider).await?;
         let etherscan_api_version = config.get_etherscan_api_version(Some(chain));
         let etherscan_api_key = config.get_etherscan_api_key(Some(chain));
-        let legacy = tx_opts.legacy || chain.is_legacy();
+        // mark it as legacy if requested or the chain is legacy and no 7702 is provided.
+        let legacy = tx_opts.legacy || (chain.is_legacy() && tx_opts.auth.is_none());
 
         if let Some(gas_limit) = tx_opts.gas_limit {
             tx.set_gas_limit(gas_limit.to());
@@ -241,7 +243,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, ToState> {
                 self.etherscan_api_key.as_deref(),
                 self.etherscan_api_version,
             )
-            .await?
+                .await?
         } else {
             (Vec::new(), None)
         };
