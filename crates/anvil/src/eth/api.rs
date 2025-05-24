@@ -1895,7 +1895,6 @@ impl EthApi {
 
                 let evm_override = EvmOverrides::state(Some(state_override));
 
-                println!("calling eth_call with override at block {:?}", block_number);
                 let Ok(result) =
                     self.call(WithOtherFields::new(tx.clone()), None, evm_override).await
                 else {
