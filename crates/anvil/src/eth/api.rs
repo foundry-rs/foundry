@@ -1892,11 +1892,12 @@ impl EthApi {
                 let mut state_override = alloy_primitives::map::AddressHashMap::default();
                 state_override.insert(token_address, account_override);
 
+                let evm_override = EvmOverrides::state(Some(state_override));
+
                 let block_number = BlockId::from(self.block_number()?.to::<u64>());
 
-                let result = self
-                    .call(WithOtherFields::new(tx), Some(block_number), Some(state_override))
-                    .await?;
+                let result =
+                    self.call(WithOtherFields::new(tx), Some(block_number), evm_override).await?;
 
                 let result_balnce =
                     U256::from_be_bytes::<32>(result.to_vec().try_into().unwrap_or([0u8; 32]));
