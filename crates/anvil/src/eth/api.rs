@@ -1875,10 +1875,15 @@ impl EthApi {
         }
 
         let calldata = IERC20::balanceOfCall { target: address }.abi_encode();
-        let tx = TransactionRequest::default().with_input(calldata.clone());
+        let tx = TransactionRequest::default().with_to(token_address).with_input(calldata.clone());
+        let block_number = BlockId::from(self.block_number()?.to::<u64>());
         let access_list_result = self.create_access_list(WithOtherFields::new(tx), None).await?;
         let access_list = access_list_result.access_list;
+        println!("> Access list contains {} entries", access_list.0.len());
+
         for item in access_list.0 {
+            println!("entry address = {:?}", item.address);
+            println!("storage_keys: {:?}", item.storage_keys);
             if item.address != token_address {
                 continue;
             };
@@ -1895,21 +1900,33 @@ impl EthApi {
 
                 let evm_override = EvmOverrides::state(Some(state_override));
 
-                let block_number = BlockId::from(self.block_number()?.to::<u64>());
+                println!("calling eth_call with override at block {:?}", block_number);
+                let result = self.call(WithOtherFields::new(tx), None, evm_override).await?;
+                println!("raw eth_call result = 0x{}", alloy_primitives::hex::encode(&result));
+                let decoded_result =
+                    <B256 as alloy_sol_types::SolValue>::abi_decode(&result).unwrap();
 
-                let result =
-                    self.call(WithOtherFields::new(tx), Some(block_number), evm_override).await?;
+                let result_balance = U256::from_be_bytes::<32>(
+                    decoded_result.to_vec().try_into().unwrap_or([0u8; 32]),
+                );
+                println!("decoded balance = {} (expected {})", result_balance, balance);
 
-                let result_balnce =
-                    U256::from_be_bytes::<32>(result.to_vec().try_into().unwrap_or([0u8; 32]));
-
-                if result_balnce == balance {
+                if result_balance == balance {
+                    println!(
+                        "balance matches {} ! writing storage slot {:?} to {}",
+                        balance, slot, balance
+                    );
                     self.anvil_set_storage_at(
-                        address,
+                        token_address,
                         U256::from_be_bytes::<32>(**slot),
                         B256::from(balance.to_be_bytes()),
                     )
                     .await?;
+                } else {
+                    println!(
+                        "balance mismatch — skipping write. got {}, expected {}",
+                        result_balance, balance
+                    );
                 }
             }
         }

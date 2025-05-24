@@ -1466,6 +1466,36 @@ async fn test_reset_dev_account_nonce() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_set_erc20_balance() {
+    let config: NodeConfig = fork_config();
+    let address = config.genesis_accounts[0].address();
+    let (api, _) = spawn(config).await;
+    let info = api.anvil_node_info().await.unwrap();
+    let number = info.fork_config.fork_block_number.unwrap();
+    assert_eq!(number, BLOCK_NUMBER);
+
+    alloy_sol_types::sol! {
+       #[sol(rpc)]
+       contract ERC20 {
+            function balanceOf(address owner) public view returns (uint256);
+       }
+    }
+    let dai = address!("0x6B175474E89094C44Da98b954EedeAC495271d0F");
+    let alloy_provider = alloy_provider::ProviderBuilder::new()
+        .connect("https://reth-ethereum.ithaca.xyz/rpc")
+        .await
+        .unwrap();
+    let erc20 = ERC20::new(dai, alloy_provider);
+    let value = U256::from(500);
+
+    let _result = api.anvil_deal_erc20(address, dai, value).await;
+
+    let new_balance = erc20.balanceOf(address).call().await.unwrap();
+
+    assert_eq!(new_balance, value);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_reset_updates_cache_path_when_rpc_url_not_provided() {
     let config: NodeConfig = fork_config();
 
