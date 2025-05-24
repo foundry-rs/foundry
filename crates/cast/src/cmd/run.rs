@@ -1,6 +1,12 @@
+use std::hash::RandomState;
+
 use alloy_consensus::Transaction;
 use alloy_network::{AnyNetwork, TransactionResponse};
-use alloy_provider::Provider;
+use alloy_primitives::{
+    map::{HashMap, HashSet},
+    Address, Bytes,
+};
+use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::BlockTransactions;
 use clap::Parser;
 use eyre::{Result, WrapErr};
@@ -21,7 +27,7 @@ use foundry_config::{
 use foundry_evm::{
     executors::{EvmError, TracingExecutor},
     opts::EvmOpts,
-    traces::{InternalTraceMode, TraceMode},
+    traces::{InternalTraceMode, TraceMode, Traces},
     utils::configure_tx_env,
     Env,
 };
@@ -272,10 +278,12 @@ impl RunArgs {
             }
         };
 
+        let contracts_bytecode = fetch_contracts_bytecode_from_trace(&provider, &result).await?;
         handle_traces(
             result,
             &config,
             chain,
+            &contracts_bytecode,
             self.label,
             self.with_local_artifacts,
             self.debug,
@@ -285,6 +293,38 @@ impl RunArgs {
 
         Ok(())
     }
+}
+
+pub async fn fetch_contracts_bytecode_from_trace(
+    provider: &RootProvider<AnyNetwork>,
+    result: &TraceResult,
+) -> Result<HashMap<Address, Bytes, RandomState>> {
+    let mut contracts_bytecode = HashMap::new();
+    if let Some(ref traces) = result.traces {
+        let addresses = gather_trace_addresses(traces);
+        for address in addresses {
+            let code = provider.get_code_at(address).await?;
+            if !code.is_empty() {
+                contracts_bytecode.insert(address, code);
+            }
+        }
+    }
+    Ok(contracts_bytecode)
+}
+
+fn gather_trace_addresses(traces: &Traces) -> Vec<Address> {
+    let mut addresses = HashSet::new();
+    for (_, trace) in traces {
+        for node in trace.arena.nodes() {
+            if !node.trace.address.is_zero() {
+                addresses.insert(node.trace.address);
+            }
+            if !node.trace.caller.is_zero() {
+                addresses.insert(node.trace.caller);
+            }
+        }
+    }
+    addresses.into_iter().collect()
 }
 
 impl figment::Provider for RunArgs {
