@@ -742,7 +742,7 @@ impl EthApi {
         &self,
         address: Address,
         block_number: Option<BlockId>,
-    ) -> Result<serde_json::Value> {
+    ) -> Result<alloy_rpc_types::eth::AccountInfo> {
         node_info!("eth_getAccountInfo");
         let account = self
             .backend
@@ -750,11 +750,11 @@ impl EthApi {
             .await?;
         let code =
             self.backend.get_code(address, Some(self.block_request(block_number).await?)).await?;
-        Ok(serde_json::json!({
-            "balance": account.balance,
-            "nonce": account.nonce,
-            "code": code
-        }))
+        Ok(alloy_rpc_types::eth::AccountInfo {
+            balance: account.balance,
+            nonce: account.nonce,
+            code,
+        })
     }
     /// Returns content of the storage at given address.
     ///
