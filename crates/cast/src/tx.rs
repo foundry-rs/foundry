@@ -1,6 +1,7 @@
 use crate::traces::identifier::SignaturesIdentifier;
 use alloy_consensus::{SidecarBuilder, SignableTransaction, SimpleCoder};
 use alloy_dyn_abi::ErrorExt;
+use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
 use alloy_network::{
     AnyNetwork, AnyTypedTransaction, TransactionBuilder, TransactionBuilder4844,
@@ -18,7 +19,7 @@ use foundry_cli::{
     opts::{CliAuthorizationList, TransactionOpts},
     utils::{self, parse_function_args},
 };
-use foundry_common::{ens::NameOrAddress, fmt::format_tokens};
+use foundry_common::fmt::format_tokens;
 use foundry_config::{Chain, Config};
 use foundry_wallets::{WalletOpts, WalletSigner};
 use itertools::Itertools;

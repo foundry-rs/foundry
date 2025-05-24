@@ -11,7 +11,7 @@ use std::sync::{
 };
 
 fn shuffled<T>(mut vec: Vec<T>) -> Vec<T> {
-    vec.shuffle(&mut rand::thread_rng());
+    vec.shuffle(&mut rand::rng());
     vec
 }
 
@@ -147,6 +147,10 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
         return "https://mainnet.base.org".to_string();
     }
 
+    if matches!(chain, Optimism) {
+        return "https://mainnet.optimism.io".to_string();
+    }
+
     if matches!(chain, BinanceSmartChainTestnet) {
         return "https://bsc-testnet-rpc.publicnode.com".to_string();
     }
@@ -166,7 +170,6 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
         let key = DRPC_KEYS[idx];
 
         let network = match chain {
-            Optimism => "optimism",
             Arbitrum => "arbitrum",
             Polygon => "polygon",
             Sepolia => "sepolia",
