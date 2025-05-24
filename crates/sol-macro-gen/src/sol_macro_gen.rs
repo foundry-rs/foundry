@@ -21,6 +21,8 @@ use std::{
     str::FromStr,
 };
 
+use convert_case::{Casing, Case};
+
 pub struct SolMacroGen {
     pub path: PathBuf,
     pub name: String,
@@ -209,7 +211,7 @@ edition = "2021"
         for instance in &self.instances {
             let contents = instance.expansion.as_ref().unwrap();
 
-            let name = instance.name.to_lowercase();
+            let name = instance.name.to_case(Case::Snake);
             let path = src.join(format!("{name}.rs"));
             let file = syn::parse2(contents.clone())
                 .wrap_err_with(|| parse_error(&format!("{}:{}", path.display(), name)))?;
@@ -266,7 +268,7 @@ edition = "2021"
         .to_string();
 
         for instance in &self.instances {
-            let name = instance.name.to_lowercase();
+            let name = instance.name.to_case(Case::Snake);
             if !single_file {
                 // Module
                 write_mod_name(&mut mod_contents, &name)?;
@@ -328,7 +330,7 @@ edition = "2021"
         )?;
         if !single_file {
             for instance in &self.instances {
-                let name = instance.name.to_lowercase();
+                let name = instance.name.to_case(Case::Snake);
                 let path = if is_mod {
                     crate_path.join(format!("{name}.rs"))
                 } else {
