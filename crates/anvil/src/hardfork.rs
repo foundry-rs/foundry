@@ -98,8 +98,7 @@ impl EthereumHardfork {
             _i if block < MAINNET_SHANGHAI_BLOCK => Self::Paris,
             _i if block < MAINNET_CANCUN_BLOCK => Self::Shanghai,
             _i if block < MAINNET_PRAGUE_BLOCK => Self::Cancun,
-            _i if block <= u64::MAX => Self::Prague,
-            _ => return None,
+            _ => Self::Prague,
         })
     }
 }
