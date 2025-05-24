@@ -56,7 +56,7 @@ use alloy_rpc_types::{
     },
     request::TransactionRequest,
     simulate::{SimulatePayload, SimulatedBlock},
-    state::EvmOverrides,
+    state::{AccountOverride, EvmOverrides, StateOverridesBuilder},
     trace::{
         filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
@@ -67,6 +67,7 @@ use alloy_rpc_types::{
     EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log, Work,
 };
 use alloy_serde::WithOtherFields;
+use alloy_sol_types::{sol, SolCall, SolValue};
 use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
@@ -354,6 +355,9 @@ impl EthApi {
             }
             EthRequest::SetBalance(addr, val) => {
                 self.anvil_set_balance(addr, val).await.to_rpc_result()
+            }
+            EthRequest::DealERC20(addr, token_addr, val) => {
+                self.anvil_deal_erc20(addr, token_addr, val).await.to_rpc_result()
             }
             EthRequest::SetCode(addr, code) => {
                 self.anvil_set_code(addr, code).await.to_rpc_result()
@@ -1850,6 +1854,76 @@ impl EthApi {
         node_info!("anvil_setBalance");
         self.backend.set_balance(address, balance).await?;
         Ok(())
+    }
+
+    /// Deals ERC20 tokens to a address
+    ///
+    /// Handler for RPC call: `anvil_dealERC20`
+    pub async fn anvil_deal_erc20(
+        &self,
+        address: Address,
+        token_address: Address,
+        balance: U256,
+    ) -> Result<()> {
+        node_info!("anvil_dealERC20");
+
+        sol! {
+            #[sol(rpc)]
+            contract IERC20 {
+                function balanceOf(address target) external view returns (uint256);
+            }
+        }
+
+        let calldata = IERC20::balanceOfCall { target: address }.abi_encode();
+        let tx = TransactionRequest::default().with_to(token_address).with_input(calldata.clone());
+
+        // first collect all the slots that are used by the balanceOf call
+        let access_list_result =
+            self.create_access_list(WithOtherFields::new(tx.clone()), None).await?;
+        let access_list = access_list_result.access_list;
+
+        // now we can iterate over all the accessed slots and try to find the one that contains the
+        // balance by overriding the slot and checking the `balanceOfCall` of
+        for item in access_list.0 {
+            if item.address != token_address {
+                continue;
+            };
+            for slot in &item.storage_keys {
+                let account_override = AccountOverride::default()
+                    .with_state_diff(std::iter::once((*slot, B256::from(balance.to_be_bytes()))));
+
+                let state_override = StateOverridesBuilder::default()
+                    .append(token_address, account_override)
+                    .build();
+
+                let evm_override = EvmOverrides::state(Some(state_override));
+
+                let Ok(result) =
+                    self.call(WithOtherFields::new(tx.clone()), None, evm_override).await
+                else {
+                    // overriding this slot failed
+                    continue;
+                };
+
+                let Ok(result_balance) = U256::abi_decode(&result) else {
+                    // response returned something other than a U256
+                    continue;
+                };
+
+                if result_balance == balance {
+                    self.anvil_set_storage_at(
+                        token_address,
+                        U256::from_be_bytes(slot.0),
+                        B256::from(balance.to_be_bytes()),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            }
+        }
+
+        // unable to set the balance
+        Err(BlockchainError::Message("Unable to set ERC20 balance, no slot found".to_string()))
     }
 
     /// Sets the code of a contract.
