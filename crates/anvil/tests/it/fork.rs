@@ -1466,6 +1466,31 @@ async fn test_reset_dev_account_nonce() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_set_erc20_balance() {
+    let config: NodeConfig = fork_config();
+    let address = config.genesis_accounts[0].address();
+    let (api, handle) = spawn(config).await;
+
+    let provider = handle.http_provider();
+
+    alloy_sol_types::sol! {
+       #[sol(rpc)]
+       contract ERC20 {
+            function balanceOf(address owner) public view returns (uint256);
+       }
+    }
+    let dai = address!("0x6B175474E89094C44Da98b954EedeAC495271d0F");
+    let erc20 = ERC20::new(dai, provider);
+    let value = U256::from(500);
+
+    api.anvil_deal_erc20(address, dai, value).await.unwrap();
+
+    let new_balance = erc20.balanceOf(address).call().await.unwrap();
+
+    assert_eq!(new_balance, value);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_reset_updates_cache_path_when_rpc_url_not_provided() {
     let config: NodeConfig = fork_config();
 

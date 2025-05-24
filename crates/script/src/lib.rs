@@ -284,7 +284,7 @@ impl ScriptArgs {
             }
 
             if shell::is_json() {
-                pre_simulation.show_json()?;
+                pre_simulation.show_json().await?;
             } else {
                 pre_simulation.show_traces().await?;
             }
@@ -529,7 +529,7 @@ impl Provider for ScriptArgs {
     }
 }
 
-#[derive(Default, Serialize)]
+#[derive(Default, Serialize, Clone)]
 pub struct ScriptResult {
     pub success: bool,
     #[serde(rename = "raw_logs")]
