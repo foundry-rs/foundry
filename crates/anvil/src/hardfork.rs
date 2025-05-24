@@ -78,8 +78,29 @@ impl EthereumHardfork {
             Self::Paris => MAINNET_PARIS_BLOCK,
             Self::Shanghai => MAINNET_SHANGHAI_BLOCK,
             Self::Cancun | Self::Latest => MAINNET_CANCUN_BLOCK,
-            Self::Prague => 22431084,
+            Self::Prague => MAINNET_PRAGUE_BLOCK,
         }
+    }
+    pub fn from_block_number(block: u64) -> Option<Self> {
+        Some(match block {
+            _i if block < MAINNET_HOMESTEAD_BLOCK => Self::Frontier,
+            _i if block < MAINNET_DAO_BLOCK => Self::Homestead,
+            _i if block < MAINNET_TANGERINE_BLOCK => Self::Dao,
+            _i if block < MAINNET_SPURIOUS_DRAGON_BLOCK => Self::Tangerine,
+            _i if block < MAINNET_BYZANTIUM_BLOCK => Self::SpuriousDragon,
+            _i if block < MAINNET_CONSTANTINOPLE_BLOCK => Self::Byzantium,
+            _i if block < MAINNET_ISTANBUL_BLOCK => Self::Constantinople,
+            _i if block < MAINNET_MUIR_GLACIER_BLOCK => Self::Istanbul,
+            _i if block < MAINNET_BERLIN_BLOCK => Self::Muirglacier,
+            _i if block < MAINNET_LONDON_BLOCK => Self::Berlin,
+            _i if block < MAINNET_ARROW_GLACIER_BLOCK => Self::London,
+            _i if block < MAINNET_PARIS_BLOCK => Self::ArrowGlacier,
+            _i if block < MAINNET_SHANGHAI_BLOCK => Self::Paris,
+            _i if block < MAINNET_CANCUN_BLOCK => Self::Shanghai,
+            _i if block < MAINNET_PRAGUE_BLOCK => Self::Cancun,
+            _i if block <= u64::MAX => Self::Prague,
+            _ => return None,
+        })
     }
 }
 
