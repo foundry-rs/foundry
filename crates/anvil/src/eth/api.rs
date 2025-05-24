@@ -1876,7 +1876,6 @@ impl EthApi {
 
         let calldata = IERC20::balanceOfCall { target: address }.abi_encode();
         let tx = TransactionRequest::default().with_to(token_address).with_input(calldata.clone());
-        let block_number = BlockId::from(self.block_number()?.to::<u64>());
         let access_list_result =
             self.create_access_list(WithOtherFields::new(tx.clone()), None).await?;
         let access_list = access_list_result.access_list;
