@@ -1469,10 +1469,9 @@ async fn test_reset_dev_account_nonce() {
 async fn test_set_erc20_balance() {
     let config: NodeConfig = fork_config();
     let address = config.genesis_accounts[0].address();
-    let (api, _) = spawn(config).await;
-    let info = api.anvil_node_info().await.unwrap();
-    let number = info.fork_config.fork_block_number.unwrap();
-    assert_eq!(number, BLOCK_NUMBER);
+    let (api, handle) = spawn(config).await;
+
+    let provider = handle.http_provider();
 
     alloy_sol_types::sol! {
        #[sol(rpc)]
@@ -1481,14 +1480,10 @@ async fn test_set_erc20_balance() {
        }
     }
     let dai = address!("0x6B175474E89094C44Da98b954EedeAC495271d0F");
-    let alloy_provider = alloy_provider::ProviderBuilder::new()
-        .connect("https://reth-ethereum.ithaca.xyz/rpc")
-        .await
-        .unwrap();
-    let erc20 = ERC20::new(dai, alloy_provider);
+    let erc20 = ERC20::new(dai, provider);
     let value = U256::from(500);
 
-    let _result = api.anvil_deal_erc20(address, dai, value).await;
+    api.anvil_deal_erc20(address, dai, value).await.unwrap();
 
     let new_balance = erc20.balanceOf(address).call().await.unwrap();
 

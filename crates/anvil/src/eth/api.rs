@@ -1877,10 +1877,13 @@ impl EthApi {
         let calldata = IERC20::balanceOfCall { target: address }.abi_encode();
         let tx = TransactionRequest::default().with_to(token_address).with_input(calldata.clone());
         let block_number = BlockId::from(self.block_number()?.to::<u64>());
-        let access_list_result = self.create_access_list(WithOtherFields::new(tx), None).await?;
+        let access_list_result =
+            self.create_access_list(WithOtherFields::new(tx.clone()), None).await?;
         let access_list = access_list_result.access_list;
         println!("> Access list contains {} entries", access_list.0.len());
+        println!("{}", address);
 
+        dbg!(&access_list);
         for item in access_list.0 {
             println!("entry address = {:?}", item.address);
             println!("storage_keys: {:?}", item.storage_keys);
@@ -1888,9 +1891,6 @@ impl EthApi {
                 continue;
             };
             for slot in &item.storage_keys {
-                let tx = alloy_rpc_types::transaction::TransactionRequest::default()
-                    .with_input(calldata.clone());
-
                 let account_override = alloy_rpc_types::state::AccountOverride::default()
                     .with_state_diff(std::iter::once((*slot, B256::from(balance.to_be_bytes()))));
 
@@ -1901,7 +1901,13 @@ impl EthApi {
                 let evm_override = EvmOverrides::state(Some(state_override));
 
                 println!("calling eth_call with override at block {:?}", block_number);
-                let result = self.call(WithOtherFields::new(tx), None, evm_override).await?;
+                let Ok(result) =
+                    self.call(WithOtherFields::new(tx.clone()), None, evm_override).await
+                else {
+                    // overriding this slot failed
+                    continue;
+                };
+
                 println!("raw eth_call result = 0x{}", alloy_primitives::hex::encode(&result));
                 let decoded_result =
                     <B256 as alloy_sol_types::SolValue>::abi_decode(&result).unwrap();
