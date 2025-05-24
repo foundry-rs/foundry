@@ -1876,10 +1876,14 @@ impl EthApi {
 
         let calldata = IERC20::balanceOfCall { target: address }.abi_encode();
         let tx = TransactionRequest::default().with_to(token_address).with_input(calldata.clone());
+
+        // first collect all the slots that are used by the balanceOf call
         let access_list_result =
             self.create_access_list(WithOtherFields::new(tx.clone()), None).await?;
         let access_list = access_list_result.access_list;
 
+        // now we can iterate over all the accessed slots and try to find the one that contains the
+        // balance by overriding the slot and checking the `balanceOfCall` of
         for item in access_list.0 {
             if item.address != token_address {
                 continue;
@@ -1901,23 +1905,25 @@ impl EthApi {
                     continue;
                 };
 
-                let decoded_result = B256::abi_decode(&result).unwrap();
-
-                let result_balance = U256::from_be_bytes::<32>(
-                    decoded_result.to_vec().try_into().unwrap_or([0u8; 32]),
-                );
+                let Ok(result_balance) = U256::abi_decode(&result) else {
+                    // response returned something other than a U256
+                    continue;
+                };
 
                 if result_balance == balance {
                     self.anvil_set_storage_at(
                         token_address,
-                        U256::from_be_bytes::<32>(**slot),
+                        U256::from_be_bytes(slot.0),
                         B256::from(balance.to_be_bytes()),
                     )
                     .await?;
+                    return Ok(());
                 }
             }
         }
-        Ok(())
+
+        // unable to set the balance
+        Err(BlockchainError::Message("Unable to set ERC20 balance, no slot found".to_string()))
     }
 
     /// Sets the code of a contract.
