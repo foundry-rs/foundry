@@ -1,5 +1,7 @@
 use std::str::FromStr;
 
+use alloy_chains::Chain;
+use alloy_hardforks::ethereum::mainnet::*;
 use alloy_rpc_types::BlockNumberOrTag;
 use eyre::bail;
 use op_revm::OpSpecId;
@@ -59,25 +61,49 @@ pub enum EthereumHardfork {
 impl EthereumHardfork {
     /// Get the first block number of the hardfork.
     pub fn fork_block(&self) -> u64 {
-        match *self {
-            Self::Frontier => 0,
-            Self::Homestead => 1150000,
-            Self::Dao => 1920000,
-            Self::Tangerine => 2463000,
-            Self::SpuriousDragon => 2675000,
-            Self::Byzantium => 4370000,
-            Self::Constantinople | Self::Petersburg => 7280000,
-            Self::Istanbul => 9069000,
-            Self::Muirglacier => 9200000,
-            Self::Berlin => 12244000,
-            Self::London => 12965000,
-            Self::ArrowGlacier => 13773000,
-            Self::GrayGlacier => 15050000,
-            Self::Paris => 15537394,
-            Self::Shanghai => 17034870,
-            Self::Cancun | Self::Latest => 19426587,
-            Self::Prague => 22431084,
-        }
+        let alloy_fork = match self {
+            Self::Frontier => alloy_hardforks::EthereumHardfork::Frontier,
+            Self::Homestead => alloy_hardforks::EthereumHardfork::Homestead,
+            Self::Dao => alloy_hardforks::EthereumHardfork::Dao,
+            Self::Tangerine => alloy_hardforks::EthereumHardfork::Tangerine,
+            Self::SpuriousDragon => alloy_hardforks::EthereumHardfork::SpuriousDragon,
+            Self::Byzantium => alloy_hardforks::EthereumHardfork::Byzantium,
+            Self::Constantinople => alloy_hardforks::EthereumHardfork::Constantinople,
+            Self::Petersburg => alloy_hardforks::EthereumHardfork::Petersburg,
+            Self::Istanbul => alloy_hardforks::EthereumHardfork::Istanbul,
+            Self::Muirglacier => alloy_hardforks::EthereumHardfork::MuirGlacier,
+            Self::Berlin => alloy_hardforks::EthereumHardfork::Berlin,
+            Self::London => alloy_hardforks::EthereumHardfork::London,
+            Self::ArrowGlacier => alloy_hardforks::EthereumHardfork::ArrowGlacier,
+            Self::GrayGlacier => alloy_hardforks::EthereumHardfork::GrayGlacier,
+            Self::Paris => alloy_hardforks::EthereumHardfork::Paris,
+            Self::Shanghai => alloy_hardforks::EthereumHardfork::Shanghai,
+            Self::Cancun => alloy_hardforks::EthereumHardfork::Cancun,
+            Self::Prague => alloy_hardforks::EthereumHardfork::Prague,
+            Self::Latest => alloy_hardforks::EthereumHardfork::Osaka,
+        };
+        alloy_hardforks::EthereumHardfork::activation_block(&alloy_fork, Chain::mainnet())
+            .unwrap_or(u64::MAX)
+    }
+    pub fn from_block_number(block: u64) -> Option<Self> {
+        Some(match block {
+            _i if block < MAINNET_HOMESTEAD_BLOCK => Self::Frontier,
+            _i if block < MAINNET_DAO_BLOCK => Self::Homestead,
+            _i if block < MAINNET_TANGERINE_BLOCK => Self::Dao,
+            _i if block < MAINNET_SPURIOUS_DRAGON_BLOCK => Self::Tangerine,
+            _i if block < MAINNET_BYZANTIUM_BLOCK => Self::SpuriousDragon,
+            _i if block < MAINNET_CONSTANTINOPLE_BLOCK => Self::Byzantium,
+            _i if block < MAINNET_ISTANBUL_BLOCK => Self::Constantinople,
+            _i if block < MAINNET_MUIR_GLACIER_BLOCK => Self::Istanbul,
+            _i if block < MAINNET_BERLIN_BLOCK => Self::Muirglacier,
+            _i if block < MAINNET_LONDON_BLOCK => Self::Berlin,
+            _i if block < MAINNET_ARROW_GLACIER_BLOCK => Self::London,
+            _i if block < MAINNET_PARIS_BLOCK => Self::ArrowGlacier,
+            _i if block < MAINNET_SHANGHAI_BLOCK => Self::Paris,
+            _i if block < MAINNET_CANCUN_BLOCK => Self::Shanghai,
+            _i if block < MAINNET_PRAGUE_BLOCK => Self::Cancun,
+            _ => Self::Prague,
+        })
     }
 }
 
@@ -146,20 +172,20 @@ impl<T: Into<BlockNumberOrTag>> From<T> for EthereumHardfork {
         };
 
         match num {
-            _i if num < 1_150_000 => Self::Frontier,
-            _i if num < 1_920_000 => Self::Dao,
-            _i if num < 2_463_000 => Self::Homestead,
-            _i if num < 2_675_000 => Self::Tangerine,
-            _i if num < 4_370_000 => Self::SpuriousDragon,
-            _i if num < 7_280_000 => Self::Byzantium,
-            _i if num < 9_069_000 => Self::Constantinople,
-            _i if num < 9_200_000 => Self::Istanbul,
-            _i if num < 12_244_000 => Self::Muirglacier,
-            _i if num < 12_965_000 => Self::Berlin,
-            _i if num < 13_773_000 => Self::London,
-            _i if num < 15_050_000 => Self::ArrowGlacier,
-            _i if num < 17_034_870 => Self::Paris,
-            _i if num < 19_426_587 => Self::Shanghai,
+            _i if num < MAINNET_HOMESTEAD_BLOCK => Self::Frontier,
+            _i if num < MAINNET_DAO_BLOCK => Self::Homestead,
+            _i if num < MAINNET_TANGERINE_BLOCK => Self::Dao,
+            _i if num < MAINNET_SPURIOUS_DRAGON_BLOCK => Self::Tangerine,
+            _i if num < MAINNET_BYZANTIUM_BLOCK => Self::SpuriousDragon,
+            _i if num < MAINNET_CONSTANTINOPLE_BLOCK => Self::Byzantium,
+            _i if num < MAINNET_ISTANBUL_BLOCK => Self::Constantinople,
+            _i if num < MAINNET_MUIR_GLACIER_BLOCK => Self::Istanbul,
+            _i if num < MAINNET_BERLIN_BLOCK => Self::Muirglacier,
+            _i if num < MAINNET_LONDON_BLOCK => Self::Berlin,
+            _i if num < MAINNET_ARROW_GLACIER_BLOCK => Self::London,
+            _i if num < MAINNET_PARIS_BLOCK => Self::ArrowGlacier,
+            _i if num < MAINNET_SHANGHAI_BLOCK => Self::Paris,
+            _i if num < MAINNET_CANCUN_BLOCK => Self::Shanghai,
             _ => Self::Latest,
         }
     }
