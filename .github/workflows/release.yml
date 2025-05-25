@@ -295,6 +295,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [prepare, release-docker, release, cleanup]
     if: failure()
+    permissions:
+      issues: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: JasonEtco/create-an-issue@v2
