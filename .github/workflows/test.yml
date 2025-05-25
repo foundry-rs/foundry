@@ -38,9 +38,10 @@ jobs:
         uses: peaceiris/actions-gh-pages@v3
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: target/doc
-          force_orphan: true
+         github_token: ${{ secrets.GITHUB_TOKEN }}
+         publish_dir: target/doc
+         force_orphan: true
+         commit_message: "Deploy documentation [skip ci]"
 
   doctest:
     runs-on: ubuntu-latest
