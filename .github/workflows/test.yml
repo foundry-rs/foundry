@@ -42,7 +42,15 @@ jobs:
          publish_dir: target/doc
          force_orphan: true
          commit_message: "Deploy documentation [skip ci]"
-
+      - name: Push changes
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          to pass before a push is allowed.
+          git commit -S -m "Auto-update gh-pages"
+          git push origin --force gh-pages
+          
+### Solution **Review Repository Rules:**
+     
   doctest:
     runs-on: ubuntu-latest
     timeout-minutes: 30
