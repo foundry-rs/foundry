@@ -2910,6 +2910,12 @@ interface Vm {
     ///  * `typeName`: Name of the type (i.e. "Transaction").
     #[cheatcode(group = Utilities)]
     function eip712HashType(string calldata bindingsPath, string calldata typeName) external pure returns (bytes32 typeHash);
+
+    #[cheatcode(group = Utilities)]
+    function eip712HashStruct(string calldata typeNameOrDefinition, string calldata jsonData) external pure returns (bytes32 typeHash);
+
+    #[cheatcode(group = Utilities)]
+    function eip712HashStruct(string calldata bindingsPath, string calldata typeName, string calldata jsonData) external pure returns (bytes32 typeHash);
 }
 }
 

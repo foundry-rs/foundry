@@ -2,7 +2,7 @@
 
 use crate::{string, Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_dyn_abi::{eip712_parser::EncodeType, DynSolType, DynSolValue, Resolver};
-use alloy_primitives::{hex, Address, B256, I256};
+use alloy_primitives::{hex, Address, B256, I256, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
@@ -605,14 +605,22 @@ fn serialize_value_as_json(value: DynSolValue) -> Result<Value> {
         DynSolValue::Bytes(b) => Ok(Value::String(hex::encode_prefixed(b))),
         DynSolValue::FixedBytes(b, size) => Ok(Value::String(hex::encode_prefixed(&b[..size]))),
         DynSolValue::Int(i, _) => {
+            // TODO: same problem as with Uint
             // let serde handle number parsing
             let n = serde_json::from_str(&i.to_string())?;
             Ok(Value::Number(n))
         }
         DynSolValue::Uint(i, _) => {
-            // let serde handle number parsing
-            let n = serde_json::from_str(&i.to_string())?;
-            Ok(Value::Number(n))
+            // TODO: ask Arsenii if (or always using strings) this is acceptable
+            // needed cause otherwise alloy fails to coerce numbers > u64
+            // alternatively i could do an alloy PR
+            if i <= U256::from(u64::MAX) {
+                // let serde handle number parsing
+                let n = serde_json::from_str(&i.to_string())?;
+                Ok(Value::Number(n))
+            } else {
+                Ok(Value::String(i.to_string()))
+            }
         }
         DynSolValue::Address(a) => Ok(Value::String(a.to_string())),
         DynSolValue::Array(e) | DynSolValue::FixedArray(e) => {

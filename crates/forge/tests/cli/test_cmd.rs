@@ -3883,3 +3883,114 @@ Encountered a total of 1 failing tests, 0 tests succeeded
         ])
         .assert_success();
 });
+
+forgetest!(test_eip712_hash_struct, |prj, cmd| {
+    prj.add_source(
+        "Eip712Permit.sol",
+        r#"
+struct PermitDetails {
+    address token;
+    uint160 amount;
+    uint48 expiration;
+    uint48 nonce;
+}
+
+// Canonical type hash for PermitDetails
+bytes32 constant _PERMIT_DETAILS_TYPEHASH = keccak256(
+    "PermitDetails(address token,uint160 amount,uint48 expiration,uint48 nonce)"
+);
+
+struct PermitSingle {
+    PermitDetails details;
+    address spender;
+    uint256 sigDeadline;
+}
+
+// Canonical type hash for PermitSingle
+bytes32 constant _PERMIT_SINGLE_TYPEHASH = keccak256(
+    "PermitSingle(PermitDetails details,address spender,uint256 sigDeadline)PermitDetails(address token,uint160 amount,uint48 expiration,uint48 nonce)"
+);
+
+// borrowed from https://github.com/Uniswap/permit2/blob/main/src/libraries/PermitHash.sol
+library PermitHash {
+    function hash(PermitSingle memory permitSingle) internal pure returns (bytes32) {
+        bytes32 permitHash = _hashPermitDetails(permitSingle.details);
+        return
+            keccak256(abi.encode(_PERMIT_SINGLE_TYPEHASH, permitHash, permitSingle.spender, permitSingle.sigDeadline));
+    }
+
+    function _hashPermitDetails(PermitDetails memory details) private pure returns (bytes32) {
+        return keccak256(abi.encode(_PERMIT_DETAILS_TYPEHASH, details));
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let bindings = prj.root().join("utils").join("JsonBindings.sol");
+    prj.update_config(|config| config.fs_permissions.add(PathPermission::read(&bindings)));
+    cmd.forge_fuse().args(["bind-json"]).assert_success();
+
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.insert_console();
+    prj.add_source(
+        "Eip712HashStructTest.sol",
+        r#"
+import "./Vm.sol";
+import "./test.sol";
+import "./console.sol";
+import "./Eip712Permit.sol";
+import {JsonBindings} from "utils/JsonBindings.sol";
+
+
+contract Eip712HashStructTest is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+    using JsonBindings for *;
+
+    function testHashPermitSingle() public {
+        PermitDetails memory details = PermitDetails({
+            token: 0x1111111111111111111111111111111111111111,
+            amount: 1000 ether,
+            expiration: 12345,
+            nonce: 1
+        });
+
+        PermitSingle memory permit = PermitSingle({
+            details: details,
+            spender: 0x2222222222222222222222222222222222222222,
+            sigDeadline: 12345
+        });
+
+        // user-computed permit (using uniswap hash library)
+        bytes32 userStructHash = PermitHash.hash(permit);
+
+        // cheatcode-computed permit (previously serializing to JSON)
+        string memory jsonData = permit.serialize();
+
+        console.log("JSON data for PermitSingle:");
+        console.log(jsonData);
+
+        bytes32 cheatStructHash = vm.eip712HashStruct("PermitSingle", jsonData);
+        console.log("PermitSingle struct hash from cheatcode:");
+        console.logBytes32(cheatStructHash);
+
+        assertEq(cheatStructHash, userStructHash, "permit struct hash mismatch");
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse()
+        .args(["test", "--mc", "Eip712HashStructTest", "-vv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+  JSON data for PermitSingle:
+  {"details":{"token":"0x1111111111111111111111111111111111111111","amount":"1000000000000000000000","expiration":12345,"nonce":1},"spender":"0x2222222222222222222222222222222222222222","sigDeadline":12345}
+  PermitSingle struct hash from cheatcode:
+  0x3ed744fdcea02b6b9ad45a9db6e648bf6f18c221909f9ee425191f2a02f9e4a8
+...
+"#]]);
+});

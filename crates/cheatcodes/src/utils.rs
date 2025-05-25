@@ -1,7 +1,7 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
-use alloy_dyn_abi::{eip712_parser::EncodeType, DynSolType, DynSolValue};
+use alloy_dyn_abi::{eip712_parser::EncodeType, DynSolType, DynSolValue, Resolver};
 use alloy_primitives::{aliases::B32, keccak256, map::HashMap, B64, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::{ens::namehash, fs, TYPE_BINDING_PREFIX};
@@ -321,16 +321,7 @@ impl Cheatcode for eip712HashType_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { typeNameOrDefinition } = self;
 
-        let type_def = if typeNameOrDefinition.contains('(') {
-            // If the input contains '(', it must be the type definition
-            EncodeType::parse(typeNameOrDefinition).and_then(|parsed| parsed.canonicalize())?
-        } else {
-            // Otherwise, it must be the type name
-            let path = state
-                .config
-                .ensure_path_allowed(&state.config.bind_json_path, FsAccessKind::Read)?;
-            get_type_def_from_bindings(typeNameOrDefinition, path, &state.config.root)?
-        };
+        let type_def = get_canonical_type_def(typeNameOrDefinition, state, None)?;
 
         Ok(keccak256(type_def.as_bytes()).to_vec())
     }
@@ -347,8 +338,49 @@ impl Cheatcode for eip712HashType_1Call {
     }
 }
 
-/// Gets the type definition from the bindings in the provided path. Assumes that read validation
-/// for the path has already been checked.
+impl Cheatcode for eip712HashStruct_0Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { typeNameOrDefinition, jsonData } = self;
+
+        let type_def = get_canonical_type_def(typeNameOrDefinition, state, None)?;
+        let primary = &type_def[..type_def.find('(').unwrap_or_else(|| type_def.len())];
+
+        get_struct_hash(primary, &type_def, jsonData)
+    }
+}
+
+impl Cheatcode for eip712HashStruct_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { bindingsPath, typeName, jsonData } = self;
+
+        let path = state.config.ensure_path_allowed(bindingsPath, FsAccessKind::Read)?;
+        let type_def = get_type_def_from_bindings(typeName, path, &state.config.root)?;
+
+        get_struct_hash(typeName, &type_def, jsonData)
+    }
+}
+
+fn get_canonical_type_def(
+    name_or_def: &String,
+    state: &mut Cheatcodes,
+    path: Option<PathBuf>,
+) -> Result<String> {
+    let type_def = if name_or_def.contains('(') {
+        // If the input contains '(', it must be the type definition
+        EncodeType::parse(name_or_def).and_then(|parsed| parsed.canonicalize())?
+    } else {
+        // Otherwise, it must be the type name
+        let path = path.as_ref().unwrap_or(&state.config.bind_json_path);
+        let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
+        get_type_def_from_bindings(name_or_def, path, &state.config.root)?
+    };
+
+    Ok(type_def)
+}
+
+/// Gets the type definition from the bindings in the provided path.
+///
+/// Assumes that read validation for the path has already been checked.
 fn get_type_def_from_bindings(name: &String, path: PathBuf, root: &PathBuf) -> Result<String> {
     let content = fs::read_to_string(&path)?;
 
@@ -379,4 +411,50 @@ fn get_type_def_from_bindings(name: &String, path: PathBuf, root: &PathBuf) -> R
             );
         }
     }
+}
+
+fn get_struct_hash(primary: &str, type_def: &String, json_data: &String) -> Result {
+    let mut resolver = Resolver::default();
+
+    // Populate the resolver by ingesting the canonical type definition, and then get the
+    // corresponding `DynSolType` of the primary type.
+    resolver
+        .ingest_string(&type_def)
+        .map_err(|e| fmt_err!("Resolver failed to ingest type definition: {e}"))?;
+
+    let resolved_sol_type = resolver.resolve(&primary).map_err(|e| {
+        fmt_err!("Failed to resolve EIP712 primary type '{}' using resolver: {}", primary, e)
+    })?;
+
+    // Coerce the JSON data into a `DynSolValue`.
+    let json_data = serde_json::from_str(json_data)
+        .map_err(|e| fmt_err!("Failed to parse input JSON data: {}", e))?;
+
+    let sol_value = resolved_sol_type.coerce_json(&json_data).map_err(|e| {
+        fmt_err!("Failed to coerce JSON data to EIP-712 'SolValue' for type '{}': {}", primary, e)
+    })?;
+
+    if !matches!(sol_value, DynSolValue::CustomStruct { .. }) {
+        bail!("JSON data for type '{}' is not a custom Struct", primary);
+    }
+
+    // Use the resolver to properly encode the data.
+    let encoded_data: Vec<u8> = resolver
+        .encode_data(&sol_value)
+        .map_err(|e| fmt_err!("Failed to EIP-712 encode data for struct '{}': {}", primary, e))?
+        .ok_or_else(|| {
+            fmt_err!("EIP-712 data encoding returned 'None' for struct '{}'", primary)
+        })?;
+
+    // Compute the type hash of the primary type.
+    let type_hash = resolver
+        .type_hash(&primary)
+        .map_err(|e| fmt_err!("Failed to compute typeHash for EIP712 type '{}': {}", primary, e))?;
+
+    // Compute the struct hash of the concatenated type hash and encoded data.
+    let mut bytes_to_hash = Vec::with_capacity(32 + encoded_data.len());
+    bytes_to_hash.extend_from_slice(type_hash.as_slice());
+    bytes_to_hash.extend_from_slice(&encoded_data);
+
+    Ok(keccak256(&bytes_to_hash).to_vec())
 }
