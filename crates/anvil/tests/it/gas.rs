@@ -8,7 +8,7 @@ use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use anvil::{eth::fees::INITIAL_BASE_FEE, spawn, NodeConfig};
 
-const GAS_TRANSFER: u128 = 21_000;
+const GAS_TRANSFER: u64 = 21_000;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_gas_limit_applied_from_config() {

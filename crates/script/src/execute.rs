@@ -144,9 +144,8 @@ impl PreExecutionState {
             &self.build_data.predeploy_libraries,
             self.execution_data.bytecode.clone(),
             needs_setup(&self.execution_data.abi),
-            self.script_config.sender_nonce,
+            &self.script_config,
             self.args.broadcast,
-            self.script_config.evm_opts.fork_url.is_none(),
         )?;
 
         if setup_result.success {
@@ -351,7 +350,7 @@ impl ExecutedState {
         let returned = &self.execution_result.returned;
         let func = &self.execution_data.func;
 
-        match func.abi_decode_output(returned, false) {
+        match func.abi_decode_output(returned) {
             Ok(decoded) => {
                 for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
                     let internal_type =
@@ -385,15 +384,20 @@ impl ExecutedState {
 }
 
 impl PreSimulationState {
-    pub fn show_json(&self) -> Result<()> {
-        let result = &self.execution_result;
+    pub async fn show_json(&self) -> Result<()> {
+        let mut result = self.execution_result.clone();
+
+        for (_, trace) in &mut result.traces {
+            decode_trace_arena(trace, &self.execution_artifacts.decoder).await;
+        }
 
         let json_result = JsonResult {
             logs: decode_console_logs(&result.logs),
             returns: &self.execution_artifacts.returns,
-            result,
+            result: &result,
         };
         let json = serde_json::to_string(&json_result)?;
+
         sh_println!("{json}")?;
 
         if !self.execution_result.success {
@@ -444,7 +448,7 @@ impl PreSimulationState {
 
         if result.success && !result.returned.is_empty() {
             sh_println!("\n== Return ==")?;
-            match func.abi_decode_output(&result.returned, false) {
+            match func.abi_decode_output(&result.returned) {
                 Ok(decoded) => {
                     for (index, (token, output)) in decoded.iter().zip(&func.outputs).enumerate() {
                         let internal_type =

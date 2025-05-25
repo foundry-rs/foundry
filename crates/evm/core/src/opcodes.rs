@@ -1,6 +1,6 @@
 //! Opcode utils
 
-use revm::interpreter::OpCode;
+use revm::bytecode::opcode::OpCode;
 
 /// Returns true if the opcode modifies memory.
 /// <https://bluealloy.github.io/revm/crates/interpreter/memory.html#opcodes>

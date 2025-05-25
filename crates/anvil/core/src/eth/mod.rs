@@ -10,7 +10,7 @@ use alloy_rpc_types::{
         filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions},
     },
-    BlockId, BlockNumberOrTag as BlockNumber, Filter, Index,
+    BlockId, BlockNumberOrTag as BlockNumber, BlockOverrides, Filter, Index,
 };
 use alloy_serde::WithOtherFields;
 use foundry_common::serde_helpers::{
@@ -18,10 +18,8 @@ use foundry_common::serde_helpers::{
 };
 
 pub mod block;
-pub mod proof;
 pub mod subscription;
 pub mod transaction;
-pub mod trie;
 pub mod wallet;
 
 pub mod serde_helpers;
@@ -37,7 +35,6 @@ pub struct Params<T: Default> {
 /// Represents ethereum JSON-RPC API
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(tag = "method", content = "params")]
-#[expect(clippy::large_enum_variant)]
 pub enum EthRequest {
     #[serde(rename = "web3_clientVersion", with = "empty_params")]
     Web3ClientVersion(()),
@@ -74,6 +71,9 @@ pub enum EthRequest {
 
     #[serde(rename = "eth_getAccount")]
     EthGetAccount(Address, Option<BlockId>),
+
+    #[serde(rename = "eth_getAccountInfo")]
+    EthGetAccountInfo(Address, Option<BlockId>),
 
     #[serde(rename = "eth_getStorageAt")]
     EthGetStorageAt(Address, U256, Option<BlockId>),
@@ -151,6 +151,7 @@ pub enum EthRequest {
         WithOtherFields<TransactionRequest>,
         #[serde(default)] Option<BlockId>,
         #[serde(default)] Option<StateOverride>,
+        #[serde(default)] Option<Box<BlockOverrides>>,
     ),
 
     #[serde(rename = "eth_simulateV1")]
@@ -164,6 +165,7 @@ pub enum EthRequest {
         WithOtherFields<TransactionRequest>,
         #[serde(default)] Option<BlockId>,
         #[serde(default)] Option<StateOverride>,
+        #[serde(default)] Option<Box<BlockOverrides>>,
     ),
 
     #[serde(rename = "eth_getTransactionByHash", with = "sequence")]
@@ -360,6 +362,15 @@ pub enum EthRequest {
     /// Modifies the balance of an account.
     #[serde(rename = "anvil_setBalance", alias = "hardhat_setBalance")]
     SetBalance(Address, #[serde(deserialize_with = "deserialize_number")] U256),
+
+    /// Modifies the ERC20 balance of an account.
+    #[serde(
+        rename = "anvil_dealERC20",
+        alias = "hardhat_dealERC20",
+        alias = "anvil_setERC20Balance",
+        alias = "tenderly_setErc20Balance"
+    )]
+    DealERC20(Address, Address, #[serde(deserialize_with = "deserialize_number")] U256),
 
     /// Sets the code of a contract
     #[serde(rename = "anvil_setCode", alias = "hardhat_setCode")]

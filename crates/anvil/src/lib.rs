@@ -23,7 +23,6 @@ use alloy_signer_local::PrivateKeySigner;
 use eth::backend::fork::ClientFork;
 use eyre::Result;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
-use foundry_evm::revm;
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
 use server::try_spawn_ipc;
@@ -48,13 +47,14 @@ pub use config::{
 };
 
 mod hardfork;
-pub use hardfork::EthereumHardfork;
+pub use hardfork::{EthereumHardfork, OptimismHardfork};
 
 /// ethereum related implementations
 pub mod eth;
 /// Evm related abstractions
 mod evm;
 pub use evm::{inject_precompiles, PrecompileFactory};
+
 /// support for polling filters
 pub mod filter;
 /// commandline output

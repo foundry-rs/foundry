@@ -676,13 +676,20 @@ mod tests {
         }
     }
 
-    // TODO: test for octal
     #[test]
     fn test_format_neg() {
         // underlying is 256 bits so we have to pad left manually
 
         let expected_2: Vec<_> = NEG_NUM.iter().map(|n| format!("{n:1>256b}")).collect();
-        // let expected_8: Vec<_> = NEG_NUM.iter().map(|n| format!("1{:7>85o}", n)).collect();
+        let expected_8: Vec<_> = NEG_NUM
+            .iter()
+            .map(|n| {
+                let i = I256::try_from(*n).unwrap();
+                let mut u = NumberWithBase::from(i);
+                u.set_base(Octal);
+                u.format()
+            })
+            .collect();
         // Sign not included, see NumberWithBase::format
         let expected_10: Vec<_> =
             NEG_NUM.iter().map(|n| format!("{n:}").trim_matches('-').to_string()).collect();
@@ -693,7 +700,7 @@ mod tests {
             let mut num: NumberWithBase = I256::try_from(n).unwrap().into();
 
             assert_eq!(num.set_base(Binary).format(), expected_2[i]);
-            // assert_eq!(num.set_base(Octal).format(), expected_8[i]);
+            assert_eq!(num.set_base(Octal).format(), expected_8[i]);
             assert_eq!(num.set_base(Decimal).format(), expected_10[i]);
             assert_eq!(num.set_base(Hexadecimal).format(), expected_l16[i]);
             assert_eq!(num.set_base(Hexadecimal).format().to_uppercase(), expected_u16[i]);

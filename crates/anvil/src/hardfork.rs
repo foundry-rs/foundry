@@ -1,7 +1,9 @@
+use std::str::FromStr;
+
 use alloy_rpc_types::BlockNumberOrTag;
 use eyre::bail;
-use foundry_evm::revm::primitives::SpecId;
-use std::str::FromStr;
+use op_revm::OpSpecId;
+use revm::primitives::hardfork::SpecId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ChainHardfork {
@@ -25,7 +27,7 @@ impl From<ChainHardfork> for SpecId {
     fn from(fork: ChainHardfork) -> Self {
         match fork {
             ChainHardfork::Ethereum(hardfork) => hardfork.into(),
-            ChainHardfork::Optimism(hardfork) => hardfork.into(),
+            ChainHardfork::Optimism(hardfork) => hardfork.into_eth_spec(),
         }
     }
 }
@@ -50,7 +52,6 @@ pub enum EthereumHardfork {
     Shanghai,
     Cancun,
     Prague,
-    PragueEOF,
     #[default]
     Latest,
 }
@@ -75,8 +76,7 @@ impl EthereumHardfork {
             Self::Paris => 15537394,
             Self::Shanghai => 17034870,
             Self::Cancun | Self::Latest => 19426587,
-            // TODO: add block after activation
-            Self::Prague | Self::PragueEOF => unreachable!(),
+            Self::Prague => 22431084,
         }
     }
 }
@@ -105,7 +105,6 @@ impl FromStr for EthereumHardfork {
             "shanghai" | "16" => Self::Shanghai,
             "cancun" | "17" => Self::Cancun,
             "prague" | "18" => Self::Prague,
-            "pragueeof" | "19" | "prague-eof" => Self::PragueEOF,
             "latest" => Self::Latest,
             _ => bail!("Unknown hardfork {s}"),
         };
@@ -134,9 +133,6 @@ impl From<EthereumHardfork> for SpecId {
             EthereumHardfork::Shanghai => Self::SHANGHAI,
             EthereumHardfork::Cancun | EthereumHardfork::Latest => Self::CANCUN,
             EthereumHardfork::Prague => Self::PRAGUE,
-            // TODO: switch to latest after activation
-            // EOF is included in OSAKA from Revm 16.0.0
-            EthereumHardfork::PragueEOF => Self::OSAKA,
         }
     }
 }
@@ -178,9 +174,15 @@ pub enum OptimismHardfork {
     Fjord,
     Granite,
     Holocene,
-    Isthmus,
     #[default]
-    Latest,
+    Isthmus,
+}
+
+impl OptimismHardfork {
+    pub fn into_eth_spec(self) -> SpecId {
+        let op_spec: OpSpecId = self.into();
+        op_spec.into_eth_spec()
+    }
 }
 
 impl FromStr for OptimismHardfork {
@@ -197,14 +199,13 @@ impl FromStr for OptimismHardfork {
             "granite" => Self::Granite,
             "holocene" => Self::Holocene,
             "isthmus" => Self::Isthmus,
-            "latest" => Self::Latest,
             _ => bail!("Unknown hardfork {s}"),
         };
         Ok(hardfork)
     }
 }
 
-impl From<OptimismHardfork> for SpecId {
+impl From<OptimismHardfork> for OpSpecId {
     fn from(fork: OptimismHardfork) -> Self {
         match fork {
             OptimismHardfork::Bedrock => Self::BEDROCK,
@@ -215,7 +216,6 @@ impl From<OptimismHardfork> for SpecId {
             OptimismHardfork::Granite => Self::GRANITE,
             OptimismHardfork::Holocene => Self::HOLOCENE,
             OptimismHardfork::Isthmus => Self::ISTHMUS,
-            OptimismHardfork::Latest => Self::LATEST,
         }
     }
 }
