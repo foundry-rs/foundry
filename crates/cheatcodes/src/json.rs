@@ -611,9 +611,9 @@ fn serialize_value_as_json(value: DynSolValue) -> Result<Value> {
             Ok(Value::Number(n))
         }
         DynSolValue::Uint(i, _) => {
-            // TODO: ask Arsenii if (or always using strings) this is acceptable
-            // needed cause otherwise alloy fails to coerce numbers > u64
-            // alternatively i could do an alloy PR
+            // TODO: ask Arsenii if this approach (or always using strings) is acceptable.
+            // needed cause otherwise alloy fails to coerce numbers > u64.
+            // alternatively i could do an alloy PR.
             if i <= U256::from(u64::MAX) {
                 // let serde handle number parsing
                 let n = serde_json::from_str(&i.to_string())?;
