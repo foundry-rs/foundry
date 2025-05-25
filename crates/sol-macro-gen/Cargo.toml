@@ -27,4 +27,4 @@ serde_json.workspace = true
 
 eyre.workspace = true
 
-convert_case = "0.4"
+heck.workspace = true
