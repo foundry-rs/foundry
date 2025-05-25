@@ -6,14 +6,17 @@
 // `Executor` struct should be accessed using a trait defined in `foundry-evm-core` instead of
 // the concrete `Executor` type.
 
-use crate::inspectors::{
-    cheatcodes::BroadcastableTransactions, Cheatcodes, InspectorData, InspectorStack,
+use crate::{
+    inspectors::{
+        cheatcodes::BroadcastableTransactions, Cheatcodes, InspectorData, InspectorStack,
+    },
+    Env,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{
     map::{AddressHashMap, HashMap},
-    Address, Bytes, Log, U256,
+    Address, Bytes, Log, TxKind, U256,
 };
 use alloy_sol_types::{sol, SolCall};
 use foundry_evm_core::{
@@ -24,17 +27,20 @@ use foundry_evm_core::{
     },
     decode::{RevertDecoder, SkipReason},
     utils::StateChangeset,
-    InspectorExt,
+    EvmEnv, InspectorExt,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
-    db::{DatabaseCommit, DatabaseRef},
-    interpreter::{return_ok, InstructionResult},
-    primitives::{
-        AuthorizationList, BlockEnv, Bytecode, Env, EnvWithHandlerCfg, ExecutionResult, Output,
-        ResultAndState, SignedAuthorization, SpecId, TxEnv, TxKind,
+    bytecode::Bytecode,
+    context::{BlockEnv, TxEnv},
+    context_interface::{
+        result::{ExecutionResult, Output, ResultAndState},
+        transaction::SignedAuthorization,
     },
+    database::{DatabaseCommit, DatabaseRef},
+    interpreter::{return_ok, InstructionResult},
+    primitives::hardfork::SpecId,
 };
 use std::{
     borrow::Cow,
@@ -83,7 +89,7 @@ pub struct Executor {
     // so the performance difference should be negligible.
     backend: Backend,
     /// The EVM environment.
-    env: EnvWithHandlerCfg,
+    env: Env,
     /// The Revm inspector stack.
     inspector: InspectorStack,
     /// The gas limit for calls and deployments.
@@ -103,7 +109,7 @@ impl Executor {
     #[inline]
     pub fn new(
         mut backend: Backend,
-        env: EnvWithHandlerCfg,
+        env: Env,
         inspector: InspectorStack,
         gas_limit: u64,
         legacy_assertions: bool,
@@ -112,7 +118,7 @@ impl Executor {
         // do not fail.
         backend.insert_account_info(
             CHEATCODE_ADDRESS,
-            revm::primitives::AccountInfo {
+            revm::state::AccountInfo {
                 code: Some(Bytecode::new_raw(Bytes::from_static(&[0]))),
                 // Also set the code hash manually so that it's not computed later.
                 // The code hash value does not matter, as long as it's not zero or `KECCAK_EMPTY`.
@@ -125,7 +131,12 @@ impl Executor {
     }
 
     fn clone_with_backend(&self, backend: Backend) -> Self {
-        let env = EnvWithHandlerCfg::new_with_spec_id(Box::new(self.env().clone()), self.spec_id());
+        let env = Env::new_with_spec_id(
+            self.env.evm_env.cfg_env.clone(),
+            self.env.evm_env.block_env.clone(),
+            self.env.tx.clone(),
+            self.spec_id(),
+        );
         Self::new(backend, env, self.inspector().clone(), self.gas_limit, self.legacy_assertions)
     }
 
@@ -141,12 +152,12 @@ impl Executor {
 
     /// Returns a reference to the EVM environment.
     pub fn env(&self) -> &Env {
-        &self.env.env
+        &self.env
     }
 
     /// Returns a mutable reference to the EVM environment.
     pub fn env_mut(&mut self) -> &mut Env {
-        &mut self.env.env
+        &mut self.env
     }
 
     /// Returns a reference to the EVM inspector.
@@ -161,12 +172,12 @@ impl Executor {
 
     /// Returns the EVM spec ID.
     pub fn spec_id(&self) -> SpecId {
-        self.env.spec_id()
+        self.env.evm_env.cfg_env.spec
     }
 
     /// Sets the EVM spec ID.
     pub fn set_spec_id(&mut self, spec_id: SpecId) {
-        self.env.handler_cfg.spec_id = spec_id;
+        self.env.evm_env.cfg_env.spec = spec_id;
     }
 
     /// Returns the gas limit for calls and deployments.
@@ -238,6 +249,7 @@ impl Executor {
         let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
         account.nonce = nonce;
         self.backend_mut().insert_account_info(address, account);
+        self.env_mut().tx.nonce = nonce;
         Ok(())
     }
 
@@ -258,7 +270,7 @@ impl Executor {
     }
 
     #[inline]
-    pub fn set_script(&mut self, script_address: Address) {
+    pub fn set_script_execution(&mut self, script_address: Address) {
         self.inspector_mut().script(script_address);
     }
 
@@ -293,17 +305,17 @@ impl Executor {
     ///
     /// # Panics
     ///
-    /// Panics if `env.tx.transact_to` is not `TxKind::Create(_)`.
+    /// Panics if `env.tx.kind` is not `TxKind::Create(_)`.
     #[instrument(name = "deploy", level = "debug", skip_all)]
     pub fn deploy_with_env(
         &mut self,
-        env: EnvWithHandlerCfg,
+        env: Env,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult, EvmError> {
         assert!(
-            matches!(env.tx.transact_to, TxKind::Create),
+            matches!(env.tx.kind, TxKind::Create),
             "Expected create transaction, got {:?}",
-            env.tx.transact_to
+            env.tx.kind
         );
         trace!(sender=%env.tx.caller, "deploying contract");
 
@@ -344,9 +356,9 @@ impl Executor {
         res = res.into_result(rd)?;
 
         // record any changes made to the block's environment during setup
-        self.env_mut().block = res.env.block.clone();
+        self.env_mut().evm_env.block_env = res.env.evm_env.block_env.clone();
         // and also the chainid, which can be set manually
-        self.env_mut().cfg.chain_id = res.env.cfg.chain_id;
+        self.env_mut().evm_env.cfg_env.chain_id = res.env.evm_env.cfg_env.chain_id;
 
         let success =
             self.is_raw_call_success(to, Cow::Borrowed(&res.state_changeset), &res, false);
@@ -384,7 +396,7 @@ impl Executor {
         let calldata = Bytes::from(args.abi_encode());
         let mut raw = self.call_raw(from, to, calldata, value)?;
         raw = raw.into_result(rd)?;
-        Ok(CallResult { decoded_result: C::abi_decode_returns(&raw.result, false)?, raw })
+        Ok(CallResult { decoded_result: C::abi_decode_returns(&raw.result)?, raw })
     }
 
     /// Performs a call to an account on the current state of the VM.
@@ -425,7 +437,8 @@ impl Executor {
         authorization_list: Vec<SignedAuthorization>,
     ) -> eyre::Result<RawCallResult> {
         let mut env = self.build_test_env(from, to.into(), calldata, value);
-        env.tx.authorization_list = Some(AuthorizationList::Signed(authorization_list));
+        env.tx.set_signed_authorization(authorization_list);
+        env.tx.tx_type = 4;
         self.call_with_env(env)
     }
 
@@ -445,7 +458,7 @@ impl Executor {
     ///
     /// The state after the call is **not** persisted.
     #[instrument(name = "call", level = "debug", skip_all)]
-    pub fn call_with_env(&self, mut env: EnvWithHandlerCfg) -> eyre::Result<RawCallResult> {
+    pub fn call_with_env(&self, mut env: Env) -> eyre::Result<RawCallResult> {
         let mut inspector = self.inspector().clone();
         let mut backend = CowBackend::new_borrowed(self.backend());
         let result = backend.inspect(&mut env, &mut inspector)?;
@@ -454,7 +467,7 @@ impl Executor {
 
     /// Execute the transaction configured in `env.tx`.
     #[instrument(name = "transact", level = "debug", skip_all)]
-    pub fn transact_with_env(&mut self, mut env: EnvWithHandlerCfg) -> eyre::Result<RawCallResult> {
+    pub fn transact_with_env(&mut self, mut env: Env) -> eyre::Result<RawCallResult> {
         let mut inspector = self.inspector().clone();
         let backend = self.backend_mut();
         let result = backend.inspect(&mut env, &mut inspector)?;
@@ -615,7 +628,7 @@ impl Executor {
             let executor = self.clone_with_backend(backend);
             let call = executor.call_sol(CALLER, address, &ITest::failedCall {}, U256::ZERO, None);
             match call {
-                Ok(CallResult { raw: _, decoded_result: ITest::failedReturn { failed } }) => {
+                Ok(CallResult { raw: _, decoded_result: failed }) => {
                     trace!(failed, "DSTest::failed()");
                     !failed
                 }
@@ -631,37 +644,36 @@ impl Executor {
     ///
     /// If using a backend with cheatcodes, `tx.gas_price` and `block.number` will be overwritten by
     /// the cheatcode state in between calls.
-    fn build_test_env(
-        &self,
-        caller: Address,
-        transact_to: TxKind,
-        data: Bytes,
-        value: U256,
-    ) -> EnvWithHandlerCfg {
-        let env = Env {
-            cfg: self.env().cfg.clone(),
-            // We always set the gas price to 0 so we can execute the transaction regardless of
-            // network conditions - the actual gas price is kept in `self.block` and is applied by
-            // the cheatcode handler if it is enabled
-            block: BlockEnv {
-                basefee: U256::ZERO,
-                gas_limit: U256::from(self.gas_limit),
-                ..self.env().block.clone()
+    fn build_test_env(&self, caller: Address, kind: TxKind, data: Bytes, value: U256) -> Env {
+        Env {
+            evm_env: EvmEnv {
+                cfg_env: {
+                    let mut cfg = self.env().evm_env.cfg_env.clone();
+                    cfg.spec = self.spec_id();
+                    cfg
+                },
+                // We always set the gas price to 0 so we can execute the transaction regardless of
+                // network conditions - the actual gas price is kept in `self.block` and is applied
+                // by the cheatcode handler if it is enabled
+                block_env: BlockEnv {
+                    basefee: 0,
+                    gas_limit: self.gas_limit,
+                    ..self.env().evm_env.block_env.clone()
+                },
             },
             tx: TxEnv {
                 caller,
-                transact_to,
+                kind,
                 data,
                 value,
                 // As above, we set the gas price to 0.
-                gas_price: U256::ZERO,
+                gas_price: 0,
                 gas_priority_fee: None,
                 gas_limit: self.gas_limit,
+                chain_id: Some(self.env().evm_env.cfg_env.chain_id),
                 ..self.env().tx.clone()
             },
-        };
-
-        EnvWithHandlerCfg::new_with_spec_id(Box::new(env), self.spec_id())
+        }
     }
 
     pub fn call_sol_default<C: SolCall>(&self, to: Address, args: &C) -> C::Return
@@ -797,7 +809,7 @@ pub struct RawCallResult {
     /// The changeset of the state.
     pub state_changeset: StateChangeset,
     /// The `revm::Env` after the call
-    pub env: EnvWithHandlerCfg,
+    pub env: Env,
     /// The cheatcode states after execution
     pub cheatcodes: Option<Cheatcodes>,
     /// The raw output of the execution
@@ -822,7 +834,7 @@ impl Default for RawCallResult {
             coverage: None,
             transactions: None,
             state_changeset: HashMap::default(),
-            env: EnvWithHandlerCfg::new_with_spec_id(Box::default(), SpecId::LATEST),
+            env: Env::default(),
             cheatcodes: Default::default(),
             out: None,
             chisel_state: None,
@@ -878,7 +890,7 @@ impl RawCallResult {
         rd: Option<&RevertDecoder>,
     ) -> Result<CallResult, EvmError> {
         self = self.into_result(rd)?;
-        let mut result = func.abi_decode_output(&self.result, false)?;
+        let mut result = func.abi_decode_output(&self.result)?;
         let decoded_result = if result.len() == 1 {
             result.pop().unwrap()
         } else {
@@ -920,7 +932,7 @@ impl std::ops::DerefMut for CallResult {
 
 /// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`
 fn convert_executed_result(
-    env: EnvWithHandlerCfg,
+    env: Env,
     inspector: InspectorStack,
     ResultAndState { result, state: state_changeset }: ResultAndState,
     has_state_snapshot_failure: bool,
@@ -938,10 +950,11 @@ fn convert_executed_result(
         }
     };
     let gas = revm::interpreter::gas::calculate_initial_tx_gas(
-        env.spec_id(),
+        env.evm_env.cfg_env.spec,
         &env.tx.data,
-        env.tx.transact_to.is_create(),
-        &env.tx.access_list,
+        env.tx.kind.is_create(),
+        env.tx.access_list.len().try_into()?,
+        0,
         0,
     );
 

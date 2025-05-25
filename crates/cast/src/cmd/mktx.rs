@@ -1,4 +1,5 @@
 use crate::tx::{self, CastTxBuilder};
+use alloy_ens::NameOrAddress;
 use alloy_network::{eip2718::Encodable2718, EthereumWallet, TransactionBuilder};
 use alloy_primitives::hex;
 use alloy_signer::Signer;
@@ -8,7 +9,6 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{get_provider, LoadConfig},
 };
-use foundry_common::ens::NameOrAddress;
 use std::{path::PathBuf, str::FromStr};
 
 /// CLI arguments for `cast mktx`.

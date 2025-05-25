@@ -5,7 +5,7 @@ use figment::{
     Error, Figment, Metadata, Profile, Provider,
 };
 use foundry_compilers::ProjectPathsConfig;
-use inflector::Inflector;
+use heck::ToSnakeCase;
 use std::path::{Path, PathBuf};
 
 pub(crate) trait ProviderExt: Provider + Sized {

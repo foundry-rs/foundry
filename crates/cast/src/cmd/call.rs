@@ -3,6 +3,7 @@ use crate::{
     tx::{CastTxBuilder, SenderKind},
     Cast,
 };
+use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types::{
     state::{StateOverride, StateOverridesBuilder},
@@ -14,7 +15,7 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, handle_traces, parse_ether_value, TraceResult},
 };
-use foundry_common::{ens::NameOrAddress, shell};
+use foundry_common::shell;
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
     figment::{
@@ -30,6 +31,7 @@ use foundry_evm::{
     traces::{InternalTraceMode, TraceMode},
 };
 use regex::Regex;
+use revm::context::TransactionType;
 use std::{str::FromStr, sync::LazyLock};
 
 // matches override pattern <address>:<slot>:<value>
@@ -242,8 +244,8 @@ impl CallArgs {
                 TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
             // modify settings that usually set in eth_call
-            env.cfg.disable_block_gas_limit = true;
-            env.block.gas_limit = U256::MAX;
+            env.evm_env.cfg_env.disable_block_gas_limit = true;
+            env.evm_env.block_env.gas_limit = u64::MAX;
 
             let trace_mode = TraceMode::Call
                 .with_debug(debug)
@@ -265,6 +267,19 @@ impl CallArgs {
             let value = tx.value.unwrap_or_default();
             let input = tx.inner.input.into_input().unwrap_or_default();
             let tx_kind = tx.inner.to.expect("set by builder");
+            let env_tx = &mut executor.env_mut().tx;
+
+            if let Some(tx_type) = tx.inner.transaction_type {
+                env_tx.tx_type = tx_type;
+            }
+
+            if let Some(access_list) = tx.inner.access_list {
+                env_tx.access_list = access_list;
+
+                if env_tx.tx_type == TransactionType::Legacy as u8 {
+                    env_tx.tx_type = TransactionType::Eip2930 as u8;
+                }
+            }
 
             let trace = match tx_kind {
                 TxKind::Create => {

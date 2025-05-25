@@ -1,7 +1,7 @@
 use crate::utils::{http_provider, http_provider_with_signer};
 use alloy_consensus::{SidecarBuilder, SimpleCoder, Transaction};
 use alloy_eips::{
-    eip4844::{BLOB_TX_MIN_BLOB_GASPRICE, DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK},
+    eip4844::{BLOB_TX_MIN_BLOB_GASPRICE, DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK_DENCUN},
     Typed2718,
 };
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionBuilder4844};
@@ -81,7 +81,7 @@ async fn can_send_multiple_blobs_in_one_tx() {
 
     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 
-    assert_eq!(receipt.blob_gas_used, Some(MAX_DATA_GAS_PER_BLOCK));
+    assert_eq!(receipt.blob_gas_used, Some(MAX_DATA_GAS_PER_BLOCK_DENCUN));
     assert_eq!(receipt.blob_gas_price, Some(0x1)); // 1 wei
 }
 

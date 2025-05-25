@@ -204,10 +204,7 @@
           ]
         ],
         "labeled_addresses": {},
-        "duration": {
-          "secs": "{...}",
-          "nanos": "{...}"
-        },
+        "duration": "{...}",
         "breakpoints": {},
         "gas_snapshots": {}
       }
