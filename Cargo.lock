@@ -2386,6 +2386,7 @@ dependencies = [
  "alloy-contract",
  "alloy-dyn-abi",
  "alloy-ens",
+ "alloy-hardforks",
  "alloy-json-abi",
  "alloy-json-rpc",
  "alloy-network",
@@ -3813,6 +3814,7 @@ version = "1.2.1"
 dependencies = [
  "alloy-chains",
  "alloy-dyn-abi",
+ "alloy-hardforks",
  "alloy-json-abi",
  "alloy-network",
  "alloy-primitives",
