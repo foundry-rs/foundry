@@ -219,9 +219,11 @@ impl NodeArgs {
         let hardfork = match &self.hardfork {
             Some(hf) => {
                 if self.evm.optimism {
-                    Some(OpHardfork::from_str(hf).unwrap().into())
+                    let hf = OpHardfork::from_str(hf).map_err(|s| eyre::eyre!(s))?.into();
+                    Some(hf)
                 } else {
-                    Some(EthereumHardfork::from_str(hf).unwrap().into())
+                    let hf = EthereumHardfork::from_str(hf).map_err(|s| eyre::eyre!(s))?.into();
+                    Some(hf)
                 }
             }
             None => None,
