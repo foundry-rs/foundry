@@ -56,7 +56,7 @@ impl FuzzConfig {
     pub fn new(cache_dir: PathBuf) -> Self {
         let cache_dir = cache_dir.display();
         Self {
-            corpus_dir: Some(format!("{cache_dir}/fuzz/corpus").into()),
+            corpus_dir: None,
             failure_persist_dir: Some(format!("{cache_dir}/fuzz").into()),
             failure_persist_file: Some("failures".to_string()),
             ..Default::default()

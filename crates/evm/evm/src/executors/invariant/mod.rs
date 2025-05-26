@@ -26,7 +26,7 @@ use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::{
     prelude::Rng,
-    strategy::{BoxedStrategy, Strategy, ValueTree},
+    strategy::{Strategy, ValueTree},
     test_runner::TestRunner,
 };
 use result::{assert_after_invariant, assert_invariants, can_continue};
@@ -35,9 +35,11 @@ use shrink::shrink_sequence;
 use std::{
     cell::RefCell,
     collections::{btree_map::Entry, HashMap as Map},
+    fs::DirEntry,
     path::PathBuf,
     sync::Arc,
     time,
+    time::SystemTime,
 };
 
 mod error;
@@ -308,33 +310,66 @@ pub struct InvariantExecutor<'a> {
 const COVERAGE_MAP_SIZE: usize = 65536;
 
 pub struct TxCorpusManager {
-    pub corpus_dir: Option<PathBuf>,
     pub in_memory_corpus: Vec<Vec<BasicTxDetails>>, /* TODO need some sort of corpus management
                                                      * (limit memory usage and flush). */
-    pub tx_generator: BoxedStrategy<BasicTxDetails>,
 }
 
 impl TxCorpusManager {
-    pub fn new(corpus_dir: PathBuf, tx_generator: BoxedStrategy<BasicTxDetails>) -> Self {
-        // assert!(corpus_dir.is_dir());
-        let mut corpus = vec![];
-        if let Ok(entries) = std::fs::read_dir(&corpus_dir) {
-            for entry in entries {
-                let path = entry.expect("msg").path();
+    pub fn new(corpus_dir: &Option<PathBuf>) -> Result<Self> {
+        let mut in_memory_corpus = vec![];
+
+        if let Some(corpus_dir) = corpus_dir {
+            if !corpus_dir.is_dir() {
+                foundry_common::fs::create_dir_all(corpus_dir)?;
+            }
+
+            let mut entries: Vec<(DirEntry, SystemTime)> = std::fs::read_dir(corpus_dir)?
+                .filter_map(|res| {
+                    res.ok().and_then(|entry| {
+                        entry
+                            .metadata()
+                            .ok()
+                            .and_then(|meta| meta.created().ok().map(|ctime| (entry, ctime)))
+                    })
+                })
+                .collect();
+            entries.sort_by_key(|&(_, time)| time);
+
+            for (entry, _) in entries {
+                let path = entry.path();
                 let tx_seq: Vec<BasicTxDetails> =
                     foundry_common::fs::read_json_file(&path).expect("msg");
-                corpus.push(tx_seq);
+                in_memory_corpus.push(tx_seq);
             }
         }
-        Self { corpus_dir: Some(corpus_dir), in_memory_corpus: corpus, tx_generator }
+
+        Ok(Self { in_memory_corpus })
     }
 
-    pub fn insert(&mut self, tx_seq: Vec<BasicTxDetails>) {
-        self.in_memory_corpus.push(tx_seq);
+    pub fn persist(&mut self, corpus_dir: &Option<PathBuf>, current_inputs: Vec<BasicTxDetails>) {
+        if let Some(corpus_dir) = corpus_dir {
+            let timestamp = time::SystemTime::now()
+                .duration_since(time::UNIX_EPOCH)
+                .expect("Time went backwards")
+                .as_secs()
+                .to_string();
+            if let Err(err) = foundry_common::fs::write_json_file(
+                corpus_dir.join(timestamp).as_path(),
+                &current_inputs,
+            ) {
+                error!(%err, "Failed to record call sequence");
+            }
+        }
+
+        // This includes reverting txs in the corpus and `can_continue` removes
+        // them. We want this as it is new coverage
+        // and may help reach the other branch.
+        self.in_memory_corpus.push(current_inputs);
     }
 
     #[allow(clippy::needless_range_loop)]
     pub fn new_sequence(&self, test_runnner: &mut TestRunner) -> Vec<BasicTxDetails> {
+        let mut new_seq = vec![];
         let rng = test_runnner.rng();
 
         if self.in_memory_corpus.len() > 1 {
@@ -342,7 +377,6 @@ impl TxCorpusManager {
             let idx2 = rng.gen_range(0..self.in_memory_corpus.len());
             let one = &self.in_memory_corpus[idx1];
             let two = &self.in_memory_corpus[idx2];
-            let mut new_seq = vec![];
             // TODO rounds of mutations on elements?
             match rng.gen_range(0..3) {
                 // TODO expose config and add tests
@@ -390,12 +424,8 @@ impl TxCorpusManager {
                     unreachable!();
                 }
             }
-
-            if !new_seq.is_empty() {
-                return new_seq;
-            }
         }
-        vec![self.tx_generator.new_tree(test_runnner).unwrap().current()]
+        new_seq
     }
 }
 
@@ -435,39 +465,41 @@ impl<'a> InvariantExecutor<'a> {
         let (invariant_test, invariant_strategy) =
             self.prepare_test(&invariant_contract, fuzz_fixtures, deployed_libs)?;
 
-        let generator = invariant_strategy.boxed();
-        if let Some(corpus_dir) = &self.config.corpus_dir {
-            if !corpus_dir.is_dir() {
-                foundry_common::fs::create_dir_all(corpus_dir)?;
+        let mut corpus = TxCorpusManager::new(&self.config.corpus_dir)?;
+        for tx_seq in &corpus.in_memory_corpus {
+            if tx_seq.is_empty() {
+                continue;
             }
-            // TODO rerun corpus and initialize history map
-            // let mut corpus =
-            //     TxCorpusManager::new(self.config.corpus_dir.clone().unwrap(), generator.clone());
 
-            // for tx_seq in corpus.in_memory_corpus.iter() {
-            //     if tx_seq.is_empty() {
-            //         continue;
-            //     }
-            //     let mut current_run = InvariantTestRun::new(
-            //         tx_seq[0].clone(),
-            //         // Before each run, we must reset the backend state.
-            //         self.executor.clone(),
-            //         self.config.depth as usize,
-            //     );
-            //     for tx in tx_seq[1..].iter() {
-
-            //     }
-            // }
+            for tx in tx_seq {
+                let mut call_result = self
+                    .executor
+                    .call_raw(
+                        tx.sender,
+                        tx.call_details.target,
+                        tx.call_details.calldata.clone(),
+                        U256::ZERO,
+                    )
+                    .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))?;
+                call_result.merge_edge_coverage(&mut self.history_map);
+            }
         }
-        let mut corpus =
-            TxCorpusManager::new(self.config.corpus_dir.clone().unwrap(), generator.clone());
 
         // Start timer for this invariant test.
         let timer = FuzzTestTimer::new(self.config.timeout);
         let mut runs = 0;
 
         'stop: while runs < self.config.runs {
-            let initial_seq = corpus.new_sequence(&mut self.runner);
+            let mut initial_seq = corpus.new_sequence(&mut self.runner);
+            if initial_seq.is_empty() {
+                initial_seq.push(
+                    invariant_strategy
+                        .new_tree(&mut invariant_test.execution_data.borrow_mut().branch_runner)
+                        .map_err(|_| eyre!("Could not generate case"))?
+                        .current(),
+                );
+            }
+
             // Create current invariant run data.
             let mut current_run = InvariantTestRun::new(
                 initial_seq[0].clone(),
@@ -601,7 +633,7 @@ impl<'a> InvariantExecutor<'a> {
                 if discarded || must_generate || generate_new {
                     // Generates the next call from the run using the recently updated dictionary
                     current_run.inputs.push(
-                        generator
+                        invariant_strategy
                             .new_tree(&mut invariant_test.execution_data.borrow_mut().branch_runner)
                             .map_err(|_| eyre!("Could not generate case"))?
                             .current(),
@@ -613,24 +645,7 @@ impl<'a> InvariantExecutor<'a> {
 
             // Save corpus if new coverage recorded during this run.
             if current_run.new_coverage {
-                if let Some(corpus_dir) = &self.config.corpus_dir {
-                    let timestamp = time::SystemTime::now()
-                        .duration_since(time::UNIX_EPOCH)
-                        .expect("Time went backwards")
-                        .as_secs()
-                        .to_string();
-                    if let Err(err) = foundry_common::fs::write_json_file(
-                        corpus_dir.join(timestamp).as_path(),
-                        &current_run.inputs,
-                    ) {
-                        error!(%err, "Failed to record call sequence");
-                    }
-                }
-
-                // This includes reverting txs in the corpus and `can_continue` removes
-                // them. We want this as it is new coverage
-                // and may help reach the other branch.
-                corpus.insert(current_run.inputs.clone());
+                corpus.persist(&self.config.corpus_dir, current_run.inputs.clone());
             }
 
             // Call `afterInvariant` only if it is declared and test didn't fail already.

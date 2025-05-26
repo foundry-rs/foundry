@@ -71,7 +71,7 @@ impl InvariantConfig {
             shrink_run_limit: 5000,
             max_assume_rejects: 65536,
             gas_report_samples: 256,
-            corpus_dir: Some(format!("{cache_dir}/invariant/corpus").into()),
+            corpus_dir: None,
             failure_persist_dir: Some(format!("{cache_dir}/invariant").into()),
             show_metrics: false,
             timeout: None,

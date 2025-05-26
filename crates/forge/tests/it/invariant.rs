@@ -1051,9 +1051,9 @@ contract InvariantSelectorsWeightTest is Test {
     function afterInvariant() public {
         assertEq(handlerOne.hit1(), 2);
         assertEq(handlerTwo.hit2(), 2);
-        assertEq(handlerTwo.hit3(), 3);
+        assertEq(handlerTwo.hit3(), 2);
         assertEq(handlerTwo.hit4(), 1);
-        assertEq(handlerTwo.hit5(), 2);
+        assertEq(handlerTwo.hit5(), 3);
     }
 
     function invariant_selectors_weight() public view {}
@@ -1097,7 +1097,7 @@ contract InvariantSequenceLenTest is Test {
     cmd.args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(str![[r#"
 ...
 [FAIL: invariant increment failure]
-	[Sequence] (original: 4, shrunk: 1)
+	[Sequence] (original: 3, shrunk: 1)
 ...
 "#]]);
 
@@ -1112,8 +1112,7 @@ contract InvariantSequenceLenTest is Test {
 Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
 [FAIL: invariant increment failure]
-	[Sequence] (original: 4, shrunk: 4)
-		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
+	[Sequence] (original: 3, shrunk: 3)
 		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
 		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
 		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[996881781832960761274744263729582347 [9.968e35]]
@@ -1135,9 +1134,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
 [FAIL: invariant increment failure]
-	[Sequence] (original: 4, shrunk: 4)
-		vm.prank([..]);
-		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
+	[Sequence] (original: 3, shrunk: 3)
 		vm.prank([..]);
 		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
 		vm.prank([..]);
@@ -1161,8 +1158,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
 [FAIL: invariant_increment replay failure]
-	[Sequence] (original: 4, shrunk: 4)
-		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
+	[Sequence] (original: 3, shrunk: 3)
 		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
 		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
 		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[996881781832960761274744263729582347 [9.968e35]]
