@@ -384,15 +384,20 @@ impl ExecutedState {
 }
 
 impl PreSimulationState {
-    pub fn show_json(&self) -> Result<()> {
-        let result = &self.execution_result;
+    pub async fn show_json(&self) -> Result<()> {
+        let mut result = self.execution_result.clone();
+
+        for (_, trace) in &mut result.traces {
+            decode_trace_arena(trace, &self.execution_artifacts.decoder).await;
+        }
 
         let json_result = JsonResult {
             logs: decode_console_logs(&result.logs),
             returns: &self.execution_artifacts.returns,
-            result,
+            result: &result,
         };
         let json = serde_json::to_string(&json_result)?;
+
         sh_println!("{json}")?;
 
         if !self.execution_result.success {
