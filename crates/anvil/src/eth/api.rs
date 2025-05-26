@@ -356,6 +356,9 @@ impl EthApi {
             EthRequest::SetBalance(addr, val) => {
                 self.anvil_set_balance(addr, val).await.to_rpc_result()
             }
+            EthRequest::AddBalance(addr, val) => {
+                self.anvil_add_balance(addr, val).await.to_rpc_result()
+            }
             EthRequest::DealERC20(addr, token_addr, val) => {
                 self.anvil_deal_erc20(addr, token_addr, val).await.to_rpc_result()
             }
@@ -1853,6 +1856,16 @@ impl EthApi {
     pub async fn anvil_set_balance(&self, address: Address, balance: U256) -> Result<()> {
         node_info!("anvil_setBalance");
         self.backend.set_balance(address, balance).await?;
+        Ok(())
+    }
+
+    /// Increases the balance of an account.
+    ///
+    /// Handler for RPC call: `anvil_addBalance`
+    pub async fn anvil_add_balance(&self, address: Address, balance: U256) -> Result<()> {
+        node_info!("anvil_addBalance");
+        let current_balance = self.backend.get_balance(address, None).await?;
+        self.backend.set_balance(address, current_balance + balance).await?;
         Ok(())
     }
 
