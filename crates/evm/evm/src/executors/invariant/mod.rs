@@ -263,6 +263,8 @@ pub struct InvariantTestRun {
     pub depth: u32,
     // Current assume rejects of the invariant run.
     pub assume_rejects_counter: u32,
+    // Whether new coverage was discovered during this run.
+    pub new_coverage: bool,
 }
 
 impl InvariantTestRun {
@@ -276,6 +278,7 @@ impl InvariantTestRun {
             run_traces: vec![],
             depth: 0,
             assume_rejects_counter: 0,
+            new_coverage: false,
         }
     }
 }
@@ -318,23 +321,13 @@ impl TxCorpusManager {
         if let Ok(entries) = std::fs::read_dir(&corpus_dir) {
             for entry in entries {
                 let path = entry.expect("msg").path();
-                if path.is_file() && path.extension() == Some(std::ffi::OsStr::new("json")) {
-                    let tx_seq: Vec<BasicTxDetails> =
-                        foundry_common::fs::read_json_file(&path).expect("msg");
-                    corpus.push(tx_seq);
-                }
+                let tx_seq: Vec<BasicTxDetails> =
+                    foundry_common::fs::read_json_file(&path).expect("msg");
+                corpus.push(tx_seq);
             }
         }
         Self { corpus_dir: Some(corpus_dir), in_memory_corpus: corpus, tx_generator }
     }
-
-    // pub fn save(&self) -> Result<()> { TODO order or key by timestamp?
-    //     for (i, tx_seq) in self.corpus.iter().enumerate() {
-    //         let path = self.corpus_dir.join(format!("{}.json", i));
-    //         foundry_common::fs::write_json_file(&path, tx_seq)?;
-    //     }
-    //     Ok(())
-    // }
 
     pub fn insert(&mut self, tx_seq: Vec<BasicTxDetails>) {
         self.in_memory_corpus.push(tx_seq);
@@ -368,10 +361,6 @@ impl TxCorpusManager {
                     for tx in two.iter().take(end2).skip(start2) {
                         new_seq.push(tx.clone());
                     }
-
-                    if !new_seq.is_empty() {
-                        return new_seq;
-                    }
                 }
                 // repeat
                 1 => {
@@ -392,7 +381,6 @@ impl TxCorpusManager {
                         let tx = if rng.gen_bool(0.5) { tx1.clone() } else { tx2.clone() };
                         new_seq.push(tx);
                     }
-                    return new_seq;
                 }
                 // TODO
                 // 3. Overwrite prefix with new or mutated sequence
@@ -402,8 +390,12 @@ impl TxCorpusManager {
                     unreachable!();
                 }
             }
+
+            if !new_seq.is_empty() {
+                return new_seq;
+            }
         }
-        return vec![self.tx_generator.new_tree(test_runnner).unwrap().current()];
+        vec![self.tx_generator.new_tree(test_runnner).unwrap().current()]
     }
 }
 
@@ -476,7 +468,6 @@ impl<'a> InvariantExecutor<'a> {
 
         'stop: while runs < self.config.runs {
             let initial_seq = corpus.new_sequence(&mut self.runner);
-            // println!("initial_seq: {:?}", initial_seq);
             // Create current invariant run data.
             let mut current_run = InvariantTestRun::new(
                 initial_seq[0].clone(),
@@ -524,66 +515,9 @@ impl<'a> InvariantExecutor<'a> {
 
                 // Collect line coverage from last fuzzed call.
                 invariant_test.merge_coverage(call_result.line_coverage.clone());
-                if let Some(ref mut x) = call_result.edge_coverage {
-                    if !x.is_empty() {
-                        let mut new_coverage = false;
-
-                        // Iterate over the current map and the history map together and update
-                        // the history map, if we discover some new coverage, report true
-                        x.iter_mut()
-                            // Use zip to add history map to the iterator, now we get tuple back
-                            .zip(self.history_map.iter_mut())
-                            // For the tuple pair
-                            .for_each(|(curr, hist)| {
-                                // If we got a hitcount of at least 1
-                                if *curr > 0 {
-                                    // Convert hitcount into bucket count
-                                    // Convert hitcount into bucket count
-                                    let bucket = match *curr {
-                                        0 => 0,
-                                        1 => 1,
-                                        2 => 2,
-                                        3 => 4,
-                                        4..=7 => 8,
-                                        8..=15 => 16,
-                                        16..=31 => 32,
-                                        32..=127 => 64,
-                                        128..=255 => 128,
-                                    };
-
-                                    // If the old record for this edge pair is lower, update
-                                    if *hist < bucket {
-                                        *hist = bucket;
-                                        new_coverage = true;
-                                    }
-
-                                    // Zero out the current map for next fuzzing iteration
-                                    *curr = 0;
-                                }
-                            });
-
-                        if !discarded && new_coverage {
-                            // TODO save at very end
-                            if let Some(corpus_dir) = &self.config.corpus_dir {
-                                let timestamp = time::SystemTime::now()
-                                    .duration_since(time::UNIX_EPOCH)
-                                    .expect("Time went backwards")
-                                    .as_secs()
-                                    .to_string();
-                                if let Err(err) = foundry_common::fs::write_json_file(
-                                    corpus_dir.join(timestamp).as_path(),
-                                    &current_run.inputs,
-                                ) {
-                                    error!(%err, "Failed to record call sequence");
-                                }
-                            }
-
-                            // This includes reverting txs in the corpus and `can_continue` removes
-                            // them. We want this as it is new coverage
-                            // and may help reach the other branch.
-                            corpus.insert(current_run.inputs.clone());
-                        }
-                    }
+                // Merge edge count with current history map and set new coverage in current run.
+                if call_result.merge_edge_coverage(&mut self.history_map) {
+                    current_run.new_coverage = true;
                 }
 
                 if discarded {
@@ -675,6 +609,28 @@ impl<'a> InvariantExecutor<'a> {
                 } else {
                     current_run.inputs.push(initial_seq[current_run.depth as usize].clone());
                 }
+            }
+
+            // Save corpus if new coverage recorded during this run.
+            if current_run.new_coverage {
+                if let Some(corpus_dir) = &self.config.corpus_dir {
+                    let timestamp = time::SystemTime::now()
+                        .duration_since(time::UNIX_EPOCH)
+                        .expect("Time went backwards")
+                        .as_secs()
+                        .to_string();
+                    if let Err(err) = foundry_common::fs::write_json_file(
+                        corpus_dir.join(timestamp).as_path(),
+                        &current_run.inputs,
+                    ) {
+                        error!(%err, "Failed to record call sequence");
+                    }
+                }
+
+                // This includes reverting txs in the corpus and `can_continue` removes
+                // them. We want this as it is new coverage
+                // and may help reach the other branch.
+                corpus.insert(current_run.inputs.clone());
             }
 
             // Call `afterInvariant` only if it is declared and test didn't fail already.
