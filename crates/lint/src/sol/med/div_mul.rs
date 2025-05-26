@@ -1,11 +1,10 @@
-use solar_ast::{BinOp, BinOpKind, Expr, ExprKind};
-
 use super::DivideBeforeMultiply;
 use crate::{
     declare_forge_lint,
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
+use solar_ast::{BinOp, BinOpKind, Expr, ExprKind};
 
 declare_forge_lint!(
     DIVIDE_BEFORE_MULTIPLY,

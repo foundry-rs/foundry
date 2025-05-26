@@ -1,11 +1,10 @@
-use solar_ast::{VarMut, VariableDefinition};
-
 use super::ScreamingSnakeCase;
 use crate::{
     declare_forge_lint,
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
+use solar_ast::{VarMut, VariableDefinition};
 
 declare_forge_lint!(
     SCREAMING_SNAKE_CASE_CONSTANT,

@@ -1,12 +1,4 @@
-pub mod macros;
-
-pub mod gas;
-pub mod high;
-pub mod info;
-pub mod med;
-
 use crate::linter::{EarlyLintPass, EarlyLintVisitor, Lint, LintContext, Linter};
-
 use foundry_compilers::solc::SolcLanguage;
 use foundry_config::lint::Severity;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -20,6 +12,13 @@ use std::{
     sync::Arc,
 };
 use thiserror::Error;
+
+pub mod macros;
+
+pub mod gas;
+pub mod high;
+pub mod info;
+pub mod med;
 
 /// Linter implementation to analyze Solidity source code responsible for identifying
 /// vulnerabilities gas optimizations, and best practices.
