@@ -290,6 +290,66 @@ casttest!(wallet_sign_message_hex_data, |_prj, cmd| {
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/10613>
+// tests that `cast wallet sign` and `cast wallet verify` work with the same message as input
+casttest!(wallet_sign_and_verify_message_hex_data, |_prj, cmd| {
+    //     message="$1"
+    //     mnemonic="test test test test test test test test test test test junk"
+    //     key=$(cast wallet private-key --mnemonic "$mnemonic")
+    //     address=$(cast wallet address --mnemonic "$mnemonic")
+    //     signature=$(cast wallet sign --private-key "$key" "$message")
+    //     cast wallet verify --address "$address" "$message" "$signature"
+    let mnemonic = "test test test test test test test test test test test junk";
+    let key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let address = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+    cmd.args(["wallet", "private-key", "--mnemonic", mnemonic]).assert_success().stdout_eq(str![[
+        r#"
+0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+
+"#
+    ]]);
+    cmd.cast_fuse().args(["wallet", "address", "--mnemonic", mnemonic]).assert_success().stdout_eq(
+        str![[r#"
+0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+
+"#]],
+    );
+
+    let msg_hex = "0x0000000000000000000000000000000000000000000000000000000000000001";
+    let signature_hex = "0xed769da87f78d0166b30aebf2767ceed5a3867da21b2fba8c6527af256bbcebe24a1e758ec8ad1ffc29cfefa540ea7ba7966c0edf6907af82348f894ba4f40fa1b";
+    cmd.cast_fuse().args([
+        "wallet", "sign", "--private-key",key, msg_hex
+    ]).assert_success().stdout_eq(str![[r#"
+0xed769da87f78d0166b30aebf2767ceed5a3867da21b2fba8c6527af256bbcebe24a1e758ec8ad1ffc29cfefa540ea7ba7966c0edf6907af82348f894ba4f40fa1b
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args(["wallet", "verify", "--address", address, msg_hex, signature_hex])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Validation succeeded. Address 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 signed this message.
+
+"#]]);
+
+    let msg_raw = "0000000000000000000000000000000000000000000000000000000000000001";
+    let signature_raw = "0x27a97b378477d9d004bd19cbd838d59bbb9847074ae4cc5b5975cc5566065eea76ee5b752fcdd483073e1baba548d82d9accc8603b3781bcc9abf195614cd3411c";
+    cmd.cast_fuse().args([
+        "wallet", "sign", "--private-key",key, msg_raw
+    ]).assert_success().stdout_eq(str![[r#"
+0x27a97b378477d9d004bd19cbd838d59bbb9847074ae4cc5b5975cc5566065eea76ee5b752fcdd483073e1baba548d82d9accc8603b3781bcc9abf195614cd3411c
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args(["wallet", "verify", "--address", address, msg_raw, signature_raw])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Validation succeeded. Address 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 signed this message.
+
+"#]]);
+});
+
 // tests that `cast wallet sign typed-data` outputs the expected signature, given a JSON string
 casttest!(wallet_sign_typed_data_string, |_prj, cmd| {
     cmd.args([
@@ -2613,6 +2673,16 @@ contract SimpleStorageScript is Script {
         ])
         .assert_failure().stderr_eq(str![[r#"
 Error: Failed to estimate gas: server returned an error response: error code 3: execution reverted: custom error 0x6786ad34: 000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000000000000003e8, data: "0x6786ad34000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000000000000003e8": AddressInsufficientBalance(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, 1000)
+
+"#]]);
+});
+
+// <https://basescan.org/block/30558838>
+casttest!(estimate_base_da, |_prj, cmd| {
+    cmd.args(["da-estimate", "30558838", "-r", "https://mainnet.base.org/"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Estimated data availability size for block 30558838 with 225 transactions: 52916546100
 
 "#]]);
 });

@@ -1,5 +1,8 @@
 use super::{
-    backend::mem::{state, BlockRequest, State},
+    backend::{
+        db::MaybeFullDatabase,
+        mem::{state, BlockRequest, State},
+    },
     sign::build_typed_transaction,
 };
 use crate::{
@@ -53,7 +56,7 @@ use alloy_rpc_types::{
     },
     request::TransactionRequest,
     simulate::{SimulatePayload, SimulatedBlock},
-    state::StateOverride,
+    state::{AccountOverride, EvmOverrides, StateOverridesBuilder},
     trace::{
         filter::TraceFilter,
         geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
@@ -64,6 +67,7 @@ use alloy_rpc_types::{
     EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log, Work,
 };
 use alloy_serde::WithOtherFields;
+use alloy_sol_types::{sol, SolCall, SolValue};
 use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
@@ -89,7 +93,7 @@ use revm::{
     bytecode::Bytecode,
     context::BlockEnv,
     context_interface::{block::BlobExcessGasAndPrice, result::Output},
-    database::DatabaseRef,
+    database::{CacheDB, DatabaseRef},
     interpreter::{return_ok, return_revert, InstructionResult},
     primitives::eip7702::PER_EMPTY_ACCOUNT_COST,
 };
@@ -252,18 +256,20 @@ impl EthApi {
             EthRequest::EthSendRawTransaction(tx) => {
                 self.send_raw_transaction(tx).await.to_rpc_result()
             }
-            EthRequest::EthCall(call, block, overrides) => {
-                self.call(call, block, overrides).await.to_rpc_result()
-            }
+            EthRequest::EthCall(call, block, state_override, block_overrides) => self
+                .call(call, block, EvmOverrides::new(state_override, block_overrides))
+                .await
+                .to_rpc_result(),
             EthRequest::EthSimulateV1(simulation, block) => {
                 self.simulate_v1(simulation, block).await.to_rpc_result()
             }
             EthRequest::EthCreateAccessList(call, block) => {
                 self.create_access_list(call, block).await.to_rpc_result()
             }
-            EthRequest::EthEstimateGas(call, block, overrides) => {
-                self.estimate_gas(call, block, overrides).await.to_rpc_result()
-            }
+            EthRequest::EthEstimateGas(call, block, state_override, block_overrides) => self
+                .estimate_gas(call, block, EvmOverrides::new(state_override, block_overrides))
+                .await
+                .to_rpc_result(),
             EthRequest::EthGetRawTransactionByHash(hash) => {
                 self.raw_transaction(hash).await.to_rpc_result()
             }
@@ -349,6 +355,12 @@ impl EthApi {
             }
             EthRequest::SetBalance(addr, val) => {
                 self.anvil_set_balance(addr, val).await.to_rpc_result()
+            }
+            EthRequest::AddBalance(addr, val) => {
+                self.anvil_add_balance(addr, val).await.to_rpc_result()
+            }
+            EthRequest::DealERC20(addr, token_addr, val) => {
+                self.anvil_deal_erc20(addr, token_addr, val).await.to_rpc_result()
             }
             EthRequest::SetCode(addr, code) => {
                 self.anvil_set_code(addr, code).await.to_rpc_result()
@@ -733,7 +745,7 @@ impl EthApi {
         &self,
         address: Address,
         block_number: Option<BlockId>,
-    ) -> Result<serde_json::Value> {
+    ) -> Result<alloy_rpc_types::eth::AccountInfo> {
         node_info!("eth_getAccountInfo");
         let account = self
             .backend
@@ -741,11 +753,11 @@ impl EthApi {
             .await?;
         let code =
             self.backend.get_code(address, Some(self.block_request(block_number).await?)).await?;
-        Ok(serde_json::json!({
-            "balance": account.balance,
-            "nonce": account.nonce,
-            "code": code
-        }))
+        Ok(alloy_rpc_types::eth::AccountInfo {
+            balance: account.balance,
+            nonce: account.nonce,
+            code,
+        })
     }
     /// Returns content of the storage at given address.
     ///
@@ -993,7 +1005,8 @@ impl EthApi {
 
         if request.gas.is_none() {
             // estimate if not provided
-            if let Ok(gas) = self.estimate_gas(request.clone(), None, None).await {
+            if let Ok(gas) = self.estimate_gas(request.clone(), None, EvmOverrides::default()).await
+            {
                 request.gas = Some(gas.to());
             }
         }
@@ -1020,7 +1033,8 @@ impl EthApi {
 
         if request.gas.is_none() {
             // estimate if not provided
-            if let Ok(gas) = self.estimate_gas(request.clone(), None, None).await {
+            if let Ok(gas) = self.estimate_gas(request.clone(), None, EvmOverrides::default()).await
+            {
                 request.gas = Some(gas.to());
             }
         }
@@ -1094,7 +1108,7 @@ impl EthApi {
         &self,
         request: WithOtherFields<TransactionRequest>,
         block_number: Option<BlockId>,
-        overrides: Option<StateOverride>,
+        overrides: EvmOverrides,
     ) -> Result<Bytes> {
         node_info!("eth_call");
         let block_request = self.block_request(block_number).await?;
@@ -1102,8 +1116,8 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
-                    if overrides.is_some() {
-                        return Err(BlockchainError::StateOverrideError(
+                    if overrides.has_state() || overrides.has_block() {
+                        return Err(BlockchainError::EvmOverrideError(
                             "not available on past forked blocks".to_string(),
                         ));
                     }
@@ -1225,7 +1239,7 @@ impl EthApi {
         &self,
         request: WithOtherFields<TransactionRequest>,
         block_number: Option<BlockId>,
-        overrides: Option<StateOverride>,
+        overrides: EvmOverrides,
     ) -> Result<U256> {
         node_info!("eth_estimateGas");
         self.do_estimate_gas(
@@ -1845,6 +1859,86 @@ impl EthApi {
         Ok(())
     }
 
+    /// Increases the balance of an account.
+    ///
+    /// Handler for RPC call: `anvil_addBalance`
+    pub async fn anvil_add_balance(&self, address: Address, balance: U256) -> Result<()> {
+        node_info!("anvil_addBalance");
+        let current_balance = self.backend.get_balance(address, None).await?;
+        self.backend.set_balance(address, current_balance + balance).await?;
+        Ok(())
+    }
+
+    /// Deals ERC20 tokens to a address
+    ///
+    /// Handler for RPC call: `anvil_dealERC20`
+    pub async fn anvil_deal_erc20(
+        &self,
+        address: Address,
+        token_address: Address,
+        balance: U256,
+    ) -> Result<()> {
+        node_info!("anvil_dealERC20");
+
+        sol! {
+            #[sol(rpc)]
+            contract IERC20 {
+                function balanceOf(address target) external view returns (uint256);
+            }
+        }
+
+        let calldata = IERC20::balanceOfCall { target: address }.abi_encode();
+        let tx = TransactionRequest::default().with_to(token_address).with_input(calldata.clone());
+
+        // first collect all the slots that are used by the balanceOf call
+        let access_list_result =
+            self.create_access_list(WithOtherFields::new(tx.clone()), None).await?;
+        let access_list = access_list_result.access_list;
+
+        // now we can iterate over all the accessed slots and try to find the one that contains the
+        // balance by overriding the slot and checking the `balanceOfCall` of
+        for item in access_list.0 {
+            if item.address != token_address {
+                continue;
+            };
+            for slot in &item.storage_keys {
+                let account_override = AccountOverride::default()
+                    .with_state_diff(std::iter::once((*slot, B256::from(balance.to_be_bytes()))));
+
+                let state_override = StateOverridesBuilder::default()
+                    .append(token_address, account_override)
+                    .build();
+
+                let evm_override = EvmOverrides::state(Some(state_override));
+
+                let Ok(result) =
+                    self.call(WithOtherFields::new(tx.clone()), None, evm_override).await
+                else {
+                    // overriding this slot failed
+                    continue;
+                };
+
+                let Ok(result_balance) = U256::abi_decode(&result) else {
+                    // response returned something other than a U256
+                    continue;
+                };
+
+                if result_balance == balance {
+                    self.anvil_set_storage_at(
+                        token_address,
+                        U256::from_be_bytes(slot.0),
+                        B256::from(balance.to_be_bytes()),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            }
+        }
+
+        // unable to set the balance
+        Err(BlockchainError::Message("Unable to set ERC20 balance, no slot found".to_string()))
+    }
+
     /// Sets the code of a contract.
     ///
     /// Handler for RPC call: `anvil_setCode`
@@ -2106,7 +2200,10 @@ impl EthApi {
 
                         // Estimate gas
                         if tx_req.gas.is_none() {
-                            if let Ok(gas) = self.estimate_gas(tx_req.clone(), None, None).await {
+                            if let Ok(gas) = self
+                                .estimate_gas(tx_req.clone(), None, EvmOverrides::default())
+                                .await
+                            {
                                 tx_req.gas = Some(gas.to());
                             }
                         }
@@ -2577,7 +2674,8 @@ impl EthApi {
 
         request.from = Some(from);
 
-        let gas_limit_fut = self.estimate_gas(request.clone(), Some(BlockId::latest()), None);
+        let gas_limit_fut =
+            self.estimate_gas(request.clone(), Some(BlockId::latest()), EvmOverrides::default());
 
         let fees_fut = self.fee_history(
             U256::from(EIP1559_FEE_ESTIMATION_PAST_BLOCKS),
@@ -2678,15 +2776,15 @@ impl EthApi {
         &self,
         request: WithOtherFields<TransactionRequest>,
         block_number: Option<BlockId>,
-        overrides: Option<StateOverride>,
+        overrides: EvmOverrides,
     ) -> Result<u128> {
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
-                    if overrides.is_some() {
-                        return Err(BlockchainError::StateOverrideError(
+                    if overrides.has_state() || overrides.has_block() {
+                        return Err(BlockchainError::EvmOverrideError(
                             "not available on past forked blocks".to_string(),
                         ));
                     }
@@ -2699,14 +2797,18 @@ impl EthApi {
         // <https://github.com/foundry-rs/foundry/issues/6036>
         self.on_blocking_task(|this| async move {
             this.backend
-                .with_database_at(Some(block_request), |mut state, block| {
-                    if let Some(overrides) = overrides {
-                        state = Box::new(state::apply_state_override(
-                            overrides.into_iter().collect(),
-                            state,
-                        )?);
+                .with_database_at(Some(block_request), |state, mut block| {
+                    let mut cache_db = CacheDB::new(state);
+                    if let Some(state_overrides) = overrides.state {
+                        state::apply_state_overrides(
+                            state_overrides.into_iter().collect(),
+                            &mut cache_db,
+                        )?;
                     }
-                    this.do_estimate_gas_with_state(request, &state, block)
+                    if let Some(block_overrides) = overrides.block {
+                        state::apply_block_overrides(*block_overrides, &mut cache_db, &mut block);
+                    }
+                    this.do_estimate_gas_with_state(request, cache_db.as_dyn(), block)
                 })
                 .await?
         })

@@ -1,0 +1,14 @@
+note[asm-keccak256]: hash using inline assembly to save gas
+ --> ROOT/testdata/Keccak256.sol:LL:CC
+  |
+3 |         keccak256(abi.encodePacked(a, b));
+  |         ---------
+  |
+
+note[asm-keccak256]: hash using inline assembly to save gas
+ --> ROOT/testdata/Keccak256.sol:LL:CC
+  |
+7 |         keccak256(abi.encodePacked(a, b));
+  |         ---------
+  |
+

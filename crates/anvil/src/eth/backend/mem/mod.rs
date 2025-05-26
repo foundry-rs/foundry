@@ -62,7 +62,7 @@ use alloy_rpc_types::{
     request::TransactionRequest,
     serde_helpers::JsonStorageKey,
     simulate::{SimBlock, SimCallResult, SimulatePayload, SimulatedBlock},
-    state::StateOverride,
+    state::EvmOverrides,
     trace::{
         filter::TraceFilter,
         geth::{
@@ -82,9 +82,9 @@ use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles};
 use anvil_core::eth::{
     block::{Block, BlockInfo},
     transaction::{
-        has_optimism_fields, optimism::DepositTransaction, transaction_request_to_typed,
-        DepositReceipt, MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse,
-        TransactionInfo, TypedReceipt, TypedTransaction,
+        has_optimism_fields, transaction_request_to_typed, DepositReceipt,
+        MaybeImpersonatedTransaction, PendingTransaction, ReceiptResponse, TransactionInfo,
+        TypedReceipt, TypedTransaction,
     },
     wallet::{Capabilities, DelegationCapability, WalletCapabilities},
 };
@@ -101,7 +101,7 @@ use foundry_evm::{
 };
 use foundry_evm_core::either_evm::EitherEvm;
 use futures::channel::mpsc::{unbounded, UnboundedSender};
-use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
+use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
 use op_revm::{
     transaction::deposit::DepositTransactionParts, OpContext, OpHaltReason, OpTransaction,
 };
@@ -1417,16 +1417,19 @@ impl Backend {
         request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_request: Option<BlockRequest>,
-        overrides: Option<StateOverride>,
+        overrides: EvmOverrides,
     ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
-        self.with_database_at(block_request, |state, block| {
+        self.with_database_at(block_request, |state, mut block| {
             let block_number = block.number;
-            let (exit, out, gas, state) = match overrides {
-                None => self.call_with_state(state.as_dyn(), request, fee_details, block),
-                Some(overrides) => {
-                    let state = state::apply_state_override(overrides.into_iter().collect(), state)?;
-                    self.call_with_state(state.as_dyn(), request, fee_details, block)
-                },
+            let (exit, out, gas, state) = {
+                let mut cache_db = CacheDB::new(state);
+                if let Some(state_overrides) = overrides.state {
+                    state::apply_state_overrides(state_overrides.into_iter().collect(), &mut cache_db)?;
+                }
+                if let Some(block_overrides) = overrides.block {
+                    state::apply_block_overrides(*block_overrides, &mut cache_db, &mut block);
+                }
+                self.call_with_state(cache_db.as_dyn(), request, fee_details, block)
             }?;
             trace!(target: "backend", "call return {:?} out: {:?} gas {} on block {}", exit, out, gas, block_number);
             Ok((exit, out, gas, state))
@@ -1612,34 +1615,13 @@ impl Backend {
                 let mut transactions = Vec::with_capacity(calls.len());
                 let mut receipts = Vec::new();
                 let mut logs= Vec::new();
+
                 // apply state overrides before executing the transactions
                 if let Some(state_overrides) = state_overrides {
-                    state::apply_cached_db_state_override(state_overrides, &mut cache_db)?;
+                    state::apply_state_overrides(state_overrides, &mut cache_db)?;
                 }
-
-                // apply block overrides
-                if let Some(overrides) = block_overrides {
-                    if let Some(number) = overrides.number {
-                        block_env.number = number.saturating_to();
-                    }
-                    if let Some(difficulty) = overrides.difficulty {
-                        block_env.difficulty = difficulty;
-                    }
-                    if let Some(time) = overrides.time {
-                        block_env.timestamp = time;
-                    }
-                    if let Some(gas_limit) = overrides.gas_limit {
-                        block_env.gas_limit = gas_limit;
-                    }
-                    if let Some(coinbase) = overrides.coinbase {
-                        block_env.beneficiary = coinbase;
-                    }
-                    if let Some(random) = overrides.random {
-                        block_env.prevrandao = Some(random);
-                    }
-                    if let Some(base_fee) = overrides.base_fee {
-                        block_env.basefee = base_fee.saturating_to();
-                    }
+                if let Some(block_overrides) = block_overrides {
+                    state::apply_block_overrides(block_overrides, &mut cache_db, &mut block_env);
                 }
 
                 // execute all calls in that block
@@ -1856,19 +1838,20 @@ impl Backend {
         block_request: Option<BlockRequest>,
         opts: GethDebugTracingCallOptions,
     ) -> Result<GethTrace, BlockchainError> {
-        let GethDebugTracingCallOptions { tracing_options, block_overrides: _, state_overrides } =
+        let GethDebugTracingCallOptions { tracing_options, block_overrides, state_overrides } =
             opts;
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = tracing_options;
 
-        self.with_database_at(block_request, |state, block| {
+        self.with_database_at(block_request, |state, mut block| {
             let block_number = block.number;
 
-            let state = if let Some(overrides) = state_overrides {
-                Box::new(state::apply_state_override(overrides, state)?)
-                    as Box<dyn MaybeFullDatabase>
-            } else {
-                state
-            };
+            let mut cache_db = CacheDB::new(state);
+            if let Some(state_overrides) = state_overrides {
+                state::apply_state_overrides(state_overrides, &mut cache_db)?;
+            }
+            if let Some(block_overrides) = block_overrides {
+                state::apply_block_overrides(block_overrides, &mut cache_db, &mut block);
+            }
 
             if let Some(tracer) = tracer {
                 return match tracer {
@@ -1884,7 +1867,7 @@ impl Backend {
 
                             let env = self.build_call_env(request, fee_details, block);
                             let mut evm = self.new_evm_with_inspector_ref(
-                                state.as_dyn(),
+                                cache_db.as_dyn(),
                                 &env,
                                 &mut inspector,
                             );
@@ -1919,7 +1902,7 @@ impl Backend {
                 .with_tracing_config(TracingInspectorConfig::from_geth_config(&config));
 
             let env = self.build_call_env(request, fee_details, block);
-            let mut evm = self.new_evm_with_inspector_ref(state.as_dyn(), &env, &mut inspector);
+            let mut evm = self.new_evm_with_inspector_ref(cache_db.as_dyn(), &env, &mut inspector);
             let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
 
             let (exit_reason, gas_used, out) = match result {
@@ -3201,8 +3184,8 @@ impl TransactionValidator for Backend {
                 // 1. no gas cost check required since already have prepaid gas from L1
                 // 2. increment account balance by deposited amount before checking for sufficient
                 //    funds `tx.value <= existing account value + deposited value`
-                if value > account.balance + deposit_tx.mint {
-                    warn!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance + deposit_tx.mint, value, *pending.sender());
+                if value > account.balance + U256::from(deposit_tx.mint) {
+                    warn!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance + U256::from(deposit_tx.mint), value, *pending.sender());
                     return Err(InvalidTransactionError::InsufficientFunds);
                 }
             }
@@ -3245,30 +3228,9 @@ pub fn transaction_build(
     base_fee: Option<u64>,
 ) -> AnyRpcTransaction {
     if let TypedTransaction::Deposit(ref deposit_tx) = eth_transaction.transaction {
-        let DepositTransaction {
-            nonce,
-            source_hash,
-            from: deposit_from,
-            kind,
-            mint,
-            gas_limit,
-            is_system_tx,
-            input,
-            value,
-        } = deposit_tx.clone();
+        let dep_tx = deposit_tx;
 
-        let dep_tx = TxDeposit {
-            source_hash,
-            input,
-            from: deposit_from,
-            mint: Some(mint.to()),
-            to: kind,
-            is_system_transaction: is_system_tx,
-            value,
-            gas_limit,
-        };
-
-        let ser = serde_json::to_value(&dep_tx).expect("could not serialize TxDeposit");
+        let ser = serde_json::to_value(dep_tx).expect("could not serialize TxDeposit");
         let maybe_deposit_fields = OtherFields::try_from(ser);
 
         match maybe_deposit_fields {
@@ -3278,10 +3240,7 @@ pub fn transaction_build(
                 fields.insert("v".to_string(), serde_json::to_value("0x0").unwrap());
                 fields.insert("r".to_string(), serde_json::to_value(B256::ZERO).unwrap());
                 fields.insert(String::from("s"), serde_json::to_value(B256::ZERO).unwrap());
-                fields.insert(
-                    String::from("nonce"),
-                    serde_json::to_value(format!("0x{nonce}")).unwrap(),
-                );
+                fields.insert(String::from("nonce"), serde_json::to_value("0x0").unwrap());
 
                 let inner = UnknownTypedTransaction {
                     ty: AnyTxType(DEPOSIT_TX_TYPE_ID),
@@ -3295,7 +3254,7 @@ pub fn transaction_build(
                 });
 
                 let tx = Transaction {
-                    inner: Recovered::new_unchecked(envelope, deposit_from),
+                    inner: Recovered::new_unchecked(envelope, deposit_tx.from),
                     block_hash: block
                         .as_ref()
                         .map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header)))),

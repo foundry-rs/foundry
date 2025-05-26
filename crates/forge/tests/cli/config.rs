@@ -148,6 +148,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         build_info: false,
         build_info_path: None,
         fmt: Default::default(),
+        lint: Default::default(),
         doc: Default::default(),
         bind_json: Default::default(),
         fs_permissions: Default::default(),
@@ -1066,6 +1067,11 @@ ignore = []
 contract_new_lines = false
 sort_imports = false
 
+[lint]
+severity = []
+exclude_lints = []
+ignore = []
+
 [doc]
 out = "docs"
 title = ""
@@ -1265,6 +1271,11 @@ exclude = []
     "ignore": [],
     "contract_new_lines": false,
     "sort_imports": false
+  },
+  "lint": {
+    "severity": [],
+    "exclude_lints": [],
+    "ignore": []
   },
   "doc": {
     "out": "docs",
