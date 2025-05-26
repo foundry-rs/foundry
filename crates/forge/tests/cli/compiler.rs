@@ -242,7 +242,7 @@ Solidity:
 
 Vyper:
 
-0.4.0 (<= cancun):
+0.4.0 (<= prague):
 ├── src/Counter.vy
 └── src/ICounter.vyi
 

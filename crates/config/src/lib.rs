@@ -1548,8 +1548,14 @@ impl Config {
     /// Returns the configured [VyperSettings] that includes:
     /// - evm version
     pub fn vyper_settings(&self) -> Result<VyperSettings, SolcError> {
+        // Vyper does not yet support Prague, so we normalize it to Cancun.
+        let evm_version = match self.evm_version {
+            EvmVersion::Prague => EvmVersion::Cancun,
+            _ => self.evm_version,
+        };
+
         Ok(VyperSettings {
-            evm_version: Some(self.evm_version),
+            evm_version: Some(evm_version),
             optimize: self.vyper.optimize,
             bytecode_metadata: None,
             // TODO: We don't yet have a way to deserialize other outputs correctly, so request only

@@ -1712,7 +1712,7 @@ contract Counter {
     let v1_profile = SettingsOverrides {
         name: "v1".to_string(),
         via_ir: Some(true),
-        evm_version: Some(EvmVersion::Cancun),
+        evm_version: Some(EvmVersion::Prague),
         optimizer: None,
         optimizer_runs: Some(44444444),
         bytecode_hash: None,

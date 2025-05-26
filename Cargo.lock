@@ -4231,8 +4231,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.16.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a43ecf9100de8d31242b7a7cf965196e3d8fb424a931a975a7882897726f4c46"
+source = "git+https://github.com/foundry-rs/compilers.git?rev=898bcbb#898bcbb77c0fe67a538a539694ed6f48598a24c8"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4245,7 +4244,7 @@ dependencies = [
  "fs_extra",
  "futures-util",
  "home",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "path-slash",
  "rand 0.8.5",
  "rayon",
@@ -4268,8 +4267,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.16.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d07ebb99f087075b97b68837de385f6cba07ca32314852a6507ce0dac5d66cd8"
+source = "git+https://github.com/foundry-rs/compilers.git?rev=898bcbb#898bcbb77c0fe67a538a539694ed6f48598a24c8"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -4278,8 +4276,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.16.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49ddf6d61defb08103e351dc16df637c42d69407bae0f8789f2662a6161e73f5"
+source = "git+https://github.com/foundry-rs/compilers.git?rev=898bcbb#898bcbb77c0fe67a538a539694ed6f48598a24c8"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4301,8 +4298,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.16.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65a777326b8e0bba45345043ed80ceab5e84f3e474ba2ac19673b31076f3c6b4"
+source = "git+https://github.com/foundry-rs/compilers.git?rev=898bcbb#898bcbb77c0fe67a538a539694ed6f48598a24c8"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4316,8 +4312,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.16.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be02912b222eb5bd8a4e8a249a488af3e2fb4fc08e0f17a3bc402406a91295b5"
+source = "git+https://github.com/foundry-rs/compilers.git?rev=898bcbb#898bcbb77c0fe67a538a539694ed6f48598a24c8"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -10805,8 +10800,3 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "foundry-compilers"
-version = "0.16.2"
-source = "git+https://github.com/foundry-rs/compilers.git?rev=898bcbb#898bcbb77c0fe67a538a539694ed6f48598a24c8"
