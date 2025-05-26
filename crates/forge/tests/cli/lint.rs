@@ -54,6 +54,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 16 |         (1 / 2) * 3;
    |         -----------
    |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
 
 
 "#]]);
@@ -76,6 +77,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 6 |         uint256 VARIABLE_MIXED_CASE_INFO;
   |                 ------------------------
   |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
 
 
 "#]]);
@@ -110,6 +112,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 6 |         uint256 VARIABLE_MIXED_CASE_INFO;
   |                 ------------------------
   |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
 
 
 "#]]);
@@ -135,6 +138,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 16 |         (1 / 2) * 3;
    |         -----------
    |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
 
 
 "#]]);
@@ -161,6 +165,7 @@ warning[incorrect-shift]: the order of args in a shift operation is incorrect
 13 |         result = 8 >> localValue;
    |                  ---------------
    |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
 
 
 "#
