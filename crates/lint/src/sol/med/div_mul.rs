@@ -11,8 +11,7 @@ declare_forge_lint!(
     DIVIDE_BEFORE_MULTIPLY,
     Severity::Med,
     "divide-before-multiply",
-    "multiplication should occur before division to avoid loss of precision",
-    ""
+    "multiplication should occur before division to avoid loss of precision"
 );
 
 impl<'ast> EarlyLintPass<'ast> for DivideBeforeMultiply {

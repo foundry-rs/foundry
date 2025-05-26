@@ -1,3 +1,4 @@
+use forge_lint::{linter::Lint, sol::med::REGISTERED_LINTS};
 use foundry_config::{LintSeverity, LinterConfig};
 
 const CONTRACT: &str = r#"
@@ -165,3 +166,54 @@ warning[incorrect-shift]: the order of args in a shift operation is incorrect
 "#
     ]]);
 });
+
+#[tokio::test]
+async fn ensure_lint_rule_docs() {
+    const FOUNDRY_BOOK_LINT_PAGE_URL: &str =
+        "https://book.getfoundry.sh/reference/forge/forge-lint";
+
+    // Fetch the content of the lint reference
+    let content = match reqwest::get(FOUNDRY_BOOK_LINT_PAGE_URL).await {
+        Ok(resp) => {
+            if !resp.status().is_success() {
+                panic!(
+                    "Failed to fetch Foundry Book lint page at {}. Status: {}",
+                    FOUNDRY_BOOK_LINT_PAGE_URL,
+                    resp.status()
+                );
+            }
+            match resp.text().await {
+                Ok(text) => text,
+                Err(e) => {
+                    panic!("Failed to read text from Foundry Book lint page response: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            panic!(
+                "Network error while fetching Foundry Book lint page {}: {}",
+                FOUNDRY_BOOK_LINT_PAGE_URL, e
+            );
+        }
+    };
+
+    // Ensure no missing lints
+    let mut missing_lints = Vec::new();
+    for lint in REGISTERED_LINTS {
+        let selector = format!("#{}", lint.id());
+        if !content.contains(&selector) {
+            missing_lints.push(lint.id());
+        }
+    }
+
+    if !missing_lints.is_empty() {
+        let mut msg = String::from(
+            "Foundry Book lint validation failed. The following lints must be added to the docs:\n",
+        );
+        for lint in missing_lints {
+            msg.push_str(&format!("  - {}\n", lint));
+        }
+        msg.push_str("Please open a PR: https://github.com/foundry-rs/book");
+        panic!("{msg}");
+    }
+}

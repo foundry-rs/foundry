@@ -160,7 +160,7 @@ pub enum SolLintError {
 pub struct SolLint {
     id: &'static str,
     description: &'static str,
-    help: Option<&'static str>,
+    help: &'static str,
     severity: Severity,
 }
 
@@ -174,7 +174,7 @@ impl Lint for SolLint {
     fn description(&self) -> &'static str {
         self.description
     }
-    fn help(&self) -> Option<&'static str> {
+    fn help(&self) -> &'static str {
         self.help
     }
 }
