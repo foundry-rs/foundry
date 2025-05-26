@@ -343,7 +343,7 @@ impl Cheatcode for eip712HashStruct_0Call {
         let Self { typeNameOrDefinition, jsonData } = self;
 
         let type_def = get_canonical_type_def(typeNameOrDefinition, state, None)?;
-        let primary = &type_def[..type_def.find('(').unwrap_or_else(|| type_def.len())];
+        let primary = &type_def[..type_def.find('(').unwrap_or(type_def.len())];
 
         get_struct_hash(primary, &type_def, jsonData)
     }
@@ -413,16 +413,16 @@ fn get_type_def_from_bindings(name: &String, path: PathBuf, root: &PathBuf) -> R
     }
 }
 
-fn get_struct_hash(primary: &str, type_def: &String, json_data: &String) -> Result {
+fn get_struct_hash(primary: &str, type_def: &String, json_data: &str) -> Result {
     let mut resolver = Resolver::default();
 
     // Populate the resolver by ingesting the canonical type definition, and then get the
     // corresponding `DynSolType` of the primary type.
     resolver
-        .ingest_string(&type_def)
+        .ingest_string(type_def)
         .map_err(|e| fmt_err!("Resolver failed to ingest type definition: {e}"))?;
 
-    let resolved_sol_type = resolver.resolve(&primary).map_err(|e| {
+    let resolved_sol_type = resolver.resolve(primary).map_err(|e| {
         fmt_err!("Failed to resolve EIP712 primary type '{}' using resolver: {}", primary, e)
     })?;
 
@@ -448,7 +448,7 @@ fn get_struct_hash(primary: &str, type_def: &String, json_data: &String) -> Resu
 
     // Compute the type hash of the primary type.
     let type_hash = resolver
-        .type_hash(&primary)
+        .type_hash(primary)
         .map_err(|e| fmt_err!("Failed to compute typeHash for EIP712 type '{}': {}", primary, e))?;
 
     // Compute the struct hash of the concatenated type hash and encoded data.

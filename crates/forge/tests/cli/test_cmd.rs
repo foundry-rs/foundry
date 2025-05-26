@@ -3884,7 +3884,71 @@ Encountered a total of 1 failing tests, 0 tests succeeded
         .assert_success();
 });
 
-forgetest!(test_eip712_hash_struct, |prj, cmd| {
+forgetest!(test_eip712_hash_struct_simple_domain, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.insert_console();
+
+    prj.add_source(
+        "Eip712HashStructDomainTest.sol",
+        r#"
+import "./Vm.sol";
+import "./test.sol";
+import "./console.sol";
+
+struct EIP712Domain {
+    string name;
+    string version;
+    uint256 chainId;
+    address verifyingContract;
+}
+
+string constant _EIP712_DOMAIN_TYPE_DEF = "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)";
+bytes32 constant _EIP712_DOMAIN_TYPE_HASH = keccak256(bytes(_EIP712_DOMAIN_TYPE_DEF));
+
+contract Eip712HashStructDomainTest is DSTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testHashEIP712Domain() public {
+        EIP712Domain memory domain = EIP712Domain({
+            name: "Foo",
+            version: "Bar",
+            chainId: 1,
+            verifyingContract: 0xdEADBEeF00000000000000000000000000000000
+        });
+
+        // simulate user-computed hash
+        bytes memory encodedData = abi.encode(
+            keccak256(bytes(domain.name)),
+            keccak256(bytes(domain.version)),
+            bytes32(domain.chainId),
+            bytes32(uint256(uint160(domain.verifyingContract)))
+        );
+        bytes32 userStructHash = keccak256(abi.encodePacked(_EIP712_DOMAIN_TYPE_HASH, encodedData));
+
+        // cheatcode-computed permit (manually serializing to JSON)
+        string memory jsonData = vm.serializeString("domain", "name", domain.name);
+        jsonData = vm.serializeString("domain", "version", domain.version);
+        jsonData = vm.serializeUint("domain", "chainId", domain.chainId);
+        jsonData = vm.serializeAddress("domain", "verifyingContract", domain.verifyingContract);
+        console.log("JSON Data for EIP712Domain:");
+        console.log(jsonData);
+
+        bytes32 cheatStructHash = vm.eip712HashStruct(_EIP712_DOMAIN_TYPE_DEF, jsonData);
+        console.log("EIP712Domain struct hash from cheatcode:");
+        console.logBytes32(cheatStructHash);
+
+        assertEq(cheatStructHash, userStructHash, "EIP712Domain struct hash mismatch");
+    }
+}
+"#,
+        )
+        .unwrap();
+
+    cmd.forge_fuse().args(["test", "--mc", "Eip712HashStructDomainTest", "-vvvv"]).assert_success();
+});
+
+forgetest!(test_eip712_hash_struct_from_bindings, |prj, cmd| {
     prj.add_source(
         "Eip712Permit.sol",
         r#"
