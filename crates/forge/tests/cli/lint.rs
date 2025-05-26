@@ -1,3 +1,4 @@
+use forge_lint::{linter::Lint, sol::med::REGISTERED_LINTS};
 use foundry_config::{LintSeverity, LinterConfig};
 
 const CONTRACT: &str = r#"
@@ -53,6 +54,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 16 |         (1 / 2) * 3;
    |         -----------
    |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
 
 
 "#]]);
@@ -75,6 +77,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 6 |         uint256 VARIABLE_MIXED_CASE_INFO;
   |                 ------------------------
   |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
 
 
 "#]]);
@@ -109,6 +112,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 6 |         uint256 VARIABLE_MIXED_CASE_INFO;
   |                 ------------------------
   |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
 
 
 "#]]);
@@ -134,6 +138,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 16 |         (1 / 2) * 3;
    |         -----------
    |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
 
 
 "#]]);
@@ -160,8 +165,56 @@ warning[incorrect-shift]: the order of args in a shift operation is incorrect
 13 |         result = 8 >> localValue;
    |                  ---------------
    |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
 
 
 "#
     ]]);
 });
+
+#[tokio::test]
+async fn ensure_lint_rule_docs() {
+    const FOUNDRY_BOOK_LINT_PAGE_URL: &str =
+        "https://book.getfoundry.sh/reference/forge/forge-lint";
+
+    // Fetch the content of the lint reference
+    let content = match reqwest::get(FOUNDRY_BOOK_LINT_PAGE_URL).await {
+        Ok(resp) => {
+            if !resp.status().is_success() {
+                panic!(
+                    "Failed to fetch Foundry Book lint page ({FOUNDRY_BOOK_LINT_PAGE_URL}). Status: {status}",
+                    status = resp.status()
+                );
+            }
+            match resp.text().await {
+                Ok(text) => text,
+                Err(e) => {
+                    panic!("Failed to read response text: {e}");
+                }
+            }
+        }
+        Err(e) => {
+            panic!("Failed to fetch Foundry Book lint page ({FOUNDRY_BOOK_LINT_PAGE_URL}): {e}",);
+        }
+    };
+
+    // Ensure no missing lints
+    let mut missing_lints = Vec::new();
+    for lint in REGISTERED_LINTS {
+        let selector = format!("#{}", lint.id());
+        if !content.contains(&selector) {
+            missing_lints.push(lint.id());
+        }
+    }
+
+    if !missing_lints.is_empty() {
+        let mut msg = String::from(
+            "Foundry Book lint validation failed. The following lints must be added to the docs:\n",
+        );
+        for lint in missing_lints {
+            msg.push_str(&format!("  - {lint}\n"));
+        }
+        msg.push_str("Please open a PR: https://github.com/foundry-rs/book");
+        panic!("{msg}");
+    }
+}

@@ -10,8 +10,7 @@ declare_forge_lint!(
     INCORRECT_SHIFT,
     Severity::High,
     "incorrect-shift",
-    "the order of args in a shift operation is incorrect",
-    ""
+    "the order of args in a shift operation is incorrect"
 );
 
 impl<'ast> EarlyLintPass<'ast> for IncorrectShift {
