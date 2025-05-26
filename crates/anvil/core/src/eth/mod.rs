@@ -361,8 +361,20 @@ pub enum EthRequest {
     SetRpcUrl(String),
 
     /// Modifies the balance of an account.
-    #[serde(rename = "anvil_setBalance", alias = "hardhat_setBalance")]
+    #[serde(
+        rename = "anvil_setBalance",
+        alias = "hardhat_setBalance",
+        alias = "tenderly_setBalance"
+    )]
     SetBalance(Address, #[serde(deserialize_with = "deserialize_number")] U256),
+
+    /// Increases the balance of an account.
+    #[serde(
+        rename = "anvil_addBalance",
+        alias = "hardhat_addBalance",
+        alias = "tenderly_addBalance"
+    )]
+    AddBalance(Address, #[serde(deserialize_with = "deserialize_number")] U256),
 
     /// Modifies the ERC20 balance of an account.
     #[serde(
