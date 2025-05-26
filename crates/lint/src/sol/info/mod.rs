@@ -1,3 +1,8 @@
+use crate::{
+    register_lints,
+    sol::{EarlyLintPass, SolLint},
+};
+
 mod mixed_case;
 use mixed_case::{MIXED_CASE_FUNCTION, MIXED_CASE_VARIABLE};
 
@@ -6,11 +11,6 @@ use pascal_case::PASCAL_CASE_STRUCT;
 
 mod screaming_snake_case;
 use screaming_snake_case::{SCREAMING_SNAKE_CASE_CONSTANT, SCREAMING_SNAKE_CASE_IMMUTABLE};
-
-use crate::{
-    register_lints,
-    sol::{EarlyLintPass, SolLint},
-};
 
 register_lints!(
     (PascalCaseStruct, (PASCAL_CASE_STRUCT)),
