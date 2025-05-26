@@ -3978,6 +3978,7 @@ dependencies = [
  "alloy-sol-macro-input",
  "eyre",
  "foundry-common",
+ "heck",
  "prettyplease",
  "proc-macro2",
  "quote",
