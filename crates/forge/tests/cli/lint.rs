@@ -177,23 +177,19 @@ async fn ensure_lint_rule_docs() {
         Ok(resp) => {
             if !resp.status().is_success() {
                 panic!(
-                    "Failed to fetch Foundry Book lint page at {}. Status: {}",
-                    FOUNDRY_BOOK_LINT_PAGE_URL,
-                    resp.status()
+                    "Failed to fetch Foundry Book lint page ({FOUNDRY_BOOK_LINT_PAGE_URL}). Status: {status}",
+                    status = resp.status()
                 );
             }
             match resp.text().await {
                 Ok(text) => text,
                 Err(e) => {
-                    panic!("Failed to read text from Foundry Book lint page response: {}", e);
+                    panic!("Failed to read response text: {e}");
                 }
             }
         }
         Err(e) => {
-            panic!(
-                "Network error while fetching Foundry Book lint page {}: {}",
-                FOUNDRY_BOOK_LINT_PAGE_URL, e
-            );
+            panic!("Failed to fetch Foundry Book lint page ({FOUNDRY_BOOK_LINT_PAGE_URL}): {e}",);
         }
     };
 
@@ -211,7 +207,7 @@ async fn ensure_lint_rule_docs() {
             "Foundry Book lint validation failed. The following lints must be added to the docs:\n",
         );
         for lint in missing_lints {
-            msg.push_str(&format!("  - {}\n", lint));
+            msg.push_str(&format!("  - {lint}\n"));
         }
         msg.push_str("Please open a PR: https://github.com/foundry-rs/book");
         panic!("{msg}");
