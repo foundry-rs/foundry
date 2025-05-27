@@ -93,11 +93,16 @@ impl ResolveArgs {
                         .collect();
 
                     let evm_version = if shell::verbosity() > 1 {
-                        Some(
-                            EvmVersion::default()
-                                .normalize_version_solc(version)
-                                .unwrap_or_default(),
-                        )
+                        let evm = EvmVersion::default()
+                            .normalize_version_solc(version)
+                            .unwrap_or_default();
+
+                        // Vyper does not yet support Prague, so we normalize it to Cancun.
+                        if language.to_string() == "Vyper" && evm == EvmVersion::Prague {
+                            Some(EvmVersion::Cancun)
+                        } else {
+                            Some(evm)
+                        }
                     } else {
                         None
                     };

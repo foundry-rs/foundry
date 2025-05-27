@@ -399,5 +399,5 @@ zip-extract = "=0.2.1"
 # revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "a625c04" }
 
 ## foundry
-foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "898bcbb" }
+foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "10fe5af" }
 # foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "811a61a" }
