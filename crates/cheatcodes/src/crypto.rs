@@ -228,7 +228,7 @@ fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut Cheatcodes
         .abi_encode())
 }
 
-fn encode_full_sig(sig: alloy_primitives::PrimitiveSignature) -> Vec<u8> {
+fn encode_full_sig(sig: alloy_primitives::Signature) -> Vec<u8> {
     // Retrieve v, r and s from signature.
     let v = U256::from(sig.v() as u64 + 27);
     let r = B256::from(sig.r());
@@ -236,7 +236,7 @@ fn encode_full_sig(sig: alloy_primitives::PrimitiveSignature) -> Vec<u8> {
     (v, r, s).abi_encode()
 }
 
-fn encode_compact_sig(sig: alloy_primitives::PrimitiveSignature) -> Vec<u8> {
+fn encode_compact_sig(sig: alloy_primitives::Signature) -> Vec<u8> {
     // Implement EIP-2098 compact signature.
     let r = B256::from(sig.r());
     let mut vs = sig.s();
@@ -244,7 +244,7 @@ fn encode_compact_sig(sig: alloy_primitives::PrimitiveSignature) -> Vec<u8> {
     (r, vs).abi_encode()
 }
 
-fn sign(private_key: &U256, digest: &B256) -> Result<alloy_primitives::PrimitiveSignature> {
+fn sign(private_key: &U256, digest: &B256) -> Result<alloy_primitives::Signature> {
     // The `ecrecover` precompile does not use EIP-155. No chain ID is needed.
     let wallet = parse_wallet(private_key)?;
     let sig = wallet.sign_hash_sync(digest)?;
@@ -256,7 +256,7 @@ fn sign_with_wallet(
     state: &mut Cheatcodes,
     signer: Option<Address>,
     digest: &B256,
-) -> Result<alloy_primitives::PrimitiveSignature> {
+) -> Result<alloy_primitives::Signature> {
     if state.wallets().is_empty() {
         bail!("no wallets available");
     }

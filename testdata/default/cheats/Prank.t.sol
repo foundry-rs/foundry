@@ -591,3 +591,23 @@ contract C {
         require(0x769A6A5f81bD725e4302751162A7cb30482A222d == address(this), "wrong address(this) in C");
     }
 }
+
+contract Counter {
+    uint256 number;
+
+    function increment() external {
+        number++;
+    }
+}
+
+contract Issue10528 is DSTest {
+    Vm constant vm = Vm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+
+    function testStartPrankOnContractCreation() external {
+        vm.startPrank(address(0x22222));
+        Counter counter = new Counter();
+
+        vm.startPrank(address(0x11111));
+        counter.increment();
+    }
+}

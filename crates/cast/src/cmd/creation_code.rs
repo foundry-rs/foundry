@@ -50,12 +50,10 @@ impl CreationCodeArgs {
 
         let config = rpc.load_config()?;
         let provider = utils::get_provider(&config)?;
-        let api_key = etherscan.key().unwrap_or_default();
         let chain = provider.get_chain_id().await?;
         etherscan.chain = Some(chain.into());
-        let client = Client::new(chain.into(), api_key)?;
 
-        let bytecode = fetch_creation_code(contract, client, provider).await?;
+        let bytecode = fetch_creation_code_from_etherscan(contract, &etherscan, provider).await?;
 
         let bytecode = parse_code_output(
             bytecode,
@@ -131,11 +129,16 @@ pub async fn parse_code_output(
 }
 
 /// Fetches the creation code of a contract from Etherscan and RPC.
-pub async fn fetch_creation_code(
+pub async fn fetch_creation_code_from_etherscan(
     contract: Address,
-    client: Client,
+    etherscan: &EtherscanOpts,
     provider: RetryProvider,
 ) -> Result<Bytes> {
+    let config = etherscan.load_config()?;
+    let chain = config.chain.unwrap_or_default();
+    let api_version = config.get_etherscan_api_version(Some(chain));
+    let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
+    let client = Client::new_with_api_version(chain, api_key, api_version)?;
     let creation_data = client.contract_creation_data(contract).await?;
     let creation_tx_hash = creation_data.transaction_hash;
     let tx_data = provider.get_transaction_by_hash(creation_tx_hash).await?;
