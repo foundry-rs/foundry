@@ -1,7 +1,7 @@
 use std::path::Path;
 use ui_test::spanned::Spanned;
 
-/// Test runner based on `ui_test`. Adapted from `https://github.com/paradigmxyz/solar/tools/tester`.
+/// Test runner based on `ui_test`. Adapted from `https://github.com/paradigmxyz/solar/tree/main/tools/tester`.
 pub fn run_tests<'a>(cmd: &str, cmd_path: &'a Path, testdata: &'a Path) -> eyre::Result<()> {
     ui_test::color_eyre::install()?;
 
