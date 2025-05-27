@@ -1,6 +1,7 @@
 //! Tests for otterscan endpoints.
 
 use crate::abi::Multicall;
+use alloy_hardforks::EthereumHardfork;
 use alloy_network::TransactionResponse;
 use alloy_primitives::{address, Address, Bytes, U256};
 use alloy_provider::Provider;
@@ -10,7 +11,7 @@ use alloy_rpc_types::{
 };
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{sol, SolCall, SolError, SolValue};
-use anvil::{spawn, EthereumHardfork, NodeConfig};
+use anvil::{spawn, NodeConfig};
 use std::collections::VecDeque;
 
 #[tokio::test(flavor = "multi_thread")]
