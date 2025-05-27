@@ -35,11 +35,7 @@ use shrink::shrink_sequence;
 use std::{
     cell::RefCell,
     collections::{btree_map::Entry, HashMap as Map},
-    fs::DirEntry,
-    path::PathBuf,
     sync::Arc,
-    time,
-    time::SystemTime,
 };
 
 mod error;
@@ -53,8 +49,10 @@ mod result;
 pub use result::InvariantFuzzTestResult;
 use serde::{Deserialize, Serialize};
 
+mod corpus;
+
 mod shrink;
-use crate::executors::{EvmError, FuzzTestTimer};
+use crate::executors::{invariant::corpus::TxCorpusManager, EvmError, FuzzTestTimer};
 pub use shrink::check_sequence;
 
 sol! {
@@ -309,126 +307,6 @@ pub struct InvariantExecutor<'a> {
 }
 const COVERAGE_MAP_SIZE: usize = 65536;
 
-pub struct TxCorpusManager {
-    pub in_memory_corpus: Vec<Vec<BasicTxDetails>>, /* TODO need some sort of corpus management
-                                                     * (limit memory usage and flush). */
-}
-
-impl TxCorpusManager {
-    pub fn new(corpus_dir: &Option<PathBuf>) -> Result<Self> {
-        let mut in_memory_corpus = vec![];
-
-        if let Some(corpus_dir) = corpus_dir {
-            if !corpus_dir.is_dir() {
-                foundry_common::fs::create_dir_all(corpus_dir)?;
-            }
-
-            let mut entries: Vec<(DirEntry, SystemTime)> = std::fs::read_dir(corpus_dir)?
-                .filter_map(|res| {
-                    res.ok().and_then(|entry| {
-                        entry
-                            .metadata()
-                            .ok()
-                            .and_then(|meta| meta.created().ok().map(|ctime| (entry, ctime)))
-                    })
-                })
-                .collect();
-            entries.sort_by_key(|&(_, time)| time);
-
-            for (entry, _) in entries {
-                let path = entry.path();
-                let tx_seq: Vec<BasicTxDetails> =
-                    foundry_common::fs::read_json_file(&path).expect("msg");
-                in_memory_corpus.push(tx_seq);
-            }
-        }
-
-        Ok(Self { in_memory_corpus })
-    }
-
-    pub fn persist(&mut self, corpus_dir: &Option<PathBuf>, current_inputs: Vec<BasicTxDetails>) {
-        if let Some(corpus_dir) = corpus_dir {
-            let timestamp = time::SystemTime::now()
-                .duration_since(time::UNIX_EPOCH)
-                .expect("Time went backwards")
-                .as_secs()
-                .to_string();
-            if let Err(err) = foundry_common::fs::write_json_file(
-                corpus_dir.join(timestamp).as_path(),
-                &current_inputs,
-            ) {
-                error!(%err, "Failed to record call sequence");
-            }
-        }
-
-        // This includes reverting txs in the corpus and `can_continue` removes
-        // them. We want this as it is new coverage
-        // and may help reach the other branch.
-        self.in_memory_corpus.push(current_inputs);
-    }
-
-    #[allow(clippy::needless_range_loop)]
-    pub fn new_sequence(&self, test_runnner: &mut TestRunner) -> Vec<BasicTxDetails> {
-        let mut new_seq = vec![];
-        let rng = test_runnner.rng();
-
-        if self.in_memory_corpus.len() > 1 {
-            let idx1 = rng.gen_range(0..self.in_memory_corpus.len());
-            let idx2 = rng.gen_range(0..self.in_memory_corpus.len());
-            let one = &self.in_memory_corpus[idx1];
-            let two = &self.in_memory_corpus[idx2];
-            // TODO rounds of mutations on elements?
-            match rng.gen_range(0..3) {
-                // TODO expose config and add tests
-                // splice
-                0 => {
-                    let start1 = rng.gen_range(0..one.len());
-                    let end1 = rng.gen_range(start1..one.len());
-
-                    let start2 = rng.gen_range(0..two.len());
-                    let end2 = rng.gen_range(start2..two.len());
-
-                    for tx in one.iter().take(end1).skip(start1) {
-                        new_seq.push(tx.clone());
-                    }
-
-                    for tx in two.iter().take(end2).skip(start2) {
-                        new_seq.push(tx.clone());
-                    }
-                }
-                // repeat
-                1 => {
-                    let tx = if rng.gen_bool(0.5) { one } else { two };
-                    new_seq = tx.clone();
-                    let start = rng.gen_range(0..tx.len());
-                    let end = rng.gen_range(start..tx.len());
-                    let item_idx = rng.gen_range(0..tx.len());
-                    let item = &tx[item_idx];
-                    for i in start..end {
-                        new_seq[i] = item.clone();
-                    }
-                }
-                // interleave
-                2 => {
-                    for (tx1, tx2) in one.iter().zip(two.iter()) {
-                        // chunks?
-                        let tx = if rng.gen_bool(0.5) { tx1.clone() } else { tx2.clone() };
-                        new_seq.push(tx);
-                    }
-                }
-                // TODO
-                // 3. Overwrite prefix with new or mutated sequence
-                // 4. Overwrite suffix with new or mutated sequence
-                // 5. Select idx to mutate and change its args according to its ABI
-                _ => {
-                    unreachable!();
-                }
-            }
-        }
-        new_seq
-    }
-}
-
 impl<'a> InvariantExecutor<'a> {
     /// Instantiates a fuzzed executor EVM given a testrunner
     pub fn new(
@@ -465,40 +343,23 @@ impl<'a> InvariantExecutor<'a> {
         let (invariant_test, invariant_strategy) =
             self.prepare_test(&invariant_contract, fuzz_fixtures, deployed_libs)?;
 
-        let mut corpus = TxCorpusManager::new(&self.config.corpus_dir)?;
-        for tx_seq in &corpus.in_memory_corpus {
-            if tx_seq.is_empty() {
-                continue;
-            }
-
-            for tx in tx_seq {
-                let mut call_result = self
-                    .executor
-                    .call_raw(
-                        tx.sender,
-                        tx.call_details.target,
-                        tx.call_details.calldata.clone(),
-                        U256::ZERO,
-                    )
-                    .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))?;
-                call_result.merge_edge_coverage(&mut self.history_map);
-            }
-        }
+        let mut corpus = TxCorpusManager::new(
+            &self.config.corpus_dir,
+            &invariant_contract.invariant_function.name,
+            &self.executor,
+            &mut self.history_map,
+        )?;
 
         // Start timer for this invariant test.
         let timer = FuzzTestTimer::new(self.config.timeout);
         let mut runs = 0;
 
         'stop: while runs < self.config.runs {
-            let mut initial_seq = corpus.new_sequence(&mut self.runner);
-            if initial_seq.is_empty() {
-                initial_seq.push(
-                    invariant_strategy
-                        .new_tree(&mut invariant_test.execution_data.borrow_mut().branch_runner)
-                        .map_err(|_| eyre!("Could not generate case"))?
-                        .current(),
-                );
-            }
+            let initial_seq = initial_sequence(
+                &corpus,
+                &invariant_strategy,
+                &mut invariant_test.execution_data.borrow_mut().branch_runner,
+            )?;
 
             // Create current invariant run data.
             let mut current_run = InvariantTestRun::new(
@@ -632,21 +493,17 @@ impl<'a> InvariantExecutor<'a> {
 
                 if discarded || must_generate || generate_new {
                     // Generates the next call from the run using the recently updated dictionary
-                    current_run.inputs.push(
-                        invariant_strategy
-                            .new_tree(&mut invariant_test.execution_data.borrow_mut().branch_runner)
-                            .map_err(|_| eyre!("Could not generate case"))?
-                            .current(),
-                    );
+                    current_run.inputs.push(tx_from_strategy(
+                        &invariant_strategy,
+                        &mut invariant_test.execution_data.borrow_mut().branch_runner,
+                    )?);
                 } else {
                     current_run.inputs.push(initial_seq[current_run.depth as usize].clone());
                 }
             }
 
-            // Save corpus if new coverage recorded during this run.
-            if current_run.new_coverage {
-                corpus.persist(&self.config.corpus_dir, current_run.inputs.clone());
-            }
+            // Extend corpus with current run data.
+            corpus.collect_inputs(&current_run);
 
             // Call `afterInvariant` only if it is declared and test didn't fail already.
             if invariant_contract.call_after_invariant && !invariant_test.has_errors() {
@@ -752,7 +609,7 @@ impl<'a> InvariantExecutor<'a> {
             &mut failures,
         )?;
         if let Some(error) = failures.error {
-            return Err(eyre!(error.revert_reason().unwrap_or_default()));
+            return Err(eyre!(error.revert_reason().unwrap_or_default()))
         }
 
         Ok((
@@ -858,7 +715,7 @@ impl<'a> InvariantExecutor<'a> {
                     .wrap_err(format!("{contract} does not have the selector {selector:?}"))?;
             }
 
-            return Ok(artifact.identifier());
+            return Ok(artifact.identifier())
         }
         eyre::bail!("{contract} not found in the project. Allowed format: `contract_name` or `contract_path:contract_name`.");
     }
@@ -1007,7 +864,7 @@ impl<'a> InvariantExecutor<'a> {
     ) -> eyre::Result<()> {
         // Do not add address in target contracts if no function selected.
         if selectors.is_empty() {
-            return Ok(());
+            return Ok(())
         }
 
         let contract = match targeted_contracts.entry(address) {
@@ -1068,13 +925,35 @@ fn collect_data(
     }
 }
 
+/// Helper function to create initial sequence for invariant run by mutating in-memory corpus.
+/// If corpus manager cannot generate a new sequence then initial tx is created from strategy.
+fn initial_sequence(
+    corpus: &TxCorpusManager,
+    strat: impl Strategy<Value = BasicTxDetails>,
+    test_runnner: &mut TestRunner,
+) -> Result<Vec<BasicTxDetails>> {
+    let mut initial_seq = corpus.new_sequence(test_runnner);
+    if initial_seq.is_empty() {
+        initial_seq.push(tx_from_strategy(strat, test_runnner)?);
+    }
+    Ok(initial_seq)
+}
+
+/// Helper function to create single input from invariant strategy.
+fn tx_from_strategy(
+    strat: impl Strategy<Value = BasicTxDetails>,
+    test_runnner: &mut TestRunner,
+) -> Result<BasicTxDetails> {
+    Ok(strat.new_tree(test_runnner).map_err(|_| eyre!("Could not generate case"))?.current())
+}
+
 /// Calls the `afterInvariant()` function on a contract.
 /// Returns call result and if call succeeded.
 /// The state after the call is not persisted.
 pub(crate) fn call_after_invariant_function(
     executor: &Executor,
     to: Address,
-) -> std::result::Result<(RawCallResult, bool), EvmError> {
+) -> Result<(RawCallResult, bool), EvmError> {
     let calldata = Bytes::from_static(&IInvariantTest::afterInvariantCall::SELECTOR);
     let mut call_result = executor.call_raw(CALLER, to, calldata, U256::ZERO)?;
     let success = executor.is_raw_call_mut_success(to, &mut call_result, false);
