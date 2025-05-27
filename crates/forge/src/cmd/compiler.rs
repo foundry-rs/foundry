@@ -1,7 +1,9 @@
 use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
 use foundry_common::shell;
-use foundry_compilers::{artifacts::EvmVersion, Graph};
+use foundry_compilers::{
+    artifacts::EvmVersion, multi::MultiCompilerLanguage, Graph, VyperLanguage,
+};
 use foundry_config::Config;
 use semver::Version;
 use serde::Serialize;
@@ -98,7 +100,9 @@ impl ResolveArgs {
                             .unwrap_or_default();
 
                         // Vyper does not yet support Prague, so we normalize it to Cancun.
-                        if language.to_string() == "Vyper" && evm == EvmVersion::Prague {
+                        if matches!(language, MultiCompilerLanguage::Vyper(_)) &&
+                            evm == EvmVersion::Prague
+                        {
                             Some(EvmVersion::Cancun)
                         } else {
                             Some(evm)
