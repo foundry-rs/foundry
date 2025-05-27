@@ -6,6 +6,7 @@ use crate::{
     utils::http_provider_with_signer,
 };
 use alloy_consensus::{SignableTransaction, TxEip1559};
+use alloy_hardforks::EthereumHardfork;
 use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
 use alloy_primitives::{address, fixed_bytes, utils::Unit, Address, Bytes, TxKind, U256};
 use alloy_provider::{ext::TxPoolApi, Provider};
@@ -21,7 +22,7 @@ use anvil::{
         api::CLIENT_VERSION,
         backend::mem::{EXECUTOR, P256_DELEGATION_CONTRACT, P256_DELEGATION_RUNTIME_CODE},
     },
-    spawn, EthereumHardfork, NodeConfig,
+    spawn, NodeConfig,
 };
 use anvil_core::{
     eth::{

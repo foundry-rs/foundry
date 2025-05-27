@@ -1,8 +1,9 @@
 //! Contains various tests related to `forge script`.
 
 use crate::constants::TEMPLATE_CONTRACT;
+use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{address, hex, Address, Bytes};
-use anvil::{spawn, EthereumHardfork, NodeConfig};
+use anvil::{spawn, NodeConfig};
 use forge_script_sequence::ScriptSequence;
 use foundry_test_utils::{
     rpc::{self, next_http_archive_rpc_url},

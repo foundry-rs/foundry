@@ -47,8 +47,7 @@ pub use config::{
 };
 
 mod hardfork;
-pub use hardfork::{EthereumHardfork, OptimismHardfork};
-
+pub use alloy_hardforks::EthereumHardfork;
 /// ethereum related implementations
 pub mod eth;
 /// Evm related abstractions
