@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-echo "Installing foundryup..."
+echo "Installing foundryup-polkadot..."
 
 BASE_DIR="${XDG_CONFIG_HOME:-$HOME}"
 FOUNDRY_DIR="${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}"
@@ -9,7 +9,7 @@ FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
 FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
 
 BIN_URL="https://raw.githubusercontent.com/paritytech/foundry-polkadot/master/foundryup/foundryup"
-BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
+BIN_PATH="$FOUNDRY_BIN_DIR/foundryup-polkadot"
 
 # Create the .foundry bin directory and foundryup binary if it doesn't exist.
 mkdir -p "$FOUNDRY_BIN_DIR"
@@ -38,7 +38,7 @@ case $SHELL in
     PREF_SHELL=ash
     ;;
 *)
-    echo "foundryup: could not detect shell, manually add ${FOUNDRY_BIN_DIR} to your PATH."
+    echo "foundryup-polkadot: could not detect shell, manually add ${FOUNDRY_BIN_DIR} to your PATH."
     exit 1
 esac
 
@@ -59,6 +59,6 @@ if [[ "$OSTYPE" =~ ^darwin ]] && [[ ! -f /usr/local/opt/libusb/lib/libusb-1.0.0.
 fi
 
 echo
-echo "Detected your preferred shell is $PREF_SHELL and added foundryup to PATH."
-echo "Run 'source $PROFILE' or start a new terminal session to use foundryup."
-echo "Then, simply run 'foundryup' to install Foundry."
+echo "Detected your preferred shell is $PREF_SHELL and added foundryup-polkadot to PATH."
+echo "Run 'source $PROFILE' or start a new terminal session to use foundryup-polkadot."
+echo "Then, simply run 'foundryup-polkadot' to install Foundry."

@@ -12,7 +12,7 @@ FOUNDRY_VERSIONS_DIR="$FOUNDRY_DIR/versions"
 FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
 FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
 FOUNDRY_BIN_URL="https://raw.githubusercontent.com/paritytech/foundry-polkadot/master/foundryup/foundryup"
-FOUNDRY_BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
+FOUNDRY_BIN_PATH="$FOUNDRY_BIN_DIR/foundryup-polkadot"
 
 FOUNDRYUP_JOBS=""
 
@@ -112,7 +112,7 @@ main() {
       FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
     fi
 
-    say "installing foundry (version ${FOUNDRYUP_VERSION}, tag ${FOUNDRYUP_TAG})"
+    say "installing foundry-polkadot (version ${FOUNDRYUP_VERSION}, tag ${FOUNDRYUP_TAG})"
 
     uname_s=$(uname -s)
     PLATFORM=$(tolower "${FOUNDRYUP_PLATFORM:-$uname_s}")
@@ -153,7 +153,7 @@ main() {
 
     ensure mkdir -p "$FOUNDRY_VERSIONS_DIR"
     # Download and extract the binaries archive
-    say "downloading forge, cast, anvil, and chisel for $FOUNDRYUP_TAG version"
+    say "downloading forge and cast for $FOUNDRYUP_TAG version"
     if [ "$PLATFORM" = "win32" ]; then
       tmp="$(mktemp -d 2>/dev/null || echo ".")/foundry.zip"
       ensure download "$BIN_ARCHIVE_URL" "$tmp"
@@ -282,7 +282,7 @@ version() {
 }
 
 update() {
-  say "updating foundryup..."
+  say "updating foundryup-polkadot..."
 
   # Download to a temporary file first
   tmp_file="$(mktemp)"
@@ -292,7 +292,7 @@ update() {
   ensure mv "$tmp_file" "$FOUNDRY_BIN_PATH"
   ensure chmod +x "$FOUNDRY_BIN_PATH"
 
-  say "successfully updated foundryup"
+  say "successfully updated foundryup-polkadot"
   exit 0
 }
 
@@ -349,7 +349,7 @@ EOF
 }
 
 say() {
-  printf "foundryup: %s\n" "$1"
+  printf "foundryup-polkadot: %s\n" "$1"
 }
 
 warn() {
