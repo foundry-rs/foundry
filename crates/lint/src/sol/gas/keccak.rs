@@ -11,8 +11,7 @@ declare_forge_lint!(
     ASM_KECCAK256,
     Severity::Gas,
     "asm-keccak256",
-    "hash using inline assembly to save gas",
-    ""
+    "hash using inline assembly to save gas"
 );
 
 impl<'ast> EarlyLintPass<'ast> for AsmKeccak256 {
