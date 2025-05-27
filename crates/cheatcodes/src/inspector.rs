@@ -575,7 +575,7 @@ impl Cheatcodes {
 
     /// Adds a delegation to the active delegations list.
     pub fn add_delegation(&mut self, authorization: SignedAuthorization) {
-        self.active_delegations.get_or_insert_with(|| vec![]).push(authorization);
+        self.active_delegations.get_or_insert_with(Vec::new).push(authorization);
     }
 
     /// Decodes the input data and applies the cheatcode.
@@ -1127,6 +1127,29 @@ impl Cheatcodes {
 
                     let input = TransactionInput::new(call.input.bytes(ecx));
 
+                    let (auth_list_result, blob_result) =
+                        (self.active_delegations.take(), self.active_blob_sidecar.take());
+
+                    if let Some(ref auth_list) = auth_list_result {
+                        let mut authority_nonces: std::collections::HashMap<Address, u64> =
+                            std::collections::HashMap::new();
+
+                        for auth in auth_list {
+                            if let Ok(addr) = auth.recover_authority() {
+                                authority_nonces
+                                    .entry(addr)
+                                    .and_modify(|n| *n = (*n).max(auth.nonce))
+                                    .or_insert(auth.nonce);
+                            }
+                        }
+
+                        for (addr, max_nonce) in authority_nonces {
+                            let _ = ecx.journaled_state.load_account(addr).map(|acc| {
+                                acc.data.info.nonce = max_nonce + 1;
+                            });
+                        }
+                    }
+
                     let account =
                         ecx.journaled_state.inner.state().get_mut(&broadcast.new_origin).unwrap();
 
@@ -1141,7 +1164,7 @@ impl Cheatcodes {
                         ..Default::default()
                     };
 
-                    match (self.active_delegations.take(), self.active_blob_sidecar.take()) {
+                    match (auth_list_result, blob_result) {
                         (Some(_), Some(_)) => {
                             let msg = "both delegation and blob are active; `attachBlob` and `attachDelegation` are not compatible";
                             return Some(CallOutcome {
@@ -1154,12 +1177,8 @@ impl Cheatcodes {
                             });
                         }
                         (Some(auth_list), None) => {
-                            let auth_count = auth_list.len() as u64;
                             tx_req.authorization_list = Some(auth_list);
                             tx_req.sidecar = None;
-
-                            // Increment nonce to reflect the signed authorizations.
-                            account.info.nonce += auth_count;
                         }
                         (None, Some(blob_sidecar)) => {
                             tx_req.set_blob_sidecar(blob_sidecar);

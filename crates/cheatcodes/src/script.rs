@@ -132,8 +132,12 @@ fn sign_delegation(
         nonce
     } else {
         let authority_acc = ccx.ecx.journaled_state.load_account(signer.address())?;
-        // If we don't have a nonce then use next auth account nonce.
-        authority_acc.data.info.nonce + 1
+        // Calculate next nonce considering existing active delegations
+        next_delegation_nonce(
+            &ccx.state.active_delegations,
+            signer.address(),
+            authority_acc.data.info.nonce,
+        )
     };
     let chain_id = if cross_chain { U256::from(0) } else { U256::from(ccx.ecx.cfg.chain_id) };
 
@@ -155,11 +159,43 @@ fn sign_delegation(
     .abi_encode())
 }
 
+/// Returns the next valid nonce for a delegation, considering existing active delegations.
+fn next_delegation_nonce(
+    active_delegations: &Option<Vec<SignedAuthorization>>,
+    authority: Address,
+    account_nonce: u64,
+) -> u64 {
+    active_delegations
+        .as_ref()
+        .and_then(|delegations| {
+            delegations
+                .iter()
+                .filter_map(|auth| {
+                    auth.recover_authority()
+                        .ok()
+                        .filter(|&addr| addr == authority)
+                        .map(|_| auth.nonce)
+                })
+                .max()
+        })
+        .map_or(account_nonce + 1, |max_nonce| max_nonce + 1)
+}
+
 fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<()> {
     let authority = auth.recover_authority().map_err(|e| format!("{e}"))?;
     let authority_acc = ccx.ecx.journaled_state.load_account(authority)?;
-    if authority_acc.data.info.nonce + 1 != auth.nonce {
-        return Err("invalid nonce".into());
+    let expected_nonce = next_delegation_nonce(
+        &ccx.state.active_delegations,
+        authority,
+        authority_acc.data.info.nonce,
+    );
+
+    if expected_nonce != auth.nonce {
+        return Err(format!(
+            "invalid nonce for {authority:?}: expected {expected_nonce}, got {}",
+            auth.nonce
+        )
+        .into());
     }
 
     if auth.address.is_zero() {
