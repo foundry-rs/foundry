@@ -233,6 +233,16 @@ impl ScriptArgs {
             evm_opts.sender = sender;
         }
 
+        // If no sender derived yet, try to derive from account
+        if evm_opts.sender == Address::ZERO {
+            if let Some(sender) = self.maybe_derive_sender_from_account()? {
+                evm_opts.sender = sender;
+            }
+        }
+
+        // Validate that sender matches account if both are provided
+        self.validate_sender_account_match(&evm_opts)?;
+
         let script_config = ScriptConfig::new(config, evm_opts).await?;
 
         Ok(PreprocessedState { args: self, script_config, script_wallets })
@@ -346,6 +356,36 @@ impl ScriptArgs {
             .filter(|pks| pks.len() == 1)
             .map(|pks| pks.first().unwrap().address());
         Ok(maybe_sender)
+    }
+
+    /// Attempts to derive the sender address from the configured account
+    fn maybe_derive_sender_from_account(&self) -> Result<Option<Address>> {
+        if self.evm.sender.is_some() {
+            return Ok(None);
+        }
+
+        let maybe_sender = self.wallets.private_keys()?.filter(|pks| pks.len() == 1).map(|pks| {
+            let address = pks.first().unwrap().address();
+            trace!(target: "script", "Derived sender {} from private key", address);
+            address
+        });
+        Ok(maybe_sender)
+    }
+
+    /// Validates that the sender address matches the account when both are provided
+    fn validate_sender_account_match(&self, evm_opts: &EvmOpts) -> Result<()> {
+        if self.evm.sender.is_some() && evm_opts.sender != Address::ZERO {
+            if let Some(private_keys) = self.wallets.private_keys()? {
+                let sender_matches = private_keys.iter().any(|pk| pk.address() == evm_opts.sender);
+                if !sender_matches {
+                    eyre::bail!(
+                        "Sender address {} does not match any of the provided accounts",
+                        evm_opts.sender
+                    );
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Returns the Function and calldata based on the signature
@@ -917,5 +957,40 @@ mod tests {
             "SolveTutorial",
         ]);
         assert!(args.with_gas_price.unwrap().is_zero());
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/10632>
+    #[test]
+    fn test_automatic_sender_derivation_from_account() {
+        use alloy_primitives::address;
+
+        let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+        let args =
+            ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--private-key", private_key]);
+
+        assert_eq!(args.evm.sender, None);
+
+        let derived_sender = args.maybe_derive_sender_from_account().unwrap();
+        assert_eq!(derived_sender, Some(address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")));
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/10632>
+    #[test]
+    fn test_no_sender_derivation_when_sender_already_provided() {
+        let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        let provided_sender = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--private-key",
+            private_key,
+            "--sender",
+            provided_sender,
+        ]);
+
+        let derived_sender = args.maybe_derive_sender_from_account().unwrap();
+        assert_eq!(derived_sender, None);
     }
 }
