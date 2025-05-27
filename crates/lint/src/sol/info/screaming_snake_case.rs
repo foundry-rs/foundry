@@ -10,8 +10,7 @@ declare_forge_lint!(
     SCREAMING_SNAKE_CASE_CONSTANT,
     Severity::Info,
     "screaming-snake-case-const",
-    "constants should use SCREAMING_SNAKE_CASE",
-    "https://docs.soliditylang.org/en/latest/style-guide.html#constants"
+    "constants should use SCREAMING_SNAKE_CASE"
 );
 
 declare_forge_lint!(
