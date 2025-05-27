@@ -54,7 +54,7 @@ impl Cheatcode for sign_0Call {
 
 impl Cheatcode for signTypedDataCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
-        let Self { privateKey, jsonData } = self;
+        let Self { jsonData, privateKey } = self;
         let typed_data: TypedData = serde_json::from_str(jsonData)?;
         let digest = typed_data.eip712_signing_hash()?;
         let sig = sign(privateKey, &digest)?;

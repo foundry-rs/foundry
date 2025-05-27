@@ -3862,7 +3862,7 @@ contract Eip712HashTypedDataTest is DSTest {
     function testSignTypedData(uint248 pk) public {
         vm.assume(pk != 0);
 
-        (uint8 v, bytes32 r, bytes32 s) = vm.signTypedData(pk, jsonData);
+        (uint8 v, bytes32 r, bytes32 s) = vm.signTypedData(jsonData, pk);
 
         address expected = vm.addr(pk);
         bytes32 digest = vm.eip712HashTypedData(jsonData);
