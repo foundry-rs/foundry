@@ -1,9 +1,10 @@
 use crate::executors::{invariant::InvariantTestRun, Executor};
 use alloy_primitives::U256;
-use eyre::{ensure, eyre};
+use eyre::eyre;
 use foundry_evm_fuzz::invariant::BasicTxDetails;
 use proptest::{prelude::Rng, test_runner::TestRunner};
-use std::{path::PathBuf, time};
+use std::path::PathBuf;
+use uuid::Uuid;
 
 /// Invariant corpus manager.
 #[derive(Default)]
@@ -13,6 +14,8 @@ pub struct TxCorpusManager {
     // In-memory corpus, populated from persisted files and current runs.
     pub in_memory_corpus: Vec<Vec<BasicTxDetails>>, /* TODO need some sort of corpus management
                                                      * (limit memory usage and flush). */
+    // Number of failed replays from persisted corpus.
+    pub failed_replays: usize,
 }
 
 impl TxCorpusManager {
@@ -31,23 +34,16 @@ impl TxCorpusManager {
             foundry_common::fs::create_dir_all(&corpus_dir)?;
         }
 
-        // Sort by filename (milliseconds since epoch) for loading corpus files in proper sequence.
-        let mut entries: Vec<_> =
-            std::fs::read_dir(&corpus_dir)?.filter_map(|entry| entry.ok()).collect();
-        entries.sort_by_key(|entry| entry.file_name().to_string_lossy().to_string());
-
         let mut in_memory_corpus = vec![];
-        // Load sequences from each corpus file, replay calls to warm up history map and populate
-        // in memory corpus.
-        for entry in entries {
-            let path = entry.path();
+        let mut failed_replays = 0;
+        for entry in std::fs::read_dir(&corpus_dir)? {
+            let path = entry?.path();
             let tx_seq: Vec<BasicTxDetails> =
                 foundry_common::fs::read_json_file(&path).expect("msg");
 
             if !tx_seq.is_empty() {
                 // Warm up history map from loaded sequences.
                 let mut executor = executor.clone();
-                let mut new_coverage = false;
                 for tx in &tx_seq {
                     let mut call_result = executor
                         .call_raw(
@@ -57,16 +53,14 @@ impl TxCorpusManager {
                             U256::ZERO,
                         )
                         .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))?;
-                    if call_result.merge_edge_coverage(history_map) {
-                        new_coverage = true;
+                    if !call_result.reverted {
+                        call_result.merge_edge_coverage(history_map);
+                        executor.commit(&mut call_result);
+                    } else {
+                        failed_replays += 1;
                     }
-                    executor.commit(&mut call_result);
                 }
-                ensure!(
-                    new_coverage,
-                    "loaded corpus from {} does not result in new coverage",
-                    path.display()
-                );
+
                 trace!(
                     target: "corpus",
                     "load sequence with len {} from corpus file {}",
@@ -79,7 +73,7 @@ impl TxCorpusManager {
             }
         }
 
-        Ok(Self { corpus_dir: Some(corpus_dir), in_memory_corpus })
+        Ok(Self { corpus_dir: Some(corpus_dir), in_memory_corpus, failed_replays })
     }
 
     /// Collects inputs from given invariant run, if new coverage produced.
@@ -94,12 +88,8 @@ impl TxCorpusManager {
 
         // Persist to disk if corpus dir is configured.
         if let Some(corpus_dir) = &self.corpus_dir {
-            let timestamp = time::SystemTime::now()
-                .duration_since(time::UNIX_EPOCH)
-                .expect("Time went backwards")
-                .as_micros()
-                .to_string();
-            let path = corpus_dir.join(timestamp);
+            let corpus_uuid = Uuid::new_v4().to_string();
+            let path = corpus_dir.join(corpus_uuid);
             trace!(
                 target: "corpus",
                 "persist inputs {} for new coverage in corpus file {}",

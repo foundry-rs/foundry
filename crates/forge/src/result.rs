@@ -579,8 +579,13 @@ impl TestResult {
 
     /// Returns the skipped result for invariant test.
     pub fn invariant_skip(&mut self, reason: SkipReason) {
-        self.kind =
-            TestKind::Invariant { runs: 1, calls: 1, reverts: 1, metrics: HashMap::default() };
+        self.kind = TestKind::Invariant {
+            runs: 1,
+            calls: 1,
+            reverts: 1,
+            metrics: HashMap::default(),
+            failed_corpus_replays: 0,
+        };
         self.status = TestStatus::Skipped;
         self.reason = reason.0;
     }
@@ -592,8 +597,13 @@ impl TestResult {
         invariant_name: &String,
         call_sequence: Vec<BaseCounterExample>,
     ) {
-        self.kind =
-            TestKind::Invariant { runs: 1, calls: 1, reverts: 1, metrics: HashMap::default() };
+        self.kind = TestKind::Invariant {
+            runs: 1,
+            calls: 1,
+            reverts: 1,
+            metrics: HashMap::default(),
+            failed_corpus_replays: 0,
+        };
         self.status = TestStatus::Failure;
         self.reason = if replayed_entirely {
             Some(format!("{invariant_name} replay failure"))
@@ -605,8 +615,13 @@ impl TestResult {
 
     /// Returns the fail result for invariant test setup.
     pub fn invariant_setup_fail(&mut self, e: Report) {
-        self.kind =
-            TestKind::Invariant { runs: 0, calls: 0, reverts: 0, metrics: HashMap::default() };
+        self.kind = TestKind::Invariant {
+            runs: 0,
+            calls: 0,
+            reverts: 0,
+            metrics: HashMap::default(),
+            failed_corpus_replays: 0,
+        };
         self.status = TestStatus::Failure;
         self.reason = Some(format!("failed to set up invariant testing environment: {e}"));
     }
@@ -622,12 +637,14 @@ impl TestResult {
         cases: Vec<FuzzedCases>,
         reverts: usize,
         metrics: Map<String, InvariantMetrics>,
+        failed_corpus_replays: usize,
     ) {
         self.kind = TestKind::Invariant {
             runs: cases.len(),
             calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
             reverts,
             metrics,
+            failed_corpus_replays,
         };
         self.status = match success {
             true => TestStatus::Success,
@@ -665,9 +682,21 @@ impl TestResult {
 /// Data report by a test.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TestKindReport {
-    Unit { gas: u64 },
-    Fuzz { runs: usize, mean_gas: u64, median_gas: u64 },
-    Invariant { runs: usize, calls: usize, reverts: usize, metrics: Map<String, InvariantMetrics> },
+    Unit {
+        gas: u64,
+    },
+    Fuzz {
+        runs: usize,
+        mean_gas: u64,
+        median_gas: u64,
+    },
+    Invariant {
+        runs: usize,
+        calls: usize,
+        reverts: usize,
+        metrics: Map<String, InvariantMetrics>,
+        failed_corpus_replays: usize,
+    },
 }
 
 impl fmt::Display for TestKindReport {
@@ -679,8 +708,12 @@ impl fmt::Display for TestKindReport {
             Self::Fuzz { runs, mean_gas, median_gas } => {
                 write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
             }
-            Self::Invariant { runs, calls, reverts, metrics: _ } => {
-                write!(f, "(runs: {runs}, calls: {calls}, reverts: {reverts})")
+            Self::Invariant { runs, calls, reverts, metrics: _, failed_corpus_replays } => {
+                if *failed_corpus_replays != 0 {
+                    write!(f, "(runs: {runs}, calls: {calls}, reverts: {reverts}, failed corpus replays: {failed_corpus_replays})")
+                } else {
+                    write!(f, "(runs: {runs}, calls: {calls}, reverts: {reverts})")
+                }
             }
         }
     }
@@ -713,7 +746,13 @@ pub enum TestKind {
         median_gas: u64,
     },
     /// An invariant test.
-    Invariant { runs: usize, calls: usize, reverts: usize, metrics: Map<String, InvariantMetrics> },
+    Invariant {
+        runs: usize,
+        calls: usize,
+        reverts: usize,
+        metrics: Map<String, InvariantMetrics>,
+        failed_corpus_replays: usize,
+    },
 }
 
 impl Default for TestKind {
@@ -730,12 +769,15 @@ impl TestKind {
             Self::Fuzz { first_case: _, runs, mean_gas, median_gas } => {
                 TestKindReport::Fuzz { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
             }
-            Self::Invariant { runs, calls, reverts, metrics: _ } => TestKindReport::Invariant {
-                runs: *runs,
-                calls: *calls,
-                reverts: *reverts,
-                metrics: HashMap::default(),
-            },
+            Self::Invariant { runs, calls, reverts, metrics: _, failed_corpus_replays } => {
+                TestKindReport::Invariant {
+                    runs: *runs,
+                    calls: *calls,
+                    reverts: *reverts,
+                    metrics: HashMap::default(),
+                    failed_corpus_replays: *failed_corpus_replays,
+                }
+            }
         }
     }
 }

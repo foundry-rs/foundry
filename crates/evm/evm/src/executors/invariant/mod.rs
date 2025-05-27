@@ -539,6 +539,7 @@ impl<'a> InvariantExecutor<'a> {
             gas_report_traces: result.gas_report_traces,
             line_coverage: result.line_coverage,
             metrics: result.metrics,
+            failed_corpus_replays: corpus.failed_replays,
         })
     }
 

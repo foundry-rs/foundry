@@ -770,6 +770,7 @@ impl<'a> FunctionRunner<'a> {
             invariant_result.cases,
             invariant_result.reverts,
             invariant_result.metrics,
+            invariant_result.failed_corpus_replays,
         );
         self.result
     }
