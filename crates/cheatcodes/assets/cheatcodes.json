@@ -4296,6 +4296,26 @@
     },
     {
       "func": {
+        "id": "eip712HashTypedData",
+        "description": "Generates a ready-to-sign digest of human-readable typed data following the EIP-712 standard.",
+        "declaration": "function eip712HashTypedData(string calldata jsonData) external pure returns (bytes32 digest);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "eip712HashTypedData(string)",
+        "selector": "0xea25e615",
+        "selectorBytes": [
+          234,
+          37,
+          230,
+          21
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "ensNamehash",
         "description": "Returns ENS namehash for provided string.",
         "declaration": "function ensNamehash(string calldata name) external pure returns (bytes32);",
@@ -9823,17 +9843,17 @@
     {
       "func": {
         "id": "signTypedData",
-        "description": "Signs Human-Readable Typed Data with `privateKey` using the secp256k1 curve.",
-        "declaration": "function signTypedData(string calldata jsonData, uint256 privateKey) external pure returns (uint8 v, bytes32 r, bytes32 s);",
+        "description": "Signs human-readable typed data `jsonData` with `privateKey` using the secp256k1 curve.\nThe typed data must follow the EIP-712 standard.",
+        "declaration": "function signTypedData(uint256 privateKey, string calldata jsonData) external pure returns (uint8 v, bytes32 r, bytes32 s);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "signTypedData(string,uint256)",
-        "selector": "0x85f00b0d",
+        "signature": "signTypedData(uint256,string)",
+        "selector": "0xa3f35987",
         "selectorBytes": [
-          133,
-          240,
-          11,
-          13
+          163,
+          243,
+          89,
+          135
         ]
       },
       "group": "crypto",

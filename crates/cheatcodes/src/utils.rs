@@ -1,7 +1,7 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
-use alloy_dyn_abi::{DynSolType, DynSolValue};
+use alloy_dyn_abi::{DynSolType, DynSolValue, TypedData};
 use alloy_ens::namehash;
 use alloy_primitives::{aliases::B32, map::HashMap, B64, U256};
 use alloy_sol_types::SolValue;
@@ -313,4 +313,14 @@ fn random_int(state: &mut Cheatcodes, bits: Option<U256>) -> Result {
         .unwrap()
         .current()
         .abi_encode())
+}
+
+impl Cheatcode for eip712HashTypedDataCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { jsonData } = self;
+        let typed_data: TypedData = serde_json::from_str(jsonData)?;
+        let digest = typed_data.eip712_signing_hash()?;
+
+        Ok(digest.to_vec())
+    }
 }

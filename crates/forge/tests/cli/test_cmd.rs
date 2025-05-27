@@ -3828,3 +3828,52 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 
 "#]]);
 });
+
+forgetest!(test_eip712_hash_typed_data, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.insert_console();
+
+    prj.add_source(
+        "Eip712HashTypedData.sol",
+        r#"
+import "./Vm.sol";
+import "./test.sol";
+import "./console.sol";
+
+contract Eip712HashTypedDataTest is DSTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    string jsonData = '{"types":{"EIP712Domain":[{"name":"name","type":"string"},{"name":"version","type":"string"},{"name":"chainId","type":"uint256"},{"name":"verifyingContract","type":"address"},{"name":"salt","type":"bytes32"}]},"primaryType":"EIP712Domain","domain":{"name":"example.metamask.io","version":"1","chainId":1,"verifyingContract":"0x0000000000000000000000000000000000000000"},"message":{}}';
+
+    function testHashEIP712Message() public {
+        console.log(jsonData);
+
+        bytes32 cheatMsgHash = vm.eip712HashTypedData(jsonData);
+        console.log("EIP712Domain message hash from cheatcode:");
+        console.logBytes32(cheatMsgHash);
+
+        // since this cheatcode simply exposes an alloy fn, the test has been borrowed from:
+        // <https://github.com/alloy-rs/core/blob/e0727c2224a5a83664d4ca1fb2275090d29def8b/crates/dyn-abi/src/eip712/typed_data.rs#L256>
+        bytes32 expectedHash = hex"122d1c8ef94b76dad44dcb03fa772361e20855c63311a15d5afe02d1b38f6077";
+        assertEq(cheatMsgHash, expectedHash, "EIP712Domain struct hash mismatch");
+    }
+
+    function testSignTypedData(uint248 pk) public {
+        vm.assume(pk != 0);
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.signTypedData(pk, jsonData);
+
+        address expected = vm.addr(pk);
+        bytes32 digest = vm.eip712HashTypedData(jsonData);
+
+        address actual = ecrecover(digest, v, r, s);
+        assertEq(actual, expected, "digest signer did not match");
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse().args(["test", "--mc", "Eip712HashTypedDataTest", "-vvvv"]).assert_success();
+});
