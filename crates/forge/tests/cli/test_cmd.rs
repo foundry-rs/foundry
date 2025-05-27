@@ -3877,3 +3877,5 @@ contract Eip712HashTypedDataTest is DSTest {
 
     cmd.forge_fuse().args(["test", "--mc", "Eip712HashTypedDataTest", "-vvvv"]).assert_success();
 });
+
+// TODO: test vm.signTypedData with ledger

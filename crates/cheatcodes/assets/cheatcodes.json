@@ -9842,7 +9842,7 @@
     },
     {
       "func": {
-        "id": "signTypedData",
+        "id": "signTypedData_0",
         "description": "Signs human-readable typed data `jsonData` with `privateKey` using the secp256k1 curve.\nThe typed data must follow the EIP-712 standard.",
         "declaration": "function signTypedData(string calldata jsonData, uint256 privateKey) external pure returns (uint8 v, bytes32 r, bytes32 s);",
         "visibility": "external",
@@ -9854,6 +9854,26 @@
           240,
           11,
           13
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signTypedData_1",
+        "description": "Signs human-readable typed data `jsonData` using a hardware wallet.\nThis cheatcode performs a foreign function call to `cast` to abstract away complexity of\nmanually building the calldata. Because of that, it requires the FFI cheatcode to be enabled.\n# Params:\n* jsonData: the typed data must follow the EIP-712 standard.\n* walletType: the hardware wallet type, either \"ledger\" or \"trezor\".\n* walletArgs: the wallet derivation path or the mnemonic index.",
+        "declaration": "function signTypedData(string calldata jsonData, string calldata walletType, string calldata walletArgs) external pure returns (uint8 v, bytes32 r, bytes32 s);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "signTypedData(string,string,string)",
+        "selector": "0xbd7ec178",
+        "selectorBytes": [
+          189,
+          126,
+          193,
+          120
         ]
       },
       "group": "crypto",
