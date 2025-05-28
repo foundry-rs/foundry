@@ -198,11 +198,15 @@ impl RuntimeTransport {
     /// Connects to a WS transport.
     async fn connect_ws(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let auth = self.jwt.as_ref().and_then(|jwt| build_auth(jwt.clone()).ok());
-        let ws = WsConnect { url: self.url.to_string(), auth, config: None }
+        let mut ws = WsConnect::new(self.url.to_string());
+        if let Some(auth) = auth {
+            ws = ws.with_auth(auth);
+        };
+        let service = ws
             .into_service()
             .await
             .map_err(|e| RuntimeTransportError::TransportError(e, self.url.to_string()))?;
-        Ok(InnerTransport::Ws(ws))
+        Ok(InnerTransport::Ws(service))
     }
 
     /// Connects to an IPC transport.
@@ -313,9 +317,8 @@ fn url_to_file_path(url: &Url) -> Result<PathBuf, ()> {
 
     let url_str = url.as_str();
 
-    if url_str.starts_with(PREFIX) {
-        let pipe_name = &url_str[PREFIX.len()..];
-        let pipe_path = format!(r"\\.\pipe\{}", pipe_name);
+    if let Some(pipe_name) = url_str.strip_prefix(PREFIX) {
+        let pipe_path = format!(r"\\.\pipe\{pipe_name}");
         return Ok(PathBuf::from(pipe_path));
     }
 

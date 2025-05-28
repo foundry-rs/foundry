@@ -3252,7 +3252,7 @@
     },
     {
       "func": {
-        "id": "attachDelegation",
+        "id": "attachDelegation_0",
         "description": "Designate the next call as an EIP-7702 transaction",
         "declaration": "function attachDelegation(SignedDelegation calldata signedDelegation) external;",
         "visibility": "external",
@@ -3264,6 +3264,26 @@
           174,
           53,
           25
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "attachDelegation_1",
+        "description": "Designate the next call as an EIP-7702 transaction, with optional cross-chain validity.",
+        "declaration": "function attachDelegation(SignedDelegation calldata signedDelegation, bool crossChain) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "attachDelegation((uint8,bytes32,bytes32,uint64,address),bool)",
+        "selector": "0xf4460d34",
+        "selectorBytes": [
+          244,
+          70,
+          13,
+          52
         ]
       },
       "group": "scripting",
@@ -8499,7 +8519,7 @@
     {
       "func": {
         "id": "record",
-        "description": "Records all storage reads and writes.",
+        "description": "Records all storage reads and writes. Use `accesses` to get the recorded data.\nSubsequent calls to `record` will clear the previous data.",
         "declaration": "function record() external;",
         "visibility": "external",
         "mutability": "",
@@ -9622,6 +9642,26 @@
     },
     {
       "func": {
+        "id": "signAndAttachDelegation_2",
+        "description": "Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction, with optional cross-chain validity.",
+        "declaration": "function signAndAttachDelegation(address implementation, uint256 privateKey, bool crossChain) external returns (SignedDelegation memory signedDelegation);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "signAndAttachDelegation(address,uint256,bool)",
+        "selector": "0xd936e146",
+        "selectorBytes": [
+          217,
+          54,
+          225,
+          70
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "signCompact_0",
         "description": "Signs data with a `Wallet`.\nReturns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the\nsignature's `s` value, and the recovery id `v` in a single bytes32.\nThis format reduces the signature size from 65 to 64 bytes.",
         "declaration": "function signCompact(Wallet calldata wallet, bytes32 digest) external returns (bytes32 r, bytes32 vs);",
@@ -9734,6 +9774,26 @@
           186,
           46,
           195
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signDelegation_2",
+        "description": "Sign an EIP-7702 authorization for delegation, with optional cross-chain validity.",
+        "declaration": "function signDelegation(address implementation, uint256 privateKey, bool crossChain) external returns (SignedDelegation memory signedDelegation);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "signDelegation(address,uint256,bool)",
+        "selector": "0xcdd7563d",
+        "selectorBytes": [
+          205,
+          215,
+          86,
+          61
         ]
       },
       "group": "scripting",
@@ -10421,6 +10481,26 @@
       "group": "evm",
       "status": "stable",
       "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "stopRecord",
+        "description": "Stops recording storage reads and writes.",
+        "declaration": "function stopRecord() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "stopRecord()",
+        "selector": "0x996be76d",
+        "selectorBytes": [
+          153,
+          107,
+          231,
+          109
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
     },
     {
       "func": {
