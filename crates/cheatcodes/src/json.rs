@@ -605,22 +605,14 @@ fn serialize_value_as_json(value: DynSolValue) -> Result<Value> {
         DynSolValue::Bytes(b) => Ok(Value::String(hex::encode_prefixed(b))),
         DynSolValue::FixedBytes(b, size) => Ok(Value::String(hex::encode_prefixed(&b[..size]))),
         DynSolValue::Int(i, _) => {
-            // TODO: same problem as with Uint
             // let serde handle number parsing
             let n = serde_json::from_str(&i.to_string())?;
             Ok(Value::Number(n))
         }
         DynSolValue::Uint(i, _) => {
-            // TODO: ask Arsenii if this approach (or always using strings) is acceptable.
-            // needed cause otherwise alloy fails to coerce numbers > u64.
-            // alternatively i could do an alloy PR.
-            if i <= U256::from(u64::MAX) {
-                // let serde handle number parsing
-                let n = serde_json::from_str(&i.to_string())?;
-                Ok(Value::Number(n))
-            } else {
-                Ok(Value::String(i.to_string()))
-            }
+            // let serde handle number parsing
+            let n = serde_json::from_str(&i.to_string())?;
+            Ok(Value::Number(n))
         }
         DynSolValue::Address(a) => Ok(Value::String(a.to_string())),
         DynSolValue::Array(e) | DynSolValue::FixedArray(e) => {
