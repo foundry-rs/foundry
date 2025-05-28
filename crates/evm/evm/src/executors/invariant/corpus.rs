@@ -11,6 +11,8 @@ use uuid::Uuid;
 pub struct TxCorpusManager {
     // Path to invariant corpus directory. If None, corpus with new coverage is not persisted.
     pub corpus_dir: Option<PathBuf>,
+    // Whether corpus to use gzip file compression and decompression.
+    pub corpus_gzip: bool,
     // In-memory corpus, populated from persisted files and current runs.
     pub in_memory_corpus: Vec<Vec<BasicTxDetails>>, /* TODO need some sort of corpus management
                                                      * (limit memory usage and flush). */
@@ -21,6 +23,7 @@ pub struct TxCorpusManager {
 impl TxCorpusManager {
     pub fn new(
         corpus_dir: &Option<PathBuf>,
+        corpus_gzip: bool,
         test_name: &String,
         executor: &Executor,
         history_map: &mut [u8],
@@ -38,8 +41,16 @@ impl TxCorpusManager {
         let mut failed_replays = 0;
         for entry in std::fs::read_dir(&corpus_dir)? {
             let path = entry?.path();
-            let tx_seq: Vec<BasicTxDetails> =
-                foundry_common::fs::read_json_file(&path).expect("msg");
+            let read_corpus_result = if corpus_gzip {
+                foundry_common::fs::read_json_gzip_file::<Vec<BasicTxDetails>>(&path)
+            } else {
+                foundry_common::fs::read_json_file::<Vec<BasicTxDetails>>(&path)
+            };
+
+            let Ok(tx_seq) = read_corpus_result else {
+                trace!(target: "corpus", "failed to load corpus from {}", path.display());
+                continue
+            };
 
             if !tx_seq.is_empty() {
                 // Warm up history map from loaded sequences.
@@ -73,7 +84,7 @@ impl TxCorpusManager {
             }
         }
 
-        Ok(Self { corpus_dir: Some(corpus_dir), in_memory_corpus, failed_replays })
+        Ok(Self { corpus_dir: Some(corpus_dir), corpus_gzip, in_memory_corpus, failed_replays })
     }
 
     /// Collects inputs from given invariant run, if new coverage produced.
@@ -89,16 +100,26 @@ impl TxCorpusManager {
         // Persist to disk if corpus dir is configured.
         if let Some(corpus_dir) = &self.corpus_dir {
             let corpus_uuid = Uuid::new_v4().to_string();
-            let path = corpus_dir.join(corpus_uuid);
-            trace!(
-                target: "corpus",
-                "persist inputs {} for new coverage in corpus file {}",
-                inputs.len(),
-                path.display()
-            );
+            let write_result = if self.corpus_gzip {
+                foundry_common::fs::write_json_gzip_file(
+                    corpus_dir.join(format!("{corpus_uuid}.gz")).as_path(),
+                    &inputs,
+                )
+            } else {
+                foundry_common::fs::write_json_file(
+                    corpus_dir.join(format!("{corpus_uuid}.json")).as_path(),
+                    &inputs,
+                )
+            };
 
-            if let Err(err) = foundry_common::fs::write_json_file(path.as_path(), &inputs) {
-                error!(%err, "Failed to record call sequence");
+            if let Err(err) = write_result {
+                debug!(%err, "Failed to record call sequence {:?}", inputs);
+            } else {
+                trace!(
+                    target: "corpus",
+                    "persisted {} inputs for new coverage in {corpus_uuid} corpus",
+                    inputs.len()
+                );
             }
         }
 

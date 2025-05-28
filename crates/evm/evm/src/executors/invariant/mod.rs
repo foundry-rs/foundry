@@ -345,6 +345,7 @@ impl<'a> InvariantExecutor<'a> {
 
         let mut corpus = TxCorpusManager::new(
             &self.config.corpus_dir,
+            self.config.corpus_gzip,
             &invariant_contract.invariant_function.name,
             &self.executor,
             &mut self.history_map,
