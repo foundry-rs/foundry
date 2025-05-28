@@ -433,34 +433,32 @@ fn get_struct_hash_from_json(primary: &str, type_def: &String, json_data: &str) 
         .ingest_string(type_def)
         .map_err(|e| fmt_err!("Resolver failed to ingest type definition: {e}"))?;
 
-    let resolved_sol_type = resolver.resolve(primary).map_err(|e| {
-        fmt_err!("Failed to resolve EIP712 primary type '{}' using resolver: {}", primary, e)
-    })?;
+    let resolved_sol_type = resolver
+        .resolve(primary)
+        .map_err(|e| fmt_err!("Failed to resolve EIP712 primary type '{primary}': {e}"))?;
 
     // Coerce the JSON data into a `DynSolValue`.
     let json_data = serde_json::from_str(json_data)
-        .map_err(|e| fmt_err!("Failed to parse input JSON data: {}", e))?;
+        .map_err(|e| fmt_err!("Failed to parse input JSON data: {e}"))?;
 
     let sol_value = resolved_sol_type.coerce_json(&json_data).map_err(|e| {
-        fmt_err!("Failed to coerce JSON data to EIP-712 'SolValue' for type '{}': {}", primary, e)
+        fmt_err!("Failed to coerce JSON data to EIP-712 'SolValue' for type '{primary}': {e}")
     })?;
 
     if !matches!(sol_value, DynSolValue::CustomStruct { .. }) {
-        bail!("JSON data for type '{}' is not a custom Struct", primary);
+        bail!("JSON data for type '{primary}' is not a custom struct");
     }
 
     // Use the resolver to properly encode the data.
     let encoded_data: Vec<u8> = resolver
         .encode_data(&sol_value)
-        .map_err(|e| fmt_err!("Failed to EIP-712 encode data for struct '{}': {}", primary, e))?
-        .ok_or_else(|| {
-            fmt_err!("EIP-712 data encoding returned 'None' for struct '{}'", primary)
-        })?;
+        .map_err(|e| fmt_err!("Failed to EIP-712 encode data for struct '{primary}': {e}"))?
+        .ok_or_else(|| fmt_err!("EIP-712 data encoding returned 'None' for struct '{primary}'"))?;
 
     // Compute the type hash of the primary type.
     let type_hash = resolver
         .type_hash(primary)
-        .map_err(|e| fmt_err!("Failed to compute typeHash for EIP712 type '{}': {}", primary, e))?;
+        .map_err(|e| fmt_err!("Failed to compute typeHash for EIP712 type '{primary}': {e}"))?;
 
     // Compute the struct hash of the concatenated type hash and encoded data.
     let mut bytes_to_hash = Vec::with_capacity(32 + encoded_data.len());
@@ -479,19 +477,15 @@ fn get_struct_hash_from_bytes(primary: &str, type_def: &String, bytes: &Bytes) -
         .ingest_string(type_def)
         .map_err(|e| fmt_err!("Resolver failed to ingest type definition: {e}"))?;
 
-    let resolved_sol_type = resolver.resolve(primary).map_err(|e| {
-        fmt_err!("Failed to resolve EIP712 primary type '{}' using resolver: {}", primary, e)
-    })?;
+    let resolved_sol_type = resolver
+        .resolve(primary)
+        .map_err(|e| fmt_err!("Failed to resolve EIP-712 primary type '{primary}': {e}"))?;
 
     let (props, types) =
         if let DynSolType::CustomStruct { name: _, prop_names, tuple } = &resolved_sol_type {
             (prop_names.clone(), tuple.clone())
         } else {
-            bail!(
-            "Primary type '{}' is not a CustomStruct in the EIP-712 definition. Actual type: {:?}",
-            primary,
-            resolved_sol_type
-        );
+            bail!("Primary type '{primary}' is not a custom struct");
         };
 
     // Decode the ABI-encoded bytes and generate a `DynSolValue::CustomStruct`.
@@ -512,15 +506,13 @@ fn get_struct_hash_from_bytes(primary: &str, type_def: &String, bytes: &Bytes) -
     // Use the resolver to properly encode the data.
     let encoded_data: Vec<u8> = resolver
         .encode_data(&sol_value)
-        .map_err(|e| fmt_err!("Failed to EIP-712 encode data for struct '{}': {}", primary, e))?
-        .ok_or_else(|| {
-            fmt_err!("EIP-712 data encoding returned 'None' for struct '{}'", primary)
-        })?;
+        .map_err(|e| fmt_err!("Failed to EIP-712 encode data for struct '{primary}': {e}"))?
+        .ok_or_else(|| fmt_err!("EIP-712 data encoding returned 'None' for struct '{primary}'"))?;
 
     // Compute the type hash of the primary type.
     let type_hash = resolver
         .type_hash(primary)
-        .map_err(|e| fmt_err!("Failed to compute typeHash for EIP712 type '{}': {}", primary, e))?;
+        .map_err(|e| fmt_err!("Failed to compute typeHash for EIP712 type '{primary}': {e}"))?;
 
     // Compute the struct hash of the concatenated type hash and encoded data.
     let mut bytes_to_hash = Vec::with_capacity(32 + encoded_data.len());
