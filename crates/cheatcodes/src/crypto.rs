@@ -19,7 +19,6 @@ use k256::{
 use p256::ecdsa::{
     signature::hazmat::PrehashSigner, Signature as P256Signature, SigningKey as P256SigningKey,
 };
-use std::str::FromStr;
 
 /// The BIP32 default derivation path prefix.
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
@@ -53,51 +52,12 @@ impl Cheatcode for sign_0Call {
     }
 }
 
-impl Cheatcode for signTypedData_0Call {
+impl Cheatcode for signTypedDataCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { jsonData, privateKey } = self;
         let typed_data: TypedData = serde_json::from_str(jsonData)?;
         let digest = typed_data.eip712_signing_hash()?;
         let sig = sign(privateKey, &digest)?;
-        Ok(encode_full_sig(sig))
-    }
-}
-
-impl Cheatcode for signTypedData_1Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
-        ensure!(
-            state.config.ffi,
-            "FFI is disabled; add the `--ffi` flag to allow tests to call external commands"
-        );
-
-        let Self { jsonData, walletType, walletArgs } = self;
-
-        // Run `cast` command
-        let mut cmd = std::process::Command::new("cast");
-        cmd.arg("wallet").arg("sign").arg("--data").arg(jsonData);
-
-        match walletType.as_str() {
-            "ledger" => cmd.arg("--ledger"),
-            "trezor" => cmd.arg("--trezor"),
-            _ => bail!("invalid hardware wallet type. Supported values are 'ledger' and 'trezor'."),
-        };
-
-        if let Ok(parsed_index) = walletArgs.parse::<u32>() {
-            cmd.arg("--mnemonic-index").arg(parsed_index.to_string());
-        } else {
-            cmd.arg("--mnemonic-derivation-path").arg(walletArgs);
-        }
-
-        let output = cmd.output().map_err(|e| fmt_err!("Failed to execute cast: {}", e))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("Hardware wallet signing failed: {stderr}");
-        }
-
-        // Parse the signature from output and retrieve v, r and s.
-        let sig = String::from_utf8_lossy(&output.stdout);
-        let sig = alloy_primitives::Signature::from_str(sig.trim())?;
-
         Ok(encode_full_sig(sig))
     }
 }

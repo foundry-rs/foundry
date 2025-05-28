@@ -2673,20 +2673,6 @@ interface Vm {
     #[cheatcode(group = Crypto)]
     function signTypedData(string calldata jsonData, uint256 privateKey) external pure returns (uint8 v, bytes32 r,bytes32 s);
 
-    /// Signs human-readable typed data `jsonData` using a hardware wallet.
-    ///
-    /// This cheatcode performs a foreign function call to `cast` to abstract away complexity of
-    /// manually building the calldata. Because of that, it requires the FFI cheatcode to be enabled.
-    ///
-    /// # Params:
-    ///
-    /// * jsonData: the typed data must follow the EIP-712 standard.
-    /// * walletType: the hardware wallet type, either "ledger" or "trezor".
-    /// * walletArgs: the wallet derivation path or the mnemonic index.
-    #[cheatcode(group = Crypto)]
-    function signTypedData(string calldata jsonData, string calldata walletType, string calldata walletArgs)
-        external pure returns (uint8 v, bytes32 r,bytes32 s);
-
     /// Signs `digest` with `privateKey` using the secp256k1 curve.
     ///
     /// Returns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the
