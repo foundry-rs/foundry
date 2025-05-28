@@ -449,7 +449,7 @@ async fn can_get_node_info() {
 
     let block_number = provider.get_block_number().await.unwrap();
     let block = provider.get_block(BlockId::from(block_number)).await.unwrap().unwrap();
-    let hard_fork: &str = SpecId::CANCUN.into();
+    let hard_fork: &str = SpecId::PRAGUE.into();
 
     let expected_node_info = NodeInfo {
         current_block_number: 0_u64,
