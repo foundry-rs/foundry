@@ -115,7 +115,6 @@ impl MutationHandler {
             let mut mutant_visitor = MutantVisitor::default();
             mutant_visitor.visit_source_unit(&ast);
             self.mutations.extend(mutant_visitor.mutation_to_conduct);
-
             Ok(())
         });
     }

@@ -49,7 +49,7 @@ impl<'ast> Visit<'ast> for MutantVisitor {
             .unwrap();
 
         self.mutation_to_conduct.extend(self.mutator_registry.generate_mutations(&context));
-
+        dbg!(&var);
         self.walk_variable_definition(var)
     }
 
@@ -58,7 +58,7 @@ impl<'ast> Visit<'ast> for MutantVisitor {
             MutationContext::builder().with_span(expr.span).with_expr(expr).build().unwrap();
 
         self.mutation_to_conduct.extend(self.mutator_registry.generate_mutations(&context));
-
+        dbg!(&expr);
         self.walk_expr(expr)
     }
 }

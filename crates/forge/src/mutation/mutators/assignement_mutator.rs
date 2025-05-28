@@ -5,28 +5,22 @@ use crate::mutation::{
 };
 
 use eyre::Result;
-use solar_parse::ast::{ExprKind, LitKind};
+use solar_parse::ast::{Expr, ExprKind, LitKind, Span};
 use std::path::PathBuf;
 
 pub struct AssignmentMutator;
 
 impl Mutator for AssignmentMutator {
     fn generate_mutants(&self, context: &MutationContext<'_>) -> Result<Vec<Mutant>> {
-        let assign_type = match determinate_type(context) {
-            Some(t) => t,
-            None => return Ok(vec![]),
+        let (assign_var_type, replacement_span) = match extract_rhs_info(context) {
+            Some(info) => info,
+            None => return Ok(vec![]), // is_applicable should filter this
         };
 
-        let span = if let Some(var_definition) = context.var_definition {
-            var_definition.initializer.as_ref().unwrap().span
-        } else {
-            context.span
-        };
-
-        match assign_type {
+        match assign_var_type {
             AssignVarTypes::Literal(lit) => match lit {
                 LitKind::Bool(val) => Ok(vec![Mutant {
-                    span,
+                    span: replacement_span,
                     mutation: MutationType::Assignment(AssignVarTypes::Literal(LitKind::Bool(
                         !val,
                     ))),
@@ -34,14 +28,14 @@ impl Mutator for AssignmentMutator {
                 }]),
                 LitKind::Number(val) => Ok(vec![
                     Mutant {
-                        span,
+                        span: replacement_span,
                         mutation: MutationType::Assignment(AssignVarTypes::Literal(
                             LitKind::Number(num_bigint::BigInt::ZERO),
                         )),
                         path: PathBuf::default(),
                     },
                     Mutant {
-                        span,
+                        span: replacement_span,
                         mutation: MutationType::Assignment(AssignVarTypes::Literal(
                             LitKind::Number(-val),
                         )),
@@ -49,19 +43,19 @@ impl Mutator for AssignmentMutator {
                     },
                 ]),
                 _ => {
-                    eyre::bail!("AssignementMutator: unexpected literal kind: {:?}", lit)
+                    eyre::bail!("AssignmentMutator: unhandled literal kind on RHS: {:?}", lit)
                 }
             },
             AssignVarTypes::Identifier(ident) => Ok(vec![
                 Mutant {
-                    span,
+                    span: replacement_span,
                     mutation: MutationType::Assignment(AssignVarTypes::Literal(LitKind::Number(
                         num_bigint::BigInt::ZERO,
                     ))),
                     path: PathBuf::default(),
                 },
                 Mutant {
-                    span,
+                    span: replacement_span,
                     mutation: MutationType::Assignment(AssignVarTypes::Identifier(format!(
                         "-{ident}"
                     ))),
@@ -71,34 +65,49 @@ impl Mutator for AssignmentMutator {
         }
     }
 
-    // Only match Assign expr (ie global var) and the var definition with a litteral initializer (ie
-    // x = 6)
+    /// Match is the expr is an assign with a var definiton having a literal or identifier as
+    /// initializer
     fn is_applicable(&self, context: &MutationContext<'_>) -> bool {
         if let Some(expr) = context.expr {
-            matches!(expr.kind, ExprKind::Assign(..))
+            if let ExprKind::Assign(_lhs, _op_opt, rhs_actual_expr) = &expr.kind {
+                matches!((&**rhs_actual_expr).kind, ExprKind::Lit(..) | ExprKind::Ident(..))
+            } else {
+                false // Not an assign
+            }
         } else if let Some(var_definition) = context.var_definition {
             if let Some(init) = &var_definition.initializer {
-                matches!(init.kind, ExprKind::Lit(..))
+                matches!(&init.kind, ExprKind::Lit(..) | ExprKind::Ident(..))
             } else {
-                false
+                false // No initializer
             }
         } else {
-            false
+            false // Not an expression or var_definition
         }
     }
 }
 
-/// Starting from a solar Expr, creates an AssignVarTypes enum (used for mutation)
-fn determinate_type(context: &MutationContext<'_>) -> Option<AssignVarTypes> {
-    let expr = if let Some(var_definition) = context.var_definition {
-        var_definition.initializer.as_ref().unwrap()
+fn extract_rhs_info(context: &MutationContext<'_>) -> Option<(AssignVarTypes, Span)> {
+    let relevant_expr_for_rhs = if let Some(var_definition) = context.var_definition {
+        var_definition.initializer.as_ref()?
+    } else if let Some(expr) = context.expr {
+        match &expr.kind {
+            ExprKind::Assign(_lhs, _op_opt, rhs_actual_expr) => &**rhs_actual_expr,
+            // If the context.expr is already what we want to get the type from
+            // (e.g. a simple Lit or Ident being passed directly, though is_applicable filters this)
+            ExprKind::Lit(..) | ExprKind::Ident(..) => expr,
+            _ => return None,
+        }
     } else {
-        context.expr.unwrap()
+        return None; // No var_definition or expr in context (shouldn't happen?)
     };
 
-    match &expr.kind {
-        ExprKind::Lit(kind, _) => Some(AssignVarTypes::Literal(kind.kind.clone())),
-        ExprKind::Ident(val) => Some(AssignVarTypes::Identifier(val.to_string())),
+    match &relevant_expr_for_rhs.kind {
+        ExprKind::Lit(kind, _) => {
+            Some((AssignVarTypes::Literal(kind.kind.clone()), relevant_expr_for_rhs.span))
+        }
+        ExprKind::Ident(val) => {
+            Some((AssignVarTypes::Identifier(val.to_string()), relevant_expr_for_rhs.span))
+        }
         _ => None,
     }
 }
