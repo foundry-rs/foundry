@@ -997,7 +997,7 @@ Compiler run successful!
 Ran 1 test for test/Contract.t.sol:PrecompileLabelsTest
 [PASS] testPrecompileLabels() ([GAS])
 Traces:
-  [14048] PrecompileLabelsTest::testPrecompileLabels()
+  [..] PrecompileLabelsTest::testPrecompileLabels()
     ├─ [0] VM::deal(VM: [0x7109709ECfa91a80626fF3989D68f67F5b1DD12D], 1000000000000000000 [1e18])
     │   └─ ← [Return]
     ├─ [0] VM::deal(console: [0x000000000000000000636F6e736F6c652e6c6f67], 1000000000000000000 [1e18])
@@ -1451,10 +1451,10 @@ contract ATest is Test {
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-[PASS] testNormalGas() (gas: 3153)
-[PASS] testWeirdGas1() (gas: 2991)
-[PASS] testWeirdGas2() (gas: 3218)
-[PASS] testWithAssembly() (gas: 3034)
+[PASS] testNormalGas() (gas: 3148)
+[PASS] testWeirdGas1() (gas: 2986)
+[PASS] testWeirdGas2() (gas: 3213)
+[PASS] testWithAssembly() (gas: 3029)
 ...
 "#]]);
 });
@@ -1547,9 +1547,9 @@ Traces:
     │   └─ ← [Stop]
     └─ ← [Stop]
 
-[PASS] test_GasMeter() (gas: 53102)
+[PASS] test_GasMeter() (gas: 53097)
 Traces:
-  [53102] ATest::test_GasMeter()
+  [53097] ATest::test_GasMeter()
     ├─ [0] VM::pauseGasMetering()
     │   └─ ← [Return]
     ├─ [0] VM::resumeGasMetering()
@@ -2916,8 +2916,6 @@ Traces:
     │   └─ ← [Return] 1
     ├─ [0] VM::assertEq(1, 1) [staticcall]
     │   └─ ← [Return]
-    ├─  storage changes:
-    │   @ 0: 0 → 1
     └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
@@ -2944,7 +2942,7 @@ contract ContractTest {
 ...
 Failing tests:
 Encountered 1 failing test in test/Foo.t.sol:ContractTest
-[FAIL: EVM error; transaction validation error: call gas cost exceeds the gas limit] setUp() ([GAS])
+[FAIL: EVM error; transaction validation error: call [GAS_COST] exceeds the [GAS_LIMIT]] setUp() ([GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -3308,9 +3306,9 @@ Traces:
     ├─ [0] VM::label(alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6], "alice")
     │   └─ ← [Return]
     ├─ [0] VM::signDelegation(0x0000000000000000000000000000000000000000, "<pk>")
-    │   └─ ← [Return] (0, 0x3d6ad67cc3dc94101a049f85f96937513a05485ae0f8b27545d25c4f71b12cf9, 0x3c0f2d62834f59d6ef0209e8a935f80a891a236eb18ac0e3700dd8f7ac8ae279, 0, 0x0000000000000000000000000000000000000000)
+    │   └─ ← [Return] (0, 0x38db2a0ada75402af7cd5bdb8248a1a5b4fec65fdafea4f935084f00dc2ff3c5, 0x29ce7b1c82f9ceaec21f12d690ba8fe6ecba65869caf6ab2d85d79890dc42df2, 1, 0x0000000000000000000000000000000000000000)
     ├─ [0] VM::signAndAttachDelegation(0x0000000000000000000000000000000000000000, "<pk>")
-    │   └─ ← [Return] (0, 0x3d6ad67cc3dc94101a049f85f96937513a05485ae0f8b27545d25c4f71b12cf9, 0x3c0f2d62834f59d6ef0209e8a935f80a891a236eb18ac0e3700dd8f7ac8ae279, 0, 0x0000000000000000000000000000000000000000)
+    │   └─ ← [Return] (0, 0x38db2a0ada75402af7cd5bdb8248a1a5b4fec65fdafea4f935084f00dc2ff3c5, 0x29ce7b1c82f9ceaec21f12d690ba8fe6ecba65869caf6ab2d85d79890dc42df2, 1, 0x0000000000000000000000000000000000000000)
     └─ ← [Stop]
 ...
 
@@ -3523,6 +3521,7 @@ contract InterceptInitcodeTest is DSTest {
 });
 
 // <https://github.com/foundry-rs/foundry/issues/10296>
+// <https://github.com/foundry-rs/foundry/issues/10552>
 forgetest_init!(should_preserve_fork_state_setup, |prj, cmd| {
     prj.wipe_contracts();
     prj.add_test(
@@ -3551,6 +3550,13 @@ contract CounterTest is Test {
     mapping(uint256 => SomeStruct) internal data;
 
     function setUp() public {
+        // Temporary workaround for `https://eth.llamarpc.com/` being down
+        setChain("mainnet", ChainData({
+            name: "mainnet",
+            rpcUrl: "https://reth-ethereum.ithaca.xyz/rpc",
+            chainId: 1
+        }));
+
         StdChains.Chain memory chain1 = getChain("mainnet");
         StdChains.Chain memory chain2 = getChain("base");
         Domain memory domain1 = Domain(chain1, vm.createFork(chain1.rpcUrl, 22253716));
@@ -3597,6 +3603,228 @@ Ran 2 tests for test/Counter.t.sol:CounterTest
 Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10544>
+forgetest_init!(should_not_panic_on_cool, |prj, cmd| {
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CounterTest is Test {
+    Counter counter = new Counter();
+
+    function testCoolPanic() public {
+        address alice = makeAddr("alice");
+        vm.deal(alice, 10000 ether);
+        counter.setNumber(1);
+        vm.cool(address(counter));
+        vm.prank(alice);
+        payable(address(counter)).transfer(1 ether);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mc", "CounterTest"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Counter.t.sol:CounterTest
+[FAIL: EvmError: Revert] testCoolPanic() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/Counter.t.sol:CounterTest
+[FAIL: EvmError: Revert] testCoolPanic() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+"#]]);
+});
+
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(detailed_revert_when_calling_non_contract_address, |prj, cmd| {
+    prj.add_test(
+        "NonContractCallRevertTest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+interface ICounter {
+    function increment() external;
+    function number() external returns (uint256);
+    function random() external returns (uint256);
+}
+
+contract NonContractCallRevertTest is Test {
+    Counter public counter;
+    address constant ADDRESS = 0xdEADBEeF00000000000000000000000000000000;
+
+    function setUp() public {
+        counter = new Counter();
+        counter.setNumber(1);
+    }
+
+    function test_non_supported_selector_call_failure() public {
+        console.log("test non supported fn selector call failure");
+        ICounter(address(counter)).random();
+    }
+
+    function test_non_contract_call_failure() public {
+        console.log("test non contract call failure");
+        ICounter(ADDRESS).number();
+    }
+
+    function test_non_contract_void_call_failure() public {
+        console.log("test non contract (void) call failure");
+        ICounter(ADDRESS).increment();
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mc", "NonContractCallRevertTest", "-vvv"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 3 tests for test/NonContractCallRevertTest.t.sol:NonContractCallRevertTest
+[FAIL: call to non-contract address 0xdEADBEeF00000000000000000000000000000000] test_non_contract_call_failure() ([GAS])
+Logs:
+  test non contract call failure
+
+Traces:
+  [6350] NonContractCallRevertTest::test_non_contract_call_failure()
+    ├─ [0] console::log("test non contract call failure") [staticcall]
+    │   └─ ← [Stop]
+    ├─ [0] 0xdEADBEeF00000000000000000000000000000000::number()
+    │   └─ ← [Stop]
+    └─ ← [Revert] call to non-contract address 0xdEADBEeF00000000000000000000000000000000
+
+[FAIL: call to non-contract address 0xdEADBEeF00000000000000000000000000000000] test_non_contract_void_call_failure() ([GAS])
+Logs:
+  test non contract (void) call failure
+
+Traces:
+  [6215] NonContractCallRevertTest::test_non_contract_void_call_failure()
+    ├─ [0] console::log("test non contract (void) call failure") [staticcall]
+    │   └─ ← [Stop]
+    └─ ← [Revert] call to non-contract address 0xdEADBEeF00000000000000000000000000000000
+
+[FAIL: EvmError: Revert] test_non_supported_selector_call_failure() ([GAS])
+Logs:
+  test non supported fn selector call failure
+
+Traces:
+  [8620] NonContractCallRevertTest::test_non_supported_selector_call_failure()
+    ├─ [0] console::log("test non supported fn selector call failure") [staticcall]
+    │   └─ ← [Stop]
+    ├─ [145] Counter::random()
+    │   └─ ← [Revert] unrecognized function selector 0x5ec01e4d for contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f, which has no fallback function.
+    └─ ← [Revert] EvmError: Revert
+
+Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 3 failed, 0 skipped (3 total tests)
+
+Failing tests:
+Encountered 3 failing tests in test/NonContractCallRevertTest.t.sol:NonContractCallRevertTest
+[FAIL: call to non-contract address 0xdEADBEeF00000000000000000000000000000000] test_non_contract_call_failure() ([GAS])
+[FAIL: call to non-contract address 0xdEADBEeF00000000000000000000000000000000] test_non_contract_void_call_failure() ([GAS])
+[FAIL: EvmError: Revert] test_non_supported_selector_call_failure() ([GAS])
+
+Encountered a total of 3 failing tests, 0 tests succeeded
+
+"#]]);
+});
+
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(detailed_revert_when_delegatecalling_unlinked_library, |prj, cmd| {
+    prj.add_test(
+        "NonContractDelegateCallRevertTest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+library TestLibrary {
+    function foo(uint256 a) public pure returns (uint256) {
+        return a * 2;
+    }
+}
+
+contract LibraryCaller {
+    address public lib;
+
+    constructor(address _lib) {
+        lib = _lib;
+    }
+
+    function foobar(uint256 val) public returns (uint256) {
+        (bool success, bytes memory data) = lib.delegatecall(
+            abi.encodeWithSelector(TestLibrary.foo.selector, val)
+        );
+
+        assert(success);
+        return abi.decode(data, (uint256));
+    }
+}
+
+contract NonContractDelegateCallRevertTest is Test {
+    function test_unlinked_library_call_failure() public {
+        console.log("Test: Simulating call to unlinked library");
+        LibraryCaller caller = new LibraryCaller(0xdEADBEeF00000000000000000000000000000000);
+
+        caller.foobar(10);
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mc", "NonContractDelegateCallRevertTest", "-vvv"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/NonContractDelegateCallRevertTest.t.sol:NonContractDelegateCallRevertTest
+[FAIL: delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)] test_unlinked_library_call_failure() ([GAS])
+Logs:
+  Test: Simulating call to unlinked library
+
+Traces:
+  [255303] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
+    ├─ [0] console::log("Test: Simulating call to unlinked library") [staticcall]
+    │   └─ ← [Stop]
+    ├─ [214746] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 960 bytes of code
+    ├─ [3896] LibraryCaller::foobar(10)
+    │   ├─ [0] 0xdEADBEeF00000000000000000000000000000000::foo(10) [delegatecall]
+    │   │   └─ ← [Stop]
+    │   └─ ← [Revert] delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)
+    └─ ← [Revert] delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/NonContractDelegateCallRevertTest.t.sol:NonContractDelegateCallRevertTest
+[FAIL: delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)] test_unlinked_library_call_failure() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
 
 "#]]);
 });

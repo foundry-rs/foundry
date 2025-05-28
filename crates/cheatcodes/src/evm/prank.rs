@@ -1,5 +1,6 @@
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::Address;
+use revm::{context::JournalTr, interpreter::Host};
 
 /// Prank information.
 #[derive(Clone, Copy, Debug, Default)]
@@ -13,10 +14,10 @@ pub struct Prank {
     /// The address to assign to `tx.origin`
     pub new_origin: Option<Address>,
     /// The depth at which the prank was called
-    pub depth: u64,
+    pub depth: usize,
     /// Whether the prank stops by itself after the next call
     pub single_call: bool,
-    /// Whether the prank should be be applied to delegate call
+    /// Whether the prank should be applied to delegate call
     pub delegate_call: bool,
     /// Whether the prank has been used yet (false if unused)
     pub used: bool,
@@ -29,7 +30,7 @@ impl Prank {
         prank_origin: Address,
         new_caller: Address,
         new_origin: Option<Address>,
-        depth: u64,
+        depth: usize,
         single_call: bool,
         delegate_call: bool,
     ) -> Self {
@@ -129,8 +130,11 @@ fn prank(
 ) -> Result {
     // Ensure that code exists at `msg.sender` if delegate calling.
     if delegate_call {
-        let code = ccx.code(*new_caller)?;
-        ensure!(!code.is_empty(), "cannot `prank` delegate call from an EOA");
+        let code = ccx
+            .load_account_code(*new_caller)
+            .ok_or_else(|| eyre::eyre!("cannot `prank` delegate call from an EOA"))?;
+
+        ensure!(!code.data.is_empty(), "cannot `prank` delegate call from an EOA");
     }
 
     let depth = ccx.ecx.journaled_state.depth();
@@ -147,7 +151,7 @@ fn prank(
 
     let prank = Prank::new(
         ccx.caller,
-        ccx.ecx.env.tx.caller,
+        ccx.ecx.tx.caller,
         *new_caller,
         new_origin.copied(),
         depth,

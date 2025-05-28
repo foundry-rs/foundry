@@ -1,9 +1,5 @@
-use crate::{
-    revm::primitives::EnvWithHandlerCfg, utils::apply_chain_and_block_specific_env_changes,
-};
 use alloy_consensus::Transaction;
 use alloy_network::{AnyNetwork, TransactionResponse};
-use alloy_primitives::U256;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockTransactions;
 use clap::Parser;
@@ -27,7 +23,11 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
     utils::configure_tx_env,
+    Env,
 };
+use foundry_evm_core::env::AsEnvMut;
+
+use crate::utils::apply_chain_and_block_specific_env_changes;
 
 /// CLI arguments for `cast run`.
 #[derive(Clone, Debug, Parser)]
@@ -149,16 +149,16 @@ impl RunArgs {
             TracingExecutor::get_fork_material(&config, evm_opts).await?;
         let mut evm_version = self.evm_version;
 
-        env.cfg.disable_block_gas_limit = self.disable_block_gas_limit;
-        env.block.number = U256::from(tx_block_number);
+        env.evm_env.cfg_env.disable_block_gas_limit = self.disable_block_gas_limit;
+        env.evm_env.block_env.number = tx_block_number;
 
         if let Some(block) = &block {
-            env.block.timestamp = U256::from(block.header.timestamp);
-            env.block.coinbase = block.header.beneficiary;
-            env.block.difficulty = block.header.difficulty;
-            env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
-            env.block.basefee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
-            env.block.gas_limit = U256::from(block.header.gas_limit);
+            env.evm_env.block_env.timestamp = block.header.timestamp;
+            env.evm_env.block_env.beneficiary = block.header.beneficiary;
+            env.evm_env.block_env.difficulty = block.header.difficulty;
+            env.evm_env.block_env.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
+            env.evm_env.block_env.basefee = block.header.base_fee_per_gas.unwrap_or_default();
+            env.evm_env.block_env.gas_limit = block.header.gas_limit;
 
             // TODO: we need a smarter way to map the block to the corresponding evm_version for
             // commonly used chains
@@ -168,7 +168,7 @@ impl RunArgs {
                     evm_version = Some(EvmVersion::Cancun);
                 }
             }
-            apply_chain_and_block_specific_env_changes::<AnyNetwork>(&mut env, block);
+            apply_chain_and_block_specific_env_changes::<AnyNetwork>(env.as_env_mut(), block);
         }
 
         let trace_mode = TraceMode::Call
@@ -187,8 +187,12 @@ impl RunArgs {
             odyssey,
             create2_deployer,
         )?;
-        let mut env =
-            EnvWithHandlerCfg::new_with_spec_id(Box::new(env.clone()), executor.spec_id());
+        let mut env = Env::new_with_spec_id(
+            env.evm_env.cfg_env.clone(),
+            env.evm_env.block_env.clone(),
+            env.tx.clone(),
+            executor.spec_id(),
+        );
 
         // Set the state to the moment right before the transaction
         if !self.quick {
@@ -218,7 +222,7 @@ impl RunArgs {
                         break;
                     }
 
-                    configure_tx_env(&mut env, &tx.inner);
+                    configure_tx_env(&mut env.as_env_mut(), &tx.inner);
 
                     if let Some(to) = Transaction::to(tx) {
                         trace!(tx=?tx.tx_hash(),?to, "executing previous call transaction");
@@ -226,7 +230,7 @@ impl RunArgs {
                             format!(
                                 "Failed to execute transaction: {:?} in block {}",
                                 tx.tx_hash(),
-                                env.block.number
+                                env.evm_env.block_env.number
                             )
                         })?;
                     } else {
@@ -240,7 +244,7 @@ impl RunArgs {
                                         format!(
                                             "Failed to deploy transaction: {:?} in block {}",
                                             tx.tx_hash(),
-                                            env.block.number
+                                            env.evm_env.block_env.number
                                         )
                                     })
                                 }
@@ -257,7 +261,7 @@ impl RunArgs {
         let result = {
             executor.set_trace_printer(self.trace_printer);
 
-            configure_tx_env(&mut env, &tx.inner);
+            configure_tx_env(&mut env.as_env_mut(), &tx.inner);
 
             if let Some(to) = Transaction::to(&tx) {
                 trace!(tx=?tx.tx_hash(), to=?to, "executing call transaction");
@@ -297,6 +301,10 @@ impl figment::Provider for RunArgs {
 
         if let Some(api_key) = &self.etherscan.key {
             map.insert("etherscan_api_key".into(), api_key.as_str().into());
+        }
+
+        if let Some(api_version) = &self.etherscan.api_version {
+            map.insert("etherscan_api_version".into(), api_version.to_string().into());
         }
 
         if let Some(evm_version) = self.evm_version {

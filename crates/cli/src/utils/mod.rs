@@ -28,6 +28,9 @@ pub use suggestions::*;
 mod abi;
 pub use abi::*;
 
+mod allocator;
+pub use allocator::*;
+
 // reexport all `foundry_config::utils`
 #[doc(hidden)]
 pub use foundry_config::utils::*;
@@ -696,6 +699,10 @@ ignore them in the `.gitignore` file."
 
     pub fn submodules(&self) -> Result<Submodules> {
         self.cmd().args(["submodule", "status"]).get_stdout_lossy().map(|stdout| stdout.parse())?
+    }
+  
+    pub fn submodule_sync(self) -> Result<()> {
+        self.cmd().stderr(self.stderr()).args(["submodule", "sync"]).exec().map(drop)
     }
 
     pub fn cmd(self) -> Command {
