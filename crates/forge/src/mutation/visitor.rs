@@ -1,5 +1,5 @@
 use crate::mutation::mutators::Mutator;
-use solar_parse::ast::{visit::Visit, Expr, LitKind, VariableDefinition};
+use solar_parse::ast::{visit::Visit, Expr, LitKind, SourceUnit, VariableDefinition};
 use std::ops::ControlFlow;
 
 use crate::mutation::{
@@ -14,29 +14,16 @@ pub enum AssignVarTypes {
                          * maybe will have to switch back if validating more aggressively */
 }
 
-/// A wrapper around the Solar macro-generated visitor, in order to use the default implementation
-/// of the fn we override in MutantVisitor
-pub struct SolarVisitorWrapper {}
-
-impl Visit<'_> for SolarVisitorWrapper {
-    type BreakValue = ();
-}
-
 /// A visitor which collect all expression to mutate as well as the mutation types
 pub struct MutantVisitor {
     pub mutation_to_conduct: Vec<Mutant>,
     pub mutator_registry: MutatorRegistry,
-    default_visitor: SolarVisitorWrapper,
 }
 
 impl MutantVisitor {
     /// Use all mutator from registry::default
     pub fn default() -> Self {
-        Self {
-            mutation_to_conduct: Vec::new(),
-            mutator_registry: MutatorRegistry::default(),
-            default_visitor: SolarVisitorWrapper {},
-        }
+        Self { mutation_to_conduct: Vec::new(), mutator_registry: MutatorRegistry::default() }
     }
 
     /// Use only a set of mutators
@@ -44,7 +31,6 @@ impl MutantVisitor {
         Self {
             mutation_to_conduct: Vec::new(),
             mutator_registry: MutatorRegistry::new_with_mutators(mutators),
-            default_visitor: SolarVisitorWrapper {},
         }
     }
 }
@@ -64,7 +50,7 @@ impl<'ast> Visit<'ast> for MutantVisitor {
 
         self.mutation_to_conduct.extend(self.mutator_registry.generate_mutations(&context));
 
-        self.default_visitor.visit_variable_definition(var)
+        self.walk_variable_definition(var)
     }
 
     fn visit_expr(&mut self, expr: &'ast Expr<'ast>) -> ControlFlow<Self::BreakValue> {
@@ -73,6 +59,6 @@ impl<'ast> Visit<'ast> for MutantVisitor {
 
         self.mutation_to_conduct.extend(self.mutator_registry.generate_mutations(&context));
 
-        self.default_visitor.visit_expr(expr)
+        self.walk_expr(expr)
     }
 }
