@@ -1,3 +1,97 @@
+# Differences Between Foundry and Foundry-Polkadot
+
+> ⚠️ Important:</strong> Only this section is up-to-date and should be considered the correct source of documentation. All other sections may be outdated or inaccurate.</span>
+
+This section outlines the key differences between the original Foundry toolkit ([Foundry](https://github.com/foundry-rs/foundry)) and the ParityTech Foundry-Polkadot ([Foundry-Polkadot](https://github.com/paritytech/foundry-polkadot)). **It is intended for developers already familiar with Foundry who are interested in using the Foundry-Polkadot for Polkadot blockchain development.** The focus is on new features, changes, and unsupported functionalities in the Foundry-Polkadot, emphasizing its adaptation for Polkadot.
+
+## 1. Installation instruction
+
+Foundryup-polkadot is the official installer for the Foundry toolchain. To install `foundryup-polkadot`, open your terminal and run the following command:
+
+```bash
+curl -L https://raw.githubusercontent.com/paritytech/foundry-polkadot/refs/heads/master/foundryup/install | bash
+```
+
+This will install `foundryup-polkadot`. Simply follow the on-screen instructions, and the `foundryup-polkadot` command will become available in your CLI.
+
+
+Running `foundryup-polkadot --install v1.1.0-rc2` will automatically install the latest version of the [precompiled binaries](https://github.com/paritytech/foundry-polkadot/releases): forge, cast. For additional options, such as installing a specific version or commit, run `foundryup-polkadot --help`.
+
+ℹ️ Note: if you're using Windows, you'll need to install and use [Git BASH](https://gitforwindows.org/) or [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) as your terminal, since Foundryup currently doesn't support Powershell or Command Prompt (CMD).
+
+## 2. Resolc Compiler Integration
+
+**Purpose**: The main addition in the Foundry-Polkadot is support for compiling Solidity contracts targeting Polkadot, using the Resolc compiler to generate PolkaVM-compatible bytecode. This contrasts with the original Foundry's use of the Solc compiler for Ethereum's EVM.
+
+**Usage**:
+
+- **Command-Line Flag**: For commands that involve compilation (e.g., `forge build`), you can use the `--resolc` flag to enable Resolc compilation. For example:
+
+  ```bash
+  forge build --resolc
+  ```
+
+  This instructs Forge to use Resolc instead of Solc, generating bytecode compatible with PolkaVM.
+- **Configuration**: Alternatively, you can configure Resolc usage in the `foundry.toml` file by adding:
+
+  ```toml
+  [profile.default.resolc]
+  resolc_compile = true
+  ```
+
+Setting `resolc_compile = false` reverts to using Solc, ensuring compatibility with Ethereum projects. By default, Foundry-Polkadot uses Solc unless Resolc is explicitly enabled.
+
+When using Resolc, you get access to options that are specific to the Resolc compiler:
+
+```bash
+Resolc configuration:
+      --resolc-compile
+          Enable compiling with resolc
+          
+          [aliases: resolc]
+
+      --use-resolc <RESOLC_VERSION>
+          Specify the resolc version, or a path to a local resolc, to build with.
+          
+          Valid values follow the SemVer format `x.y.z-dev.n`, `resolc:x.y.z-dev.n` or `path/to/resolc`.
+
+  -O, --resolc-optimizer-mode <LEVEL>
+          Set the resolc optimization mode `-O[0 | 1 | 2 | 3 | s | z]`
+          
+          [aliases: resolc-optimization]
+
+      --heap-size <SIZE>
+          Set the contracts heap size in bytes
+
+      --stack-size <SIZE>
+          Set the contracts total stack size in bytes
+```
+
+## 3. Command-Line Interface
+
+**Subcommands**: Foundry-Polkadot currently supports a wide range of subcommands under `forge` ([Forge Commands](./README.forge.md)) and `cast` ([Cast Commands](./README.cast.md)).
+
+**Potential Differences**: Commands relying on compilation (e.g., `create`, `bind`, `build`, `inspect`) in Foundry-Polkadot can use Resolc, altering their output compared to the original Foundry.
+
+## 4. Unsupported (yet) or Modified Features
+
+**Potential Unsupported Features**: Support for Anvil and Chisel is not available, which also means commands like `forge test`, `forge snapshot`, and `forge script` are not currently supported.
+
+**Modified Features**:
+
+- Compilation output: When using Resolc, the bytecode differs from Solc's output, reflecting PolkaVM's requirements.
+
+## 5. Additional (Contextual) Repositories
+
+Foundry-Polkadot is part of ParityTech's ecosystem, which includes related repositories:
+
+- **paritytech/revive**: Hosts the Resolc compiler, providing the backend for Polkadot-targeted Solidity compilation ([Revive Repository](https://github.com/paritytech/revive)).
+- **paritytech/foundry-compilers-polkadot**: Utilities for working with compilers, potentially including Resolc, though primarily focused on Solc ([Foundry Compilers Polkadot](https://github.com/paritytech/foundry-compilers-polkadot)).
+
+These repositories may contain additional tools or documentation relevant to Foundry-Polkadot's functionality.
+
+---
+
 <div align="center">
   <img src=".github/assets/banner.png" alt="Foundry banner" />
 
@@ -35,66 +129,6 @@ Foundry consists of:
 
 ![Demo](.github/assets/demo.gif)
 
----
-
-## Installation instruction
-[Foundryup-polkadot](https://github.com/paritytech/foundry-book-polkadot/blob/master/src/getting-started/installation.md#using-foundryup) is the official installer for the Foundry toolchain. To install `foundryup-polkadot`, open your terminal and run the following command:
-
-```bash
-curl -L https://raw.githubusercontent.com/paritytech/foundry-polkadot/refs/heads/master/foundryup/install | bash
-```
-
-This will install foundryup-polkadot. Simply follow the on-screen instructions, and the foundryup-polkadot command will become available in your CLI.
-
-
-Running `foundryup-polkadot --install v1.1.0-rc2` will automatically install the latest version of the [precompiled binaries](https://github.com/paritytech/foundry-polkadot/releases): forge, cast. For additional options, such as installing a specific version or commit, run `foundryup-polkadot --help`.
-
-ℹ️ Note: if you're using Windows, you'll need to install and use [Git BASH](https://gitforwindows.org/) or [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) as your terminal, since Foundryup currently doesn't support Powershell or Command Prompt (CMD).
-
-## Differences Between Foundry and Foundry-Polkadot
-
-This section outlines the key differences between the original Foundry toolkit ([Foundry](https://github.com/foundry-rs/foundry)) and the ParityTech Foundry-Polkadot ([Foundry-Polkadot](https://github.com/paritytech/foundry-polkadot)). **It is intended for developers already familiar with Foundry who are interested in using the Foundry-Polkadot for Polkadot blockchain development.** The focus is on new features, changes, and unsupported functionalities in the Foundry-Polkadot, emphasizing its adaptation for Polkadot.
-
-### 1. Resolc Compiler Integration
-
-**Purpose**: The main addition in the Foundry-Polkadot is support for compiling Solidity contracts targeting Polkadot, using the Resolc compiler to generate PolkaVM-compatible bytecode. This contrasts with the original Foundry's use of the Solc compiler for Ethereum's EVM.
-
-**Usage**:
-- **Command-Line Flag**: For commands that involve compilation (e.g., `forge build`), you can use the `--resolc` flag to enable Resolc compilation. For example:
-  ```bash
-  forge build --resolc
-  ```
-  This instructs Forge to use Resolc instead of Solc, generating bytecode compatible with PolkaVM.
-- **Configuration**: Alternatively, you can configure Resolc usage in the `foundry.toml` file by adding:
-  ```toml
-  [profile.default.resolc]
-  resolc_compile = true
-  ```
-Setting `resolc_compile = false` reverts to using Solc, ensuring compatibility with Ethereum projects. By default, Foundry-Polkadot uses Solc unless Resolc is explicitly enabled.
-
-### 2. Command-Line Interface
-
-**Subcommands**: Foundry-Polkadot currently supports a wide range of subcommands under `forge` ([Forge Commands](./README.forge.md)) and `cast` ([Cast Commands](./README.cast.md)).
-
-**Potential Differences**: Commands relying on compilation (e.g., `create`, `bind`, `build`, `inspect`) in Foundry-Polkadot can use Resolc, altering their output compared to the original Foundry.
-
-### 3. Unsupported (yet) or Modified Features
-
-**Potential Unsupported Features**: Support for Anvil and Chisel is not available, which also means commands like `forge test`, `forge snapshot`, and `forge script` are not currently supported.
-
-**Modified Features**:
-- Compilation output: When using Resolc, the bytecode differs from Solc's output, reflecting PolkaVM's requirements.
-
-### 4. Additional (Contextual) Repositories
-
-Foundry-Polkadot is part of ParityTech's ecosystem, which includes related repositories:
-- **paritytech/revive**: Hosts the Resolc compiler, providing the backend for Polkadot-targeted Solidity compilation ([Revive Repository](https://github.com/paritytech/revive)).
-- **paritytech/foundry-compilers-polkadot**: Utilities for working with compilers, potentially including Resolc, though primarily focused on Solc ([Foundry Compilers Polkadot](https://github.com/paritytech/foundry-compilers-polkadot)).
-
-These repositories may contain additional tools or documentation relevant to Foundry-Polkadot's functionality.
-
----
-
 ## Features
 
 - **High-Performance Compilation**
@@ -126,18 +160,18 @@ These repositories may contain additional tools or documentation relevant to Fou
 
 Getting started is very easy:
 
-Install `foundryup`:
+Install `foundryup-polkadot`:
 
 ```
 curl -L https://raw.githubusercontent.com/paritytech/foundry-polkadot/refs/heads/master/foundryup/install | bash
 ```
 
-Next, run `foundryup`.
+Next, run `foundryup-polkadot`.
 
 It will automatically install the latest version of the precompiled binaries: [`forge`](#forge), [`cast`](#cast).
 
 ```
-foundryup
+foundryup-polkadot
 ```
 
 **Done!**

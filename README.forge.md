@@ -23,7 +23,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
 
 ### Project Setup and Installation
 
-#### <span style="color: green;">init</span>
+#### ✅ <span style="color: green;">init</span>
 - **Command**: `forge init`
 - **Example**:
   <details>
@@ -45,7 +45,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">inspect</span>
+#### ✅ <span style="color: green;">inspect</span>
 - **Command**: `forge inspect`
 - **Additional Flags**:
   - `--resolc`: Use the Resolc compiler. When running with this flag the output for the bytecode should start with `0x505`.
@@ -61,7 +61,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
 
 ### Compilation and Testing
 
-#### <span style="color: green;">build</span>
+#### ✅ <span style="color: green;">build</span>
 - **Command**: `forge build`
 - **Additional Flags**:
   - `--resolc`: Use the Resolc compiler.
@@ -100,7 +100,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: red;">test</span>
+#### ❌ <span style="color: red;">test</span>
 - **Command**: `forge test`
 - **Example**:
   <details>
@@ -149,7 +149,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: red;">snapshot</span>
+#### ❌ <span style="color: red;">snapshot</span>
 - **Command**: `forge snapshot`
 - **Additional Flags**:
   - `--resolc`: Use the Resolc compiler.
@@ -200,7 +200,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">bind</span>
+#### ✅ <span style="color: green;">bind</span>
 - **Command**: `forge bind`
 - **Additional Flags**:
   - `--resolc`: Use the Resolc compiler.
@@ -217,7 +217,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">bind</span>
+#### ✅ <span style="color: green;">bind</span>
 - **Command**: `forge bind-json`
 - **Additional Flags**:
   - `--resolc`: Use the Resolc compiler.
@@ -234,7 +234,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
 
 ### Contract Deployment
 
-#### <span style="color: green;">create</span>
+#### ✅ <span style="color: green;">create</span>
 - **Command**: `forge create [OPTIONS] <CONTRACT>`
 - **Additional Flags**:
   - `--resolc`: Use the Resolc compiler.
@@ -253,7 +253,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
 
 ### Code Manipulation and Documentation
 
-#### <span style="color: green;">flatten</span>
+#### ✅ <span style="color: green;">flatten</span>
 - **Command**: `forge flatten [OPTIONS] <PATH>`
 - **Required Parameters**: `PATH`
 - **Example**:
@@ -279,7 +279,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">doc</span>
+#### ✅ <span style="color: green;">doc</span>
 - **Command**: `forge doc`
 - **Example**:
   <details>
@@ -290,7 +290,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">cache clean</span>
+#### ✅ <span style="color: green;">cache clean</span>
 - **Command**: `forge cache clean`
 - **Example**:
   <details>
@@ -301,7 +301,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">cache ls</span>
+#### ✅ <span style="color: green;">cache ls</span>
 - **Command**: `forge cache ls`
 - **Example**:
   <details>
@@ -312,7 +312,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">selectors upload</span>
+#### ✅ <span style="color: green;">selectors upload</span>
 - **Command**: `forge selectors upload`
 - **Example**:
   <details>
@@ -330,7 +330,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">selectors list</span>
+#### ✅ <span style="color: green;">selectors list</span>
 - **Command**: `forge selectors list`
 - **Example**:
   <details>
@@ -353,7 +353,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">selectors find</span>
+#### ✅ <span style="color: green;">selectors find</span>
 - **Command**: `forge selectors find`
 - **Example**:
   <details>
@@ -373,7 +373,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">selectors cache</span>
+#### ✅ <span style="color: green;">selectors cache</span>
 - **Command**: `forge selectors cache`
 - **Example**:
   <details>
@@ -385,7 +385,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="colr: green;">cache clean</span>
+#### ✅ <span style="colr: green;">cache clean</span>
 - **Command**: `forge clean`
 - **Example**:
   <details>
@@ -396,7 +396,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">compiler resolve</span>
+#### ✅ <span style="color: green;">compiler resolve</span>
 - **Command**: `forge compiler resolve`
 - **Example**:
   <details>
@@ -409,7 +409,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">config</span>
+#### ✅ <span style="color: green;">config</span>
 - **Command**: `forge config`
 - **Example**:
   <details>
@@ -420,7 +420,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: red;">coverage</span>
+#### ❌ <span style="color: red;">coverage</span>
 - **Command**: `forge coverage`
 - **Example**:
   <details>
@@ -431,7 +431,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">fmt</span>
+#### ✅ <span style="color: green;">fmt</span>
 - **Command**: `forge fmt`
 - **Example**:
   <details>
@@ -442,7 +442,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">tree</span>
+#### ✅ <span style="color: green;">tree</span>
 - **Command**: `forge tree`
 - **Example**:
   <details>
@@ -453,7 +453,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">update</span>
+#### ✅ <span style="color: green;">update</span>
 - **Command**: `forge update`
 - **Example**:
   <details>
@@ -464,7 +464,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">install</span>
+#### ✅ <span style="color: green;">install</span>
 - **Command**: `forge install`
 - **Example**:
   <details>

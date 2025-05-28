@@ -23,7 +23,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
 
 ### Cast Commands
 
-#### <span style="color: green;">chain-id</span>
+#### ✅ <span style="color: green;">chain-id</span>
 - **Command**: `cast chain-id [OPTIONS]`
 - **Example**:
   <details>
@@ -34,7 +34,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">chain</span>
+#### ✅ <span style="color: green;">chain</span>
 - **Command**: `cast chain [OPTIONS]`
 - **Example**:
   <details>
@@ -46,7 +46,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">client</span>
+#### ✅ <span style="color: green;">client</span>
 - **Command**: `cast client [OPTIONS]`
 - **Example**:
   <details>
@@ -59,7 +59,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
 
 ### Block Commands
 
-#### <span style="color: green;">find-block</span>
+#### ✅ <span style="color: green;">find-block</span>
 - **Command**: `cast find-block [OPTIONS] <TIMESTAMP>`
 - **Required Parameters**: `TIMESTAMP`
 - **Example**:
@@ -71,7 +71,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">gas-price</span>
+#### ✅ <span style="color: green;">gas-price</span>
 - **Command**: `cast gas-price [OPTIONS]`
 - **Example**:
   <details>
@@ -82,7 +82,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">block-number</span>
+#### ✅ <span style="color: green;">block-number</span>
 - **Command**: `cast block-number [OPTIONS] [BLOCK]`
 - **Example**:
   <details>
@@ -93,7 +93,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">base-fee</span>
+#### ✅ <span style="color: green;">base-fee</span>
 - **Command**: `cast base-fee [OPTIONS] [BLOCK]`
 - **Example**:
   <details>
@@ -104,7 +104,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">block</span>
+#### ✅ <span style="color: green;">block</span>
 - **Command**: `cast block [OPTIONS] [BLOCK]`
 - **Example**:
   <details>
@@ -140,7 +140,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">age</span>
+#### ✅ <span style="color: green;">age</span>
 - **Command**: `cast age [OPTIONS] [BLOCK]`
 - **Required Parameters**: `BLOCK`
 - **Example**:
@@ -154,7 +154,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
 
 ### Account Commands
 
-#### <span style="color: green;">codesize</span>
+#### ✅ <span style="color: green;">codesize</span>
 - **Command**: `cast codesize [OPTIONS]`
 - **Example**:
   <details>
@@ -166,7 +166,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">balance</span>
+#### ✅ <span style="color: green;">balance</span>
 - **Command**: `cast balance [OPTIONS] <WHO>`
 - **Required Parameters**: `WHO`
 - **Example**:
@@ -179,7 +179,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">storage</span>
+#### ✅ <span style="color: green;">storage</span>
 - **Command**: `cast storage [OPTIONS] <ADDRESS> [SLOT]`
 - **Additional Flags**:
   - `--resolc`: Use the Resolc compiler.
@@ -194,7 +194,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">nonce</span>
+#### ✅ <span style="color: green;">nonce</span>
 - **Command**: `cast nonce [OPTIONS] <WHO>`
 - **Required Parameters**: `WHO`
 - **Example**:
@@ -207,7 +207,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">code</span>
+#### ✅ <span style="color: green;">code</span>
 - **Command**: `cast code [OPTIONS] <WHO>`
 - **Required Parameters**: `WHO`
 - **Example**:
@@ -221,7 +221,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
 
 ### Transaction and Contract Interaction Commands
 
-#### <span style="color: green;">receipt</span>
+#### ✅ <span style="color: green;">receipt</span>
 - **Command**: `cast receipt`
 - **Example**:
   <details>
@@ -249,7 +249,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">call</span>
+#### ✅ <span style="color: green;">call</span>
 - **Command**: `cast call`
 - **Example**:
   <details>
@@ -261,7 +261,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">tx</span>
+#### ✅ <span style="color: green;">tx</span>
 - **Command**: `cast tx`
 - **Example**:
   <details>
@@ -292,7 +292,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">publish</span>
+#### ✅ <span style="color: green;">publish</span>
 - **Command**: `cast publish [OPTIONS]`
 - **Example**:
   <details>
@@ -304,7 +304,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">sig-event</span>
+#### ✅ <span style="color: green;">sig-event</span>
 - **Command**: `cast sig-event [OPTIONS] [EVENT_STRING]`
 - **Required Parameters**: `EVENT_STRING`
 - **Example**:
@@ -317,7 +317,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">4byte-event</span>
+#### ✅ <span style="color: green;">4byte-event</span>
 - **Command**: `cast 4byte-event [OPTIONS] [TOPIC_0]`
 - **Required Parameters**: `TOPIC_0`
 - **Example**:
@@ -330,7 +330,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">decode-event</span>
+#### ✅ <span style="color: green;">decode-event</span>
 - **Command**: `cast decode-event [OPTIONS] <DATA>`
 - **Required Parameters**: `DATA`
 - **Example**:
@@ -343,7 +343,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">decode-error</span>
+#### ✅ <span style="color: green;">decode-error</span>
 - **Command**: `cast decode-error [OPTIONS] <DATA>`
 - **Required Parameters**: `DATA`
 - **Example**:
@@ -356,7 +356,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">rpc</span>
+#### ✅ <span style="color: green;">rpc</span>
 - **Command**: `cast rpc [OPTIONS] <METHOD> [PARAMS]...`
 - **Required Parameters**: `METHOD`, `RPC`
 - **Example**:
@@ -368,7 +368,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">abi-encode</span>
+#### ✅ <span style="color: green;">abi-encode</span>
 - **Command**: `cast abi-encode [OPTIONS] <SIG> [ARGS]...`
 - **Required Parameters**: `SIG`
 - **Example**:
@@ -380,7 +380,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">calldata</span>
+#### ✅ <span style="color: green;">calldata</span>
 - **Command**: `cast calldata [OPTIONS] <SIG> [ARGS]...`
 - **Required Parameters**: `SIG`
 - **Example**:
@@ -393,7 +393,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">decode-abi</span>
+#### ✅ <span style="color: green;">decode-abi</span>
 - **Command**: `cast decode-abi [OPTIONS] <SIG> <CALLDATA>`
 - **Required Parameters**: `SIG`, `CALLDATA`
 - **Example**:
@@ -406,7 +406,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">decode-calldata</span>
+#### ✅ <span style="color: green;">decode-calldata</span>
 - **Command**: `cast decode-calldata [OPTIONS] <SIG> <CALLDATA>`
 - **Required Parameters**: `SIG`, `CALLDATA`
 - **Example**:
@@ -420,7 +420,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">estimate</span>
+#### ✅ <span style="color: green;">estimate</span>
 - **Command**: `cast estimate [OPTIONS] [TO] [SIG] [ARGS]... [COMMAND]`
 - **Required Parameters**: `TO`
 - **Example**:
@@ -433,7 +433,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">logs</span>
+#### ✅ <span style="color: green;">logs</span>
 - **Command**: `cast logs [OPTIONS] [SIG_OR_TOPIC] [TOPICS_OR_ARGS]...`
 - **Required Parameters**: `SIG_OR_TOPIC`
 - **Example**:
@@ -445,7 +445,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">mktx</span>
+#### ✅ <span style="color: green;">mktx</span>
 - **Command**: `cast mktx [OPTIONS] [TO] [SIG] [ARGS]... [COMMAND]`
 - **Required Parameters**: `TO`
 - **Example**:
@@ -459,7 +459,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   </details>
 
 
-#### <span style="color: green;">decode-transaction</span>
+#### ✅ <span style="color: green;">decode-transaction</span>
 - **Command**: `cast decode-transaction [OPTIONS] [TX]`
 - **Required Parameters**: `TX`
 - **Example**:
@@ -472,7 +472,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: red;">proof</span>
+#### ❌ <span style="color: red;">proof</span>
 - **Command**: `cast proof [OPTIONS] <ADDRESS> [SLOTS]...`
 - **Required Parameters**: `ADDRESS`
 - **Example**:
@@ -485,7 +485,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: red;">storage-root</span>
+#### ❌ <span style="color: red;">storage-root</span>
 - **Command**: `cast storage-root [OPTIONS] <WHO> [SLOTS]...`
 - **Required Parameters**: `WHO`
 - **Example**:
@@ -498,7 +498,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   ```
   </details>
 
-#### <span style="color: green;">send</span>
+#### ✅ <span style="color: green;">send</span>
 - **Command**: `cast send [OPTIONS] [TO] [SIG] [ARGS]... [COMMAND]`
 - **Required Parameters**: `TO`
 - **Example**:
@@ -529,7 +529,7 @@ This format ensures clarity and ease of navigation, with the color scheme provid
 
 ### Miscellaneous Commands
 
-#### <span style="color: green;">index</span>
+#### ✅ <span style="color: green;">index</span>
 - **Command**: `cast index [OPTIONS] <KEY_TYPE> <KEY> <SLOT_NUMBER>`
 - **Required Parameters**: `KEY_TYPE`, `KEY`, `SLOT_NUMBER`
 - **Example**:
