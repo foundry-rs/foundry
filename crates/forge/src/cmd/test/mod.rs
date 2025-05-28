@@ -505,11 +505,10 @@ impl TestArgs {
                         let mut new_config = (*config).clone();
 
                         new_config.root = mutant_path.clone();
-                        new_config.src = mutant_path.clone().join("src");
-                        new_config.out = mutant_path.clone().join("out");
-                        new_config.test = mutant_path.clone().join("test");
-
-                        new_config.cache_path = mutant_path.clone().join("cache");
+                        new_config.src = mutant_path.clone().join(config.src.file_name().unwrap());
+                        new_config.out = mutant_path.clone().join(config.out.file_name().unwrap());
+                        new_config.cache_path =
+                            mutant_path.clone().join(config.cache_path.file_name().unwrap());
 
                         let new_config = Arc::new(new_config);
                         let new_filter = self.filter(&new_config).unwrap();
