@@ -525,7 +525,7 @@ impl NodeConfig {
     /// Returns the hardfork to use
     pub fn get_hardfork(&self) -> ChainHardfork {
         if self.odyssey {
-            return ChainHardfork::Ethereum(EthereumHardfork::Prague);
+            return ChainHardfork::Ethereum(EthereumHardfork::default());
         }
         if let Some(hardfork) = self.hardfork {
             return hardfork;
