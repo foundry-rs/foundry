@@ -409,7 +409,6 @@ impl CreateArgs {
         };
 
         if self.ens_name.is_some() || self.auto_name {
-            // self.naming.run("deployandname").await?;
             let config = self.load_config()?;
             let signer = self.eth.wallet.signer().await?;
             enscribe::set_primary_name(

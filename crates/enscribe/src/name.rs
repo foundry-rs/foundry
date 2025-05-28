@@ -22,7 +22,8 @@ use foundry_common::sh_println;
 use foundry_config::Config;
 use serde::Deserialize;
 
-pub(crate) static CONFIG_API_URL: &str = "https://app.enscribe.xyz/api/v1/config";
+// todo abhi: revert this
+pub(crate) static CONFIG_API_URL: &str = "http://localhost:3000/api/v1/config";
 pub(crate) static AUTO_GEN_NAME_API_URL: &str = "https://app.enscribe.xyz/api/v1/name";
 
 const BASE: u64 = 8453;
@@ -121,7 +122,7 @@ pub async fn set_primary_name(
         )
         .await?;
     } else {
-        sh_println!("auto generating name ... ")?;
+        sh_println!("auto generating name ...")?;
         let label = get_auto_generated_name().await?;
         sh_println!("{label}.{}", config.parent_name)?;
 
@@ -183,7 +184,7 @@ async fn enscribe_set_name<P: Provider<AnyNetwork>>(
     parent_name: &str,
     logger: &MetricLogger,
 ) -> Result<()> {
-    sh_println!("setting name via enscribe ... ")?;
+    sh_println!("setting name via enscribe ...")?;
     let enscribe = Enscribe::new(enscribe_addr, provider);
     let parent_node = namehash(parent_name);
     let tx = enscribe
@@ -244,7 +245,7 @@ async fn create_subname<P: Provider<AnyNetwork>>(
     let tx = name_wrapper.isWrapped(parent_name_hash);
     let result = provider.call(tx.into_transaction_request()).await?;
     let is_wrapped = isWrappedCall::abi_decode_returns(&result)?;
-    sh_println!("creating subname ... ")?;
+    sh_println!("creating subname ...")?;
     if is_wrapped {
         let tx = name_wrapper.setSubnodeRecord(
             parent_name_hash,
@@ -289,14 +290,14 @@ async fn set_resolutions<P: Provider<AnyNetwork>>(
     reverse_registrar_addr: Address,
     logger: &MetricLogger,
 ) -> Result<()> {
-    sh_println!("checking if fwd resolution already set ... ")?;
+    sh_println!("checking if fwd resolution already set ...")?;
     let public_resolver = PublicResolver::new(public_resolver_addr, provider);
     let tx = public_resolver.addr(complete_name_hash);
     let result = provider.call(tx.into_transaction_request()).await?;
     let result = addrCall::abi_decode_returns(&result)?;
 
     if result == Address::ZERO {
-        sh_println!("setting fwd resolution ({} -> {}) ... ", name, contract_addr)?;
+        sh_println!("setting fwd resolution ({} -> {}) ...", name, contract_addr)?;
         let tx = public_resolver.setAddr(complete_name_hash, contract_addr);
         let result =
             provider.send_transaction(tx.into_transaction_request()).await?.watch().await?;
@@ -306,7 +307,7 @@ async fn set_resolutions<P: Provider<AnyNetwork>>(
         sh_println!("fwd resolution already set")?;
     }
 
-    sh_println!("setting rev resolution ({} -> {}) ... ", contract_addr, name)?;
+    sh_println!("setting rev resolution ({} -> {}) ...", contract_addr, name)?;
     if is_reverse_claimer {
         let addr = &(&sender_addr.to_string().to_ascii_lowercase())[2..];
         let reverse_node = namehash(&format!("{addr}.addr.reverse"));
@@ -339,12 +340,21 @@ async fn get_config(chain_id: u64) -> Result<ChainConfigResponse> {
 
     let status = response.status();
     if !status.is_success() {
-        let error: serde_json::Value = response.json().await?;
-        eyre::bail!(
-            "Contract naming request \
-                             failed with status code {status}\n\
-                             Details: {error:#}",
-        );
+        let reverse_registrar_addr = std::env::var("REVERSE_REGISTRAR_ADDR")?;
+        let ens_registry_addr = std::env::var("ENS_REGISTRY_ADDR")?;
+        let public_resolver_addr = std::env::var("PUBLIC_RESOLVER_ADDR")?;
+        let name_wrapper_addr = std::env::var("NAME_WRAPPER_ADDR")?;
+        let enscribe_addr = std::env::var("ENSCRIBE_ADDR")?;
+        let parent_name = std::env::var("PARENT_NAME")?;
+
+        return Ok(ChainConfigResponse {
+            reverse_registrar_addr,
+            ens_registry_addr,
+            public_resolver_addr,
+            name_wrapper_addr,
+            enscribe_addr,
+            parent_name,
+        });
     }
 
     let text = response.text().await?;
@@ -356,4 +366,57 @@ async fn get_auto_generated_name() -> Result<String> {
     let client = reqwest::Client::new();
     let response = client.get(AUTO_GEN_NAME_API_URL).send().await?;
     Ok(response.text().await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serial_test::serial;
+    use std::env;
+    use wiremock::{
+        matchers::{method, path},
+        Mock, MockServer, ResponseTemplate,
+    };
+
+    #[serial]
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_get_config_fallback_to_env() {
+        // Setup environment fallback values
+        unsafe {
+            env::set_var("REVERSE_REGISTRAR_ADDR", "0xRev");
+            env::set_var("ENS_REGISTRY_ADDR", "0xEnsReg");
+            env::set_var("PUBLIC_RESOLVER_ADDR", "0xResolver");
+            env::set_var("NAME_WRAPPER_ADDR", "0xWrapper");
+            env::set_var("ENSCRIBE_ADDR", "0xEnscribe");
+            env::set_var("PARENT_NAME", "ens.eth");
+        }
+
+        // Start a mock server
+        let mock_server = MockServer::start().await;
+
+        // Return 404 to trigger env fallback
+        Mock::given(method("GET"))
+            .and(path("/123"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&mock_server)
+            .await;
+
+        let config = get_config(123).await.unwrap();
+
+        assert_eq!(config.reverse_registrar_addr, "0xRev");
+        assert_eq!(config.ens_registry_addr, "0xEnsReg");
+        assert_eq!(config.public_resolver_addr, "0xResolver");
+        assert_eq!(config.name_wrapper_addr, "0xWrapper");
+        assert_eq!(config.enscribe_addr, "0xEnscribe");
+        assert_eq!(config.parent_name, "ens.eth");
+        
+        unsafe {
+            env::remove_var("REVERSE_REGISTRAR_ADDR");
+            env::remove_var("ENS_REGISTRY_ADDR");
+            env::remove_var("PUBLIC_RESOLVER_ADDR");
+            env::remove_var("NAME_WRAPPER_ADDR");
+            env::remove_var("ENSCRIBE_ADDR");
+            env::remove_var("PARENT_NAME");
+        }
+    }
 }

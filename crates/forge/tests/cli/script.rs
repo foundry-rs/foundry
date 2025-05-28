@@ -1,10 +1,21 @@
 //! Contains various tests related to `forge script`.
 
-use crate::constants::TEMPLATE_CONTRACT;
+use crate::{
+    abi::{
+        price_oracle::StablePriceOracle, BaseRegistrarImplementation, DummyOracle, ENSRegistry,
+        ETHRegistrarController, NameWrapper, PublicResolver, ReverseRegistrar,
+        StaticMetadataService,
+    },
+    constants::TEMPLATE_CONTRACT,
+};
+use alloy_ens::namehash;
+use alloy_network::EthereumWallet;
 use alloy_hardforks::EthereumHardfork;
-use alloy_primitives::{address, hex, Address, Bytes};
+use alloy_primitives::{address, hex, keccak256, Address, Bytes, B256, I256, U256};
+use alloy_rpc_types::anvil::MineOptions;
 use anvil::{spawn, NodeConfig};
 use forge_script_sequence::ScriptSequence;
+use foundry_common::provider::ProviderBuilder;
 use foundry_test_utils::{
     rpc::{self, next_http_archive_rpc_url},
     snapbox::IntoData,
@@ -2857,4 +2868,389 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 
 "#]]);
+});
+
+forgetest_async!(can_set_name, |prj, cmd| {
+    cmd.args(["init", "--force"])
+        .arg(prj.root())
+        .assert_success()
+        .stdout_eq(str![[r#"
+Initializing [..]...
+Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
+    Installed forge-std[..]
+    Initialized forge project
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: Target directory is not empty, but `--force` was specified
+...
+
+"#]]);
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let signer: EthereumWallet = wallet.clone().into();
+    let account = wallet.address();
+    let provider = ProviderBuilder::new(&handle.http_endpoint())
+        .build_with_wallet(signer)
+        .expect("failed to build Alloy HTTP provider with signer");
+
+    // deploy ENSRegistry
+    let ens_registry = ENSRegistry::deploy(&provider).await.unwrap();
+    println!("ens registry addr is: {}", ens_registry.address().to_owned());
+
+    let eth_namehash = namehash("eth");
+    // Deploy BaseRegistrarImplementation & set owner of eth tld to base-registrar via the ens
+    // registry
+    let base_registrar_impl = BaseRegistrarImplementation::deploy(
+        &provider,
+        ens_registry.address().to_owned(),
+        eth_namehash,
+    )
+    .await
+    .unwrap();
+    println!("base registrar addr is: {}", base_registrar_impl.address().to_owned());
+
+    // Deploy ReverseRegistrar
+    let rev_registrar =
+        match ReverseRegistrar::deploy(&provider, ens_registry.address().to_owned()).await {
+            Ok(re) => re,
+            Err(e) => panic!("failed to deploy ReverseRegistrar: {}", e),
+        };
+
+    let _receipt = ens_registry
+        .setSubnodeOwner(B256::ZERO, keccak256("reverse"), account)
+        .send()
+        .await
+        .unwrap();
+    let _receipt = ens_registry
+        .setSubnodeOwner(namehash("reverse"), keccak256("addr"), rev_registrar.address().to_owned())
+        .send()
+        .await
+        .unwrap();
+
+    // Deploy NameWrapper
+    let name_wrapper = NameWrapper::deploy(
+        &provider,
+        ens_registry.address().to_owned(),
+        base_registrar_impl.address().to_owned(),
+        account,
+    )
+    .await
+    .unwrap();
+
+    let _ = ens_registry
+        .setSubnodeOwner(B256::ZERO, keccak256("eth"), base_registrar_impl.address().to_owned())
+        .send()
+        .await
+        .unwrap();
+
+    // Deploy DummyOracle
+    let dummy_oracle =
+        DummyOracle::deploy(&provider, I256::try_from(100000000).unwrap()).await.unwrap();
+
+    // Deploy StablePriceOracle
+    let price_oracle = StablePriceOracle::deploy(
+        &provider,
+        dummy_oracle.address().to_owned(),
+        vec![
+            U256::try_from(0).unwrap(),
+            U256::try_from(0).unwrap(),
+            U256::try_from(4).unwrap(),
+            U256::try_from(2).unwrap(),
+            U256::try_from(1).unwrap(),
+        ],
+    )
+    .await
+    .unwrap();
+
+    // let meta_service =
+    //     StaticMetadataService::deploy(&provider, "https://ens.domains".to_owned()).await.unwrap();
+
+    // Deploy ETHRegistrarController
+    let eth_registrar_controller = ETHRegistrarController::deploy(
+        &provider,
+        base_registrar_impl.address().to_owned(),
+        price_oracle.address().to_owned(),
+        U256::try_from(600).unwrap(),
+        U256::try_from(86400).unwrap(),
+        rev_registrar.address().to_owned(),
+        name_wrapper.address().to_owned(),
+        ens_registry.address().to_owned(),
+    )
+    .await
+    .unwrap();
+
+    let _ = name_wrapper
+        .setController(eth_registrar_controller.address().to_owned(), true)
+        .send()
+        .await
+        .unwrap();
+    let _ =
+        base_registrar_impl.addController(name_wrapper.address().to_owned()).send().await.unwrap();
+    let _ = rev_registrar
+        .setController(eth_registrar_controller.address().to_owned(), true)
+        .send()
+        .await
+        .unwrap();
+
+    // Deploy PublicResolver
+    let public_resolver = PublicResolver::deploy(
+        &provider,
+        ens_registry.address().to_owned(),
+        name_wrapper.address().to_owned(),
+        eth_registrar_controller.address().to_owned(),
+        rev_registrar.address().to_owned(),
+    )
+    .await
+    .unwrap();
+
+    let _receipt = base_registrar_impl
+        .addController(eth_registrar_controller.address().to_owned())
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let _receipt = base_registrar_impl
+        .addController(account)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let commitment = eth_registrar_controller
+        .makeCommitment(
+            "forge".to_owned(),
+            account,
+            U256::try_from(365 * 24 * 60 * 60).unwrap(),
+            B256::ZERO,
+            public_resolver.address().to_owned(),
+            vec![],
+            false,
+            0,
+        )
+        .call()
+        .await
+        .unwrap();
+
+    let _ = eth_registrar_controller
+        .makeCommitment(
+            "forge".to_owned(),
+            account,
+            U256::try_from(365 * 24 * 60 * 60).unwrap(),
+            B256::ZERO,
+            public_resolver.address().to_owned(),
+            vec![],
+            false,
+            0,
+        )
+        .send()
+        .await
+        .unwrap();
+
+    let _ = eth_registrar_controller
+        .commit(commitment)
+        .send()
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let min_age = eth_registrar_controller.minCommitmentAge().call().await.unwrap();
+    api.evm_increase_time(min_age).await.unwrap(); // add enough seconds
+    api.evm_mine(Some(MineOptions::Options { timestamp: None, blocks: Some(1) })).await.unwrap();
+
+    let price = eth_registrar_controller
+        .rentPrice("forge".to_owned(), U256::from(365 * 24 * 60 * 60))
+        .call()
+        .await
+        .unwrap();
+
+    let _ = eth_registrar_controller
+        .register(
+            "forge".to_owned(),
+            account,
+            U256::try_from(365 * 24 * 60 * 60).unwrap(),
+            B256::ZERO,
+            public_resolver.address().to_owned(),
+            vec![],
+            false,
+            0,
+        )
+        .value(price.base + price.premium)
+        .call()
+        .await
+        .unwrap();
+    let _ = eth_registrar_controller
+        .register(
+            "forge".to_owned(),
+            account,
+            U256::try_from(365 * 24 * 60 * 60).unwrap(),
+            B256::ZERO,
+            public_resolver.address().to_owned(),
+            vec![],
+            false,
+            0,
+        )
+        .value(price.base + price.premium)
+        .send()
+        .await
+        .unwrap();
+
+    let exists = ens_registry.recordExists(namehash("forge.eth")).call().await.unwrap();
+    assert!(exists);
+
+    let script = prj
+        .add_script(
+            "ENSNameSetting.s.sol",
+            r#"
+import "forge-std/Script.sol";
+import "@openzeppelin/openzeppelin-contracts/contracts/access/Ownable.sol";
+import "@ensdomains/ens-contracts/contracts/registry/ENSRegistry.sol";
+import "@ensdomains/ens-contracts/contracts/resolvers/PublicResolver.sol";
+import "@ensdomains/ens-contracts/contracts/ethregistrar/BaseRegistrarImplementation.sol";
+import "@ensdomains/ens-contracts/contracts/ethregistrar/ETHRegistrarController.sol";
+
+contract HelloWorld is Ownable {
+    string greetings;
+    uint256 count;
+
+    constructor(string memory greet, uint256 initialCount) Ownable () {
+        greetings = greet;
+        count = initialCount;
+    }
+
+    function set(string memory greet) public {
+        greetings = greet;
+    }
+
+    function retrieve() public view returns (string memory) {
+        return greetings;
+    }
+}
+
+contract HelloWorldScript is Script {
+    function run() public {
+        vm.startBroadcast();
+
+        new HelloWorld("hi forge!", 0);
+
+        vm.stopBroadcast();
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    prj.create_file(
+        "foundry.toml",
+        r#"
+        [profile.default]
+        src = "src"
+        out = "out"
+        libs = ["lib"]
+        remappings = [
+            '@ensdomains/ens-contracts/=lib/ens-contracts/',
+            '@ensdomains/buffer/=lib/buffer/',
+            '@openzeppelin/openzeppelin-contracts/=lib/openzeppelin-contracts/',
+            '@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/'
+        ]
+        "#,
+    );
+
+    // install dependencies
+    cmd.forge_fuse().args(["install", "ensdomains/buffer"]).assert_success().stdout_eq(str![[r#"
+Installing buffer in [..] (url: Some("https://github.com/ensdomains/buffer"), tag: None)
+    Installed buffer
+
+"#]]);
+    cmd.forge_fuse().args(["install", "ensdomains/ens-contracts@v1.4.0"]).assert_success().stdout_eq(
+                str![[r#"
+Installing ens-contracts in [..] (url: Some("https://github.com/ensdomains/ens-contracts"), tag: Some("v1.4.0"))
+    Installed ens-contracts [..]
+
+"#]],
+            );
+    cmd.forge_fuse().args(["install", "openzeppelin/openzeppelin-contracts@v4.9.6"]).assert_success().stdout_eq(
+                str![[r#"
+Installing openzeppelin-contracts in [..] (url: Some("https://github.com/openzeppelin/openzeppelin-contracts"), tag: Some("v4.9.6"))
+    Installed openzeppelin-contracts [..]
+
+"#]],
+            );
+    // build
+    //      cmd.forge_fuse().args(["build", "--silent"]).assert_success().stdout_eq(
+    //              str![[r#"
+    //  Installing openzeppelin-contracts in [..] (url: Some("https://github.com/openzeppelin/openzeppelin-contracts"), tag: None)
+    //      Installed openzeppelin-contracts [..]
+
+    //  "#]],
+    //          );
+
+    let cmd = cmd.forge_fuse().arg("script").arg(script).args([
+        "--ens-name",
+        "test.forge.eth",
+        "--tc",
+        "HelloWorldScript",
+        "--sender",
+        account.to_string().as_str(),
+        "--rpc-url",
+        handle.http_endpoint().as_str(),
+        "--broadcast",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ]);
+    cmd.env("REVERSE_REGISTRAR_ADDR", rev_registrar.address().to_string());
+    cmd.env("ENS_REGISTRY_ADDR", ens_registry.address().to_string());
+    cmd.env("PUBLIC_RESOLVER_ADDR", public_resolver.address().to_string());
+    cmd.env("NAME_WRAPPER_ADDR", name_wrapper.address().to_string());
+    cmd.env("ENSCRIBE_ADDR", "0xEnscribe");
+    cmd.env("PARENT_NAME", "ens.eth");
+    cmd.assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+...
+Script ran successfully.
+
+## Setting up 1 EVM.
+
+==========================
+
+Chain 31337
+
+[ESTIMATED_GAS_PRICE]
+
+[ESTIMATED_TOTAL_GAS_USED]
+
+[ESTIMATED_AMOUNT_REQUIRED]
+
+==========================
+
+
+==========================
+
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+Contract is Ownable contract.
+creating subname ...
+done (txn hash: 0xee80d56a524fca126be53e09df80f71d3ee14713955df4821b9b763a3d153f69)
+checking if fwd resolution already set ...
+setting fwd resolution (test.forge.eth -> 0x3Aa5ebB10DC797CAC828524e59A333d0A371443c) ...
+done (txn hash: 0xe0208dfdc7d96230fbeec995e01bc3b410a74191234aecd8377f775dfa53d3f7)
+setting rev resolution (0x3Aa5ebB10DC797CAC828524e59A333d0A371443c -> test.forge.eth) ...
+done (txn hash: 0x998353867b3c41b6c2b9835460b36cd32380628a837271fca48bd9319f3505d4)
+
+[SAVED_TRANSACTIONS]
+
+[SAVED_SENSITIVE_VALUES]
+
+
+"#]]);
+    let exists = ens_registry.recordExists(namehash("test.forge.eth")).call().await.unwrap();
+    assert!(exists);
 });
