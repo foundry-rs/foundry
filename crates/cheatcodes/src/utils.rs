@@ -426,13 +426,13 @@ fn get_struct_hash(primary: &str, type_def: &String, abi_encoded_data: &Bytes) -
         .resolve(primary)
         .map_err(|e| fmt_err!("Failed to resolve EIP-712 primary type '{primary}': {e}"))?;
 
-    // ABI-decode the bytes into `DynSolType::Tuple` and convert to `DynSolValue::CustomStruct`.
+    // ABI-decode the bytes into `DynSolValue::CustomStruct`.
     let sol_value = resolved_sol_type.abi_decode(abi_encoded_data.as_ref()).map_err(|e| {
-            fmt_err!(
-                "Decoding '{primary}'. Data (length: {}): {abi_encoded_data}.\nFailed to ABI decode using resolved_sol_type directly for '{primary}': {e}.\n\nresolved_sol_type: {resolved_sol_type:?}",
-                abi_encoded_data.len()
-            )
-        })?;
+        fmt_err!(
+            "Failed to ABI decode using resolved_sol_type directly for '{primary}': {e}.",
+            abi_encoded_data.len()
+        )
+    })?;
 
     // Use the resolver to properly encode the data.
     let encoded_data: Vec<u8> = resolver
