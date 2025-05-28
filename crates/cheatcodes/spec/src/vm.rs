@@ -2667,6 +2667,12 @@ interface Vm {
     #[cheatcode(group = Crypto)]
     function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
 
+    /// Signs human-readable typed data `jsonData` with `privateKey` using the secp256k1 curve.
+    ///
+    /// The typed data must follow the EIP-712 standard.
+    #[cheatcode(group = Crypto)]
+    function signTypedData(string calldata jsonData, uint256 privateKey) external pure returns (uint8 v, bytes32 r,bytes32 s);
+
     /// Signs `digest` with `privateKey` using the secp256k1 curve.
     ///
     /// Returns a compact signature (`r`, `vs`) as per EIP-2098, where `vs` encodes both the
@@ -2888,6 +2894,10 @@ interface Vm {
     /// catch (bytes memory interceptedInitcode) { initcode = interceptedInitcode; }
     #[cheatcode(group = Utilities, safety = Unsafe)]
     function interceptInitcode() external;
+
+    /// Generates a ready-to-sign digest of human-readable typed data following the EIP-712 standard.
+    #[cheatcode(group = Utilities)]
+    function eip712HashTypedData(string calldata jsonData) external pure returns (bytes32 digest);
 }
 }
 

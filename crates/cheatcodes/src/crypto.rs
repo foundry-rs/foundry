@@ -1,6 +1,7 @@
 //! Implementations of [`Crypto`](spec::Group::Crypto) Cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
+use alloy_dyn_abi::eip712::TypedData;
 use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_signer::{Signer, SignerSync};
 use alloy_signer_local::{
@@ -47,6 +48,16 @@ impl Cheatcode for sign_0Call {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { wallet, digest } = self;
         let sig = sign(&wallet.privateKey, digest)?;
+        Ok(encode_full_sig(sig))
+    }
+}
+
+impl Cheatcode for signTypedDataCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { jsonData, privateKey } = self;
+        let typed_data: TypedData = serde_json::from_str(jsonData)?;
+        let digest = typed_data.eip712_signing_hash()?;
+        let sig = sign(privateKey, &digest)?;
         Ok(encode_full_sig(sig))
     }
 }
