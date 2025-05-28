@@ -148,6 +148,7 @@ impl ForgeTestProfile {
             gas_report_samples: 256,
             corpus_dir: None,
             corpus_gzip: true,
+            corpus_max_mutations: 5,
             failure_persist_dir: Some(
                 tempfile::Builder::new()
                     .prefix(&format!("foundry-{self}"))

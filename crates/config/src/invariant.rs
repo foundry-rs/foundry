@@ -30,6 +30,8 @@ pub struct InvariantConfig {
     pub corpus_dir: Option<PathBuf>,
     /// Whether corpus to use gzip file compression and decompression.
     pub corpus_gzip: bool,
+    // Number of corpus mutations until marked as eligible to be flushed from memory.
+    pub corpus_max_mutations: usize,
     /// Path where invariant failures are recorded and replayed.
     pub failure_persist_dir: Option<PathBuf>,
     /// Whether to collect and display fuzzed selectors metrics.
@@ -53,6 +55,7 @@ impl Default for InvariantConfig {
             gas_report_samples: 256,
             corpus_dir: None,
             corpus_gzip: true,
+            corpus_max_mutations: 5,
             failure_persist_dir: None,
             show_metrics: false,
             timeout: None,
@@ -76,6 +79,7 @@ impl InvariantConfig {
             gas_report_samples: 256,
             corpus_dir: None,
             corpus_gzip: true,
+            corpus_max_mutations: 5,
             failure_persist_dir: Some(format!("{cache_dir}/invariant").into()),
             show_metrics: false,
             timeout: None,

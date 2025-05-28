@@ -1108,6 +1108,7 @@ shrink_run_limit = 5000
 max_assume_rejects = 65536
 gas_report_samples = 256
 corpus_gzip = true
+corpus_max_mutations = 5
 failure_persist_dir = "cache/invariant"
 show_metrics = false
 show_solidity = false
@@ -1218,6 +1219,7 @@ exclude = []
     "gas_report_samples": 256,
     "corpus_dir": null,
     "corpus_gzip": true,
+    "corpus_max_mutations": 5,
     "failure_persist_dir": "cache/invariant",
     "show_metrics": false,
     "timeout": null,

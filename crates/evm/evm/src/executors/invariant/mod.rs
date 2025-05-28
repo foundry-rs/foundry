@@ -344,8 +344,7 @@ impl<'a> InvariantExecutor<'a> {
             self.prepare_test(&invariant_contract, fuzz_fixtures, deployed_libs)?;
 
         let mut corpus = TxCorpusManager::new(
-            &self.config.corpus_dir,
-            self.config.corpus_gzip,
+            &self.config,
             &invariant_contract.invariant_function.name,
             &self.executor,
             &mut self.history_map,
@@ -357,7 +356,7 @@ impl<'a> InvariantExecutor<'a> {
 
         'stop: while runs < self.config.runs {
             let initial_seq = initial_sequence(
-                &corpus,
+                &mut corpus,
                 &invariant_strategy,
                 &mut invariant_test.execution_data.borrow_mut().branch_runner,
             )?;
@@ -540,7 +539,7 @@ impl<'a> InvariantExecutor<'a> {
             gas_report_traces: result.gas_report_traces,
             line_coverage: result.line_coverage,
             metrics: result.metrics,
-            failed_corpus_replays: corpus.failed_replays,
+            failed_corpus_replays: corpus.failed_replays(),
         })
     }
 
@@ -930,7 +929,7 @@ fn collect_data(
 /// Helper function to create initial sequence for invariant run by mutating in-memory corpus.
 /// If corpus manager cannot generate a new sequence then initial tx is created from strategy.
 fn initial_sequence(
-    corpus: &TxCorpusManager,
+    corpus: &mut TxCorpusManager,
     strat: impl Strategy<Value = BasicTxDetails>,
     test_runnner: &mut TestRunner,
 ) -> Result<Vec<BasicTxDetails>> {
