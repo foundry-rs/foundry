@@ -1491,6 +1491,22 @@ async fn test_set_erc20_balance() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_add_balance() {
+    let config: NodeConfig = fork_config();
+    let address = config.genesis_accounts[0].address();
+    let (api, _handle) = spawn(config).await;
+
+    let start_balance = U256::from(100_000_u64);
+    api.anvil_set_balance(address, start_balance).await.unwrap();
+
+    let balance_increase = U256::from(50_000_u64);
+    api.anvil_add_balance(address, balance_increase).await.unwrap();
+
+    let new_balance = api.balance(address, None).await.unwrap();
+    assert_eq!(new_balance, start_balance + balance_increase);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_reset_updates_cache_path_when_rpc_url_not_provided() {
     let config: NodeConfig = fork_config();
 
