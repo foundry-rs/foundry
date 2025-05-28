@@ -401,4 +401,4 @@ zip-extract = "=0.2.1"
 # revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "a625c04" }
 
 ## foundry
-# foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "811a61a" }
+ foundry-fork-db = { git = "https://github.com/Rimeeeeee/foundry-fork-db", branch = "get-account-info" }
