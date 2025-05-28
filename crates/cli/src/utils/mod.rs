@@ -700,7 +700,7 @@ ignore them in the `.gitignore` file."
     pub fn submodules(&self) -> Result<Submodules> {
         self.cmd().args(["submodule", "status"]).get_stdout_lossy().map(|stdout| stdout.parse())?
     }
-  
+
     pub fn submodule_sync(self) -> Result<()> {
         self.cmd().stderr(self.stderr()).args(["submodule", "sync"]).exec().map(drop)
     }
