@@ -531,7 +531,7 @@ impl NodeConfig {
             return hardfork;
         }
         if self.enable_optimism {
-            return OpHardfork::Isthmus.into();
+            return OpHardfork::default().into();
         }
         EthereumHardfork::default().into()
     }
