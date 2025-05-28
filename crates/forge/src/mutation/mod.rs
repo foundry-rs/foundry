@@ -167,35 +167,16 @@ impl MutationHandler {
             .collect()
     }
 
-    /// Copy the src, cache, out and test folders to one of the mutant temp folder
+    /// Copy the src to one of the mutant temp folder
     fn copy_origin(path: &Path, src_contract_path: &Path, config: Arc<Config>) {
-        let cache_src = &config.cache_path;
-        let out_src = &config.out;
         let contract_src = &config.src;
-        let test_src = &config.test;
-
-        let cache_dest = path.join("cache");
-        let out_dest = path.join("out");
-        let contract_dest = path.join("src");
-        let test_dest = path.join("test");
-
-        std::fs::create_dir_all(&cache_dest).expect("Failed to create temp cache directory");
-        std::fs::create_dir_all(&out_dest).expect("Failed to create temp out directory");
+        let contract_dest = path.join(contract_src.file_name().unwrap());
         std::fs::create_dir_all(&contract_dest).expect("Failed to create temp src directory");
-        std::fs::create_dir_all(&test_dest).expect("Failed to create temp src directory");
-
-        Self::copy_dir_except(cache_src, cache_dest, src_contract_path)
-            .expect("Failed to copy in temp cache");
-        Self::copy_dir_except(out_src, out_dest, src_contract_path)
-            .expect("Failed to copy in temp out directory");
         Self::copy_dir_except(contract_src, contract_dest, src_contract_path)
-            .expect("Failed to copy in temp src directory");
-        Self::copy_dir_except(test_src, test_dest, src_contract_path)
             .expect("Failed to copy in temp src directory");
     }
 
     /// Recursively copy all files except one, from a src to a dst folder
-    /// @todo Symlinks instead?
     fn copy_dir_except(
         src: impl AsRef<Path>,
         dst: impl AsRef<Path>,
@@ -210,9 +191,6 @@ impl MutationHandler {
             if ty.is_dir() {
                 Self::copy_dir_except(entry.path(), dst.as_ref().join(entry.file_name()), except)?;
             } else if entry.file_name() != except.file_name().unwrap_or_default() {
-                // std::os::unix::fs::symlink(entry.path(),
-                // &dst.as_ref().join(entry.file_name()))?; // and for windows, would be
-                // std::os::windows::fs::symlink_file
                 std::fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
             }
         }
