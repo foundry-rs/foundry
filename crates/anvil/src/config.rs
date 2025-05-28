@@ -533,7 +533,7 @@ impl NodeConfig {
         if self.enable_optimism {
             return OpHardfork::Isthmus.into();
         }
-        EthereumHardfork::Cancun.into()
+        EthereumHardfork::Prague.into()
     }
 
     /// Sets a custom code size limit
