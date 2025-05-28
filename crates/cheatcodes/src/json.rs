@@ -2,7 +2,7 @@
 
 use crate::{string, Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_dyn_abi::{eip712_parser::EncodeType, DynSolType, DynSolValue, Resolver};
-use alloy_primitives::{hex, Address, B256, I256, U256};
+use alloy_primitives::{hex, Address, B256, I256};
 use alloy_sol_types::SolValue;
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
