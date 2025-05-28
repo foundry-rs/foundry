@@ -3978,12 +3978,12 @@ bytes32 constant _PERMIT_SINGLE_TYPEHASH = keccak256(
 // borrowed from https://github.com/Uniswap/permit2/blob/main/src/libraries/PermitHash.sol
 library PermitHash {
     function hash(PermitSingle memory permitSingle) internal pure returns (bytes32) {
-        bytes32 permitHash = _hashPermitDetails(permitSingle.details);
+        bytes32 permitHash = _hashDetails(permitSingle.details);
         return
             keccak256(abi.encode(_PERMIT_SINGLE_TYPEHASH, permitHash, permitSingle.spender, permitSingle.sigDeadline));
     }
 
-    function _hashPermitDetails(PermitDetails memory details) private pure returns (bytes32) {
+    function _hashDetails(PermitDetails memory details) internal pure returns (bytes32) {
         return keccak256(abi.encode(_PERMIT_DETAILS_TYPEHASH, details));
     }
 }
@@ -4007,18 +4007,25 @@ import "./console.sol";
 import "./Eip712Permit.sol";
 import {JsonBindings} from "utils/JsonBindings.sol";
 
-
 contract Eip712HashStructTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
     using JsonBindings for *;
 
-    function testHashPermitSingle() public {
+    function testHashJsonPermitSingle_jsonData() public {
         PermitDetails memory details = PermitDetails({
             token: 0x1111111111111111111111111111111111111111,
             amount: 1000 ether,
             expiration: 12345,
             nonce: 1
         });
+
+        // user-computed details (using uniswap hash library)
+        bytes32 userStructHash = PermitHash._hashDetails(details);
+
+        // cheatcode-computed details (previously serializing to JSON)
+        bytes32 cheatStructHash = vm.eip712HashStruct("PermitDetails", details.serialize());
+
+        assertEq(cheatStructHash, userStructHash, "details struct hash mismatch");
 
         PermitSingle memory permit = PermitSingle({
             details: details,
@@ -4027,7 +4034,7 @@ contract Eip712HashStructTest is DSTest {
         });
 
         // user-computed permit (using uniswap hash library)
-        bytes32 userStructHash = PermitHash.hash(permit);
+        userStructHash = PermitHash.hash(permit);
 
         // cheatcode-computed permit (previously serializing to JSON)
         string memory jsonData = permit.serialize();
@@ -4035,7 +4042,40 @@ contract Eip712HashStructTest is DSTest {
         console.log("JSON data for PermitSingle:");
         console.log(jsonData);
 
-        bytes32 cheatStructHash = vm.eip712HashStruct("PermitSingle", jsonData);
+        cheatStructHash = vm.eip712HashStruct("PermitSingle", jsonData);
+        console.log("PermitSingle struct hash from cheatcode:");
+        console.logBytes32(cheatStructHash);
+
+        assertEq(cheatStructHash, userStructHash, "permit struct hash mismatch");
+    }
+
+    function testHashPermitSingle_abiEncodedData() public {
+        PermitDetails memory details = PermitDetails({
+            token: 0x1111111111111111111111111111111111111111,
+            amount: 1000 ether,
+            expiration: 12345,
+            nonce: 1
+        });
+
+        // user-computed permit (using uniswap hash library)
+        bytes32 userStructHash = PermitHash._hashDetails(details);
+
+        // cheatcode-computed permit (previously encoding)
+        bytes32 cheatStructHash = vm.eip712HashStruct("PermitDetails", abi.encode(details));
+
+        assertEq(cheatStructHash, userStructHash, "details struct hash mismatch");
+
+        PermitSingle memory permit = PermitSingle({
+            details: details,
+            spender: 0x2222222222222222222222222222222222222222,
+            sigDeadline: 12345
+        });
+
+        // user-computed permit (using uniswap hash library)
+        userStructHash = PermitHash.hash(permit);
+
+        // cheatcode-computed permit (previously encoding)
+        cheatStructHash = vm.eip712HashStruct("PermitSingle", abi.encode(permit));
         console.log("PermitSingle struct hash from cheatcode:");
         console.logBytes32(cheatStructHash);
 

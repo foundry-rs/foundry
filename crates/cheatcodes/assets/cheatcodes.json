@@ -4298,6 +4298,26 @@
       "func": {
         "id": "eip712HashStruct_0",
         "description": "",
+        "declaration": "function eip712HashStruct(string calldata typeNameOrDefinition, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "eip712HashStruct(string,bytes)",
+        "selector": "0xaedeaebc",
+        "selectorBytes": [
+          174,
+          222,
+          174,
+          188
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "eip712HashStruct_1",
+        "description": "",
         "declaration": "function eip712HashStruct(string calldata typeNameOrDefinition, string calldata jsonData) external pure returns (bytes32 typeHash);",
         "visibility": "external",
         "mutability": "pure",
@@ -4316,7 +4336,7 @@
     },
     {
       "func": {
-        "id": "eip712HashStruct_1",
+        "id": "eip712HashStruct_2",
         "description": "",
         "declaration": "function eip712HashStruct(string calldata bindingsPath, string calldata typeName, string calldata jsonData) external pure returns (bytes32 typeHash);",
         "visibility": "external",

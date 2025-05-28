@@ -2912,6 +2912,9 @@ interface Vm {
     function eip712HashType(string calldata bindingsPath, string calldata typeName) external pure returns (bytes32 typeHash);
 
     #[cheatcode(group = Utilities)]
+    function eip712HashStruct(string calldata typeNameOrDefinition, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);
+
+    #[cheatcode(group = Utilities)]
     function eip712HashStruct(string calldata typeNameOrDefinition, string calldata jsonData) external pure returns (bytes32 typeHash);
 
     #[cheatcode(group = Utilities)]
