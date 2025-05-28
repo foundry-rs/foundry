@@ -104,7 +104,7 @@ impl BuildArgs {
         let output = compiler.compile(&project)?;
 
         // Cache project selectors.
-        cache_local_signatures(&output, &Config::foundry_cache_dir().unwrap())?;
+        cache_local_signatures(&output, Config::foundry_cache_dir())?;
 
         if format_json && !self.names && !self.sizes {
             sh_println!("{}", serde_json::to_string_pretty(&output.output())?)?;
