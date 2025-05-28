@@ -1,7 +1,10 @@
 use super::{install, watch::WatchArgs};
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
+use foundry_cli::{
+    opts::BuildOpts,
+    utils::{cache_local_signatures, LoadConfig},
+};
 use foundry_common::{compile::ProjectCompiler, shell};
 use foundry_compilers::{
     compilers::{multi::MultiCompilerLanguage, Language},
@@ -99,6 +102,9 @@ impl BuildArgs {
             .bail(!format_json);
 
         let output = compiler.compile(&project)?;
+
+        // Cache project selectors.
+        cache_local_signatures(&output, &Config::foundry_cache_dir().unwrap())?;
 
         if format_json && !self.names && !self.sizes {
             sh_println!("{}", serde_json::to_string_pretty(&output.output())?)?;
