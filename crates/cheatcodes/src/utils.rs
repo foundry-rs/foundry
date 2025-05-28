@@ -428,10 +428,7 @@ fn get_struct_hash(primary: &str, type_def: &String, abi_encoded_data: &Bytes) -
 
     // ABI-decode the bytes into `DynSolValue::CustomStruct`.
     let sol_value = resolved_sol_type.abi_decode(abi_encoded_data.as_ref()).map_err(|e| {
-        fmt_err!(
-            "Failed to ABI decode using resolved_sol_type directly for '{primary}': {e}.",
-            abi_encoded_data.len()
-        )
+        fmt_err!("Failed to ABI decode using resolved_sol_type directly for '{primary}': {e}.")
     })?;
 
     // Use the resolver to properly encode the data.
