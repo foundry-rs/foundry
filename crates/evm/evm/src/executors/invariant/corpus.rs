@@ -35,6 +35,8 @@ pub struct TxCorpusManager {
     corpus_gzip: bool,
     // Number of corpus mutations until marked as eligible to be flushed from in-memory corpus.
     corpus_max_mutations: usize,
+    // Number of corpus that won't be evicted from memory.
+    pub corpus_min_size: usize,
     // In-memory corpus, populated from persisted files and current runs.
     // Oldest corpus that is mutated more than `corpus_max_mutations` times.
     in_memory_corpus: Vec<Corpus>,
@@ -64,6 +66,7 @@ impl TxCorpusManager {
         let mut failed_replays = 0;
         let corpus_gzip = invariant_config.corpus_gzip;
         let corpus_max_mutations = invariant_config.corpus_max_mutations;
+        let corpus_min_size = invariant_config.corpus_min_size;
         for entry in std::fs::read_dir(&corpus_dir)? {
             let path = entry?.path();
             let read_corpus_result = if corpus_gzip {
@@ -118,6 +121,7 @@ impl TxCorpusManager {
             corpus_dir: Some(corpus_dir),
             corpus_gzip,
             corpus_max_mutations,
+            corpus_min_size,
             in_memory_corpus,
             current_mutated: None,
             failed_replays,
@@ -190,17 +194,25 @@ impl TxCorpusManager {
     #[allow(clippy::needless_range_loop)]
     pub fn new_sequence(&mut self, test_runnner: &mut TestRunner) -> Vec<BasicTxDetails> {
         let mut new_seq = vec![];
+
+        if self.in_memory_corpus.is_empty() {
+            return new_seq;
+        }
+
         let rng = test_runnner.rng();
 
         // Flush oldest corpus mutated more than configured max mutations.
-        if let Some(index) = self
-            .in_memory_corpus
-            .iter()
-            .position(|corpus| corpus.1.total_mutations > self.corpus_max_mutations)
-        {
-            let uuid = self.in_memory_corpus.get(index).unwrap().1.uuid;
-            debug!(target: "corpus", "remove corpus with {uuid}");
-            self.in_memory_corpus.remove(index);
+        let should_evict = self.in_memory_corpus.len() > self.corpus_min_size;
+        if should_evict {
+            if let Some(index) = self
+                .in_memory_corpus
+                .iter()
+                .position(|corpus| corpus.1.total_mutations > self.corpus_max_mutations)
+            {
+                let uuid = self.in_memory_corpus.get(index).unwrap().1.uuid;
+                debug!(target: "corpus", "remove corpus with {uuid}");
+                self.in_memory_corpus.remove(index);
+            }
         }
 
         if self.in_memory_corpus.len() > 1 {
@@ -208,7 +220,6 @@ impl TxCorpusManager {
             let idx2 = rng.gen_range(0..self.in_memory_corpus.len());
 
             let primary_corpus = &self.in_memory_corpus[idx1];
-
             let one = &primary_corpus.0;
             let two = &self.in_memory_corpus[idx2].0;
             // TODO rounds of mutations on elements?
@@ -260,10 +271,13 @@ impl TxCorpusManager {
             }
 
             // Record corpus uuid if mutated corpus results in non-empty new sequence.
-            if !new_seq.is_empty() {
+            // Record mutations only when we have more than min corpus in-memory (that is to avoid
+            // fast eviction when new corpus added).
+            if should_evict && !new_seq.is_empty() {
                 self.current_mutated = Some(primary_corpus.1.uuid);
             }
-            trace!(target: "corpus", "new sequence generated {} from corpus {:?}", new_seq.len(), self.current_mutated);
+
+            trace!(target: "corpus", "new sequence generated {} from corpus {:?}", new_seq.len(), primary_corpus.1.uuid);
         }
 
         new_seq
