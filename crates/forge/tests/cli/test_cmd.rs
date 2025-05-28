@@ -3884,7 +3884,7 @@ Encountered a total of 1 failing tests, 0 tests succeeded
         .assert_success();
 });
 
-forgetest!(test_eip712_hash_struct_simple_domain, |prj, cmd| {
+forgetest!(test_eip712_hash_struct_simple, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
     prj.insert_console();
@@ -3917,7 +3917,7 @@ contract Eip712HashStructDomainTest is DSTest {
             verifyingContract: 0xdEADBEeF00000000000000000000000000000000
         });
 
-        // simulate user-computed hash
+        // simulate user-computed domain hash
         bytes memory encodedData = abi.encode(
             keccak256(bytes(domain.name)),
             keccak256(bytes(domain.version)),
@@ -3926,15 +3926,8 @@ contract Eip712HashStructDomainTest is DSTest {
         );
         bytes32 userStructHash = keccak256(abi.encodePacked(_EIP712_DOMAIN_TYPE_HASH, encodedData));
 
-        // cheatcode-computed permit (manually serializing to JSON)
-        string memory jsonData = vm.serializeString("domain", "name", domain.name);
-        jsonData = vm.serializeString("domain", "version", domain.version);
-        jsonData = vm.serializeUint("domain", "chainId", domain.chainId);
-        jsonData = vm.serializeAddress("domain", "verifyingContract", domain.verifyingContract);
-        console.log("JSON Data for EIP712Domain:");
-        console.log(jsonData);
-
-        bytes32 cheatStructHash = vm.eip712HashStruct(_EIP712_DOMAIN_TYPE_DEF, jsonData);
+        // cheatcode-computed domain hash
+        bytes32 cheatStructHash = vm.eip712HashStruct(_EIP712_DOMAIN_TYPE_DEF, abi.encode(domain));
         console.log("EIP712Domain struct hash from cheatcode:");
         console.logBytes32(cheatStructHash);
 
@@ -3948,7 +3941,7 @@ contract Eip712HashStructDomainTest is DSTest {
     cmd.forge_fuse().args(["test", "--mc", "Eip712HashStructDomainTest", "-vvvv"]).assert_success();
 });
 
-forgetest!(test_eip712_hash_struct_from_bindings, |prj, cmd| {
+forgetest!(test_eip712_hash_struct_complex, |prj, cmd| {
     prj.add_source(
         "Eip712Permit.sol",
         r#"
@@ -3959,7 +3952,6 @@ struct PermitDetails {
     uint48 nonce;
 }
 
-// Canonical type hash for PermitDetails
 bytes32 constant _PERMIT_DETAILS_TYPEHASH = keccak256(
     "PermitDetails(address token,uint160 amount,uint48 expiration,uint48 nonce)"
 );
@@ -3970,7 +3962,6 @@ struct PermitSingle {
     uint256 sigDeadline;
 }
 
-// Canonical type hash for PermitSingle
 bytes32 constant _PERMIT_SINGLE_TYPEHASH = keccak256(
     "PermitSingle(PermitDetails details,address spender,uint256 sigDeadline)PermitDetails(address token,uint160 amount,uint48 expiration,uint48 nonce)"
 );
@@ -3991,6 +3982,62 @@ library PermitHash {
     )
     .unwrap();
 
+    prj.add_source(
+        "Eip712Transaction.sol",
+        r#"
+struct Asset {
+    address token;
+    uint256 amount;
+}
+
+bytes32 constant _ASSET_TYPEHASH = keccak256(
+    "Asset(address token,uint256 amount)"
+);
+
+struct Person {
+    address wallet;
+    string name;
+}
+
+bytes32 constant _PERSON_TYPEHASH = keccak256(
+    "Person(address wallet,string name)"
+);
+
+struct Transaction {
+    Person from;
+    Person to;
+    Asset tx;
+}
+
+bytes32 constant _TRANSACTION_TYPEHASH = keccak256(
+    "Transaction(Person from,Person to,Asset tx)Asset(address token,uint256 amount)Person(address wallet,string name)"
+);
+
+
+library TransactionHash {
+    function hash(Transaction memory t) internal pure returns (bytes32) {
+        bytes32 fromHash = _hashPerson(t.from);
+        bytes32 toHash = _hashPerson(t.to);
+        bytes32 assetHash = _hashAsset(t.tx);
+        return
+            keccak256(abi.encode(_TRANSACTION_TYPEHASH, fromHash, toHash, assetHash));
+    }
+
+    function _hashPerson(Person memory person) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(_PERSON_TYPEHASH, person.wallet, keccak256(bytes(person.name)))
+        );
+
+    }
+
+    function _hashAsset(Asset memory asset) internal pure returns (bytes32) {
+        return keccak256(abi.encode(_ASSET_TYPEHASH, asset));
+    }
+}
+    "#,
+    )
+    .unwrap();
+
     let bindings = prj.root().join("utils").join("JsonBindings.sol");
     prj.update_config(|config| config.fs_permissions.add(PathPermission::read(&bindings)));
     cmd.forge_fuse().args(["bind-json"]).assert_success();
@@ -4005,51 +4052,12 @@ import "./Vm.sol";
 import "./test.sol";
 import "./console.sol";
 import "./Eip712Permit.sol";
-import {JsonBindings} from "utils/JsonBindings.sol";
+import "./Eip712Transaction.sol";
 
 contract Eip712HashStructTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
-    using JsonBindings for *;
 
-    function testHashJsonPermitSingle_jsonData() public {
-        PermitDetails memory details = PermitDetails({
-            token: 0x1111111111111111111111111111111111111111,
-            amount: 1000 ether,
-            expiration: 12345,
-            nonce: 1
-        });
-
-        // user-computed details (using uniswap hash library)
-        bytes32 userStructHash = PermitHash._hashDetails(details);
-
-        // cheatcode-computed details (previously serializing to JSON)
-        bytes32 cheatStructHash = vm.eip712HashStruct("PermitDetails", details.serialize());
-
-        assertEq(cheatStructHash, userStructHash, "details struct hash mismatch");
-
-        PermitSingle memory permit = PermitSingle({
-            details: details,
-            spender: 0x2222222222222222222222222222222222222222,
-            sigDeadline: 12345
-        });
-
-        // user-computed permit (using uniswap hash library)
-        userStructHash = PermitHash.hash(permit);
-
-        // cheatcode-computed permit (previously serializing to JSON)
-        string memory jsonData = permit.serialize();
-
-        console.log("JSON data for PermitSingle:");
-        console.log(jsonData);
-
-        cheatStructHash = vm.eip712HashStruct("PermitSingle", jsonData);
-        console.log("PermitSingle struct hash from cheatcode:");
-        console.logBytes32(cheatStructHash);
-
-        assertEq(cheatStructHash, userStructHash, "permit struct hash mismatch");
-    }
-
-    function testHashPermitSingle_abiEncodedData() public {
+    function testHashPermitSingle_withTypeName() public {
         PermitDetails memory details = PermitDetails({
             token: 0x1111111111111111111111111111111111111111,
             amount: 1000 ether,
@@ -4060,7 +4068,7 @@ contract Eip712HashStructTest is DSTest {
         // user-computed permit (using uniswap hash library)
         bytes32 userStructHash = PermitHash._hashDetails(details);
 
-        // cheatcode-computed permit (previously encoding)
+        // cheatcode-computed permit
         bytes32 cheatStructHash = vm.eip712HashStruct("PermitDetails", abi.encode(details));
 
         assertEq(cheatStructHash, userStructHash, "details struct hash mismatch");
@@ -4074,12 +4082,87 @@ contract Eip712HashStructTest is DSTest {
         // user-computed permit (using uniswap hash library)
         userStructHash = PermitHash.hash(permit);
 
-        // cheatcode-computed permit (previously encoding)
+        // cheatcode-computed permit
         cheatStructHash = vm.eip712HashStruct("PermitSingle", abi.encode(permit));
         console.log("PermitSingle struct hash from cheatcode:");
         console.logBytes32(cheatStructHash);
 
         assertEq(cheatStructHash, userStructHash, "permit struct hash mismatch");
+    }
+
+    function testHashPermitSingle_withTypeDefinion() public {
+        PermitDetails memory details = PermitDetails({
+            token: 0x1111111111111111111111111111111111111111,
+            amount: 1000 ether,
+            expiration: 12345,
+            nonce: 1
+        });
+
+        // user-computed permit (using uniswap hash library)
+        bytes32 userStructHash = PermitHash._hashDetails(details);
+
+        // cheatcode-computed permit
+        bytes32 cheatStructHash = vm.eip712HashStruct("PermitDetails(address token, uint160 amount, uint48 expiration, uint48 nonce)", abi.encode(details));
+
+        assertEq(cheatStructHash, userStructHash, "details struct hash mismatch");
+
+        PermitSingle memory permit = PermitSingle({
+            details: details,
+            spender: 0x2222222222222222222222222222222222222222,
+            sigDeadline: 12345
+        });
+
+        // user-computed permit (using uniswap hash library)
+        userStructHash = PermitHash.hash(permit);
+
+        // cheatcode-computed permit (previously encoding)
+        cheatStructHash = vm.eip712HashStruct("PermitDetails(address token, uint160 amount, uint48 expiration, uint48 nonce) PermitSingle(PermitDetails details,address spender,uint256 sigDeadline)", abi.encode(permit));
+        console.log("PermitSingle struct hash from cheatcode:");
+        console.logBytes32(cheatStructHash);
+
+        assertEq(cheatStructHash, userStructHash, "permit struct hash mismatch");
+    }
+
+    function testHashTransaction_withTypeName() public {
+        Asset memory asset = Asset ({ token: 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2, amount: 100 ether });
+
+        bytes32 user = TransactionHash._hashAsset(asset);
+        bytes32 cheat = vm.eip712HashStruct("Asset", abi.encode(asset));
+        assertEq(user, cheat, "asset struct hash mismatch");
+
+        Person memory from = Person ({ wallet: 0x0000000000000000000000000000000000000001, name: "alice" });
+        Person memory to = Person ({ wallet: 0x0000000000000000000000000000000000000002, name: "bob" });
+
+        user = TransactionHash._hashPerson(from);
+        cheat = vm.eip712HashStruct("Person", abi.encode(from));
+        assertEq(user, cheat, "person struct hash mismatch");
+
+        Transaction memory t = Transaction ({ from: from, to: to, tx: asset });
+
+        user = TransactionHash.hash(t);
+        cheat = vm.eip712HashStruct("Transaction", abi.encode(t));
+        assertEq(user, cheat, "transaction struct hash mismatch");
+    }
+
+    function testHashTransaction_withTypeDefinition() public {
+        Asset memory asset = Asset ({ token: 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2, amount: 100 ether });
+
+        bytes32 user = TransactionHash._hashAsset(asset);
+        bytes32 cheat = vm.eip712HashStruct("Asset(address token, uint256 amount)", abi.encode(asset));
+        assertEq(user, cheat, "asset struct hash mismatch");
+
+        Person memory from = Person ({ wallet: 0x0000000000000000000000000000000000000001, name: "alice" });
+        Person memory to = Person ({ wallet: 0x0000000000000000000000000000000000000002, name: "bob" });
+
+        user = TransactionHash._hashPerson(from);
+        cheat = vm.eip712HashStruct("Person(address wallet, string name)", abi.encode(from));
+        assertEq(user, cheat, "person struct hash mismatch");
+
+        Transaction memory t = Transaction ({ from: from, to: to, tx: asset });
+
+        user = TransactionHash.hash(t);
+        cheat = vm.eip712HashStruct("Person(address wallet, string name) Asset(address token, uint256 amount) Transaction(Person from, Person to, Asset tx)", abi.encode(t));
+        assertEq(user, cheat, "transaction struct hash mismatch");
     }
 }
 "#,
@@ -4091,8 +4174,13 @@ contract Eip712HashStructTest is DSTest {
         .assert_success()
         .stdout_eq(str![[r#"
 ...
-  JSON data for PermitSingle:
-  {"details":{"token":"0x1111111111111111111111111111111111111111","amount":"1000000000000000000000","expiration":12345,"nonce":1},"spender":"0x2222222222222222222222222222222222222222","sigDeadline":12345}
+[PASS] testHashPermitSingle_withTypeDefinion() ([GAS])
+Logs:
+  PermitSingle struct hash from cheatcode:
+  0x3ed744fdcea02b6b9ad45a9db6e648bf6f18c221909f9ee425191f2a02f9e4a8
+
+[PASS] testHashPermitSingle_withTypeName() ([GAS])
+Logs:
   PermitSingle struct hash from cheatcode:
   0x3ed744fdcea02b6b9ad45a9db6e648bf6f18c221909f9ee425191f2a02f9e4a8
 ...

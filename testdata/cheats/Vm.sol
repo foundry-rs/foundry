@@ -209,8 +209,7 @@ interface Vm {
     function difficulty(uint256 newDifficulty) external;
     function dumpState(string calldata pathToStateJson) external;
     function eip712HashStruct(string calldata typeNameOrDefinition, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);
-    function eip712HashStruct(string calldata typeNameOrDefinition, string calldata jsonData) external pure returns (bytes32 typeHash);
-    function eip712HashStruct(string calldata bindingsPath, string calldata typeName, string calldata jsonData) external pure returns (bytes32 typeHash);
+    function eip712HashStruct(string calldata bindingsPath, string calldata typeName, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);
     function eip712HashType(string calldata typeNameOrDefinition) external pure returns (bytes32 typeHash);
     function eip712HashType(string calldata bindingsPath, string calldata typeName) external pure returns (bytes32 typeHash);
     function ensNamehash(string calldata name) external pure returns (bytes32);

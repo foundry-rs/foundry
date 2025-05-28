@@ -345,29 +345,18 @@ impl Cheatcode for eip712HashStruct_0Call {
         let type_def = get_canonical_type_def(typeNameOrDefinition, state, None)?;
         let primary = &type_def[..type_def.find('(').unwrap_or(type_def.len())];
 
-        get_struct_hash_from_bytes(primary, &type_def, abiEncodedData)
+        get_struct_hash(primary, &type_def, abiEncodedData)
     }
 }
 
 impl Cheatcode for eip712HashStruct_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self { typeNameOrDefinition, jsonData } = self;
-
-        let type_def = get_canonical_type_def(typeNameOrDefinition, state, None)?;
-        let primary = &type_def[..type_def.find('(').unwrap_or(type_def.len())];
-
-        get_struct_hash_from_json(primary, &type_def, jsonData)
-    }
-}
-
-impl Cheatcode for eip712HashStruct_2Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self { bindingsPath, typeName, jsonData } = self;
+        let Self { bindingsPath, typeName, abiEncodedData } = self;
 
         let path = state.config.ensure_path_allowed(bindingsPath, FsAccessKind::Read)?;
         let type_def = get_type_def_from_bindings(typeName, path, &state.config.root)?;
 
-        get_struct_hash_from_json(typeName, &type_def, jsonData)
+        get_struct_hash(typeName, &type_def, abiEncodedData)
     }
 }
 
@@ -424,51 +413,7 @@ fn get_type_def_from_bindings(name: &String, path: PathBuf, root: &PathBuf) -> R
     }
 }
 
-fn get_struct_hash_from_json(primary: &str, type_def: &String, json_data: &str) -> Result {
-    let mut resolver = Resolver::default();
-
-    // Populate the resolver by ingesting the canonical type definition, and then get the
-    // corresponding `DynSolType` of the primary type.
-    resolver
-        .ingest_string(type_def)
-        .map_err(|e| fmt_err!("Resolver failed to ingest type definition: {e}"))?;
-
-    let resolved_sol_type = resolver
-        .resolve(primary)
-        .map_err(|e| fmt_err!("Failed to resolve EIP712 primary type '{primary}': {e}"))?;
-
-    // Coerce the JSON data into a `DynSolValue`.
-    let json_data = serde_json::from_str(json_data)
-        .map_err(|e| fmt_err!("Failed to parse input JSON data: {e}"))?;
-
-    let sol_value = resolved_sol_type.coerce_json(&json_data).map_err(|e| {
-        fmt_err!("Failed to coerce JSON data to EIP-712 'SolValue' for type '{primary}': {e}")
-    })?;
-
-    if !matches!(sol_value, DynSolValue::CustomStruct { .. }) {
-        bail!("JSON data for type '{primary}' is not a custom struct");
-    }
-
-    // Use the resolver to properly encode the data.
-    let encoded_data: Vec<u8> = resolver
-        .encode_data(&sol_value)
-        .map_err(|e| fmt_err!("Failed to EIP-712 encode data for struct '{primary}': {e}"))?
-        .ok_or_else(|| fmt_err!("EIP-712 data encoding returned 'None' for struct '{primary}'"))?;
-
-    // Compute the type hash of the primary type.
-    let type_hash = resolver
-        .type_hash(primary)
-        .map_err(|e| fmt_err!("Failed to compute typeHash for EIP712 type '{primary}': {e}"))?;
-
-    // Compute the struct hash of the concatenated type hash and encoded data.
-    let mut bytes_to_hash = Vec::with_capacity(32 + encoded_data.len());
-    bytes_to_hash.extend_from_slice(type_hash.as_slice());
-    bytes_to_hash.extend_from_slice(&encoded_data);
-
-    Ok(keccak256(&bytes_to_hash).to_vec())
-}
-
-fn get_struct_hash_from_bytes(primary: &str, type_def: &String, bytes: &Bytes) -> Result {
+fn get_struct_hash(primary: &str, type_def: &String, abi_encoded_data: &Bytes) -> Result {
     let mut resolver = Resolver::default();
 
     // Populate the resolver by ingesting the canonical type definition, and then get the
@@ -481,27 +426,13 @@ fn get_struct_hash_from_bytes(primary: &str, type_def: &String, bytes: &Bytes) -
         .resolve(primary)
         .map_err(|e| fmt_err!("Failed to resolve EIP-712 primary type '{primary}': {e}"))?;
 
-    let (props, types) =
-        if let DynSolType::CustomStruct { name: _, prop_names, tuple } = &resolved_sol_type {
-            (prop_names.clone(), tuple.clone())
-        } else {
-            bail!("Primary type '{primary}' is not a custom struct");
-        };
-
-    // Decode the ABI-encoded bytes and generate a `DynSolValue::CustomStruct`.
-    let decoded_abi_value = DynSolType::Tuple(types).abi_decode_sequence(bytes.as_ref())?;
-    let decoded_member_values = match decoded_abi_value {
-        DynSolValue::Tuple(members) => members,
-        other => bail!(
-            "ABI decoding for struct '{primary}' did not result in a Tuple as expected. Got: {other:?}",
-        ),
-    };
-
-    let sol_value = DynSolValue::CustomStruct {
-        name: primary.to_string(),
-        prop_names: props,
-        tuple: decoded_member_values,
-    };
+    // ABI-decode the bytes into `DynSolType::Tuple` and convert to `DynSolValue::CustomStruct`.
+    let sol_value = resolved_sol_type.abi_decode(abi_encoded_data.as_ref()).map_err(|e| {
+            fmt_err!(
+                "Decoding '{primary}'. Data (length: {}): {abi_encoded_data}.\nFailed to ABI decode using resolved_sol_type directly for '{primary}': {e}.\n\nresolved_sol_type: {resolved_sol_type:?}",
+                abi_encoded_data.len()
+            )
+        })?;
 
     // Use the resolver to properly encode the data.
     let encoded_data: Vec<u8> = resolver
