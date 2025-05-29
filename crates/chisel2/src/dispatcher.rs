@@ -144,491 +144,546 @@ impl ChiselDispatcher {
             None => Cow::Borrowed(DEFAULT_PROMPT),
         }
     }
+}
 
+/// [`ChiselCommand`] implementations.
+impl ChiselDispatcher {
     /// Dispatches a [`ChiselCommand`].
     pub async fn dispatch_command(&mut self, cmd: ChiselCommand) -> Result<()> {
         match cmd {
-            ChiselCommand::Help => sh_println!("{}", ChiselCommand::format_help()),
-            ChiselCommand::Quit => {
-                // TODO(dani): Don't call `exit`.
-                // Exit the process with status code `0` for success.
-                std::process::exit(0);
+            ChiselCommand::Help => self.show_help(),
+            ChiselCommand::Quit => self.quit(),
+            ChiselCommand::Clear => self.clear(),
+            ChiselCommand::Save { id } => self.save(id),
+            ChiselCommand::Load { id } => self.load(id),
+            ChiselCommand::ListSessions => self.list_sessions(),
+            ChiselCommand::Source => self.show_source(),
+            ChiselCommand::ClearCache => self.clear_cache(),
+            ChiselCommand::Fork { url } => self.fork(url),
+            ChiselCommand::Traces => self.toggle_traces(),
+            ChiselCommand::Calldata { data } => self.set_calldata(data),
+            ChiselCommand::MemDump => self.show_mem_dump().await,
+            ChiselCommand::StackDump => self.show_stack_dump().await,
+            ChiselCommand::Export => self.export(),
+            ChiselCommand::Fetch { addr, name } => self.fetch_interface(addr, name).await,
+            ChiselCommand::Exec { command, args } => self.exec_command(command, args),
+            ChiselCommand::Edit => self.edit_session().await,
+            ChiselCommand::RawStack { var } => self.show_raw_stack(var).await,
+        }
+    }
+
+    /// Shows help information
+    fn show_help(&self) -> Result<()> {
+        sh_println!("{}", ChiselCommand::format_help())
+    }
+
+    /// Quits the application
+    fn quit(&self) -> Result<()> {
+        // TODO(dani): Don't call `exit`.
+        // Exit the process with status code `0` for success.
+        std::process::exit(0);
+    }
+
+    /// Clears the current session
+    fn clear(&mut self) -> Result<()> {
+        self.source_mut().clear();
+        sh_println!("Cleared session!")
+    }
+
+    /// Saves the current session
+    fn save(&mut self, id: Option<String>) -> Result<()> {
+        // If a new name was supplied, overwrite the ID of the current session.
+        if let Some(id) = id {
+            // TODO: Should we delete the old cache file if the id of the session
+            // changes?
+            self.session.id = Some(id);
+        }
+
+        self.session.write()?;
+        sh_println!("Saved session to cache with ID = {}", self.session.id.as_ref().unwrap())
+    }
+
+    /// Loads a session
+    fn load(&mut self, id: String) -> Result<()> {
+        // Try to save the current session before loading another
+        // Don't save an empty session
+        if !self.source().run_code.is_empty() {
+            self.session.write()?;
+            sh_println!("{}", "Saved current session!".green())?;
+        }
+
+        let mut new_session = match id.as_str() {
+            "latest" => ChiselSession::latest(),
+            id => ChiselSession::load(id),
+        }
+        .wrap_err("failed to load session")?;
+
+        new_session.session_source.build()?;
+        self.session = new_session;
+        sh_println!("Loaded Chisel session! (ID = {})", self.session.id.as_ref().unwrap())
+    }
+
+    /// Lists all available sessions
+    fn list_sessions(&self) -> Result<()> {
+        match ChiselSession::list_sessions() {
+            Ok(sessions) => DispatchResult::CommandSuccess(Some(format!(
+                "{}\n{}",
+                format!("{CHISEL_CHAR} Chisel Sessions").cyan(),
+                sessions
+                    .iter()
+                    .map(|(time, name)| { format!("{} - {}", format!("{time:?}").blue(), name) })
+                    .collect::<Vec<String>>()
+                    .join("\n")
+            ))),
+            Err(_) => DispatchResult::CommandFailed(Self::make_error(
+                "No sessions found. Use the `!save` command to save a session.",
+            )),
+        }
+    }
+
+    /// Shows the current source code
+    fn show_source(&self) -> Result<()> {
+        match self.format_source() {
+            Ok(formatted_source) => DispatchResult::CommandSuccess(Some(
+                SolidityHelper::new().highlight(&formatted_source).into_owned(),
+            )),
+            Err(_) => {
+                DispatchResult::CommandFailed(String::from("Failed to format session source"))
             }
-            ChiselCommand::Clear => {
-                self.source_mut().clear();
-                sh_println!("Cleared session!")
+        }
+    }
+
+    /// Clears the cache
+    fn clear_cache(&mut self) -> Result<()> {
+        match ChiselSession::clear_cache() {
+            Ok(_) => {
+                self.session.id = None;
+                DispatchResult::CommandSuccess(Some(String::from("Cleared chisel cache!")))
             }
-            ChiselCommand::Save { id } => {
-                // If a new name was supplied, overwrite the ID of the current session.
-                if let Some(id) = id {
-                    // TODO: Should we delete the old cache file if the id of the session
-                    // changes?
-                    self.session.id = Some(id);
-                }
+            Err(_) => DispatchResult::CommandFailed(Self::make_error(
+                "Failed to clear cache! Check file permissions or disk space.",
+            )),
+        }
+    }
 
-                self.session.write()?;
-                sh_println!(
-                    "Saved session to cache with ID = {}",
-                    self.session.id.as_ref().unwrap()
-                )
-            }
-            ChiselCommand::Load { id } => {
-                // Try to save the current session before loading another
-                // Don't save an empty session
-                if !self.source().run_code.is_empty() {
-                    self.session.write()?;
-                    sh_println!("{}", "Saved current session!".green())?;
-                }
+    /// Sets the fork URL
+    fn fork(&mut self, url: Option<String>) -> Result<()> {
+        let Some(url) = url else {
+            self.source_mut().config.evm_opts.fork_url = None;
+            sh_println!("Now using local environment.")?;
+            return Ok(());
+        };
 
-                let mut new_session = match id.as_str() {
-                    "latest" => ChiselSession::latest(),
-                    id => ChiselSession::load(id),
-                }
-                .wrap_err("failed to load session")?;
-
-                new_session.session_source.build()?;
-                self.session = new_session;
-                sh_println!("Loaded Chisel session! (ID = {})", self.session.id.as_ref().unwrap())
-            }
-            ChiselCommand::ListSessions => match ChiselSession::list_sessions() {
-                Ok(sessions) => DispatchResult::CommandSuccess(Some(format!(
-                    "{}\n{}",
-                    format!("{CHISEL_CHAR} Chisel Sessions").cyan(),
-                    sessions
-                        .iter()
-                        .map(|(time, name)| {
-                            format!("{} - {}", format!("{time:?}").blue(), name)
-                        })
-                        .collect::<Vec<String>>()
-                        .join("\n")
-                ))),
-                Err(_) => DispatchResult::CommandFailed(Self::make_error(
-                    "No sessions found. Use the `!save` command to save a session.",
-                )),
-            },
-            ChiselCommand::Source => match self.format_source() {
-                Ok(formatted_source) => DispatchResult::CommandSuccess(Some(
-                    SolidityHelper::new().highlight(&formatted_source).into_owned(),
-                )),
-                Err(_) => {
-                    DispatchResult::CommandFailed(String::from("Failed to format session source"))
-                }
-            },
-            ChiselCommand::ClearCache => match ChiselSession::clear_cache() {
-                Ok(_) => {
-                    self.session.id = None;
-                    DispatchResult::CommandSuccess(Some(String::from("Cleared chisel cache!")))
-                }
-                Err(_) => DispatchResult::CommandFailed(Self::make_error(
-                    "Failed to clear cache! Check file permissions or disk space.",
-                )),
-            },
-            ChiselCommand::Fork { url } => {
-                let Some(url) = url else {
-                    self.source_mut().config.evm_opts.fork_url = None;
-                    sh_println!("Now using local environment.")?;
-                    return Ok(());
-                };
-
-                // If the argument is an RPC alias designated in the
-                // `[rpc_endpoints]` section of the `foundry.toml` within
-                // the pwd, use the URL matched to the key.
-                let endpoint = if let Some(endpoint) =
-                    self.source_mut().config.foundry_config.rpc_endpoints.get(&url)
-                {
-                    endpoint.clone()
-                } else {
-                    RpcEndpointUrl::Env(url.to_string()).into()
-                };
-                let fork_url = match endpoint.resolve().url() {
-                    Ok(fork_url) => fork_url,
-                    Err(e) => {
-                        return DispatchResult::CommandFailed(Self::make_error(format!(
-                            "\"{}\" ENV Variable not set!",
-                            e.var
-                        )))
-                    }
-                };
-
-                // Check validity of URL
-                if Url::parse(&fork_url).is_err() {
-                    return DispatchResult::CommandFailed(Self::make_error(
-                        "Invalid fork URL! Please provide a valid RPC endpoint URL.",
-                    ))
-                }
-
-                sh_println!("Set fork URL to {}", fork_url.yellow())?;
-
-                self.source_mut().config.evm_opts.fork_url = Some(fork_url);
-                // Clear the backend so that it is re-instantiated with the new fork
-                // upon the next execution of the session source.
-                self.source_mut().config.backend = None;
-
-                Ok(())
-            }
-            ChiselCommand::Traces => {
-                self.source_mut().config.traces = !self.source_mut().config.traces;
-                DispatchResult::CommandSuccess(Some(format!(
-                    "{} traces!",
-                    if self.source_mut().config.traces { "Enabled" } else { "Disabled" }
+        // If the argument is an RPC alias designated in the
+        // `[rpc_endpoints]` section of the `foundry.toml` within
+        // the pwd, use the URL matched to the key.
+        let endpoint = if let Some(endpoint) =
+            self.source_mut().config.foundry_config.rpc_endpoints.get(&url)
+        {
+            endpoint.clone()
+        } else {
+            RpcEndpointUrl::Env(url.to_string()).into()
+        };
+        let fork_url = match endpoint.resolve().url() {
+            Ok(fork_url) => fork_url,
+            Err(e) => {
+                return DispatchResult::CommandFailed(Self::make_error(format!(
+                    "\"{}\" ENV Variable not set!",
+                    e.var
                 )))
             }
-            ChiselCommand::Calldata { data } => {
-                // remove empty space, double quotes, and 0x prefix
-                let arg = data
-                    .as_deref()
-                    .map(|s| s.trim_matches(|c: char| c.is_whitespace() || c == '"' || c == '\''))
-                    .map(|s| s.strip_prefix("0x").unwrap_or(s))
-                    .unwrap_or("");
+        };
 
-                if arg.is_empty() {
-                    self.source_mut().config.calldata = None;
-                    return DispatchResult::CommandSuccess(Some("Calldata cleared.".to_string()))
-                }
+        // Check validity of URL
+        if Url::parse(&fork_url).is_err() {
+            return DispatchResult::CommandFailed(Self::make_error(
+                "Invalid fork URL! Please provide a valid RPC endpoint URL.",
+            ))
+        }
 
-                let calldata = hex::decode(arg);
-                match calldata {
-                    Ok(calldata) => {
-                        self.source_mut().config.calldata = Some(calldata);
-                        DispatchResult::CommandSuccess(Some(format!(
-                            "Set calldata to '{}'",
-                            arg.yellow()
-                        )))
-                    }
-                    Err(e) => DispatchResult::CommandFailed(Self::make_error(format!(
-                        "Invalid calldata: {e}"
-                    ))),
+        sh_println!("Set fork URL to {}", fork_url.yellow())?;
+
+        self.source_mut().config.evm_opts.fork_url = Some(fork_url);
+        // Clear the backend so that it is re-instantiated with the new fork
+        // upon the next execution of the session source.
+        self.source_mut().config.backend = None;
+
+        Ok(())
+    }
+
+    /// Toggles traces
+    fn toggle_traces(&mut self) -> Result<()> {
+        self.source_mut().config.traces = !self.source_mut().config.traces;
+        DispatchResult::CommandSuccess(Some(format!(
+            "{} traces!",
+            if self.source_mut().config.traces { "Enabled" } else { "Disabled" }
+        )))
+    }
+
+    /// Sets the calldata
+    fn set_calldata(&mut self, data: Option<String>) -> Result<()> {
+        // remove empty space, double quotes, and 0x prefix
+        let arg = data
+            .as_deref()
+            .map(|s| s.trim_matches(|c: char| c.is_whitespace() || c == '"' || c == '\''))
+            .map(|s| s.strip_prefix("0x").unwrap_or(s))
+            .unwrap_or("");
+
+        if arg.is_empty() {
+            self.source_mut().config.calldata = None;
+            return DispatchResult::CommandSuccess(Some("Calldata cleared.".to_string()))
+        }
+
+        let calldata = hex::decode(arg);
+        match calldata {
+            Ok(calldata) => {
+                self.source_mut().config.calldata = Some(calldata);
+                DispatchResult::CommandSuccess(Some(format!("Set calldata to '{}'", arg.yellow())))
+            }
+            Err(e) => {
+                DispatchResult::CommandFailed(Self::make_error(format!("Invalid calldata: {e}")))
+            }
+        }
+    }
+
+    /// Shows memory dump
+    async fn show_mem_dump(&mut self) -> Result<()> {
+        match self.source_mut().execute().await {
+            Ok((_, res)) => {
+                if let Some((stack, mem)) = res.state.as_ref() {
+                    // Print memory by word
+                    (0..mem.len()).step_by(32).for_each(|i| {
+                        let _ = sh_println!(
+                            "{}: {}",
+                            format!("[0x{:02x}:0x{:02x}]", i, i + 32).yellow(),
+                            hex::encode_prefixed(&mem[i..i + 32]).cyan()
+                        );
+                    });
+                    DispatchResult::CommandSuccess(None)
+                } else {
+                    DispatchResult::CommandFailed(Self::make_error("Run function is empty."))
                 }
             }
-            ChiselCommand::MemDump | ChiselCommand::StackDump => {
-                match self.source_mut().execute().await {
-                    Ok((_, res)) => {
-                        if let Some((stack, mem)) = res.state.as_ref() {
-                            if matches!(cmd, ChiselCommand::MemDump) {
-                                // Print memory by word
-                                (0..mem.len()).step_by(32).for_each(|i| {
-                                    let _ = sh_println!(
-                                        "{}: {}",
-                                        format!("[0x{:02x}:0x{:02x}]", i, i + 32).yellow(),
-                                        hex::encode_prefixed(&mem[i..i + 32]).cyan()
-                                    );
-                                });
-                            } else {
-                                // Print all stack items
-                                (0..stack.len()).rev().for_each(|i| {
-                                    let _ = sh_println!(
-                                        "{}: {}",
-                                        format!("[{}]", stack.len() - i - 1).yellow(),
-                                        format!("0x{:02x}", stack[i]).cyan()
-                                    );
-                                });
-                            }
-                            DispatchResult::CommandSuccess(None)
-                        } else {
-                            DispatchResult::CommandFailed(Self::make_error(
-                                "Run function is empty.",
-                            ))
-                        }
-                    }
-                    Err(e) => DispatchResult::CommandFailed(Self::make_error(e.to_string())),
+            Err(e) => DispatchResult::CommandFailed(Self::make_error(e.to_string())),
+        }
+    }
+
+    /// Shows stack dump
+    async fn show_stack_dump(&mut self) -> Result<()> {
+        match self.source_mut().execute().await {
+            Ok((_, res)) => {
+                if let Some((stack, _)) = res.state.as_ref() {
+                    // Print all stack items
+                    (0..stack.len()).rev().for_each(|i| {
+                        let _ = sh_println!(
+                            "{}: {}",
+                            format!("[{}]", stack.len() - i - 1).yellow(),
+                            format!("0x{:02x}", stack[i]).cyan()
+                        );
+                    });
+                    DispatchResult::CommandSuccess(None)
+                } else {
+                    DispatchResult::CommandFailed(Self::make_error("Run function is empty."))
                 }
             }
-            ChiselCommand::Export => {
-                // Check if the current session inherits `Script.sol` before exporting
+            Err(e) => DispatchResult::CommandFailed(Self::make_error(e.to_string())),
+        }
+    }
 
-                // Check if the pwd is a foundry project
-                if !Path::new("foundry.toml").exists() {
-                    return DispatchResult::CommandFailed(Self::make_error(
-                        "Must be in a foundry project to export source to script.",
-                    ));
-                }
+    /// Exports the current session
+    fn export(&self) -> Result<()> {
+        // Check if the current session inherits `Script.sol` before exporting
 
-                // Create "script" dir if it does not already exist.
-                if !Path::new("script").exists() {
-                    if let Err(e) = std::fs::create_dir_all("script") {
-                        return DispatchResult::CommandFailed(Self::make_error(e.to_string()))
-                    }
-                }
+        // Check if the pwd is a foundry project
+        if !Path::new("foundry.toml").exists() {
+            return DispatchResult::CommandFailed(Self::make_error(
+                "Must be in a foundry project to export source to script.",
+            ));
+        }
 
-                match self.format_source() {
-                    Ok(formatted_source) => {
-                        // Write session source to `script/REPL.s.sol`
-                        if let Err(e) =
-                            std::fs::write(PathBuf::from("script/REPL.s.sol"), formatted_source)
-                        {
-                            return DispatchResult::CommandFailed(Self::make_error(e.to_string()))
-                        }
-
-                        DispatchResult::CommandSuccess(Some(String::from(
-                            "Exported session source to script/REPL.s.sol!",
-                        )))
-                    }
-                    Err(_) => DispatchResult::CommandFailed(String::from(
-                        "Failed to format session source",
-                    )),
-                }
+        // Create "script" dir if it does not already exist.
+        if !Path::new("script").exists() {
+            if let Err(e) = std::fs::create_dir_all("script") {
+                return DispatchResult::CommandFailed(Self::make_error(e.to_string()))
             }
-            ChiselCommand::Fetch { addr, name } => {
-                let request_url = format!(
-                    "https://api.etherscan.io/api?module=contract&action=getabi&address={}{}",
-                    addr,
-                    if let Some(api_key) =
-                        self.source().config.foundry_config.etherscan_api_key.as_ref()
-                    {
-                        format!("&apikey={api_key}")
-                    } else {
-                        String::default()
-                    }
-                );
+        }
 
-                // TODO: Not the cleanest method of building a solidity interface from
-                // the ABI, but does the trick. Might want to pull this logic elsewhere
-                // and/or refactor at some point.
-                match reqwest::get(&request_url).await {
-                    Ok(response) => {
-                        let json = response.json::<EtherscanABIResponse>().await.unwrap();
-                        if json.status == "1" && json.result.is_some() {
-                            let abi = json.result.unwrap();
-                            let abi: serde_json::Result<JsonAbi> = serde_json::from_str(&abi);
-                            if let Ok(abi) = abi {
-                                let mut interface =
-                                    format!("// Interface of {addr}\ninterface {name} {{\n");
+        match self.format_source() {
+            Ok(formatted_source) => {
+                // Write session source to `script/REPL.s.sol`
+                if let Err(e) = std::fs::write(PathBuf::from("script/REPL.s.sol"), formatted_source)
+                {
+                    return DispatchResult::CommandFailed(Self::make_error(e.to_string()))
+                }
 
-                                // Add error definitions
-                                abi.errors().for_each(|err| {
-                                    interface.push_str(&format!(
-                                        "\terror {}({});\n",
-                                        err.name,
-                                        err.inputs
-                                            .iter()
-                                            .map(|input| {
-                                                let mut param_type = &input.ty;
-                                                // If complex type then add the name of custom type.
-                                                // see <https://github.com/foundry-rs/foundry/issues/6618>.
-                                                if input.is_complex_type() {
-                                                    if let Some(
-                                                        InternalType::Enum { contract: _, ty } |
-                                                        InternalType::Struct { contract: _, ty } |
-                                                        InternalType::Other { contract: _, ty },
-                                                    ) = &input.internal_type
-                                                    {
-                                                        param_type = ty;
-                                                    }
-                                                }
-                                                format!("{} {}", param_type, input.name)
-                                            })
-                                            .collect::<Vec<_>>()
-                                            .join(",")
-                                    ));
-                                });
-                                // Add event definitions
-                                abi.events().for_each(|event| {
-                                    interface.push_str(&format!(
-                                        "\tevent {}({});\n",
-                                        event.name,
-                                        event
-                                            .inputs
-                                            .iter()
-                                            .map(|input| {
-                                                let mut formatted = input.ty.to_string();
-                                                if input.indexed {
-                                                    formatted.push_str(" indexed");
-                                                }
-                                                formatted
-                                            })
-                                            .collect::<Vec<_>>()
-                                            .join(",")
-                                    ));
-                                });
-                                // Add function definitions
-                                abi.functions().for_each(|func| {
-                                    interface.push_str(&format!(
-                                        "\tfunction {}({}) external{}{};\n",
-                                        func.name,
-                                        func.inputs
-                                            .iter()
-                                            .map(|input| format_param!(input))
-                                            .collect::<Vec<_>>()
-                                            .join(","),
-                                        match func.state_mutability {
-                                            alloy_json_abi::StateMutability::Pure => " pure",
-                                            alloy_json_abi::StateMutability::View => " view",
-                                            alloy_json_abi::StateMutability::Payable => " payable",
-                                            _ => "",
-                                        },
-                                        if func.outputs.is_empty() {
-                                            String::default()
-                                        } else {
-                                            format!(
-                                                " returns ({})",
-                                                func.outputs
-                                                    .iter()
-                                                    .map(|output| format_param!(output))
-                                                    .collect::<Vec<_>>()
-                                                    .join(",")
-                                            )
+                DispatchResult::CommandSuccess(Some(String::from(
+                    "Exported session source to script/REPL.s.sol!",
+                )))
+            }
+            Err(_) => {
+                DispatchResult::CommandFailed(String::from("Failed to format session source"))
+            }
+        }
+    }
+
+    /// Fetches an interface from Etherscan
+    async fn fetch_interface(&mut self, addr: String, name: String) -> Result<()> {
+        let request_url = format!(
+            "https://api.etherscan.io/api?module=contract&action=getabi&address={}{}",
+            addr,
+            if let Some(api_key) = self.source().config.foundry_config.etherscan_api_key.as_ref() {
+                format!("&apikey={api_key}")
+            } else {
+                String::default()
+            }
+        );
+
+        // TODO: Not the cleanest method of building a solidity interface from
+        // the ABI, but does the trick. Might want to pull this logic elsewhere
+        // and/or refactor at some point.
+        match reqwest::get(&request_url).await {
+            Ok(response) => {
+                let json = response.json::<EtherscanABIResponse>().await.unwrap();
+                if json.status == "1" && json.result.is_some() {
+                    let abi = json.result.unwrap();
+                    let abi: serde_json::Result<JsonAbi> = serde_json::from_str(&abi);
+                    if let Ok(abi) = abi {
+                        let mut interface =
+                            format!("// Interface of {addr}\ninterface {name} {{\n");
+
+                        // Add error definitions
+                        abi.errors().for_each(|err| {
+                            interface.push_str(&format!(
+                                "\terror {}({});\n",
+                                err.name,
+                                err.inputs
+                                    .iter()
+                                    .map(|input| {
+                                        let mut param_type = &input.ty;
+                                        // If complex type then add the name of custom type.
+                                        // see <https://github.com/foundry-rs/foundry/issues/6618>.
+                                        if input.is_complex_type() {
+                                            if let Some(
+                                                InternalType::Enum { contract: _, ty } |
+                                                InternalType::Struct { contract: _, ty } |
+                                                InternalType::Other { contract: _, ty },
+                                            ) = &input.internal_type
+                                            {
+                                                param_type = ty;
+                                            }
                                         }
-                                    ));
-                                });
-                                // Close interface definition
-                                interface.push('}');
+                                        format!("{} {}", param_type, input.name)
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join(",")
+                            ));
+                        });
+                        // Add event definitions
+                        abi.events().for_each(|event| {
+                            interface.push_str(&format!(
+                                "\tevent {}({});\n",
+                                event.name,
+                                event
+                                    .inputs
+                                    .iter()
+                                    .map(|input| {
+                                        let mut formatted = input.ty.to_string();
+                                        if input.indexed {
+                                            formatted.push_str(" indexed");
+                                        }
+                                        formatted
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join(",")
+                            ));
+                        });
+                        // Add function definitions
+                        abi.functions().for_each(|func| {
+                            interface.push_str(&format!(
+                                "\tfunction {}({}) external{}{};\n",
+                                func.name,
+                                func.inputs
+                                    .iter()
+                                    .map(|input| format_param!(input))
+                                    .collect::<Vec<_>>()
+                                    .join(","),
+                                match func.state_mutability {
+                                    alloy_json_abi::StateMutability::Pure => " pure",
+                                    alloy_json_abi::StateMutability::View => " view",
+                                    alloy_json_abi::StateMutability::Payable => " payable",
+                                    _ => "",
+                                },
+                                if func.outputs.is_empty() {
+                                    String::default()
+                                } else {
+                                    format!(
+                                        " returns ({})",
+                                        func.outputs
+                                            .iter()
+                                            .map(|output| format_param!(output))
+                                            .collect::<Vec<_>>()
+                                            .join(",")
+                                    )
+                                }
+                            ));
+                        });
+                        // Close interface definition
+                        interface.push('}');
 
-                                // Add the interface to the source outright - no need to verify
-                                // syntax via compilation and/or
-                                // parsing.
-                                self.source_mut().add_global_code(&interface);
+                        // Add the interface to the source outright - no need to verify
+                        // syntax via compilation and/or
+                        // parsing.
+                        self.source_mut().add_global_code(&interface);
 
-                                DispatchResult::CommandSuccess(Some(format!(
-                                    "Added {addr}'s interface to source as `{name}`"
-                                )))
-                            } else {
-                                DispatchResult::CommandFailed(Self::make_error(
-                                    "Contract is not verified!",
-                                ))
-                            }
-                        } else if let Some(error_msg) = json.result {
-                            DispatchResult::CommandFailed(Self::make_error(format!(
-                                "Could not fetch interface - \"{error_msg}\""
-                            )))
-                        } else {
-                            DispatchResult::CommandFailed(Self::make_error(format!(
-                                "Could not fetch interface - \"{}\"",
-                                json.message
-                            )))
-                        }
+                        DispatchResult::CommandSuccess(Some(format!(
+                            "Added {addr}'s interface to source as `{name}`"
+                        )))
+                    } else {
+                        DispatchResult::CommandFailed(Self::make_error("Contract is not verified!"))
                     }
-                    Err(e) => DispatchResult::CommandFailed(Self::make_error(format!(
-                        "Failed to communicate with Etherscan API: {e}"
-                    ))),
+                } else if let Some(error_msg) = json.result {
+                    DispatchResult::CommandFailed(Self::make_error(format!(
+                        "Could not fetch interface - \"{error_msg}\""
+                    )))
+                } else {
+                    DispatchResult::CommandFailed(Self::make_error(format!(
+                        "Could not fetch interface - \"{}\"",
+                        json.message
+                    )))
                 }
             }
-            ChiselCommand::Exec { command, args } => {
-                let mut cmd = Command::new(command);
-                cmd.args(args);
-                match cmd.output() {
-                    Ok(output) => {
-                        std::io::stdout().write_all(&output.stdout).unwrap();
-                        std::io::stdout().write_all(&output.stderr).unwrap();
-                        DispatchResult::CommandSuccess(None)
-                    }
-                    Err(e) => DispatchResult::CommandFailed(e.to_string()),
-                }
+            Err(e) => DispatchResult::CommandFailed(Self::make_error(format!(
+                "Failed to communicate with Etherscan API: {e}"
+            ))),
+        }
+    }
+
+    /// Executes a command
+    fn exec_command(&self, command: String, args: Vec<String>) -> Result<()> {
+        let mut cmd = Command::new(command);
+        cmd.args(args);
+        match cmd.output() {
+            Ok(output) => {
+                std::io::stdout().write_all(&output.stdout).unwrap();
+                std::io::stdout().write_all(&output.stderr).unwrap();
+                DispatchResult::CommandSuccess(None)
             }
-            ChiselCommand::Edit => {
-                // create a temp file with the content of the run code
-                let mut temp_file_path = std::env::temp_dir();
-                temp_file_path.push("chisel-tmp.sol");
-                let result = std::fs::File::create(&temp_file_path)
-                    .map(|mut file| file.write_all(self.source().run_code.as_bytes()));
-                if let Err(e) = result {
-                    return DispatchResult::CommandFailed(format!(
-                        "Could not write to a temporary file: {e}"
-                    ))
-                }
+            Err(e) => DispatchResult::CommandFailed(e.to_string()),
+        }
+    }
 
-                // open the temp file with the editor
-                let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
-                let mut cmd = Command::new(editor);
-                cmd.arg(&temp_file_path);
+    /// Edits the current session
+    async fn edit_session(&mut self) -> Result<()> {
+        // create a temp file with the content of the run code
+        let mut temp_file_path = std::env::temp_dir();
+        temp_file_path.push("chisel-tmp.sol");
+        let result = std::fs::File::create(&temp_file_path)
+            .map(|mut file| file.write_all(self.source().run_code.as_bytes()));
+        if let Err(e) = result {
+            return DispatchResult::CommandFailed(format!(
+                "Could not write to a temporary file: {e}"
+            ))
+        }
 
-                match cmd.status() {
-                    Ok(status) => {
-                        if !status.success() {
-                            if let Some(status_code) = status.code() {
-                                return DispatchResult::CommandFailed(format!(
-                                    "Editor exited with status {status_code}"
-                                ))
-                            } else {
-                                return DispatchResult::CommandFailed(
-                                    "Editor exited without a status code".to_string(),
-                                )
-                            }
-                        }
-                    }
-                    Err(_) => {
+        // open the temp file with the editor
+        let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+        let mut cmd = Command::new(editor);
+        cmd.arg(&temp_file_path);
+
+        match cmd.status() {
+            Ok(status) => {
+                if !status.success() {
+                    if let Some(status_code) = status.code() {
+                        return DispatchResult::CommandFailed(format!(
+                            "Editor exited with status {status_code}"
+                        ))
+                    } else {
                         return DispatchResult::CommandFailed(
                             "Editor exited without a status code".to_string(),
                         )
                     }
                 }
-
-                let mut new_session_source = self.source().clone();
-                if let Ok(edited_code) = std::fs::read_to_string(temp_file_path) {
-                    new_session_source.clear_run();
-                    new_session_source.add_run_code(&edited_code);
-                } else {
-                    return DispatchResult::CommandFailed(
-                        "Could not read the edited file".to_string(),
-                    )
-                }
-
-                // if the editor exited successfully, try to compile the new code
-                match new_session_source.execute().await {
-                    Ok((_, mut res)) => {
-                        let failed = !res.success;
-                        if new_session_source.config.traces || failed {
-                            if let Ok(decoder) =
-                                Self::decode_traces(&new_session_source.config, &mut res).await
-                            {
-                                if let Err(e) = Self::show_traces(&decoder, &mut res).await {
-                                    return DispatchResult::CommandFailed(e.to_string())
-                                };
-
-                                // Show console logs, if there are any
-                                let decoded_logs = decode_console_logs(&res.logs);
-                                if !decoded_logs.is_empty() {
-                                    let _ = sh_println!("{}", "Logs:".green());
-                                    for log in decoded_logs {
-                                        let _ = sh_println!("  {log}");
-                                    }
-                                }
-                            }
-
-                            if failed {
-                                // If the contract execution failed, continue on without
-                                // updating the source.
-                                return DispatchResult::CommandFailed(Self::make_error(
-                                    "Failed to execute edited contract!",
-                                ));
-                            }
-                        }
-
-                        // the code could be compiled, save it
-                        *self.source_mut() = new_session_source;
-                        DispatchResult::CommandSuccess(Some(String::from(
-                            "Successfully edited `run()` function's body!",
-                        )))
-                    }
-                    Err(_) => {
-                        DispatchResult::CommandFailed("The code could not be compiled".to_string())
-                    }
-                }
             }
-            ChiselCommand::RawStack { var } => {
-                // Store the variable that we want to inspect
-                let to_inspect = var.as_str();
-
-                // Get a mutable reference to the session source
-                let source = self.source_mut();
-
-                // Copy the variable's stack contents into a bytes32 variable without updating
-                // the current session source.
-                let line = format!("bytes32 __raw__; assembly {{ __raw__ := {to_inspect} }}");
-                if let Ok((new_source, _)) = source.clone_with_new_line(line) {
-                    match new_source.inspect("__raw__").await {
-                        Ok((_, Some(res))) => return DispatchResult::CommandSuccess(Some(res)),
-                        Ok((_, None)) => {}
-                        Err(e) => return DispatchResult::CommandFailed(Self::make_error(e)),
-                    }
-                }
-
-                DispatchResult::CommandFailed(
-                    "Variable must exist within `run()` function.".to_string(),
+            Err(_) => {
+                return DispatchResult::CommandFailed(
+                    "Editor exited without a status code".to_string(),
                 )
             }
         }
+
+        let mut new_session_source = self.source().clone();
+        if let Ok(edited_code) = std::fs::read_to_string(temp_file_path) {
+            new_session_source.clear_run();
+            new_session_source.add_run_code(&edited_code);
+        } else {
+            return DispatchResult::CommandFailed("Could not read the edited file".to_string())
+        }
+
+        // if the editor exited successfully, try to compile the new code
+        match new_session_source.execute().await {
+            Ok((_, mut res)) => {
+                let failed = !res.success;
+                if new_session_source.config.traces || failed {
+                    if let Ok(decoder) =
+                        Self::decode_traces(&new_session_source.config, &mut res).await
+                    {
+                        if let Err(e) = Self::show_traces(&decoder, &mut res).await {
+                            return DispatchResult::CommandFailed(e.to_string())
+                        };
+
+                        // Show console logs, if there are any
+                        let decoded_logs = decode_console_logs(&res.logs);
+                        if !decoded_logs.is_empty() {
+                            let _ = sh_println!("{}", "Logs:".green());
+                            for log in decoded_logs {
+                                let _ = sh_println!("  {log}");
+                            }
+                        }
+                    }
+
+                    if failed {
+                        // If the contract execution failed, continue on without
+                        // updating the source.
+                        return DispatchResult::CommandFailed(Self::make_error(
+                            "Failed to execute edited contract!",
+                        ));
+                    }
+                }
+
+                // the code could be compiled, save it
+                *self.source_mut() = new_session_source;
+                DispatchResult::CommandSuccess(Some(String::from(
+                    "Successfully edited `run()` function's body!",
+                )))
+            }
+            Err(_) => DispatchResult::CommandFailed("The code could not be compiled".to_string()),
+        }
     }
 
+    /// Shows raw stack contents
+    async fn show_raw_stack(&mut self, var: String) -> Result<()> {
+        // Store the variable that we want to inspect
+        let to_inspect = var.as_str();
+
+        // Get a mutable reference to the session source
+        let source = self.source_mut();
+
+        // Copy the variable's stack contents into a bytes32 variable without updating
+        // the current session source.
+        let line = format!("bytes32 __raw__; assembly {{ __raw__ := {to_inspect} }}");
+        if let Ok((new_source, _)) = source.clone_with_new_line(line) {
+            match new_source.inspect("__raw__").await {
+                Ok((_, Some(res))) => return DispatchResult::CommandSuccess(Some(res)),
+                Ok((_, None)) => {}
+                Err(e) => return DispatchResult::CommandFailed(Self::make_error(e)),
+            }
+        }
+
+        DispatchResult::CommandFailed("Variable must exist within `run()` function.".to_string())
+    }
+}
+
+impl ChiselDispatcher {
     /// Dispatches an input as a command via [Self::dispatch_command] or as a Solidity snippet.
     pub async fn dispatch(&mut self, mut input: &str) -> DispatchResult {
         // Check if the input is a builtin command.
