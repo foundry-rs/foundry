@@ -241,7 +241,7 @@ impl TxCorpusManager {
             let rng = test_runner.rng();
 
             // Flush oldest corpus mutated more than configured max mutations.
-            let should_evict = self.in_memory_corpus.len() > self.corpus_min_size;
+            let should_evict = self.in_memory_corpus.len() > self.corpus_min_size.max(1);
             if should_evict {
                 if let Some(index) = self
                     .in_memory_corpus
@@ -269,114 +269,110 @@ impl TxCorpusManager {
                 }
             }
 
-            if self.in_memory_corpus.len() > 1 {
-                let corpus_len = self.in_memory_corpus.len();
-                let primary = &self.in_memory_corpus[rng.gen_range(0..corpus_len)];
-                let secondary = &self.in_memory_corpus[rng.gen_range(0..corpus_len)];
+            let corpus_len = self.in_memory_corpus.len();
+            let primary = &self.in_memory_corpus[rng.gen_range(0..corpus_len)];
+            let secondary = &self.in_memory_corpus[rng.gen_range(0..corpus_len)];
 
-                // TODO rounds of mutations on elements?
-                match rng.gen_range(0..=5) {
-                    // TODO expose config and add tests
-                    // splice
-                    0 => {
-                        trace!(target: "corpus", "splice {} and {}", primary.uuid, secondary.uuid);
-                        if should_evict {
-                            self.current_mutated = Some(primary.uuid);
-                        }
-                        let start1 = rng.gen_range(0..primary.tx_seq.len());
-                        let end1 = rng.gen_range(start1..primary.tx_seq.len());
+            // TODO rounds of mutations on elements?
+            match rng.gen_range(0..=5) {
+                // TODO expose config and add tests
+                // splice
+                0 => {
+                    trace!(target: "corpus", "splice {} and {}", primary.uuid, secondary.uuid);
+                    if should_evict {
+                        self.current_mutated = Some(primary.uuid);
+                    }
+                    let start1 = rng.gen_range(0..primary.tx_seq.len());
+                    let end1 = rng.gen_range(start1..primary.tx_seq.len());
 
-                        let start2 = rng.gen_range(0..secondary.tx_seq.len());
-                        let end2 = rng.gen_range(start2..secondary.tx_seq.len());
+                    let start2 = rng.gen_range(0..secondary.tx_seq.len());
+                    let end2 = rng.gen_range(start2..secondary.tx_seq.len());
 
-                        for tx in primary.tx_seq.iter().take(end1).skip(start1) {
-                            new_seq.push(tx.clone());
-                        }
-                        for tx in secondary.tx_seq.iter().take(end2).skip(start2) {
-                            new_seq.push(tx.clone());
-                        }
+                    for tx in primary.tx_seq.iter().take(end1).skip(start1) {
+                        new_seq.push(tx.clone());
                     }
-                    // repeat
-                    1 => {
-                        let corpus = if rng.gen_bool(0.5) { primary } else { secondary };
-                        trace!(target: "corpus", "repeat {}", corpus.uuid);
-                        if should_evict {
-                            self.current_mutated = Some(corpus.uuid);
-                        }
-                        new_seq = corpus.tx_seq.clone();
-                        let start = rng.gen_range(0..corpus.tx_seq.len());
-                        let end = rng.gen_range(start..corpus.tx_seq.len());
-                        let item_idx = rng.gen_range(0..corpus.tx_seq.len());
-                        let item = &corpus.tx_seq[item_idx];
-                        for i in start..end {
-                            new_seq[i] = item.clone();
-                        }
+                    for tx in secondary.tx_seq.iter().take(end2).skip(start2) {
+                        new_seq.push(tx.clone());
                     }
-                    // interleave
-                    2 => {
-                        trace!(target: "corpus", "interleave {} with {}", primary.uuid, secondary.uuid);
-                        if should_evict {
-                            self.current_mutated = Some(primary.uuid);
-                        }
-                        for (tx1, tx2) in primary.tx_seq.iter().zip(secondary.tx_seq.iter()) {
-                            // chunks?
-                            let tx = if rng.gen_bool(0.5) { tx1.clone() } else { tx2.clone() };
-                            new_seq.push(tx);
-                        }
+                }
+                // repeat
+                1 => {
+                    let corpus = if rng.gen_bool(0.5) { primary } else { secondary };
+                    trace!(target: "corpus", "repeat {}", corpus.uuid);
+                    if should_evict {
+                        self.current_mutated = Some(corpus.uuid);
                     }
-                    // 3. Overwrite prefix with new sequence.
-                    3 => {
-                        let corpus = if rng.gen_bool(0.5) { primary } else { secondary };
-                        trace!(target: "corpus", "overwrite prefix of {}", corpus.uuid);
-                        if should_evict {
-                            self.current_mutated = Some(corpus.uuid);
-                        }
-                        new_seq = corpus.tx_seq.clone();
-                        for i in 0..rng.gen_range(0..=new_seq.len()) {
-                            new_seq[i] = self.new_tx(test_runner)?;
-                        }
+                    new_seq = corpus.tx_seq.clone();
+                    let start = rng.gen_range(0..corpus.tx_seq.len());
+                    let end = rng.gen_range(start..corpus.tx_seq.len());
+                    let item_idx = rng.gen_range(0..corpus.tx_seq.len());
+                    let item = &corpus.tx_seq[item_idx];
+                    for i in start..end {
+                        new_seq[i] = item.clone();
                     }
-                    // 4. Overwrite suffix with new sequence.
-                    4 => {
-                        let corpus = if rng.gen_bool(0.5) { primary } else { secondary };
-                        trace!(target: "corpus", "overwrite suffix of {}", corpus.uuid);
-                        if should_evict {
-                            self.current_mutated = Some(corpus.uuid);
-                        }
-                        new_seq = corpus.tx_seq.clone();
-                        for i in
-                            new_seq.len() - rng.gen_range(0..new_seq.len())..corpus.tx_seq.len()
-                        {
-                            new_seq[i] = self.new_tx(test_runner)?;
-                        }
+                }
+                // interleave
+                2 => {
+                    trace!(target: "corpus", "interleave {} with {}", primary.uuid, secondary.uuid);
+                    if should_evict {
+                        self.current_mutated = Some(primary.uuid);
                     }
-                    // 5. Select idx to mutate and change its args according to its ABI.
-                    5 => {
-                        let targets = test.targeted_contracts.targets.lock();
-                        let corpus = if rng.gen_bool(0.5) { primary } else { secondary };
-                        trace!(target: "corpus", "ABI mutate args of {}", corpus.uuid);
-                        if should_evict {
-                            self.current_mutated = Some(corpus.uuid);
-                        }
-                        new_seq = corpus.tx_seq.clone();
+                    for (tx1, tx2) in primary.tx_seq.iter().zip(secondary.tx_seq.iter()) {
+                        // chunks?
+                        let tx = if rng.gen_bool(0.5) { tx1.clone() } else { tx2.clone() };
+                        new_seq.push(tx);
+                    }
+                }
+                // 3. Overwrite prefix with new sequence.
+                3 => {
+                    let corpus = if rng.gen_bool(0.5) { primary } else { secondary };
+                    trace!(target: "corpus", "overwrite prefix of {}", corpus.uuid);
+                    if should_evict {
+                        self.current_mutated = Some(corpus.uuid);
+                    }
+                    new_seq = corpus.tx_seq.clone();
+                    for i in 0..rng.gen_range(0..=new_seq.len()) {
+                        new_seq[i] = self.new_tx(test_runner)?;
+                    }
+                }
+                // 4. Overwrite suffix with new sequence.
+                4 => {
+                    let corpus = if rng.gen_bool(0.5) { primary } else { secondary };
+                    trace!(target: "corpus", "overwrite suffix of {}", corpus.uuid);
+                    if should_evict {
+                        self.current_mutated = Some(corpus.uuid);
+                    }
+                    new_seq = corpus.tx_seq.clone();
+                    for i in new_seq.len() - rng.gen_range(0..new_seq.len())..corpus.tx_seq.len() {
+                        new_seq[i] = self.new_tx(test_runner)?;
+                    }
+                }
+                // 5. Select idx to mutate and change its args according to its ABI.
+                5 => {
+                    let targets = test.targeted_contracts.targets.lock();
+                    let corpus = if rng.gen_bool(0.5) { primary } else { secondary };
+                    trace!(target: "corpus", "ABI mutate args of {}", corpus.uuid);
+                    if should_evict {
+                        self.current_mutated = Some(corpus.uuid);
+                    }
+                    new_seq = corpus.tx_seq.clone();
 
-                        let idx = rng.gen_range(0..new_seq.len());
-                        let tx = new_seq.get_mut(idx).unwrap();
-                        if let (_, Some(function)) = targets.fuzzed_artifacts(tx) {
-                            tx.call_details.calldata =
-                                fuzz_calldata(function.clone(), &FuzzFixtures::default())
-                                    .new_tree(test_runner)
-                                    .map_err(|_| eyre!("Could not generate case"))?
-                                    .current();
-                        }
+                    let idx = rng.gen_range(0..new_seq.len());
+                    let tx = new_seq.get_mut(idx).unwrap();
+                    if let (_, Some(function)) = targets.fuzzed_artifacts(tx) {
+                        tx.call_details.calldata =
+                            fuzz_calldata(function.clone(), &FuzzFixtures::default())
+                                .new_tree(test_runner)
+                                .map_err(|_| eyre!("Could not generate case"))?
+                                .current();
                     }
-                    _ => {
-                        unreachable!()
-                    }
-                };
+                }
+                _ => {
+                    unreachable!()
+                }
+            };
 
-                trace!(target: "corpus", "new sequence generated {} from corpus {:?}", new_seq.len(), self.current_mutated);
-            }
+            trace!(target: "corpus", "new sequence generated {} from corpus {:?}", new_seq.len(), self.current_mutated);
         }
 
         // Make sure sequence contains at least one tx to start fuzzing from.
