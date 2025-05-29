@@ -15,7 +15,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use solar_parse::interface::diagnostics::EmittedDiagnostics;
 use solar_sema::{hir, interface::Session, ty::Gcx};
-use std::{fmt, path::PathBuf};
+use std::{cell::OnceCell, fmt, path::PathBuf};
 use walkdir::WalkDir;
 
 /// The minimum Solidity version of the `Vm` interface.
@@ -102,7 +102,7 @@ pub struct SessionSource {
 
     /// The generated output
     #[serde(skip)]
-    pub output: Option<GeneratedOutput>,
+    output: OnceCell<GeneratedOutput>,
 }
 
 impl Clone for SessionSource {
@@ -115,7 +115,7 @@ impl Clone for SessionSource {
             contract_code: self.contract_code.clone(),
             run_code: self.run_code.clone(),
             config: self.config.clone(),
-            output: None,
+            output: Default::default(),
         }
     }
 }
@@ -150,7 +150,7 @@ impl SessionSource {
             global_code: Default::default(),
             contract_code: Default::default(),
             run_code: Default::default(),
-            output: None,
+            output: Default::default(),
         }
     }
 
@@ -194,7 +194,7 @@ impl SessionSource {
     pub fn add_global_code(&mut self, content: &str) -> &mut Self {
         self.global_code.push_str(content.trim());
         self.global_code.push('\n');
-        self.output = None;
+        self.clear_output();
         self
     }
 
@@ -202,7 +202,7 @@ impl SessionSource {
     pub fn add_contract_code(&mut self, content: &str) -> &mut Self {
         self.contract_code.push_str(content.trim());
         self.contract_code.push('\n');
-        self.output = None;
+        self.clear_output();
         self
     }
 
@@ -210,37 +210,41 @@ impl SessionSource {
     pub fn add_run_code(&mut self, content: &str) -> &mut Self {
         self.run_code.push_str(content.trim());
         self.run_code.push('\n');
-        self.output = None;
+        self.clear_output();
         self
     }
 
     /// Clears all source code.
     pub fn clear(&mut self) {
-        self.global_code.clear();
-        self.contract_code.clear();
-        self.run_code.clear();
-        self.output = None;
+        String::clear(&mut self.global_code);
+        String::clear(&mut self.contract_code);
+        String::clear(&mut self.run_code);
+        self.clear_output();
     }
 
     /// Clear the global-level code .
     pub fn clear_global(&mut self) -> &mut Self {
         String::clear(&mut self.global_code);
-        self.output = None;
+        self.clear_output();
         self
     }
 
     /// Clear the contract-level code .
     pub fn clear_contract(&mut self) -> &mut Self {
         String::clear(&mut self.contract_code);
-        self.output = None;
+        self.clear_output();
         self
     }
 
     /// Clear the `run()` function code.
     pub fn clear_run(&mut self) -> &mut Self {
         String::clear(&mut self.run_code);
-        self.output = None;
+        self.clear_output();
         self
+    }
+
+    fn clear_output(&mut self) {
+        self.output.take();
     }
 
     /// Builds a [`SolcInput`] containing the source.
@@ -291,13 +295,15 @@ impl SessionSource {
         Ok(compiled)
     }
 
-    /// Compiles the source.
-    pub fn build(&mut self) -> Result<&GeneratedOutput> {
-        let compiler_output = self.compile()?;
-        let intermediate_output = self.analyze()?;
-        let generated_output =
-            GeneratedOutput { intermediate: intermediate_output, compiler: compiler_output };
-        Ok(self.output.insert(generated_output))
+    /// Compiles the source if necessary.
+    pub fn build(&self) -> Result<&GeneratedOutput> {
+        if let Some(output) = self.output.get() {
+            return Ok(output);
+        }
+        let compiler = self.compile()?;
+        let intermediate = self.analyze()?;
+        let output = GeneratedOutput { intermediate, compiler };
+        Ok(self.output.get_or_init(|| output))
     }
 
     /// Construct the source as a valid Forge script.

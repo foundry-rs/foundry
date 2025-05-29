@@ -1,8 +1,5 @@
 //! Chisel is a fast, utilitarian, and verbose Solidity REPL.
 
-// TODO(dani): remove async from all possible functions; mainly `execute` and bubble up
-// TODO(dani): see if we can use &self in source with OnceCell
-
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 

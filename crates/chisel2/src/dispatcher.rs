@@ -149,7 +149,7 @@ impl ChiselDispatcher {
         }
 
         // Create new source with exact input appended and parse
-        let (mut new_source, do_execute) = source.clone_with_new_line(input.to_string())?;
+        let (new_source, do_execute) = source.clone_with_new_line(input.to_string())?;
 
         // TODO: Cloning / parsing the session source twice on non-inspected inputs kinda sucks.
         // Should change up how this works.
@@ -310,7 +310,7 @@ impl ChiselDispatcher {
             sh_println!("{}", "Saved current session!".green())?;
         }
 
-        let mut new_session = match id {
+        let new_session = match id {
             "latest" => ChiselSession::latest(),
             id => ChiselSession::load(id),
         }

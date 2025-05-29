@@ -188,10 +188,7 @@ impl SessionSource {
 
         // If abi-encoding the input failed, check whether it is an event
         if let Some(err) = err {
-            let output = source_without_inspector
-                .output
-                .as_ref()
-                .ok_or_else(|| eyre::eyre!("Could not find generated output!"))?;
+            let output = source_without_inspector.build()?;
             if let Some(event) = output.intermediate.get_event(input) {
                 let formatted = format_event_definition(output.intermediate.gcx(), event)?;
                 return Ok((false, Some(formatted)))
