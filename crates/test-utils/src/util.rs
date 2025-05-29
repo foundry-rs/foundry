@@ -1025,7 +1025,7 @@ fn test_redactions() -> snapbox::Redactions {
             ),
             (
                 "[RESOLC_VERSION]",
-                r"Resolc (v)?\d+\.\d+\.\d+(-[a-zA-Z0-9\.]+)?, Solc (v)?\d+.\d+.\d+",
+                r"Resolc (v)?\d+\.\d+\.\d+(-[a-zA-Z0-9\.]+)?(\+([\dA-Za-z-]+(\.[\dA-Za-z-]*)*))?, Solc (v)?\d+.\d+.\d+",
             ),
         ];
         for (placeholder, re) in redactions {
