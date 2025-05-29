@@ -3178,8 +3178,8 @@ impl TransactionValidator for Backend {
                 // 1. no gas cost check required since already have prepaid gas from L1
                 // 2. increment account balance by deposited amount before checking for sufficient
                 //    funds `tx.value <= existing account value + deposited value`
-                if value > account.balance + U256::from(deposit_tx.mint.unwrap_or_default()) {
-                    warn!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance + U256::from(deposit_tx.mint.unwrap_or_default()), value, *pending.sender());
+                if value > account.balance + U256::from(deposit_tx.mint) {
+                    warn!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance + U256::from(deposit_tx.mint), value, *pending.sender());
                     return Err(InvalidTransactionError::InsufficientFunds);
                 }
             }

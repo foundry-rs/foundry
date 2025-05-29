@@ -10,8 +10,7 @@ declare_forge_lint!(
     MIXED_CASE_FUNCTION,
     Severity::Info,
     "mixed-case-function",
-    "function names should use mixedCase",
-    "https://docs.soliditylang.org/en/latest/style-guide.html#function-names"
+    "function names should use mixedCase"
 );
 
 impl<'ast> EarlyLintPass<'ast> for MixedCaseFunction {
