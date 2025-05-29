@@ -22,8 +22,7 @@ use foundry_common::sh_println;
 use foundry_config::Config;
 use serde::Deserialize;
 
-// todo abhi: revert this
-pub(crate) static CONFIG_API_URL: &str = "http://localhost:3000/api/v1/config";
+pub(crate) static CONFIG_API_URL: &str = "https://app.enscribe.xyz/api/v1/config";
 pub(crate) static AUTO_GEN_NAME_API_URL: &str = "https://app.enscribe.xyz/api/v1/name";
 
 const BASE: u64 = 8453;
@@ -409,7 +408,7 @@ mod tests {
         assert_eq!(config.name_wrapper_addr, "0xWrapper");
         assert_eq!(config.enscribe_addr, "0xEnscribe");
         assert_eq!(config.parent_name, "ens.eth");
-        
+
         unsafe {
             env::remove_var("REVERSE_REGISTRAR_ADDR");
             env::remove_var("ENS_REGISTRY_ADDR");

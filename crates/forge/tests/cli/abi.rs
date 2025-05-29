@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments)]
 use alloy_sol_types::sol;
 
 sol!(
@@ -40,30 +41,6 @@ sol!(
     #[sol(rpc)]
     ReverseRegistrar,
     "test-data/ReverseRegistrar.json"
-);
-
-sol!(
-    #[sol(rpc)]
-    StaticMetadataService,
-    "test-data/StaticMetadataService.json"
-);
-
-sol!(
-    #[sol(rpc)]
-    LegacyENSRegistry,
-    "test-data/LegacyENSRegistry.json"
-);
-
-sol!(
-    #[sol(rpc)]
-    Root,
-    "test-data/Root.json"
-);
-
-sol!(
-    #[sol(rpc)]
-    LegacyETHRegistrarController,
-    "test-data/LegacyETHRegistrarController.json"
 );
 
 pub mod price_oracle {

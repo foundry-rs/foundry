@@ -4,13 +4,12 @@ use crate::{
     abi::{
         price_oracle::StablePriceOracle, BaseRegistrarImplementation, DummyOracle, ENSRegistry,
         ETHRegistrarController, NameWrapper, PublicResolver, ReverseRegistrar,
-        StaticMetadataService,
     },
     constants::TEMPLATE_CONTRACT,
 };
 use alloy_ens::namehash;
-use alloy_network::EthereumWallet;
 use alloy_hardforks::EthereumHardfork;
+use alloy_network::EthereumWallet;
 use alloy_primitives::{address, hex, keccak256, Address, Bytes, B256, I256, U256};
 use alloy_rpc_types::anvil::MineOptions;
 use anvil::{spawn, NodeConfig};
@@ -2897,7 +2896,6 @@ Warning: Target directory is not empty, but `--force` was specified
 
     // deploy ENSRegistry
     let ens_registry = ENSRegistry::deploy(&provider).await.unwrap();
-    println!("ens registry addr is: {}", ens_registry.address().to_owned());
 
     let eth_namehash = namehash("eth");
     // Deploy BaseRegistrarImplementation & set owner of eth tld to base-registrar via the ens
@@ -2909,13 +2907,12 @@ Warning: Target directory is not empty, but `--force` was specified
     )
     .await
     .unwrap();
-    println!("base registrar addr is: {}", base_registrar_impl.address().to_owned());
 
     // Deploy ReverseRegistrar
     let rev_registrar =
         match ReverseRegistrar::deploy(&provider, ens_registry.address().to_owned()).await {
             Ok(re) => re,
-            Err(e) => panic!("failed to deploy ReverseRegistrar: {}", e),
+            Err(e) => panic!("failed to deploy ReverseRegistrar: {e}"),
         };
 
     let _receipt = ens_registry
@@ -2963,9 +2960,6 @@ Warning: Target directory is not empty, but `--force` was specified
     )
     .await
     .unwrap();
-
-    // let meta_service =
-    //     StaticMetadataService::deploy(&provider, "https://ens.domains".to_owned()).await.unwrap();
 
     // Deploy ETHRegistrarController
     let eth_registrar_controller = ETHRegistrarController::deploy(
@@ -3111,10 +3105,6 @@ Warning: Target directory is not empty, but `--force` was specified
             r#"
 import "forge-std/Script.sol";
 import "@openzeppelin/openzeppelin-contracts/contracts/access/Ownable.sol";
-import "@ensdomains/ens-contracts/contracts/registry/ENSRegistry.sol";
-import "@ensdomains/ens-contracts/contracts/resolvers/PublicResolver.sol";
-import "@ensdomains/ens-contracts/contracts/ethregistrar/BaseRegistrarImplementation.sol";
-import "@ensdomains/ens-contracts/contracts/ethregistrar/ETHRegistrarController.sol";
 
 contract HelloWorld is Ownable {
     string greetings;
@@ -3155,27 +3145,12 @@ contract HelloWorldScript is Script {
         out = "out"
         libs = ["lib"]
         remappings = [
-            '@ensdomains/ens-contracts/=lib/ens-contracts/',
-            '@ensdomains/buffer/=lib/buffer/',
             '@openzeppelin/openzeppelin-contracts/=lib/openzeppelin-contracts/',
             '@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/'
         ]
         "#,
     );
 
-    // install dependencies
-    cmd.forge_fuse().args(["install", "ensdomains/buffer"]).assert_success().stdout_eq(str![[r#"
-Installing buffer in [..] (url: Some("https://github.com/ensdomains/buffer"), tag: None)
-    Installed buffer
-
-"#]]);
-    cmd.forge_fuse().args(["install", "ensdomains/ens-contracts@v1.4.0"]).assert_success().stdout_eq(
-                str![[r#"
-Installing ens-contracts in [..] (url: Some("https://github.com/ensdomains/ens-contracts"), tag: Some("v1.4.0"))
-    Installed ens-contracts [..]
-
-"#]],
-            );
     cmd.forge_fuse().args(["install", "openzeppelin/openzeppelin-contracts@v4.9.6"]).assert_success().stdout_eq(
                 str![[r#"
 Installing openzeppelin-contracts in [..] (url: Some("https://github.com/openzeppelin/openzeppelin-contracts"), tag: Some("v4.9.6"))
@@ -3183,14 +3158,6 @@ Installing openzeppelin-contracts in [..] (url: Some("https://github.com/openzep
 
 "#]],
             );
-    // build
-    //      cmd.forge_fuse().args(["build", "--silent"]).assert_success().stdout_eq(
-    //              str![[r#"
-    //  Installing openzeppelin-contracts in [..] (url: Some("https://github.com/openzeppelin/openzeppelin-contracts"), tag: None)
-    //      Installed openzeppelin-contracts [..]
-
-    //  "#]],
-    //          );
 
     let cmd = cmd.forge_fuse().arg("script").arg(script).args([
         "--ens-name",
@@ -3214,7 +3181,7 @@ Installing openzeppelin-contracts in [..] (url: Some("https://github.com/openzep
     cmd.assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful with warnings:
+Compiler run successful!
 ...
 Script ran successfully.
 
@@ -3238,12 +3205,12 @@ Chain 31337
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 Contract is Ownable contract.
 creating subname ...
-done (txn hash: 0xee80d56a524fca126be53e09df80f71d3ee14713955df4821b9b763a3d153f69)
+done (txn hash: 0x562509425574db1e0669f56802ab799f8184e9c6f1de76bab474c7595bd29a69)
 checking if fwd resolution already set ...
 setting fwd resolution (test.forge.eth -> 0x3Aa5ebB10DC797CAC828524e59A333d0A371443c) ...
-done (txn hash: 0xe0208dfdc7d96230fbeec995e01bc3b410a74191234aecd8377f775dfa53d3f7)
+done (txn hash: 0xa9784c67594c205300438a07c383cea3dd57924f6fec4cdf5b2a1c8ed67e77d2)
 setting rev resolution (0x3Aa5ebB10DC797CAC828524e59A333d0A371443c -> test.forge.eth) ...
-done (txn hash: 0x998353867b3c41b6c2b9835460b36cd32380628a837271fca48bd9319f3505d4)
+done (txn hash: 0x4a7b46717dc075d85ef71fcbbfc5523b72dae7ef46146aa7ae0af03d84088881)
 
 [SAVED_TRANSACTIONS]
 
