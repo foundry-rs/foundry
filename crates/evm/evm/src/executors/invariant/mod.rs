@@ -24,11 +24,7 @@ use foundry_evm_fuzz::{
 use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
-use proptest::{
-    prelude::Rng,
-    strategy::{Strategy, ValueTree},
-    test_runner::TestRunner,
-};
+use proptest::{prelude::Rng, strategy::Strategy, test_runner::TestRunner};
 use result::{assert_after_invariant, assert_invariants, can_continue};
 use revm::state::Account;
 use shrink::shrink_sequence;
@@ -340,26 +336,15 @@ impl<'a> InvariantExecutor<'a> {
             return Err(eyre!("Invariant test function should have no inputs"));
         }
 
-        let (invariant_test, invariant_strategy) =
+        let (invariant_test, mut corpus_manager) =
             self.prepare_test(&invariant_contract, fuzz_fixtures, deployed_libs)?;
-
-        let mut corpus = TxCorpusManager::new(
-            &self.config,
-            &invariant_contract.invariant_function.name,
-            &self.executor,
-            &mut self.history_map,
-        )?;
 
         // Start timer for this invariant test.
         let timer = FuzzTestTimer::new(self.config.timeout);
         let mut runs = 0;
 
         'stop: while runs < self.config.runs {
-            let initial_seq = initial_sequence(
-                &mut corpus,
-                &invariant_strategy,
-                &mut invariant_test.execution_data.borrow_mut().branch_runner,
-            )?;
+            let initial_seq = corpus_manager.new_sequence(&invariant_test)?;
 
             // Create current invariant run data.
             let mut current_run = InvariantTestRun::new(
@@ -493,17 +478,18 @@ impl<'a> InvariantExecutor<'a> {
 
                 if discarded || must_generate || generate_new {
                     // Generates the next call from the run using the recently updated dictionary
-                    current_run.inputs.push(tx_from_strategy(
-                        &invariant_strategy,
-                        &mut invariant_test.execution_data.borrow_mut().branch_runner,
-                    )?);
+                    current_run.inputs.push(
+                        corpus_manager.new_tx(
+                            &mut invariant_test.execution_data.borrow_mut().branch_runner,
+                        )?,
+                    );
                 } else {
                     current_run.inputs.push(initial_seq[current_run.depth as usize].clone());
                 }
             }
 
             // Extend corpus with current run data.
-            corpus.collect_inputs(&current_run);
+            corpus_manager.collect_inputs(&current_run);
 
             // Call `afterInvariant` only if it is declared and test didn't fail already.
             if invariant_contract.call_after_invariant && !invariant_test.has_errors() {
@@ -539,19 +525,19 @@ impl<'a> InvariantExecutor<'a> {
             gas_report_traces: result.gas_report_traces,
             line_coverage: result.line_coverage,
             metrics: result.metrics,
-            failed_corpus_replays: corpus.failed_replays(),
+            failed_corpus_replays: corpus_manager.failed_replays(),
         })
     }
 
     /// Prepares certain structures to execute the invariant tests:
     /// * Invariant Fuzz Test.
-    /// * Invariant Strategy
+    /// * Invariant Corpus Manager.
     fn prepare_test(
         &mut self,
         invariant_contract: &InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
         deployed_libs: &[Address],
-    ) -> Result<(InvariantTest, impl Strategy<Value = BasicTxDetails>)> {
+    ) -> Result<(InvariantTest, TxCorpusManager)> {
         // Finds out the chosen deployed contracts and/or senders.
         self.select_contract_artifacts(invariant_contract.address)?;
         let (targeted_senders, targeted_contracts) =
@@ -613,16 +599,24 @@ impl<'a> InvariantExecutor<'a> {
             return Err(eyre!(error.revert_reason().unwrap_or_default()))
         }
 
-        Ok((
-            InvariantTest::new(
-                fuzz_state,
-                targeted_contracts,
-                failures,
-                last_call_results,
-                self.runner.clone(),
-            ),
-            strategy,
-        ))
+        let corpus_manager = TxCorpusManager::new(
+            &self.config,
+            &invariant_contract.invariant_function.name,
+            &targeted_contracts,
+            strategy.boxed(),
+            &self.executor,
+            &mut self.history_map,
+        )?;
+
+        let invariant_test = InvariantTest::new(
+            fuzz_state,
+            targeted_contracts,
+            failures,
+            last_call_results,
+            self.runner.clone(),
+        );
+
+        Ok((invariant_test, corpus_manager))
     }
 
     /// Fills the `InvariantExecutor` with the artifact identifier filters (in `path:name` string
@@ -924,28 +918,6 @@ fn collect_data(
     if let Some(changed) = sender_changeset {
         state_changeset.insert(tx.sender, changed);
     }
-}
-
-/// Helper function to create initial sequence for invariant run by mutating in-memory corpus.
-/// If corpus manager cannot generate a new sequence then initial tx is created from strategy.
-fn initial_sequence(
-    corpus: &mut TxCorpusManager,
-    strat: impl Strategy<Value = BasicTxDetails>,
-    test_runnner: &mut TestRunner,
-) -> Result<Vec<BasicTxDetails>> {
-    let mut initial_seq = corpus.new_sequence(test_runnner);
-    if initial_seq.is_empty() {
-        initial_seq.push(tx_from_strategy(strat, test_runnner)?);
-    }
-    Ok(initial_seq)
-}
-
-/// Helper function to create single input from invariant strategy.
-fn tx_from_strategy(
-    strat: impl Strategy<Value = BasicTxDetails>,
-    test_runnner: &mut TestRunner,
-) -> Result<BasicTxDetails> {
-    Ok(strat.new_tree(test_runnner).map_err(|_| eyre!("Could not generate case"))?.current())
 }
 
 /// Calls the `afterInvariant()` function on a contract.

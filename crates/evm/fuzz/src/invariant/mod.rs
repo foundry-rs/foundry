@@ -127,6 +127,14 @@ impl TargetedContracts {
             .flat_map(|(contract, c)| c.abi_fuzzed_functions().map(move |f| (contract, f)))
     }
 
+    /// Returns whether the given transaction can be replayed or not with known contracts.
+    pub fn can_replay(&self, tx: &BasicTxDetails) -> bool {
+        match self.inner.get(&tx.call_details.target) {
+            Some(c) => c.abi.functions().any(|f| f.selector() == tx.call_details.calldata[..4]),
+            None => false,
+        }
+    }
+
     /// Identifies fuzzed contract and function based on given tx details and returns unique metric
     /// key composed from contract identifier and function name.
     pub fn fuzzed_metric_key(&self, tx: &BasicTxDetails) -> Option<String> {
