@@ -22,6 +22,7 @@ contract Issue2851Test is DSTest {
         back = new Backdoor();
     }
 
+    /// forge-config: default.invariant.depth = 1000
     function invariantNotZero() public {
         assertEq(back.number(), 1);
     }

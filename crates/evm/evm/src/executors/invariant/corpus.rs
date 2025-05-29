@@ -22,6 +22,8 @@ use std::{
 };
 use uuid::Uuid;
 
+const METADATA_SUFFIX: &str = "-metadata.json";
+
 /// Holds Corpus information.
 #[derive(Serialize)]
 struct Corpus {
@@ -113,10 +115,18 @@ impl TxCorpusManager {
 
         for entry in std::fs::read_dir(&corpus_dir)? {
             let path = entry?.path();
-            let read_corpus_result = if corpus_gzip {
-                foundry_common::fs::read_json_gzip_file::<Vec<BasicTxDetails>>(&path)
-            } else {
-                foundry_common::fs::read_json_file::<Vec<BasicTxDetails>>(&path)
+            if path.is_file() {
+                if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                    // Ignore metadata files
+                    if name.contains(METADATA_SUFFIX) {
+                        continue
+                    }
+                }
+            }
+
+            let read_corpus_result = match path.extension().and_then(|ext| ext.to_str()) {
+                Some("gz") => foundry_common::fs::read_json_gzip_file::<Vec<BasicTxDetails>>(&path),
+                _ => foundry_common::fs::read_json_file::<Vec<BasicTxDetails>>(&path),
             };
 
             let Ok(tx_seq) = read_corpus_result else {
@@ -249,7 +259,8 @@ impl TxCorpusManager {
                     .position(|corpus| corpus.total_mutations > self.corpus_max_mutations)
                 {
                     let corpus = self.in_memory_corpus.get(index).unwrap();
-                    debug!(target: "corpus", "remove corpus {}", corpus.uuid);
+                    let uuid = corpus.uuid;
+                    debug!(target: "corpus", "evict corpus {uuid}");
 
                     // Flush to disk the seed metadata at the time of eviction.
                     if let Some(corpus_dir) = &self.corpus_dir {
@@ -259,7 +270,7 @@ impl TxCorpusManager {
                             .as_secs();
                         foundry_common::fs::write_json_file(
                             corpus_dir
-                                .join(format!("{}-{}-metadata.json", corpus.uuid, eviction_time))
+                                .join(format!("{uuid}-{eviction_time}-{METADATA_SUFFIX}"))
                                 .as_path(),
                             &corpus,
                         )?
@@ -372,7 +383,7 @@ impl TxCorpusManager {
                 }
             };
 
-            trace!(target: "corpus", "new sequence generated {} from corpus {:?}", new_seq.len(), self.current_mutated);
+            trace!(target: "corpus", "new sequence generated {}", new_seq.len());
         }
 
         // Make sure sequence contains at least one tx to start fuzzing from.
