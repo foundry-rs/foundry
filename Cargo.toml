@@ -201,7 +201,7 @@ foundry-linking = { path = "crates/linking" }
 foundry-block-explorers = { version = "0.18.0", default-features = false }
 foundry-compilers = { version = "0.17.0", default-features = false }
 foundry-fork-db = "0.15"
-solang-parser = { version = "=0.3.8", package = "foundry-solang-parser" }
+solang-parser = { version = "=0.3.9", package = "foundry-solang-parser" }
 solar-ast = { version = "=0.1.4", default-features = false }
 solar-parse = { version = "=0.1.4", default-features = false }
 solar-sema = { version = "=0.1.4", default-features = false }
