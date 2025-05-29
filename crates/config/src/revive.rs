@@ -55,6 +55,7 @@ impl ResolcConfig {
                 config.resolc.optimizer_mode,
                 config.resolc.heap_size,
                 config.resolc.stack_size,
+                None,
             );
             s
         })
