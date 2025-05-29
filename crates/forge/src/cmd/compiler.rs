@@ -139,6 +139,12 @@ impl ResolveArgs {
                     0 => sh_println!("- {version}")?,
                     _ => {
                         if let Some(evm) = &resolved_compiler.evm_version {
+                            if let Some(path) = &resolved_compiler.paths.last() {
+                                if path.ends_with(".vy") && evm == &EvmVersion::Prague {
+                                    sh_println!("{version} (<= {evm}):", evm = EvmVersion::Cancun)?;
+                                    continue;
+                                }
+                            };
                             sh_println!("{version} (<= {evm}):")?
                         } else {
                             sh_println!("{version}:")?
