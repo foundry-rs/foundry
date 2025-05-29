@@ -60,7 +60,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
     }
 
     let mut rl = Editor::<SolidityHelper, _>::new()?;
-    rl.set_helper(Some(SolidityHelper::default()));
+    rl.set_helper(Some(dispatcher.helper.clone()));
     rl.set_auto_add_history(true);
     if let Some(path) = chisel_history_file() {
         let _ = rl.load_history(&path);
@@ -79,7 +79,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
 
                 // Dispatch and match results.
                 let r = dispatcher.dispatch(&line).await;
-                rl.helper_mut().unwrap().set_errored(r.is_err());
+                dispatcher.helper.set_errored(r.is_err());
                 if let Err(e) = r {
                     sh_err!("{}", foundry_common::errors::display_chain(&e))?;
                 }

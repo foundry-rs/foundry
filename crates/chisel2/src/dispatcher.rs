@@ -47,8 +47,8 @@ pub const CHISEL_CHAR: &str = "⚒️";
 /// Chisel input dispatcher
 #[derive(Debug)]
 pub struct ChiselDispatcher {
-    /// A Chisel Session
     pub session: ChiselSession,
+    pub helper: SolidityHelper,
 }
 
 /// A response from the Etherscan API's `getabi` action
@@ -92,7 +92,7 @@ pub fn format_source(source: &str, config: FormatterConfig) -> eyre::Result<Stri
 impl ChiselDispatcher {
     /// Associated public function to create a new Dispatcher instance
     pub fn new(config: SessionSourceConfig) -> eyre::Result<Self> {
-        ChiselSession::new(config).map(|session| Self { session })
+        ChiselSession::new(config).map(|session| Self { session, helper: Default::default() })
     }
 
     /// Returns the optional ID of the current session.
@@ -349,8 +349,7 @@ impl ChiselDispatcher {
 
     pub(crate) fn show_source(&self) -> Result<()> {
         let formatted = self.format_source().wrap_err("failed to format session source")?;
-        // TODO(dani): get the solidity helper from rustyline or store in self?
-        let highlighted = SolidityHelper::new().highlight(&formatted);
+        let highlighted = self.helper.highlight(&formatted);
         sh_println!("{highlighted}")
     }
 

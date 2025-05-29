@@ -19,7 +19,7 @@ use solar_parse::{
     token::Token,
     Cursor, Lexer,
 };
-use std::{borrow::Cow, ops::Range};
+use std::{borrow::Cow, cell::RefCell, fmt, ops::Range, rc::Rc};
 use yansi::{Color, Style};
 
 /// The maximum length of an ANSI prefix + suffix characters using [SolidityHelper].
@@ -31,8 +31,13 @@ use yansi::{Color, Style};
 /// * 4 - suffix: `\x1B[0m`
 const MAX_ANSI_LEN: usize = 9;
 
-/// A rustyline helper for Solidity code
+/// A rustyline helper for Solidity code.
+#[derive(Clone)]
 pub struct SolidityHelper {
+    inner: Rc<RefCell<Inner>>,
+}
+
+struct Inner {
     errored: bool,
 
     do_paint: bool,
@@ -46,25 +51,37 @@ impl Default for SolidityHelper {
     }
 }
 
+impl fmt::Debug for SolidityHelper {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let this = self.inner.borrow_mut();
+        f.debug_struct("SolidityHelper")
+            .field("errored", &this.errored)
+            .field("do_paint", &this.do_paint)
+            .finish_non_exhaustive()
+    }
+}
+
 impl SolidityHelper {
     /// Create a new SolidityHelper.
     pub fn new() -> Self {
         Self {
-            errored: false,
-            do_paint: yansi::is_enabled(),
-            sess: Session::builder().with_silent_emitter(None).build(),
-            globals: SessionGlobals::new(),
+            inner: Rc::new(RefCell::new(Inner {
+                errored: false,
+                do_paint: yansi::is_enabled(),
+                sess: Session::builder().with_silent_emitter(None).build(),
+                globals: SessionGlobals::new(),
+            })),
         }
     }
 
     /// Returns whether the helper is in an errored state.
     pub fn errored(&self) -> bool {
-        self.errored
+        self.inner.borrow().errored
     }
 
     /// Set the errored field.
     pub fn set_errored(&mut self, errored: bool) -> &mut Self {
-        self.errored = errored;
+        self.inner.borrow_mut().errored = errored;
         self
     }
 
@@ -197,12 +214,13 @@ impl SolidityHelper {
 
     /// Returns whether to color the output.
     fn do_paint(&self) -> bool {
-        self.do_paint
+        self.inner.borrow().do_paint
     }
 
     /// Enters the session.
     fn enter(&self, f: impl FnOnce(&Session)) {
-        self.globals.set(|| self.sess.enter(|| f(&self.sess)));
+        let this = self.inner.borrow();
+        this.globals.set(|| this.sess.enter(|| f(&this.sess)));
     }
 }
 
@@ -240,7 +258,7 @@ impl Highlighter for SolidityHelper {
 
         if let Some(i) = out.find(PROMPT_ARROW) {
             let style =
-                if self.errored { Color::Red.foreground() } else { Color::Green.foreground() };
+                if self.errored() { Color::Red.foreground() } else { Color::Green.foreground() };
             out.replace_range(i..=i + 2, &Self::paint_unchecked_owned(PROMPT_ARROW_STR, style));
         }
 
