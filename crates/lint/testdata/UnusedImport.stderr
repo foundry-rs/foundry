@@ -1,0 +1,24 @@
+note[unused-import]: unused imports should be removed
+ --> ROOT/testdata/UnusedImport.sol:LL:CC
+  |
+4 |     symbol2 as notUsed,
+  |                -------
+  |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
+
+note[unused-import]: unused imports should be removed
+ --> ROOT/testdata/UnusedImport.sol:LL:CC
+  |
+8 |     symbolNotUsed,
+  |     -------------
+  |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
+
+note[unused-import]: unused imports should be removed
+  --> ROOT/testdata/UnusedImport.sol:LL:CC
+   |
+10 |     IContractNotUsed
+   |     ----------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
+

@@ -1,6 +1,7 @@
 use crate::linter::{EarlyLintPass, EarlyLintVisitor, Lint, LintContext, Linter};
 use foundry_compilers::solc::SolcLanguage;
 use foundry_config::lint::Severity;
+use info::UNUSED_IMPORT;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use solar_ast::{visit::Visit, Arena};
 use solar_interface::{
@@ -108,9 +109,10 @@ impl SolidityLinter {
             let ast = parser.parse_file().map_err(|e| e.emit())?;
 
             // Initialize and run the visitor
-            let ctx = LintContext::new(sess, self.with_description);
-            let mut visitor = EarlyLintVisitor { ctx: &ctx, passes: &mut passes };
+            let mut ctx = LintContext::new(sess, self.with_description);
+            let mut visitor = EarlyLintVisitor { ctx: &mut ctx, passes: &mut passes };
             _ = visitor.visit_source_unit(&ast);
+            ctx.emit_unused_imports(&UNUSED_IMPORT);
 
             Ok(())
         });
