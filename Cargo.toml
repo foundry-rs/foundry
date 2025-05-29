@@ -197,12 +197,12 @@ foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.17.0", default-features = false }
-foundry-compilers = { version = "0.16.1", default-features = false }
+foundry-compilers = { version = "0.16.4", default-features = false }
 foundry-fork-db = "0.14"
 solang-parser = { version = "=0.3.8", package = "foundry-solang-parser" }
-solar-parse = { version = "=0.1.3", default-features = false }
-solar-sema = { version = "=0.1.3", default-features = false }
-solar-interface = { version = "=0.1.3", default-features = false }
+solar-parse = { version = "=0.1.4", default-features = false }
+solar-sema = { version = "=0.1.4", default-features = false }
+solar-interface = { version = "=0.1.4", default-features = false }
 
 ## alloy
 alloy-consensus = { version = "1.0.5", default-features = false }
@@ -391,11 +391,6 @@ zip-extract = "=0.2.1"
 revm = { git = "https://github.com/bluealloy/revm.git", rev = "b5808253" }
 op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "b5808253" }
 # revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "a625c04" }
-
-## solar
-solar-parse = { git = "https://github.com/paradigmxyz/solar.git", branch = "dani/resolver-absolute-paths" }
-solar-sema = { git = "https://github.com/paradigmxyz/solar.git", branch = "dani/resolver-absolute-paths" }
-solar-interface = { git = "https://github.com/paradigmxyz/solar.git", branch = "dani/resolver-absolute-paths" }
 
 ## foundry
 # foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "811a61a" }

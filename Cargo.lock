@@ -4303,9 +4303,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.16.1"
+version = "0.16.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d6154e503612a175a88ff342592f0a44664dda54a508d9443121b62b1701f91"
+checksum = "fe41ab4be8c70e139241dfa4c8b4f30f905a1c92fa13123255e2eeedc5ffa63d"
 dependencies = [
  "alloy-json-abi 1.1.2",
  "alloy-primitives 1.1.2",
@@ -4340,9 +4340,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts"
-version = "0.16.1"
+version = "0.16.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "efca59ffe52914a8ff4ae4e8e97e9fa5d782031d2f5a2d1fb109fa6aac26653d"
+checksum = "afd39a92e4cf1ea15b283a8ad2c55af4ec05f5f9334601d62afd1a05abe78e84"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -4350,9 +4350,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-solc"
-version = "0.16.1"
+version = "0.16.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a3ffc93f94d2c4ae0ff0f7a12cdeaa5fbb043ced0c558cabd05631e32ac508a"
+checksum = "5a3999266fe758acc25725f649d964c7ddf77b38fd00ac9423b74e65901c687d"
 dependencies = [
  "alloy-json-abi 1.1.2",
  "alloy-primitives 1.1.2",
@@ -4373,9 +4373,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
-version = "0.16.1"
+version = "0.16.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f077777aa33f933f9f01e90f9ed78e4a40ed60a6380798b528681ca9519a577"
+checksum = "b1b7b83ebff9bdb25b35070152169a6ea720d21b7d201debf527b4b11569ea62"
 dependencies = [
  "alloy-json-abi 1.1.2",
  "alloy-primitives 1.1.2",
@@ -4388,9 +4388,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-core"
-version = "0.16.1"
+version = "0.16.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ff92d5831075077fe64391dcbbe4a1518bce0439f97ab6a940fa1b9c1f3eaa2"
+checksum = "80f3bb9ac0bc9f509b3ed080092b4c0e8fa1ff58243d89454e96fa0cc4599d1e"
 dependencies = [
  "alloy-primitives 1.1.2",
  "cfg-if",
@@ -8598,8 +8598,9 @@ dependencies = [
 
 [[package]]
 name = "solar-ast"
-version = "0.1.3"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fresolver-absolute-paths#97e8dd947e20b5530edbad1422393ef9ca5678d2"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "acb0d9abd88c1325e5c0f9bb153ebfb02ed40bc9639067d0ad120f5d29ee8777"
 dependencies = [
  "alloy-primitives 1.1.2",
  "bumpalo",
@@ -8616,16 +8617,18 @@ dependencies = [
 
 [[package]]
 name = "solar-config"
-version = "0.1.3"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fresolver-absolute-paths#97e8dd947e20b5530edbad1422393ef9ca5678d2"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "908d455bb7c04acd783bd157b63791bf010cf6a495a845e48f7aee334aad319f"
 dependencies = [
  "strum 0.27.1",
 ]
 
 [[package]]
 name = "solar-data-structures"
-version = "0.1.3"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fresolver-absolute-paths#97e8dd947e20b5530edbad1422393ef9ca5678d2"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8b5a697cab81241c4623b4546c69e57182202847a75d7c0047c0dd10b923d8c"
 dependencies = [
  "bumpalo",
  "index_vec",
@@ -8638,8 +8641,9 @@ dependencies = [
 
 [[package]]
 name = "solar-interface"
-version = "0.1.3"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fresolver-absolute-paths#97e8dd947e20b5530edbad1422393ef9ca5678d2"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33e49e5a714ec80d7f9c8942584e5e86add1c5e824aa175d0681e9ac7a10e5cc"
 dependencies = [
  "annotate-snippets",
  "anstream",
@@ -8648,7 +8652,7 @@ dependencies = [
  "derive_builder",
  "derive_more 2.0.1",
  "dunce",
- "itertools 0.10.5",
+ "itertools 0.14.0",
  "itoa",
  "lasso",
  "match_cfg",
@@ -8665,8 +8669,9 @@ dependencies = [
 
 [[package]]
 name = "solar-macros"
-version = "0.1.3"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fresolver-absolute-paths#97e8dd947e20b5530edbad1422393ef9ca5678d2"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e17f8b99f28f358b41acb6efe4d7b8f326541b3c58a15dd1931d6fe581feefef"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8675,13 +8680,14 @@ dependencies = [
 
 [[package]]
 name = "solar-parse"
-version = "0.1.3"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fresolver-absolute-paths#97e8dd947e20b5530edbad1422393ef9ca5678d2"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6982ef2ecfb1338c774c743ab7166ce8c3dcc92089ab77fad58eeb632b201e9"
 dependencies = [
  "alloy-primitives 1.1.2",
  "bitflags 2.9.1",
  "bumpalo",
- "itertools 0.10.5",
+ "itertools 0.14.0",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -8695,8 +8701,9 @@ dependencies = [
 
 [[package]]
 name = "solar-sema"
-version = "0.1.3"
-source = "git+https://github.com/paradigmxyz/solar.git?branch=dani%2Fresolver-absolute-paths#97e8dd947e20b5530edbad1422393ef9ca5678d2"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe8e0a3a6dfc7f4987bfb93f9b56079150407ef55c459964a1541c669554b74d"
 dependencies = [
  "alloy-json-abi 1.1.2",
  "alloy-primitives 1.1.2",
