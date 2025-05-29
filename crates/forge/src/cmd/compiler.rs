@@ -66,14 +66,34 @@ pub struct ResolveArgs {
     /// Skip files that match the given regex pattern.
     #[arg(long, short, value_name = "REGEX")]
     skip: Option<regex::Regex>,
+
+    /// Use resolc.
+    #[arg(
+        value_name = "RESOLC_COMPILE",
+        help = "Enable compiling with resolc",
+        long = "resolc-compile",
+        visible_alias = "resolc",
+        action = clap::ArgAction::SetTrue,
+        default_value = "false"
+    )]
+    resolc_compile: bool,
 }
 
 impl ResolveArgs {
     pub fn run(self) -> Result<()> {
-        let Self { root, skip } = self;
+        let Self { root, skip, resolc_compile } = self;
 
         let root = root.unwrap_or_else(|| PathBuf::from("."));
-        let config = Config::load_with_root(&root)?.canonic_at(root);
+
+        let config = {
+            let mut config = Config::load_with_root(&root)?.canonic_at(root);
+
+            if resolc_compile {
+                config.resolc.resolc_compile = true;
+            }
+            config
+        };
+
         let project = config.project()?;
 
         let graph = Graph::resolve(&project.paths)?;

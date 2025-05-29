@@ -1,6 +1,7 @@
 use clap::Parser;
 use foundry_config::{revive::ResolcConfig, SolcReq};
 use serde::Serialize;
+
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 #[clap(next_help_heading = "Resolc configuration")]
 /// Compiler options for resolc

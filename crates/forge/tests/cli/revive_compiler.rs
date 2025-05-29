@@ -36,12 +36,11 @@ forgetest!(can_resolve_path, |prj, cmd| {
         config.resolc.resolc = Some(foundry_config::SolcReq::Version(
             semver::Version::parse(OTHER_RESOLC_VERSION).unwrap(),
         ));
-        config.resolc.resolc_compile = true;
     });
 
     prj.add_source("ContractA", CONTRACT_A).unwrap();
 
-    cmd.args(["compiler", "resolve", "--root", prj.root().to_str().unwrap()])
+    cmd.args(["compiler", "resolve", "--resolc", "--root", prj.root().to_str().unwrap()])
         .assert_success()
         .stdout_eq(str![[r#"
 Solidity:
