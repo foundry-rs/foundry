@@ -2,9 +2,10 @@
 
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_dyn_abi::{eip712_parser::EncodeType, DynSolType, DynSolValue, Resolver, TypedData};
+use alloy_ens::namehash;
 use alloy_primitives::{aliases::B32, keccak256, map::HashMap, Bytes, B64, U256};
 use alloy_sol_types::SolValue;
-use foundry_common::{ens::namehash, fs, TYPE_BINDING_PREFIX};
+use foundry_common::{fs, TYPE_BINDING_PREFIX};
 use foundry_config::fs_permissions::FsAccessKind;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
 use proptest::prelude::Strategy;

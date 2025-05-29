@@ -2,6 +2,7 @@ use crate::{
     tx::{self, CastTxBuilder},
     Cast,
 };
+use alloy_ens::NameOrAddress;
 use alloy_network::{AnyNetwork, EthereumWallet};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
@@ -14,7 +15,6 @@ use foundry_cli::{
     utils,
     utils::LoadConfig,
 };
-use foundry_common::ens::NameOrAddress;
 use std::{path::PathBuf, str::FromStr};
 
 /// CLI arguments for `cast send`.

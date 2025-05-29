@@ -11,6 +11,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{
     anvil::Forking,
     request::{TransactionInput, TransactionRequest},
+    state::EvmOverrides,
     BlockId, BlockNumberOrTag,
 };
 use alloy_serde::WithOtherFields;
@@ -870,7 +871,7 @@ async fn test_fork_call() {
                 ..Default::default()
             }),
             None,
-            None,
+            EvmOverrides::default(),
         )
         .await
         .unwrap();
@@ -1313,7 +1314,7 @@ async fn test_fork_execution_reverted() {
                 ..Default::default()
             }),
             Some(target.into()),
-            None,
+            EvmOverrides::default(),
         )
         .await;
 
@@ -1462,6 +1463,47 @@ async fn test_reset_dev_account_nonce() {
         .unwrap();
 
     assert!(receipt.status());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_erc20_balance() {
+    let config: NodeConfig = fork_config();
+    let address = config.genesis_accounts[0].address();
+    let (api, handle) = spawn(config).await;
+
+    let provider = handle.http_provider();
+
+    alloy_sol_types::sol! {
+       #[sol(rpc)]
+       contract ERC20 {
+            function balanceOf(address owner) public view returns (uint256);
+       }
+    }
+    let dai = address!("0x6B175474E89094C44Da98b954EedeAC495271d0F");
+    let erc20 = ERC20::new(dai, provider);
+    let value = U256::from(500);
+
+    api.anvil_deal_erc20(address, dai, value).await.unwrap();
+
+    let new_balance = erc20.balanceOf(address).call().await.unwrap();
+
+    assert_eq!(new_balance, value);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_add_balance() {
+    let config: NodeConfig = fork_config();
+    let address = config.genesis_accounts[0].address();
+    let (api, _handle) = spawn(config).await;
+
+    let start_balance = U256::from(100_000_u64);
+    api.anvil_set_balance(address, start_balance).await.unwrap();
+
+    let balance_increase = U256::from(50_000_u64);
+    api.anvil_add_balance(address, balance_increase).await.unwrap();
+
+    let new_balance = api.balance(address, None).await.unwrap();
+    assert_eq!(new_balance, start_balance + balance_increase);
 }
 
 #[tokio::test(flavor = "multi_thread")]

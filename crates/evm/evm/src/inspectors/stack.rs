@@ -1,6 +1,6 @@
 use super::{
     Cheatcodes, CheatsConfig, ChiselState, CoverageCollector, CustomPrintTracer, Fuzzer,
-    LogCollector, ScriptExecutionInspector, TracingInspector,
+    LogCollector, RevertDiagnostic, ScriptExecutionInspector, TracingInspector,
 };
 use alloy_evm::{eth::EthEvmContext, Evm};
 use alloy_primitives::{
@@ -50,7 +50,7 @@ pub struct InspectorStackBuilder {
     pub cheatcodes: Option<Arc<CheatsConfig>>,
     /// The fuzzer inspector and its state, if it exists.
     pub fuzzer: Option<Fuzzer>,
-    /// Whether to enable tracing.
+    /// Whether to enable tracing and revert diagnostics.
     pub trace_mode: TraceMode,
     /// Whether logs should be collected.
     pub logs: Option<bool>,
@@ -143,6 +143,7 @@ impl InspectorStackBuilder {
     }
 
     /// Set whether to enable the tracer.
+    /// Revert diagnostic inspector is activated when `mode != TraceMode::None`
     #[inline]
     pub fn trace_mode(mut self, mode: TraceMode) -> Self {
         if self.trace_mode < mode {
@@ -304,6 +305,7 @@ pub struct InspectorStackInner {
     pub enable_isolation: bool,
     pub odyssey: bool,
     pub create2_deployer: Address,
+    pub revert_diag: Option<RevertDiagnostic>,
 
     /// Flag marking if we are in the inner EVM context.
     pub in_inner_context: bool,
@@ -439,8 +441,15 @@ impl InspectorStack {
     }
 
     /// Set whether to enable the tracer.
+    /// Revert diagnostic inspector is activated when `mode != TraceMode::None`
     #[inline]
     pub fn tracing(&mut self, mode: TraceMode) {
+        if mode.is_none() {
+            self.revert_diag = None;
+        } else {
+            self.revert_diag = Some(RevertDiagnostic::default());
+        }
+
         if let Some(config) = mode.into_config() {
             *self.tracer.get_or_insert_with(Default::default).config_mut() = config;
         } else {
@@ -520,7 +529,13 @@ impl InspectorStackRefMut<'_> {
         let result = outcome.result.result;
         call_inspectors!(
             #[ret]
-            [&mut self.fuzzer, &mut self.tracer, &mut self.cheatcodes, &mut self.printer],
+            [
+                &mut self.fuzzer,
+                &mut self.tracer,
+                &mut self.cheatcodes,
+                &mut self.printer,
+                &mut self.revert_diag
+            ],
             |inspector| {
                 let previous_outcome = outcome.clone();
                 inspector.call_end(ecx, inputs, outcome);
@@ -601,6 +616,7 @@ impl InspectorStackRefMut<'_> {
         let cached_env = Env::from(ecx.cfg.clone(), ecx.block.clone(), ecx.tx.clone());
 
         ecx.block.basefee = 0;
+        ecx.tx.chain_id = Some(ecx.cfg.chain_id);
         ecx.tx.caller = caller;
         ecx.tx.kind = kind;
         ecx.tx.data = input;
@@ -801,7 +817,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
                 &mut self.coverage,
                 &mut self.cheatcodes,
                 &mut self.script_execution_inspector,
-                &mut self.printer
+                &mut self.printer,
+                &mut self.revert_diag
             ],
             |inspector| inspector.step(interpreter, ecx),
         );
@@ -813,7 +830,13 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
         ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
     ) {
         call_inspectors!(
-            [&mut self.tracer, &mut self.cheatcodes, &mut self.chisel_state, &mut self.printer],
+            [
+                &mut self.tracer,
+                &mut self.cheatcodes,
+                &mut self.chisel_state,
+                &mut self.printer,
+                &mut self.revert_diag
+            ],
             |inspector| inspector.step_end(interpreter, ecx),
         );
     }
@@ -846,7 +869,13 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
 
         call_inspectors!(
             #[ret]
-            [&mut self.fuzzer, &mut self.tracer, &mut self.log_collector, &mut self.printer],
+            [
+                &mut self.fuzzer,
+                &mut self.tracer,
+                &mut self.log_collector,
+                &mut self.printer,
+                &mut self.revert_diag
+            ],
             |inspector| {
                 let mut out = None;
                 if let Some(output) = inspector.call(ecx, call) {

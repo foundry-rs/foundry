@@ -33,7 +33,7 @@ use revm::{
     database::WrapDatabaseRef,
     handler::{instructions::EthInstructions, EthPrecompiles},
     interpreter::InstructionResult,
-    precompile::{PrecompileSpecId, Precompiles},
+    precompile::{secp256r1::P256VERIFY, PrecompileSpecId, Precompiles},
     primitives::hardfork::SpecId,
     Database, DatabaseRef, Inspector, Journal,
 };
@@ -74,9 +74,9 @@ impl ExecutedTransaction {
             TypedTransaction::EIP1559(_) => TypedReceipt::EIP1559(receipt_with_bloom),
             TypedTransaction::EIP4844(_) => TypedReceipt::EIP4844(receipt_with_bloom),
             TypedTransaction::EIP7702(_) => TypedReceipt::EIP7702(receipt_with_bloom),
-            TypedTransaction::Deposit(tx) => TypedReceipt::Deposit(DepositReceipt {
+            TypedTransaction::Deposit(_tx) => TypedReceipt::Deposit(DepositReceipt {
                 inner: receipt_with_bloom,
-                deposit_nonce: Some(tx.nonce),
+                deposit_nonce: Some(0),
                 deposit_receipt_version: Some(1),
             }),
         }
@@ -326,6 +326,11 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
 
         let exec_result = {
             let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
+
+            if self.odyssey {
+                inject_precompiles(&mut evm, vec![P256VERIFY]);
+            }
+
             if let Some(factory) = &self.precompile_factory {
                 inject_precompiles(&mut evm, factory.precompiles());
             }
@@ -426,9 +431,7 @@ where
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
 {
     if env.is_optimism {
-        // TODO: we currently pin to `OpSpecId::BEDROCK` as it is primarily used in the context of
-        // testing deposit transactions. We should make this configurable in the future.
-        let op_cfg = env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::BEDROCK);
+        let op_cfg = env.evm_env.cfg_env.clone().with_spec(op_revm::OpSpecId::ISTHMUS);
         let op_context = OpContext {
             journaled_state: {
                 let mut journal = Journal::new(db);
