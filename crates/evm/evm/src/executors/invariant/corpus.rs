@@ -5,7 +5,11 @@ use crate::executors::{
 use alloy_primitives::U256;
 use eyre::eyre;
 use foundry_config::InvariantConfig;
-use foundry_evm_fuzz::invariant::{BasicTxDetails, FuzzRunIdentifiedContracts};
+use foundry_evm_fuzz::{
+    invariant::{BasicTxDetails, FuzzRunIdentifiedContracts},
+    strategies::fuzz_calldata,
+    FuzzFixtures,
+};
 use proptest::{
     prelude::{Rng, Strategy},
     strategy::{BoxedStrategy, ValueTree},
@@ -250,7 +254,7 @@ impl TxCorpusManager {
                 let secondary = &self.in_memory_corpus[rng.gen_range(0..corpus_len)];
 
                 // TODO rounds of mutations on elements?
-                match rng.gen_range(0..=4) {
+                match rng.gen_range(0..=5) {
                     // TODO expose config and add tests
                     // splice
                     0 => {
@@ -320,12 +324,31 @@ impl TxCorpusManager {
                         }
                         new_seq = corpus.tx_seq.clone();
                         for i in
-                            new_seq.len() - rng.gen_range(0..=new_seq.len())..corpus.tx_seq.len()
+                            new_seq.len() - rng.gen_range(0..new_seq.len())..corpus.tx_seq.len()
                         {
                             new_seq[i] = self.new_tx(test_runner)?;
                         }
                     }
-                    // 5. Select idx to mutate and change its args according to its ABI
+                    // 5. Select idx to mutate and change its args according to its ABI.
+                    5 => {
+                        let targets = test.targeted_contracts.targets.lock();
+                        let corpus = if rng.gen_bool(0.5) { primary } else { secondary };
+                        trace!(target: "corpus", "ABI mutate args of {}", corpus.uuid);
+                        if should_evict {
+                            self.current_mutated = Some(corpus.uuid);
+                        }
+                        new_seq = corpus.tx_seq.clone();
+
+                        let idx = rng.gen_range(0..new_seq.len());
+                        let tx = new_seq.get_mut(idx).unwrap();
+                        if let (_, Some(function)) = targets.fuzzed_artifacts(tx) {
+                            tx.call_details.calldata =
+                                fuzz_calldata(function.clone(), &FuzzFixtures::default())
+                                    .new_tree(test_runner)
+                                    .map_err(|_| eyre!("Could not generate case"))?
+                                    .current();
+                        }
+                    }
                     _ => {
                         unreachable!()
                     }
