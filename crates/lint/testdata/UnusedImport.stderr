@@ -22,3 +22,11 @@ note[unused-import]: unused imports should be removed
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
 
+note[unused-import]: unused imports should be removed
+  --> ROOT/testdata/UnusedImport.sol:LL:CC
+   |
+15 |     CONSTANT_1
+   |     ----------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
+

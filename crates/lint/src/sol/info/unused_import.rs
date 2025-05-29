@@ -1,4 +1,4 @@
-use solar_ast::{ImportItems, TypeKind, UsingList};
+use solar_ast::{ExprKind, ImportItems, TypeKind, UsingList};
 
 use super::UnusedImport;
 use crate::{
@@ -52,6 +52,12 @@ impl<'ast> EarlyLintPass<'ast> for UnusedImport {
         if let TypeKind::Custom(ty) = &var.ty.kind {
             ctx.use_import(ty.last().name.clone());
         }
+
+        if let Some(expr) = &var.initializer {
+            if let ExprKind::Ident(ident) = expr.kind {
+                ctx.use_import(ident.name.clone());
+            }
+        }
     }
 
     fn check_using_directive(
@@ -68,11 +74,4 @@ impl<'ast> EarlyLintPass<'ast> for UnusedImport {
             }
         }
     }
-}
-
-#[cfg(test)]
-mod test {
-
-    #[test]
-    fn test_unused_imports() {}
 }

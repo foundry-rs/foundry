@@ -10,8 +10,15 @@ import {
     IContractNotUsed //~NOTE: unused imports should be removed
 } from "File.sol";
 
+import {
+    CONSTANT_0,
+    CONSTANT_1 //~NOTE: unused imports should be removed
+} from "Constants.sol";
+
 contract UnusedImport is IContract {
     using mySymbol for address;
+
+    uint256 constant MY_CONSTANT = CONSTANT_0;
 
     struct FooBar {
         symbol3 foo;
