@@ -146,12 +146,12 @@ impl ResolveArgs {
                                     .last()
                                     .is_some_and(|p| p.ends_with(".vy") || p.ends_with(".vyi"))
                             {
-                                sh_println!("{version} (<= {evm}):", evm = EvmVersion::Cancun)?;
+                                sh_println!("{version} (<= {evm}):", evm = EvmVersion::Cancun)?
                             } else {
-                                sh_println!("{version} (<= {evm}):")?;
+                                sh_println!("{version} (<= {evm}):")?
                             }
                         } else {
-                            sh_println!("{version}:")?;
+                            sh_println!("{version}:")?
                         }
                     }
                 }
