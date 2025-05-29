@@ -4,7 +4,6 @@
 //! the REPL contract's source code. It provides simple compilation, parsing, and
 //! execution helpers.
 
-use alloy_primitives::map::HashMap;
 use eyre::Result;
 use foundry_compilers::{
     artifacts::{CompilerOutput, Settings, SolcInput, Source, Sources},
@@ -14,10 +13,9 @@ use foundry_config::{Config, SolcReq};
 use foundry_evm::{backend::Backend, opts::EvmOpts};
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use solang_parser::pt;
 use solar_parse::interface::diagnostics::EmittedDiagnostics;
-use solar_sema::{hir, ty::Gcx};
-use std::path::PathBuf;
+use solar_sema::{hir, interface::Session, ty::Gcx};
+use std::{fmt, path::PathBuf};
 use walkdir::WalkDir;
 
 /// The minimum Solidity version of the `Vm` interface.
@@ -26,42 +24,23 @@ pub const MIN_VM_VERSION: Version = Version::new(0, 6, 2);
 /// Solidity source for the `Vm` interface in [forge-std](https://github.com/foundry-rs/forge-std)
 static VM_SOURCE: &str = include_str!("../../../testdata/cheats/Vm.sol");
 
+/// [`SessionSource`] build output.
+pub struct GeneratedOutput {
+    pub intermediate: IntermediateOutput<'static>,
+    pub compiler: CompilerOutput,
+}
+
+impl fmt::Debug for GeneratedOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GeneratedOutput").finish_non_exhaustive()
+    }
+}
+
 /// Intermediate output for the compiled [SessionSource]
-#[derive(Clone, Debug)]
-pub struct IntermediateOutput {
-    /// All expressions within the REPL contract's run function and top level scope.
-    repl_contract_expressions: HashMap<String, pt::Expression>,
-    /// Intermediate contracts
-    intermediate_contracts: IntermediateContracts,
+pub struct IntermediateOutput<'gcx> {
+    gcx: solar_sema::GcxWrapper<'gcx>,
     /// `REPL::run`
     run: hir::FunctionId,
-}
-
-/// A refined intermediate parse tree for a contract that enables easy lookups
-/// of definitions.
-#[derive(Clone, Debug)]
-pub struct IntermediateContract {
-    /// All function definitions within the contract
-    pub function_definitions: HashMap<String, Box<pt::FunctionDefinition>>,
-    /// All event definitions within the contract
-    pub event_definitions: HashMap<String, Box<pt::EventDefinition>>,
-    /// All struct definitions within the contract
-    pub struct_definitions: HashMap<String, Box<pt::StructDefinition>>,
-    /// All variable definitions within the top level scope of the contract
-    pub variable_definitions: HashMap<String, Box<pt::VariableDefinition>>,
-}
-
-/// A defined type for a map of contract names to [IntermediateContract]s
-type IntermediateContracts = HashMap<String, IntermediateContract>;
-
-/// Full compilation output for the [SessionSource]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct GeneratedOutput {
-    /// The [IntermediateOutput] component
-    #[serde(skip)]
-    pub intermediate: IntermediateOutput,
-    /// The [CompilerOutput] component
-    pub compiler: CompilerOutput,
 }
 
 /// Configuration for the [SessionSource]
@@ -98,14 +77,18 @@ impl SessionSourceConfig {
 /// REPL Session Source wrapper
 ///
 /// Heavily based on soli's [`ConstructedSource`](https://github.com/jpopesculian/soli/blob/master/src/main.rs#L166)
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SessionSource {
     /// The file name
     pub file_name: PathBuf,
     /// The contract name
     pub contract_name: String,
+
     /// The solidity compiler version
     pub solc: Solc,
+    /// Session Source configuration
+    pub config: SessionSourceConfig,
+
     /// Global level solidity code
     ///
     /// Typically, global-level code is present between the contract definition and the first
@@ -117,10 +100,25 @@ pub struct SessionSource {
     pub top_level_code: String,
     /// Code existing within the "run()" function's scope
     pub run_code: String,
+
     /// The generated output
+    #[serde(skip)]
     pub output: Option<GeneratedOutput>,
-    /// Session Source configuration
-    pub config: SessionSourceConfig,
+}
+
+impl Clone for SessionSource {
+    fn clone(&self) -> Self {
+        Self {
+            file_name: self.file_name.clone(),
+            contract_name: self.contract_name.clone(),
+            solc: self.solc.clone(),
+            global_code: self.global_code.clone(),
+            top_level_code: self.top_level_code.clone(),
+            run_code: self.run_code.clone(),
+            config: self.config.clone(),
+            output: None,
+        }
+    }
 }
 
 impl SessionSource {
@@ -157,25 +155,6 @@ impl SessionSource {
         }
     }
 
-    /// Clones a [SessionSource] without copying the [GeneratedOutput], as it will
-    /// need to be regenerated as soon as new code is added.
-    ///
-    /// ### Returns
-    ///
-    /// A shallow-cloned [SessionSource]
-    pub fn shallow_clone(&self) -> Self {
-        Self {
-            file_name: self.file_name.clone(),
-            contract_name: self.contract_name.clone(),
-            solc: self.solc.clone(),
-            global_code: self.global_code.clone(),
-            top_level_code: self.top_level_code.clone(),
-            run_code: self.run_code.clone(),
-            output: None,
-            config: self.config.clone(),
-        }
-    }
-
     /// Clones the [SessionSource] and appends a new line of code. Will return
     /// an error result if the new line fails to be parsed.
     ///
@@ -184,20 +163,20 @@ impl SessionSource {
     /// Optionally, a shallow-cloned [SessionSource] with the passed content appended to the
     /// source code.
     pub fn clone_with_new_line(&self, mut content: String) -> Result<(Self, bool)> {
-        let new_source = self.shallow_clone();
+        let new_source = self.clone();
         if let Some(parsed) = parse_fragment(new_source.solc, new_source.config, &content)
             .or_else(|| {
-                let new_source = self.shallow_clone();
+                let new_source = self.clone();
                 content.push(';');
                 parse_fragment(new_source.solc, new_source.config, &content)
             })
             .or_else(|| {
-                let new_source = self.shallow_clone();
+                let new_source = self.clone();
                 content = content.trim_end().trim_end_matches(';').to_string();
                 parse_fragment(new_source.solc, new_source.config, &content)
             })
         {
-            let mut new_source = self.shallow_clone();
+            let mut new_source = self.clone();
             // Flag that tells the dispatcher whether to build or execute the session
             // source based on the scope of the new code.
             match parsed {
@@ -425,7 +404,7 @@ contract {contract_name} {{
         sess.dcx.emitted_errors().unwrap()
     }
 
-    pub fn analyze(&self) -> Result<IntermediateOutput, EmittedDiagnostics> {
+    pub fn analyze(&self) -> Result<IntermediateOutput<'static>, EmittedDiagnostics> {
         todo!()
     }
 
@@ -435,39 +414,30 @@ contract {contract_name} {{
     }
 }
 
-impl IntermediateOutput {
-    pub fn gcx<'gcx>(&self) -> Gcx<'gcx> {
-        todo!()
+impl<'gcx> IntermediateOutput<'gcx> {
+    pub fn gcx(&self) -> Gcx<'gcx> {
+        self.gcx.get()
     }
 
+    pub fn sess(&self) -> &'gcx Session {
+        self.gcx().sess
+    }
+
+    // TODO(dani)
     pub fn get_event(&self, name: &str) -> Option<hir::EventId> {
+        let _ = name;
         todo!()
     }
 
+    // TODO(dani)
     pub fn get_var(&self, name: &str) -> Option<hir::VariableId> {
+        let _ = name;
         todo!()
     }
 
-    /// Helper function that returns the body of the REPL contract's "run" function.
-    ///
-    /// ### Returns
-    ///
-    /// Optionally, the last statement within the "run" function of the REPL contract.
-    pub fn run_func_body(&self) -> Result<&[pt::Statement]> {
-        match self
-            .intermediate_contracts
-            .get("REPL")
-            .ok_or_else(|| eyre::eyre!("Could not find REPL intermediate contract!"))?
-            .function_definitions
-            .get("run")
-            .ok_or_else(|| eyre::eyre!("Could not find run function definition in REPL contract!"))?
-            .body
-            .as_ref()
-            .ok_or_else(|| eyre::eyre!("Could not find run function body!"))?
-        {
-            pt::Statement::Block { statements, .. } => Ok(statements),
-            _ => eyre::bail!("Could not find statements within run function body!"),
-        }
+    /// Returns the body of the `REPL::run()` function.
+    pub fn run_func_body(&self) -> hir::Block<'gcx> {
+        self.gcx().hir.function(self.run).body.expect("`run` has no body")
     }
 }
 

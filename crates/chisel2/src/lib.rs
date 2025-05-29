@@ -6,14 +6,23 @@
 extern crate foundry_common;
 
 pub mod args;
+
 pub mod cmd;
+
 pub mod dispatcher;
+
 pub mod executor;
+
 pub mod opts;
+
 pub mod runner;
+
 pub mod session;
+
 pub mod session_source;
-pub mod solidity_helper;
+
+mod solidity_helper;
+pub use solidity_helper::SolidityHelper;
 
 pub mod prelude {
     pub use crate::{

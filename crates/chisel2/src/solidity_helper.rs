@@ -1,7 +1,5 @@
-//! SolidityHelper
-//!
 //! This module contains the `SolidityHelper`, a [rustyline::Helper] implementation for
-//! usage in Chisel. It is ported from [soli](https://github.com/jpopesculian/soli/blob/master/src/main.rs).
+//! usage in Chisel. It was originally ported from [soli](https://github.com/jpopesculian/soli/blob/master/src/main.rs).
 
 use crate::{
     dispatcher::PROMPT_ARROW,

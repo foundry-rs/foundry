@@ -23,7 +23,6 @@ use foundry_evm::{
 use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use solang_parser::diagnostics::Diagnostic;
 use std::{
     borrow::Cow,
     error::Error,
@@ -73,8 +72,6 @@ pub enum DispatchResult {
     CommandSuccess(Option<String>),
     /// A failure to parse a Chisel Command
     UnrecognizedCommand(Box<dyn Error>),
-    /// The solang parser failed
-    SolangParserFailed(Vec<Diagnostic>),
     /// A Command Failed with error message
     CommandFailed(String),
     /// File IO Error
@@ -89,7 +86,6 @@ impl DispatchResult {
             Self::Failure(_) |
                 Self::CommandFailed(_) |
                 Self::UnrecognizedCommand(_) |
-                Self::SolangParserFailed(_) |
                 Self::FileIoError(_)
         )
     }
