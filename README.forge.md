@@ -397,15 +397,15 @@ This format ensures clarity and ease of navigation, with the color scheme provid
   </details>
 
 #### ✅ <span style="color: green;">compiler resolve</span>
-- **Command**: `forge compiler resolve`
+- **Command**: `forge compiler resolve --resolc`
 - **Example**:
   <details>
   <summary>Click to toggle contents of example</summary>
 
   ```bash
-  > forge compiler resolve
+  > forge compiler resolve --resolc
   Solidity:
-  - 0.8.29
+  - Resolc v0.1.0-dev.16, Solc v0.8.29
   ```
   </details>
 
