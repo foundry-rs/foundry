@@ -58,7 +58,7 @@ pub struct TxCorpusManager {
     // Number of corpus mutations until marked as eligible to be flushed from in-memory corpus.
     corpus_max_mutations: usize,
     // Number of corpus that won't be evicted from memory.
-    pub corpus_min_size: usize,
+    corpus_min_size: usize,
     // In-memory corpus, populated from persisted files and current runs.
     // Oldest corpus that is mutated more than `corpus_max_mutations` times.
     in_memory_corpus: Vec<Corpus>,
