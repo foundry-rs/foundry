@@ -41,7 +41,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
     let (config, evm_opts) = args.load_config_and_evm_opts()?;
 
     // Create a new cli dispatcher
-    let mut dispatcher = ChiselDispatcher::new(crate::session_source::SessionSourceConfig {
+    let mut dispatcher = ChiselDispatcher::new(crate::source::SessionSourceConfig {
         // Enable traces if any level of verbosity was passed
         traces: config.verbosity > 0,
         foundry_config: config,

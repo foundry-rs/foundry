@@ -186,7 +186,7 @@ impl SessionSource {
 
             Ok((new_source, matches!(parsed, ParseTreeFragment::Function)))
         } else {
-            eyre::bail!("\"{}\"", content.trim().to_owned());
+            eyre::bail!("\"{}\"", content.trim());
         }
     }
 

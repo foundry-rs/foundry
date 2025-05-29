@@ -13,7 +13,7 @@ use time::{format_description, OffsetDateTime};
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ChiselSession {
     /// The `SessionSource` object that houses the REPL session.
-    pub session_source: SessionSource,
+    pub source: SessionSource,
     /// The current session's identifier
     pub id: Option<String>,
 }
@@ -32,7 +32,7 @@ impl ChiselSession {
     pub fn new(mut config: SessionSourceConfig) -> Result<Self> {
         let solc = config.solc()?;
         // Return initialized ChiselSession with set solc version
-        Ok(Self { session_source: SessionSource::new(solc, config), id: None })
+        Ok(Self { source: SessionSource::new(solc, config), id: None })
     }
 
     /// Render the full source code for the current session.
@@ -46,7 +46,7 @@ impl ChiselSession {
     /// This function will not panic, but will return a blank string if the
     /// session's [SessionSource] is None.
     pub fn contract_source(&self) -> String {
-        self.session_source.to_repl_source()
+        self.source.to_repl_source()
     }
 
     /// Clears the cache directory
@@ -161,12 +161,8 @@ impl ChiselSession {
         Ok(())
     }
 
-    /// Lists all available cached sessions
-    ///
-    /// ### Returns
-    ///
-    /// Optionally, a vector containing tuples of session IDs and cache-file names.
-    pub fn list_sessions() -> Result<Vec<(String, String)>> {
+    /// Returns a list of all available cached sessions.
+    pub fn get_sessions() -> Result<Vec<(String, String)>> {
         // Read the cache directory entries
         let cache_dir = Self::cache_dir()?;
         let entries = std::fs::read_dir(cache_dir)?;

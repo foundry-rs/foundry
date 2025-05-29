@@ -30,7 +30,7 @@ pub struct Chisel {
     #[arg(long, help_heading = "REPL options", long_help = format!(
         "Disable the default `Vm` import.\n\n\
          The import is disabled by default if the Solc version is less than {}.",
-        crate::session_source::MIN_VM_VERSION
+        crate::source::MIN_VM_VERSION
     ))]
     pub no_vm: bool,
 
