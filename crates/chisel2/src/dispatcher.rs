@@ -10,6 +10,7 @@ use crate::{
 use alloy_json_abi::{InternalType, JsonAbi};
 use alloy_primitives::{hex, Address};
 use clap::Parser;
+use eyre::{Context, Result};
 use forge_fmt::FormatterConfig;
 use foundry_config::RpcEndpointUrl;
 use foundry_evm::{
@@ -59,36 +60,6 @@ static ADDRESS_RE: LazyLock<Regex> = LazyLock::new(|| {
 pub struct ChiselDispatcher {
     /// A Chisel Session
     pub session: ChiselSession,
-}
-
-/// Chisel dispatch result variants
-#[derive(Debug)]
-pub enum DispatchResult {
-    /// A Generic Dispatch Success
-    Success(Option<String>),
-    /// A Generic Failure
-    Failure(Option<String>),
-    /// A successful ChiselCommand Execution
-    CommandSuccess(Option<String>),
-    /// A failure to parse a Chisel Command
-    UnrecognizedCommand(Box<dyn Error>),
-    /// A Command Failed with error message
-    CommandFailed(String),
-    /// File IO Error
-    FileIoError(Box<dyn Error>),
-}
-
-impl DispatchResult {
-    /// Returns `true` if the result is an error.
-    pub fn is_error(&self) -> bool {
-        matches!(
-            self,
-            Self::Failure(_) |
-                Self::CommandFailed(_) |
-                Self::UnrecognizedCommand(_) |
-                Self::FileIoError(_)
-        )
-    }
 }
 
 /// A response from the Etherscan API's `getabi` action
@@ -174,31 +145,18 @@ impl ChiselDispatcher {
         }
     }
 
-    /// Dispatches a [ChiselCommand]
-    ///
-    /// ### Takes
-    ///
-    /// - A [ChiselCommand]
-    /// - An array of arguments
-    ///
-    /// ### Returns
-    ///
-    /// A [DispatchResult] containing feedback on the dispatch's execution.
-    pub async fn dispatch_command(&mut self, cmd: ChiselCommand) -> DispatchResult {
+    /// Dispatches a [`ChiselCommand`].
+    pub async fn dispatch_command(&mut self, cmd: ChiselCommand) -> Result<()> {
         match cmd {
-            ChiselCommand::Help => {
-                DispatchResult::CommandSuccess(Some(ChiselCommand::format_help()))
-            }
+            ChiselCommand::Help => sh_println!("{}", ChiselCommand::format_help()),
             ChiselCommand::Quit => {
                 // TODO(dani): Don't call `exit`.
                 // Exit the process with status code `0` for success.
                 std::process::exit(0);
             }
             ChiselCommand::Clear => {
-                self.source_mut().drain_run();
-                self.source_mut().drain_global_code();
-                self.source_mut().drain_top_level_code();
-                DispatchResult::CommandSuccess(Some(String::from("Cleared session!")))
+                self.source_mut().clear();
+                sh_println!("Cleared session!")
             }
             ChiselCommand::Save { id } => {
                 // If a new name was supplied, overwrite the ID of the current session.
@@ -208,48 +166,29 @@ impl ChiselDispatcher {
                     self.session.id = Some(id);
                 }
 
-                if let Err(e) = self.session.write() {
-                    return DispatchResult::FileIoError(e.into())
-                }
-                DispatchResult::CommandSuccess(Some(format!(
+                self.session.write()?;
+                sh_println!(
                     "Saved session to cache with ID = {}",
                     self.session.id.as_ref().unwrap()
-                )))
+                )
             }
             ChiselCommand::Load { id } => {
-                let name = id.as_str();
                 // Try to save the current session before loading another
                 // Don't save an empty session
                 if !self.source().run_code.is_empty() {
-                    if let Err(e) = self.session.write() {
-                        return DispatchResult::FileIoError(e.into())
-                    }
-                    let _ = sh_println!("{}", "Saved current session!".green());
+                    self.session.write()?;
+                    sh_println!("{}", "Saved current session!".green())?;
                 }
 
-                // Parse the arguments
-                let new_session = match name {
+                let mut new_session = match id.as_str() {
                     "latest" => ChiselSession::latest(),
-                    _ => ChiselSession::load(name),
-                };
-
-                // WARNING: Overwrites the current session
-                if let Ok(mut new_session) = new_session {
-                    // Regenerate [IntermediateOutput]; It cannot be serialized.
-                    //
-                    // SAFETY
-                    // Should never panic due to the checks performed when the session was created
-                    // in the first place.
-                    new_session.session_source.build().unwrap();
-
-                    self.session = new_session;
-                    DispatchResult::CommandSuccess(Some(format!(
-                        "Loaded Chisel session! (ID = {})",
-                        self.session.id.as_ref().unwrap()
-                    )))
-                } else {
-                    DispatchResult::CommandFailed(Self::make_error("Failed to load session!"))
+                    id => ChiselSession::load(id),
                 }
+                .wrap_err("failed to load session")?;
+
+                new_session.session_source.build()?;
+                self.session = new_session;
+                sh_println!("Loaded Chisel session! (ID = {})", self.session.id.as_ref().unwrap())
             }
             ChiselCommand::ListSessions => match ChiselSession::list_sessions() {
                 Ok(sessions) => DispatchResult::CommandSuccess(Some(format!(
@@ -287,21 +226,19 @@ impl ChiselDispatcher {
             ChiselCommand::Fork { url } => {
                 let Some(url) = url else {
                     self.source_mut().config.evm_opts.fork_url = None;
-                    return DispatchResult::CommandSuccess(Some(
-                        "Now using local environment.".to_string(),
-                    ))
+                    sh_println!("Now using local environment.")?;
+                    return Ok(());
                 };
-                let arg = &*url;
 
                 // If the argument is an RPC alias designated in the
                 // `[rpc_endpoints]` section of the `foundry.toml` within
                 // the pwd, use the URL matched to the key.
                 let endpoint = if let Some(endpoint) =
-                    self.source_mut().config.foundry_config.rpc_endpoints.get(arg)
+                    self.source_mut().config.foundry_config.rpc_endpoints.get(&url)
                 {
                     endpoint.clone()
                 } else {
-                    RpcEndpointUrl::Env(arg.to_string()).into()
+                    RpcEndpointUrl::Env(url.to_string()).into()
                 };
                 let fork_url = match endpoint.resolve().url() {
                     Ok(fork_url) => fork_url,
@@ -320,18 +257,14 @@ impl ChiselDispatcher {
                     ))
                 }
 
-                // Create success message before moving the fork_url
-                let success_msg = format!("Set fork URL to {}", &fork_url.yellow());
+                sh_println!("Set fork URL to {}", fork_url.yellow())?;
 
-                // Update the fork_url inside of the [SessionSourceConfig]'s [EvmOpts]
-                // field
                 self.source_mut().config.evm_opts.fork_url = Some(fork_url);
-
                 // Clear the backend so that it is re-instantiated with the new fork
                 // upon the next execution of the session source.
                 self.source_mut().config.backend = None;
 
-                DispatchResult::CommandSuccess(Some(success_msg))
+                Ok(())
             }
             ChiselCommand::Traces => {
                 self.source_mut().config.traces = !self.source_mut().config.traces;
@@ -543,7 +476,7 @@ impl ChiselDispatcher {
                                 // Add the interface to the source outright - no need to verify
                                 // syntax via compilation and/or
                                 // parsing.
-                                self.source_mut().with_global_code(&interface);
+                                self.source_mut().add_global_code(&interface);
 
                                 DispatchResult::CommandSuccess(Some(format!(
                                     "Added {addr}'s interface to source as `{name}`"
@@ -621,8 +554,8 @@ impl ChiselDispatcher {
 
                 let mut new_session_source = self.source().clone();
                 if let Ok(edited_code) = std::fs::read_to_string(temp_file_path) {
-                    new_session_source.drain_run();
-                    new_session_source.with_run_code(&edited_code);
+                    new_session_source.clear_run();
+                    new_session_source.add_run_code(&edited_code);
                 } else {
                     return DispatchResult::CommandFailed(
                         "Could not read the edited file".to_string(),
@@ -717,7 +650,7 @@ impl ChiselDispatcher {
         // If the input is a comment, add it to the run code so we avoid running with empty input
         if COMMENT_RE.is_match(input) {
             debug!(%input, "matched comment");
-            source.with_run_code(input);
+            source.add_run_code(input);
             return DispatchResult::Success(None)
         }
 

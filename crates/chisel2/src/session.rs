@@ -186,13 +186,7 @@ impl ChiselSession {
                 file_name,
             ));
         }
-
-        if sessions.is_empty() {
-            eyre::bail!("No sessions found!")
-        } else {
-            // Return the list of sessions and their modified times
-            Ok(sessions)
-        }
+        Ok(sessions)
     }
 
     /// Loads a specific ChiselSession from the specified cache file

@@ -1,6 +1,6 @@
 use crate::{
     opts::{Chisel, ChiselSubcommand},
-    prelude::{ChiselCommand, ChiselDispatcher, DispatchResult, SolidityHelper},
+    prelude::{ChiselCommand, ChiselDispatcher, SolidityHelper},
 };
 use clap::Parser;
 use eyre::{Context, Result};
@@ -54,54 +54,9 @@ pub async fn run_command(args: Chisel) -> Result<()> {
     // Execute prelude Solidity source files
     evaluate_prelude(&mut dispatcher, args.prelude).await?;
 
-    // Check for chisel subcommands
-    match &args.cmd {
-        Some(ChiselSubcommand::List) => {
-            let sessions = dispatcher.dispatch_command(ChiselCommand::ListSessions).await;
-            match sessions {
-                DispatchResult::CommandSuccess(Some(session_list)) => {
-                    sh_println!("{session_list}")?;
-                }
-                DispatchResult::CommandFailed(e) => sh_err!("{e}")?,
-                _ => panic!("Unexpected result: Please report this bug."),
-            }
-            return Ok(())
-        }
-        Some(ChiselSubcommand::Load { id }) | Some(ChiselSubcommand::View { id }) => {
-            // For both of these subcommands, we need to attempt to load the session from cache
-            match dispatcher.dispatch_command(ChiselCommand::Load { id: id.clone() }).await {
-                DispatchResult::CommandSuccess(_) => { /* Continue */ }
-                DispatchResult::CommandFailed(e) => {
-                    sh_err!("{e}")?;
-                    return Ok(())
-                }
-                _ => panic!("Unexpected result! Please report this bug."),
-            }
-
-            // If the subcommand was `view`, print the source and exit.
-            if matches!(args.cmd, Some(ChiselSubcommand::View { .. })) {
-                match dispatcher.dispatch_command(ChiselCommand::Source).await {
-                    DispatchResult::CommandSuccess(Some(source)) => {
-                        sh_println!("{source}")?;
-                    }
-                    _ => panic!("Unexpected result! Please report this bug."),
-                }
-                return Ok(())
-            }
-        }
-        Some(ChiselSubcommand::ClearCache) => {
-            match dispatcher.dispatch_command(ChiselCommand::ClearCache).await {
-                DispatchResult::CommandSuccess(Some(msg)) => sh_println!("{}", msg.green())?,
-                DispatchResult::CommandFailed(e) => sh_err!("{e}")?,
-                _ => panic!("Unexpected result! Please report this bug."),
-            }
-            return Ok(())
-        }
-        Some(ChiselSubcommand::Eval { command }) => {
-            dispatch_repl_line(&mut dispatcher, command).await?;
-            return Ok(())
-        }
-        None => { /* No chisel subcommand present; Continue */ }
+    if let Some(cmd) = args.cmd {
+        handle_cli_command(&mut dispatcher, cmd).await?;
+        return Ok(());
     }
 
     let mut rl = Editor::<SolidityHelper, _>::new()?;
@@ -131,8 +86,11 @@ pub async fn run_command(args: Chisel) -> Result<()> {
                 interrupt = false;
 
                 // Dispatch and match results
-                let errored = dispatch_repl_line(&mut dispatcher, &line).await?;
-                rl.helper_mut().unwrap().set_errored(errored);
+                let r = dispatcher.dispatch(&line).await;
+                rl.helper_mut().unwrap().set_errored(r.is_err());
+                if let Err(e) = r {
+                    sh_err!("{e}")?;
+                }
             }
             Err(ReadlineError::Interrupted) => {
                 if interrupt {
@@ -155,28 +113,6 @@ pub async fn run_command(args: Chisel) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Evaluate a single Solidity line.
-async fn dispatch_repl_line(dispatcher: &mut ChiselDispatcher, line: &str) -> Result<bool> {
-    let r = dispatcher.dispatch(line).await;
-    match &r {
-        DispatchResult::Success(msg) | DispatchResult::CommandSuccess(msg) => {
-            debug!(%line, ?msg, "dispatch success");
-            if let Some(msg) = msg {
-                sh_println!("{}", msg.green())?;
-            }
-        },
-        DispatchResult::UnrecognizedCommand(e) => sh_err!("{e}")?,
-        // DispatchResult::SolangParserFailed(e) => {
-        //     sh_err!("{}", "Compilation error".red())?;
-        //     sh_eprintln!("{}", format!("{e:?}").red())?;
-        // }
-        DispatchResult::FileIoError(e) => sh_err!("{}", format!("File IO - {e}").red())?,
-        DispatchResult::CommandFailed(msg) | DispatchResult::Failure(Some(msg)) => sh_err!("{}", msg.red())?,
-        DispatchResult::Failure(None) => sh_err!("Please report this bug as a github issue if it persists: https://github.com/foundry-rs/foundry/issues/new/choose")?,
-    }
-    Ok(r.is_error())
 }
 
 /// Evaluate multiple Solidity source files contained within a
@@ -210,7 +146,31 @@ async fn evaluate_prelude(
 async fn load_prelude_file(dispatcher: &mut ChiselDispatcher, file: PathBuf) -> Result<()> {
     let prelude = fs::read_to_string(file)
         .wrap_err("Could not load source file. Are you sure this path is correct?")?;
-    dispatch_repl_line(dispatcher, &prelude).await?;
+    dispatcher.dispatch(&prelude).await
+}
+
+async fn handle_cli_command(
+    dispatcher: &mut ChiselDispatcher,
+    cmd: ChiselSubcommand,
+) -> Result<()> {
+    match cmd {
+        ChiselSubcommand::List => {
+            dispatcher.dispatch_command(ChiselCommand::ListSessions).await?;
+        }
+        ChiselSubcommand::Load { id } => {
+            dispatcher.dispatch_command(ChiselCommand::Load { id }).await?;
+        }
+        ChiselSubcommand::View { id } => {
+            dispatcher.dispatch_command(ChiselCommand::Load { id }).await?;
+            dispatcher.dispatch_command(ChiselCommand::Source).await?;
+        }
+        ChiselSubcommand::ClearCache => {
+            dispatcher.dispatch_command(ChiselCommand::ClearCache).await?;
+        }
+        ChiselSubcommand::Eval { command } => {
+            dispatcher.dispatch(&command).await?;
+        }
+    }
     Ok(())
 }
 

@@ -89,16 +89,15 @@ pub struct SessionSource {
     /// Session Source configuration
     pub config: SessionSourceConfig,
 
-    /// Global level solidity code
+    /// Global level Solidity code.
     ///
-    /// Typically, global-level code is present between the contract definition and the first
-    /// function (usually constructor)
+    /// Above and outside all contract declarations, in the global context.
     pub global_code: String,
-    /// Top level solidity code
+    /// Top level Solidity code.
     ///
-    /// Typically, this is code seen above the constructor
-    pub top_level_code: String,
-    /// Code existing within the "run()" function's scope
+    /// Within the contract declaration, but outside of the `run()` function.
+    pub contract_code: String,
+    /// The code to be executed in the `run()` function.
     pub run_code: String,
 
     /// The generated output
@@ -113,7 +112,7 @@ impl Clone for SessionSource {
             contract_name: self.contract_name.clone(),
             solc: self.solc.clone(),
             global_code: self.global_code.clone(),
-            top_level_code: self.top_level_code.clone(),
+            contract_code: self.contract_code.clone(),
             run_code: self.run_code.clone(),
             config: self.config.clone(),
             output: None,
@@ -149,7 +148,7 @@ impl SessionSource {
             solc,
             config,
             global_code: Default::default(),
-            top_level_code: Default::default(),
+            contract_code: Default::default(),
             run_code: Default::default(),
             output: None,
         }
@@ -180,9 +179,9 @@ impl SessionSource {
             // Flag that tells the dispatcher whether to build or execute the session
             // source based on the scope of the new code.
             match parsed {
-                ParseTreeFragment::Function => new_source.with_run_code(&content),
-                ParseTreeFragment::Contract => new_source.with_top_level_code(&content),
-                ParseTreeFragment::Source => new_source.with_global_code(&content),
+                ParseTreeFragment::Function => new_source.add_run_code(&content),
+                ParseTreeFragment::Contract => new_source.add_contract_code(&content),
+                ParseTreeFragment::Source => new_source.add_global_code(&content),
             };
 
             Ok((new_source, matches!(parsed, ParseTreeFragment::Function)))
@@ -191,61 +190,60 @@ impl SessionSource {
         }
     }
 
-    // Fillers
-
-    /// Appends global-level code to the source
-    pub fn with_global_code(&mut self, content: &str) -> &mut Self {
+    /// Append global-level code to the source.
+    pub fn add_global_code(&mut self, content: &str) -> &mut Self {
         self.global_code.push_str(content.trim());
         self.global_code.push('\n');
         self.output = None;
         self
     }
 
-    /// Appends top-level code to the source
-    pub fn with_top_level_code(&mut self, content: &str) -> &mut Self {
-        self.top_level_code.push_str(content.trim());
-        self.top_level_code.push('\n');
+    /// Append contract-level code to the source.
+    pub fn add_contract_code(&mut self, content: &str) -> &mut Self {
+        self.contract_code.push_str(content.trim());
+        self.contract_code.push('\n');
         self.output = None;
         self
     }
 
-    /// Appends code to the "run()" function
-    pub fn with_run_code(&mut self, content: &str) -> &mut Self {
+    /// Append code to the `run()` function of the REPL contract.
+    pub fn add_run_code(&mut self, content: &str) -> &mut Self {
         self.run_code.push_str(content.trim());
         self.run_code.push('\n');
         self.output = None;
         self
     }
 
-    // Drains
+    /// Clears all source code.
+    pub fn clear(&mut self) {
+        self.global_code.clear();
+        self.contract_code.clear();
+        self.run_code.clear();
+        self.output = None;
+    }
 
-    /// Clears global code from the source
-    pub fn drain_global_code(&mut self) -> &mut Self {
+    /// Clear the global-level code .
+    pub fn clear_global(&mut self) -> &mut Self {
         String::clear(&mut self.global_code);
         self.output = None;
         self
     }
 
-    /// Clears top-level code from the source
-    pub fn drain_top_level_code(&mut self) -> &mut Self {
-        String::clear(&mut self.top_level_code);
+    /// Clear the contract-level code .
+    pub fn clear_contract(&mut self) -> &mut Self {
+        String::clear(&mut self.contract_code);
         self.output = None;
         self
     }
 
-    /// Clears the "run()" function's code
-    pub fn drain_run(&mut self) -> &mut Self {
+    /// Clear the `run()` function code.
+    pub fn clear_run(&mut self) -> &mut Self {
         String::clear(&mut self.run_code);
         self.output = None;
         self
     }
 
-    /// Generates and [`SolcInput`] from the source.
-    ///
-    /// ### Returns
-    ///
-    /// A [`SolcInput`] object containing forge-std's `Vm` interface as well as the REPL contract
-    /// source.
+    /// Builds a [`SolcInput`] containing the source.
     pub fn compiler_input(&self) -> SolcInput {
         let mut sources = Sources::new();
         sources.insert(self.file_name.clone(), Source::new(self.to_repl_source()));
@@ -275,11 +273,7 @@ impl SessionSource {
             .expect("Solidity source not found")
     }
 
-    /// Compile the contract
-    ///
-    /// ### Returns
-    ///
-    /// Optionally, a [CompilerOutput] object that contains compilation artifacts.
+    /// Compiles the source.
     pub fn compile(&self) -> Result<CompilerOutput> {
         // Compile the contract
         let compiled = self.solc.compile_exact(&self.compiler_input())?;
@@ -297,12 +291,7 @@ impl SessionSource {
         Ok(compiled)
     }
 
-    /// Builds the SessionSource from input into the complete CompiledOutput
-    ///
-    /// ### Returns
-    ///
-    /// Optionally, a [GeneratedOutput] object containing both the [CompilerOutput] and the
-    /// [IntermediateOutput].
+    /// Compiles the source.
     pub fn build(&mut self) -> Result<&GeneratedOutput> {
         let compiler_output = self.compile()?;
         let intermediate_output = self.analyze()?;
@@ -311,14 +300,17 @@ impl SessionSource {
         Ok(self.output.insert(generated_output))
     }
 
-    /// Convert the [SessionSource] to a valid Script contract
-    ///
-    /// ### Returns
-    ///
-    /// The [SessionSource] represented as a Forge Script contract.
+    /// Construct the source as a valid Forge script.
     pub fn to_script_source(&self) -> String {
         let Version { major, minor, patch, .. } = self.solc.version;
-        let Self { contract_name, global_code, top_level_code, run_code, config, .. } = self;
+        let Self {
+            contract_name,
+            global_code,
+            contract_code: top_level_code,
+            run_code,
+            config,
+            ..
+        } = self;
 
         let script_import =
             if !config.no_vm { "import {Script} from \"forge-std/Script.sol\";\n" } else { "" };
@@ -342,14 +334,17 @@ contract {contract_name} is Script {{
         )
     }
 
-    /// Convert the [SessionSource] to a valid REPL contract
-    ///
-    /// ### Returns
-    ///
-    /// The [SessionSource] represented as a REPL contract.
+    /// Construct the REPL source.
     pub fn to_repl_source(&self) -> String {
         let Version { major, minor, patch, .. } = self.solc.version;
-        let Self { contract_name, global_code, top_level_code, run_code, config, .. } = self;
+        let Self {
+            contract_name,
+            global_code,
+            contract_code: top_level_code,
+            run_code,
+            config,
+            ..
+        } = self;
         let (mut vm_import, mut vm_constant) = (String::new(), String::new());
         if !config.no_vm {
             // Check if there's any `forge-std` remapping and determine proper path to it by
@@ -464,15 +459,15 @@ fn parse_fragment(
 ) -> Option<ParseTreeFragment> {
     let mut base = SessionSource::new(solc, config);
 
-    match base.clone().with_run_code(buffer).parse() {
+    match base.clone().add_run_code(buffer).parse() {
         Ok(_) => return Some(ParseTreeFragment::Function),
         Err(e) => debug_errors(&e),
     }
-    match base.clone().with_top_level_code(buffer).parse() {
+    match base.clone().add_contract_code(buffer).parse() {
         Ok(_) => return Some(ParseTreeFragment::Contract),
         Err(e) => debug_errors(&e),
     }
-    match base.with_global_code(buffer).parse() {
+    match base.add_global_code(buffer).parse() {
         Ok(_) => return Some(ParseTreeFragment::Source),
         Err(e) => debug_errors(&e),
     }
