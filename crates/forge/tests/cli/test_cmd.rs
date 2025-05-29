@@ -4186,3 +4186,34 @@ Logs:
 ...
 "#]]);
 });
+
+forgetest!(test_eip712_hash_typed_data, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.insert_console();
+
+    prj.add_source(
+        "Eip712HashTypedData.sol",
+        r#"
+import "./Vm.sol";
+import "./test.sol";
+import "./console.sol";
+contract Eip712HashTypedDataTest is DSTest {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testHashEIP712Message() public {
+        string memory jsonData =
+            '{"types":{"EIP712Domain":[{"name":"name","type":"string"},{"name":"version","type":"string"},{"name":"chainId","type":"uint256"},{"name":"verifyingContract","type":"address"},{"name":"salt","type":"bytes32"}]},"primaryType":"EIP712Domain","domain":{"name":"example.metamask.io","version":"1","chainId":1,"verifyingContract":"0x0000000000000000000000000000000000000000"},"message":{}}';
+
+        // since this cheatcode simply exposes an alloy fn, the test has been borrowed from:
+        // <https://github.com/alloy-rs/core/blob/e0727c2224a5a83664d4ca1fb2275090d29def8b/crates/dyn-abi/src/eip712/typed_data.rs#L256>
+        bytes32 expectedHash = hex"122d1c8ef94b76dad44dcb03fa772361e20855c63311a15d5afe02d1b38f6077";
+        assertEq(vm.eip712HashTypedData(jsonData), expectedHash, "EIP712Domain struct hash mismatch");
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse().args(["test", "--mc", "Eip712HashTypedDataTest"]).assert_success();
+});

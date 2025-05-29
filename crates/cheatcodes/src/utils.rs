@@ -1,7 +1,7 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
-use alloy_dyn_abi::{eip712_parser::EncodeType, DynSolType, DynSolValue, Resolver};
+use alloy_dyn_abi::{eip712_parser::EncodeType, DynSolType, DynSolValue, Resolver, TypedData};
 use alloy_primitives::{aliases::B32, keccak256, map::HashMap, Bytes, B64, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::{ens::namehash, fs, TYPE_BINDING_PREFIX};
@@ -357,6 +357,16 @@ impl Cheatcode for eip712HashStruct_1Call {
         let type_def = get_type_def_from_bindings(typeName, path, &state.config.root)?;
 
         get_struct_hash(typeName, &type_def, abiEncodedData)
+    }
+}
+
+impl Cheatcode for eip712HashTypedDataCall {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+        let Self { jsonData } = self;
+        let typed_data: TypedData = serde_json::from_str(jsonData)?;
+        let digest = typed_data.eip712_signing_hash()?;
+
+        Ok(digest.to_vec())
     }
 }
 

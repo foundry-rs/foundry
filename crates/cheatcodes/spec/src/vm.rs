@@ -2933,6 +2933,10 @@ interface Vm {
     ///  * `abiEncodedData`: ABI-encoded data for the struct that is being hashed.
     #[cheatcode(group = Utilities)]
     function eip712HashStruct(string calldata bindingsPath, string calldata typeName, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);
+
+    /// Generates a ready-to-sign digest of human-readable typed data following the EIP-712 standard.
+    #[cheatcode(group = Utilities)]
+    function eip712HashTypedData(string calldata jsonData) external pure returns (bytes32 digest);
 }
 }
 
