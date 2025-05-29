@@ -44,25 +44,25 @@ pub struct Chisel {
 /// Chisel binary subcommands
 #[derive(Debug, Subcommand)]
 pub enum ChiselSubcommand {
-    /// List all cached sessions
+    /// List all cached sessions.
     List,
 
-    /// Load a cached session
+    /// Load a cached session.
     Load {
         /// The ID of the session to load.
         id: String,
     },
 
-    /// View the source of a cached session
+    /// View the source of a cached session.
     View {
         /// The ID of the session to load.
         id: String,
     },
 
-    /// Clear all cached chisel sessions from the cache directory
+    /// Clear all cached chisel sessions from the cache directory.
     ClearCache,
 
-    /// Simple evaluation of a command without entering the REPL
+    /// Simple evaluation of a command without entering the REPL.
     Eval {
         /// The command to be evaluated.
         command: String,

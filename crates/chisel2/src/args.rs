@@ -71,25 +71,17 @@ pub async fn run_command(args: Chisel) -> Result<()> {
     // REPL loop.
     let mut interrupt = false;
     loop {
-        // Get the prompt from the dispatcher
-        // Variable based on status of the last entry
-        let prompt = dispatcher.get_prompt();
-
-        // Read the next line
-        let next_string = rl.readline(prompt.as_ref());
-
-        // Try to read the string
-        match next_string {
+        match rl.readline(&dispatcher.get_prompt()) {
             Ok(line) => {
                 debug!("dispatching next line: {line}");
-                // Clear interrupt flag
+                // Clear interrupt flag.
                 interrupt = false;
 
-                // Dispatch and match results
+                // Dispatch and match results.
                 let r = dispatcher.dispatch(&line).await;
                 rl.helper_mut().unwrap().set_errored(r.is_err());
                 if let Err(e) = r {
-                    sh_err!("{e}")?;
+                    sh_err!("{}", foundry_common::errors::display_chain(&e))?;
                 }
             }
             Err(ReadlineError::Interrupted) => {
@@ -102,7 +94,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
             }
             Err(ReadlineError::Eof) => break,
             Err(err) => {
-                sh_err!("{err:?}")?;
+                sh_err!("{err}")?;
                 break
             }
         }
@@ -149,26 +141,23 @@ async fn load_prelude_file(dispatcher: &mut ChiselDispatcher, file: PathBuf) -> 
     dispatcher.dispatch(&prelude).await
 }
 
-async fn handle_cli_command(
-    dispatcher: &mut ChiselDispatcher,
-    cmd: ChiselSubcommand,
-) -> Result<()> {
+async fn handle_cli_command(d: &mut ChiselDispatcher, cmd: ChiselSubcommand) -> Result<()> {
     match cmd {
         ChiselSubcommand::List => {
-            dispatcher.dispatch_command(ChiselCommand::ListSessions).await?;
+            d.dispatch_command(ChiselCommand::ListSessions).await?;
         }
         ChiselSubcommand::Load { id } => {
-            dispatcher.dispatch_command(ChiselCommand::Load { id }).await?;
+            d.dispatch_command(ChiselCommand::Load { id }).await?;
         }
         ChiselSubcommand::View { id } => {
-            dispatcher.dispatch_command(ChiselCommand::Load { id }).await?;
-            dispatcher.dispatch_command(ChiselCommand::Source).await?;
+            d.dispatch_command(ChiselCommand::Load { id }).await?;
+            d.dispatch_command(ChiselCommand::Source).await?;
         }
         ChiselSubcommand::ClearCache => {
-            dispatcher.dispatch_command(ChiselCommand::ClearCache).await?;
+            d.dispatch_command(ChiselCommand::ClearCache).await?;
         }
         ChiselSubcommand::Eval { command } => {
-            dispatcher.dispatch(&command).await?;
+            d.dispatch(&command).await?;
         }
     }
     Ok(())

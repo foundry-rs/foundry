@@ -21,14 +21,14 @@ use foundry_evm::{
         render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
     },
 };
-use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
+use solar_parse::lexer::token::{RawLiteralKind, RawTokenKind};
+use solar_sema::ast::Base;
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
     process::Command,
-    sync::LazyLock,
 };
 use tracing::debug;
 use yansi::Paint;
@@ -43,15 +43,6 @@ const DEFAULT_PROMPT: &str = "➜ ";
 pub const COMMAND_LEADER: char = '!';
 /// Chisel character
 pub const CHISEL_CHAR: &str = "⚒️";
-
-/// Matches Solidity comments
-static COMMENT_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\s*(?://.*\s*$)|(/*[\s\S]*?\*/\s*$)").unwrap());
-
-/// Matches Ethereum addresses that are not strings
-static ADDRESS_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?m)(([^"']\s*)|^)(?P<address>0x[a-fA-F0-9]{40})((\s*[^"'\w])|$)"#).unwrap()
-});
 
 /// Chisel input dispatcher
 #[derive(Debug)]
@@ -152,36 +143,20 @@ impl ChiselDispatcher {
             }
         }
 
-        if input.trim().is_empty() {
-            debug!("empty dispatch input");
-            return Ok(());
-        }
-
         let source = self.source_mut();
 
-        // TODO(dani): replace these regex with one Cursor for loop
+        input = input.trim();
+        let (only_trivia, new_input) = preprocess(input);
+        input = &*new_input;
 
         // If the input is a comment, add it to the run code so we avoid running with empty input
-        if COMMENT_RE.is_match(input) {
-            debug!(%input, "matched comment");
-            source.add_run_code(input);
+        if only_trivia {
+            debug!(?input, "matched trivia");
+            if !input.is_empty() {
+                source.add_run_code(input);
+            }
             return Ok(());
         }
-
-        // If there is an address (or multiple addresses) in the input, ensure that they are
-        // encoded with a valid checksum per EIP-55.
-        let mut heap_input = input.to_string();
-        ADDRESS_RE.captures_iter(input).for_each(|m| {
-            // Convert the match to a string slice
-            let match_str = m.name("address").expect("exists").as_str();
-
-            // We can always safely unwrap here due to the regex matching.
-            let addr: Address = match_str.parse().expect("Valid address regex");
-            // Replace all occurrences of the address with a checksummed version
-            heap_input = heap_input.replace(match_str, &addr.to_string());
-        });
-        // Replace the old input with the formatted input.
-        input = &heap_input;
 
         // Create new source with exact input appended and parse
         let (mut new_source, do_execute) = source.clone_with_new_line(input.to_string())?;
@@ -311,22 +286,22 @@ impl ChiselDispatcher {
         }
     }
 
-    fn show_help(&self) -> Result<()> {
+    pub(crate) fn show_help(&self) -> Result<()> {
         sh_println!("{}", ChiselCommand::format_help())
     }
 
-    fn quit(&self) -> Result<()> {
+    pub(crate) fn quit(&self) -> Result<()> {
         // TODO(dani): Don't call `exit`.
         // Exit the process with status code `0` for success.
         std::process::exit(0);
     }
 
-    fn clear_source(&mut self) -> Result<()> {
+    pub(crate) fn clear_source(&mut self) -> Result<()> {
         self.source_mut().clear();
         sh_println!("Cleared session!")
     }
 
-    fn save_session(&mut self, id: Option<String>) -> Result<()> {
+    pub(crate) fn save_session(&mut self, id: Option<String>) -> Result<()> {
         // If a new name was supplied, overwrite the ID of the current session.
         if let Some(id) = id {
             // TODO: Should we delete the old cache file if the id of the session changes?
@@ -337,7 +312,7 @@ impl ChiselDispatcher {
         sh_println!("Saved session to cache with ID = {}", self.session.id.as_ref().unwrap())
     }
 
-    fn load_session(&mut self, id: &str) -> Result<()> {
+    pub(crate) fn load_session(&mut self, id: &str) -> Result<()> {
         // Try to save the current session before loading another.
         // Don't save an empty session.
         if !self.source().run_code.is_empty() {
@@ -356,7 +331,7 @@ impl ChiselDispatcher {
         sh_println!("Loaded Chisel session! (ID = {})", self.session.id.as_ref().unwrap())
     }
 
-    fn list_sessions(&self) -> Result<()> {
+    pub(crate) fn list_sessions(&self) -> Result<()> {
         let sessions = ChiselSession::get_sessions()?;
         if sessions.is_empty() {
             eyre::bail!("No sessions found. Use the `!save` command to save a session.");
@@ -372,20 +347,20 @@ impl ChiselDispatcher {
         )
     }
 
-    fn show_source(&self) -> Result<()> {
+    pub(crate) fn show_source(&self) -> Result<()> {
         let formatted = self.format_source().wrap_err("failed to format session source")?;
         // TODO(dani): get the solidity helper from rustyline or store in self?
         let highlighted = SolidityHelper::new().highlight(&formatted);
         sh_println!("{highlighted}")
     }
 
-    fn clear_cache(&mut self) -> Result<()> {
+    pub(crate) fn clear_cache(&mut self) -> Result<()> {
         ChiselSession::clear_cache().wrap_err("failed to clear cache")?;
         self.session.id = None;
         sh_println!("Cleared chisel cache!")
     }
 
-    fn set_fork(&mut self, url: Option<String>) -> Result<()> {
+    pub(crate) fn set_fork(&mut self, url: Option<String>) -> Result<()> {
         let Some(url) = url else {
             self.source_mut().config.evm_opts.fork_url = None;
             sh_println!("Now using local environment.")?;
@@ -418,13 +393,13 @@ impl ChiselDispatcher {
         Ok(())
     }
 
-    fn toggle_traces(&mut self) -> Result<()> {
+    pub(crate) fn toggle_traces(&mut self) -> Result<()> {
         let t = &mut self.source_mut().config.traces;
         *t = !*t;
         sh_println!("{} traces!", if *t { "Enabled" } else { "Disabled" })
     }
 
-    fn set_calldata(&mut self, data: Option<&str>) -> Result<()> {
+    pub(crate) fn set_calldata(&mut self, data: Option<&str>) -> Result<()> {
         // remove empty space, double quotes, and 0x prefix
         let arg = data
             .map(|s| s.trim_matches(|c: char| c.is_whitespace() || c == '"' || c == '\''))
@@ -449,7 +424,7 @@ impl ChiselDispatcher {
         }
     }
 
-    async fn show_mem_dump(&mut self) -> Result<()> {
+    pub(crate) async fn show_mem_dump(&mut self) -> Result<()> {
         let (_, res) = self.source_mut().execute().await?;
         let Some((_, mem)) = res.state.as_ref() else {
             eyre::bail!("Run function is empty.");
@@ -464,7 +439,7 @@ impl ChiselDispatcher {
         Ok(())
     }
 
-    async fn show_stack_dump(&mut self) -> Result<()> {
+    pub(crate) async fn show_stack_dump(&mut self) -> Result<()> {
         let (_, res) = self.source_mut().execute().await?;
         let Some((stack, _)) = res.state.as_ref() else {
             eyre::bail!("Run function is empty.");
@@ -479,7 +454,7 @@ impl ChiselDispatcher {
         Ok(())
     }
 
-    fn export(&self) -> Result<()> {
+    pub(crate) fn export(&self) -> Result<()> {
         // Check if the pwd is a foundry project
         if !Path::new("foundry.toml").exists() {
             eyre::bail!("Must be in a foundry project to export source to script.");
@@ -496,7 +471,7 @@ impl ChiselDispatcher {
     }
 
     /// Fetches an interface from Etherscan
-    async fn fetch_interface(&mut self, addr: Address, name: String) -> Result<()> {
+    pub(crate) async fn fetch_interface(&mut self, addr: Address, name: String) -> Result<()> {
         // TODO(dani): for the love of god we have an entire crate to handle just etherscan
 
         let request_url = format!(
@@ -620,14 +595,14 @@ impl ChiselDispatcher {
         }
     }
 
-    fn exec_command(&self, command: String, args: Vec<String>) -> Result<()> {
+    pub(crate) fn exec_command(&self, command: String, args: Vec<String>) -> Result<()> {
         let mut cmd = Command::new(command);
         cmd.args(args);
         let _ = cmd.status()?;
         Ok(())
     }
 
-    async fn edit_session(&mut self) -> Result<()> {
+    pub(crate) async fn edit_session(&mut self) -> Result<()> {
         // create a temp file with the content of the run code
         let tmp = std::env::temp_dir().join("chisel-tmp.sol");
         std::fs::write(&tmp, self.source().run_code.as_bytes())
@@ -652,7 +627,7 @@ impl ChiselDispatcher {
         sh_println!("Successfully edited `run()` function's body!")
     }
 
-    async fn show_raw_stack(&mut self, var: String) -> Result<()> {
+    pub(crate) async fn show_raw_stack(&mut self, var: String) -> Result<()> {
         let source = self.source_mut();
         let line = format!("bytes32 __raw__; assembly {{ __raw__ := {var} }}");
         if let Ok((new_source, _)) = source.clone_with_new_line(line) {
@@ -666,30 +641,52 @@ impl ChiselDispatcher {
     }
 }
 
+/// Preprocesses addresses to ensure they are correctly checksummed and returns whether the input
+/// only contained trivia (comments, whitespace).
+fn preprocess(input: &str) -> (bool, Cow<'_, str>) {
+    let mut current_pos = 0;
+    let mut only_trivia = true;
+    let mut new_input = Cow::Borrowed(input);
+    for token in solar_parse::Cursor::new(input) {
+        use RawTokenKind::*;
+
+        let pos = current_pos as usize;
+        current_pos += token.len;
+
+        if matches!(token.kind, Whitespace | LineComment { .. } | BlockComment { .. }) {
+            continue;
+        }
+        only_trivia = false;
+
+        // Ensure that addresses are correctly checksummed.
+        if let Literal { kind: RawLiteralKind::Int { base: Base::Hexadecimal, .. } } = token.kind {
+            if token.len == 42 {
+                let range = pos..pos + 42;
+                if let Ok(addr) = input[range.clone()].parse::<Address>() {
+                    new_input.to_mut().replace_range(range, addr.to_checksum_buffer(None).as_str());
+                }
+            }
+        }
+    }
+    (only_trivia, new_input)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_comment_regex() {
-        assert!(COMMENT_RE.is_match("// line comment"));
-        assert!(COMMENT_RE.is_match("  \n// line \tcomment\n"));
-        assert!(!COMMENT_RE.is_match("// line \ncomment"));
+    fn test_trivia() {
+        fn only_trivia(s: &str) -> bool {
+            let (only_trivia, _new_input) = preprocess(s);
+            only_trivia
+        }
+        assert!(only_trivia("// line comment"));
+        assert!(only_trivia("  \n// line \tcomment\n"));
+        assert!(!only_trivia("// line \ncomment"));
 
-        assert!(COMMENT_RE.is_match("/* block comment */"));
-        assert!(COMMENT_RE.is_match(" \t\n  /* block \n \t comment */\n"));
-        assert!(!COMMENT_RE.is_match("/* block \n \t comment */\nwith \tother"));
-    }
-
-    #[test]
-    fn test_address_regex() {
-        assert!(ADDRESS_RE.is_match("0xe5f3aF50FE5d0bF402a3C6F55ccC47d4307922d4"));
-        assert!(ADDRESS_RE.is_match(" 0xe5f3aF50FE5d0bF402a3C6F55ccC47d4307922d4 "));
-        assert!(ADDRESS_RE.is_match("0xe5f3aF50FE5d0bF402a3C6F55ccC47d4307922d4,"));
-        assert!(ADDRESS_RE.is_match("(0xe5f3aF50FE5d0bF402a3C6F55ccC47d4307922d4)"));
-        assert!(!ADDRESS_RE.is_match("0xe5f3aF50FE5d0bF402a3C6F55ccC47d4307922d4aaa"));
-        assert!(!ADDRESS_RE.is_match("'0xe5f3aF50FE5d0bF402a3C6F55ccC47d4307922d4'"));
-        assert!(!ADDRESS_RE.is_match("'    0xe5f3aF50FE5d0bF402a3C6F55ccC47d4307922d4'"));
-        assert!(!ADDRESS_RE.is_match("'0xe5f3aF50FE5d0bF402a3C6F55ccC47d4307922d4'"));
+        assert!(only_trivia("/* block comment */"));
+        assert!(only_trivia(" \t\n  /* block \n \t comment */\n"));
+        assert!(!only_trivia("/* block \n \t comment */\nwith \tother"));
     }
 }
