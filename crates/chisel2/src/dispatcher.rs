@@ -144,6 +144,204 @@ impl ChiselDispatcher {
             None => Cow::Borrowed(DEFAULT_PROMPT),
         }
     }
+
+    /// Dispatches an input as a command via [Self::dispatch_command] or as a Solidity snippet.
+    pub async fn dispatch(&mut self, mut input: &str) -> DispatchResult {
+        // Check if the input is a builtin command.
+        // Commands are denoted with a `!` leading character.
+        if let Some(command) = input.strip_prefix(COMMAND_LEADER) {
+            return match ChiselCommand::try_parse_from(command.split_whitespace()) {
+                Ok(cmd) => self.dispatch_command(cmd).await,
+                Err(e) => DispatchResult::UnrecognizedCommand(e.into()),
+            }
+        }
+        if input.trim().is_empty() {
+            debug!("empty dispatch input");
+            return DispatchResult::Success(None)
+        }
+
+        // Get a mutable reference to the session source
+        let source = self.source_mut();
+
+        // If the input is a comment, add it to the run code so we avoid running with empty input
+        if COMMENT_RE.is_match(input) {
+            debug!(%input, "matched comment");
+            source.add_run_code(input);
+            return DispatchResult::Success(None)
+        }
+
+        // If there is an address (or multiple addresses) in the input, ensure that they are
+        // encoded with a valid checksum per EIP-55.
+        let mut heap_input = input.to_string();
+        ADDRESS_RE.captures_iter(input).for_each(|m| {
+            // Convert the match to a string slice
+            let match_str = m.name("address").expect("exists").as_str();
+
+            // We can always safely unwrap here due to the regex matching.
+            let addr: Address = match_str.parse().expect("Valid address regex");
+            // Replace all occurrences of the address with a checksummed version
+            heap_input = heap_input.replace(match_str, &addr.to_string());
+        });
+        // Replace the old input with the formatted input.
+        input = &heap_input;
+
+        // Create new source with exact input appended and parse
+        let (mut new_source, do_execute) = match source.clone_with_new_line(input.to_string()) {
+            Ok(new) => new,
+            Err(e) => {
+                return DispatchResult::CommandFailed(Self::make_error(format!(
+                    "Failed to parse input! {e}"
+                )))
+            }
+        };
+
+        // TODO: Cloning / parsing the session source twice on non-inspected inputs kinda sucks.
+        // Should change up how this works.
+        match source.inspect(input).await {
+            // Continue and print
+            Ok((true, Some(res))) => {
+                let _ = sh_println!("{res}");
+            }
+            Ok((true, None)) => {}
+            // Return successfully
+            Ok((false, res)) => {
+                debug!(%input, ?res, "inspect success");
+                return DispatchResult::Success(res)
+            }
+
+            // Return with the error
+            Err(e) => return DispatchResult::CommandFailed(Self::make_error(e)),
+        }
+
+        if do_execute {
+            match new_source.execute().await {
+                Ok((_, mut res)) => {
+                    let failed = !res.success;
+
+                    // If traces are enabled or there was an error in execution, show the execution
+                    // traces.
+                    if new_source.config.traces || failed {
+                        if let Ok(decoder) = Self::decode_traces(&new_source.config, &mut res).await
+                        {
+                            if let Err(e) = Self::show_traces(&decoder, &mut res).await {
+                                return DispatchResult::CommandFailed(e.to_string())
+                            };
+
+                            // Show console logs, if there are any
+                            let decoded_logs = decode_console_logs(&res.logs);
+                            if !decoded_logs.is_empty() {
+                                let _ = sh_println!("{}", "Logs:".green());
+                                for log in decoded_logs {
+                                    let _ = sh_println!("  {log}");
+                                }
+                            }
+
+                            // If the contract execution failed, continue on without adding the new
+                            // line to the source.
+                            if failed {
+                                return DispatchResult::Failure(Some(Self::make_error(
+                                    "Failed to execute REPL contract!",
+                                )))
+                            }
+                        }
+                    }
+
+                    // Replace the old session source with the new version
+                    *self.source_mut() = new_source;
+
+                    DispatchResult::Success(None)
+                }
+                Err(e) => DispatchResult::Failure(Some(e.to_string())),
+            }
+        } else {
+            match new_source.build() {
+                Ok(out) => {
+                    debug!(%input, ?out, "skipped execute and rebuild source");
+                    *self.source_mut() = new_source;
+                    DispatchResult::Success(None)
+                }
+                Err(e) => DispatchResult::Failure(Some(e.to_string())),
+            }
+        }
+    }
+
+    /// Decodes traces in the [ChiselResult]
+    /// TODO: Add `known_contracts` back in.
+    ///
+    /// ### Takes
+    ///
+    /// - A reference to a [SessionSourceConfig]
+    /// - A mutable reference to a [ChiselResult]
+    ///
+    /// ### Returns
+    ///
+    /// Optionally, a [CallTraceDecoder]
+    pub async fn decode_traces(
+        session_config: &SessionSourceConfig,
+        result: &mut ChiselResult,
+        // known_contracts: &ContractsByArtifact,
+    ) -> eyre::Result<CallTraceDecoder> {
+        let mut decoder = CallTraceDecoderBuilder::new()
+            .with_labels(result.labeled_addresses.clone())
+            .with_signature_identifier(SignaturesIdentifier::from_config(
+                &session_config.foundry_config,
+            )?)
+            .build();
+
+        let mut identifier = TraceIdentifiers::new().with_etherscan(
+            &session_config.foundry_config,
+            session_config.evm_opts.get_remote_chain_id().await,
+        )?;
+        if !identifier.is_empty() {
+            for (_, trace) in &mut result.traces {
+                decoder.identify(trace, &mut identifier);
+            }
+        }
+        Ok(decoder)
+    }
+
+    /// Display the gathered traces of a REPL execution.
+    ///
+    /// ### Takes
+    ///
+    /// - A reference to a [CallTraceDecoder]
+    /// - A mutable reference to a [ChiselResult]
+    ///
+    /// ### Returns
+    ///
+    /// Optionally, a unit type signifying a successful result.
+    pub async fn show_traces(
+        decoder: &CallTraceDecoder,
+        result: &mut ChiselResult,
+    ) -> eyre::Result<()> {
+        if result.traces.is_empty() {
+            eyre::bail!("Unexpected error: No traces gathered. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
+        }
+
+        sh_println!("{}", "Traces:".green())?;
+        for (kind, trace) in &mut result.traces {
+            // Display all Setup + Execution traces.
+            if matches!(kind, TraceKind::Setup | TraceKind::Execution) {
+                decode_trace_arena(trace, decoder).await;
+                sh_println!("{}", render_trace_arena(trace))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Format a type that implements [std::fmt::Display] as a chisel error string.
+    ///
+    /// ### Takes
+    ///
+    /// A generic type implementing the [std::fmt::Display] trait.
+    ///
+    /// ### Returns
+    ///
+    /// A formatted error [String].
+    pub fn make_error<T: std::fmt::Display>(msg: T) -> String {
+        format!("{}", msg.red())
+    }
 }
 
 /// [`ChiselCommand`] implementations.
@@ -680,206 +878,6 @@ impl ChiselDispatcher {
         }
 
         DispatchResult::CommandFailed("Variable must exist within `run()` function.".to_string())
-    }
-}
-
-impl ChiselDispatcher {
-    /// Dispatches an input as a command via [Self::dispatch_command] or as a Solidity snippet.
-    pub async fn dispatch(&mut self, mut input: &str) -> DispatchResult {
-        // Check if the input is a builtin command.
-        // Commands are denoted with a `!` leading character.
-        if let Some(command) = input.strip_prefix(COMMAND_LEADER) {
-            return match ChiselCommand::try_parse_from(command.split_whitespace()) {
-                Ok(cmd) => self.dispatch_command(cmd).await,
-                Err(e) => DispatchResult::UnrecognizedCommand(e.into()),
-            }
-        }
-        if input.trim().is_empty() {
-            debug!("empty dispatch input");
-            return DispatchResult::Success(None)
-        }
-
-        // Get a mutable reference to the session source
-        let source = self.source_mut();
-
-        // If the input is a comment, add it to the run code so we avoid running with empty input
-        if COMMENT_RE.is_match(input) {
-            debug!(%input, "matched comment");
-            source.add_run_code(input);
-            return DispatchResult::Success(None)
-        }
-
-        // If there is an address (or multiple addresses) in the input, ensure that they are
-        // encoded with a valid checksum per EIP-55.
-        let mut heap_input = input.to_string();
-        ADDRESS_RE.captures_iter(input).for_each(|m| {
-            // Convert the match to a string slice
-            let match_str = m.name("address").expect("exists").as_str();
-
-            // We can always safely unwrap here due to the regex matching.
-            let addr: Address = match_str.parse().expect("Valid address regex");
-            // Replace all occurrences of the address with a checksummed version
-            heap_input = heap_input.replace(match_str, &addr.to_string());
-        });
-        // Replace the old input with the formatted input.
-        input = &heap_input;
-
-        // Create new source with exact input appended and parse
-        let (mut new_source, do_execute) = match source.clone_with_new_line(input.to_string()) {
-            Ok(new) => new,
-            Err(e) => {
-                return DispatchResult::CommandFailed(Self::make_error(format!(
-                    "Failed to parse input! {e}"
-                )))
-            }
-        };
-
-        // TODO: Cloning / parsing the session source twice on non-inspected inputs kinda sucks.
-        // Should change up how this works.
-        match source.inspect(input).await {
-            // Continue and print
-            Ok((true, Some(res))) => {
-                let _ = sh_println!("{res}");
-            }
-            Ok((true, None)) => {}
-            // Return successfully
-            Ok((false, res)) => {
-                debug!(%input, ?res, "inspect success");
-                return DispatchResult::Success(res)
-            }
-
-            // Return with the error
-            Err(e) => return DispatchResult::CommandFailed(Self::make_error(e)),
-        }
-
-        if do_execute {
-            match new_source.execute().await {
-                Ok((_, mut res)) => {
-                    let failed = !res.success;
-
-                    // If traces are enabled or there was an error in execution, show the execution
-                    // traces.
-                    if new_source.config.traces || failed {
-                        if let Ok(decoder) = Self::decode_traces(&new_source.config, &mut res).await
-                        {
-                            if let Err(e) = Self::show_traces(&decoder, &mut res).await {
-                                return DispatchResult::CommandFailed(e.to_string())
-                            };
-
-                            // Show console logs, if there are any
-                            let decoded_logs = decode_console_logs(&res.logs);
-                            if !decoded_logs.is_empty() {
-                                let _ = sh_println!("{}", "Logs:".green());
-                                for log in decoded_logs {
-                                    let _ = sh_println!("  {log}");
-                                }
-                            }
-
-                            // If the contract execution failed, continue on without adding the new
-                            // line to the source.
-                            if failed {
-                                return DispatchResult::Failure(Some(Self::make_error(
-                                    "Failed to execute REPL contract!",
-                                )))
-                            }
-                        }
-                    }
-
-                    // Replace the old session source with the new version
-                    *self.source_mut() = new_source;
-
-                    DispatchResult::Success(None)
-                }
-                Err(e) => DispatchResult::Failure(Some(e.to_string())),
-            }
-        } else {
-            match new_source.build() {
-                Ok(out) => {
-                    debug!(%input, ?out, "skipped execute and rebuild source");
-                    *self.source_mut() = new_source;
-                    DispatchResult::Success(None)
-                }
-                Err(e) => DispatchResult::Failure(Some(e.to_string())),
-            }
-        }
-    }
-
-    /// Decodes traces in the [ChiselResult]
-    /// TODO: Add `known_contracts` back in.
-    ///
-    /// ### Takes
-    ///
-    /// - A reference to a [SessionSourceConfig]
-    /// - A mutable reference to a [ChiselResult]
-    ///
-    /// ### Returns
-    ///
-    /// Optionally, a [CallTraceDecoder]
-    pub async fn decode_traces(
-        session_config: &SessionSourceConfig,
-        result: &mut ChiselResult,
-        // known_contracts: &ContractsByArtifact,
-    ) -> eyre::Result<CallTraceDecoder> {
-        let mut decoder = CallTraceDecoderBuilder::new()
-            .with_labels(result.labeled_addresses.clone())
-            .with_signature_identifier(SignaturesIdentifier::from_config(
-                &session_config.foundry_config,
-            )?)
-            .build();
-
-        let mut identifier = TraceIdentifiers::new().with_etherscan(
-            &session_config.foundry_config,
-            session_config.evm_opts.get_remote_chain_id().await,
-        )?;
-        if !identifier.is_empty() {
-            for (_, trace) in &mut result.traces {
-                decoder.identify(trace, &mut identifier);
-            }
-        }
-        Ok(decoder)
-    }
-
-    /// Display the gathered traces of a REPL execution.
-    ///
-    /// ### Takes
-    ///
-    /// - A reference to a [CallTraceDecoder]
-    /// - A mutable reference to a [ChiselResult]
-    ///
-    /// ### Returns
-    ///
-    /// Optionally, a unit type signifying a successful result.
-    pub async fn show_traces(
-        decoder: &CallTraceDecoder,
-        result: &mut ChiselResult,
-    ) -> eyre::Result<()> {
-        if result.traces.is_empty() {
-            eyre::bail!("Unexpected error: No traces gathered. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
-        }
-
-        sh_println!("{}", "Traces:".green())?;
-        for (kind, trace) in &mut result.traces {
-            // Display all Setup + Execution traces.
-            if matches!(kind, TraceKind::Setup | TraceKind::Execution) {
-                decode_trace_arena(trace, decoder).await;
-                sh_println!("{}", render_trace_arena(trace))?;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Format a type that implements [std::fmt::Display] as a chisel error string.
-    ///
-    /// ### Takes
-    ///
-    /// A generic type implementing the [std::fmt::Display] trait.
-    ///
-    /// ### Returns
-    ///
-    /// A formatted error [String].
-    pub fn make_error<T: std::fmt::Display>(msg: T) -> String {
-        format!("{}", msg.red())
     }
 }
 
