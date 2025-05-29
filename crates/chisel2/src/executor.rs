@@ -2,13 +2,9 @@
 //!
 //! This module contains the execution logic for the [SessionSource].
 
-use crate::prelude::{
-    ChiselDispatcher, ChiselResult, ChiselRunner, IntermediateOutput, SessionSource, SolidityHelper,
-};
+use crate::prelude::{ChiselDispatcher, ChiselResult, ChiselRunner, SessionSource, SolidityHelper};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_json_abi::EventParam;
 use alloy_primitives::{hex, Address, B256, U256};
-use core::fmt::Debug;
 use eyre::{Result, WrapErr};
 use foundry_compilers::Artifact;
 use foundry_evm::{
@@ -19,13 +15,10 @@ use itertools::Itertools;
 use solang_parser::pt::{self, CodeLocation};
 use solar_sema::{
     hir,
-    ty::{self, Gcx},
+    ty::{self, Gcx, Ty},
 };
-use std::str::FromStr;
 use tracing::debug;
 use yansi::Paint;
-
-const USIZE_MAX_AS_U256: U256 = U256::from_limbs([usize::MAX as u64, 0, 0, 0]);
 
 /// Executor implementation for [SessionSource]
 impl SessionSource {
@@ -145,7 +138,7 @@ impl SessionSource {
         };
 
         let bytecode = bytecode.into_owned();
-        let mut runner = self.prepare_runner(final_pc).await?;
+        let mut runner = self.build_runner(final_pc).await?;
         runner.run(bytecode)
     }
 
@@ -162,7 +155,7 @@ impl SessionSource {
     /// - `formatted_output` is the formatted value, if any
     pub async fn inspect(&self, input: &str) -> Result<(bool, Option<String>)> {
         let line = format!("bytes memory inspectoor = abi.encode({input});");
-        let mut source = match self.clone_with_new_line(line.clone()) {
+        let mut source = match self.clone_with_new_line(line) {
             Ok((source, _)) => source,
             Err(err) => {
                 debug!(%err, "failed to build new source");
@@ -226,43 +219,18 @@ impl SessionSource {
             return Err(eyre::eyre!("Failed to inspect expression"))
         };
 
-        let output = source
-            .output
-            .as_ref()
-            .ok_or_else(|| eyre::eyre!("Could not find generated output!"))?;
+        // let output = source
+        //     .output
+        //     .as_ref()
+        //     .ok_or_else(|| eyre::eyre!("Could not find generated output!"))?;
 
-        // If the expression is a variable declaration within the REPL contract, use its type;
-        // otherwise, attempt to infer the type.
-        let contract_expr = output
-            .intermediate
-            .get_var(input)
-            .map(|id| {
-                let gcx = output.intermediate.gcx();
-                (gcx.type_of_item(id.into()), gcx.hir.variable(id).initializer)
-            })
-            .or_else(|| {
-                // TODO(dani): type_of_expr() of the abi.encode argument
-                // source.infer_inner_expr_type()
-                let expr = source.infer_inner_expr_type();
-                (None)
-            });
-
-        // If the current action is a function call, we get its return type
-        // otherwise it returns None
-        let function_call_return_type =
-            Type::get_function_return_type(contract_expr, &output.intermediate);
-
-        let (contract_expr, ty) = if let Some(r) = function_call_return_type {
-            r
-        } else {
-            match contract_expr
-                .and_then(|e| Type::ethabi(e, Some(&output.intermediate)).map(|ty| (e, ty)))
-            {
-                Some(res) => res,
-                // this type was denied for inspection, continue
-                None => return Ok((true, None)),
-            }
-        };
+        // Either the expression referred to by `input`, or the last expression, which was wrapped
+        // in `abi.encode`.
+        // TODO(dani): type_of_expr() of the abi.encode argument
+        let resolved_input: Option<(Ty<'_>, bool)> = None;
+        let Some((ty, should_continue)) = resolved_input else { return Ok((true, None)) };
+        // TODO(dani): format types even if no value?
+        let Some(ty) = ty_to_dyn_sol_type(ty) else { return Ok((true, None)) };
 
         // the file compiled correctly, thus the last stack item must be the memory offset of
         // the `bytes memory inspectoor` value
@@ -271,41 +239,14 @@ impl SessionSource {
         let len = U256::try_from_be_slice(mem_offset).unwrap().to::<usize>();
         offset += 32;
         let data = &memory[offset..offset + len];
-        // `tokens` is guaranteed to have the same length as the provided types
-        let token =
-            DynSolType::abi_decode(&ty, data).wrap_err("Could not decode inspected values")?;
-        Ok((should_continue(contract_expr), Some(format_token(token))))
+        let token = ty.abi_decode(data).wrap_err("Could not decode inspected values")?;
+        Ok((should_continue, Some(format_token(token))))
     }
 
-    /// Gracefully attempts to extract the type of the expression within the `abi.encode(...)`
-    /// call inserted by the inspect function.
-    ///
-    /// ### Takes
-    ///
-    /// A reference to a [SessionSource]
-    ///
-    /// ### Returns
-    ///
-    /// Optionally, a [Type]
-    fn infer_inner_expr_type(&self) -> Option<&pt::Expression> {
-        // TODO(dani)
-        None
-    }
-
-    /// Prepare a runner for the Chisel REPL environment
-    ///
-    /// ### Takes
-    ///
-    /// The final statement's program counter for the ChiselInspector
-    ///
-    /// ### Returns
-    ///
-    /// A configured [ChiselRunner]
-    async fn prepare_runner(&mut self, final_pc: usize) -> Result<ChiselRunner> {
+    async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner> {
         let env =
             self.config.evm_opts.evm_env().await.expect("Could not instantiate fork environment");
 
-        // Create an in-memory backend
         let backend = match self.config.backend.take() {
             Some(backend) => backend,
             None => {
@@ -316,7 +257,6 @@ impl SessionSource {
             }
         };
 
-        // Build a new executor
         let executor = ExecutorBuilder::new()
             .inspectors(|stack| {
                 stack.chisel_state(final_pc).trace_mode(TraceMode::Call).cheatcodes(
@@ -334,8 +274,6 @@ impl SessionSource {
             .legacy_assertions(self.config.foundry_config.legacy_assertions)
             .build(env, backend);
 
-        // Create a [ChiselRunner] with a default balance of [U256::MAX] and
-        // the sender [Address::zero].
         Ok(ChiselRunner::new(executor, U256::MAX, Address::ZERO, self.config.calldata.clone()))
     }
 }
@@ -487,38 +425,30 @@ fn format_event_definition<'gcx>(gcx: Gcx<'gcx>, id: hir::EventId) -> Result<Str
 }
 
 /// Whether execution should continue after inspecting this expression
-fn should_continue(expr: &pt::Expression) -> bool {
-    match expr {
-        // assignments
-        pt::Expression::PreDecrement(_, _) |       // --<inner>
-        pt::Expression::PostDecrement(_, _) |      // <inner>--
-        pt::Expression::PreIncrement(_, _) |       // ++<inner>
-        pt::Expression::PostIncrement(_, _) |      // <inner>++
-        pt::Expression::Assign(_, _, _) |          // <inner>   = ...
-        pt::Expression::AssignAdd(_, _, _) |       // <inner>  += ...
-        pt::Expression::AssignSubtract(_, _, _) |  // <inner>  -= ...
-        pt::Expression::AssignMultiply(_, _, _) |  // <inner>  *= ...
-        pt::Expression::AssignDivide(_, _, _) |    // <inner>  /= ...
-        pt::Expression::AssignModulo(_, _, _) |    // <inner>  %= ...
-        pt::Expression::AssignAnd(_, _, _) |       // <inner>  &= ...
-        pt::Expression::AssignOr(_, _, _) |        // <inner>  |= ...
-        pt::Expression::AssignXor(_, _, _) |       // <inner>  ^= ...
-        pt::Expression::AssignShiftLeft(_, _, _) | // <inner> <<= ...
-        pt::Expression::AssignShiftRight(_, _, _)  // <inner> >>= ...
-        => {
-            true
-        }
+fn should_continue(expr: &hir::Expr<'_>) -> bool {
+    match expr.kind {
+        hir::ExprKind::Assign(..) => true,
+        hir::ExprKind::Unary(u, _) => matches!(
+            u.kind,
+            hir::UnOpKind::PreInc |
+                hir::UnOpKind::PreDec |
+                hir::UnOpKind::PostInc |
+                hir::UnOpKind::PostDec,
+        ),
 
         // Array.pop()
-        pt::Expression::FunctionCall(_, lhs, _) => {
-            match lhs.as_ref() {
-                pt::Expression::MemberAccess(_, _inner, access) => access.name == "pop",
-                _ => false
-            }
+        hir::ExprKind::Call(lhs, _, _) => {
+            matches!(lhs.kind, hir::ExprKind::Member(_, access) if access.as_str() == "pop")
         }
 
-        _ => false
+        _ => false,
     }
+}
+
+fn ty_to_dyn_sol_type(ty: Ty<'_>) -> Option<DynSolType> {
+    // TODO(dani)
+    let _ = ty;
+    None
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

@@ -27,17 +27,19 @@ pub const MIN_VM_VERSION: Version = Version::new(0, 6, 2);
 static VM_SOURCE: &str = include_str!("../../../testdata/cheats/Vm.sol");
 
 /// Intermediate output for the compiled [SessionSource]
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct IntermediateOutput {
     /// All expressions within the REPL contract's run function and top level scope.
     repl_contract_expressions: HashMap<String, pt::Expression>,
     /// Intermediate contracts
     intermediate_contracts: IntermediateContracts,
+    /// `REPL::run`
+    run: hir::FunctionId,
 }
 
 /// A refined intermediate parse tree for a contract that enables easy lookups
 /// of definitions.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct IntermediateContract {
     /// All function definitions within the contract
     pub function_definitions: HashMap<String, Box<pt::FunctionDefinition>>,

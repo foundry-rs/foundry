@@ -194,6 +194,7 @@ impl ChiselDispatcher {
                 DispatchResult::CommandSuccess(Some(ChiselCommand::format_help()))
             }
             ChiselCommand::Quit => {
+                // TODO(dani): Don't call `exit`.
                 // Exit the process with status code `0` for success.
                 std::process::exit(0);
             }

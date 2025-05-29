@@ -9,7 +9,6 @@ pub mod args;
 pub mod cmd;
 pub mod dispatcher;
 pub mod executor;
-pub mod history;
 pub mod opts;
 pub mod runner;
 pub mod session;

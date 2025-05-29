@@ -6,8 +6,7 @@ use foundry_common::{
 };
 use std::path::PathBuf;
 
-// Loads project's figment and merges the build cli arguments into it
-foundry_config::merge_impl_figment_convert!(Chisel, build, evm);
+foundry_config::impl_figment_convert!(Chisel, build, evm);
 
 /// Fast, utilitarian, and verbose Solidity REPL.
 #[derive(Debug, Parser)]

@@ -1,5 +1,5 @@
 use crate::{
-    history::chisel_history_file,
+    opts::{Chisel, ChiselSubcommand},
     prelude::{ChiselCommand, ChiselDispatcher, DispatchResult, SolidityHelper},
 };
 use clap::Parser;
@@ -9,19 +9,10 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::fs;
-use foundry_config::{
-    figment::{
-        value::{Dict, Map},
-        Metadata, Profile, Provider,
-    },
-    Config,
-};
 use rustyline::{config::Configurer, error::ReadlineError, Editor};
 use std::path::PathBuf;
 use tracing::debug;
 use yansi::Paint;
-
-use crate::opts::{Chisel, ChiselSubcommand};
 
 /// Run the `chisel` command line interface.
 pub fn run() -> Result<()> {
@@ -46,9 +37,6 @@ pub fn setup() -> Result<()> {
 /// Run the subcommand.
 #[tokio::main]
 pub async fn run_command(args: Chisel) -> Result<()> {
-    // Keeps track of whether or not an interrupt was the last input
-    let mut interrupt = false;
-
     // Load configuration
     let (config, evm_opts) = args.load_config_and_evm_opts()?;
 
@@ -116,22 +104,17 @@ pub async fn run_command(args: Chisel) -> Result<()> {
         None => { /* No chisel subcommand present; Continue */ }
     }
 
-    // Create a new rustyline Editor
     let mut rl = Editor::<SolidityHelper, _>::new()?;
     rl.set_helper(Some(SolidityHelper::default()));
-
-    // automatically add lines to history
     rl.set_auto_add_history(true);
-
-    // load history
-    if let Some(chisel_history) = chisel_history_file() {
-        let _ = rl.load_history(&chisel_history);
+    if let Some(path) = chisel_history_file() {
+        let _ = rl.load_history(&path);
     }
 
-    // Print welcome header
     sh_println!("Welcome to Chisel! Type `{}` to show available commands.", "!help".green())?;
 
-    // Begin Rustyline loop
+    // REPL loop.
+    let mut interrupt = false;
     loop {
         // Get the prompt from the dispatcher
         // Variable based on status of the last entry
@@ -167,22 +150,11 @@ pub async fn run_command(args: Chisel) -> Result<()> {
         }
     }
 
-    if let Some(chisel_history) = chisel_history_file() {
-        let _ = rl.save_history(&chisel_history);
+    if let Some(path) = chisel_history_file() {
+        let _ = rl.save_history(&path);
     }
 
     Ok(())
-}
-
-/// [Provider] impl
-impl Provider for Chisel {
-    fn metadata(&self) -> Metadata {
-        Metadata::named("Script Args Provider")
-    }
-
-    fn data(&self) -> Result<Map<Profile, Dict>, foundry_config::figment::Error> {
-        Ok(Map::from([(Config::selected_profile(), Dict::default())]))
-    }
 }
 
 /// Evaluate a single Solidity line.
@@ -240,6 +212,10 @@ async fn load_prelude_file(dispatcher: &mut ChiselDispatcher, file: PathBuf) -> 
         .wrap_err("Could not load source file. Are you sure this path is correct?")?;
     dispatch_repl_line(dispatcher, &prelude).await?;
     Ok(())
+}
+
+fn chisel_history_file() -> Option<PathBuf> {
+    foundry_config::Config::foundry_dir().map(|p| p.join(".chisel_history"))
 }
 
 #[cfg(test)]
