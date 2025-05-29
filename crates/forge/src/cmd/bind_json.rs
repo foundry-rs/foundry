@@ -5,7 +5,7 @@ use foundry_cli::{
     opts::{solar_pcx_from_solc_project, BuildOpts},
     utils::LoadConfig,
 };
-use foundry_common::fs;
+use foundry_common::{fs, TYPE_BINDING_PREFIX};
 use foundry_compilers::{
     artifacts::{Source, Sources},
     multi::{MultiCompilerLanguage, MultiCompilerParsedSource},
@@ -487,8 +487,8 @@ library JsonBindings {
         for struct_to_write in &self.structs_to_write {
             writeln!(
                 result,
-                "    string constant schema_{} = \"{}\";",
-                struct_to_write.name_in_fns, struct_to_write.schema
+                "    {}{} = \"{}\";",
+                TYPE_BINDING_PREFIX, struct_to_write.name_in_fns, struct_to_write.schema
             )?;
         }
 
