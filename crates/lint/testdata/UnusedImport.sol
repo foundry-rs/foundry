@@ -15,6 +15,22 @@ import {
     CONSTANT_1 //~NOTE: unused imports should be removed
 } from "Constants.sol";
 
+import {
+    MyTpe,
+    MyOtherType,
+    YetAnotherType //~NOTE: unused imports should be removed
+} from "Types.sol";
+
+import "SomeFile.sol";
+import "AnotherFile.sol"; //~NOTE: unused imports should be removed
+
+import "some_file_2.sol" as SomeFile2;
+import "another_file_2.sol" as AnotherFile2; //~NOTE: unused imports should be removed
+
+import * as Utils from "utils.sol";
+import * as OtherUtils from "utils2.sol"; //~NOTE: unused imports should be removed
+
+
 contract UnusedImport is IContract {
     using mySymbol for address;
 
@@ -25,7 +41,17 @@ contract UnusedImport is IContract {
         myOtherSymbol bar;
     }
 
-    symbol4 myVar;
+    SomeFile.Baz public myStruct;
+    SomeFile2.Baz public myStruct2;
+    symbol4 public myVar;
 
-    function foo(uint256 a, symbol5 b) public view {}
+    function foo(uint256 a, symbol5 b) public view returns (uint256) {
+        uint256 c = Utils.calculate(a, b);
+        return c;
+    }
+
+    function convert(address addr) public pure returns (MyOtherType) {
+        MyType a = MyTpe.wrap(123);
+        return MyOtherType.wrap(a);
+    }
 }

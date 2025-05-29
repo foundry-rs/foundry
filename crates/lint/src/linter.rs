@@ -9,7 +9,7 @@ use solar_interface::{
     diagnostics::{DiagBuilder, DiagId, MultiSpan},
     Session, Span,
 };
-use std::{collections::BTreeMap, ops::ControlFlow, path::PathBuf};
+use std::{collections::HashMap, ops::ControlFlow, path::PathBuf};
 
 /// Trait representing a generic linter for analyzing and reporting issues in smart contract source
 /// code files. A linter can be implemented for any smart contract language supported by Foundry.
@@ -40,12 +40,12 @@ pub trait Lint {
 pub struct LintContext<'s> {
     sess: &'s Session,
     desc: bool,
-    unused_imports: BTreeMap<Symbol, Span>,
+    unused_imports: HashMap<Symbol, Span>,
 }
 
 impl<'s> LintContext<'s> {
     pub fn new(sess: &'s Session, with_description: bool) -> Self {
-        Self { sess, desc: with_description, unused_imports: BTreeMap::new() }
+        Self { sess, desc: with_description, unused_imports: HashMap::new() }
     }
 
     pub fn add_import(&mut self, import: (Symbol, Span)) {
@@ -56,13 +56,21 @@ impl<'s> LintContext<'s> {
         self.unused_imports.remove(&import);
     }
 
-    pub fn emit_unused_imports<L: Lint>(&self, lint: &'static L) {
-        for (_, span) in &self.unused_imports {
-            self.emit(lint, span.to_owned());
+    /// Helper method to easily emit diagnostics for unused imports.
+    /// Should be called after all passes have finished.
+    ///
+    /// Clears the `unused_imports` map.
+    pub fn emit_unused_imports<L: Lint>(&mut self, lint: &'static L) {
+        let unused = std::mem::take(&mut self.unused_imports);
+        let mut spans = unused.into_values().collect::<Vec<Span>>();
+        spans.sort();
+
+        for span in spans.into_iter() {
+            self.emit(lint, span);
         }
     }
 
-    // Helper method to emit diagnostics easily from passes
+    /// Helper method to emit diagnostics easily from passes
     pub fn emit<L: Lint>(&self, lint: &'static L, span: Span) {
         let desc = if self.desc { lint.description() } else { "" };
         let diag: DiagBuilder<'_, ()> = self
