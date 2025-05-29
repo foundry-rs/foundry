@@ -80,10 +80,29 @@ pub fn subscriber() {
     registry.with(tracing_subscriber::fmt::layer()).init()
 }
 
-pub fn abi_to_solidity(abi: &JsonAbi, name: &str) -> Result<String> {
-    let s = abi.to_sol(name, None);
-    let s = forge_fmt::format(&s)?;
-    Ok(s)
+/// Converts a [`JsonAbi`] to Solidity source code.
+///
+/// Prints a warning if formatting fails and then ignores the error.
+pub fn abi_to_solidity(abi: &JsonAbi, name: &str) -> String {
+    let (s, r) = abi_to_solidity_inner(abi, name);
+    if let Err(e) = r {
+        let _ = sh_warn!("failed to format interface for {name}: {e}");
+    }
+    s
+}
+
+/// Tries to convert a [`JsonAbi`] to Solidity source code.
+pub fn try_abi_to_solidity(abi: &JsonAbi, name: &str) -> Result<String> {
+    match abi_to_solidity_inner(abi, name) {
+        (s, Ok(())) => Ok(s),
+        (_, Err(e)) => Err(e),
+    }
+}
+
+fn abi_to_solidity_inner(abi: &JsonAbi, name: &str) -> (String, Result<()>) {
+    let mut s = abi.to_sol(name, None);
+    let r = forge_fmt::format(&s).map(|s2| s = s2);
+    (s, r.map_err(Into::into))
 }
 
 /// Returns a [RetryProvider] instantiated using [Config]'s

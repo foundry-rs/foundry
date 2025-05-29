@@ -7,7 +7,6 @@ use crate::{
     prelude::{ChiselCommand, ChiselResult, ChiselSession, SessionSourceConfig, SolidityHelper},
     source::SessionSource,
 };
-use alloy_json_abi::{InternalType, JsonAbi};
 use alloy_primitives::{hex, Address};
 use clap::Parser;
 use eyre::{Context, Result};
@@ -63,16 +62,6 @@ pub struct EtherscanABIResponse {
     pub result: Option<String>,
 }
 
-/// Used to format ABI parameters into valid solidity function / error / event param syntax
-/// TODO: Smarter resolution of storage location, defaults to "memory" for all types
-/// that cannot be stored on the stack.
-macro_rules! format_param {
-    ($param:expr) => {{
-        let param = $param;
-        format!("{}{}", param.ty, if param.is_complex_type() { " memory" } else { "" })
-    }};
-}
-
 /// Helper function that formats solidity source with the given [FormatterConfig]
 pub fn format_source(source: &str, config: FormatterConfig) -> eyre::Result<String> {
     match forge_fmt::parse(source) {
@@ -92,7 +81,8 @@ pub fn format_source(source: &str, config: FormatterConfig) -> eyre::Result<Stri
 impl ChiselDispatcher {
     /// Associated public function to create a new Dispatcher instance
     pub fn new(config: SessionSourceConfig) -> eyre::Result<Self> {
-        ChiselSession::new(config).map(|session| Self { session, helper: Default::default() })
+        let session = ChiselSession::new(config)?;
+        Ok(Self { session, helper: Default::default() })
     }
 
     /// Returns the optional ID of the current session.
@@ -470,128 +460,20 @@ impl ChiselDispatcher {
     }
 
     /// Fetches an interface from Etherscan
-    pub(crate) async fn fetch_interface(&mut self, addr: Address, name: String) -> Result<()> {
-        // TODO(dani): for the love of god we have an entire crate to handle just etherscan
-
-        let request_url = format!(
-            "https://api.etherscan.io/api?module=contract&action=getabi&address={}{}",
-            addr,
-            if let Some(api_key) = self.source().config.foundry_config.etherscan_api_key.as_ref() {
-                format!("&apikey={api_key}")
-            } else {
-                String::default()
-            }
-        );
-
-        // TODO: Not the cleanest method of building a solidity interface from
-        // the ABI, but does the trick. Might want to pull this logic elsewhere
-        // and/or refactor at some point.
-        match reqwest::get(&request_url).await {
-            Ok(response) => {
-                let json = response.json::<EtherscanABIResponse>().await.unwrap();
-                if json.status == "1" && json.result.is_some() {
-                    let abi = json.result.unwrap();
-                    let abi: serde_json::Result<JsonAbi> = serde_json::from_str(&abi);
-                    if let Ok(abi) = abi {
-                        let mut interface =
-                            format!("// Interface of {addr}\ninterface {name} {{\n");
-
-                        // Add error definitions
-                        abi.errors().for_each(|err| {
-                            interface.push_str(&format!(
-                                "\terror {}({});\n",
-                                err.name,
-                                err.inputs
-                                    .iter()
-                                    .map(|input| {
-                                        let mut param_type = &input.ty;
-                                        // If complex type then add the name of custom type.
-                                        // see <https://github.com/foundry-rs/foundry/issues/6618>.
-                                        if input.is_complex_type() {
-                                            if let Some(
-                                                InternalType::Enum { contract: _, ty } |
-                                                InternalType::Struct { contract: _, ty } |
-                                                InternalType::Other { contract: _, ty },
-                                            ) = &input.internal_type
-                                            {
-                                                param_type = ty;
-                                            }
-                                        }
-                                        format!("{} {}", param_type, input.name)
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join(",")
-                            ));
-                        });
-                        // Add event definitions
-                        abi.events().for_each(|event| {
-                            interface.push_str(&format!(
-                                "\tevent {}({});\n",
-                                event.name,
-                                event
-                                    .inputs
-                                    .iter()
-                                    .map(|input| {
-                                        let mut formatted = input.ty.to_string();
-                                        if input.indexed {
-                                            formatted.push_str(" indexed");
-                                        }
-                                        formatted
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join(",")
-                            ));
-                        });
-                        // Add function definitions
-                        abi.functions().for_each(|func| {
-                            interface.push_str(&format!(
-                                "\tfunction {}({}) external{}{};\n",
-                                func.name,
-                                func.inputs
-                                    .iter()
-                                    .map(|input| format_param!(input))
-                                    .collect::<Vec<_>>()
-                                    .join(","),
-                                match func.state_mutability {
-                                    alloy_json_abi::StateMutability::Pure => " pure",
-                                    alloy_json_abi::StateMutability::View => " view",
-                                    alloy_json_abi::StateMutability::Payable => " payable",
-                                    _ => "",
-                                },
-                                if func.outputs.is_empty() {
-                                    String::default()
-                                } else {
-                                    format!(
-                                        " returns ({})",
-                                        func.outputs
-                                            .iter()
-                                            .map(|output| format_param!(output))
-                                            .collect::<Vec<_>>()
-                                            .join(",")
-                                    )
-                                }
-                            ));
-                        });
-                        // Close interface definition
-                        interface.push('}');
-
-                        // Add the interface to the source outright - no need to verify
-                        // syntax via compilation and/or
-                        // parsing.
-                        self.source_mut().add_global_code(&interface);
-
-                        sh_println!("Added {addr}'s interface to source as `{name}`")
-                    } else {
-                        eyre::bail!("Contract is not verified!")
-                    }
-                } else if let Some(error_msg) = json.result {
-                    eyre::bail!("Could not fetch interface - \"{error_msg}\"")
-                } else {
-                    eyre::bail!("Could not fetch interface - \"{}\"", json.message)
-                }
-            }
-            Err(e) => eyre::bail!("Failed to communicate with Etherscan API: {e}"),
-        }
+    pub(crate) async fn fetch_interface(&mut self, address: Address, name: String) -> Result<()> {
+        let abis = foundry_common::abi::fetch_abi_from_etherscan(
+            address,
+            &self.source().config.foundry_config,
+        )
+        .await
+        .wrap_err("Failed to fetch ABI from Etherscan")?;
+        let (abi, _) = abis
+            .into_iter()
+            .next()
+            .ok_or_else(|| eyre::eyre!("No ABI found for address {address} on Etherscan"))?;
+        let code = foundry_cli::utils::abi_to_solidity(&abi, &name);
+        self.source_mut().add_global_code(&code);
+        sh_println!("Added {address}'s interface to source as `{name}`")
     }
 
     pub(crate) fn exec_command(&self, command: String, args: Vec<String>) -> Result<()> {

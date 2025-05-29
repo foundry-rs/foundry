@@ -36,7 +36,6 @@ alloy-primitives = { workspace = true, features = [
     "arbitrary",
     "rlp",
 ] }
-alloy-json-abi.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 dirs.workspace = true
