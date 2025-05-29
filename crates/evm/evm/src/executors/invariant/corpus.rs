@@ -15,18 +15,24 @@ use proptest::{
     strategy::{BoxedStrategy, ValueTree},
     test_runner::TestRunner,
 };
-use std::path::PathBuf;
+use serde::Serialize;
+use std::{
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use uuid::Uuid;
 
 /// Holds Corpus information.
+#[derive(Serialize)]
 struct Corpus {
     // Unique corpus identifier.
     uuid: Uuid,
     // Total mutations of corpus as primary source.
     total_mutations: usize,
-    // New coverage explored by mutating corpus.
-    new_coverage: usize,
+    // New coverage found as a result of mutating this corpus.
+    new_finds_produced: usize,
     // Corpus call sequence.
+    #[serde(skip_serializing)]
     tx_seq: Vec<BasicTxDetails>,
 }
 
@@ -38,12 +44,12 @@ impl Corpus {
         } else {
             Uuid::new_v4()
         };
-        Ok(Self { uuid, total_mutations: 0, new_coverage: 0, tx_seq })
+        Ok(Self { uuid, total_mutations: 0, new_finds_produced: 0, tx_seq })
     }
 
     /// New corpus with given call sequence and new uuid.
     pub fn from_tx_seq(tx_seq: Vec<BasicTxDetails>) -> Self {
-        Self { uuid: Uuid::new_v4(), total_mutations: 0, new_coverage: 0, tx_seq }
+        Self { uuid: Uuid::new_v4(), total_mutations: 0, new_finds_produced: 0, tx_seq }
     }
 }
 
@@ -173,13 +179,13 @@ impl TxCorpusManager {
             {
                 corpus.total_mutations += 1;
                 if test_run.new_coverage {
-                    corpus.new_coverage += 1
+                    corpus.new_finds_produced += 1
                 }
 
                 trace!(
                     target: "corpus",
-                    "updated corpus {}, total mutations: {}, new coverage: {}",
-                    corpus.uuid, corpus.total_mutations, corpus.new_coverage
+                    "updated corpus {}, total mutations: {}, new finds: {}",
+                    corpus.uuid, corpus.total_mutations, corpus.new_finds_produced
                 );
             }
 
@@ -242,8 +248,23 @@ impl TxCorpusManager {
                     .iter()
                     .position(|corpus| corpus.total_mutations > self.corpus_max_mutations)
                 {
-                    let uuid = self.in_memory_corpus.get(index).unwrap().uuid;
-                    debug!(target: "corpus", "remove corpus with {uuid}");
+                    let corpus = self.in_memory_corpus.get(index).unwrap();
+                    debug!(target: "corpus", "remove corpus {}", corpus.uuid);
+
+                    // Flush to disk the seed metadata at the time of eviction.
+                    if let Some(corpus_dir) = &self.corpus_dir {
+                        let eviction_time = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .expect("Time went backwards")
+                            .as_secs();
+                        foundry_common::fs::write_json_file(
+                            corpus_dir
+                                .join(format!("{}-{}-metadata.json", corpus.uuid, eviction_time))
+                                .as_path(),
+                            &corpus,
+                        )?
+                    }
+                    // Remove corpus from memory.
                     self.in_memory_corpus.remove(index);
                 }
             }
