@@ -440,14 +440,10 @@ pub async fn print_traces(
 
 /// Traverse the artifacts in the project to generate local signatures and merge them into the cache
 /// file.
-pub fn cache_local_signatures(
-    output: &ProjectCompileOutput,
-    cache_dir: Option<PathBuf>,
-) -> Result<()> {
-    let Some(cache_dir) = cache_dir else {
+pub fn cache_local_signatures(output: &ProjectCompileOutput) -> Result<()> {
+    let Some(cache_dir) = Config::foundry_cache_dir() else {
         eyre::bail!("Failed to get `cache_dir` to generate local signatures.");
     };
-
     let path = cache_dir.join("signatures");
     let mut signatures = SignaturesCache::load(&path);
     for (_, artifact) in output.artifacts() {
