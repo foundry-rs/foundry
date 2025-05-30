@@ -73,10 +73,14 @@ impl SolidityLinter {
         let _ = sess.enter(|| -> Result<(), diagnostics::ErrorGuaranteed> {
             // Declare all available passes and lints
             let mut passes_and_lints = Vec::new();
-            passes_and_lints.extend(gas::create_lint_passes());
             passes_and_lints.extend(high::create_lint_passes());
             passes_and_lints.extend(med::create_lint_passes());
             passes_and_lints.extend(info::create_lint_passes());
+
+            // Do not apply gas-severity rules on tests and scripts
+            if !file.ends_with(".t.sol") && !file.ends_with(".s.sol") {
+                passes_and_lints.extend(gas::create_lint_passes());
+            }
 
             // Filter based on linter config
             let mut passes: Vec<Box<dyn EarlyLintPass<'_>>> = passes_and_lints
