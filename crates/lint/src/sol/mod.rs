@@ -1,5 +1,5 @@
 use crate::linter::{EarlyLintPass, EarlyLintVisitor, Lint, LintContext, Linter};
-use foundry_compilers::solc::SolcLanguage;
+use foundry_compilers::{solc::SolcLanguage, ProjectPathsConfig};
 use foundry_config::lint::Severity;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use solar_ast::{visit::Visit, Arena};
@@ -22,8 +22,9 @@ pub mod med;
 
 /// Linter implementation to analyze Solidity source code responsible for identifying
 /// vulnerabilities gas optimizations, and best practices.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SolidityLinter {
+    path_config: ProjectPathsConfig,
     severity: Option<Vec<Severity>>,
     lints_included: Option<Vec<SolLint>>,
     lints_excluded: Option<Vec<SolLint>>,
@@ -32,8 +33,9 @@ pub struct SolidityLinter {
 }
 
 impl SolidityLinter {
-    pub fn new() -> Self {
+    pub fn new(path_config: ProjectPathsConfig) -> Self {
         Self {
+            path_config,
             severity: None,
             lints_included: None,
             lints_excluded: None,
@@ -78,7 +80,7 @@ impl SolidityLinter {
             passes_and_lints.extend(info::create_lint_passes());
 
             // Do not apply gas-severity rules on tests and scripts
-            if !file.ends_with(".t.sol") && !file.ends_with(".s.sol") {
+            if !self.path_config.is_test_or_script(file) {
                 passes_and_lints.extend(gas::create_lint_passes());
             }
 
