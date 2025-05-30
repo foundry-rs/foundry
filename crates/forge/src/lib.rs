@@ -3,6 +3,13 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
+//Silence unused crate dependencies
+use alloy_hardforks as _;
+use forge_script_sequence as _;
+use foundry_wallets as _;
+use futures as _;
+use reqwest as _;
+
 #[macro_use]
 extern crate foundry_common;
 
