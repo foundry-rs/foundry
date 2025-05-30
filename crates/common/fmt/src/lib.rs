@@ -1,5 +1,7 @@
 //! Helpers for formatting Ethereum types.
 
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+
 mod console;
 pub use console::{console_format, ConsoleFmt, FormatSpec};
 
