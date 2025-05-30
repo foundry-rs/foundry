@@ -26,6 +26,14 @@ pub struct InvariantConfig {
     pub max_assume_rejects: u32,
     /// Number of runs to execute and include in the gas report.
     pub gas_report_samples: u32,
+    /// Path where invariant corpus is stored.
+    pub corpus_dir: Option<PathBuf>,
+    /// Whether corpus to use gzip file compression and decompression.
+    pub corpus_gzip: bool,
+    // Number of corpus mutations until marked as eligible to be flushed from memory.
+    pub corpus_max_mutations: usize,
+    // Number of corpus that won't be evicted from memory.
+    pub corpus_min_size: usize,
     /// Path where invariant failures are recorded and replayed.
     pub failure_persist_dir: Option<PathBuf>,
     /// Whether to collect and display fuzzed selectors metrics.
@@ -47,6 +55,10 @@ impl Default for InvariantConfig {
             shrink_run_limit: 5000,
             max_assume_rejects: 65536,
             gas_report_samples: 256,
+            corpus_dir: None,
+            corpus_gzip: true,
+            corpus_max_mutations: 5,
+            corpus_min_size: 0,
             failure_persist_dir: None,
             show_metrics: false,
             timeout: None,
@@ -58,6 +70,7 @@ impl Default for InvariantConfig {
 impl InvariantConfig {
     /// Creates invariant configuration to write failures in `{PROJECT_ROOT}/cache/fuzz` dir.
     pub fn new(cache_dir: PathBuf) -> Self {
+        let cache_dir = cache_dir.display();
         Self {
             runs: 256,
             depth: 500,
@@ -67,7 +80,11 @@ impl InvariantConfig {
             shrink_run_limit: 5000,
             max_assume_rejects: 65536,
             gas_report_samples: 256,
-            failure_persist_dir: Some(cache_dir),
+            corpus_dir: None,
+            corpus_gzip: true,
+            corpus_max_mutations: 5,
+            corpus_min_size: 0,
+            failure_persist_dir: Some(format!("{cache_dir}/invariant").into()),
             show_metrics: false,
             timeout: None,
             show_solidity: false,

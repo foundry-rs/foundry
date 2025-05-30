@@ -1058,7 +1058,9 @@ impl Config {
                 }
             }
         };
+        remove_test_dir(&self.fuzz.corpus_dir); // TODO maybe force?
         remove_test_dir(&self.fuzz.failure_persist_dir);
+        remove_test_dir(&self.invariant.corpus_dir);
         remove_test_dir(&self.invariant.failure_persist_dir);
 
         Ok(())
@@ -2341,8 +2343,8 @@ impl Default for Config {
             test_failures_file: "cache/test-failures".into(),
             threads: None,
             show_progress: false,
-            fuzz: FuzzConfig::new("cache/fuzz".into()),
-            invariant: InvariantConfig::new("cache/invariant".into()),
+            fuzz: FuzzConfig::new("cache".into()),
+            invariant: InvariantConfig::new("cache".into()),
             always_use_create_2_factory: false,
             ffi: false,
             allow_internal_expect_revert: false,
@@ -4538,6 +4540,7 @@ mod tests {
                     runs: 512,
                     depth: 10,
                     failure_persist_dir: Some(PathBuf::from("cache/invariant")),
+                    corpus_dir: None,
                     ..Default::default()
                 }
             );

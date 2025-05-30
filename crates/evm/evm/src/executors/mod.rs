@@ -802,8 +802,10 @@ pub struct RawCallResult {
     pub labels: AddressHashMap<String>,
     /// The traces of the call
     pub traces: Option<SparsedTraceArena>,
-    /// The coverage info collected during the call
-    pub coverage: Option<HitMaps>,
+    /// The line coverage info collected during the call
+    pub line_coverage: Option<HitMaps>,
+    /// The edge coverage info collected during the call
+    pub edge_coverage: Option<Vec<u8>>,
     /// Scripted transactions generated from this call
     pub transactions: Option<BroadcastableTransactions>,
     /// The changeset of the state.
@@ -831,7 +833,8 @@ impl Default for RawCallResult {
             logs: Vec::new(),
             labels: HashMap::default(),
             traces: None,
-            coverage: None,
+            line_coverage: None,
+            edge_coverage: None,
             transactions: None,
             state_changeset: HashMap::default(),
             env: Env::default(),
@@ -904,6 +907,48 @@ impl RawCallResult {
     pub fn transactions(&self) -> Option<&BroadcastableTransactions> {
         self.cheatcodes.as_ref().map(|c| &c.broadcastable_transactions)
     }
+
+    /// Update provided history map with edge coverage info collected during this call.
+    pub fn merge_edge_coverage(&mut self, history_map: &mut [u8]) -> bool {
+        let mut new_coverage = false;
+        if let Some(ref mut x) = self.edge_coverage {
+            if !x.is_empty() {
+                // Iterate over the current map and the history map together and update
+                // the history map, if we discover some new coverage, report true
+                x.iter_mut()
+                    // Use zip to add history map to the iterator, now we get tuple back
+                    .zip(history_map.iter_mut())
+                    // For the tuple pair
+                    .for_each(|(curr, hist)| {
+                        // If we got a hitcount of at least 1
+                        if *curr > 0 {
+                            // Convert hitcount into bucket count
+                            let bucket = match *curr {
+                                0 => 0,
+                                1 => 1,
+                                2 => 2,
+                                3 => 4,
+                                4..=7 => 8,
+                                8..=15 => 16,
+                                16..=31 => 32,
+                                32..=127 => 64,
+                                128..=255 => 128,
+                            };
+
+                            // If the old record for this edge pair is lower, update
+                            if *hist < bucket {
+                                *hist = bucket;
+                                new_coverage = true;
+                            }
+
+                            // Zero out the current map for next iteration.
+                            *curr = 0;
+                        }
+                    });
+            }
+        }
+        new_coverage
+    }
 }
 
 /// The result of a call.
@@ -963,8 +1008,15 @@ fn convert_executed_result(
         _ => Bytes::new(),
     };
 
-    let InspectorData { mut logs, labels, traces, coverage, cheatcodes, chisel_state } =
-        inspector.collect();
+    let InspectorData {
+        mut logs,
+        labels,
+        traces,
+        line_coverage,
+        edge_coverage,
+        cheatcodes,
+        chisel_state,
+    } = inspector.collect();
 
     if logs.is_empty() {
         logs = exec_logs;
@@ -986,7 +1038,8 @@ fn convert_executed_result(
         logs,
         labels,
         traces,
-        coverage,
+        line_coverage,
+        edge_coverage,
         transactions,
         state_changeset,
         env,
