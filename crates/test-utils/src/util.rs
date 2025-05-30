@@ -48,7 +48,7 @@ static TEMPLATE_LOCK: LazyLock<PathBuf> =
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// The default Solc version used when compiling tests.
-pub const SOLC_VERSION: &str = "0.8.27";
+pub const SOLC_VERSION: &str = "0.8.30";
 
 /// Another Solc version used when compiling tests.
 ///
