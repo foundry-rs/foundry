@@ -1,7 +1,5 @@
 //! The `chisel` CLI: a fast, utilitarian, and verbose Solidity REPL.
 
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-
 use chisel::args::run;
 
 #[global_allocator]

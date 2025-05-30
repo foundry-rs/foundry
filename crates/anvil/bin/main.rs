@@ -1,7 +1,5 @@
 //! The `anvil` CLI: a fast local Ethereum development node, akin to Hardhat Network, Tenderly.
 
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-
 use anvil::args::run;
 
 #[global_allocator]
