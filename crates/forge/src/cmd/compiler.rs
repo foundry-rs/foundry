@@ -139,7 +139,17 @@ impl ResolveArgs {
                     0 => sh_println!("- {version}")?,
                     _ => {
                         if let Some(evm) = &resolved_compiler.evm_version {
-                            sh_println!("{version} (<= {evm}):")?
+                            // Vyper does not yet support Prague, so we normalize it to Cancun.
+                            if evm == &EvmVersion::Prague &&
+                                resolved_compiler
+                                    .paths
+                                    .last()
+                                    .is_some_and(|p| p.ends_with(".vy") || p.ends_with(".vyi"))
+                            {
+                                sh_println!("{version} (<= {evm}):", evm = EvmVersion::Cancun)?
+                            } else {
+                                sh_println!("{version} (<= {evm}):")?
+                            }
                         } else {
                             sh_println!("{version}:")?
                         }

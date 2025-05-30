@@ -1,28 +1,30 @@
 use super::eip712::Resolver;
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
-use foundry_common::{compile::with_compilation_reporter, fs};
+use foundry_cli::{
+    opts::{solar_pcx_from_solc_project, BuildOpts},
+    utils::LoadConfig,
+};
+use foundry_common::{fs, TYPE_BINDING_PREFIX};
 use foundry_compilers::{
-    artifacts::{
-        output_selection::OutputSelection, ContractDefinitionPart, Source, SourceUnit,
-        SourceUnitPart, Sources,
-    },
+    artifacts::{Source, Sources},
     multi::{MultiCompilerLanguage, MultiCompilerParsedSource},
-    project::ProjectCompiler,
-    solc::SolcLanguage,
-    Graph, Project,
+    solc::{SolcLanguage, SolcVersionedInput},
+    CompilerInput, Graph, Project,
 };
 use foundry_config::Config;
 use itertools::Itertools;
+use path_slash::PathExt;
 use rayon::prelude::*;
+use semver::Version;
 use solar_parse::{
     ast::{self, interface::source_map::FileName, visit::Visit, Arena, FunctionKind, Span, VarMut},
     interface::Session,
     Parser as SolarParser,
 };
+use solar_sema::thread_local::ThreadLocal;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     fmt::{self, Write},
     ops::ControlFlow,
     path::PathBuf,
@@ -30,6 +32,8 @@ use std::{
 };
 
 foundry_config::impl_figment_convert!(BindJsonArgs, build);
+
+const JSON_BINDINGS_PLACEHOLDER: &str = "library JsonBindings {}";
 
 /// CLI arguments for `forge bind-json`.
 #[derive(Clone, Debug, Parser)]
@@ -44,7 +48,7 @@ pub struct BindJsonArgs {
 
 impl BindJsonArgs {
     pub fn run(self) -> Result<()> {
-        self.preprocess()?.compile()?.find_structs()?.resolve_imports_and_aliases().write()?;
+        self.preprocess()?.find_structs()?.resolve_imports_and_aliases().write()?;
 
         Ok(())
     }
@@ -74,7 +78,7 @@ impl BindJsonArgs {
         let graph = Graph::<MultiCompilerParsedSource>::resolve_sources(&project.paths, sources)?;
 
         // We only generate bindings for a single Solidity version to avoid conflicts.
-        let mut sources = graph
+        let (version, mut sources, _) = graph
             // resolve graph into mapping language -> version -> sources
             .into_sources_by_version(&project)?
             .sources
@@ -86,8 +90,7 @@ impl BindJsonArgs {
             .into_iter()
             // For now, we are always picking the latest version.
             .max_by(|(v1, _, _), (v2, _, _)| v1.cmp(v2))
-            .unwrap()
-            .1;
+            .unwrap();
 
         let sess = Session::builder().with_stderr_emitter().build();
         let result = sess.enter_parallel(|| -> solar_parse::interface::Result<()> {
@@ -114,9 +117,9 @@ impl BindJsonArgs {
         eyre::ensure!(result.is_ok(), "failed parsing");
 
         // Insert empty bindings file.
-        sources.insert(target_path.clone(), Source::new("library JsonBindings {}"));
+        sources.insert(target_path.clone(), Source::new(JSON_BINDINGS_PLACEHOLDER));
 
-        Ok(PreprocessedState { sources, target_path, project, config })
+        Ok(PreprocessedState { version, sources, target_path, project, config })
     }
 }
 
@@ -237,8 +240,8 @@ impl StructToWrite {
     }
 }
 
-#[derive(Debug)]
 struct PreprocessedState {
+    version: Version,
     sources: Sources,
     target_path: PathBuf,
     project: Project,
@@ -246,117 +249,87 @@ struct PreprocessedState {
 }
 
 impl PreprocessedState {
-    fn compile(self) -> Result<CompiledState> {
-        let Self { sources, target_path, mut project, config } = self;
-
-        project.update_output_selection(|selection| {
-            *selection = OutputSelection::ast_output_selection();
-        });
-
-        let output = with_compilation_reporter(false, || {
-            ProjectCompiler::with_sources(&project, sources)?.compile()
-        })?;
-
-        if output.has_compiler_errors() {
-            eyre::bail!("{output}");
-        }
-
-        // Collect ASTs by getting them from sources and converting into strongly typed
-        // `SourceUnit`s. Also strips root from paths.
-        let asts = output
-            .into_output()
-            .sources
-            .into_iter()
-            .filter_map(|(path, mut sources)| Some((path, sources.swap_remove(0).source_file.ast?)))
-            .map(|(path, ast)| {
-                Ok((
-                    path.strip_prefix(project.root()).unwrap_or(&path).to_path_buf(),
-                    serde_json::from_str::<SourceUnit>(&serde_json::to_string(&ast)?)?,
-                ))
-            })
-            .collect::<Result<BTreeMap<_, _>>>()?;
-
-        Ok(CompiledState { asts, target_path, config, project })
-    }
-}
-
-#[derive(Debug, Clone)]
-struct CompiledState {
-    asts: BTreeMap<PathBuf, SourceUnit>,
-    target_path: PathBuf,
-    config: Config,
-    project: Project,
-}
-
-impl CompiledState {
     fn find_structs(self) -> Result<StructsState> {
-        let Self { asts, target_path, config, project } = self;
-
-        // construct mapping (file, id) -> (struct definition, optional parent contract name)
-        let structs = asts
-            .iter()
-            .flat_map(|(path, ast)| {
-                let mut structs = Vec::new();
-                // we walk AST directly instead of using visitors because we need to distinguish
-                // between file-level and contract-level struct definitions
-                for node in &ast.nodes {
-                    match node {
-                        SourceUnitPart::StructDefinition(def) => {
-                            structs.push((def, None));
-                        }
-                        SourceUnitPart::ContractDefinition(contract) => {
-                            for node in &contract.nodes {
-                                if let ContractDefinitionPart::StructDefinition(def) = node {
-                                    structs.push((def, Some(contract.name.clone())));
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                structs.into_iter().map(|(def, parent)| ((path.as_path(), def.id), (def, parent)))
-            })
-            .collect::<BTreeMap<_, _>>();
-
-        // Resolver for EIP712 schemas
-        let resolver = Resolver::new(&asts);
-
         let mut structs_to_write = Vec::new();
+        let Self { version, sources, target_path, config, project } = self;
 
+        let settings = config.solc_settings()?;
         let include = config.bind_json.include;
         let exclude = config.bind_json.exclude;
+        let root = config.root;
 
-        for ((path, id), (def, contract_name)) in structs {
-            // For some structs there's no schema (e.g. if they contain a mapping), so we just skip
-            // those.
-            let Some(schema) = resolver.resolve_struct_eip712(id)? else { continue };
+        let input = SolcVersionedInput::build(sources, settings, SolcLanguage::Solidity, version);
 
-            if !include.is_empty() {
-                if !include.iter().any(|matcher| matcher.is_match(path)) {
+        let mut sess = Session::builder().with_stderr_emitter().build();
+        sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
+
+        let result = sess.enter_parallel(|| -> Result<()> {
+            // Set up the parsing context with the project paths, without adding the source files
+            let mut parsing_context = solar_pcx_from_solc_project(&sess, &project, &input, false);
+
+            let mut target_files = HashSet::new();
+            for (path, source) in &input.input.sources {
+                if !include.is_empty() {
+                    if !include.iter().any(|matcher| matcher.is_match(path)) {
+                        continue;
+                    }
+                } else {
+                    // Exclude library files by default
+                    if project.paths.has_library_ancestor(path) {
+                        continue;
+                    }
+                }
+
+                if exclude.iter().any(|matcher| matcher.is_match(path)) {
                     continue;
                 }
-            } else {
-                // Exclude library files by default
-                if project.paths.has_library_ancestor(path) {
-                    continue;
+
+                if let Ok(src_file) =
+                    sess.source_map().new_source_file(path.clone(), source.content.as_str())
+                {
+                    target_files.insert(src_file.stable_id);
+                    parsing_context.add_file(src_file);
                 }
             }
 
-            if exclude.iter().any(|matcher| matcher.is_match(path)) {
-                continue;
+            // Parse and resolve
+            let hir_arena = ThreadLocal::new();
+            if let Ok(Some(gcx)) = parsing_context.parse_and_lower(&hir_arena) {
+                let hir = &gcx.get().hir;
+                let resolver = Resolver::new(gcx);
+                for id in &resolver.struct_ids() {
+                    if let Some(schema) = resolver.resolve_struct_eip712(*id) {
+                        let def = hir.strukt(*id);
+                        let source = hir.source(def.source);
+
+                        if !target_files.contains(&source.file.stable_id) {
+                            continue;
+                        }
+
+                        if let FileName::Real(ref path) = source.file.name {
+                            structs_to_write.push(StructToWrite {
+                                name: def.name.as_str().into(),
+                                contract_name: def
+                                    .contract
+                                    .map(|id| hir.contract(id).name.as_str().into()),
+                                path: path
+                                    .strip_prefix(&root)
+                                    .unwrap_or_else(|_| path)
+                                    .to_path_buf(),
+                                schema,
+
+                                // will be filled later
+                                import_alias: None,
+                                name_in_fns: String::new(),
+                            });
+                        }
+                    }
+                }
             }
+            Ok(())
+        });
 
-            structs_to_write.push(StructToWrite {
-                name: def.name.clone(),
-                contract_name,
-                path: path.to_path_buf(),
-                schema,
-
-                // will be filled later
-                import_alias: None,
-                name_in_fns: String::new(),
-            })
-        }
+        eyre::ensure!(result.is_ok() && sess.dcx.has_errors().is_ok(), "failed parsing");
 
         Ok(StructsState { structs_to_write, target_path })
     }
@@ -482,7 +455,7 @@ impl ResolvedState {
                 result,
                 "import {{{}}} from \"{}\";",
                 names.iter().join(", "),
-                path.display()
+                path.to_slash_lossy()
             )?;
         }
 
@@ -514,8 +487,8 @@ library JsonBindings {
         for struct_to_write in &self.structs_to_write {
             writeln!(
                 result,
-                "    string constant schema_{} = \"{}\";",
-                struct_to_write.name_in_fns, struct_to_write.schema
+                "    {}{} = \"{}\";",
+                TYPE_BINDING_PREFIX, struct_to_write.name_in_fns, struct_to_write.schema
             )?;
         }
 

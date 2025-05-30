@@ -83,6 +83,7 @@ serde_json.workspace = true
 similar = { version = "2", features = ["inline"] }
 solang-parser.workspace = true
 solar-parse.workspace = true
+solar-sema.workspace = true
 solar-interface.workspace = true
 strum = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
@@ -94,6 +95,7 @@ watchexec-events = "6.0"
 watchexec-signals = "5.0"
 clearscreen = "4.0"
 evm-disassembler.workspace = true
+path-slash.workspace = true
 
 # doc server
 axum = { workspace = true, features = ["ws"] }
@@ -111,7 +113,6 @@ foundry-test-utils.workspace = true
 mockall = "0.13"
 globset = "0.4"
 paste = "1.0"
-path-slash = "0.2"
 similar-asserts.workspace = true
 svm = { package = "svm-rs", version = "0.5", default-features = false, features = [
     "rustls",
