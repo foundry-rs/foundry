@@ -1,5 +1,6 @@
 //! The `cast` CLI: a Swiss Army knife for interacting with EVM smart contracts, sending
 //! transactions and getting chain data.
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 use cast::args::run;
 

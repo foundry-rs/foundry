@@ -1,6 +1,8 @@
 //! The `forge` CLI: build, test, fuzz, debug and deploy Solidity contracts, like Hardhat, Brownie,
 //! Ape.
 
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+
 use forge::args::run;
 
 #[global_allocator]
