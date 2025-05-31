@@ -75,7 +75,7 @@ impl FsPermissions {
     /// `./out/contracts` = `read`
     /// `./out/contracts` = `write`
     ///
-    /// And we check for `./out/contracts/MyContract.sol`, we will get both `read` and 
+    /// And we check for `./out/contracts/MyContract.sol`, we will get both `read` and
     /// `write` permissions.
     pub fn find_all_permissions(&self, path: &Path) -> Vec<FsAccessPermission> {
         let mut matching_permissions = Vec::new();
@@ -312,7 +312,8 @@ mod tests {
             PathPermission::write("./out/contracts"),
         ]);
 
-        let found_permissions = permissions.find_all_permissions(Path::new("./out/contracts/MyContract.sol"));
+        let found_permissions =
+            permissions.find_all_permissions(Path::new("./out/contracts/MyContract.sol"));
         assert_eq!(found_permissions.len(), 2);
         assert!(found_permissions.contains(&FsAccessPermission::Write));
         assert!(found_permissions.contains(&FsAccessPermission::Read));
