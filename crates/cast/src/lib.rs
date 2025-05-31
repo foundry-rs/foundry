@@ -3,13 +3,6 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-//Silence unused crate dependencies
-use alloy_hardforks as _;
-#[cfg(feature = "aws-kms")]
-use aws_sdk_kms as _;
-#[cfg(feature = "gcp-kms")]
-use gcloud_sdk as _;
-
 use alloy_consensus::TxEnvelope;
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_ens::NameOrAddress;
