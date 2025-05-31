@@ -29,5 +29,6 @@ mod verify;
 mod verify_bytecode;
 mod version;
 
+mod abi;
 mod ext_integration;
 mod test_optimizer;
