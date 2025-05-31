@@ -45,6 +45,7 @@ impl LintArgs {
     pub fn run(self) -> Result<()> {
         let config = self.load_config()?;
         let project = config.project()?;
+        let path_config = config.project_paths();
 
         // Expand ignore globs and canonicalize from the get go
         let ignored = expand_globs(&config.root, config.lint.ignore.iter())?
@@ -105,7 +106,7 @@ impl LintArgs {
             return Err(eyre!("Linting not supported for this language"));
         }
 
-        let linter = SolidityLinter::new()
+        let linter = SolidityLinter::new(path_config)
             .with_json_emitter(self.json)
             .with_description(true)
             .with_lints(include)
