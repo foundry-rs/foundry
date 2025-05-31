@@ -23,7 +23,7 @@ declare_forge_lint!(
 impl<'ast> EarlyLintPass<'ast> for ScreamingSnakeCase {
     fn check_variable_definition(
         &mut self,
-        ctx: &LintContext<'_>,
+        ctx: &mut LintContext<'_>,
         var: &'ast VariableDefinition<'ast>,
     ) {
         if let (Some(name), Some(mutability)) = (var.name, var.mutability) {
