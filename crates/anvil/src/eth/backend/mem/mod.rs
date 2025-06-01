@@ -1774,8 +1774,8 @@ impl Backend {
                 }
 
                 for res in &mut call_res {
-                    res.logs.iter_mut().for_each(| log| {
-                    log.block_hash = Some(block.header.hash);
+                    res.logs.iter_mut().for_each(|log| {
+                        log.block_hash = Some(block.header.hash);
                     });
                 }
 
