@@ -375,11 +375,15 @@ impl TxCorpusManager {
                         // of the time
                         if !function.inputs.is_empty() {
                             let mut new_function = function.clone();
-                            let mut arg_mutation_rounds = rng.gen_range(1..=function.inputs.len());
-                            let round_arg_idx: Vec<usize> = (0..arg_mutation_rounds)
-                                .map(|_| test_runner.rng().gen_range(0..function.inputs.len() - 1))
-                                .collect();
-
+                            let mut arg_mutation_rounds =
+                                rng.gen_range(0..=function.inputs.len()).max(1);
+                            let round_arg_idx: Vec<usize> = if function.inputs.len() <= 1 {
+                                vec![0]
+                            } else {
+                                (0..arg_mutation_rounds)
+                                    .map(|_| test_runner.rng().gen_range(0..function.inputs.len()))
+                                    .collect()
+                            };
                             // TODO mutation strategy for individual ABI types
                             let mut prev_inputs = function
                                 .abi_decode_input(&tx.call_details.calldata)
