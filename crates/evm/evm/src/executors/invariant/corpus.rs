@@ -2,13 +2,13 @@ use crate::executors::{
     invariant::{InvariantTest, InvariantTestRun},
     Executor,
 };
+use alloy_dyn_abi::JsonAbiExt;
 use alloy_primitives::U256;
 use eyre::eyre;
 use foundry_config::InvariantConfig;
 use foundry_evm_fuzz::{
     invariant::{BasicTxDetails, FuzzRunIdentifiedContracts},
-    strategies::fuzz_calldata,
-    FuzzFixtures,
+    strategies::fuzz_param_from_state,
 };
 use proptest::{
     prelude::{Rng, Strategy},
@@ -371,11 +371,47 @@ impl TxCorpusManager {
                     let idx = rng.gen_range(0..new_seq.len());
                     let tx = new_seq.get_mut(idx).unwrap();
                     if let (_, Some(function)) = targets.fuzzed_artifacts(tx) {
-                        tx.call_details.calldata =
-                            fuzz_calldata(function.clone(), &FuzzFixtures::default())
+                        // TODO add call_value to call details and mutate it as well as sender some
+                        // of the time
+                        if !function.inputs.is_empty() {
+                            let mut new_function = function.clone();
+                            let mut arg_mutation_rounds = rng.gen_range(1..=function.inputs.len());
+                            let round_arg_idx: Vec<usize> = (0..arg_mutation_rounds)
+                                .map(|_| test_runner.rng().gen_range(0..function.inputs.len() - 1))
+                                .collect();
+
+                            // TODO mutation strategy for individual ABI types
+                            let mut prev_inputs = function
+                                .abi_decode_input(&tx.call_details.calldata)
+                                .expect("fuzzed_artifacts returned wrong sig");
+                            // For now, only new inputs are generated, no existing inputs are
+                            // mutated.
+                            let mut gen_input = |input: &alloy_json_abi::Param| {
+                                fuzz_param_from_state(
+                                    &input.selector_type().parse().unwrap(),
+                                    &test.fuzz_state,
+                                )
                                 .new_tree(test_runner)
-                                .map_err(|_| eyre!("Could not generate case"))?
-                                .current();
+                                .expect("Could not generate case")
+                                .current()
+                            };
+
+                            while arg_mutation_rounds > 0 {
+                                let idx = round_arg_idx[arg_mutation_rounds - 1];
+                                let input = new_function
+                                    .inputs
+                                    .get_mut(idx)
+                                    .expect("Could not get input to mutate");
+                                let new_input = gen_input(input);
+                                prev_inputs[idx] = new_input;
+                                arg_mutation_rounds -= 1;
+                            }
+
+                            tx.call_details.calldata = new_function
+                                .abi_encode_input(&prev_inputs)
+                                .map_err(|e| eyre!(e.to_string()))?
+                                .into();
+                        }
                     }
                 }
                 _ => {
