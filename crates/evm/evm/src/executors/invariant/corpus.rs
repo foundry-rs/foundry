@@ -386,7 +386,7 @@ impl TxCorpusManager {
                             };
                             // TODO mutation strategy for individual ABI types
                             let mut prev_inputs = function
-                                .abi_decode_input(&tx.call_details.calldata)
+                                .abi_decode_input(&tx.call_details.calldata[4..])
                                 .expect("fuzzed_artifacts returned wrong sig");
                             // For now, only new inputs are generated, no existing inputs are
                             // mutated.
