@@ -242,7 +242,6 @@ impl TxCorpusManager {
 
     /// Generates new call sequence from in memory corpus. Evicts oldest corpus mutated more than
     /// configured max mutations value.
-    #[allow(clippy::needless_range_loop)]
     pub fn new_sequence(&mut self, test: &InvariantTest) -> eyre::Result<Vec<BasicTxDetails>> {
         let mut new_seq = vec![];
         let test_runner = &mut test.execution_data.borrow_mut().branch_runner;
@@ -317,10 +316,8 @@ impl TxCorpusManager {
                     let start = rng.gen_range(0..corpus.tx_seq.len());
                     let end = rng.gen_range(start..corpus.tx_seq.len());
                     let item_idx = rng.gen_range(0..corpus.tx_seq.len());
-                    let item = &corpus.tx_seq[item_idx];
-                    for i in start..end {
-                        new_seq[i] = item.clone();
-                    }
+                    let repeated = vec![new_seq[item_idx].clone(); end - start];
+                    new_seq.splice(start..end, repeated);
                 }
                 // interleave
                 2 => {
