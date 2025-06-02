@@ -249,14 +249,14 @@ impl TxCorpusManager {
         if !self.in_memory_corpus.is_empty() {
             let rng = test_runner.rng();
 
-            // Flush oldest corpus mutated more than configured max mutations.
+            // Flush oldest corpus mutated more than configured max mutations unless they are
+            // producing new finds more than 1/3 of the time.
             let should_evict = self.in_memory_corpus.len() > self.corpus_min_size.max(1);
             if should_evict {
-                if let Some(index) = self
-                    .in_memory_corpus
-                    .iter()
-                    .position(|corpus| corpus.total_mutations > self.corpus_max_mutations)
-                {
+                if let Some(index) = self.in_memory_corpus.iter().position(|corpus| {
+                    corpus.total_mutations > self.corpus_max_mutations &&
+                        (corpus.new_finds_produced as f64 / corpus.total_mutations as f64) < 0.3
+                }) {
                     let corpus = self.in_memory_corpus.get(index).unwrap();
                     let uuid = corpus.uuid;
                     debug!(target: "corpus", "evict corpus {uuid}");
