@@ -15,7 +15,7 @@ curl -L https://raw.githubusercontent.com/paritytech/foundry-polkadot/refs/heads
 This will install `foundryup-polkadot`. Simply follow the on-screen instructions, and the `foundryup-polkadot` command will become available in your CLI.
 
 
-Running `foundryup-polkadot --install v1.1.0-rc2` will automatically install the latest version of the [precompiled binaries](https://github.com/paritytech/foundry-polkadot/releases): forge, cast. For additional options, such as installing a specific version or commit, run `foundryup-polkadot --help`.
+Running `foundryup-polkadot --install v1.1.0-rc3` will automatically install the latest version of the [precompiled binaries](https://github.com/paritytech/foundry-polkadot/releases): forge, cast. For additional options, such as installing a specific version or commit, run `foundryup-polkadot --help`.
 
 ℹ️ Note: if you're using Windows, you'll need to install and use [Git BASH](https://gitforwindows.org/) or [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) as your terminal, since Foundryup currently doesn't support Powershell or Command Prompt (CMD).
 
