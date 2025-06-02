@@ -190,10 +190,10 @@ pub enum TypedTransactionRequest {
     Deposit(TxDeposit),
 }
 
-/// A wrapper for [TypedTransaction] that allows impersonating accounts.
+/// A wrapper for [`OpTxEnvelope`] that allows impersonating accounts.
 ///
 /// This is a helper that carries the `impersonated` sender so that the right hash
-/// [TypedTransaction::impersonated_hash] can be created.
+///  can be created.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MaybeImpersonatedTransaction {
     pub transaction: OpTxEnvelope,

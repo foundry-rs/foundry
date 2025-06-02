@@ -42,7 +42,7 @@ impl TransactionOrder {
     pub fn priority(&self, tx: &OpTxEnvelope) -> TransactionPriority {
         match self {
             Self::Fifo => TransactionPriority::default(),
-            Self::Fees => TransactionPriority(tx.gas_price().unwrap()),
+            Self::Fees => TransactionPriority(tx.gas_price().unwrap_or_default()),
         }
     }
 }
@@ -99,7 +99,7 @@ impl PoolTransaction {
 
     /// Returns the gas pric of this transaction
     pub fn gas_price(&self) -> u128 {
-        self.pending_transaction.transaction.gas_price().unwrap()
+        self.pending_transaction.transaction.gas_price().unwrap_or_default()
     }
 
     /// Returns the type of the transaction

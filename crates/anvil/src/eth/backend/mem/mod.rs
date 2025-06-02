@@ -3117,7 +3117,9 @@ impl TransactionValidator for Backend {
         }
 
         if env.evm_env.cfg_env.spec >= SpecId::LONDON {
-            if tx.gas_price().unwrap() < env.evm_env.block_env.basefee as u128 && !is_deposit_tx {
+            if tx.gas_price().unwrap_or_default() < env.evm_env.block_env.basefee as u128 &&
+                !is_deposit_tx
+            {
                 warn!(target: "backend", "max fee per gas={:?}, too low, block basefee={}", tx.gas_price(), env.evm_env.block_env.basefee);
                 return Err(InvalidTransactionError::FeeCapTooLow);
             }
@@ -3132,7 +3134,7 @@ impl TransactionValidator for Backend {
             }
         }
 
-        let max_cost = (tx.gas_limit() as u128).saturating_mul(tx.gas_price().unwrap());
+        let max_cost = (tx.gas_limit() as u128).saturating_mul(tx.gas_price().unwrap_or_default());
         let value = tx.value();
 
         match &tx.transaction {
