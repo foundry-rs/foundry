@@ -1058,7 +1058,6 @@ impl Config {
                 }
             }
         };
-        remove_test_dir(&self.fuzz.corpus_dir); // TODO maybe force?
         remove_test_dir(&self.fuzz.failure_persist_dir);
         remove_test_dir(&self.invariant.corpus_dir);
         remove_test_dir(&self.invariant.failure_persist_dir);

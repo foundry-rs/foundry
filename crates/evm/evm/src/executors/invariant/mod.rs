@@ -340,10 +340,18 @@ impl<'a> InvariantExecutor<'a> {
             self.prepare_test(&invariant_contract, fuzz_fixtures, deployed_libs)?;
 
         // Start timer for this invariant test.
-        let timer = FuzzTestTimer::new(self.config.timeout);
         let mut runs = 0;
+        let timer = FuzzTestTimer::new(self.config.timeout);
+        let continue_campaign = |runs: u32| {
+            // If timeout is configured, then perform invariant runs until expires.
+            if self.config.timeout.is_some() {
+                return !timer.is_timed_out()
+            }
+            // If no timeout configured then loop until configured runs.
+            runs < self.config.runs
+        };
 
-        'stop: while runs < self.config.runs {
+        'stop: while continue_campaign(runs) {
             let initial_seq = corpus_manager.new_sequence(&invariant_test)?;
 
             // Create current invariant run data.

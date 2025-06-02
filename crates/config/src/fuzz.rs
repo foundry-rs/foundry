@@ -22,8 +22,6 @@ pub struct FuzzConfig {
     pub dictionary: FuzzDictionaryConfig,
     /// Number of runs to execute and include in the gas report.
     pub gas_report_samples: u32,
-    /// Path where stateless fuzz test corpus is stored.
-    pub corpus_dir: Option<PathBuf>,
     /// Path where fuzz failures are recorded and replayed.
     pub failure_persist_dir: Option<PathBuf>,
     /// Name of the file to record fuzz failures, defaults to `failures`.
@@ -42,7 +40,6 @@ impl Default for FuzzConfig {
             seed: None,
             dictionary: FuzzDictionaryConfig::default(),
             gas_report_samples: 256,
-            corpus_dir: None,
             failure_persist_dir: None,
             failure_persist_file: None,
             show_logs: false,
@@ -56,7 +53,6 @@ impl FuzzConfig {
     pub fn new(cache_dir: PathBuf) -> Self {
         let cache_dir = cache_dir.display();
         Self {
-            corpus_dir: None,
             failure_persist_dir: Some(format!("{cache_dir}/fuzz").into()),
             failure_persist_file: Some("failures".to_string()),
             ..Default::default()

@@ -125,7 +125,6 @@ impl ForgeTestProfile {
                 max_fuzz_dictionary_values: 10_000,
             },
             gas_report_samples: 256,
-            corpus_dir: None,
             failure_persist_dir: Some(tempfile::tempdir().unwrap().keep()),
             failure_persist_file: Some("testfailure".to_string()),
             show_logs: false,

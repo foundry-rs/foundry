@@ -667,8 +667,13 @@ impl<'a> FunctionRunner<'a> {
             }
         }
 
-        let progress =
-            start_fuzz_progress(self.cr.progress, self.cr.name, &func.name, invariant_config.runs);
+        let progress = start_fuzz_progress(
+            self.cr.progress,
+            self.cr.name,
+            &func.name,
+            invariant_config.timeout,
+            invariant_config.runs,
+        );
         let invariant_result = match evm.invariant_fuzz(
             invariant_contract.clone(),
             &self.setup.fuzz_fixtures,
@@ -793,8 +798,13 @@ impl<'a> FunctionRunner<'a> {
         let runner = self.fuzz_runner();
         let fuzz_config = self.config.fuzz.clone();
 
-        let progress =
-            start_fuzz_progress(self.cr.progress, self.cr.name, &func.name, fuzz_config.runs);
+        let progress = start_fuzz_progress(
+            self.cr.progress,
+            self.cr.name,
+            &func.name,
+            fuzz_config.timeout,
+            fuzz_config.runs,
+        );
 
         // Run fuzz test.
         let fuzzed_executor =
