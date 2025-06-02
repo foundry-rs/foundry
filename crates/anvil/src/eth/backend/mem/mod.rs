@@ -3115,12 +3115,18 @@ impl TransactionValidator for Backend {
             warn!(target: "backend", "[{:?}] nonce too low", tx.hash());
             return Err(InvalidTransactionError::NonceTooLow);
         }
+        let gas_price = match &tx.transaction {
+            OpTxEnvelope::Legacy(tx) => tx.tx().gas_price,
+            OpTxEnvelope::Eip2930(tx) => tx.tx().gas_price,
+            OpTxEnvelope::Eip1559(tx) => tx.tx().max_fee_per_gas,
+            OpTxEnvelope::Eip7702(tx) => tx.tx().max_fee_per_gas,
+            OpTxEnvelope::Deposit(_) => 0u128,
+        };
 
         if env.evm_env.cfg_env.spec >= SpecId::LONDON {
-            if tx.gas_price().unwrap_or_default() < env.evm_env.block_env.basefee as u128 &&
-                !is_deposit_tx
-            {
-                warn!(target: "backend", "max fee per gas={:?}, too low, block basefee={}", tx.gas_price(), env.evm_env.block_env.basefee);
+            if gas_price < env.evm_env.block_env.basefee.into() && !is_deposit_tx {
+                warn!(target: "backend", "max fee per gas={:?}, too low, block basefee={}",
+            gas_price, env.evm_env.block_env.basefee);
                 return Err(InvalidTransactionError::FeeCapTooLow);
             }
 

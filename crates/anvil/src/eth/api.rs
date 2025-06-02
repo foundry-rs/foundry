@@ -2520,7 +2520,7 @@ impl EthApi {
             let gas_price = tx.gas_price();
             let value = tx.value();
             let gas = tx.gas_limit();
-            TxpoolInspectSummary { to, value, gas, gas_price: gas_price.unwrap() }
+            TxpoolInspectSummary { to, value, gas, gas_price: gas_price.unwrap_or_default() }
         }
 
         // Note: naming differs geth vs anvil:
