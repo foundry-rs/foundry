@@ -32,8 +32,14 @@ impl Block {
         T: Into<Transaction>,
     {
         let transactions: Vec<_> = transactions.into_iter().map(Into::into).collect();
-        let transactions1: Vec<super::transaction::TypedTransaction> =
-            transactions.clone().into_iter().map(Into::into).collect();
+        let transactions1: Vec<op_alloy_consensus::OpTxEnvelope> = transactions
+            .clone()
+            .into_iter()
+            .map(|tx| tx.transaction.try_into_eth_envelope())
+            .filter_map(Result::ok)
+            .map(|env| env.try_into())
+            .filter_map(Result::ok)
+            .collect();
         let transactions_root = calculate_transaction_root(&transactions1);
 
         Self {

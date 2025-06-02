@@ -1,11 +1,13 @@
 use crate::eth::error::BlockchainError;
 use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
+use alloy_eips::Encodable2718;
 use alloy_network::TxSignerSync;
 use alloy_primitives::{map::AddressHashMap, Address, Signature, B256};
 use alloy_signer::Signer as AlloySigner;
 use alloy_signer_local::PrivateKeySigner;
-use anvil_core::eth::transaction::{TypedTransaction, TypedTransactionRequest};
+use anvil_core::eth::transaction::TypedTransactionRequest;
+use op_alloy_consensus::OpTxEnvelope;
 
 /// A transaction signer
 #[async_trait::async_trait]
@@ -118,22 +120,14 @@ impl Signer for DevSigner {
 pub fn build_typed_transaction(
     request: TypedTransactionRequest,
     signature: Signature,
-) -> Result<TypedTransaction, BlockchainError> {
+) -> Result<OpTxEnvelope, BlockchainError> {
     let tx = match request {
-        TypedTransactionRequest::Legacy(tx) => TypedTransaction::Legacy(tx.into_signed(signature)),
-        TypedTransactionRequest::EIP2930(tx) => {
-            TypedTransaction::EIP2930(tx.into_signed(signature))
-        }
-        TypedTransactionRequest::EIP1559(tx) => {
-            TypedTransaction::EIP1559(tx.into_signed(signature))
-        }
-        TypedTransactionRequest::EIP7702(tx) => {
-            TypedTransaction::EIP7702(tx.into_signed(signature))
-        }
-        TypedTransactionRequest::EIP4844(tx) => {
-            TypedTransaction::EIP4844(tx.into_signed(signature))
-        }
-        TypedTransactionRequest::Deposit(tx) => TypedTransaction::Deposit(tx),
+        TypedTransactionRequest::Legacy(tx) => OpTxEnvelope::Legacy(tx.into_signed(signature)),
+        TypedTransactionRequest::EIP2930(tx) => OpTxEnvelope::Eip2930(tx.into_signed(signature)),
+        TypedTransactionRequest::EIP1559(tx) => OpTxEnvelope::Eip1559(tx.into_signed(signature)),
+        TypedTransactionRequest::EIP7702(tx) => OpTxEnvelope::Eip7702(tx.into_signed(signature)),
+        TypedTransactionRequest::Deposit(tx) => OpTxEnvelope::Deposit(tx.seal()),
+        TypedTransactionRequest::EIP4844(_tx_eip4844_variant) => todo!(),
     };
 
     Ok(tx)

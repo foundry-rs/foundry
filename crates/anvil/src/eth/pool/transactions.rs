@@ -1,10 +1,13 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
+use alloy_consensus::Transaction;
+use alloy_eips::Typed2718;
 use alloy_network::AnyRpcTransaction;
 use alloy_primitives::{
     map::{HashMap, HashSet},
     Address, TxHash,
 };
-use anvil_core::eth::transaction::{PendingTransaction, TypedTransaction};
+use anvil_core::eth::transaction::PendingTransaction;
+use op_alloy_consensus::OpTxEnvelope;
 use parking_lot::RwLock;
 use std::{cmp::Ordering, collections::BTreeSet, fmt, str::FromStr, sync::Arc, time::Instant};
 
@@ -36,10 +39,10 @@ pub enum TransactionOrder {
 
 impl TransactionOrder {
     /// Returns the priority of the transactions
-    pub fn priority(&self, tx: &TypedTransaction) -> TransactionPriority {
+    pub fn priority(&self, tx: &OpTxEnvelope) -> TransactionPriority {
         match self {
             Self::Fifo => TransactionPriority::default(),
-            Self::Fees => TransactionPriority(tx.gas_price()),
+            Self::Fees => TransactionPriority(tx.gas_price().unwrap()),
         }
     }
 }
@@ -96,12 +99,12 @@ impl PoolTransaction {
 
     /// Returns the gas pric of this transaction
     pub fn gas_price(&self) -> u128 {
-        self.pending_transaction.transaction.gas_price()
+        self.pending_transaction.transaction.gas_price().unwrap()
     }
 
     /// Returns the type of the transaction
     pub fn tx_type(&self) -> u8 {
-        self.pending_transaction.transaction.r#type().unwrap_or_default()
+        self.pending_transaction.transaction.ty()
     }
 }
 
@@ -120,7 +123,7 @@ impl fmt::Debug for PoolTransaction {
 impl TryFrom<AnyRpcTransaction> for PoolTransaction {
     type Error = eyre::Error;
     fn try_from(value: AnyRpcTransaction) -> Result<Self, Self::Error> {
-        let typed_transaction = TypedTransaction::try_from(value)?;
+        let typed_transaction = OpTxEnvelope::try_from(value)?;
         let pending_transaction = PendingTransaction::new(typed_transaction)?;
         Ok(Self {
             pending_transaction,
@@ -513,7 +516,8 @@ impl ReadyTransactions {
                 // (addr + nonce) then we check for gas price
                 if to_remove.provides() == tx.provides {
                     // check if underpriced
-                    if tx.pending_transaction.transaction.gas_price() <= to_remove.gas_price() {
+                    if tx.pending_transaction.transaction.gas_price() <= Some(to_remove.gas_price())
+                    {
                         warn!(target: "txpool", "ready replacement transaction underpriced [{:?}]", tx.hash());
                         return Err(PoolError::ReplacementUnderpriced(Box::new(tx.clone())))
                     } else {

@@ -13,6 +13,7 @@ use crate::{
 };
 use alloy_consensus::{
     constants::EMPTY_WITHDRAWALS, proofs::calculate_receipt_root, Receipt, ReceiptWithBloom,
+    Transaction,
 };
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, eip7840::BlobParams};
 use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap, EthEvm, Evm};
@@ -20,12 +21,11 @@ use alloy_op_evm::OpEvm;
 use alloy_primitives::{Bloom, BloomInput, Log, B256};
 use anvil_core::eth::{
     block::{Block, BlockInfo, PartialHeader},
-    transaction::{
-        DepositReceipt, PendingTransaction, TransactionInfo, TypedReceipt, TypedTransaction,
-    },
+    transaction::{DepositReceipt, PendingTransaction, TransactionInfo, TypedReceipt},
 };
 use foundry_evm::{backend::DatabaseError, traces::CallTraceNode};
 use foundry_evm_core::either_evm::EitherEvm;
+use op_alloy_consensus::OpTxEnvelope;
 use op_revm::{precompiles::OpPrecompiles, L1BlockInfo, OpContext};
 use revm::{
     context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext},
@@ -69,12 +69,11 @@ impl ExecutedTransaction {
         .into();
 
         match &self.transaction.pending_transaction.transaction.transaction {
-            TypedTransaction::Legacy(_) => TypedReceipt::Legacy(receipt_with_bloom),
-            TypedTransaction::EIP2930(_) => TypedReceipt::EIP2930(receipt_with_bloom),
-            TypedTransaction::EIP1559(_) => TypedReceipt::EIP1559(receipt_with_bloom),
-            TypedTransaction::EIP4844(_) => TypedReceipt::EIP4844(receipt_with_bloom),
-            TypedTransaction::EIP7702(_) => TypedReceipt::EIP7702(receipt_with_bloom),
-            TypedTransaction::Deposit(_tx) => TypedReceipt::Deposit(DepositReceipt {
+            OpTxEnvelope::Legacy(_) => TypedReceipt::Legacy(receipt_with_bloom),
+            OpTxEnvelope::Eip2930(_) => TypedReceipt::EIP2930(receipt_with_bloom),
+            OpTxEnvelope::Eip1559(_) => TypedReceipt::EIP1559(receipt_with_bloom),
+            OpTxEnvelope::Eip7702(_) => TypedReceipt::EIP7702(receipt_with_bloom),
+            OpTxEnvelope::Deposit(_tx) => TypedReceipt::Deposit(DepositReceipt {
                 inner: receipt_with_bloom,
                 deposit_nonce: Some(0),
                 deposit_receipt_version: Some(1),
@@ -160,7 +159,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
                     continue
                 }
                 TransactionExecutionOutcome::BlobGasExhausted(tx) => {
-                    trace!(target: "backend",  blob_gas = %tx.pending_transaction.transaction.blob_gas().unwrap_or_default(), ?tx,  "block blob gas limit exhausting, skipping transaction");
+                    trace!(target: "backend",  blob_gas = %tx.pending_transaction.transaction.blob_gas_used().unwrap_or_default(), ?tx,  "block blob gas limit exhausting, skipping transaction");
                     continue
                 }
                 TransactionExecutionOutcome::Invalid(tx, _) => {
@@ -181,7 +180,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
                     .pending_transaction
                     .transaction
                     .transaction
-                    .blob_gas()
+                    .blob_gas_used()
                     .unwrap_or(0);
                 cumulative_blob_gas_used =
                     Some(cumulative_blob_gas_used.unwrap_or(0u64).saturating_add(tx_blob_gas));
@@ -295,7 +294,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
 
         // check that we comply with the block's blob gas limit
         let max_blob_gas = self.blob_gas_used.saturating_add(
-            transaction.pending_transaction.transaction.transaction.blob_gas().unwrap_or(0),
+            transaction.pending_transaction.transaction.transaction.blob_gas_used().unwrap_or(0),
         );
         if max_blob_gas > self.blob_params.max_blob_gas_per_block() {
             return Some(TransactionExecutionOutcome::BlobGasExhausted(transaction))
@@ -390,7 +389,9 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         self.gas_used = self.gas_used.saturating_add(gas_used);
 
         // Track the total blob gas used for total blob gas per blob checks
-        if let Some(blob_gas) = transaction.pending_transaction.transaction.transaction.blob_gas() {
+        if let Some(blob_gas) =
+            transaction.pending_transaction.transaction.transaction.blob_gas_used()
+        {
             self.blob_gas_used = self.blob_gas_used.saturating_add(blob_gas);
         }
 

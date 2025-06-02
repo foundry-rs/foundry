@@ -6,12 +6,13 @@ use alloy_primitives::{keccak256, map::HashMap, Address, Bytes, B256, U256};
 use alloy_rpc_types::BlockId;
 use anvil_core::eth::{
     block::Block,
-    transaction::{MaybeImpersonatedTransaction, TransactionInfo, TypedReceipt, TypedTransaction},
+    transaction::{MaybeImpersonatedTransaction, TransactionInfo, TypedReceipt},
 };
 use foundry_common::errors::FsPathError;
 use foundry_evm::backend::{
     BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertStateSnapshotAction, StateSnapshot,
 };
+use op_alloy_consensus::OpTxEnvelope;
 use revm::{
     bytecode::Bytecode,
     context::BlockEnv,
@@ -467,7 +468,7 @@ where
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SerializableTransactionType {
-    TypedTransaction(TypedTransaction),
+    TypedTransaction(OpTxEnvelope),
     MaybeImpersonatedTransaction(MaybeImpersonatedTransaction),
 }
 
@@ -568,48 +569,46 @@ mod test {
     #[test]
     fn test_deser_block() {
         let block = r#"{
-            "header": {
-                "parentHash": "0xceb0fe420d6f14a8eeec4319515b89acbb0bb4861cad9983d529ab4b1e4af929",
-                "sha3Uncles": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
-                "miner": "0x0000000000000000000000000000000000000000",
-                "stateRoot": "0xe1423fd180478ab4fd05a7103277d64496b15eb914ecafe71eeec871b552efd1",
-                "transactionsRoot": "0x2b5598ef261e5f88e4303bb2b3986b3d5c0ebf4cd9977daebccae82a6469b988",
-                "receiptsRoot": "0xf78dfb743fbd92ade140711c8bbc542b5e307f0ab7984eff35d751969fe57efa",
-                "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-                "difficulty": "0x0",
-                "number": "0x2",
-                "gasLimit": "0x1c9c380",
-                "gasUsed": "0x5208",
-                "timestamp": "0x66cdc823",
-                "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
-                "nonce": "0x0000000000000000",
-                "baseFeePerGas": "0x342a1c58",
-                "blobGasUsed": "0x0",
-                "excessBlobGas": "0x0",
-                "extraData": "0x"
-            },
-            "transactions": [
-                {
-                    "EIP1559": {
-                        "chainId": "0x7a69",
-                        "nonce": "0x0",
-                        "gas": "0x5209",
-                        "maxFeePerGas": "0x77359401",
-                        "maxPriorityFeePerGas": "0x1",
-                        "to": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
-                        "value": "0x0",
-                        "accessList": [],
-                        "input": "0x",
-                        "r": "0x85c2794a580da137e24ccc823b45ae5cea99371ae23ee13860fcc6935f8305b0",
-                        "s": "0x41de7fa4121dab284af4453d30928241208bafa90cdb701fe9bc7054759fe3cd",
-                        "yParity": "0x0",
-                        "hash": "0x8c9b68e8947ace33028dba167354fde369ed7bbe34911b772d09b3c64b861515"
-                    }
-                }
-            ],
-            "ommers": []
-        }
-        "#;
+        "header": {
+            "parentHash": "0xceb0fe420d6f14a8eeec4319515b89acbb0bb4861cad9983d529ab4b1e4af929",
+            "sha3Uncles": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+            "miner": "0x0000000000000000000000000000000000000000",
+            "stateRoot": "0xe1423fd180478ab4fd05a7103277d64496b15eb914ecafe71eeec871b552efd1",
+            "transactionsRoot": "0x2b5598ef261e5f88e4303bb2b3986b3d5c0ebf4cd9977daebccae82a6469b988",
+            "receiptsRoot": "0xf78dfb743fbd92ade140711c8bbc542b5e307f0ab7984eff35d751969fe57efa",
+            "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            "difficulty": "0x0",
+            "number": "0x2",
+            "gasLimit": "0x1c9c380",
+            "gasUsed": "0x5208",
+            "timestamp": "0x66cdc823",
+            "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "nonce": "0x0000000000000000",
+            "baseFeePerGas": "0x342a1c58",
+            "blobGasUsed": "0x0",
+            "excessBlobGas": "0x0",
+            "extraData": "0x"
+        },
+        "transactions": [
+            {
+                "type": "0x2",
+                "chainId": "0x7a69",
+                "nonce": "0x0",
+                "maxPriorityFeePerGas": "0x1",
+                "maxFeePerGas": "0x77359401",
+                "gas": "0x5209",
+                "to": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+                "value": "0x0",
+                "input": "0x",
+                "accessList": [],
+                "v": "0x0",
+                "r": "0x85c2794a580da137e24ccc823b45ae5cea99371ae23ee13860fcc6935f8305b0",
+                "s": "0x41de7fa4121dab284af4453d30928241208bafa90cdb701fe9bc7054759fe3cd",
+                "hash": "0x8c9b68e8947ace33028dba167354fde369ed7bbe34911b772d09b3c64b861515"
+            }
+        ],
+        "ommers": []
+    }"#;
 
         let _block: SerializableBlock = serde_json::from_str(block).unwrap();
     }

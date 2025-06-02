@@ -57,7 +57,7 @@ alloy-genesis.workspace = true
 alloy-trie.workspace = true
 alloy-hardforks.workspace = true
 alloy-op-hardforks.workspace = true
-op-alloy-consensus = { workspace = true, features = ["serde"] }
+op-alloy-consensus = { workspace = true, features = ["serde", "alloy-compat"] }
 
 # revm
 revm = { workspace = true, features = [

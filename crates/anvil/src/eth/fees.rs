@@ -13,8 +13,8 @@ use alloy_eips::{
     eip7840::BlobParams,
 };
 use alloy_primitives::B256;
-use anvil_core::eth::transaction::TypedTransaction;
 use futures::StreamExt;
+use op_alloy_consensus::OpTxEnvelope;
 use parking_lot::{Mutex, RwLock};
 use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork::SpecId};
 
@@ -276,27 +276,17 @@ impl FeeHistoryService {
                     let gas_used = receipt.cumulative_gas_used();
                     let effective_reward = match block.transactions.get(i).map(|tx| &tx.transaction)
                     {
-                        Some(TypedTransaction::Legacy(t)) => {
-                            t.tx().gas_price.saturating_sub(base_fee)
-                        }
-                        Some(TypedTransaction::EIP2930(t)) => {
-                            t.tx().gas_price.saturating_sub(base_fee)
-                        }
-                        Some(TypedTransaction::EIP1559(t)) => t
+                        Some(OpTxEnvelope::Legacy(t)) => t.tx().gas_price.saturating_sub(base_fee),
+                        Some(OpTxEnvelope::Eip2930(t)) => t.tx().gas_price.saturating_sub(base_fee),
+                        Some(OpTxEnvelope::Eip1559(t)) => t
                             .tx()
                             .max_priority_fee_per_gas
                             .min(t.tx().max_fee_per_gas.saturating_sub(base_fee)),
-                        // TODO: This probably needs to be extended to extract 4844 info.
-                        Some(TypedTransaction::EIP4844(t)) => t
-                            .tx()
-                            .tx()
-                            .max_priority_fee_per_gas
-                            .min(t.tx().tx().max_fee_per_gas.saturating_sub(base_fee)),
-                        Some(TypedTransaction::EIP7702(t)) => t
+                        Some(OpTxEnvelope::Eip7702(t)) => t
                             .tx()
                             .max_priority_fee_per_gas
                             .min(t.tx().max_fee_per_gas.saturating_sub(base_fee)),
-                        Some(TypedTransaction::Deposit(_)) => 0,
+                        Some(OpTxEnvelope::Deposit(_)) => 0,
                         None => 0,
                     };
 

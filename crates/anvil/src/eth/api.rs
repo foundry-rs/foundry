@@ -34,7 +34,7 @@ use crate::{
 };
 use alloy_consensus::{
     transaction::{eip4844::TxEip4844Variant, Recovered},
-    Account,
+    Account, Transaction,
 };
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
@@ -73,7 +73,7 @@ use anvil_core::{
     eth::{
         block::BlockInfo,
         transaction::{
-            transaction_request_to_typed, PendingTransaction, ReceiptResponse, TypedTransaction,
+            transaction_request_to_typed, PendingTransaction, ReceiptResponse,
             TypedTransactionRequest,
         },
         wallet::{WalletCapabilities, WalletError},
@@ -88,6 +88,7 @@ use futures::{
     channel::{mpsc::Receiver, oneshot},
     StreamExt,
 };
+use op_alloy_consensus::OpTxEnvelope;
 use parking_lot::RwLock;
 use revm::{
     bytecode::Bytecode,
@@ -504,7 +505,7 @@ impl EthApi {
         &self,
         from: &Address,
         request: TypedTransactionRequest,
-    ) -> Result<TypedTransaction> {
+    ) -> Result<OpTxEnvelope> {
         match request {
             TypedTransactionRequest::Deposit(_) => {
                 let nil_signature = Signature::from_scalars_and_parity(
@@ -1073,7 +1074,7 @@ impl EthApi {
             return Err(BlockchainError::EmptyRawTransactionData);
         }
 
-        let transaction = TypedTransaction::decode_2718(&mut data)
+        let transaction = OpTxEnvelope::decode_2718(&mut data)
             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
 
         self.ensure_typed_transaction_supported(&transaction)?;
@@ -2175,7 +2176,7 @@ impl EthApi {
                 let pending = match tx_data {
                     TransactionData::Raw(bytes) => {
                         let mut data = bytes.as_ref();
-                        let decoded = TypedTransaction::decode_2718(&mut data)
+                        let decoded = OpTxEnvelope::decode_2718(&mut data)
                             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
                         PendingTransaction::new(decoded)?
                     }
@@ -2519,7 +2520,7 @@ impl EthApi {
             let gas_price = tx.gas_price();
             let value = tx.value();
             let gas = tx.gas_limit();
-            TxpoolInspectSummary { to, value, gas, gas_price }
+            TxpoolInspectSummary { to, value, gas, gas_price: gas_price.unwrap() }
         }
 
         // Note: naming differs geth vs anvil:
@@ -2951,7 +2952,7 @@ impl EthApi {
     }
 
     /// Returns the priority of the transaction based on the current `TransactionOrder`
-    fn transaction_priority(&self, tx: &TypedTransaction) -> TransactionPriority {
+    fn transaction_priority(&self, tx: &OpTxEnvelope) -> TransactionPriority {
         self.transaction_order.read().priority(tx)
     }
 
@@ -3253,14 +3254,13 @@ impl EthApi {
     }
 
     /// additional validation against hardfork
-    fn ensure_typed_transaction_supported(&self, tx: &TypedTransaction) -> Result<()> {
+    fn ensure_typed_transaction_supported(&self, tx: &OpTxEnvelope) -> Result<()> {
         match &tx {
-            TypedTransaction::EIP2930(_) => self.backend.ensure_eip2930_active(),
-            TypedTransaction::EIP1559(_) => self.backend.ensure_eip1559_active(),
-            TypedTransaction::EIP4844(_) => self.backend.ensure_eip4844_active(),
-            TypedTransaction::EIP7702(_) => self.backend.ensure_eip7702_active(),
-            TypedTransaction::Deposit(_) => self.backend.ensure_op_deposits_active(),
-            TypedTransaction::Legacy(_) => Ok(()),
+            OpTxEnvelope::Eip2930(_) => self.backend.ensure_eip2930_active(),
+            OpTxEnvelope::Eip1559(_) => self.backend.ensure_eip1559_active(),
+            OpTxEnvelope::Eip7702(_) => self.backend.ensure_eip7702_active(),
+            OpTxEnvelope::Deposit(_) => self.backend.ensure_op_deposits_active(),
+            OpTxEnvelope::Legacy(_) => Ok(()),
         }
     }
 }
