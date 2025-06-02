@@ -84,6 +84,20 @@ pub struct CreateArgs {
     #[arg(long, env = "ETH_TIMEOUT")]
     pub timeout: Option<u64>,
 
+    // #[command(flatten)]
+    // pub naming: NameArgs,
+    /// The ENS name to set for the contract.
+    #[arg(long)]
+    pub ens_name: Option<String>,
+
+    /// Whether an auto-generated ENS name should be set.
+    #[arg(long)]
+    pub auto_name: bool,
+
+    /// Whether the contract is ReverseSetter or not.
+    #[arg(long, requires = "ens_name")]
+    pub reverse_setter: bool,
+
     #[command(flatten)]
     build: BuildOpts,
 
@@ -394,6 +408,20 @@ impl CreateArgs {
             sh_println!("Transaction hash: {:?}", receipt.transaction_hash)?;
         };
 
+        if self.ens_name.is_some() || self.auto_name {
+            let config = self.load_config()?;
+            let signer = self.eth.wallet.signer().await?;
+            enscribe::set_primary_name(
+                &config,
+                EthereumWallet::new(signer),
+                deployed_contract,
+                self.ens_name,
+                self.reverse_setter,
+                "deployandname",
+            )
+            .await?;
+        }
+
         if !self.verify {
             return Ok(());
         }
@@ -681,5 +709,17 @@ mod tests {
         let constructor: Constructor = serde_json::from_str(r#"{"type":"constructor","inputs":[{"name":"_name","type":"int256","internalType":"int256"}],"stateMutability":"nonpayable"}"#).unwrap();
         let params = args.parse_constructor_args(&constructor, &args.constructor_args).unwrap();
         assert_eq!(params, vec![DynSolValue::Int(I256::unchecked_from(-5), 256)]);
+    }
+
+    #[test]
+    fn can_parse_ens_name() {
+        let args: CreateArgs = CreateArgs::parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--ens-name",
+            "test.abhi.eth",
+        ]);
+
+        assert_eq!(args.ens_name, Some("test.abhi.eth".to_owned()));
     }
 }
