@@ -192,8 +192,8 @@ pub fn calculate_next_block_base_fee(gas_used: u64, gas_limit: u64, base_fee: u6
 
 /// An async service that takes care of the `FeeHistory` cache
 pub struct FeeHistoryService {
-    /// Hardfork identifier
-    spec_id: SpecId,
+    /// blob parameters for the current spec
+    blob_params: BlobParams,
     /// incoming notifications about new blocks
     new_blocks: NewBlockNotifications,
     /// contains all fee history related entries
@@ -206,13 +206,13 @@ pub struct FeeHistoryService {
 
 impl FeeHistoryService {
     pub fn new(
-        spec_id: SpecId,
+        blob_params: BlobParams,
         new_blocks: NewBlockNotifications,
         cache: FeeHistoryCache,
         storage_info: StorageInfo,
     ) -> Self {
         Self {
-            spec_id,
+            blob_params,
             new_blocks,
             cache,
             fee_history_limit: MAX_FEE_HISTORY_CACHE_SIZE,
@@ -254,12 +254,7 @@ impl FeeHistoryService {
         let base_fee = header.base_fee_per_gas.map(|g| g as u128).unwrap_or_default();
         let excess_blob_gas = header.excess_blob_gas.map(|g| g as u128);
         let blob_gas_used = header.blob_gas_used.map(|g| g as u128);
-
-        let base_fee_per_blob_gas = match self.spec_id {
-            SpecId::OSAKA => header.blob_fee(BlobParams::osaka()),
-            SpecId::PRAGUE => header.blob_fee(BlobParams::prague()),
-            _ => header.blob_fee(BlobParams::cancun()),
-        };
+        let base_fee_per_blob_gas = header.blob_fee(self.blob_params);
 
         let mut item = FeeHistoryCacheItem {
             base_fee,
