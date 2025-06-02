@@ -50,7 +50,7 @@ pub fn read_json_file<T: DeserializeOwned>(path: &Path) -> Result<T> {
     serde_json::from_str(&s).map_err(|source| FsPathError::ReadJson { source, path: path.into() })
 }
 
-/// Reads the gzip file and deserialize it into the provided type.
+/// Reads and decodes the json gzip file, then deserialize it into the provided type.
 pub fn read_json_gzip_file<T: DeserializeOwned>(path: &Path) -> Result<T> {
     // read the file into a byte array first
     // https://github.com/serde-rs/json/issues/160

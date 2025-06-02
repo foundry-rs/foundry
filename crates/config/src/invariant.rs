@@ -70,7 +70,6 @@ impl Default for InvariantConfig {
 impl InvariantConfig {
     /// Creates invariant configuration to write failures in `{PROJECT_ROOT}/cache/fuzz` dir.
     pub fn new(cache_dir: PathBuf) -> Self {
-        let cache_dir = cache_dir.display();
         Self {
             runs: 256,
             depth: 500,
@@ -84,7 +83,7 @@ impl InvariantConfig {
             corpus_gzip: true,
             corpus_min_mutations: 5,
             corpus_min_size: 0,
-            failure_persist_dir: Some(format!("{cache_dir}/invariant").into()),
+            failure_persist_dir: Some(cache_dir),
             show_metrics: false,
             timeout: None,
             show_solidity: false,

@@ -11,7 +11,8 @@ use foundry_evm_fuzz::{
     strategies::fuzz_param_from_state,
 };
 use proptest::{
-    prelude::{Rng, Strategy},
+    prelude::{Just, Rng, Strategy},
+    prop_oneof,
     strategy::{BoxedStrategy, ValueTree},
     test_runner::TestRunner,
 };
@@ -23,6 +24,24 @@ use std::{
 use uuid::Uuid;
 
 const METADATA_SUFFIX: &str = "-metadata.json";
+const JSON_EXTENSION: &str = ".json";
+
+/// Possible mutation strategies to apply on a call sequence.
+#[derive(Debug, Clone)]
+enum MutationType {
+    /// Splice original call sequence.
+    Splice,
+    /// Repeat selected call several times.
+    Repeat,
+    /// Interleave calls from two random call sequences.
+    Interleave,
+    /// Replace prefix of the original call sequence with new calls.
+    Prefix,
+    /// Replace suffix of the original call sequence with new calls.
+    Suffix,
+    /// ABI mutate random args of selected call in sequence.
+    Abi,
+}
 
 /// Holds Corpus information.
 #[derive(Serialize)]
@@ -42,7 +61,7 @@ impl Corpus {
     /// New corpus from given call sequence and corpus path to read uuid.
     pub fn new(tx_seq: Vec<BasicTxDetails>, path: PathBuf) -> eyre::Result<Self> {
         let uuid = if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-            Uuid::try_from(stem.to_string())?
+            Uuid::try_from(stem.strip_suffix(JSON_EXTENSION).unwrap_or(stem).to_string())?
         } else {
             Uuid::new_v4()
         };
@@ -59,6 +78,8 @@ impl Corpus {
 pub struct TxCorpusManager {
     // Fuzzed calls generator.
     tx_generator: BoxedStrategy<BasicTxDetails>,
+    // Call sequence mutation strategy type generator.
+    mutation_generator: BoxedStrategy<MutationType>,
     // Path to invariant corpus directory. If None, sequences with new coverage are not persisted.
     corpus_dir: Option<PathBuf>,
     // Whether corpus to use gzip file compression and decompression.
@@ -86,6 +107,15 @@ impl TxCorpusManager {
         executor: &Executor,
         history_map: &mut [u8],
     ) -> eyre::Result<Self> {
+        let mutation_generator = prop_oneof![
+            Just(MutationType::Splice),
+            Just(MutationType::Repeat),
+            Just(MutationType::Interleave),
+            Just(MutationType::Prefix),
+            Just(MutationType::Suffix),
+            Just(MutationType::Abi),
+        ]
+        .boxed();
         let mut in_memory_corpus = vec![];
         let corpus_gzip = invariant_config.corpus_gzip;
         let corpus_min_mutations = invariant_config.corpus_min_mutations;
@@ -96,6 +126,7 @@ impl TxCorpusManager {
         let Some(corpus_dir) = &invariant_config.corpus_dir else {
             return Ok(Self {
                 tx_generator,
+                mutation_generator,
                 corpus_dir: None,
                 corpus_gzip,
                 corpus_min_mutations,
@@ -170,6 +201,7 @@ impl TxCorpusManager {
 
         Ok(Self {
             tx_generator,
+            mutation_generator,
             corpus_dir: Some(corpus_dir),
             corpus_gzip,
             corpus_min_mutations,
@@ -215,12 +247,12 @@ impl TxCorpusManager {
         if let Some(corpus_dir) = &self.corpus_dir {
             let write_result = if self.corpus_gzip {
                 foundry_common::fs::write_json_gzip_file(
-                    corpus_dir.join(format!("{corpus_uuid}.gz")).as_path(),
+                    corpus_dir.join(format!("{corpus_uuid}{JSON_EXTENSION}.gz")).as_path(),
                     &corpus.tx_seq,
                 )
             } else {
                 foundry_common::fs::write_json_file(
-                    corpus_dir.join(format!("{corpus_uuid}.json")).as_path(),
+                    corpus_dir.join(format!("{corpus_uuid}{JSON_EXTENSION}")).as_path(),
                     &corpus.tx_seq,
                 )
             };
@@ -248,8 +280,6 @@ impl TxCorpusManager {
         let test_runner = &mut test.execution_data.borrow_mut().branch_runner;
 
         if !self.in_memory_corpus.is_empty() {
-            let rng = test_runner.rng();
-
             // Flush oldest corpus mutated more than configured max mutations unless they are
             // producing new finds more than 1/3 of the time.
             let should_evict = self.in_memory_corpus.len() > self.corpus_min_size.max(1);
@@ -280,15 +310,18 @@ impl TxCorpusManager {
                 }
             }
 
+            let mutation_type = self
+                .mutation_generator
+                .new_tree(test_runner)
+                .expect("Could not generate mutation type")
+                .current();
+            let rng = test_runner.rng();
             let corpus_len = self.in_memory_corpus.len();
             let primary = &self.in_memory_corpus[rng.gen_range(0..corpus_len)];
             let secondary = &self.in_memory_corpus[rng.gen_range(0..corpus_len)];
 
-            // TODO rounds of mutations on elements?
-            match rng.gen_range(0..=5) {
-                // TODO expose config and add tests
-                // splice
-                0 => {
+            match mutation_type {
+                MutationType::Splice => {
                     trace!(target: "corpus", "splice {} and {}", primary.uuid, secondary.uuid);
                     if should_evict {
                         self.current_mutated = Some(primary.uuid);
@@ -306,8 +339,7 @@ impl TxCorpusManager {
                         new_seq.push(tx.clone());
                     }
                 }
-                // repeat
-                1 => {
+                MutationType::Repeat => {
                     let corpus = if rng.gen_bool(0.5) { primary } else { secondary };
                     trace!(target: "corpus", "repeat {}", corpus.uuid);
                     if should_evict {
@@ -320,8 +352,7 @@ impl TxCorpusManager {
                     let repeated = vec![new_seq[item_idx].clone(); end - start];
                     new_seq.splice(start..end, repeated);
                 }
-                // interleave
-                2 => {
+                MutationType::Interleave => {
                     trace!(target: "corpus", "interleave {} with {}", primary.uuid, secondary.uuid);
                     if should_evict {
                         self.current_mutated = Some(primary.uuid);
@@ -332,8 +363,7 @@ impl TxCorpusManager {
                         new_seq.push(tx);
                     }
                 }
-                // 3. Overwrite prefix with new sequence.
-                3 => {
+                MutationType::Prefix => {
                     let corpus = if rng.gen_bool(0.5) { primary } else { secondary };
                     trace!(target: "corpus", "overwrite prefix of {}", corpus.uuid);
                     if should_evict {
@@ -344,8 +374,7 @@ impl TxCorpusManager {
                         new_seq[i] = self.new_tx(test_runner)?;
                     }
                 }
-                // 4. Overwrite suffix with new sequence.
-                4 => {
+                MutationType::Suffix => {
                     let corpus = if rng.gen_bool(0.5) { primary } else { secondary };
                     trace!(target: "corpus", "overwrite suffix of {}", corpus.uuid);
                     if should_evict {
@@ -356,8 +385,7 @@ impl TxCorpusManager {
                         new_seq[i] = self.new_tx(test_runner)?;
                     }
                 }
-                // 5. Select idx to mutate and change its args according to its ABI.
-                5 => {
+                MutationType::Abi => {
                     let targets = test.targeted_contracts.targets.lock();
                     let corpus = if rng.gen_bool(0.5) { primary } else { secondary };
                     trace!(target: "corpus", "ABI mutate args of {}", corpus.uuid);
@@ -416,18 +444,14 @@ impl TxCorpusManager {
                         }
                     }
                 }
-                _ => {
-                    unreachable!()
-                }
-            };
-
-            trace!(target: "corpus", "new sequence generated {}", new_seq.len());
+            }
         }
 
         // Make sure sequence contains at least one tx to start fuzzing from.
         if new_seq.is_empty() {
             new_seq.push(self.new_tx(test_runner)?);
         }
+        trace!(target: "corpus", "new sequence of {} calls generated", new_seq.len());
 
         Ok(new_seq)
     }

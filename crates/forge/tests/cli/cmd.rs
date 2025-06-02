@@ -797,8 +797,8 @@ Compiler run successful!
 // checks that `clean` removes fuzz and invariant cache dirs
 forgetest_init!(can_clean_test_cache, |prj, cmd| {
     prj.update_config(|config| {
-        config.fuzz = FuzzConfig::new("cache".into());
-        config.invariant = InvariantConfig::new("cache".into());
+        config.fuzz = FuzzConfig::new("cache/fuzz".into());
+        config.invariant = InvariantConfig::new("cache/invariant".into());
     });
     // default test contract is written in custom out directory
     let fuzz_cache_dir = prj.root().join("cache/fuzz");
