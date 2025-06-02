@@ -59,18 +59,19 @@ impl Corpus {
 pub struct TxCorpusManager {
     // Fuzzed calls generator.
     tx_generator: BoxedStrategy<BasicTxDetails>,
-    // Path to invariant corpus directory. If None, corpus with new coverage is not persisted.
+    // Path to invariant corpus directory. If None, sequences with new coverage are not persisted.
     corpus_dir: Option<PathBuf>,
     // Whether corpus to use gzip file compression and decompression.
     corpus_gzip: bool,
-    // Number of corpus mutations until marked as eligible to be flushed from in-memory corpus.
-    corpus_max_mutations: usize,
+    // Number of mutations until entry marked as eligible to be flushed from in-memory corpus.
+    // Mutations will be perfored at least `corpus_min_mutations` times.
+    corpus_min_mutations: usize,
     // Number of corpus that won't be evicted from memory.
     corpus_min_size: usize,
     // In-memory corpus, populated from persisted files and current runs.
-    // Oldest corpus that is mutated more than `corpus_max_mutations` times.
+    // Mutation is performed on these.
     in_memory_corpus: Vec<Corpus>,
-    // Identifier of current mutated corpus.
+    // Identifier of current mutated entry.
     current_mutated: Option<Uuid>,
     // Number of failed replays from persisted corpus.
     failed_replays: usize,
@@ -87,7 +88,7 @@ impl TxCorpusManager {
     ) -> eyre::Result<Self> {
         let mut in_memory_corpus = vec![];
         let corpus_gzip = invariant_config.corpus_gzip;
-        let corpus_max_mutations = invariant_config.corpus_max_mutations;
+        let corpus_min_mutations = invariant_config.corpus_min_mutations;
         let corpus_min_size = invariant_config.corpus_min_size;
         let mut failed_replays = 0;
 
@@ -97,7 +98,7 @@ impl TxCorpusManager {
                 tx_generator,
                 corpus_dir: None,
                 corpus_gzip,
-                corpus_max_mutations,
+                corpus_min_mutations,
                 corpus_min_size,
                 in_memory_corpus,
                 current_mutated: None,
@@ -171,7 +172,7 @@ impl TxCorpusManager {
             tx_generator,
             corpus_dir: Some(corpus_dir),
             corpus_gzip,
-            corpus_max_mutations,
+            corpus_min_mutations,
             corpus_min_size,
             in_memory_corpus,
             current_mutated: None,
@@ -254,7 +255,7 @@ impl TxCorpusManager {
             let should_evict = self.in_memory_corpus.len() > self.corpus_min_size.max(1);
             if should_evict {
                 if let Some(index) = self.in_memory_corpus.iter().position(|corpus| {
-                    corpus.total_mutations > self.corpus_max_mutations &&
+                    corpus.total_mutations > self.corpus_min_mutations &&
                         (corpus.new_finds_produced as f64 / corpus.total_mutations as f64) < 0.3
                 }) {
                     let corpus = self.in_memory_corpus.get(index).unwrap();
