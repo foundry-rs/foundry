@@ -52,8 +52,6 @@ pub fn read_json_file<T: DeserializeOwned>(path: &Path) -> Result<T> {
 
 /// Reads and decodes the json gzip file, then deserialize it into the provided type.
 pub fn read_json_gzip_file<T: DeserializeOwned>(path: &Path) -> Result<T> {
-    // read the file into a byte array first
-    // https://github.com/serde-rs/json/issues/160
     let file = open(path)?;
     let reader = BufReader::new(file);
     let decoder = GzDecoder::new(reader);
