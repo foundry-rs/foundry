@@ -53,7 +53,6 @@ alloy-signer.workspace = true
 alloy-sol-types.workspace = true
 alloy-transport.workspace = true
 alloy-ens = { workspace = true, features = ["provider"] }
-alloy-hardforks.workspace = true
 
 op-alloy-flz.workspace = true
 op-alloy-consensus = { workspace = true, features = ["alloy-compat"] }
@@ -67,12 +66,6 @@ rand_08.workspace = true
 rayon.workspace = true
 serde_json.workspace = true
 serde.workspace = true
-
-# aws-kms
-aws-sdk-kms = { workspace = true, default-features = false, optional = true }
-
-# gcp-kms
-gcloud-sdk = { version = "0.27", default-features = false, optional = true }
 
 # bin
 foundry-cli.workspace = true
@@ -95,6 +88,7 @@ evmole.workspace = true
 [dev-dependencies]
 anvil.workspace = true
 foundry-test-utils.workspace = true
+alloy-hardforks.workspace = true
 
 [features]
 default = ["jemalloc"]
@@ -102,6 +96,6 @@ asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
 mimalloc = ["foundry-cli/mimalloc"]
 tracy-allocator = ["foundry-cli/tracy-allocator"]
-aws-kms = ["foundry-wallets/aws-kms", "dep:aws-sdk-kms"]
-gcp-kms = ["foundry-wallets/gcp-kms", "dep:gcloud-sdk"]
+aws-kms = ["foundry-wallets/aws-kms"]
+gcp-kms = ["foundry-wallets/gcp-kms"]
 isolate-by-default = ["foundry-config/isolate-by-default"]

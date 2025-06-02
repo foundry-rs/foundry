@@ -91,7 +91,6 @@ thiserror.workspace = true
 yansi.workspace = true
 tempfile.workspace = true
 itertools.workspace = true
-rand.workspace = true
 rand_08.workspace = true
 eyre.workspace = true
 
@@ -110,6 +109,7 @@ clap_complete_fig = "4"
 [dev-dependencies]
 alloy-provider = { workspace = true, features = ["txpool-api"] }
 alloy-pubsub.workspace = true
+rand.workspace = true
 foundry-test-utils.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
