@@ -58,9 +58,9 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "alloy-chains"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "517e5acbd38b6d4c59da380e8bbadc6d365bf001903ce46cf5521c53c647e07b"
+checksum = "d6967ca1ed656766e471bc323da42fb0db320ca5e1418b408650e98e4757b3d2"
 dependencies = [
  "alloy-primitives",
  "num_enum",
@@ -2308,9 +2308,9 @@ dependencies = [
 
 [[package]]
 name = "camino"
-version = "1.1.9"
+version = "1.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b96ec4966b5813e2c0507c1f86115c8c5abaadc3980879c3424042a02fd1ad3"
+checksum = "0da45bc31171d8d6960122e222a67740df867c1dd53b4d51caa297084c185cab"
 dependencies = [
  "serde",
 ]
@@ -6485,9 +6485,9 @@ dependencies = [
 
 [[package]]
 name = "op-alloy-flz"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ef71f23a8caf6f2a2d5cafbdc44956d44e6014dcb9aa58abf7e4e6481c6ec34"
+checksum = "a79f352fc3893dcd670172e615afef993a41798a1d3fc0db88a3e60ef2e70ecc"
 
 [[package]]
 name = "op-alloy-rpc-types"
@@ -7145,7 +7145,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "syn 2.0.101",
@@ -7513,9 +7513,9 @@ checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 
 [[package]]
 name = "reqwest"
-version = "0.12.18"
+version = "0.12.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e98ff6b0dbbe4d5a37318f433d4fc82babd21631f194d370409ceb2e40b2f0b5"
+checksum = "a2f8e5513d63f2e5b386eb5106dc67eaf3f84e95258e210489136b8b92ad6119"
 dependencies = [
  "async-compression",
  "base64 0.22.1",
@@ -8661,7 +8661,7 @@ dependencies = [
  "derive_builder",
  "derive_more 2.0.1",
  "dunce",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "itoa",
  "lasso",
  "match_cfg",
@@ -8673,7 +8673,7 @@ dependencies = [
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 2.0.12",
+ "thiserror 1.0.69",
  "tracing",
  "unicode-width 0.2.0",
 ]
@@ -8698,7 +8698,7 @@ dependencies = [
  "alloy-primitives",
  "bitflags 2.9.1",
  "bumpalo",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -9009,7 +9009,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
- "thiserror 2.0.12",
+ "thiserror 1.0.69",
  "url",
  "zip",
 ]
