@@ -84,7 +84,7 @@ futures.workspace = true
 async-trait.workspace = true
 
 # misc
-flate2 = "1.0"
+flate2 = "1.1"
 serde_json.workspace = true
 serde.workspace = true
 thiserror.workspace = true
