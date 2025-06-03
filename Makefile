@@ -5,8 +5,10 @@
 
 # Cargo profile for builds.
 PROFILE ?= dev
+
 # The docker image name
 DOCKER_IMAGE_NAME ?= ghcr.io/foundry-rs/foundry:latest
+
 BIN_DIR = dist/bin
 CARGO_TARGET_DIR ?= target
 
@@ -22,7 +24,7 @@ endif
 
 .PHONY: help
 help: ## Display this help.
-	@awk 'BEGIN {FS = ":.*##"; printf "Usage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*##"; printf "Usage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
 ##@ Build
 
@@ -90,10 +92,12 @@ test: ## Run all tests.
 
 ##@ Linting
 
+.PHONY: fmt
 fmt: ## Run all formatters.
 	cargo +nightly fmt
 	./.github/scripts/format.sh --check
 
+.PHONY: lint-clippy
 lint-clippy: ## Run clippy on the codebase.
 	cargo +nightly clippy \
 	--workspace \
@@ -101,6 +105,7 @@ lint-clippy: ## Run clippy on the codebase.
 	--all-features \
 	-- -D warnings
 
+.PHONY: lint-codespell
 lint-codespell: ## Run codespell on the codebase.
 	@command -v codespell >/dev/null || { \
 		echo "codespell not found. Please install it by running the command `pipx install codespell` or refer to the following link for more information: https://github.com/codespell-project/codespell" \
@@ -108,6 +113,7 @@ lint-codespell: ## Run codespell on the codebase.
 	}
 	codespell --skip "*.json"
 
+.PHONY: lint
 lint: ## Run all linters.
 	make fmt && \
 	make lint-clippy && \
@@ -119,6 +125,12 @@ lint: ## Run all linters.
 clean: ## Clean the project.
 	cargo clean
 
-pr: ## Run all tests and linters in preparation for a PR.
+.PHONY: deny
+deny: ## Perform a `cargo` deny check.
+	cargo deny --all-features check all
+
+.PHONY: pr
+pr: ## Run all checks and tests.
+	make deny && \
 	make lint && \
 	make test
