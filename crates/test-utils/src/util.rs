@@ -1017,6 +1017,7 @@ fn test_redactions() -> snapbox::Redactions {
             ("[TX_HASH]", r"Transaction hash: 0x[0-9A-Fa-f]{64}"),
             ("[ADDRESS]", r"Address: +0x[0-9A-Fa-f]{40}"),
             ("[PUBLIC_KEY]", r"Public key: +0x[0-9A-Fa-f]{128}"),
+            ("[PRIVATE_KEY]", r"Private key: +0x[0-9A-Fa-f]{64}"),
             ("[UPDATING_DEPENDENCIES]", r"Updating dependencies in .*"),
             ("[SAVED_TRANSACTIONS]", r"Transactions saved to: .*\.json"),
             ("[SAVED_SENSITIVE_VALUES]", r"Sensitive values saved to: .*\.json"),
