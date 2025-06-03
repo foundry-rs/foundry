@@ -1,3 +1,7 @@
+# Phoundry
+
+### Phoundry is a minimalfork of Foundry that is customized to support the cheat codes used in the Credible Layer
+
 <div align="center">
   <img src=".github/assets/banner.png" alt="Foundry banner" />
 
@@ -23,7 +27,7 @@
 
 ---
 
-### Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.
+### Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust
 
 Foundry consists of:
 
@@ -349,7 +353,6 @@ shall be dual licensed as above, without any additional terms or conditions.
 [foundry-compilers]: https://github.com/foundry-rs/compilers
 [ethers-solc]: https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/
 [solady]: https://github.com/Vectorized/solady
-[openzeppelin]: https://github.com/OpenZeppelin/openzeppelin-contracts/tree/release-v5.1
 [morpho-blue]: https://github.com/morpho-org/morpho-blue
 [solmate]: https://github.com/transmissions11/solmate/
 [geb]: https://github.com/reflexer-labs/geb
