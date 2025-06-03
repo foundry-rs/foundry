@@ -1680,6 +1680,7 @@ impl Backend {
                         request,
                         Signature::new(Default::default(), Default::default(), false),
                     )?;
+                    let tx_hash = tx.hash();
                     let rpc_tx = transaction_build(
                         None,
                         MaybeImpersonatedTransaction::impersonated(tx, from),
@@ -1713,20 +1714,22 @@ impl Backend {
                                 removed: false,
 
                                 block_hash: None,
-                                transaction_hash: None,
+                                transaction_hash: Some(tx_hash),
                             })
                             .collect(),
                     };
+
                     let receipt = Receipt {
                         status: result.is_success().into(),
                         cumulative_gas_used: result.gas_used(),
-                        logs:sim_res.logs.clone()
+                        logs: sim_res.logs.clone()
                     };
                     receipts.push(receipt.with_bloom());
                     logs.extend(sim_res.logs.clone().iter().map(|log| log.inner.clone()));
                     log_index += sim_res.logs.len();
                     call_res.push(sim_res);
                 }
+
                 let transactions_envelopes: Vec<AnyTxEnvelope> = transactions
                 .iter()
                 .map(|tx| AnyTxEnvelope::from(tx.clone()))
@@ -1736,7 +1739,6 @@ impl Backend {
                     transactions_root: calculate_transaction_root(&transactions_envelopes),
                     receipts_root: calculate_receipt_root(&transactions_envelopes),
                     parent_hash: Default::default(),
-                    ommers_hash: Default::default(),
                     beneficiary: block_env.beneficiary,
                     state_root: Default::default(),
                     difficulty: Default::default(),
@@ -1753,6 +1755,7 @@ impl Backend {
                     excess_blob_gas: None,
                     parent_beacon_block_root: None,
                     requests_hash: None,
+                    ..Default::default()
                 };
                 let mut block = alloy_rpc_types::Block {
                     header: AnyRpcHeader {
@@ -1768,6 +1771,12 @@ impl Backend {
 
                 if !return_full_transactions {
                     block.transactions.convert_to_hashes();
+                }
+
+                for res in &mut call_res {
+                    res.logs.iter_mut().for_each(|log| {
+                        log.block_hash = Some(block.header.hash);
+                    });
                 }
 
                 let simulated_block = SimulatedBlock {
@@ -3178,8 +3187,8 @@ impl TransactionValidator for Backend {
                 // 1. no gas cost check required since already have prepaid gas from L1
                 // 2. increment account balance by deposited amount before checking for sufficient
                 //    funds `tx.value <= existing account value + deposited value`
-                if value > account.balance + U256::from(deposit_tx.mint.unwrap_or_default()) {
-                    warn!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance + U256::from(deposit_tx.mint.unwrap_or_default()), value, *pending.sender());
+                if value > account.balance + U256::from(deposit_tx.mint) {
+                    warn!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance + U256::from(deposit_tx.mint), value, *pending.sender());
                     return Err(InvalidTransactionError::InsufficientFunds);
                 }
             }
