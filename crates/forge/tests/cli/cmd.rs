@@ -3622,7 +3622,7 @@ forgetest_init!(can_inspect_standard_json, |prj, cmd| {
         ]
       }
     },
-    "evmVersion": "cancun",
+    "evmVersion": "prague",
     "viaIR": false,
     "libraries": {}
   }
