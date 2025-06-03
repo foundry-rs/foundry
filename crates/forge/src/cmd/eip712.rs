@@ -229,9 +229,9 @@ impl Resolver {
                             name
                         };
 
-                    return Ok(Some(name))
+                    Ok(Some(name))
                 } else {
-                    return Ok(None)
+                    Ok(None)
                 }
             }
         }
