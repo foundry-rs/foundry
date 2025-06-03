@@ -9,7 +9,6 @@ on:
       - "v*.*.*"
   schedule:
     - cron: "0 6 * * *"
-  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
