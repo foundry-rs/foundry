@@ -1,9 +1,10 @@
 use crate::{
     config::{ForkChoice, DEFAULT_MNEMONIC},
     eth::{backend::db::SerializableState, pool::transactions::TransactionOrder, EthApi},
-    AccountGenerator, EthereumHardfork, NodeConfig, OptimismHardfork, CHAIN_ID,
+    AccountGenerator, EthereumHardfork, NodeConfig, CHAIN_ID,
 };
 use alloy_genesis::Genesis;
+use alloy_op_hardforks::OpHardfork;
 use alloy_primitives::{utils::Unit, B256, U256};
 use alloy_signer_local::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
@@ -78,7 +79,7 @@ pub struct NodeArgs {
 
     /// The EVM hardfork to use.
     ///
-    /// Choose the hardfork by name, e.g. `cancun`, `shanghai`, `paris`, `london`, etc...
+    /// Choose the hardfork by name, e.g. `prague`, `cancun`, `shanghai`, `paris`, `london`, etc...
     /// [default: latest]
     #[arg(long)]
     pub hardfork: Option<String>,
@@ -218,7 +219,7 @@ impl NodeArgs {
         let hardfork = match &self.hardfork {
             Some(hf) => {
                 if self.evm.optimism {
-                    Some(OptimismHardfork::from_str(hf)?.into())
+                    Some(OpHardfork::from_str(hf)?.into())
                 } else {
                     Some(EthereumHardfork::from_str(hf)?.into())
                 }
@@ -836,7 +837,7 @@ mod tests {
         let args: NodeArgs =
             NodeArgs::parse_from(["anvil", "--optimism", "--hardfork", "Regolith"]);
         let config = args.into_node_config().unwrap();
-        assert_eq!(config.hardfork, Some(OptimismHardfork::Regolith.into()));
+        assert_eq!(config.hardfork, Some(OpHardfork::Regolith.into()));
     }
 
     #[test]
