@@ -21,7 +21,7 @@ pub trait TestFilter: Send + Sync {
 pub trait TestFunctionExt {
     /// Returns the kind of test function.
     fn test_function_kind(&self) -> TestFunctionKind {
-        TestFunctionKind::classify(self.tfe_as_str(), self.tfe_has_inputs())
+        TestFunctionKind::classify(self.tfe_as_str(), self.tfe_has_inputs(), self.tfe_is_library_function())
     }
 
     /// Returns `true` if this function is a `setUp` function.
@@ -73,6 +73,8 @@ pub trait TestFunctionExt {
     fn tfe_as_str(&self) -> &str;
     #[doc(hidden)]
     fn tfe_has_inputs(&self) -> bool;
+    #[doc(hidden)]
+    fn tfe_is_library_function(&self) -> bool;
 }
 
 impl TestFunctionExt for Function {
@@ -82,6 +84,24 @@ impl TestFunctionExt for Function {
 
     fn tfe_has_inputs(&self) -> bool {
         !self.inputs.is_empty()
+    }
+    
+    fn tfe_is_library_function(&self) -> bool {
+        // There is no direct way in alloy_json_abi::Function to determine 
+        // if a function belongs to a library.
+        // We'll use a heuristic based on function name and state mutability
+        
+        // Library functions are typically view or pure
+        if self.state_mutability == alloy_json_abi::StateMutability::View 
+           || self.state_mutability == alloy_json_abi::StateMutability::Pure {
+            // If the function starts with "invariant" and is pure/view - 
+            // there's a high probability it's a library function
+            if self.name.starts_with("invariant") {
+                return true;
+            }
+        }
+        
+        false
     }
 }
 
@@ -93,6 +113,10 @@ impl TestFunctionExt for String {
     fn tfe_has_inputs(&self) -> bool {
         false
     }
+    
+    fn tfe_is_library_function(&self) -> bool {
+        false // Default assumption for String
+    }
 }
 
 impl TestFunctionExt for str {
@@ -102,6 +126,10 @@ impl TestFunctionExt for str {
 
     fn tfe_has_inputs(&self) -> bool {
         false
+    }
+    
+    fn tfe_is_library_function(&self) -> bool {
+        false // Default assumption for str
     }
 }
 
@@ -125,9 +153,12 @@ pub enum TestFunctionKind {
 }
 
 impl TestFunctionKind {
-    /// Classify a function.
+    /// Classify a function with consideration for library functions.
+    /// 
+    /// This is needed to prevent library functions with names starting with "invariant" 
+    /// from being misclassified as invariant tests.
     #[inline]
-    pub fn classify(name: &str, has_inputs: bool) -> Self {
+    pub fn classify(name: &str, has_inputs: bool, is_library_function: bool) -> Self {
         match () {
             _ if name.starts_with("test") => {
                 let should_fail = name.starts_with("testFail");
@@ -137,7 +168,8 @@ impl TestFunctionKind {
                     Self::UnitTest { should_fail }
                 }
             }
-            _ if name.starts_with("invariant") || name.starts_with("statefulFuzz") => {
+            // Skip invariant test classification for library functions
+            _ if (name.starts_with("invariant") || name.starts_with("statefulFuzz")) && !is_library_function => {
                 Self::InvariantTest
             }
             _ if name.eq_ignore_ascii_case("setup") => Self::Setup,
