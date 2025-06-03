@@ -2414,9 +2414,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.24"
+version = "1.2.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16595d3be041c03b09d08d0858631facccee9221e579704070e6e9e4915d3bc7"
+checksum = "d0fc897dc1e865cc67c0e05a836d9d3f1df3cbe442aa4a9473b18e12624a4951"
 dependencies = [
  "jobserver",
  "libc",
@@ -2576,9 +2576,9 @@ dependencies = [
 
 [[package]]
 name = "clap_complete"
-version = "4.5.51"
+version = "4.5.52"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d2267df7f3c8e74e38268887ea5235d4dfadd39bfff2d56ab82d61776be355e"
+checksum = "1a554639e42d0c838336fc4fbedb9e2df3ad1fa4acda149f9126b4ccfcd7900f"
 dependencies = [
  "clap",
 ]
@@ -2732,9 +2732,9 @@ dependencies = [
 
 [[package]]
 name = "color-eyre"
-version = "0.6.4"
+version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6e1761c0e16f8883bbbb8ce5990867f4f06bf11a0253da6495a04ce4b6ef0ec"
+checksum = "e5920befb47832a6d61ee3a3a846565cfa39b331331e68a3b1d1116630f2f26d"
 dependencies = [
  "backtrace",
  "color-spantrace",
@@ -2747,9 +2747,9 @@ dependencies = [
 
 [[package]]
 name = "color-spantrace"
-version = "0.2.2"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ddd8d5bfda1e11a501d0a7303f3bfed9aa632ebdb859be40d0fd70478ed70d5"
+checksum = "b8b88ea9df13354b55bc7234ebcce36e6ef896aca2e42a15de9e10edce01b427"
 dependencies = [
  "once_cell",
  "owo-colors 4.2.1",
@@ -4234,9 +4234,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.17.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e3e990fb891b4f7caa49271c842d8eaece61431106b33c52f9d511dc7270eee"
+checksum = "d14093062732cc5085a2ad6eb5ec1f20e5b6704b86fc4eeef7ba15f53f75178d"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4271,9 +4271,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts"
-version = "0.17.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8234ce9c22e8e5047dcae2acd10cb0ccd448dd5058d4e341310bb9dabcec4aa6"
+checksum = "d2dfbae2e37ccb536b7dd85303fb0f006902a71218587f649129e9311e2ea646"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -4281,9 +4281,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-solc"
-version = "0.17.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d46c321c7a688810301c8efa1d020ee876b6bcf4a327c6a50bf807845b94c41"
+checksum = "d17f0a8f8c4ff296546cdb1985a460542bb39ab853815de8ba51b43c134e4051"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4304,9 +4304,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
-version = "0.17.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f2e6f66303fe27dbd3123db706f9f25bae1b46ddcb97191e0f5ac199db94403"
+checksum = "5e87c18e3fed59ac0b7012f690eb3b0cc0e289e8e60601f438d427d9d85b8760"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4319,9 +4319,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-core"
-version = "0.17.0"
+version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34dd4424b0bcbbf6ad9e6f80377136b84edcfcbb4234a0c59afa78a89d5a9ee8"
+checksum = "053b13c3ee670c41e86235df99805bdfedd88a5efb6bbe697925b69028218481"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -4993,12 +4993,6 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hermit-abi"
-version = "0.3.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d231dfb89cfffdbc30e7fc41579ed6066ad03abda9e567ccafae602b97ec5024"
-
-[[package]]
-name = "hermit-abi"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f154ce46856750ed433c8649605bf7ed2de3bc35fd9d2a9f30cddd873c80cb08"
@@ -5476,7 +5470,7 @@ version = "0.4.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e04d7f318608d35d4b61ddd75cbdaee86b023ebe2bd5a66ee0915f0bf93095a9"
 dependencies = [
- "hermit-abi 0.5.1",
+ "hermit-abi",
  "libc",
  "windows-sys 0.59.0",
 ]
@@ -6384,11 +6378,11 @@ dependencies = [
 
 [[package]]
 name = "num_cpus"
-version = "1.16.0"
+version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4161fcb6d602d4d2081af7c3a45852d875a03dd337a6bfdd6e06407b61342a43"
+checksum = "91df4bbde75afed763b708b7eee1e8e7651e02d97f6d5dd763e89367e957b23b"
 dependencies = [
- "hermit-abi 0.3.9",
+ "hermit-abi",
  "libc",
 ]
 
@@ -6519,9 +6513,9 @@ dependencies = [
 
 [[package]]
 name = "op-revm"
-version = "5.0.0"
+version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47296d449fbe2d5cc74ab6e1213dee88cae3e2fd238343bec605c3c687bbcfab"
+checksum = "c0e8a3830a2be82166fbe9ead34361149ff4320743ed7ee5502ab779de221361"
 dependencies = [
  "auto_impl",
  "once_cell",
@@ -7011,9 +7005,9 @@ dependencies = [
 
 [[package]]
 name = "prettyplease"
-version = "0.2.32"
+version = "0.2.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "664ec5419c51e34154eec046ebcba56312d5a2fc3b09a06da188e1ad21afadf6"
+checksum = "9dee91521343f4c5c6a63edd65e54f31f5c92fe8978c40a4282f8372194c6a7d"
 dependencies = [
  "proc-macro2",
  "syn 2.0.101",
@@ -7573,9 +7567,9 @@ dependencies = [
 
 [[package]]
 name = "revm"
-version = "24.0.0"
+version = "24.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d3ae9d1b08303eb5150dcf820a29e14235cf3f24f6c09024458a4dcbffe6695"
+checksum = "01d277408ff8d6f747665ad9e52150ab4caf8d5eaf0d787614cf84633c8337b4"
 dependencies = [
  "revm-bytecode",
  "revm-context",
@@ -7605,9 +7599,9 @@ dependencies = [
 
 [[package]]
 name = "revm-context"
-version = "5.0.0"
+version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b181214eb2bbb76ee9d6195acba19857d991d2cdb9a65b7cb6939c30250a3966"
+checksum = "b01aad49e1233f94cebda48a4e5cef022f7c7ed29b4edf0d202b081af23435ef"
 dependencies = [
  "cfg-if",
  "derive-where",
@@ -7663,9 +7657,9 @@ dependencies = [
 
 [[package]]
 name = "revm-handler"
-version = "5.0.0"
+version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08a9204e3ac1a8edb850cc441a6a1d0f2251c0089e5fffdaba11566429e6c64e"
+checksum = "481e8c3290ff4fa1c066592fdfeb2b172edfd14d12e6cade6f6f5588cad9359a"
 dependencies = [
  "auto_impl",
  "revm-bytecode",
@@ -7681,9 +7675,9 @@ dependencies = [
 
 [[package]]
 name = "revm-inspector"
-version = "5.0.0"
+version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae4881eeae6ff35417c8569bc7cc03b6c0969869ee2c9b3945a39b4f9fa58bc5"
+checksum = "fdc1167ef8937d8867888e63581d8ece729a72073d322119ef4627d813d99ecb"
 dependencies = [
  "auto_impl",
  "revm-context",
@@ -9515,9 +9509,9 @@ dependencies = [
 
 [[package]]
 name = "tower-http"
-version = "0.6.4"
+version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fdb0c213ca27a9f57ab69ddb290fd80d970922355b83ae380b395d3986b8a2e"
+checksum = "5cc2d9e086a412a451384326f521c8123a99a466b329941a9403696bff9b0da2"
 dependencies = [
  "bitflags 2.9.1",
  "bytes",
@@ -9670,9 +9664,9 @@ dependencies = [
 
 [[package]]
 name = "tracy-client"
-version = "0.18.0"
+version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d90a2c01305b02b76fdd89ac8608bae27e173c829a35f7d76a345ab5d33836db"
+checksum = "3927832d93178f979a970d26deed7b03510586e328f31b0f9ad7a73985b8332a"
 dependencies = [
  "loom",
  "once_cell",
@@ -9682,9 +9676,9 @@ dependencies = [
 
 [[package]]
 name = "tracy-client-sys"
-version = "0.24.3"
+version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69fff37da548239c3bf9e64a12193d261e8b22b660991c6fd2df057c168f435f"
+checksum = "c032d68a49d25d9012a864fef1c64ac17aee43c87e0477bf7301d8ae8bfea7b7"
 dependencies = [
  "cc",
  "windows-targets 0.52.6",
