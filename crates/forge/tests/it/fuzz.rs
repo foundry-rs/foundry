@@ -254,7 +254,7 @@ forgetest_init!(test_fuzz_timeout, |prj, cmd| {
 import {Test} from "forge-std/Test.sol";
 
 contract FuzzTimeoutTest is Test {
-    /// forge-config: default.fuzz.max-test-rejects = 10000
+    /// forge-config: default.fuzz.max-test-rejects = 50000
     /// forge-config: default.fuzz.timeout = 1
     function test_fuzz_bound(uint256 a) public pure {
         vm.assume(a == 0);
