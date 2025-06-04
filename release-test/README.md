@@ -35,14 +35,26 @@ This folder contains scripts and resources for running comprehensive release tes
 You can specify the Foundry version using the `VERSION` build argument. If omitted, it defaults to `stable`.
 
 ```sh
+cd release-test
 docker build --build-arg VERSION=1.1.0-rc3 -t foundry .
 ```
 
 Or, to use the default `stable` version:
 
 ```sh
+cd release-test
 docker build -t foundry .
 ```
+
+Alternatively, you can get the latest changes from the `master` branch to use the latest version of the `foundry-polkadot` repository:
+
+Comment out the `ENTRYPOINT` line in the `Dockerfile` to use the default entrypoint (and not `ENTRYPOINT ["/bin/sh", "-c"]`).
+
+```sh
+docker build --platform=linux/amd64 -t foundry .
+```
+
+Update `forge.sh` and `cast.sh` under `docker_run()` to use `docker run --platform=linux/amd64` instead of `docker run` to run the commands.
 
 ### 2. Run the Test Scripts
 
@@ -104,6 +116,20 @@ docker build -t foundry .
 
 - **To change the RPC endpoint or test accounts:**  
   Edit the `RPC_URL`, `ADDRESS`, or `PRIVATE_KEY` variables at the top of the scripts.
+
+## How to Run Interactively
+
+If you want to run a command interactively, you can use the following command to get a shell in the container:
+
+```sh
+docker run --rm -it foundry sh
+```
+
+For example, to run `forge --help` in the container while mounted the current `test/` directory:
+
+```sh
+docker run --rm -v $PWD/test:/test -w /test foundry forge --help
+```
 
 ## Notes
 
