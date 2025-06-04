@@ -1,6 +1,6 @@
 //! Vyper specific configuration types.
 
-use foundry_compilers::artifacts::vyper::VyperOptimizationMode;
+use foundry_compilers::artifacts::{vyper::VyperOptimizationMode, EvmVersion};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -15,4 +15,14 @@ pub struct VyperConfig {
     /// Optionally enables experimental Venom pipeline
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub experimental_codegen: Option<bool>,
+}
+
+/// Vyper does not yet support the Prague EVM version, so we normalize it to Cancun.
+/// This is a temporary workaround until Vyper supports Prague.
+pub fn normalize_evm_version_vyper(evm_version: EvmVersion) -> EvmVersion {
+    if evm_version >= EvmVersion::Prague {
+        return EvmVersion::Cancun;
+    }
+
+    evm_version
 }
