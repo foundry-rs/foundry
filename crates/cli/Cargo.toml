@@ -19,9 +19,10 @@ foundry-config.workspace = true
 foundry-debugger.workspace = true
 foundry-evm.workspace = true
 foundry-wallets.workspace = true
+foundry-block-explorers.workspace = true
 
 foundry-compilers = { workspace = true, features = ["full"] }
-foundry-block-explorers.workspace = true
+solar-sema.workspace = true
 
 alloy-eips.workspace = true
 alloy-dyn-abi.workspace = true
@@ -53,6 +54,7 @@ tracing.workspace = true
 tracy-client = { workspace = true, optional = true, features = ["demangle"] }
 yansi.workspace = true
 rustls = { workspace = true, features = ["ring"] }
+dunce.workspace = true
 
 tracing-tracy = { version = "0.11", optional = true }
 

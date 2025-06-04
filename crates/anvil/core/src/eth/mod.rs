@@ -664,7 +664,7 @@ pub enum EthRequest {
 
     /// Add an address to the [`DelegationCapability`] of the wallet
     ///
-    /// [`DelegationCapability`]: wallet::DelegationCapability  
+    /// [`DelegationCapability`]: wallet::DelegationCapability
     #[serde(rename = "anvil_addCapability", with = "sequence")]
     AnvilAddCapability(Address),
 
