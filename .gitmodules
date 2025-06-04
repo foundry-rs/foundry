@@ -1,4 +1,4 @@
 [submodule "testdata/lib/credible-std"]
-	path = testdata/lib/credible-std
-	url = git@github.com:phylaxsystems/credible-std.git
-  branch = feat/update-assertion-interface
+path = testdata/lib/credible-std
+url = https://github.com/phylaxsystems/credible-std.git
+branch = feat/update-assertion-interface
