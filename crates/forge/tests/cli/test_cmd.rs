@@ -1582,7 +1582,7 @@ contract ATest is Test {
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-[PASS] test_negativeGas() (gas: 0)
+[PASS] test_negativeGas() (gas: 96)
 ...
 "#]]);
 });
@@ -1779,17 +1779,17 @@ contract ATest is DSTest {
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-[PASS] testResetGas() (gas: 40)
-[PASS] testResetGas1() (gas: 40)
-[PASS] testResetGas2() (gas: 40)
+[PASS] testResetGas() (gas: 96)
+[PASS] testResetGas1() (gas: 96)
+[PASS] testResetGas2() (gas: 96)
 [PASS] testResetGas3() (gas: [..])
 [PASS] testResetGas4() (gas: [..])
-[PASS] testResetGas5() (gas: 40)
-[PASS] testResetGas6() (gas: 40)
-[PASS] testResetGas7() (gas: 49)
+[PASS] testResetGas5() (gas: 96)
+[PASS] testResetGas6() (gas: 96)
+[PASS] testResetGas7() (gas: 96)
 [PASS] testResetGas8() (gas: [..])
-[PASS] testResetGas9() (gas: 40)
-[PASS] testResetNegativeGas() (gas: 0)
+[PASS] testResetGas9() (gas: 96)
+[PASS] testResetNegativeGas() (gas: 96)
 ...
 "#]]);
 });
@@ -2788,7 +2788,7 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
                     31337
                 );
 
-                assertEq(deployedAddress, address(0x90d4E26f2e78feDf488c7F3C46B8053a0515c71F));
+                assertEq(deployedAddress, address(0xD32c10E38A626Db0b0978B1A5828eb2957665668));
             }
 
             function test_getDeployments() public {
@@ -2798,7 +2798,7 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
                 );
 
                 assertEq(deployments.length, 2);
-                assertEq(deployments[0], address(0x90d4E26f2e78feDf488c7F3C46B8053a0515c71F)); // Create2 address - latest deployment
+                assertEq(deployments[0], address(0xD32c10E38A626Db0b0978B1A5828eb2957665668)); // Create2 address - latest deployment
                 assertEq(deployments[1], address(0x5FbDB2315678afecb367f032d93F642f64180aa3)); // Create address - oldest deployment
             }
 }

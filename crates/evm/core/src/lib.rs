@@ -31,7 +31,6 @@ pub mod either_evm;
 pub mod evm;
 pub mod fork;
 pub mod ic;
-pub mod opcodes;
 pub mod opts;
 pub mod precompiles;
 pub mod state_snapshot;
