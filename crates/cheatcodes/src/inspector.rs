@@ -1162,10 +1162,10 @@ impl Cheatcodes {
                     // Apply active EIP-7702 delegations, if any.
                     if !active_delegations.is_empty() {
                         for auth in &active_delegations {
-                            let Ok(auth) = auth.recover_authority() else {
+                            let Ok(authority) = auth.recover_authority() else {
                                 continue;
                             };
-                            if auth.eq(&broadcast.new_origin) {
+                            if authority == broadcast.new_origin {
                                 // Increment nonce of broadcasting account to reflect signed
                                 // authorization.
                                 account.info.nonce += 1;
