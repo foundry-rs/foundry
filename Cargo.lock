@@ -1778,7 +1778,7 @@ dependencies = [
 [[package]]
 name = "assertion-executor"
 version = "0.1.3"
-source = "git+https://github.com/phylaxsystems/assertion-executor.git#b78dfd918c2165c9f449835643c00a8d35d95f32"
+source = "git+https://github.com/phylaxsystems/assertion-executor.git?tag=0.1.3#b78dfd918c2165c9f449835643c00a8d35d95f32"
 dependencies = [
  "alloy",
  "alloy-consensus 0.11.1",
