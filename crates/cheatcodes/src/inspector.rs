@@ -374,7 +374,7 @@ pub struct Cheatcodes {
     /// Currently active EIP-7702 delegations that will be consumed when building the next
     /// transaction. Set by `vm.attachDelegation()` and consumed via `.take()` during
     /// transaction construction.
-    pub active_delegations: Option<Vec<SignedAuthorization>>,
+    pub active_delegations: Vec<SignedAuthorization>,
 
     /// The active EIP-4844 blob that will be attached to the next call.
     pub active_blob_sidecar: Option<BlobTransactionSidecar>,
@@ -575,7 +575,7 @@ impl Cheatcodes {
 
     /// Adds a delegation to the active delegations list.
     pub fn add_delegation(&mut self, authorization: SignedAuthorization) {
-        self.active_delegations.get_or_insert_with(Vec::new).push(authorization);
+        self.active_delegations.push(authorization);
     }
 
     /// Decodes the input data and applies the cheatcode.
@@ -1141,8 +1141,11 @@ impl Cheatcodes {
                         ..Default::default()
                     };
 
-                    match (self.active_delegations.take(), self.active_blob_sidecar.take()) {
-                        (Some(_), Some(_)) => {
+                    let active_delegations = std::mem::take(&mut self.active_delegations);
+                    // Set active blob sidecar, if any.
+                    if let Some(blob_sidecar) = self.active_blob_sidecar.take() {
+                        // Ensure blob and delegation are not set for the same tx.
+                        if !active_delegations.is_empty() {
                             let msg = "both delegation and blob are active; `attachBlob` and `attachDelegation` are not compatible";
                             return Some(CallOutcome {
                                 result: InterpreterResult {
@@ -1153,29 +1156,22 @@ impl Cheatcodes {
                                 memory_offset: call.return_memory_offset.clone(),
                             });
                         }
-                        (Some(auth_list), None) => {
-                            for auth in &auth_list {
-                                let Ok(auth) = auth.recover_authority() else {
-                                    continue;
-                                };
-                                if auth.eq(&broadcast.new_origin) {
-                                    // Increment nonce of broadcasting account to reflect signed
-                                    // authorization.
-                                    account.info.nonce += 1;
-                                }
-                            }
+                        tx_req.set_blob_sidecar(blob_sidecar);
+                    }
 
-                            tx_req.authorization_list = Some(auth_list);
-                            tx_req.sidecar = None;
+                    // Apply active EIP-7702 delegations, if any.
+                    if !active_delegations.is_empty() {
+                        for auth in &active_delegations {
+                            let Ok(auth) = auth.recover_authority() else {
+                                continue;
+                            };
+                            if auth.eq(&broadcast.new_origin) {
+                                // Increment nonce of broadcasting account to reflect signed
+                                // authorization.
+                                account.info.nonce += 1;
+                            }
                         }
-                        (None, Some(blob_sidecar)) => {
-                            tx_req.set_blob_sidecar(blob_sidecar);
-                            tx_req.authorization_list = None;
-                        }
-                        (None, None) => {
-                            tx_req.sidecar = None;
-                            tx_req.authorization_list = None;
-                        }
+                        tx_req.authorization_list = Some(active_delegations);
                     }
 
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {

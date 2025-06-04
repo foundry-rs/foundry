@@ -161,23 +161,16 @@ fn sign_delegation(
 
 /// Returns the next valid nonce for a delegation, considering existing active delegations.
 fn next_delegation_nonce(
-    active_delegations: &Option<Vec<SignedAuthorization>>,
+    active_delegations: &[SignedAuthorization],
     authority: Address,
     account_nonce: u64,
 ) -> u64 {
     active_delegations
-        .as_ref()
-        .and_then(|delegations| {
-            delegations
-                .iter()
-                .filter_map(|auth| {
-                    auth.recover_authority()
-                        .ok()
-                        .filter(|&addr| addr == authority)
-                        .map(|_| auth.nonce)
-                })
-                .max()
+        .iter()
+        .filter_map(|auth| {
+            auth.recover_authority().ok().filter(|&addr| addr == authority).map(|_| auth.nonce)
         })
+        .max()
         .map_or(account_nonce + 1, |max_nonce| max_nonce + 1)
 }
 
