@@ -9582,6 +9582,26 @@
     },
     {
       "func": {
+        "id": "setSeed",
+        "description": "Randomly shuffles an array.",
+        "declaration": "function setSeed(uint256 seed) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "setSeed(uint256)",
+        "selector": "0xc32a50f9",
+        "selectorBytes": [
+          195,
+          42,
+          80,
+          249
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "shuffle",
         "description": "Randomly shuffles an array.",
         "declaration": "function shuffle(uint256[] calldata array) external returns (uint256[] memory);",

@@ -1,5 +1,7 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
+use std::sync::Arc;
+
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_ens::namehash;
@@ -258,7 +260,7 @@ impl Cheatcode for sortCall {
     }
 }
 
-impl Cheatcode for shuffle_0Call {
+impl Cheatcode for shuffleCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { array } = self;
 
@@ -270,17 +272,16 @@ impl Cheatcode for shuffle_0Call {
     }
 }
 
-impl Cheatcode for shuffle_1Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let Self { array, seed } = self;
-
-        let mut shuffled_values = array.clone();
-        let rng = state.rng().clone();
-        rng.seed_from_u64(seed.to::<u64>());
-        shuffled_values.shuffle(rng);
-
-        Ok(shuffled_values.abi_encode())
+impl Cheatcode for setSeedCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { seed } = self;
+        set_seed(ccx, U256::from(*seed))
     }
+}
+
+fn set_seed(ccx: &mut CheatsCtxt, seed: U256) -> Result {
+    Arc::make_mut(&mut ccx.state.config).seed.replace(seed);
+    Ok(Default::default())
 }
 
 /// Helper to generate a random `uint` value (with given bits or bounded if specified)
