@@ -10,13 +10,13 @@ contract SeedTest is DSTest {
     function testSeedAffectsRandom() public {
         // Use a known seed
         uint256 seed = 123456789;
-        vm.useSeed(seed);
+        vm.setSeed(seed);
 
         // Call a foundry cheatcode to get a random value (this depends on the integration)
         uint256 rand1 = uint256(vm.randUint());
 
         // Reset the seed and verify the result is the same
-        vm.useSeed(seed);
+        vm.setSeed(seed);
         uint256 rand2 = uint256(vm.randUint());
 
         // If the seed is the same, the random value must be equal
@@ -29,11 +29,11 @@ contract SeedTest is DSTest {
 
     function testSeedChangesRandom() public {
         // Use one seed
-        vm.useSeed(1);
+        vm.setSeed(1);
         uint256 randA = uint256(vm.randUint());
 
         // Use a different seed
-        vm.useSeed(2);
+        vm.setSeed(2);
         uint256 randB = uint256(vm.randUint());
 
         // Values must be different
