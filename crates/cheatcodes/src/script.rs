@@ -136,6 +136,7 @@ fn sign_delegation(
         next_delegation_nonce(
             &ccx.state.active_delegations,
             signer.address(),
+            &ccx.state.broadcast,
             authority_acc.data.info.nonce,
         )
     };
@@ -163,23 +164,36 @@ fn sign_delegation(
 fn next_delegation_nonce(
     active_delegations: &[SignedAuthorization],
     authority: Address,
+    broadcast: &Option<Broadcast>,
     account_nonce: u64,
 ) -> u64 {
-    active_delegations
-        .iter()
-        .filter_map(|auth| {
-            auth.recover_authority().ok().filter(|&addr| addr == authority).map(|_| auth.nonce)
-        })
-        .max()
-        .map_or(account_nonce + 1, |max_nonce| max_nonce + 1)
+    match active_delegations.iter().rfind(|auth| auth.recover_authority().unwrap() == authority) {
+        Some(auth) => {
+            // Increment nonce of last recorded delegation.
+            auth.nonce + 1
+        }
+        None => {
+            // First time a delegation is added for this authority.
+            if let Some(broadcast) = broadcast {
+                // Increment nonce if authority is the sender of transaction.
+                if broadcast.new_origin == authority {
+                    return account_nonce + 1
+                }
+            }
+            // Return current nonce if authority is not the sender of transaction.
+            account_nonce
+        }
+    }
 }
 
 fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<()> {
     let authority = auth.recover_authority().map_err(|e| format!("{e}"))?;
     let authority_acc = ccx.ecx.journaled_state.load_account(authority)?;
+
     let expected_nonce = next_delegation_nonce(
         &ccx.state.active_delegations,
         authority,
+        &ccx.state.broadcast,
         authority_acc.data.info.nonce,
     );
 
