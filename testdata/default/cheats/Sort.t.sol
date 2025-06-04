@@ -19,4 +19,14 @@ contract SortTest is DSTest {
         assertEq(sortedNumbers[1], 2);
         assertEq(sortedNumbers[2], 3);
     }
+
+    function testShuffleCheatCodesWithSeed() public {
+        uint256[] memory numbers = new Uint256[](3)
+        numbers[0] = 3;
+        numbers[1] = 1;
+        numbers[2] = 2;
+
+        uint256[] memory sortedNumbers = vm.sort(numbers);
+
+    }
 }

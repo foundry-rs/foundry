@@ -258,12 +258,25 @@ impl Cheatcode for sortCall {
     }
 }
 
-impl Cheatcode for shuffleCall {
+impl Cheatcode for shuffle_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { array } = self;
 
         let mut shuffled_values = array.clone();
         let rng = state.rng();
+        shuffled_values.shuffle(rng);
+
+        Ok(shuffled_values.abi_encode())
+    }
+}
+
+impl Cheatcode for shuffle_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { array, seed } = self;
+
+        let mut shuffled_values = array.clone();
+        let rng = state.rng().clone();
+        rng.seed_from_u64(seed.to::<u64>());
         shuffled_values.shuffle(rng);
 
         Ok(shuffled_values.abi_encode())
