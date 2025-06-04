@@ -167,7 +167,10 @@ fn next_delegation_nonce(
     broadcast: &Option<Broadcast>,
     account_nonce: u64,
 ) -> u64 {
-    match active_delegations.iter().rfind(|auth| auth.recover_authority().unwrap() == authority) {
+    match active_delegations
+        .iter()
+        .rfind(|auth| auth.recover_authority().is_ok_and(|recovered| recovered == authority))
+    {
         Some(auth) => {
             // Increment nonce of last recorded delegation.
             auth.nonce + 1
