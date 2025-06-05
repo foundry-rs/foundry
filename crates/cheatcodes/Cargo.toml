@@ -22,7 +22,7 @@ vergen = { workspace = true, default-features = false, features = [
 ] }
 
 [dependencies]
-assertion-executor = { git = "https://github.com/phylaxsystems/assertion-executor.git", tag = "0.1.3", default-features = false }
+assertion-executor = { git = "https://github.com/phylaxsystems/assertion-executor.git", tag = "0.1.4", default-features = false }
 foundry-cheatcodes-spec.workspace = true
 foundry-common.workspace = true
 foundry-compilers.workspace = true
