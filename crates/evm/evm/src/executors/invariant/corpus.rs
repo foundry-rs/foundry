@@ -23,7 +23,7 @@ use std::{
 };
 use uuid::Uuid;
 
-const METADATA_SUFFIX: &str = "-metadata.json";
+const METADATA_SUFFIX: &str = "metadata.json";
 const JSON_EXTENSION: &str = ".json";
 
 /// Possible mutation strategies to apply on a call sequence.
@@ -340,7 +340,7 @@ impl TxCorpusManager {
                     }
                 }
                 MutationType::Repeat => {
-                    let corpus = if rng.gen_bool(0.5) { primary } else { secondary };
+                    let corpus = if rng.gen::<bool>() { primary } else { secondary };
                     trace!(target: "corpus", "repeat {}", corpus.uuid);
                     if should_evict {
                         self.current_mutated = Some(corpus.uuid);
@@ -359,12 +359,12 @@ impl TxCorpusManager {
                     }
                     for (tx1, tx2) in primary.tx_seq.iter().zip(secondary.tx_seq.iter()) {
                         // chunks?
-                        let tx = if rng.gen_bool(0.5) { tx1.clone() } else { tx2.clone() };
+                        let tx = if rng.gen::<bool>() { tx1.clone() } else { tx2.clone() };
                         new_seq.push(tx);
                     }
                 }
                 MutationType::Prefix => {
-                    let corpus = if rng.gen_bool(0.5) { primary } else { secondary };
+                    let corpus = if rng.gen::<bool>() { primary } else { secondary };
                     trace!(target: "corpus", "overwrite prefix of {}", corpus.uuid);
                     if should_evict {
                         self.current_mutated = Some(corpus.uuid);
@@ -375,7 +375,7 @@ impl TxCorpusManager {
                     }
                 }
                 MutationType::Suffix => {
-                    let corpus = if rng.gen_bool(0.5) { primary } else { secondary };
+                    let corpus = if rng.gen::<bool>() { primary } else { secondary };
                     trace!(target: "corpus", "overwrite suffix of {}", corpus.uuid);
                     if should_evict {
                         self.current_mutated = Some(corpus.uuid);
@@ -387,7 +387,7 @@ impl TxCorpusManager {
                 }
                 MutationType::Abi => {
                     let targets = test.targeted_contracts.targets.lock();
-                    let corpus = if rng.gen_bool(0.5) { primary } else { secondary };
+                    let corpus = if rng.gen::<bool>() { primary } else { secondary };
                     trace!(target: "corpus", "ABI mutate args of {}", corpus.uuid);
                     if should_evict {
                         self.current_mutated = Some(corpus.uuid);

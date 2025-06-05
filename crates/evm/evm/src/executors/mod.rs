@@ -909,42 +909,37 @@ impl RawCallResult {
     }
 
     /// Update provided history map with edge coverage info collected during this call.
+    /// Uses AFL binning algo https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L57-L85
     pub fn merge_edge_coverage(&mut self, history_map: &mut [u8]) -> bool {
         let mut new_coverage = false;
         if let Some(x) = &mut self.edge_coverage {
-            if !x.is_empty() {
-                // Iterate over the current map and the history map together and update
-                // the history map, if we discover some new coverage, report true
-                x.iter_mut()
-                    // Use zip to add history map to the iterator, now we get tuple back
-                    .zip(history_map.iter_mut())
-                    // For the tuple pair
-                    .for_each(|(curr, hist)| {
-                        // If we got a hitcount of at least 1
-                        if *curr > 0 {
-                            // Convert hitcount into bucket count
-                            let bucket = match *curr {
-                                0 => 0,
-                                1 => 1,
-                                2 => 2,
-                                3 => 4,
-                                4..=7 => 8,
-                                8..=15 => 16,
-                                16..=31 => 32,
-                                32..=127 => 64,
-                                128..=255 => 128,
-                            };
+            // Iterate over the current map and the history map together and update
+            // the history map, if we discover some new coverage, report true
+            for (curr, hist) in std::iter::zip(x, history_map) {
+                // If we got a hitcount of at least 1
+                if *curr > 0 {
+                    // Convert hitcount into bucket count
+                    let bucket = match *curr {
+                        0 => 0,
+                        1 => 1,
+                        2 => 2,
+                        3 => 4,
+                        4..=7 => 8,
+                        8..=15 => 16,
+                        16..=31 => 32,
+                        32..=127 => 64,
+                        128..=255 => 128,
+                    };
 
-                            // If the old record for this edge pair is lower, update
-                            if *hist < bucket {
-                                *hist = bucket;
-                                new_coverage = true;
-                            }
+                    // If the old record for this edge pair is lower, update
+                    if *hist < bucket {
+                        *hist = bucket;
+                        new_coverage = true;
+                    }
 
-                            // Zero out the current map for next iteration.
-                            *curr = 0;
-                        }
-                    });
+                    // Zero out the current map for next iteration.
+                    *curr = 0;
+                }
             }
         }
         new_coverage
