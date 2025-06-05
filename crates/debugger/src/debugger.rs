@@ -43,18 +43,6 @@ impl Debugger {
         }
     }
 
-    /// Starts the debugger TUI. Terminates the current process on failure or user exit.
-    pub fn run_tui_exit(mut self) -> ! {
-        let code = match self.try_run_tui() {
-            Ok(ExitReason::CharExit) => 0,
-            Err(e) => {
-                let _ = sh_eprintln!("{e}");
-                1
-            }
-        };
-        std::process::exit(code)
-    }
-
     /// Starts the debugger TUI.
     pub fn try_run_tui(&mut self) -> Result<ExitReason> {
         eyre::ensure!(!self.context.debug_arena.is_empty(), "debug arena is empty");

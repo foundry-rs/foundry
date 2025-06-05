@@ -24,7 +24,7 @@ use revm::{
     database::{CacheDB, DatabaseRef},
     inspector::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
-    primitives::{hardfork::SpecId, HashMap as Map, Log, KECCAK_EMPTY},
+    primitives::{hardfork::SpecId, HashMap as Map, KECCAK_EMPTY},
     state::{Account, AccountInfo, EvmState, EvmStorageSlot},
     Database, DatabaseCommit, JournalEntry,
 };
@@ -664,11 +664,6 @@ impl Backend {
         self.active_fork_ids.map(|(i, _)| i == id).unwrap_or_default()
     }
 
-    /// Returns `true` if the `Backend` is currently in forking mode
-    pub fn is_in_forking_mode(&self) -> bool {
-        self.active_fork().is_some()
-    }
-
     /// Returns the currently active `Fork`, if any
     pub fn active_fork(&self) -> Option<&Fork> {
         self.active_fork_ids.map(|(_, idx)| self.inner.get_fork(idx))
@@ -716,29 +711,6 @@ impl Backend {
         } else {
             BackendDatabaseSnapshot::InMemory(self.mem_db.clone())
         }
-    }
-
-    /// Since each `Fork` tracks logs separately, we need to merge them to get _all_ of them
-    pub fn merged_logs(&self, mut logs: Vec<Log>) -> Vec<Log> {
-        if let Some((_, active)) = self.active_fork_ids {
-            let mut all_logs = Vec::with_capacity(logs.len());
-
-            self.inner
-                .forks
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, f)| f.as_ref().map(|f| (idx, f)))
-                .for_each(|(idx, f)| {
-                    if idx == active {
-                        all_logs.append(&mut logs);
-                    } else {
-                        all_logs.extend(f.journaled_state.logs.clone())
-                    }
-                });
-            return all_logs;
-        }
-
-        logs
     }
 
     /// Initializes settings we need to keep track of.
@@ -1735,23 +1707,6 @@ impl BackendInner {
         self.created_forks.insert(fork_id.clone(), idx);
         self.issued_local_fork_ids.insert(id, fork_id);
         self.set_fork(idx, fork)
-    }
-
-    /// Updates the fork and the local mapping and returns the new index for the `fork_db`
-    pub fn update_fork_mapping(
-        &mut self,
-        id: LocalForkId,
-        fork_id: ForkId,
-        db: ForkDB,
-        journaled_state: JournaledState,
-    ) -> ForkLookupIndex {
-        let idx = self.forks.len();
-        self.issued_local_fork_ids.insert(id, fork_id.clone());
-        self.created_forks.insert(fork_id, idx);
-
-        let fork = Fork { db, journaled_state };
-        self.forks.push(Some(fork));
-        idx
     }
 
     pub fn roll_fork(
