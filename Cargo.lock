@@ -1753,8 +1753,8 @@ dependencies = [
 
 [[package]]
 name = "assertion-da-client"
-version = "0.1.3"
-source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.4#7eccceb798a35de0c6c1766ff40f8a8887de2fa7"
+version = "0.1.5"
+source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.5#3c31186078d71ff6c0c54faf2c83913787ea7dd1"
 dependencies = [
  "alloy",
  "assertion-da-core",
@@ -1770,8 +1770,8 @@ dependencies = [
 
 [[package]]
 name = "assertion-da-core"
-version = "0.1.3"
-source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.4#7eccceb798a35de0c6c1766ff40f8a8887de2fa7"
+version = "0.1.5"
+source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.5#3c31186078d71ff6c0c54faf2c83913787ea7dd1"
 dependencies = [
  "alloy",
  "serde",
@@ -1779,8 +1779,8 @@ dependencies = [
 
 [[package]]
 name = "assertion-executor"
-version = "0.1.5"
-source = "git+https://github.com/phylaxsystems/assertion-executor.git?tag=0.1.5#dcb6e895a2354bef45315835fe0d8799468cd488"
+version = "0.1.6"
+source = "git+https://github.com/phylaxsystems/assertion-executor.git?tag=0.1.6#fc0ab502625a3e96b0848cf9ed257b317a39d0ef"
 dependencies = [
  "alloy",
  "alloy-consensus 0.11.1",
