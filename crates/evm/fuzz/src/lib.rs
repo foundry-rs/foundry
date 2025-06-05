@@ -313,18 +313,6 @@ impl FuzzedCases {
             .map(|c| if with_stipend { c.gas } else { c.gas.saturating_sub(c.stipend) })
             .collect()
     }
-
-    /// Returns the case with the highest gas usage
-    #[inline]
-    pub fn highest(&self) -> Option<&FuzzCase> {
-        self.cases.last()
-    }
-
-    /// Returns the case with the lowest gas usage
-    #[inline]
-    pub fn lowest(&self) -> Option<&FuzzCase> {
-        self.cases.first()
-    }
 }
 
 /// Fixtures to be used for fuzz tests.

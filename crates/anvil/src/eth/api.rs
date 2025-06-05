@@ -113,8 +113,6 @@ pub struct EthApi {
     /// Holds all blockchain related data
     /// In-Memory only for now
     pub backend: Arc<backend::mem::Backend>,
-    /// Whether this node is mining
-    is_mining: bool,
     /// available signers
     signers: Arc<Vec<Box<dyn Signer>>>,
     /// data required for `eth_feeHistory`
@@ -155,7 +153,6 @@ impl EthApi {
         Self {
             pool,
             backend,
-            is_mining: true,
             signers,
             fee_history_cache,
             fee_history_limit,
@@ -565,30 +562,6 @@ impl EthApi {
         node_info!("web3_sha3");
         let hash = alloy_primitives::keccak256(bytes.as_ref());
         Ok(alloy_primitives::hex::encode_prefixed(&hash[..]))
-    }
-
-    /// Returns protocol version encoded as a string (quotes are necessary).
-    ///
-    /// Handler for ETH RPC call: `eth_protocolVersion`
-    pub fn protocol_version(&self) -> Result<u64> {
-        node_info!("eth_protocolVersion");
-        Ok(1)
-    }
-
-    /// Returns the number of hashes per second that the node is mining with.
-    ///
-    /// Handler for ETH RPC call: `eth_hashrate`
-    pub fn hashrate(&self) -> Result<U256> {
-        node_info!("eth_hashrate");
-        Ok(U256::ZERO)
-    }
-
-    /// Returns true if client is actively mining new blocks.
-    ///
-    /// Handler for ETH RPC call: `eth_mining`
-    pub fn is_mining(&self) -> Result<bool> {
-        node_info!("eth_mining");
-        Ok(self.is_mining)
     }
 
     /// Returns the chain ID used for transaction signing at the

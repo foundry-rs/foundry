@@ -139,10 +139,6 @@ pub fn needs_setup(abi: &JsonAbi) -> bool {
     setup_fns.len() == 1 && setup_fns[0].name == "setUp"
 }
 
-pub fn eta_key(state: &indicatif::ProgressState, f: &mut dyn Write) {
-    write!(f, "{:.1}s", state.eta().as_secs_f64()).unwrap()
-}
-
 pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
     let pb = indicatif::ProgressBar::new(len);
     let mut template =
@@ -153,10 +149,14 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
     pb.set_style(
         indicatif::ProgressStyle::with_template(&template)
             .unwrap()
-            .with_key("eta", crate::utils::eta_key)
+            .with_key("eta", eta_key)
             .progress_chars("#>-"),
     );
     pb
+}
+
+fn eta_key(state: &indicatif::ProgressState, f: &mut dyn Write) {
+    write!(f, "{:.1}s", state.eta().as_secs_f64()).unwrap()
 }
 
 /// True if the network calculates gas costs differently.
