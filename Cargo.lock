@@ -1753,23 +1753,25 @@ dependencies = [
 
 [[package]]
 name = "assertion-da-client"
-version = "0.1.2"
-source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.2#48edd1137fedbca4f84413ebb84adb2a9af67888"
+version = "0.1.3"
+source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.4#7eccceb798a35de0c6c1766ff40f8a8887de2fa7"
 dependencies = [
  "alloy",
  "assertion-da-core",
  "http 1.3.1",
- "jsonrpsee",
+ "reqwest",
+ "serde",
  "serde_json",
  "thiserror 2.0.12",
  "tokio",
  "tokio-util",
+ "url",
 ]
 
 [[package]]
 name = "assertion-da-core"
-version = "0.1.2"
-source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.2#48edd1137fedbca4f84413ebb84adb2a9af67888"
+version = "0.1.3"
+source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.4#7eccceb798a35de0c6c1766ff40f8a8887de2fa7"
 dependencies = [
  "alloy",
  "serde",
@@ -1777,8 +1779,8 @@ dependencies = [
 
 [[package]]
 name = "assertion-executor"
-version = "0.1.3"
-source = "git+https://github.com/phylaxsystems/assertion-executor.git?tag=0.1.3#b78dfd918c2165c9f449835643c00a8d35d95f32"
+version = "0.1.5"
+source = "git+https://github.com/phylaxsystems/assertion-executor.git?tag=0.1.5#dcb6e895a2354bef45315835fe0d8799468cd488"
 dependencies = [
  "alloy",
  "alloy-consensus 0.11.1",
