@@ -167,9 +167,7 @@ pub fn configure_tx_req_env(
     env.tx.max_fee_per_blob_gas = max_fee_per_blob_gas.unwrap_or_default();
 
     // Type 4, EIP-7702
-    if let Some(authorization_list) = authorization_list {
-        env.tx.set_signed_authorization(authorization_list.clone());
-    }
+    env.tx.set_signed_authorization(authorization_list.clone().unwrap_or_default());
 
     Ok(())
 }
