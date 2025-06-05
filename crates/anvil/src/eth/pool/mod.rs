@@ -36,7 +36,7 @@ use crate::{
     },
     mem::storage::MinedBlockOutcome,
 };
-use alloy_primitives::{Address, TxHash, U64};
+use alloy_primitives::{Address, TxHash};
 use alloy_rpc_types::txpool::TxpoolStatus;
 use anvil_core::eth::transaction::PendingTransaction;
 use futures::channel::mpsc::{channel, Receiver, Sender};
@@ -102,7 +102,7 @@ impl Pool {
     /// directly or are a dependency of the transaction associated with that marker.
     pub fn prune_markers(
         &self,
-        block_number: U64,
+        block_number: u64,
         markers: impl IntoIterator<Item = TxMarker>,
     ) -> PruneResult {
         debug!(target: "txpool", ?block_number, "pruning transactions");

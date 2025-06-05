@@ -11,6 +11,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{
     anvil::Forking,
     request::{TransactionInput, TransactionRequest},
+    state::EvmOverrides,
     BlockId, BlockNumberOrTag,
 };
 use alloy_serde::WithOtherFields;
@@ -61,7 +62,7 @@ pub fn fork_config() -> NodeConfig {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_gas_limit_applied_from_config() {
-    let (api, _handle) = spawn(fork_config().with_gas_limit(Some(10_000_000_u128))).await;
+    let (api, _handle) = spawn(fork_config().with_gas_limit(Some(10_000_000))).await;
 
     assert_eq!(api.gas_limit(), uint!(10_000_000_U256));
 }
@@ -478,12 +479,12 @@ async fn can_deploy_greeter_on_fork() {
     let greeter_contract = Greeter::deploy(&provider, "Hello World!".to_string()).await.unwrap();
 
     let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Hello World!", greeting._0);
+    assert_eq!("Hello World!", greeting);
 
     let greeter_contract = Greeter::deploy(&provider, "Hello World!".to_string()).await.unwrap();
 
     let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Hello World!", greeting._0);
+    assert_eq!("Hello World!", greeting);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -691,7 +692,7 @@ async fn test_fork_nft_set_approve_all() {
     let nouns = ERC721::new(nouns_addr, provider.clone());
 
     let real_owner = nouns.ownerOf(token_id).call().await.unwrap();
-    assert_eq!(real_owner._0, owner);
+    assert_eq!(real_owner, owner);
     let approval = nouns.setApprovalForAll(nouns_addr, true);
     let tx = TransactionRequest::default()
         .from(owner)
@@ -704,13 +705,13 @@ async fn test_fork_nft_set_approve_all() {
     assert!(status);
 
     // transfer: impersonate real owner and transfer nft
-    api.anvil_impersonate_account(real_owner._0).await.unwrap();
+    api.anvil_impersonate_account(real_owner).await.unwrap();
 
-    api.anvil_set_balance(real_owner._0, U256::from(10000e18 as u64)).await.unwrap();
+    api.anvil_set_balance(real_owner, U256::from(10000e18 as u64)).await.unwrap();
 
-    let call = nouns.transferFrom(real_owner._0, signer, token_id);
+    let call = nouns.transferFrom(real_owner, signer, token_id);
     let tx = TransactionRequest::default()
-        .from(real_owner._0)
+        .from(real_owner)
         .to(nouns_addr)
         .with_input(call.calldata().to_owned());
     let tx = WithOtherFields::new(tx);
@@ -719,7 +720,7 @@ async fn test_fork_nft_set_approve_all() {
     assert!(status);
 
     let real_owner = nouns.ownerOf(token_id).call().await.unwrap();
-    assert_eq!(real_owner._0, wallet.address());
+    assert_eq!(real_owner, wallet.address());
 }
 
 // <https://github.com/foundry-rs/foundry/issues/2261>
@@ -870,7 +871,7 @@ async fn test_fork_call() {
                 ..Default::default()
             }),
             None,
-            None,
+            EvmOverrides::default(),
         )
         .await
         .unwrap();
@@ -1115,11 +1116,11 @@ async fn can_override_fork_chain_id() {
         Greeter::deploy(provider.clone(), "Hello World!".to_string()).await.unwrap();
     let greeting = greeter_contract.greet().call().await.unwrap();
 
-    assert_eq!("Hello World!", greeting._0);
+    assert_eq!("Hello World!", greeting);
     let greeter_contract =
         Greeter::deploy(provider.clone(), "Hello World!".to_string()).await.unwrap();
     let greeting = greeter_contract.greet().call().await.unwrap();
-    assert_eq!("Hello World!", greeting._0);
+    assert_eq!("Hello World!", greeting);
 
     let provider = handle.http_provider();
     let chain_id = provider.get_chain_id().await.unwrap();
@@ -1313,7 +1314,7 @@ async fn test_fork_execution_reverted() {
                 ..Default::default()
             }),
             Some(target.into()),
-            None,
+            EvmOverrides::default(),
         )
         .await;
 
@@ -1329,6 +1330,7 @@ async fn test_immutable_fork_transaction_hash() {
     use std::str::FromStr;
 
     // Fork to a block with a specific transaction
+    // <https://explorer.immutable.com/tx/0x39d64ebf9eb3f07ede37f8681bc3b61928817276c4c4680b6ef9eac9f88b6786>
     let fork_tx_hash =
         TxHash::from_str("2ac736ce725d628ef20569a1bb501726b42b33f9d171f60b92b69de3ce705845")
             .unwrap();
@@ -1461,6 +1463,47 @@ async fn test_reset_dev_account_nonce() {
         .unwrap();
 
     assert!(receipt.status());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_set_erc20_balance() {
+    let config: NodeConfig = fork_config();
+    let address = config.genesis_accounts[0].address();
+    let (api, handle) = spawn(config).await;
+
+    let provider = handle.http_provider();
+
+    alloy_sol_types::sol! {
+       #[sol(rpc)]
+       contract ERC20 {
+            function balanceOf(address owner) public view returns (uint256);
+       }
+    }
+    let dai = address!("0x6B175474E89094C44Da98b954EedeAC495271d0F");
+    let erc20 = ERC20::new(dai, provider);
+    let value = U256::from(500);
+
+    api.anvil_deal_erc20(address, dai, value).await.unwrap();
+
+    let new_balance = erc20.balanceOf(address).call().await.unwrap();
+
+    assert_eq!(new_balance, value);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_add_balance() {
+    let config: NodeConfig = fork_config();
+    let address = config.genesis_accounts[0].address();
+    let (api, _handle) = spawn(config).await;
+
+    let start_balance = U256::from(100_000_u64);
+    api.anvil_set_balance(address, start_balance).await.unwrap();
+
+    let balance_increase = U256::from(50_000_u64);
+    api.anvil_add_balance(address, balance_increase).await.unwrap();
+
+    let new_balance = api.balance(address, None).await.unwrap();
+    assert_eq!(new_balance, start_balance + balance_increase);
 }
 
 #[tokio::test(flavor = "multi_thread")]

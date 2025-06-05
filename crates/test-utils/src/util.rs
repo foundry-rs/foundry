@@ -48,7 +48,7 @@ static TEMPLATE_LOCK: LazyLock<PathBuf> =
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// The default Solc version used when compiling tests.
-pub const SOLC_VERSION: &str = "0.8.27";
+pub const SOLC_VERSION: &str = "0.8.30";
 
 /// Another Solc version used when compiling tests.
 ///
@@ -1008,6 +1008,8 @@ fn test_redactions() -> snapbox::Redactions {
             ("[SOLC_VERSION]", r"Solc( version)? \d+.\d+.\d+"),
             ("[ELAPSED]", r"(finished )?in \d+(\.\d+)?\w?s( \(.*?s CPU time\))?"),
             ("[GAS]", r"[Gg]as( used)?: \d+"),
+            ("[GAS_COST]", r"[Gg]as cost\s*\(\d+\)"),
+            ("[GAS_LIMIT]", r"[Gg]as limit\s*\(\d+\)"),
             ("[AVG_GAS]", r"μ: \d+, ~: \d+"),
             ("[FILE]", r"-->.*\.sol"),
             ("[FILE]", r"Location(.|\n)*\.rs(.|\n)*Backtrace"),

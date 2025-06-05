@@ -178,6 +178,7 @@ impl ContractData {
 
         let helper = format!(
             r#"
+// SPDX-License-Identifier: MIT
 pragma solidity >=0.4.0;
 
 import "{path}";

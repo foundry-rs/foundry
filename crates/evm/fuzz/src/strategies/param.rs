@@ -232,7 +232,7 @@ mod tests {
     };
     use foundry_common::abi::get_func;
     use foundry_config::FuzzDictionaryConfig;
-    use revm::db::{CacheDB, EmptyDB};
+    use revm::database::{CacheDB, EmptyDB};
 
     #[test]
     fn can_fuzz_array() {
