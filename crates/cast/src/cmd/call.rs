@@ -302,8 +302,22 @@ impl CallArgs {
 
         Ok(())
     }
-    /// Parse state overrides from command line arguments
-    pub fn get_state_overrides(&self) -> eyre::Result<StateOverride> {
+
+    /// Parse state overrides from command line arguments.
+    pub fn get_state_overrides(&self) -> eyre::Result<Option<StateOverride>> {
+        // Early return if no override set - <https://github.com/foundry-rs/foundry/issues/10705>
+        if [
+            self.balance_overrides.as_ref(),
+            self.nonce_overrides.as_ref(),
+            self.code_overrides.as_ref(),
+            self.state_overrides.as_ref(),
+        ]
+        .iter()
+        .all(Option::is_none)
+        {
+            return Ok(None);
+        }
+
         let mut state_overrides_builder = StateOverridesBuilder::default();
 
         // Parse balance overrides
@@ -341,7 +355,7 @@ impl CallArgs {
                 state_overrides_builder.with_state_diff(addr, [(slot.into(), value.into())]);
         }
 
-        Ok(state_overrides_builder.build())
+        Ok(Some(state_overrides_builder.build()))
     }
 }
 
