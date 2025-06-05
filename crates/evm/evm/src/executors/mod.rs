@@ -911,7 +911,7 @@ impl RawCallResult {
     /// Update provided history map with edge coverage info collected during this call.
     pub fn merge_edge_coverage(&mut self, history_map: &mut [u8]) -> bool {
         let mut new_coverage = false;
-        if let Some(ref mut x) = self.edge_coverage {
+        if let Some(x) = &mut self.edge_coverage {
             if !x.is_empty() {
                 // Iterate over the current map and the history map together and update
                 // the history map, if we discover some new coverage, report true
