@@ -132,7 +132,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Casts the current writer `w` as a `String` reference. Should only be used for debugging.
     unsafe fn buf_contents(&self) -> &String {
-        *(&self.buf.w as *const W as *const &mut String)
+        *(&raw const self.buf.w as *const &mut String)
     }
 
     /// Casts the current `W` writer or the current temp buffer as a `String` reference.

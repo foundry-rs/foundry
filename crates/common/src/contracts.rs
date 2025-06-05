@@ -280,7 +280,7 @@ impl ContractsByArtifact {
             eyre::bail!("{id} has more than one implementation.");
         }
 
-        Ok(contracts.first().cloned())
+        Ok(contracts.first().copied())
     }
 
     /// Finds abi for contract which has the same contract name or identifier as `id`.
