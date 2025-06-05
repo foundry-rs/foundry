@@ -113,7 +113,7 @@ fn attach_delegation(
         U256::from_be_bytes(s.0),
     );
     write_delegation(ccx, signed_auth.clone())?;
-    ccx.state.active_delegation = Some(signed_auth);
+    ccx.state.add_delegation(signed_auth);
     Ok(Default::default())
 }
 
@@ -132,8 +132,13 @@ fn sign_delegation(
         nonce
     } else {
         let authority_acc = ccx.ecx.journaled_state.load_account(signer.address())?;
-        // If we don't have a nonce then use next auth account nonce.
-        authority_acc.data.info.nonce + 1
+        // Calculate next nonce considering existing active delegations
+        next_delegation_nonce(
+            &ccx.state.active_delegations,
+            signer.address(),
+            &ccx.state.broadcast,
+            authority_acc.data.info.nonce,
+        )
     };
     let chain_id = if cross_chain { U256::from(0) } else { U256::from(ccx.ecx.cfg.chain_id) };
 
@@ -143,7 +148,7 @@ fn sign_delegation(
     if attach {
         let signed_auth = SignedAuthorization::new_unchecked(auth, sig.v() as u8, sig.r(), sig.s());
         write_delegation(ccx, signed_auth.clone())?;
-        ccx.state.active_delegation = Some(signed_auth);
+        ccx.state.add_delegation(signed_auth);
     }
     Ok(SignedDelegation {
         v: sig.v() as u8,
@@ -155,11 +160,52 @@ fn sign_delegation(
     .abi_encode())
 }
 
+/// Returns the next valid nonce for a delegation, considering existing active delegations.
+fn next_delegation_nonce(
+    active_delegations: &[SignedAuthorization],
+    authority: Address,
+    broadcast: &Option<Broadcast>,
+    account_nonce: u64,
+) -> u64 {
+    match active_delegations
+        .iter()
+        .rfind(|auth| auth.recover_authority().is_ok_and(|recovered| recovered == authority))
+    {
+        Some(auth) => {
+            // Increment nonce of last recorded delegation.
+            auth.nonce + 1
+        }
+        None => {
+            // First time a delegation is added for this authority.
+            if let Some(broadcast) = broadcast {
+                // Increment nonce if authority is the sender of transaction.
+                if broadcast.new_origin == authority {
+                    return account_nonce + 1
+                }
+            }
+            // Return current nonce if authority is not the sender of transaction.
+            account_nonce
+        }
+    }
+}
+
 fn write_delegation(ccx: &mut CheatsCtxt, auth: SignedAuthorization) -> Result<()> {
     let authority = auth.recover_authority().map_err(|e| format!("{e}"))?;
     let authority_acc = ccx.ecx.journaled_state.load_account(authority)?;
-    if authority_acc.data.info.nonce + 1 != auth.nonce {
-        return Err("invalid nonce".into());
+
+    let expected_nonce = next_delegation_nonce(
+        &ccx.state.active_delegations,
+        authority,
+        &ccx.state.broadcast,
+        authority_acc.data.info.nonce,
+    );
+
+    if expected_nonce != auth.nonce {
+        return Err(format!(
+            "invalid nonce for {authority:?}: expected {expected_nonce}, got {}",
+            auth.nonce
+        )
+        .into());
     }
 
     if auth.address.is_zero() {
