@@ -1654,16 +1654,6 @@ impl Config {
         }
     }
 
-    /// Returns the default config that uses dapptools style paths
-    pub fn dapptools() -> Self {
-        Self {
-            chain: Some(Chain::from_id(99)),
-            block_timestamp: 0,
-            block_number: 0,
-            ..Self::default()
-        }
-    }
-
     /// Extracts a basic subset of the config, used for initialisations.
     ///
     /// # Example

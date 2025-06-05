@@ -583,14 +583,6 @@ impl EthApi {
         Ok(U256::ZERO)
     }
 
-    /// Returns the client coinbase address.
-    ///
-    /// Handler for ETH RPC call: `eth_coinbase`
-    pub fn author(&self) -> Result<Address> {
-        node_info!("eth_coinbase");
-        Ok(self.backend.coinbase())
-    }
-
     /// Returns true if client is actively mining new blocks.
     ///
     /// Handler for ETH RPC call: `eth_mining`
@@ -2417,15 +2409,6 @@ impl EthApi {
         }
 
         Ok(blocks)
-    }
-
-    /// Sets the reported block number
-    ///
-    /// Handler for ETH RPC call: `anvil_setBlock`
-    pub fn anvil_set_block(&self, block_number: u64) -> Result<()> {
-        node_info!("anvil_setBlock");
-        self.backend.set_block_number(block_number);
-        Ok(())
     }
 
     /// Sets the backend rpc url

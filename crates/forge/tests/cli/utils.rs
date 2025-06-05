@@ -79,16 +79,6 @@ impl EnvExternalities {
         })
     }
 
-    pub fn arbitrum_goerli() -> Option<Self> {
-        Some(Self {
-            chain: NamedChain::ArbitrumGoerli,
-            rpc: network_rpc_key("arbitrum-goerli")?,
-            pk: network_private_key("arbitrum-goerli")?,
-            etherscan: etherscan_key(NamedChain::ArbitrumGoerli)?,
-            verifier: "blockscout".to_string(),
-        })
-    }
-
     pub fn mumbai() -> Option<Self> {
         Some(Self {
             chain: NamedChain::PolygonMumbai,

@@ -194,13 +194,6 @@ pub trait Db:
     fn current_state(&self) -> StateDb;
 }
 
-impl dyn Db {
-    // TODO: Required until trait upcasting is stabilized: <https://github.com/rust-lang/rust/issues/65991>
-    pub fn as_dbref(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
-        self.as_dyn()
-    }
-}
-
 /// Convenience impl only used to use any `Db` on the fly as the db layer for revm's CacheDB
 /// This is useful to create blocks without actually writing to the `Db`, but rather in the cache of
 /// the `CacheDB` see also
