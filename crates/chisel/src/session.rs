@@ -35,20 +35,6 @@ impl ChiselSession {
         Ok(Self { session_source: SessionSource::new(solc, config), id: None })
     }
 
-    /// Render the full source code for the current session.
-    ///
-    /// ### Returns
-    ///
-    /// Returns the full, flattened source code for the current session.
-    ///
-    /// ### Notes
-    ///
-    /// This function will not panic, but will return a blank string if the
-    /// session's [SessionSource] is None.
-    pub fn contract_source(&self) -> String {
-        self.session_source.to_repl_source()
-    }
-
     /// Clears the cache directory
     ///
     /// ### WARNING

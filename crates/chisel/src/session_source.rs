@@ -428,37 +428,6 @@ impl SessionSource {
         Ok(generated_output)
     }
 
-    /// Convert the [SessionSource] to a valid Script contract
-    ///
-    /// ### Returns
-    ///
-    /// The [SessionSource] represented as a Forge Script contract.
-    pub fn to_script_source(&self) -> String {
-        let Version { major, minor, patch, .. } = self.solc.version;
-        let Self { contract_name, global_code, top_level_code, run_code, config, .. } = self;
-
-        let script_import =
-            if !config.no_vm { "import {Script} from \"forge-std/Script.sol\";\n" } else { "" };
-
-        format!(
-            r#"
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^{major}.{minor}.{patch};
-
-{script_import}
-{global_code}
-
-contract {contract_name} is Script {{
-    {top_level_code}
-  
-    /// @notice Script entry point
-    function run() public {{
-        {run_code}
-    }}
-}}"#,
-        )
-    }
-
     /// Convert the [SessionSource] to a valid REPL contract
     ///
     /// ### Returns

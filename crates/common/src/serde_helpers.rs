@@ -1,7 +1,7 @@
 //! Misc Serde helpers for foundry crates.
 
 use alloy_primitives::U256;
-use serde::{de, Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer};
 use std::str::FromStr;
 
 /// Helper type to parse both `u64` and `U256`
@@ -33,26 +33,6 @@ impl FromStr for Numeric {
             U256::from_str_radix(s, 16).map(Numeric::U256).map_err(|err| err.to_string())
         } else {
             U256::from_str(s).map(Numeric::U256).map_err(|err| err.to_string())
-        }
-    }
-}
-
-/// An enum that represents either a [serde_json::Number] integer, or a hex [U256].
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub enum NumberOrHexU256 {
-    /// An integer
-    Int(serde_json::Number),
-    /// A hex U256
-    Hex(U256),
-}
-
-impl NumberOrHexU256 {
-    /// Tries to convert this into a [U256]].
-    pub fn try_into_u256<E: de::Error>(self) -> Result<U256, E> {
-        match self {
-            Self::Int(num) => U256::from_str(num.to_string().as_str()).map_err(E::custom),
-            Self::Hex(val) => Ok(val),
         }
     }
 }

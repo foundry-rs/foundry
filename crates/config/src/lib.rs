@@ -1107,17 +1107,6 @@ impl Config {
         evm_spec_id(self.evm_version, self.odyssey)
     }
 
-    /// Returns whether the compiler version should be auto-detected
-    ///
-    /// Returns `false` if `solc_version` is explicitly set, otherwise returns the value of
-    /// `auto_detect_solc`
-    pub fn is_auto_detect(&self) -> bool {
-        if self.solc.is_some() {
-            return false;
-        }
-        self.auto_detect_solc
-    }
-
     /// Whether caching should be enabled for the given chain id
     pub fn enable_caching(&self, endpoint: &str, chain_id: impl Into<u64>) -> bool {
         !self.no_storage_caching &&
@@ -1419,34 +1408,6 @@ impl Config {
             .flatten()
             .map(|c| c.api_version)
             .unwrap_or_default()
-    }
-
-    /// Returns the remapping for the project's _src_ directory
-    ///
-    /// **Note:** this will add an additional `<src>/=<src path>` remapping here so imports that
-    /// look like `import {Foo} from "src/Foo.sol";` are properly resolved.
-    ///
-    /// This is due the fact that `solc`'s VFS resolves [direct imports](https://docs.soliditylang.org/en/develop/path-resolution.html#direct-imports) that start with the source directory's name.
-    pub fn get_source_dir_remapping(&self) -> Option<Remapping> {
-        get_dir_remapping(&self.src)
-    }
-
-    /// Returns the remapping for the project's _test_ directory, but only if it exists
-    pub fn get_test_dir_remapping(&self) -> Option<Remapping> {
-        if self.root.join(&self.test).exists() {
-            get_dir_remapping(&self.test)
-        } else {
-            None
-        }
-    }
-
-    /// Returns the remapping for the project's _script_ directory, but only if it exists
-    pub fn get_script_dir_remapping(&self) -> Option<Remapping> {
-        if self.root.join(&self.script).exists() {
-            get_dir_remapping(&self.script)
-        } else {
-            None
-        }
     }
 
     /// Returns the `Optimizer` based on the configured settings
@@ -1855,34 +1816,6 @@ impl Config {
         let path = dirs::data_dir().wrap_err("Failed to find data directory")?.join("foundry");
         std::fs::create_dir_all(&path).wrap_err("Failed to create module directory")?;
         Ok(path)
-    }
-
-    /// Returns the path to the `foundry.toml` file, the file is searched for in
-    /// the current working directory and all parent directories until the root,
-    /// and the first hit is used.
-    ///
-    /// If this search comes up empty, then it checks if a global `foundry.toml` exists at
-    /// `~/.foundry/foundry.toml`, see [`Self::foundry_dir_toml`].
-    pub fn find_config_file() -> Option<PathBuf> {
-        fn find(path: &Path) -> Option<PathBuf> {
-            if path.is_absolute() {
-                return match path.is_file() {
-                    true => Some(path.to_path_buf()),
-                    false => None,
-                };
-            }
-            let cwd = std::env::current_dir().ok()?;
-            let mut cwd = cwd.as_path();
-            loop {
-                let file_path = cwd.join(path);
-                if file_path.is_file() {
-                    return Some(file_path);
-                }
-                cwd = cwd.parent()?;
-            }
-        }
-        find(Env::var_or("FOUNDRY_CONFIG", Self::FILE_NAME).as_ref())
-            .or_else(|| Self::foundry_dir_toml().filter(|p| p.exists()))
     }
 
     /// Clears the foundry cache.
