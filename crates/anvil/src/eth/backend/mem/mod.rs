@@ -2290,7 +2290,7 @@ impl Backend {
                         .number
                 }
                 BlockId::Number(num) => match num {
-                    BlockNumber::Latest | BlockNumber::Pending => self.best_number(),
+                    BlockNumber::Latest | BlockNumber::Pending => current,
                     BlockNumber::Earliest => U64::ZERO.to::<u64>(),
                     BlockNumber::Number(num) => num,
                     BlockNumber::Safe => current.saturating_sub(self.slots_in_an_epoch),
