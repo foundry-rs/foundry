@@ -1,5 +1,52 @@
 # Changelog
 
+## [1.1.0] - 2025-06-05
+
+### Added
+- Added `release.sh` for easy release automation and updated README.mds (#146) (filip-parity) - 2025-06-04
+- Added cast & forge .sh and Dockerfile for release-test (#155) (filip-parity) - 2025-06-04
+- Added fork documentation (#134) (filip-parity) - 2025-05-28
+- Added cast serial tests on kittchensink node (#107) (ADPs) - 2025-05-28
+- Added custom resolc settings (#123) (Sebastian Miasojed) - 2025-05-20
+- Added forge tests (#118) (Sebastian Miasojed) - 2025-05-12
+- Added test for compilation to the same output dir (#105) (Sebastian Miasojed) - 2025-05-09
+- Added substrate-node to CI (#85) (Sebastian Miasojed) - 2025-04-15
+- Added kittchensink node wrapper (#80) (Sebastian Miasojed) - 2025-04-11
+- Added forge create tests (#72) (Sebastian Miasojed) - 2025-04-01
+- Added revive build unit test (#68) (Sebastian Miasojed) - 2025-03-27
+- Added GHA Scripts for generating and installing Foundry forge and cast builds (#65) (Ashish Peters) - 2025-03-27
+
+### Changed
+- Renamed foundryup to foundryup-polkadot (#138) (Sebastian Miasojed) - 2025-05-27
+- Renamed revive to resolc (#95) (Sebastian Miasojed) - 2025-04-25
+- Updated compilers version (#152, #147) (Sebastian Miasojed) - 2025-06-03, 2025-05-29
+- Updated readme (#150) (Sebastian Miasojed) - 2025-06-02
+- Updated docs (#145) (Pavlo Khrystenko) - 2025-05-29
+- Updated foundry-compilers (#143) (Pavlo Khrystenko) - 2025-05-29
+- Updated Compilers fork (#137) (Pavlo Khrystenko) - 2025-05-26
+- Updated latest source for Cargo.lock > foundry-compilers-artifacts* (#127, #122) (filip-parity) - 2025-05-13, 2025-05-09
+- Improved foundry revive config (#75) (Sebastian Miasojed) - 2025-04-08
+- Improved error handling in the forge inspect cmd (#71) (Sebastian Miasojed) - 2025-03-28
+- Improved CI and use dRPC service (#67) (Sebastian Miasojed) - 2025-03-25
+
+### Fixed
+- Fixed `forge compiler resolve` to accept `ResolcArgs` (#142) (Pavlo Khrystenko) - 2025-05-29
+- Fixed the resolc config option propagation (#135) (Sebastian Miasojed) - 2025-05-22
+- Fixed `forge bind` with `--resolc` (#132) (Pavlo Khrystenko) - 2025-05-21
+- Fixed clippy CI issue (#94) (Pavlo Khrystenko) - 2025-04-24
+- Fixed release yml (#110) (Pavlo Khrystenko) - 2025-04-30
+- Fixed CI jobs timeout (#88) (Sebastian Miasojed) - 2025-04-16
+
+### Infrastructure
+- Use RVM to manage resolc versions (#96) (Sebastian Miasojed) - 2025-04-28
+- Use rvm for `resolc` management (#87) (Pavlo Khrystenko) - 2025-04-25
+- Enable CI for macOS (#74) (Sebastian Miasojed) - 2025-04-03
+- Increase CI jobs timeout (#88) (Sebastian Miasojed) - 2025-04-16
+
+### Documentation
+- Init installation docs (#116) (Pavlo Khrystenko) - 2025-05-21
+- Build manpages (#114) (Pavlo Khrystenko) - 2025-05-06
+
 ## Pre 1.0
 
 ### Important note for users
