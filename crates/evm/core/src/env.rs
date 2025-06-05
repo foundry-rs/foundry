@@ -14,6 +14,13 @@ pub struct Env {
 
 /// Helper container type for [`EvmEnv`] and [`TxEnv`].
 impl Env {
+    pub fn default_with_spec_id(spec_id: SpecId) -> Self {
+        let mut cfg = CfgEnv::default();
+        cfg.spec = spec_id;
+
+        Self::from(cfg, BlockEnv::default(), TxEnv::default())
+    }
+
     pub fn from(cfg: CfgEnv, block: BlockEnv, tx: TxEnv) -> Self {
         Self { evm_env: EvmEnv { cfg_env: cfg, block_env: block }, tx }
     }
