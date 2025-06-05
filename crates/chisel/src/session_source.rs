@@ -554,7 +554,7 @@ contract {contract_name} {{
     /// ### Returns
     ///
     /// A vector containing tuples of the inner expressions' names, types, and storage locations.
-    pub fn get_statement_definitions(statement: &pt::Statement) -> Vec<(String, pt::Expression)> {
+    fn get_statement_definitions(statement: &pt::Statement) -> Vec<(String, pt::Expression)> {
         match statement {
             pt::Statement::VariableDefinition(_, def, _) => {
                 vec![(def.name.safe_unwrap().name.clone(), def.ty.clone())]

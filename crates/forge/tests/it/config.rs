@@ -36,10 +36,6 @@ impl TestConfig {
         self
     }
 
-    pub fn should_fail(self) -> Self {
-        self.set_should_fail(true)
-    }
-
     pub fn set_should_fail(mut self, should_fail: bool) -> Self {
         self.should_fail = should_fail;
         self
