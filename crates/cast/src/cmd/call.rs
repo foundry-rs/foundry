@@ -271,6 +271,7 @@ impl CallArgs {
                 trace_mode,
                 odyssey,
                 create2_deployer,
+                state_overrides,
             )?;
 
             let value = tx.value.unwrap_or_default();
