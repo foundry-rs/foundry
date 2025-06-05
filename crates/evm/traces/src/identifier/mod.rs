@@ -1,10 +1,10 @@
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::Address;
+use alloy_primitives::{map::HashMap, Address, Bytes};
 use foundry_common::ContractsByArtifact;
 use foundry_compilers::ArtifactId;
 use foundry_config::{Chain, Config};
 use revm_inspectors::tracing::types::CallTraceNode;
-use std::borrow::Cow;
+use std::{borrow::Cow, hash::RandomState};
 
 mod local;
 pub use local::LocalTraceIdentifier;
@@ -43,6 +43,8 @@ pub struct TraceIdentifiers<'a> {
     pub local: Option<LocalTraceIdentifier<'a>>,
     /// The optional Etherscan trace identifier.
     pub etherscan: Option<EtherscanIdentifier>,
+    /// The contracts bytecode.
+    pub contracts_bytecode: Option<&'a HashMap<Address, Bytes, RandomState>>,
 }
 
 impl Default for TraceIdentifiers<'_> {
@@ -70,12 +72,23 @@ impl TraceIdentifier for TraceIdentifiers<'_> {
 impl<'a> TraceIdentifiers<'a> {
     /// Creates a new, empty instance.
     pub const fn new() -> Self {
-        Self { local: None, etherscan: None }
+        Self { local: None, etherscan: None, contracts_bytecode: None }
     }
 
     /// Sets the local identifier.
     pub fn with_local(mut self, known_contracts: &'a ContractsByArtifact) -> Self {
         self.local = Some(LocalTraceIdentifier::new(known_contracts));
+        self
+    }
+
+    /// Sets the local identifier.
+    pub fn with_local_and_bytecodes(
+        mut self,
+        known_contracts: &'a ContractsByArtifact,
+        contracts_bytecode: &'a HashMap<Address, Bytes, RandomState>,
+    ) -> Self {
+        self.local =
+            Some(LocalTraceIdentifier::new(known_contracts).with_bytecodes(contracts_bytecode));
         self
     }
 
