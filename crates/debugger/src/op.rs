@@ -41,16 +41,18 @@ const fn map_opcode(op: u8) -> &'static [OpcodeParam] {
     }
 
     // https://www.evm.codes
-    // https://github.com/smlxl/evm.codes
-    // https://github.com/klkvr/evm.codes
-    // https://github.com/klkvr/evm.codes/blob/HEAD/opcodes.json
-    // jq -rf opcodes.jq opcodes.json
-    /*
-    def mkargs(input):
-        input | split(" | ") | to_entries | map("\(.key): \"\(.value)\"") | join(", ");
-
-    to_entries[] | "0x\(.key)(\(mkargs(.value.input))),"
-    */
+    // https://raw.githubusercontent.com/duneanalytics/evm.codes/refs/heads/main/opcodes.json
+    //
+    // jq -r '
+    //   def mkargs(input):
+    //     input
+    //     | split(" | ")
+    //     | to_entries
+    //     | map("\(.key): \"\(.value)\"")
+    //     | join(", ");
+    //   to_entries[]
+    //   | "0x\(.key)(\(mkargs(.value.input))),"
+    // ' opcodes.json
     map! {
         0x00(),
         0x01(0: "a", 1: "b"),
@@ -125,7 +127,7 @@ const fn map_opcode(op: u8) -> &'static [OpcodeParam] {
         0x46(),
         0x47(),
         0x48(),
-        0x49(),
+        0x49(0: "index"),
         0x4a(),
         0x4b(),
         0x4c(),
@@ -144,11 +146,9 @@ const fn map_opcode(op: u8) -> &'static [OpcodeParam] {
         0x59(),
         0x5a(),
         0x5b(),
-        0x5c(),
-        0x5d(),
-        0x5e(),
-
-        // PUSHN
+        0x5c(0: "key"),
+        0x5d(0: "key", 1: "value"),
+        0x5e(0: "destOffset", 1: "offset", 2: "size"),
         0x5f(),
         0x60(),
         0x61(),
@@ -182,43 +182,38 @@ const fn map_opcode(op: u8) -> &'static [OpcodeParam] {
         0x7d(),
         0x7e(),
         0x7f(),
-
-        // DUPN
-        0x80(0x00: "dup_value"),
-        0x81(0x01: "dup_value"),
-        0x82(0x02: "dup_value"),
-        0x83(0x03: "dup_value"),
-        0x84(0x04: "dup_value"),
-        0x85(0x05: "dup_value"),
-        0x86(0x06: "dup_value"),
-        0x87(0x07: "dup_value"),
-        0x88(0x08: "dup_value"),
-        0x89(0x09: "dup_value"),
-        0x8a(0x0a: "dup_value"),
-        0x8b(0x0b: "dup_value"),
-        0x8c(0x0c: "dup_value"),
-        0x8d(0x0d: "dup_value"),
-        0x8e(0x0e: "dup_value"),
-        0x8f(0x0f: "dup_value"),
-
-        // SWAPN
-        0x90(0: "a", 0x01: "swap_value"),
-        0x91(0: "a", 0x02: "swap_value"),
-        0x92(0: "a", 0x03: "swap_value"),
-        0x93(0: "a", 0x04: "swap_value"),
-        0x94(0: "a", 0x05: "swap_value"),
-        0x95(0: "a", 0x06: "swap_value"),
-        0x96(0: "a", 0x07: "swap_value"),
-        0x97(0: "a", 0x08: "swap_value"),
-        0x98(0: "a", 0x09: "swap_value"),
-        0x99(0: "a", 0x0a: "swap_value"),
-        0x9a(0: "a", 0x0b: "swap_value"),
-        0x9b(0: "a", 0x0c: "swap_value"),
-        0x9c(0: "a", 0x0d: "swap_value"),
-        0x9d(0: "a", 0x0e: "swap_value"),
-        0x9e(0: "a", 0x0f: "swap_value"),
-        0x9f(0: "a", 0x10: "swap_value"),
-
+        0x80(0: "value"),
+        0x81(0: "a", 1: "b"),
+        0x82(0: "a", 1: "b", 2: "c"),
+        0x83(0: "...", 1: "value"),
+        0x84(0: "...", 1: "value"),
+        0x85(0: "...", 1: "value"),
+        0x86(0: "...", 1: "value"),
+        0x87(0: "...", 1: "value"),
+        0x88(0: "...", 1: "value"),
+        0x89(0: "...", 1: "value"),
+        0x8a(0: "...", 1: "value"),
+        0x8b(0: "...", 1: "value"),
+        0x8c(0: "...", 1: "value"),
+        0x8d(0: "...", 1: "value"),
+        0x8e(0: "...", 1: "value"),
+        0x8f(0: "...", 1: "value"),
+        0x90(0: "a", 1: "b"),
+        0x91(0: "a", 1: "b", 2: "c"),
+        0x92(0: "a", 1: "...", 2: "b"),
+        0x93(0: "a", 1: "...", 2: "b"),
+        0x94(0: "a", 1: "...", 2: "b"),
+        0x95(0: "a", 1: "...", 2: "b"),
+        0x96(0: "a", 1: "...", 2: "b"),
+        0x97(0: "a", 1: "...", 2: "b"),
+        0x98(0: "a", 1: "...", 2: "b"),
+        0x99(0: "a", 1: "...", 2: "b"),
+        0x9a(0: "a", 1: "...", 2: "b"),
+        0x9b(0: "a", 1: "...", 2: "b"),
+        0x9c(0: "a", 1: "...", 2: "b"),
+        0x9d(0: "a", 1: "...", 2: "b"),
+        0x9e(0: "a", 1: "...", 2: "b"),
+        0x9f(0: "a", 1: "...", 2: "b"),
         0xa0(0: "offset", 1: "size"),
         0xa1(0: "offset", 1: "size", 2: "topic"),
         0xa2(0: "offset", 1: "size", 2: "topic1", 3: "topic2"),
@@ -270,7 +265,7 @@ const fn map_opcode(op: u8) -> &'static [OpcodeParam] {
         0xd0(0: "offset"),
         0xd1(),
         0xd2(),
-        0xd3(0: "memOffset", 1: "offset", 2: "size"),
+        0xd3(0: "mem_offset", 1: "offset", 2: "size"),
         0xd4(),
         0xd5(),
         0xd6(),
@@ -295,9 +290,9 @@ const fn map_opcode(op: u8) -> &'static [OpcodeParam] {
         0xe9(),
         0xea(),
         0xeb(),
-        0xec(0: "value", 1: "salt", 2: "offset", 3: "size"),
+        0xec(0: "value", 1: "salt", 2: "input_offset", 3: "input_size"),
         0xed(),
-        0xee(0: "offset", 1: "size"),
+        0xee(0: "aux_data_offset", 1: "aux_data_size"),
         0xef(),
         0xf0(0: "value", 1: "offset", 2: "size"),
         0xf1(0: "gas", 1: "address", 2: "value", 3: "argsOffset", 4: "argsSize", 5: "retOffset", 6: "retSize"),
@@ -307,10 +302,10 @@ const fn map_opcode(op: u8) -> &'static [OpcodeParam] {
         0xf5(0: "value", 1: "offset", 2: "size", 3: "salt"),
         0xf6(),
         0xf7(0: "offset"),
-        0xf8(0: "address", 1: "argsOffset", 2: "argsSize", 3: "value"),
-        0xf9(0: "address", 1: "argsOffset", 2: "argsSize"),
+        0xf8(0: "target_address", 1: "input_offset", 2: "input_size", 3: "value"),
+        0xf9(0: "target_address", 1: "input_offset", 2: "input_size"),
         0xfa(0: "gas", 1: "address", 2: "argsOffset", 3: "argsSize", 4: "retOffset", 5: "retSize"),
-        0xfb(0: "address", 1: "argsOffset", 2: "argsSize"),
+        0xfb(0: "target_address", 1: "input_offset", 2: "input_size"),
         0xfc(),
         0xfd(0: "offset", 1: "size"),
         0xfe(),
