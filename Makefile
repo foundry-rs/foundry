@@ -90,6 +90,18 @@ test: ## Run all tests.
 	make test-unit && \
 	make test-doc
 
+.PHONY: coverage-unit
+coverage-unit: ## Run unit tests with coverage.
+	rm -f lcov.info
+	cargo llvm-cov nextest -E 'kind(test) & !test(/\b(issue|ext_integration)/)' \
+		--lcov \
+		--output-path lcov.info
+
+.PHONY: coverage
+coverage: coverage-unit ## Run unit tests with coverage, generate an HTML coverage report and open it in the browser.
+	cargo llvm-cov report --html
+	open target/llvm-cov/html/index.html
+
 ##@ Linting
 
 .PHONY: fmt
