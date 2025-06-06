@@ -652,7 +652,7 @@ impl<'a> FunctionRunner<'a> {
                         identified_contracts.clone(),
                         &mut self.result.logs,
                         &mut self.result.traces,
-                        &mut self.result.coverage,
+                        &mut self.result.line_coverage,
                         &mut self.result.deprecated_cheatcodes,
                         &txes,
                         show_solidity,
@@ -667,8 +667,13 @@ impl<'a> FunctionRunner<'a> {
             }
         }
 
-        let progress =
-            start_fuzz_progress(self.cr.progress, self.cr.name, &func.name, invariant_config.runs);
+        let progress = start_fuzz_progress(
+            self.cr.progress,
+            self.cr.name,
+            &func.name,
+            invariant_config.timeout,
+            invariant_config.runs,
+        );
         let invariant_result = match evm.invariant_fuzz(
             invariant_contract.clone(),
             &self.setup.fuzz_fixtures,
@@ -682,7 +687,7 @@ impl<'a> FunctionRunner<'a> {
             }
         };
         // Merge coverage collected during invariant run with test setup coverage.
-        self.result.merge_coverages(invariant_result.coverage);
+        self.result.merge_coverages(invariant_result.line_coverage);
 
         let mut counterexample = None;
         let success = invariant_result.error.is_none();
@@ -703,7 +708,7 @@ impl<'a> FunctionRunner<'a> {
                         identified_contracts.clone(),
                         &mut self.result.logs,
                         &mut self.result.traces,
-                        &mut self.result.coverage,
+                        &mut self.result.line_coverage,
                         &mut self.result.deprecated_cheatcodes,
                         progress.as_ref(),
                         show_solidity,
@@ -752,7 +757,7 @@ impl<'a> FunctionRunner<'a> {
                     identified_contracts.clone(),
                     &mut self.result.logs,
                     &mut self.result.traces,
-                    &mut self.result.coverage,
+                    &mut self.result.line_coverage,
                     &mut self.result.deprecated_cheatcodes,
                     &invariant_result.last_run_inputs,
                     show_solidity,
@@ -770,6 +775,7 @@ impl<'a> FunctionRunner<'a> {
             invariant_result.cases,
             invariant_result.reverts,
             invariant_result.metrics,
+            invariant_result.failed_corpus_replays,
         );
         self.result
     }
@@ -792,8 +798,13 @@ impl<'a> FunctionRunner<'a> {
         let runner = self.fuzz_runner();
         let fuzz_config = self.config.fuzz.clone();
 
-        let progress =
-            start_fuzz_progress(self.cr.progress, self.cr.name, &func.name, fuzz_config.runs);
+        let progress = start_fuzz_progress(
+            self.cr.progress,
+            self.cr.name,
+            &func.name,
+            fuzz_config.timeout,
+            fuzz_config.runs,
+        );
 
         // Run fuzz test.
         let fuzzed_executor =

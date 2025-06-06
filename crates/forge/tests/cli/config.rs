@@ -91,6 +91,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         invariant: InvariantConfig {
             runs: 256,
             failure_persist_dir: Some("test-cache/fuzz".into()),
+            corpus_dir: Some("cache/invariant/corpus".into()),
             ..Default::default()
         },
         ffi: true,
@@ -1105,6 +1106,9 @@ max_fuzz_dictionary_values = 6553600
 shrink_run_limit = 5000
 max_assume_rejects = 65536
 gas_report_samples = 256
+corpus_gzip = true
+corpus_min_mutations = 5
+corpus_min_size = 0
 failure_persist_dir = "cache/invariant"
 show_metrics = false
 show_solidity = false
@@ -1212,6 +1216,10 @@ exclude = []
     "shrink_run_limit": 5000,
     "max_assume_rejects": 65536,
     "gas_report_samples": 256,
+    "corpus_dir": null,
+    "corpus_gzip": true,
+    "corpus_min_mutations": 5,
+    "corpus_min_size": 0,
     "failure_persist_dir": "cache/invariant",
     "show_metrics": false,
     "timeout": null,

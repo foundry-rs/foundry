@@ -28,7 +28,7 @@ pub fn replay_run(
     mut ided_contracts: ContractsByAddress,
     logs: &mut Vec<Log>,
     traces: &mut Traces,
-    coverage: &mut Option<HitMaps>,
+    line_coverage: &mut Option<HitMaps>,
     deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     inputs: &[BasicTxDetails],
     show_solidity: bool,
@@ -51,7 +51,7 @@ pub fn replay_run(
 
         logs.extend(call_result.logs);
         traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
-        HitMaps::merge_opt(coverage, call_result.coverage);
+        HitMaps::merge_opt(line_coverage, call_result.line_coverage);
 
         // Identify newly generated contracts, if they exist.
         ided_contracts
@@ -108,7 +108,7 @@ pub fn replay_error(
     ided_contracts: ContractsByAddress,
     logs: &mut Vec<Log>,
     traces: &mut Traces,
-    coverage: &mut Option<HitMaps>,
+    line_coverage: &mut Option<HitMaps>,
     deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     progress: Option<&ProgressBar>,
     show_solidity: bool,
@@ -136,7 +136,7 @@ pub fn replay_error(
                 ided_contracts,
                 logs,
                 traces,
-                coverage,
+                line_coverage,
                 deprecated_cheatcodes,
                 &calls,
                 show_solidity,

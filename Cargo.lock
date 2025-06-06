@@ -4188,6 +4188,7 @@ dependencies = [
  "comfy-table",
  "dunce",
  "eyre",
+ "flate2",
  "foundry-block-explorers",
  "foundry-common-fmt",
  "foundry-compilers",
@@ -4423,6 +4424,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.12",
  "tracing",
+ "uuid 1.17.0",
 ]
 
 [[package]]
