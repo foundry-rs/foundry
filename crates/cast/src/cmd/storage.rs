@@ -1,4 +1,5 @@
 use crate::{opts::parse_slot, Cast};
+use alloy_ens::NameOrAddress;
 use alloy_network::AnyNetwork;
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::Provider;
@@ -15,7 +16,6 @@ use foundry_cli::{
 use foundry_common::{
     abi::find_source,
     compile::{etherscan_project, ProjectCompiler},
-    ens::NameOrAddress,
     shell,
 };
 use foundry_compilers::{
@@ -135,8 +135,9 @@ impl StorageArgs {
         }
 
         let chain = utils::get_chain(config.chain, &provider).await?;
+        let api_version = config.get_etherscan_api_version(Some(chain));
         let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-        let client = Client::new(chain, api_key)?;
+        let client = Client::new_with_api_version(chain, api_key, api_version)?;
         let source = if let Some(proxy) = self.proxy {
             find_source(client, proxy.resolve(&provider).await?).await?
         } else {

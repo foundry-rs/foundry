@@ -126,7 +126,7 @@ test_repro!(3347, false, None, |res| {
     let test = res.test_results.remove("test()").unwrap();
     assert_eq!(test.logs.len(), 1);
     let event = Event::parse("event log2(uint256, uint256)").unwrap();
-    let decoded = event.decode_log(&test.logs[0].data, false).unwrap();
+    let decoded = event.decode_log(&test.logs[0].data).unwrap();
     assert_eq!(
         decoded,
         DecodedEvent {
@@ -401,3 +401,15 @@ test_repro!(7238);
 
 // https://github.com/foundry-rs/foundry/issues/10302
 test_repro!(10302);
+
+// https://github.com/foundry-rs/foundry/issues/10477
+test_repro!(10477);
+
+// https://github.com/foundry-rs/foundry/issues/10527
+test_repro!(10527);
+
+// https://github.com/foundry-rs/foundry/issues/10552
+test_repro!(10552);
+
+// https://github.com/foundry-rs/foundry/issues/10586
+test_repro!(10586);

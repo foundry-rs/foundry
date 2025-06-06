@@ -1,19 +1,17 @@
 use crate::cmd::{
     access_list::AccessListArgs, artifact::ArtifactArgs, bind::BindArgs, call::CallArgs,
     constructor_args::ConstructorArgsArgs, create2::Create2Args, creation_code::CreationCodeArgs,
-    estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs,
-    mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs,
-    txpool::TxPoolSubcommands, wallet::WalletSubcommands,
+    da_estimate::DAEstimateArgs, estimate::EstimateArgs, find_block::FindBlockArgs,
+    interface::InterfaceArgs, logs::LogsArgs, mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs,
+    send::SendTxArgs, storage::StorageArgs, txpool::TxPoolSubcommands, wallet::WalletSubcommands,
 };
+use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, Selector, B256, U256};
 use alloy_rpc_types::BlockId;
 use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
 use foundry_cli::opts::{EtherscanOpts, GlobalArgs, RpcOpts};
-use foundry_common::{
-    ens::NameOrAddress,
-    version::{LONG_VERSION, SHORT_VERSION},
-};
+use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
 use std::{path::PathBuf, str::FromStr};
 
 /// A Swiss Army knife for interacting with Ethereum applications from the command line.
@@ -391,6 +389,10 @@ pub enum CastSubcommand {
         /// The arguments to encode.
         #[arg(allow_hyphen_values = true)]
         args: Vec<String>,
+
+        // Path to file containing arguments to encode.
+        #[arg(long, value_name = "PATH")]
+        file: Option<PathBuf>,
     },
 
     /// Get the symbolic name of the current chain.
@@ -1057,16 +1059,15 @@ pub enum CastSubcommand {
         resolve: bool,
     },
 
-    /// Decodes EOF container bytes
-    #[command()]
-    DecodeEof { eof: Option<String> },
-
     /// Inspect the TxPool of a node.
     #[command(visible_alias = "tp")]
     TxPool {
         #[command(subcommand)]
         command: TxPoolSubcommands,
     },
+    /// Estimates the data availability size of a given opstack block.
+    #[command(name = "da-estimate")]
+    DAEstimate(DAEstimateArgs),
 }
 
 /// CLI arguments for `cast --to-base`.
@@ -1142,6 +1143,19 @@ mod tests {
                     args,
                     vec!["5c9d55b78febcc2061715ba4f57ecf8ea2711f2c".to_string(), "2".to_string()]
                 )
+            }
+            _ => unreachable!(),
+        };
+    }
+
+    #[test]
+    fn parse_call_data_with_file() {
+        let args: Cast = Cast::parse_from(["foundry-cli", "calldata", "f()", "--file", "test.txt"]);
+        match args.cmd {
+            CastSubcommand::CalldataEncode { sig, file, args } => {
+                assert_eq!(sig, "f()".to_string());
+                assert_eq!(file, Some(PathBuf::from("test.txt")));
+                assert!(args.is_empty());
             }
             _ => unreachable!(),
         };

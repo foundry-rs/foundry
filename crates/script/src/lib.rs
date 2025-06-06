@@ -26,6 +26,7 @@ use dialoguer::Confirm;
 use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
+use foundry_block_explorers::EtherscanApiVersion;
 use foundry_cli::{
     opts::{BuildOpts, GlobalArgs},
     utils::LoadConfig,
@@ -178,9 +179,17 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub non_interactive: bool,
 
+    /// Disables the contract size limit during script execution.
+    #[arg(long)]
+    pub disable_code_size_limit: bool,
+
     /// The Etherscan (or equivalent) API key
     #[arg(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     pub etherscan_api_key: Option<String>,
+
+    /// The Etherscan API version.
+    #[arg(long, env = "ETHERSCAN_API_VERSION", value_name = "VERSION")]
+    pub etherscan_api_version: Option<EtherscanApiVersion>,
 
     /// Verifies all the contracts found in the receipts of a script, if any.
     #[arg(long)]
@@ -266,7 +275,7 @@ impl ScriptArgs {
             }
 
             if shell::is_json() {
-                pre_simulation.show_json()?;
+                pre_simulation.show_json().await?;
             } else {
                 pre_simulation.show_traces().await?;
             }
@@ -279,6 +288,10 @@ impl ScriptArgs {
                 .as_ref()
                 .is_none_or(|txs| txs.is_empty())
             {
+                if pre_simulation.args.broadcast {
+                    sh_warn!("No transactions to broadcast.")?;
+                }
+
                 return Ok(());
             }
 
@@ -392,6 +405,11 @@ impl ScriptArgs {
         known_contracts: &ContractsByArtifact,
         create2_deployer: Address,
     ) -> Result<()> {
+        // If disable-code-size-limit flag is enabled then skip the size check
+        if self.disable_code_size_limit {
+            return Ok(())
+        }
+
         // (name, &init, &deployed)[]
         let mut bytecodes: Vec<(String, &[u8], &[u8])> = vec![];
 
@@ -492,6 +510,9 @@ impl Provider for ScriptArgs {
                 figment::value::Value::from(etherscan_api_key.to_string()),
             );
         }
+        if let Some(api_version) = &self.etherscan_api_version {
+            dict.insert("etherscan_api_version".to_string(), api_version.to_string().into());
+        }
         if let Some(timeout) = self.timeout {
             dict.insert("transaction_timeout".to_string(), timeout.into());
         }
@@ -499,7 +520,7 @@ impl Provider for ScriptArgs {
     }
 }
 
-#[derive(Default, Serialize)]
+#[derive(Default, Serialize, Clone)]
 pub struct ScriptResult {
     pub success: bool,
     #[serde(rename = "raw_logs")]
@@ -695,6 +716,18 @@ mod tests {
         ]);
         let config = args.load_config().unwrap();
         assert_eq!(config.etherscan_api_key, Some("goerli".to_string()));
+    }
+
+    #[test]
+    fn can_disable_code_size_limit() {
+        let args =
+            ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--disable-code-size-limit"]);
+        assert!(args.disable_code_size_limit);
+
+        let result = ScriptResult::default();
+        let contracts = ContractsByArtifact::default();
+        let create = Address::ZERO;
+        assert!(args.check_contract_sizes(&result, &contracts, create).is_ok());
     }
 
     #[test]
