@@ -1,7 +1,5 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
-use std::sync::Arc;
-
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_dyn_abi::{eip712_parser::EncodeType, DynSolType, DynSolValue, Resolver, TypedData};
 use alloy_ens::namehash;

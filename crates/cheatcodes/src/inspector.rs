@@ -564,7 +564,6 @@ impl Cheatcodes {
         self.test_runner = None;
     }
 
-
     /// Returns the configured prank at given depth or the first prank configured at a lower depth.
     /// For example, if pranks configured for depth 1, 3 and 5, the prank for depth 4 is the one
     /// configured at depth 3.
