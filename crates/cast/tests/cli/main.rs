@@ -2432,6 +2432,30 @@ contract Counter {
 
 "#]]);
 
+    // Override state, `number()` should return overridden value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-state",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x1234",
+            "number()(uint256)",
+            "--trace",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [2402] 0x5FbDB2315678afecb367f032d93F642f64180aa3::number()
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000001234
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+
     // Override balance, `getBalance()` should return overridden value.
     cmd.cast_fuse()
         .args([
@@ -2447,6 +2471,31 @@ contract Counter {
         .assert_success()
         .stdout_eq(str![[r#"
 4369
+
+"#]]);
+
+    // Override balance, `getBalance()` should return overridden value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-balance",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x1111",
+            "getBalance(address)(uint256)",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--trace",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [747] 0x5FbDB2315678afecb367f032d93F642f64180aa3::getBalance(0x5FbDB2315678afecb367f032d93F642f64180aa3)
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000001111
+
+
+Transaction successfully executed.
+[GAS]
 
 "#]]);
 
@@ -2468,6 +2517,28 @@ contract Counter {
         .assert_failure()
         .stderr_eq(str![[r#"
 Error: server returned an error response: error code 3: execution reverted, data: "0x"
+
+"#]]);
+
+    // Override code with
+    // contract Counter {
+    //     uint256 public number1;
+    // }
+    // Calling `number()` should revert.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-code",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063c223a39e14602a575b5f5ffd5b60306044565b604051603b9190605f565b60405180910390f35b5f5481565b5f819050919050565b6059816049565b82525050565b5f60208201905060705f8301846052565b9291505056fea26469706673582212202a0acfb9083efed3e0e9f27177b090731d4392cf196d58e27e05088f59008d0964736f6c634300081d0033",
+            "number()(uint256)",
+            "--trace"
+        ])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Error: Transaction failed.
 
 "#]]);
 
@@ -2499,6 +2570,32 @@ Error: server returned an error response: error code 3: execution reverted, data
             &handle.http_endpoint(),
             "--override-code",
             "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063c223a39e14602a575b5f5ffd5b60306044565b604051603b9190605f565b60405180910390f35b5f5481565b5f819050919050565b6059816049565b82525050565b5f60208201905060705f8301846052565b9291505056fea26469706673582212202a0acfb9083efed3e0e9f27177b090731d4392cf196d58e27e05088f59008d0964736f6c634300081d0033",
+            "--override-state",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x2222",
+            "number1()(uint256)",
+            "--trace"
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [2402] 0x5FbDB2315678afecb367f032d93F642f64180aa3::number1()
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000002222
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+
+    // Calling `number1()` with overridden state should return new value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-code",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063c223a39e14602a575b5f5ffd5b60306044565b604051603b9190605f565b60405180910390f35b5f5481565b5f819050919050565b6059816049565b82525050565b5f60208201905060705f8301846052565b9291505056fea26469706673582212202a0acfb9083efed3e0e9f27177b090731d4392cf196d58e27e05088f59008d0964736f6c634300081d0033",
             "--override-state-diff",
             "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x2222",
             "number1()(uint256)",
@@ -2506,6 +2603,32 @@ Error: server returned an error response: error code 3: execution reverted, data
         .assert_success()
         .stdout_eq(str![[r#"
 8738
+
+"#]]);
+
+    // Calling `number1()` with overridden state should return new value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-code",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063c223a39e14602a575b5f5ffd5b60306044565b604051603b9190605f565b60405180910390f35b5f5481565b5f819050919050565b6059816049565b82525050565b5f60208201905060705f8301846052565b9291505056fea26469706673582212202a0acfb9083efed3e0e9f27177b090731d4392cf196d58e27e05088f59008d0964736f6c634300081d0033",
+            "--override-state-diff",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x2222",
+            "number1()(uint256)",
+            "--trace",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [2402] 0x5FbDB2315678afecb367f032d93F642f64180aa3::number1()
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000002222
+
+
+Transaction successfully executed.
+[GAS]
 
 "#]]);
 });
