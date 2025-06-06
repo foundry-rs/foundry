@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["print_logs","print_traces"],"struct":["AnvilInspector"]};
