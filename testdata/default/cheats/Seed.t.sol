@@ -18,9 +18,8 @@ contract SeedTest is DSTest {
         // Reset the seed and verify the result is the same
         vm.setSeed(seed);
         uint256 rand2 = uint256(vm.randomUint());
-
         // If the seed is the same, the random value must be equal
-        assertEq(rand1, rand2, "Random value must be equal if seed is the same");
+        assertEq(rand1, rand2);
     }
 
     function testSeedChangesRandom() public {

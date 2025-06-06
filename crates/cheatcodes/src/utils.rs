@@ -283,7 +283,7 @@ impl Cheatcode for setSeedCall {
 }
 
 fn set_seed(ccx: &mut CheatsCtxt, seed: U256) -> Result {
-    Arc::make_mut(&mut ccx.state.config).seed.replace(seed);
+    ccx.state.set_seed(seed);
     Ok(Default::default())
 }
 
