@@ -71,8 +71,11 @@ impl ProjectPathOpts {
     /// # Panics
     ///
     /// Panics if the project root directory cannot be found. See [`find_project_root`].
+    #[track_caller]
     pub fn project_root(&self) -> PathBuf {
-        self.root.clone().unwrap_or_else(|| find_project_root(None))
+        self.root
+            .clone()
+            .unwrap_or_else(|| find_project_root(None).expect("could not determine project root"))
     }
 
     /// Returns the remappings to add to the config

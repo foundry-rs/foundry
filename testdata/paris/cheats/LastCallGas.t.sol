@@ -39,7 +39,7 @@ abstract contract LastCallGasFixture is DSTest {
     }
 
     function testRevertNoCachedLastCallGas() public {
-        vm.expectRevert();
+        vm._expectCheatcodeRevert();
         vm.lastCallGas();
     }
 

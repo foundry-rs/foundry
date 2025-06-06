@@ -7,7 +7,7 @@ use alloy_dyn_abi::{
 use alloy_primitives::U256;
 use foundry_common::fmt::format_token;
 use foundry_compilers::artifacts::sourcemap::{Jump, SourceElement};
-use revm::interpreter::OpCode;
+use revm::bytecode::opcode::OpCode;
 use revm_inspectors::tracing::types::{CallTraceStep, DecodedInternalCall, DecodedTraceStep};
 pub use sources::{ArtifactData, ContractSources, SourceData};
 
@@ -80,7 +80,7 @@ impl<'a> DebugStepsWalker<'a> {
     fn src_map(&self, step: usize) -> Option<(SourceElement, &SourceData)> {
         self.sources.find_source_mapping(
             self.contract_name,
-            self.node.trace.steps[step].pc,
+            self.node.trace.steps[step].pc as u32,
             self.node.trace.kind.is_any_create(),
         )
     }
@@ -200,6 +200,13 @@ impl<'a> DebugStepsWalker<'a> {
 fn parse_function_from_loc(source: &SourceData, loc: &SourceElement) -> Option<String> {
     let start = loc.offset() as usize;
     let end = start + loc.length() as usize;
+    let src_len = source.source.len();
+
+    // Handle special case of preprocessed test sources.
+    if start > src_len || end > src_len {
+        return None;
+    }
+
     let source_part = &source.source[start..end];
     if !source_part.starts_with("function") {
         return None;

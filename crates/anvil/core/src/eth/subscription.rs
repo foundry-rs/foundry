@@ -1,12 +1,11 @@
 //! Subscription types
 use alloy_primitives::hex;
-use rand::{distributions::Alphanumeric, thread_rng, Rng};
+use rand::{distr::Alphanumeric, rng, Rng};
 use std::fmt;
 
 /// Unique subscription id
-#[derive(Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
-#[cfg_attr(feature = "serde", serde(untagged))]
+#[derive(Clone, PartialEq, Eq, Hash, serde::Deserialize, serde::Serialize)]
+#[serde(untagged)]
 pub enum SubscriptionId {
     /// numerical sub id
     Number(u64),
@@ -49,7 +48,7 @@ impl HexIdProvider {
     /// Generates a random hex encoded Id
     pub fn gen(&self) -> String {
         let id: String =
-            (&mut thread_rng()).sample_iter(Alphanumeric).map(char::from).take(self.len).collect();
+            (&mut rng()).sample_iter(Alphanumeric).map(char::from).take(self.len).collect();
         let out = hex::encode(id);
         format!("0x{out}")
     }

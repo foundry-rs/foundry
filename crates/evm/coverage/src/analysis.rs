@@ -12,7 +12,7 @@ use std::sync::Arc;
 #[derive(Clone, Debug)]
 pub struct ContractVisitor<'a> {
     /// The source ID of the contract.
-    source_id: usize,
+    source_id: u32,
     /// The source code that contains the AST being walked.
     source: &'a str,
 
@@ -20,7 +20,7 @@ pub struct ContractVisitor<'a> {
     contract_name: &'a Arc<str>,
 
     /// The current branch ID
-    branch_id: usize,
+    branch_id: u32,
     /// Stores the last line we put in the items collection to ensure we don't push duplicate lines
     last_line: u32,
 
@@ -30,7 +30,14 @@ pub struct ContractVisitor<'a> {
 
 impl<'a> ContractVisitor<'a> {
     pub fn new(source_id: usize, source: &'a str, contract_name: &'a Arc<str>) -> Self {
-        Self { source_id, source, contract_name, branch_id: 0, last_line: 0, items: Vec::new() }
+        Self {
+            source_id: source_id.try_into().expect("too many sources"),
+            source,
+            contract_name,
+            branch_id: 0,
+            last_line: 0,
+            items: Vec::new(),
+        }
     }
 
     pub fn visit_contract(&mut self, node: &Node) -> eyre::Result<()> {
@@ -283,8 +290,8 @@ impl<'a> ContractVisitor<'a> {
 
                 Ok(())
             }
-            // Try-catch statement. Coverage is reported for expression, for each clause and their
-            // bodies (if any).
+            // Try-catch statement. Coverage is reported as branches for catch clauses with
+            // statements.
             NodeType::TryStatement => {
                 self.visit_expression(
                     &node
@@ -292,20 +299,53 @@ impl<'a> ContractVisitor<'a> {
                         .ok_or_else(|| eyre::eyre!("try statement had no call"))?,
                 )?;
 
-                // Add coverage for each Try-catch clause.
-                for clause in node
-                    .attribute::<Vec<Node>>("clauses")
-                    .ok_or_else(|| eyre::eyre!("try statement had no clause"))?
-                {
-                    // Add coverage for clause statement.
-                    self.push_item_kind(CoverageItemKind::Statement, &clause.src);
-                    self.visit_statement(&clause)?;
+                let branch_id = self.branch_id;
+                self.branch_id += 1;
 
-                    // Add coverage for clause body only if it is not empty.
-                    if let Some(block) = clause.attribute::<Node>("block") {
-                        if has_statements(&block) {
-                            self.push_item_kind(CoverageItemKind::Statement, &block.src);
-                            self.visit_block(&block)?;
+                let mut clauses = node
+                    .attribute::<Vec<Node>>("clauses")
+                    .ok_or_else(|| eyre::eyre!("try statement had no clauses"))?;
+
+                let try_block = clauses
+                    .remove(0)
+                    .attribute::<Node>("block")
+                    .ok_or_else(|| eyre::eyre!("try statement had no block"))?;
+                // Add branch with path id 0 for try (first clause).
+                self.push_item_kind(
+                    CoverageItemKind::Branch { branch_id, path_id: 0, is_first_opcode: true },
+                    &ast::LowFidelitySourceLocation {
+                        start: node.src.start,
+                        length: try_block
+                            .src
+                            .length
+                            .map(|length| try_block.src.start + length - node.src.start),
+                        index: node.src.index,
+                    },
+                );
+                self.visit_block(&try_block)?;
+
+                let mut path_id = 1;
+                for clause in clauses {
+                    if let Some(catch_block) = clause.attribute::<Node>("block") {
+                        if has_statements(&catch_block) {
+                            // Add catch branch if it has statements.
+                            self.push_item_kind(
+                                CoverageItemKind::Branch {
+                                    branch_id,
+                                    path_id,
+                                    is_first_opcode: true,
+                                },
+                                &catch_block.src,
+                            );
+                            self.visit_block(&catch_block)?;
+                            // Increment path id for next branch.
+                            path_id += 1;
+                        } else if clause.attribute::<Node>("parameters").is_some() {
+                            // Add coverage for clause with parameters and empty statements.
+                            // (`catch (bytes memory reason) {}`).
+                            // Catch all clause without statements is ignored (`catch {}`).
+                            self.push_item_kind(CoverageItemKind::Statement, &clause.src);
+                            self.visit_statement(&clause)?;
                         }
                     }
                 }
@@ -484,7 +524,7 @@ impl<'a> ContractVisitor<'a> {
         let n_lines = self.source[bytes.start as usize..bytes.end as usize].lines().count() as u32;
         let lines = start_line..start_line + n_lines;
         SourceLocation {
-            source_id: self.source_id,
+            source_id: self.source_id as usize,
             contract_name: self.contract_name.clone(),
             bytes,
             lines,
@@ -508,25 +548,16 @@ fn has_statements(node: &Node) -> bool {
     }
 }
 
-/// [`SourceAnalyzer`] result type.
-#[derive(Debug)]
+/// Coverage source analysis.
+#[derive(Clone, Debug, Default)]
 pub struct SourceAnalysis {
-    /// A collection of coverage items.
-    pub items: Vec<CoverageItem>,
+    /// All the coverage items.
+    all_items: Vec<CoverageItem>,
+    /// Source ID to `(offset, len)` into `all_items`.
+    map: Vec<(u32, u32)>,
 }
 
-/// Analyzes a set of sources to find coverage items.
-#[derive(Debug)]
-pub struct SourceAnalyzer<'a> {
-    sources: &'a SourceFiles<'a>,
-}
-
-impl<'a> SourceAnalyzer<'a> {
-    /// Creates a new source analyzer.
-    pub fn new(data: &'a SourceFiles<'a>) -> Self {
-        Self { sources: data }
-    }
-
+impl SourceAnalysis {
     /// Analyzes contracts in the sources held by the source analyzer.
     ///
     /// Coverage items are found by:
@@ -540,13 +571,12 @@ impl<'a> SourceAnalyzer<'a> {
     /// Note: Source IDs are only unique per compilation job; that is, a code base compiled with
     /// two different solc versions will produce overlapping source IDs if the compiler version is
     /// not taken into account.
-    pub fn analyze(&self) -> eyre::Result<SourceAnalysis> {
-        let items = self
-            .sources
+    pub fn new(data: &SourceFiles<'_>) -> eyre::Result<Self> {
+        let mut sourced_items = data
             .sources
             .par_iter()
             .flat_map_iter(|(&source_id, SourceFile { source, ast })| {
-                ast.nodes.iter().map(move |node| {
+                let items = ast.nodes.iter().map(move |node| {
                     if !matches!(node.node_type, NodeType::ContractDefinition) {
                         return Ok(vec![]);
                     }
@@ -579,10 +609,61 @@ impl<'a> SourceAnalyzer<'a> {
                     }
 
                     Ok(items)
-                })
+                });
+                items.map(move |items| items.map(|items| (source_id, items)))
             })
-            .collect::<eyre::Result<Vec<Vec<_>>>>()?;
-        Ok(SourceAnalysis { items: items.concat() })
+            .collect::<eyre::Result<Vec<(usize, Vec<CoverageItem>)>>>()?;
+
+        // Create mapping and merge items.
+        sourced_items.sort_by_key(|(id, items)| (*id, items.first().map(|i| i.loc.bytes.start)));
+        let Some(&(max_idx, _)) = sourced_items.last() else { return Ok(Self::default()) };
+        let len = max_idx + 1;
+        let mut all_items = Vec::new();
+        let mut map = vec![(u32::MAX, 0); len];
+        for (idx, items) in sourced_items {
+            // Assumes that all `idx` items are consecutive, guaranteed by the sort above.
+            if map[idx].0 == u32::MAX {
+                map[idx].0 = all_items.len() as u32;
+            }
+            map[idx].1 += items.len() as u32;
+            all_items.extend(items);
+        }
+
+        Ok(Self { all_items, map })
+    }
+
+    /// Returns all the coverage items.
+    pub fn all_items(&self) -> &[CoverageItem] {
+        &self.all_items
+    }
+
+    /// Returns all the mutable coverage items.
+    pub fn all_items_mut(&mut self) -> &mut Vec<CoverageItem> {
+        &mut self.all_items
+    }
+
+    /// Returns an iterator over the coverage items and their IDs for the given source.
+    pub fn items_for_source_enumerated(
+        &self,
+        source_id: u32,
+    ) -> impl Iterator<Item = (u32, &CoverageItem)> {
+        let (base_id, items) = self.items_for_source(source_id);
+        items.iter().enumerate().map(move |(idx, item)| (base_id + idx as u32, item))
+    }
+
+    /// Returns the base item ID and all the coverage items for the given source.
+    pub fn items_for_source(&self, source_id: u32) -> (u32, &[CoverageItem]) {
+        let (mut offset, len) = self.map.get(source_id as usize).copied().unwrap_or_default();
+        if offset == u32::MAX {
+            offset = 0;
+        }
+        (offset, &self.all_items[offset as usize..][..len as usize])
+    }
+
+    /// Returns the coverage item for the given item ID.
+    #[inline]
+    pub fn get(&self, item_id: u32) -> Option<&CoverageItem> {
+        self.all_items.get(item_id as usize)
     }
 }
 

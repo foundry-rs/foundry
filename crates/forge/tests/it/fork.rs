@@ -19,7 +19,7 @@ async fn test_cheats_fork_revert() {
         &format!(".*cheats{RE_PATH_SEPARATOR}Fork"),
     );
     let mut runner = TEST_DATA_DEFAULT.runner();
-    let suite_result = runner.test_collect(&filter);
+    let suite_result = runner.test_collect(&filter).unwrap();
     assert_eq!(suite_result.len(), 1);
 
     for (_, SuiteResult { test_results, .. }) in suite_result {

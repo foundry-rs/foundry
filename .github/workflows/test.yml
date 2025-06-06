@@ -12,6 +12,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
 
 jobs:
   nextest:
@@ -108,14 +109,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - run: cargo hack check
+      - run: cargo hack check --each-feature --exclude-features isolate-by-default
 
   deny:
     uses: ithacaxyz/ci/.github/workflows/deny.yml@main
-    with:
-      # Clear out arguments to not pass `--all-features` to `cargo deny`.
-      # Many crates have an `openssl` feature which enables banned dependencies.
-      deny-flags: ""
 
   ci-success:
     runs-on: ubuntu-latest

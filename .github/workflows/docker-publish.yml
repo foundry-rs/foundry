@@ -1,14 +1,13 @@
 name: docker
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
-  schedule:
-    - cron: "0 0 * * *"
   # Trigger without any parameters a proactive rebuild
   workflow_dispatch: {}
   workflow_call:
+    inputs:
+      tag_name:
+        required: true
+        type: string
 
 env:
   REGISTRY: ghcr.io
@@ -18,7 +17,7 @@ env:
 jobs:
   build:
     name: build and push
-    runs-on: Linux-20.04
+    runs-on: Linux-22.04
     permissions:
       id-token: write
       packages: write
@@ -30,7 +29,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - uses: taiki-e/install-action@cross
+      - name: Install cross
+        id: cross_main
+        run: |
+          cargo install cross
       # Login against a Docker registry except on PR
       # https://github.com/docker/login-action
       - name: Login into registry ${{ env.REGISTRY }}
@@ -75,4 +77,4 @@ jobs:
             echo "LABELS -> ${{ steps.meta.outputs.labels }}"
 
       - name: Build and push foundry image
-        run: make DOCKER_IMAGE_NAME=${{ steps.docker_tagging.outputs.docker_tags }} PROFILE=maxperf docker-build-push
+        run: make DOCKER_IMAGE_NAME=${{ steps.docker_tagging.outputs.docker_tags }} CARGO_TAG_NAME=${{ inputs.tag_name }} PROFILE=maxperf docker-build-push

@@ -7,7 +7,7 @@ use foundry_compilers::artifacts::{
     remappings::{Remapping, RemappingError},
     EvmVersion,
 };
-use revm_primitives::SpecId;
+use revm::primitives::hardfork::SpecId;
 use serde::{de::Error, Deserialize, Deserializer};
 use std::{
     io,
@@ -15,23 +15,20 @@ use std::{
     str::FromStr,
 };
 
-/// Loads the config for the current project workspace
-pub fn load_config() -> Config {
+// TODO: Why do these exist separately from `Config::load`?
+
+/// Loads the config for the current project workspace.
+pub fn load_config() -> eyre::Result<Config> {
     load_config_with_root(None)
 }
 
 /// Loads the config for the current project workspace or the provided root path.
-///
-/// # Panics
-///
-/// Panics if the project root cannot be found. See [`find_project_root`].
-#[track_caller]
-pub fn load_config_with_root(root: Option<&Path>) -> Config {
+pub fn load_config_with_root(root: Option<&Path>) -> eyre::Result<Config> {
     let root = match root {
         Some(root) => root,
-        None => &find_project_root(None),
+        None => &find_project_root(None)?,
     };
-    Config::load_with_root(root).sanitized()
+    Ok(Config::load_with_root(root)?.sanitized())
 }
 
 /// Returns the path of the top-level directory of the working git tree.
@@ -59,20 +56,10 @@ pub fn find_git_root(relative_to: &Path) -> io::Result<Option<PathBuf>> {
 ///
 /// Returns `repo` or `cwd` if no `foundry.toml` is found in the tree.
 ///
-/// # Panics
-///
-/// Panics if:
+/// Returns an error if:
 /// - `cwd` is `Some` and is not a valid directory;
 /// - `cwd` is `None` and the [`std::env::current_dir`] call fails.
-#[track_caller]
-pub fn find_project_root(cwd: Option<&Path>) -> PathBuf {
-    try_find_project_root(cwd).expect("Could not find project root")
-}
-
-/// Returns the root path to set for the project root.
-///
-/// Same as [`find_project_root`], but returns an error instead of panicking.
-pub fn try_find_project_root(cwd: Option<&Path>) -> io::Result<PathBuf> {
+pub fn find_project_root(cwd: Option<&Path>) -> io::Result<PathBuf> {
     let cwd = match cwd {
         Some(path) => path,
         None => &std::env::current_dir()?,
@@ -276,6 +263,7 @@ pub fn evm_spec_id(evm_version: EvmVersion, odyssey: bool) -> SpecId {
         EvmVersion::Paris => SpecId::MERGE,
         EvmVersion::Shanghai => SpecId::SHANGHAI,
         EvmVersion::Cancun => SpecId::CANCUN,
-        EvmVersion::Prague => SpecId::OSAKA, // Osaka enables EOF
+        EvmVersion::Prague => SpecId::PRAGUE,
+        EvmVersion::Osaka => SpecId::OSAKA,
     }
 }

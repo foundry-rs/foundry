@@ -88,7 +88,7 @@ impl<W> FormatBuffer<W> {
 
     /// Indent the buffer by delta
     pub fn indent(&mut self, delta: usize) {
-        self.indents.extend(std::iter::repeat(IndentGroup::default()).take(delta));
+        self.indents.extend(std::iter::repeat_n(IndentGroup::default(), delta));
     }
 
     /// Dedent the buffer by delta
@@ -181,7 +181,7 @@ impl<W: Write> FormatBuffer<W> {
                 .take(self.base_indent_len)
                 .take_while(|(_, _, ch)| ch.is_whitespace())
                 .last()
-                .map(|(state, idx, _)| (state, idx + 1))
+                .map(|(state, idx, ch)| (state, idx + ch.len_utf8()))
                 .unwrap_or((comment_state, 0));
             comment_state = new_comment_state;
             let trimmed_line = &line[line_start..];
@@ -431,7 +431,7 @@ mod tests {
             /* comment2 */ ",
         ];
 
-        for content in contents.iter() {
+        for content in &contents {
             let mut buf = FormatBuffer::new(String::new(), TAB_WIDTH);
             write!(buf, "{content}")?;
             assert_eq!(&buf.w, content);

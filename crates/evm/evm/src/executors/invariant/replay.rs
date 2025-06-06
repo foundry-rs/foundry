@@ -4,7 +4,7 @@ use super::{
 };
 use crate::executors::Executor;
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_primitives::{map::HashMap, Log};
+use alloy_primitives::{map::HashMap, Log, U256};
 use eyre::Result;
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_coverage::HitMaps;
@@ -16,12 +16,11 @@ use foundry_evm_traces::{load_contracts, TraceKind, TraceMode, Traces};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::test_runner::TestError;
-use revm::primitives::U256;
 use std::sync::Arc;
 
 /// Replays a call sequence for collecting logs and traces.
 /// Returns counterexample to be used when the call sequence is a failed scenario.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn replay_run(
     invariant_contract: &InvariantContract<'_>,
     mut executor: Executor,
@@ -32,6 +31,7 @@ pub fn replay_run(
     coverage: &mut Option<HitMaps>,
     deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     inputs: &[BasicTxDetails],
+    show_solidity: bool,
 ) -> Result<Vec<BaseCounterExample>> {
     // We want traces for a failed case.
     if executor.inspector().tracer.is_none() {
@@ -64,6 +64,7 @@ pub fn replay_run(
             &tx.call_details.calldata,
             &ided_contracts,
             call_result.traces,
+            show_solidity,
         ));
     }
 
@@ -98,7 +99,7 @@ pub fn replay_run(
 }
 
 /// Replays the error case, shrinks the failing sequence and collects all necessary traces.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn replay_error(
     failed_case: &FailedInvariantCaseData,
     invariant_contract: &InvariantContract<'_>,
@@ -110,6 +111,7 @@ pub fn replay_error(
     coverage: &mut Option<HitMaps>,
     deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     progress: Option<&ProgressBar>,
+    show_solidity: bool,
 ) -> Result<Vec<BaseCounterExample>> {
     match failed_case.test_error {
         // Don't use at the moment.
@@ -137,6 +139,7 @@ pub fn replay_error(
                 coverage,
                 deprecated_cheatcodes,
                 &calls,
+                show_solidity,
             )
         }
     }

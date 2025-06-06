@@ -21,12 +21,12 @@ use foundry_evm::{
     fork::CreateFork,
     inspectors::CheatsConfig,
     opts::EvmOpts,
-    revm,
     traces::{InternalTraceMode, TraceMode},
+    Env,
 };
 use foundry_linking::{LinkOutput, Linker};
 use rayon::prelude::*;
-use revm::primitives::SpecId;
+use revm::primitives::hardfork::SpecId;
 use std::{
     borrow::Borrow,
     collections::BTreeMap,
@@ -136,8 +136,11 @@ impl MultiContractRunner {
     /// The same as [`test`](Self::test), but returns the results instead of streaming them.
     ///
     /// Note that this method returns only when all tests have been executed.
-    pub fn test_collect(&mut self, filter: &dyn TestFilter) -> BTreeMap<String, SuiteResult> {
-        self.test_iter(filter).collect()
+    pub fn test_collect(
+        &mut self,
+        filter: &dyn TestFilter,
+    ) -> Result<BTreeMap<String, SuiteResult>> {
+        Ok(self.test_iter(filter)?.collect())
     }
 
     /// Executes _all_ tests that match the given `filter`.
@@ -148,10 +151,10 @@ impl MultiContractRunner {
     pub fn test_iter(
         &mut self,
         filter: &dyn TestFilter,
-    ) -> impl Iterator<Item = (String, SuiteResult)> {
+    ) -> Result<impl Iterator<Item = (String, SuiteResult)>> {
         let (tx, rx) = mpsc::channel();
-        self.test(filter, tx, false);
-        rx.into_iter()
+        self.test(filter, tx, false)?;
+        Ok(rx.into_iter())
     }
 
     /// Executes _all_ tests that match the given `filter`.
@@ -165,12 +168,12 @@ impl MultiContractRunner {
         filter: &dyn TestFilter,
         tx: mpsc::Sender<(String, SuiteResult)>,
         show_progress: bool,
-    ) {
+    ) -> Result<()> {
         let tokio_handle = tokio::runtime::Handle::current();
         trace!("running all tests");
 
         // The DB backend that serves all the data.
-        let db = Backend::spawn(self.fork.take());
+        let db = Backend::spawn(self.fork.take())?;
 
         let find_timer = Instant::now();
         let contracts = self.matching_contracts(filter).collect::<Vec<_>>();
@@ -221,6 +224,8 @@ impl MultiContractRunner {
                 let _ = tx.send((id.identifier(), result));
             })
         }
+
+        Ok(())
     }
 
     fn run_test_suite(
@@ -244,10 +249,11 @@ impl MultiContractRunner {
 
         debug!("start executing all tests in contract");
 
+        let executor = self.tcfg.executor(self.known_contracts.clone(), artifact_id, db.clone());
         let runner = ContractRunner::new(
             &identifier,
             contract,
-            self.tcfg.executor(self.known_contracts.clone(), artifact_id, db.clone()),
+            executor,
             progress,
             tokio_handle,
             span,
@@ -274,7 +280,7 @@ pub struct TestRunnerConfig {
     /// EVM configuration.
     pub evm_opts: EvmOpts,
     /// EVM environment.
-    pub env: revm::primitives::Env,
+    pub env: Env,
     /// EVM version.
     pub spec_id: SpecId,
     /// The address which will be used to deploy the initial contracts and send all transactions.
@@ -294,18 +300,21 @@ pub struct TestRunnerConfig {
 
 impl TestRunnerConfig {
     /// Reconfigures all fields using the given `config`.
+    /// This is for example used to override the configuration with inline config.
     pub fn reconfigure_with(&mut self, config: Arc<Config>) {
         debug_assert!(!Arc::ptr_eq(&self.config, &config));
 
-        // TODO: self.evm_opts
-        // TODO: self.env
         self.spec_id = config.evm_spec_id();
         self.sender = config.sender;
+        self.odyssey = config.odyssey;
+        self.isolation = config.isolate;
+
+        // Specific to Forge, not present in config.
+        // TODO: self.evm_opts
+        // TODO: self.env
         // self.coverage = N/A;
         // self.debug = N/A;
         // self.decode_internal = N/A;
-        // self.isolation = N/A;
-        self.odyssey = config.odyssey;
 
         self.config = config;
     }
@@ -343,8 +352,7 @@ impl TestRunnerConfig {
             &self.config,
             self.evm_opts.clone(),
             Some(known_contracts),
-            Some(artifact_id.name.clone()),
-            Some(artifact_id.version.clone()),
+            Some(artifact_id.clone()),
         ));
         ExecutorBuilder::new()
             .inspectors(|stack| {
@@ -465,7 +473,7 @@ impl MultiContractRunnerBuilder {
         self,
         root: &Path,
         output: &ProjectCompileOutput,
-        env: revm::primitives::Env,
+        env: Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner> {
         let contracts = output

@@ -8,7 +8,7 @@ use foundry_config::UnresolvedEnvVarError;
 use foundry_evm_core::backend::{BackendError, DatabaseError};
 use foundry_wallets::error::WalletSignerError;
 use k256::ecdsa::signature::Error as SignatureError;
-use revm::primitives::EVMError;
+use revm::context_interface::result::EVMError;
 use std::{borrow::Cow, fmt};
 
 /// Cheatcode result type.
@@ -283,6 +283,8 @@ impl_from!(
     alloy_sol_types::Error,
     alloy_dyn_abi::Error,
     alloy_primitives::SignatureError,
+    alloy_consensus::crypto::RecoveryError,
+    eyre::Report,
     FsPathError,
     hex::FromHexError,
     BackendError,
@@ -303,12 +305,6 @@ impl_from!(
 impl<T: Into<BackendError>> From<EVMError<T>> for Error {
     fn from(err: EVMError<T>) -> Self {
         Self::display(BackendError::from(err))
-    }
-}
-
-impl From<eyre::Report> for Error {
-    fn from(err: eyre::Report) -> Self {
-        Self::from(foundry_common::errors::display_chain(&err))
     }
 }
 

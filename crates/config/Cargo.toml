@@ -19,17 +19,19 @@ foundry-compilers = { workspace = true, features = ["svm-solc"] }
 
 alloy-chains = { workspace = true, features = ["serde"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
-revm-primitives.workspace = true
+
+revm.workspace = true
 
 solar-parse.workspace = true
+solar-interface.workspace = true
 
-dirs-next = "2"
+dirs.workspace = true
 dunce.workspace = true
 eyre.workspace = true
 figment = { workspace = true, features = ["toml", "env"] }
 glob = "0.3"
 globset = "0.4"
-Inflector = "0.11"
+heck.workspace = true
 itertools.workspace = true
 mesc.workspace = true
 number_prefix = "0.4"
@@ -37,14 +39,15 @@ regex.workspace = true
 reqwest.workspace = true
 semver = { workspace = true, features = ["serde"] }
 serde_json.workspace = true
-serde_regex = "1"
 serde.workspace = true
+soldeer-core.workspace = true
 thiserror.workspace = true
 toml = { workspace = true, features = ["preserve_order"] }
 toml_edit = "0.22"
 tracing.workspace = true
 walkdir.workspace = true
 yansi.workspace = true
+clap = { version = "4", features = ["derive"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 path-slash = "0.2"
@@ -55,6 +58,4 @@ figment = { workspace = true, features = ["test"] }
 tempfile.workspace = true
 
 [features]
-default = ["rustls"]
-rustls = ["reqwest/rustls-tls-native-roots"]
 isolate-by-default = []

@@ -45,7 +45,7 @@ impl TermSettings {
     }
 }
 
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub struct Spinner {
     indicator: &'static [&'static str],
     no_progress: bool,
@@ -53,8 +53,7 @@ pub struct Spinner {
     idx: usize,
 }
 
-#[allow(unused)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 impl Spinner {
     pub fn new(msg: impl Into<String>) -> Self {
         Self::with_indicator(SPINNERS[0], msg)
@@ -165,7 +164,11 @@ impl Reporter for SpinnerReporter {
                 dirty_files
                     .iter()
                     .map(|path| {
-                        let trimmed_path = path.strip_prefix(&project_root).unwrap_or(path);
+                        let trimmed_path = if let Ok(project_root) = &project_root {
+                            path.strip_prefix(project_root).unwrap_or(path)
+                        } else {
+                            path
+                        };
                         format!("- {}", trimmed_path.display())
                     })
                     .sorted()

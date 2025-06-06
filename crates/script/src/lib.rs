@@ -26,6 +26,7 @@ use dialoguer::Confirm;
 use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
+use foundry_block_explorers::EtherscanApiVersion;
 use foundry_cli::{
     opts::{BuildOpts, GlobalArgs},
     utils::LoadConfig,
@@ -178,9 +179,17 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub non_interactive: bool,
 
+    /// Disables the contract size limit during script execution.
+    #[arg(long)]
+    pub disable_code_size_limit: bool,
+
     /// The Etherscan (or equivalent) API key
     #[arg(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     pub etherscan_api_key: Option<String>,
+
+    /// The Etherscan API version.
+    #[arg(long, env = "ETHERSCAN_API_VERSION", value_name = "VERSION")]
+    pub etherscan_api_version: Option<EtherscanApiVersion>,
 
     /// Verifies all the contracts found in the receipts of a script, if any.
     #[arg(long)]
@@ -222,7 +231,7 @@ impl ScriptArgs {
     pub async fn preprocess(self) -> Result<PreprocessedState> {
         let script_wallets = Wallets::new(self.wallets.get_multi_wallet().await?, self.evm.sender);
 
-        let (config, mut evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
+        let (config, mut evm_opts) = self.load_config_and_evm_opts()?;
 
         if let Some(sender) = self.maybe_load_private_key()? {
             evm_opts.sender = sender;
@@ -260,13 +269,13 @@ impl ScriptArgs {
 
             if pre_simulation.args.debug {
                 return match pre_simulation.args.dump.clone() {
-                    Some(ref path) => pre_simulation.run_debug_file_dumper(path),
+                    Some(path) => pre_simulation.dump_debugger(&path),
                     None => pre_simulation.run_debugger(),
                 };
             }
 
             if shell::is_json() {
-                pre_simulation.show_json()?;
+                pre_simulation.show_json().await?;
             } else {
                 pre_simulation.show_traces().await?;
             }
@@ -279,6 +288,10 @@ impl ScriptArgs {
                 .as_ref()
                 .is_none_or(|txs| txs.is_empty())
             {
+                if pre_simulation.args.broadcast {
+                    sh_warn!("No transactions to broadcast.")?;
+                }
+
                 return Ok(());
             }
 
@@ -303,6 +316,11 @@ impl ScriptArgs {
         // Exit early in case user didn't provide any broadcast/verify related flags.
         if !bundled.args.should_broadcast() {
             if !shell::is_json() {
+                if shell::verbosity() >= 4 {
+                    sh_println!("\n=== Transactions that will be broadcast ===\n")?;
+                    bundled.sequence.show_transactions()?;
+                }
+
                 sh_println!("\nSIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet configuration(s) to the previous command. See forge script --help for more.")?;
             }
             return Ok(());
@@ -387,6 +405,11 @@ impl ScriptArgs {
         known_contracts: &ContractsByArtifact,
         create2_deployer: Address,
     ) -> Result<()> {
+        // If disable-code-size-limit flag is enabled then skip the size check
+        if self.disable_code_size_limit {
+            return Ok(())
+        }
+
         // (name, &init, &deployed)[]
         let mut bytecodes: Vec<(String, &[u8], &[u8])> = vec![];
 
@@ -487,6 +510,9 @@ impl Provider for ScriptArgs {
                 figment::value::Value::from(etherscan_api_key.to_string()),
             );
         }
+        if let Some(api_version) = &self.etherscan_api_version {
+            dict.insert("etherscan_api_version".to_string(), api_version.to_string().into());
+        }
         if let Some(timeout) = self.timeout {
             dict.insert("transaction_timeout".to_string(), timeout.into());
         }
@@ -494,7 +520,7 @@ impl Provider for ScriptArgs {
     }
 }
 
-#[derive(Default, Serialize)]
+#[derive(Default, Serialize, Clone)]
 pub struct ScriptResult {
     pub success: bool,
     #[serde(rename = "raw_logs")]
@@ -597,7 +623,7 @@ impl ScriptConfig {
                 Some(db) => db.clone(),
                 None => {
                     let fork = self.evm_opts.get_fork(&self.config, env.clone());
-                    let backend = Backend::spawn(fork);
+                    let backend = Backend::spawn(fork)?;
                     self.backends.insert(fork_url.clone(), backend.clone());
                     backend
                 }
@@ -606,7 +632,7 @@ impl ScriptConfig {
             // It's only really `None`, when we don't pass any `--fork-url`. And if so, there is
             // no need to cache it, since there won't be any onchain simulation that we'd need
             // to cache the backend for.
-            Backend::spawn(None)
+            Backend::spawn(None)?
         };
 
         // We need to enable tracing to decode contract names: local or external.
@@ -629,8 +655,7 @@ impl ScriptConfig {
                             &self.config,
                             self.evm_opts.clone(),
                             Some(known_contracts),
-                            Some(target.name),
-                            Some(target.version),
+                            Some(target),
                         )
                         .into(),
                     )
@@ -689,8 +714,20 @@ mod tests {
             "--etherscan-api-key",
             "goerli",
         ]);
-        let config = args.load_config();
+        let config = args.load_config().unwrap();
         assert_eq!(config.etherscan_api_key, Some("goerli".to_string()));
+    }
+
+    #[test]
+    fn can_disable_code_size_limit() {
+        let args =
+            ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--disable-code-size-limit"]);
+        assert!(args.disable_code_size_limit);
+
+        let result = ScriptResult::default();
+        let contracts = ContractsByArtifact::default();
+        let create = Address::ZERO;
+        assert!(args.check_contract_sizes(&result, &contracts, create).is_ok());
     }
 
     #[test]
@@ -754,7 +791,7 @@ mod tests {
             root.as_os_str().to_str().unwrap(),
         ]);
 
-        let config = args.load_config();
+        let config = args.load_config().unwrap();
         let mumbai = config.get_etherscan_api_key(Some(NamedChain::PolygonMumbai.into()));
         assert_eq!(mumbai, Some("https://etherscan-mumbai.com/".to_string()));
     }

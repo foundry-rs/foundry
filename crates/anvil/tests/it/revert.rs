@@ -18,7 +18,7 @@ async fn test_deploy_reverting() {
     let tx = WithOtherFields::new(tx);
 
     // Calling/estimating gas fails early.
-    let err = provider.call(&tx).await.unwrap_err();
+    let err = provider.call(tx.clone()).await.unwrap_err();
     let s = err.to_string();
     assert!(s.contains("execution reverted"), "{s:?}");
 

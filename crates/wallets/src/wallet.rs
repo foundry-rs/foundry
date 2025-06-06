@@ -128,12 +128,14 @@ impl WalletOpts {
             eyre::bail!(
                 "\
 Error accessing local wallet. Did you set a private key, mnemonic or keystore?
-Run `cast send --help` or `forge create --help` and use the corresponding CLI
+Run the command with --help flag for more information or use the corresponding CLI
 flag to set your key via:
 --private-key, --mnemonic-path, --aws, --gcp, --interactive, --trezor or --ledger.
-Alternatively, if you're using a local node with unlocked accounts,
-use the --unlocked flag and either set the `ETH_FROM` environment variable to the address
-of the unlocked account you want to use, or provide the --from flag with the address directly."
+Alternatively, when using the `cast send` or `cast mktx` commands with a local node
+or RPC that has unlocked accounts, the --unlocked or --ethsign flags can be used,
+respectively. The sender address can be specified by setting the `ETH_FROM` environment
+variable to the desired unlocked account address, or by providing the address directly
+using the --from flag."
             )
         };
 
@@ -148,12 +150,10 @@ impl From<RawWalletOpts> for WalletOpts {
 }
 
 #[cfg(test)]
-#[allow(clippy::needless_return)]
 mod tests {
+    use super::*;
     use alloy_signer::Signer;
     use std::{path::Path, str::FromStr};
-
-    use super::*;
 
     #[tokio::test]
     async fn find_keystore() {

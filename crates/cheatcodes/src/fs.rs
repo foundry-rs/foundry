@@ -12,7 +12,7 @@ use dialoguer::{Input, Password};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
-use revm::interpreter::CreateInputs;
+use revm::{context::CreateScheme, interpreter::CreateInputs};
 use revm_inspectors::tracing::types::CallKind;
 use semver::Version;
 use std::{
@@ -97,7 +97,7 @@ impl Cheatcode for closeFileCall {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
-        state.context.opened_read_files.remove(&path);
+        state.test_context.opened_read_files.remove(&path);
 
         Ok(Default::default())
     }
@@ -167,7 +167,7 @@ impl Cheatcode for readLineCall {
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
         // Get reader for previously opened file to continue reading OR initialize new reader
-        let reader = match state.context.opened_read_files.entry(path.clone()) {
+        let reader = match state.test_context.opened_read_files.entry(path.clone()) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => entry.insert(BufReader::new(fs::open(path)?)),
         };
@@ -212,7 +212,7 @@ impl Cheatcode for removeFileCall {
         state.config.ensure_not_foundry_toml(&path)?;
 
         // also remove from the set if opened previously
-        state.context.opened_read_files.remove(&path);
+        state.test_context.opened_read_files.remove(&path);
 
         if state.fs_commit {
             fs::remove_file(&path)?;
@@ -297,46 +297,95 @@ impl Cheatcode for getDeployedCodeCall {
 impl Cheatcode for deployCode_0Call {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
         let Self { artifactPath: path } = self;
-        let bytecode = get_artifact_code(ccx.state, path, false)?;
-        let address = executor
-            .exec_create(
-                CreateInputs {
-                    caller: ccx.caller,
-                    scheme: revm::primitives::CreateScheme::Create,
-                    value: U256::ZERO,
-                    init_code: bytecode,
-                    gas_limit: ccx.gas_limit,
-                },
-                ccx,
-            )?
-            .address
-            .ok_or_else(|| fmt_err!("contract creation failed"))?;
-
-        Ok(address.abi_encode())
+        deploy_code(ccx, executor, path, None, None, None)
     }
 }
 
 impl Cheatcode for deployCode_1Call {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
-        let Self { artifactPath: path, constructorArgs } = self;
-        let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
-        bytecode.extend_from_slice(constructorArgs);
-        let address = executor
-            .exec_create(
-                CreateInputs {
-                    caller: ccx.caller,
-                    scheme: revm::primitives::CreateScheme::Create,
-                    value: U256::ZERO,
-                    init_code: bytecode.into(),
-                    gas_limit: ccx.gas_limit,
-                },
-                ccx,
-            )?
-            .address
-            .ok_or_else(|| fmt_err!("contract creation failed"))?;
-
-        Ok(address.abi_encode())
+        let Self { artifactPath: path, constructorArgs: args } = self;
+        deploy_code(ccx, executor, path, Some(args), None, None)
     }
+}
+
+impl Cheatcode for deployCode_2Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, value } = self;
+        deploy_code(ccx, executor, path, None, Some(*value), None)
+    }
+}
+
+impl Cheatcode for deployCode_3Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, constructorArgs: args, value } = self;
+        deploy_code(ccx, executor, path, Some(args), Some(*value), None)
+    }
+}
+
+impl Cheatcode for deployCode_4Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, salt } = self;
+        deploy_code(ccx, executor, path, None, None, Some((*salt).into()))
+    }
+}
+
+impl Cheatcode for deployCode_5Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, constructorArgs: args, salt } = self;
+        deploy_code(ccx, executor, path, Some(args), None, Some((*salt).into()))
+    }
+}
+
+impl Cheatcode for deployCode_6Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, value, salt } = self;
+        deploy_code(ccx, executor, path, None, Some(*value), Some((*salt).into()))
+    }
+}
+
+impl Cheatcode for deployCode_7Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, constructorArgs: args, value, salt } = self;
+        deploy_code(ccx, executor, path, Some(args), Some(*value), Some((*salt).into()))
+    }
+}
+
+/// Helper function to deploy contract from artifact code.
+/// Uses CREATE2 scheme if salt specified.
+fn deploy_code(
+    ccx: &mut CheatsCtxt,
+    executor: &mut dyn CheatcodesExecutor,
+    path: &str,
+    constructor_args: Option<&Bytes>,
+    value: Option<U256>,
+    salt: Option<U256>,
+) -> Result {
+    let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
+    if let Some(args) = constructor_args {
+        bytecode.extend_from_slice(args);
+    }
+
+    let scheme =
+        if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create };
+
+    let outcome = executor.exec_create(
+        CreateInputs {
+            caller: ccx.caller,
+            scheme,
+            value: value.unwrap_or(U256::ZERO),
+            init_code: bytecode.into(),
+            gas_limit: ccx.gas_limit,
+        },
+        ccx,
+    )?;
+
+    if !outcome.result.result.is_ok() {
+        return Err(crate::Error::from(outcome.result.output))
+    }
+
+    let address = outcome.address.ok_or_else(|| fmt_err!("contract creation failed"))?;
+
+    Ok(address.abi_encode())
 }
 
 /// Returns the path to the json artifact depending on the input
@@ -413,19 +462,31 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
 
             let artifact = match &filtered[..] {
                 [] => Err(fmt_err!("no matching artifact found")),
-                [artifact] => Ok(artifact),
+                [artifact] => Ok(*artifact),
                 filtered => {
+                    let mut filtered = filtered.to_vec();
                     // If we know the current script/test contract solc version, try to filter by it
                     state
                         .config
-                        .running_version
+                        .running_artifact
                         .as_ref()
-                        .and_then(|version| {
-                            let filtered = filtered
-                                .iter()
-                                .filter(|(id, _)| id.version == *version)
-                                .collect::<Vec<_>>();
-                            (filtered.len() == 1).then(|| filtered[0])
+                        .and_then(|running| {
+                            // Firstly filter by version
+                            filtered.retain(|(id, _)| id.version == running.version);
+
+                            // Return artifact if only one matched
+                            if filtered.len() == 1 {
+                                return Some(filtered[0])
+                            }
+
+                            // Try filtering by profile as well
+                            filtered.retain(|(id, _)| id.profile == running.profile);
+
+                            if filtered.len() == 1 {
+                                Some(filtered[0])
+                            } else {
+                                None
+                            }
                         })
                         .ok_or_else(|| fmt_err!("multiple matching artifacts found"))
                 }
@@ -689,7 +750,7 @@ impl Cheatcode for getBroadcasts_1Call {
 impl Cheatcode for getDeployment_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { contractName } = self;
-        let chain_id = ccx.ecx.env.cfg.chain_id;
+        let chain_id = ccx.ecx.cfg.chain_id;
 
         let latest_broadcast = latest_broadcast(
             contractName,

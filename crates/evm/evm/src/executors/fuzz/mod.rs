@@ -77,14 +77,12 @@ impl FuzzedExecutor {
     /// test case.
     ///
     /// Returns a list of all the consumed gas and calldata of every fuzz case
-    #[allow(clippy::too_many_arguments)]
     pub fn fuzz(
         &self,
         func: &Function,
         fuzz_fixtures: &FuzzFixtures,
         deployed_libs: &[Address],
         address: Address,
-        should_fail: bool,
         rd: &RevertDecoder,
         progress: Option<&ProgressBar>,
     ) -> FuzzTestResult {
@@ -109,7 +107,7 @@ impl FuzzedExecutor {
                 return Err(TestCaseError::fail(TEST_TIMEOUT));
             }
 
-            let fuzz_res = self.single_fuzz(address, should_fail, calldata)?;
+            let fuzz_res = self.single_fuzz(address, calldata)?;
 
             // If running with progress then increment current run.
             if let Some(progress) = progress {
@@ -209,7 +207,7 @@ impl FuzzedExecutor {
                 } else {
                     result.reason = (!reason.is_empty()).then_some(reason);
                     let args = if let Some(data) = calldata.get(4..) {
-                        func.abi_decode_input(data, false).unwrap_or_default()
+                        func.abi_decode_input(data).unwrap_or_default()
                     } else {
                         vec![]
                     };
@@ -238,7 +236,6 @@ impl FuzzedExecutor {
     pub fn single_fuzz(
         &self,
         address: Address,
-        should_fail: bool,
         calldata: alloy_primitives::Bytes,
     ) -> Result<FuzzOutcome, TestCaseError> {
         let mut call = self
@@ -256,7 +253,7 @@ impl FuzzedExecutor {
                 (cheats.breakpoints.clone(), cheats.deprecated.clone())
             });
 
-        let success = self.executor.is_raw_call_mut_success(address, &mut call, should_fail);
+        let success = self.executor.is_raw_call_mut_success(address, &mut call, false);
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {
                 case: FuzzCase { calldata, gas: call.gas_used, stipend: call.stipend },

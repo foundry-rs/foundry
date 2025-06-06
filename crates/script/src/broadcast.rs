@@ -14,7 +14,6 @@ use alloy_primitives::{
 use alloy_provider::{utils::Eip1559Estimation, Provider};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
-use alloy_transport::Transport;
 use eyre::{bail, Context, Result};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cheatcodes::Wallets;
@@ -28,21 +27,17 @@ use futures::{future::join_all, StreamExt};
 use itertools::Itertools;
 use std::{cmp::Ordering, sync::Arc};
 
-pub async fn estimate_gas<P, T>(
+pub async fn estimate_gas<P: Provider<AnyNetwork>>(
     tx: &mut WithOtherFields<TransactionRequest>,
     provider: &P,
     estimate_multiplier: u64,
-) -> Result<()>
-where
-    P: Provider<T, AnyNetwork>,
-    T: Transport + Clone,
-{
+) -> Result<()> {
     // if already set, some RPC endpoints might simply return the gas value that is already
     // set in the request and omit the estimate altogether, so we remove it here
     tx.gas = None;
 
     tx.set_gas_limit(
-        provider.estimate_gas(tx).await.wrap_err("Failed to estimate gas for tx")? *
+        provider.estimate_gas(tx.clone()).await.wrap_err("Failed to estimate gas for tx")? *
             estimate_multiplier /
             100,
     );
@@ -289,7 +284,7 @@ impl BundledState {
                         }),
                     ),
                     (false, _, _) => {
-                        let mut fees = provider.estimate_eip1559_fees(None).await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+                        let mut fees = provider.estimate_eip1559_fees().await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
 
                         if let Some(gas_price) = self.args.with_gas_price {
                             fees.max_fee_per_gas = gas_price.to();

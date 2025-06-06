@@ -199,7 +199,6 @@ impl TUIContext<'_> {
             CallKind::CallCode => "Contract callcode",
             CallKind::DelegateCall => "Contract delegatecall",
             CallKind::AuthCall => "Contract authcall",
-            CallKind::EOFCreate => "EOF contract creation",
         };
         let title = format!(
             "{} {} ",
@@ -351,7 +350,7 @@ impl TUIContext<'_> {
             .contracts_sources
             .find_source_mapping(
                 contract_name,
-                self.current_step().pc,
+                self.current_step().pc as u32,
                 self.debug_call().kind.is_any_create(),
             )
             .ok_or_else(|| format!("No source map for contract {contract_name}"))

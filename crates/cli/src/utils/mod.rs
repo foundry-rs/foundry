@@ -1,7 +1,6 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::U256;
 use alloy_provider::{network::AnyNetwork, Provider};
-use alloy_transport::Transport;
 use eyre::{ContextCompat, Result};
 use foundry_common::{
     provider::{ProviderBuilder, RetryProvider},
@@ -26,6 +25,9 @@ pub use suggestions::*;
 
 mod abi;
 pub use abi::*;
+
+mod allocator;
+pub use allocator::*;
 
 // reexport all `foundry_config::utils`
 #[doc(hidden)]
@@ -101,8 +103,7 @@ pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
         builder = builder.chain(chain);
     }
 
-    let jwt = config.get_rpc_jwt_secret()?;
-    if let Some(jwt) = jwt {
+    if let Some(jwt) = config.get_rpc_jwt_secret()? {
         builder = builder.jwt(jwt.as_ref());
     }
 
@@ -117,10 +118,9 @@ pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
     Ok(builder)
 }
 
-pub async fn get_chain<P, T>(chain: Option<Chain>, provider: P) -> Result<Chain>
+pub async fn get_chain<P>(chain: Option<Chain>, provider: P) -> Result<Chain>
 where
-    P: Provider<T, AnyNetwork>,
-    T: Transport + Clone,
+    P: Provider<AnyNetwork>,
 {
     match chain {
         Some(chain) => Ok(chain),
@@ -193,7 +193,7 @@ pub fn load_dotenv() {
     // we only want the .env file of the cwd and project root
     // `find_project_root` calls `current_dir` internally so both paths are either both `Ok` or
     // both `Err`
-    if let (Ok(cwd), Ok(prj_root)) = (std::env::current_dir(), try_find_project_root(None)) {
+    if let (Ok(cwd), Ok(prj_root)) = (std::env::current_dir(), find_project_root(None)) {
         load(&prj_root);
         if cwd != prj_root {
             // prj root and cwd can be identical
@@ -206,6 +206,23 @@ pub fn load_dotenv() {
 pub fn enable_paint() {
     let enable = yansi::Condition::os_support() && yansi::Condition::tty_and_color_live();
     yansi::whenever(yansi::Condition::cached(enable));
+}
+
+/// This force installs the default crypto provider.
+///
+/// This is necessary in case there are more than one available backends enabled in rustls (ring,
+/// aws-lc-rs).
+///
+/// This should be called high in the main fn.
+///
+/// See also:
+///   <https://github.com/snapview/tokio-tungstenite/issues/353#issuecomment-2455100010>
+///   <https://github.com/awslabs/aws-sdk-rust/discussions/1257>
+pub fn install_crypto_provider() {
+    // https://github.com/snapview/tokio-tungstenite/issues/353
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install default rustls crypto provider");
 }
 
 /// Useful extensions to [`std::process::Command`].
@@ -379,7 +396,7 @@ impl<'a> Git<'a> {
         self.cmd().arg("init").exec().map(drop)
     }
 
-    #[allow(clippy::should_implement_trait)] // this is not std::ops::Add clippy
+    #[expect(clippy::should_implement_trait)] // this is not std::ops::Add clippy
     pub fn add<I, S>(self, paths: I) -> Result<()>
     where
         I: IntoIterator<Item = S>,
@@ -463,7 +480,7 @@ and it requires clean working and staging areas, including no untracked files.
 
 Check the current git repository's status with `git status`.
 Then, you can track files with `git add ...` and then commit them with `git commit`,
-ignore them in the `.gitignore` file, or run this command again with the `--no-commit` flag."
+ignore them in the `.gitignore` file."
             ))
         }
     }
@@ -559,6 +576,10 @@ ignore them in the `.gitignore` file, or run this command again with the `--no-c
 
     pub fn submodule_init(self) -> Result<()> {
         self.cmd().stderr(self.stderr()).args(["submodule", "init"]).exec().map(drop)
+    }
+
+    pub fn submodule_sync(self) -> Result<()> {
+        self.cmd().stderr(self.stderr()).args(["submodule", "sync"]).exec().map(drop)
     }
 
     pub fn cmd(self) -> Command {

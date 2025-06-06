@@ -1,11 +1,12 @@
 use crate::{CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{hex, I256, U256};
 use foundry_evm_core::{
-    abi::{format_units_int, format_units_uint},
+    abi::console::{format_units_int, format_units_uint},
     backend::GLOBAL_FAIL_SLOT,
     constants::CHEATCODE_ADDRESS,
 };
 use itertools::Itertools;
+use revm::context::JournalTr;
 use std::fmt::{Debug, Display};
 
 const EQ_REL_DELTA_RESOLUTION: U256 = U256::from_limbs([18, 0, 0, 0]);
@@ -180,17 +181,21 @@ fn handle_assertion_result<ERR>(
     match result {
         Ok(_) => Ok(Default::default()),
         Err(err) => {
-            let error_msg = error_msg.unwrap_or("assertion failed").to_string();
+            let error_msg = error_msg.unwrap_or("assertion failed");
             let msg = if format_error {
                 format!("{error_msg}: {}", error_formatter(&err))
             } else {
-                error_msg
+                error_msg.to_string()
             };
             if ccx.state.config.assertions_revert {
                 Err(msg.into())
             } else {
-                executor.console_log(ccx, msg);
-                ccx.ecx.sstore(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, U256::from(1))?;
+                executor.console_log(ccx, &msg);
+                ccx.ecx.journaled_state.sstore(
+                    CHEATCODE_ADDRESS,
+                    GLOBAL_FAIL_SLOT,
+                    U256::from(1),
+                )?;
                 Ok(Default::default())
             }
         }

@@ -83,19 +83,19 @@ config = [
     ),
     Case(
         name="integration",
-        filter="kind(test) & !test(/issue|forge_std|ext_integration/)",
+        filter="kind(test) & !test(/\\b(issue|ext_integration)/)",
         n_partitions=3,
         pr_cross_platform=True,
     ),
     Case(
         name="integration / issue-repros",
-        filter="package(=forge) & test(~issue)",
+        filter="package(=forge) & test(/\\bissue/)",
         n_partitions=2,
         pr_cross_platform=False,
     ),
     Case(
         name="integration / external",
-        filter="package(=forge) & test(~ext_integration)",
+        filter="package(=forge) & test(/\\bext_integration/)",
         n_partitions=2,
         pr_cross_platform=False,
     ),

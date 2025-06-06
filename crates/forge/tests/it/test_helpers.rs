@@ -2,7 +2,8 @@
 
 use alloy_chains::NamedChain;
 use alloy_primitives::U256;
-use forge::{revm::primitives::SpecId, MultiContractRunner, MultiContractRunnerBuilder};
+use forge::{MultiContractRunner, MultiContractRunnerBuilder};
+use foundry_cli::utils::install_crypto_provider;
 use foundry_compilers::{
     artifacts::{EvmVersion, Libraries, Settings},
     compilers::multi::MultiCompiler,
@@ -14,7 +15,11 @@ use foundry_config::{
     InvariantConfig, RpcEndpointUrl, RpcEndpoints,
 };
 use foundry_evm::{constants::CALLER, opts::EvmOpts};
-use foundry_test_utils::{fd_lock, init_tracing, rpc::next_rpc_endpoint};
+use foundry_test_utils::{
+    fd_lock, init_tracing,
+    rpc::{next_http_archive_rpc_url, next_rpc_endpoint},
+};
+use revm::primitives::hardfork::SpecId;
 use std::{
     env, fmt,
     io::Write,
@@ -120,7 +125,7 @@ impl ForgeTestProfile {
                 max_fuzz_dictionary_values: 10_000,
             },
             gas_report_samples: 256,
-            failure_persist_dir: Some(tempfile::tempdir().unwrap().into_path()),
+            failure_persist_dir: Some(tempfile::tempdir().unwrap().keep()),
             failure_persist_file: Some("testfailure".to_string()),
             show_logs: false,
             timeout: None,
@@ -145,10 +150,11 @@ impl ForgeTestProfile {
                     .prefix(&format!("foundry-{self}"))
                     .tempdir()
                     .unwrap()
-                    .into_path(),
+                    .keep(),
             ),
             show_metrics: false,
             timeout: None,
+            show_solidity: false,
         };
 
         config.sanitized()
@@ -168,6 +174,7 @@ impl ForgeTestData {
     ///
     /// Uses [get_compiled] to lazily compile the project.
     pub fn new(profile: ForgeTestProfile) -> Self {
+        install_crypto_provider();
         init_tracing();
         let config = Arc::new(profile.config());
         let mut project = config.project().unwrap();
@@ -325,7 +332,7 @@ pub static TEST_DATA_DEFAULT: LazyLock<ForgeTestData> =
 pub static TEST_DATA_PARIS: LazyLock<ForgeTestData> =
     LazyLock::new(|| ForgeTestData::new(ForgeTestProfile::Paris));
 
-/// Data for tests requiring Cancun support on Solc and EVM level.
+/// Data for tests requiring Prague support on Solc and EVM level.
 pub static TEST_DATA_MULTI_VERSION: LazyLock<ForgeTestData> =
     LazyLock::new(|| ForgeTestData::new(ForgeTestProfile::MultiVersion));
 
@@ -342,12 +349,13 @@ pub fn manifest_root() -> &'static Path {
 /// the RPC endpoints used during tests
 pub fn rpc_endpoints() -> RpcEndpoints {
     RpcEndpoints::new([
-        ("mainnet", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Mainnet))),
-        ("mainnet2", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Mainnet))),
+        ("mainnet", RpcEndpointUrl::Url(next_http_archive_rpc_url())),
+        ("mainnet2", RpcEndpointUrl::Url(next_http_archive_rpc_url())),
         ("sepolia", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Sepolia))),
         ("optimism", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Optimism))),
         ("arbitrum", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Arbitrum))),
         ("polygon", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Polygon))),
+        ("bsc", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::BinanceSmartChain))),
         ("avaxTestnet", RpcEndpointUrl::Url("https://api.avax-test.network/ext/bc/C/rpc".into())),
         ("moonbeam", RpcEndpointUrl::Url("https://moonbeam-rpc.publicnode.com".into())),
         ("rpcEnvAlias", RpcEndpointUrl::Env("${RPC_ENV_ALIAS}".into())),

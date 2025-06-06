@@ -20,17 +20,9 @@ workspace = true
 name = "chisel"
 path = "bin/main.rs"
 
-[build-dependencies]
-vergen = { workspace = true, default-features = false, features = [
-    "build",
-    "git",
-    "gitcl",
-] }
-
 [dependencies]
 # forge
 forge-fmt.workspace = true
-foundry-block-explorers.workspace = true
 foundry-cli.workspace = true
 foundry-common.workspace = true
 foundry-compilers = { workspace = true, features = ["project-util", "full"] }
@@ -45,10 +37,9 @@ alloy-primitives = { workspace = true, features = [
     "rlp",
 ] }
 alloy-json-abi.workspace = true
-alloy-rpc-types.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
-dirs = "5"
+dirs.workspace = true
 eyre.workspace = true
 regex.workspace = true
 reqwest.workspace = true
@@ -64,17 +55,14 @@ time = { version = "0.3", features = ["formatting"] }
 tokio = { workspace = true, features = ["full"] }
 yansi.workspace = true
 tracing.workspace = true
-
-[target.'cfg(unix)'.dependencies]
-tikv-jemallocator = { workspace = true, optional = true }
+walkdir.workspace = true
 
 [dev-dependencies]
-serial_test = "3"
 tracing-subscriber.workspace = true
 
 [features]
-default = ["rustls", "jemalloc"]
-rustls = ["reqwest/rustls-tls", "reqwest/rustls-tls-native-roots"]
-openssl = ["foundry-compilers/openssl", "reqwest/default-tls"]
+default = ["jemalloc"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
-jemalloc = ["dep:tikv-jemallocator"]
+jemalloc = ["foundry-cli/jemalloc"]
+mimalloc = ["foundry-cli/mimalloc"]
+tracy-allocator = ["foundry-cli/tracy-allocator"]

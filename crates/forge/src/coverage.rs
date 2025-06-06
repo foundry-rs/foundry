@@ -1,6 +1,6 @@
 //! Coverage reports.
 
-use alloy_primitives::map::HashMap;
+use alloy_primitives::map::{HashMap, HashSet};
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Attribute, Cell, Color, Row, Table};
 use evm_disassembler::disassemble_bytes;
 use foundry_common::fs;
@@ -15,7 +15,13 @@ pub use foundry_evm::coverage::*;
 
 /// A coverage reporter.
 pub trait CoverageReporter {
-    fn report(self, report: &CoverageReport) -> eyre::Result<()>;
+    /// Returns `true` if the reporter needs source maps for the final report.
+    fn needs_source_maps(&self) -> bool {
+        false
+    }
+
+    /// Runs the reporter.
+    fn report(&mut self, report: &CoverageReport) -> eyre::Result<()>;
 }
 
 /// A simple summary reporter that prints the coverage results in a table.
@@ -56,7 +62,7 @@ impl CoverageSummaryReporter {
 }
 
 impl CoverageReporter for CoverageSummaryReporter {
-    fn report(mut self, report: &CoverageReport) -> eyre::Result<()> {
+    fn report(&mut self, report: &CoverageReport) -> eyre::Result<()> {
         for (path, summary) in report.summary_by_file() {
             self.total.merge(&summary);
             self.add_row(path.display(), summary);
@@ -89,26 +95,30 @@ fn format_cell(hits: usize, total: usize) -> Cell {
 ///
 /// [LCOV]: https://github.com/linux-test-project/lcov
 /// [tracefile format]: https://man.archlinux.org/man/geninfo.1.en#TRACEFILE_FORMAT
-pub struct LcovReporter<'a> {
-    out: &'a mut (dyn Write + 'a),
+pub struct LcovReporter {
+    path: PathBuf,
     version: Version,
 }
 
-impl<'a> LcovReporter<'a> {
+impl LcovReporter {
     /// Create a new LCOV reporter.
-    pub fn new(out: &'a mut (dyn Write + 'a), version: Version) -> Self {
-        Self { out, version }
+    pub fn new(path: PathBuf, version: Version) -> Self {
+        Self { path, version }
     }
 }
 
-impl CoverageReporter for LcovReporter<'_> {
-    fn report(self, report: &CoverageReport) -> eyre::Result<()> {
+impl CoverageReporter for LcovReporter {
+    fn report(&mut self, report: &CoverageReport) -> eyre::Result<()> {
+        let mut out = std::io::BufWriter::new(fs::create_file(&self.path)?);
+
         let mut fn_index = 0usize;
         for (path, items) in report.items_by_file() {
             let summary = CoverageSummary::from_items(items.iter().copied());
 
-            writeln!(self.out, "TN:")?;
-            writeln!(self.out, "SF:{}", path.display())?;
+            writeln!(out, "TN:")?;
+            writeln!(out, "SF:{}", path.display())?;
+
+            let mut recorded_lines = HashSet::new();
 
             for item in items {
                 let line = item.loc.lines.start;
@@ -120,49 +130,50 @@ impl CoverageReporter for LcovReporter<'_> {
                         let name = format!("{}.{name}", item.loc.contract_name);
                         if self.version >= Version::new(2, 2, 0) {
                             // v2.2 changed the FN format.
-                            writeln!(self.out, "FNL:{fn_index},{line},{end_line}")?;
-                            writeln!(self.out, "FNA:{fn_index},{hits},{name}")?;
+                            writeln!(out, "FNL:{fn_index},{line},{end_line}")?;
+                            writeln!(out, "FNA:{fn_index},{hits},{name}")?;
                             fn_index += 1;
                         } else if self.version >= Version::new(2, 0, 0) {
                             // v2.0 added end_line to FN.
-                            writeln!(self.out, "FN:{line},{end_line},{name}")?;
-                            writeln!(self.out, "FNDA:{hits},{name}")?;
+                            writeln!(out, "FN:{line},{end_line},{name}")?;
+                            writeln!(out, "FNDA:{hits},{name}")?;
                         } else {
-                            writeln!(self.out, "FN:{line},{name}")?;
-                            writeln!(self.out, "FNDA:{hits},{name}")?;
+                            writeln!(out, "FN:{line},{name}")?;
+                            writeln!(out, "FNDA:{hits},{name}")?;
                         }
                     }
-                    CoverageItemKind::Line => {
-                        writeln!(self.out, "DA:{line},{hits}")?;
+                    // Add lines / statement hits only once.
+                    CoverageItemKind::Line | CoverageItemKind::Statement => {
+                        if recorded_lines.insert(line) {
+                            writeln!(out, "DA:{line},{hits}")?;
+                        }
                     }
                     CoverageItemKind::Branch { branch_id, path_id, .. } => {
                         writeln!(
-                            self.out,
+                            out,
                             "BRDA:{line},{branch_id},{path_id},{}",
                             if hits == 0 { "-".to_string() } else { hits.to_string() }
                         )?;
                     }
-                    // Statements are not in the LCOV format.
-                    // We don't add them in order to avoid doubling line hits.
-                    CoverageItemKind::Statement { .. } => {}
                 }
             }
 
             // Function summary
-            writeln!(self.out, "FNF:{}", summary.function_count)?;
-            writeln!(self.out, "FNH:{}", summary.function_hits)?;
+            writeln!(out, "FNF:{}", summary.function_count)?;
+            writeln!(out, "FNH:{}", summary.function_hits)?;
 
             // Line summary
-            writeln!(self.out, "LF:{}", summary.line_count)?;
-            writeln!(self.out, "LH:{}", summary.line_hits)?;
+            writeln!(out, "LF:{}", summary.line_count)?;
+            writeln!(out, "LH:{}", summary.line_hits)?;
 
             // Branch summary
-            writeln!(self.out, "BRF:{}", summary.branch_count)?;
-            writeln!(self.out, "BRH:{}", summary.branch_hits)?;
+            writeln!(out, "BRF:{}", summary.branch_count)?;
+            writeln!(out, "BRH:{}", summary.branch_hits)?;
 
-            writeln!(self.out, "end_of_record")?;
+            writeln!(out, "end_of_record")?;
         }
 
+        out.flush()?;
         sh_println!("Wrote LCOV report.")?;
 
         Ok(())
@@ -173,40 +184,40 @@ impl CoverageReporter for LcovReporter<'_> {
 pub struct DebugReporter;
 
 impl CoverageReporter for DebugReporter {
-    fn report(self, report: &CoverageReport) -> eyre::Result<()> {
+    fn report(&mut self, report: &CoverageReport) -> eyre::Result<()> {
         for (path, items) in report.items_by_file() {
             sh_println!("Uncovered for {}:", path.display())?;
-            items.iter().for_each(|item| {
+            for item in items {
                 if item.hits == 0 {
-                    let _ = sh_println!("- {item}");
+                    sh_println!("- {item}")?;
                 }
-            });
+            }
             sh_println!()?;
         }
 
         for (contract_id, anchors) in &report.anchors {
             sh_println!("Anchors for {contract_id}:")?;
-            anchors
+            let anchors = anchors
                 .0
                 .iter()
                 .map(|anchor| (false, anchor))
-                .chain(anchors.1.iter().map(|anchor| (true, anchor)))
-                .for_each(|(is_deployed, anchor)| {
-                    let _ = sh_println!("- {anchor}");
-                    if is_deployed {
-                        let _ = sh_println!("- Creation code");
-                    } else {
-                        let _ = sh_println!("- Runtime code");
-                    }
-                    let _ = sh_println!(
-                        "  - Refers to item: {}",
-                        report
-                            .items
-                            .get(&contract_id.version)
-                            .and_then(|items| items.get(anchor.item_id))
-                            .map_or("None".to_owned(), |item| item.to_string())
-                    );
-                });
+                .chain(anchors.1.iter().map(|anchor| (true, anchor)));
+            for (is_deployed, anchor) in anchors {
+                sh_println!("- {anchor}")?;
+                if is_deployed {
+                    sh_println!("- Creation code")?;
+                } else {
+                    sh_println!("- Runtime code")?;
+                }
+                sh_println!(
+                    "  - Refers to item: {}",
+                    report
+                        .analyses
+                        .get(&contract_id.version)
+                        .and_then(|items| items.get(anchor.item_id))
+                        .map_or_else(|| "None".to_owned(), |item| item.to_string())
+                )?;
+            }
             sh_println!()?;
         }
 
@@ -226,8 +237,14 @@ impl BytecodeReporter {
 }
 
 impl CoverageReporter for BytecodeReporter {
-    fn report(self, report: &CoverageReport) -> eyre::Result<()> {
+    fn needs_source_maps(&self) -> bool {
+        true
+    }
+
+    fn report(&mut self, report: &CoverageReport) -> eyre::Result<()> {
         use std::fmt::Write;
+
+        fs::create_dir_all(&self.destdir)?;
 
         let no_source_elements = Vec::new();
         let mut line_number_cache = LineNumberCache::new(self.root.clone());
@@ -241,7 +258,7 @@ impl CoverageReporter for BytecodeReporter {
 
             for (code, source_element) in std::iter::zip(ops.iter(), source_elements) {
                 let hits = hits
-                    .get(code.offset as usize)
+                    .get(code.offset)
                     .map(|h| format!("[{h:03}]"))
                     .unwrap_or("     ".to_owned());
                 let source_id = source_element.index();

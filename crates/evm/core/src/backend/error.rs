@@ -1,13 +1,13 @@
 use alloy_primitives::Address;
 pub use foundry_fork_db::{DatabaseError, DatabaseResult};
-use revm::primitives::EVMError;
+use revm::context_interface::result::EVMError;
 use std::convert::Infallible;
 
 pub type BackendResult<T> = Result<T, BackendError>;
 
 /// Errors that can happen when working with [`revm::Database`]
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum BackendError {
     #[error("{0}")]
     Message(String),
@@ -59,7 +59,6 @@ impl<T: Into<Self>> From<EVMError<T>> for BackendError {
             EVMError::Database(err) => err.into(),
             EVMError::Custom(err) => Self::msg(err),
             EVMError::Header(err) => Self::msg(err.to_string()),
-            EVMError::Precompile(err) => Self::msg(err),
             EVMError::Transaction(err) => Self::msg(err.to_string()),
         }
     }

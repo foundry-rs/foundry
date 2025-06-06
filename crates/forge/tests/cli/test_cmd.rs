@@ -2,7 +2,6 @@
 
 use alloy_primitives::U256;
 use anvil::{spawn, NodeConfig};
-use foundry_config::{Config, FuzzConfig};
 use foundry_test_utils::{
     rpc, str,
     util::{OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION},
@@ -16,17 +15,15 @@ forgetest!(can_set_filter_values, |prj, cmd| {
     let glob = globset::Glob::from_str("foo/bar/baz*").unwrap();
 
     // explicitly set patterns
-    let config = Config {
-        test_pattern: Some(patt.clone().into()),
-        test_pattern_inverse: None,
-        contract_pattern: Some(patt.clone().into()),
-        contract_pattern_inverse: None,
-        path_pattern: Some(glob.clone()),
-        path_pattern_inverse: None,
-        coverage_pattern_inverse: None,
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.test_pattern = Some(patt.clone().into());
+        config.test_pattern_inverse = None;
+        config.contract_pattern = Some(patt.clone().into());
+        config.contract_pattern_inverse = None;
+        config.path_pattern = Some(glob.clone());
+        config.path_pattern_inverse = None;
+        config.coverage_pattern_inverse = None;
+    });
 
     let config = cmd.config();
 
@@ -291,7 +288,7 @@ contract SimpleContractTest is DSTest {
     function test() public {
         SimpleContract c = new SimpleContract();
         c.setValues(100);
-        console.log("Value set: ", 100);
+        console.logUint(100);
     }
 }
    "#;
@@ -325,8 +322,8 @@ forgetest!(can_run_test_in_custom_test_folder, |prj, cmd| {
     prj.insert_ds_test();
 
     // explicitly set the test folder
-    let config = Config { test: "nested/forge-tests".into(), ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| config.test = "nested/forge-tests".into());
+
     let config = cmd.config();
     assert_eq!(config.test, PathBuf::from("nested/forge-tests"));
 
@@ -414,8 +411,9 @@ contract ContractTest is DSTest {
     .unwrap();
 
     // pin version
-    let config = Config { solc: Some(SOLC_VERSION.into()), ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.solc = Some(SOLC_VERSION.into());
+    });
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -431,8 +429,9 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 
     // pin version
-    let config = Config { solc: Some(OTHER_SOLC_VERSION.into()), ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.solc = Some(OTHER_SOLC_VERSION.into());
+    });
 
     cmd.forge_fuse().arg("test").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
@@ -580,7 +579,7 @@ Traces:
     │   └─ ← [Return] 0
     ├─ [3110] 0xdAC17F958D2ee523a2206206994597C13D831ec7::name() [staticcall]
     │   └─ ← [Return] "Tether USD"
-    └─ ← [Stop] 
+    └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
@@ -591,7 +590,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // https://github.com/foundry-rs/foundry/issues/6579
 forgetest_init!(include_custom_types_in_traces, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.wipe_contracts();
 
     prj.add_test(
@@ -622,14 +620,14 @@ Compiler run successful!
 Ran 2 tests for test/Contract.t.sol:CustomTypesTest
 [FAIL: PoolNotInitialized()] testErr() ([GAS])
 Traces:
-  [253] CustomTypesTest::testErr()
+  [247] CustomTypesTest::testErr()
     └─ ← [Revert] PoolNotInitialized()
 
 [PASS] testEvent() ([GAS])
 Traces:
-  [1267] CustomTypesTest::testEvent()
+  [1524] CustomTypesTest::testEvent()
     ├─ emit MyEvent(a: 100)
-    └─ ← [Stop] 
+    └─ ← [Stop]
 
 Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 
@@ -689,7 +687,6 @@ contract TransientTest is Test {
         assertEq(t.locked(), false);
     }
 }
-
    "#,
     )
     .unwrap();
@@ -697,14 +694,17 @@ contract TransientTest is Test {
     cmd.args(["test", "-vvvv", "--isolate", "--evm-version", "cancun"]).assert_success();
 });
 
-forgetest_init!(can_disable_block_gas_limit, |prj, cmd| {
-    prj.wipe_contracts();
+forgetest_init!(
+    #[ignore = "Too slow"]
+    can_disable_block_gas_limit,
+    |prj, cmd| {
+        prj.wipe_contracts();
 
-    let endpoint = rpc::next_http_archive_rpc_url();
+        let endpoint = rpc::next_http_archive_rpc_url();
 
-    prj.add_test(
-        "Contract.t.sol",
-        &r#"
+        prj.add_test(
+            "Contract.t.sol",
+            &r#"
 import {Test} from "forge-std/Test.sol";
 
 contract C is Test {}
@@ -726,12 +726,13 @@ contract GasLimitTest is Test {
     }
 }
    "#
-        .replace("<rpc>", &endpoint),
-    )
-    .unwrap();
+            .replace("<rpc>", &endpoint),
+        )
+        .unwrap();
 
-    cmd.args(["test", "-vvvv", "--isolate", "--disable-block-gas-limit"]).assert_success();
-});
+        cmd.args(["test", "-vvvv", "--isolate", "--disable-block-gas-limit"]).assert_success();
+    }
+);
 
 forgetest!(test_match_path, |prj, cmd| {
     prj.add_source(
@@ -752,11 +753,10 @@ forgetest_init!(should_not_shrink_fuzz_failure, |prj, cmd| {
     prj.wipe_contracts();
 
     // deterministic test so we always have 54 runs until test fails with overflow
-    let config = Config {
-        fuzz: { FuzzConfig { runs: 256, seed: Some(U256::from(100)), ..Default::default() } },
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.fuzz.runs = 256;
+        config.fuzz.seed = Some(U256::from(100));
+    });
 
     prj.add_test(
         "CounterFuzz.t.sol",
@@ -893,17 +893,17 @@ Compiler run successful!
 
 Ran 4 tests for test/ReplayFailures.t.sol:ReplayFailuresTest
 [PASS] testA() ([GAS])
-[FAIL: revert: testB failed] testB() ([GAS])
+[FAIL: testB failed] testB() ([GAS])
 [PASS] testC() ([GAS])
-[FAIL: revert: testD failed] testD() ([GAS])
+[FAIL: testD failed] testD() ([GAS])
 Suite result: FAILED. 2 passed; 2 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 2 failed, 0 skipped (4 total tests)
 
 Failing tests:
 Encountered 2 failing tests in test/ReplayFailures.t.sol:ReplayFailuresTest
-[FAIL: revert: testB failed] testB() ([GAS])
-[FAIL: revert: testD failed] testD() ([GAS])
+[FAIL: testB failed] testB() ([GAS])
+[FAIL: testD failed] testD() ([GAS])
 
 Encountered a total of 2 failing tests, 2 tests succeeded
 
@@ -917,16 +917,16 @@ Encountered a total of 2 failing tests, 2 tests succeeded
 No files changed, compilation skipped
 
 Ran 2 tests for test/ReplayFailures.t.sol:ReplayFailuresTest
-[FAIL: revert: testB failed] testB() ([GAS])
-[FAIL: revert: testD failed] testD() ([GAS])
+[FAIL: testB failed] testB() ([GAS])
+[FAIL: testD failed] testD() ([GAS])
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
 
 Failing tests:
 Encountered 2 failing tests in test/ReplayFailures.t.sol:ReplayFailuresTest
-[FAIL: revert: testB failed] testB() ([GAS])
-[FAIL: revert: testD failed] testD() ([GAS])
+[FAIL: testB failed] testB() ([GAS])
+[FAIL: testD failed] testD() ([GAS])
 
 Encountered a total of 2 failing tests, 0 tests succeeded
 
@@ -959,7 +959,6 @@ contract SetupFailureTest is Test {
 
 // https://github.com/foundry-rs/foundry/issues/7530
 forgetest_init!(should_show_precompile_labels, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.wipe_contracts();
 
     prj.add_test(
@@ -998,38 +997,38 @@ Compiler run successful!
 Ran 1 test for test/Contract.t.sol:PrecompileLabelsTest
 [PASS] testPrecompileLabels() ([GAS])
 Traces:
-  [9383] PrecompileLabelsTest::testPrecompileLabels()
+  [..] PrecompileLabelsTest::testPrecompileLabels()
     ├─ [0] VM::deal(VM: [0x7109709ECfa91a80626fF3989D68f67F5b1DD12D], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(console: [0x000000000000000000636F6e736F6c652e6c6f67], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(Create2Deployer: [0x4e59b44847b379578588920cA78FbF26c0B4956C], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(DefaultSender: [0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(DefaultTestContract: [0xb4c79daB8f259C7Aee6E5b2Aa729821864227e84], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(ECRecover: [0x0000000000000000000000000000000000000001], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(SHA-256: [0x0000000000000000000000000000000000000002], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(RIPEMD-160: [0x0000000000000000000000000000000000000003], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(Identity: [0x0000000000000000000000000000000000000004], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(ModExp: [0x0000000000000000000000000000000000000005], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(ECAdd: [0x0000000000000000000000000000000000000006], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(ECMul: [0x0000000000000000000000000000000000000007], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(ECPairing: [0x0000000000000000000000000000000000000008], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(Blake2F: [0x0000000000000000000000000000000000000009], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
+    │   └─ ← [Return]
     ├─ [0] VM::deal(PointEvaluation: [0x000000000000000000000000000000000000000A], 1000000000000000000 [1e18])
-    │   └─ ← [Return] 
-    └─ ← [Stop] 
+    │   └─ ← [Return]
+    └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
@@ -1044,11 +1043,10 @@ forgetest_init!(should_show_logs_when_fuzz_test, |prj, cmd| {
     prj.wipe_contracts();
 
     // run fuzz test 3 times
-    let config = Config {
-        fuzz: { FuzzConfig { runs: 3, show_logs: true, ..Default::default() } },
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.fuzz.runs = 3;
+        config.fuzz.show_logs = true;
+    });
     let config = cmd.config();
     assert_eq!(config.fuzz.runs, 3);
 
@@ -1090,9 +1088,9 @@ forgetest_init!(should_show_logs_when_fuzz_test_inline_config, |prj, cmd| {
     prj.wipe_contracts();
 
     // run fuzz test 3 times
-    let config =
-        Config { fuzz: { FuzzConfig { runs: 3, ..Default::default() } }, ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.fuzz.runs = 3;
+    });
     let config = cmd.config();
     assert_eq!(config.fuzz.runs, 3);
 
@@ -1135,11 +1133,10 @@ forgetest_init!(should_not_show_logs_when_fuzz_test, |prj, cmd| {
     prj.wipe_contracts();
 
     // run fuzz test 3 times
-    let config = Config {
-        fuzz: { FuzzConfig { runs: 3, show_logs: false, ..Default::default() } },
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.fuzz.runs = 3;
+        config.fuzz.show_logs = false;
+    });
     let config = cmd.config();
     assert_eq!(config.fuzz.runs, 3);
 
@@ -1176,9 +1173,9 @@ forgetest_init!(should_not_show_logs_when_fuzz_test_inline_config, |prj, cmd| {
     prj.wipe_contracts();
 
     // run fuzz test 3 times
-    let config =
-        Config { fuzz: { FuzzConfig { runs: 3, ..Default::default() } }, ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.fuzz.runs = 3;
+    });
     let config = cmd.config();
     assert_eq!(config.fuzz.runs, 3);
 
@@ -1269,14 +1266,14 @@ Traces:
     ├─ [22630] SimpleContract::increment()
     │   ├─ [20147] SimpleContract::_setNum(1)
     │   │   └─ ← 0
-    │   └─ ← [Stop] 
+    │   └─ ← [Stop]
     ├─ [23204] SimpleContract::setValues(100, 0x0000000000000000000000000000000000000123)
     │   ├─ [247] SimpleContract::_setNum(100)
     │   │   └─ ← 1
     │   ├─ [22336] SimpleContract::_setAddr(0x0000000000000000000000000000000000000123)
     │   │   └─ ← 0x0000000000000000000000000000000000000000
-    │   └─ ← [Stop] 
-    └─ ← [Stop] 
+    │   └─ ← [Stop]
+    └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
@@ -1327,8 +1324,8 @@ Traces:
     ├─ [2511] SimpleContract::setStr("new value")
     │   ├─ [1588] SimpleContract::_setStr("new value")
     │   │   └─ ← "initial value"
-    │   └─ ← [Stop] 
-    └─ ← [Stop] 
+    │   └─ ← [Stop]
+    └─ ← [Stop]
 ...
 "#]]);
 });
@@ -1417,7 +1414,6 @@ contract DeterministicRandomnessTest is Test {
 // Tests that `pauseGasMetering` used at the end of test does not produce meaningless values.
 // https://github.com/foundry-rs/foundry/issues/5491
 forgetest_init!(gas_metering_pause_last_call, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.wipe_contracts();
 
     prj.add_test(
@@ -1455,10 +1451,10 @@ contract ATest is Test {
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-[PASS] testNormalGas() (gas: 3194)
-[PASS] testWeirdGas1() (gas: 3032)
-[PASS] testWeirdGas2() (gas: 3139)
-[PASS] testWithAssembly() (gas: 3075)
+[PASS] testNormalGas() (gas: 3148)
+[PASS] testWeirdGas1() (gas: 2986)
+[PASS] testWeirdGas2() (gas: 3213)
+[PASS] testWithAssembly() (gas: 3029)
 ...
 "#]]);
 });
@@ -1503,7 +1499,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // https://github.com/foundry-rs/foundry/issues/4523
 forgetest_init!(gas_metering_gasleft, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.wipe_contracts();
 
     prj.add_test(
@@ -1544,9 +1539,22 @@ contract ATest is Test {
     cmd.args(["test", "-vvvv"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
 Logs:
-  Gas cost: 34367
-...
-[PASS] test_GasMeter() (gas: 37407)
+  Gas cost: 50068
+
+Traces:
+  [2303684] ATest::test_GasLeft()
+    ├─ [0] console::log("Gas cost:", 50068 [5.006e4]) [staticcall]
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+[PASS] test_GasMeter() (gas: 53097)
+Traces:
+  [53097] ATest::test_GasMeter()
+    ├─ [0] VM::pauseGasMetering()
+    │   └─ ← [Return]
+    ├─ [0] VM::resumeGasMetering()
+    │   └─ ← [Return]
+    └─ ← [Stop]
 ...
 "#]]);
 });
@@ -1574,7 +1582,7 @@ contract ATest is Test {
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-[PASS] test_negativeGas() (gas: 0)
+[PASS] test_negativeGas() (gas: 96)
 ...
 "#]]);
 });
@@ -1582,7 +1590,6 @@ contract ATest is Test {
 // tests `pauseTracing` and `resumeTracing` functions
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(pause_tracing, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.wipe_contracts();
     prj.insert_ds_test();
     prj.insert_vm();
@@ -1632,37 +1639,37 @@ contract PauseTracingTest is DSTest {
     cmd.args(["test", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
 ...
 Traces:
-  [7282] PauseTracingTest::setUp()
+  [7757] PauseTracingTest::setUp()
     ├─ emit DummyEvent(i: 1)
     ├─ [0] VM::pauseTracing() [staticcall]
-    │   └─ ← [Return] 
-    └─ ← [Stop] 
+    │   └─ ← [Return]
+    └─ ← [Stop]
 
-  [282512] PauseTracingTest::test()
+  [449649] PauseTracingTest::test()
     ├─ [0] VM::resumeTracing() [staticcall]
-    │   └─ ← [Return] 
-    ├─ [18327] TraceGenerator::generate()
-    │   ├─ [1278] TraceGenerator::call(0)
+    │   └─ ← [Return]
+    ├─ [22896] TraceGenerator::generate()
+    │   ├─ [1589] TraceGenerator::call(0)
     │   │   ├─ emit DummyEvent(i: 0)
-    │   │   └─ ← [Stop] 
-    │   ├─ [1278] TraceGenerator::call(1)
+    │   │   └─ ← [Stop]
+    │   ├─ [1589] TraceGenerator::call(1)
     │   │   ├─ emit DummyEvent(i: 1)
-    │   │   └─ ← [Stop] 
-    │   ├─ [1278] TraceGenerator::call(2)
+    │   │   └─ ← [Stop]
+    │   ├─ [1589] TraceGenerator::call(2)
     │   │   ├─ emit DummyEvent(i: 2)
-    │   │   └─ ← [Stop] 
+    │   │   └─ ← [Stop]
     │   ├─ [0] VM::pauseTracing() [staticcall]
-    │   │   └─ ← [Return] 
+    │   │   └─ ← [Return]
     │   ├─ [0] VM::resumeTracing() [staticcall]
-    │   │   └─ ← [Return] 
-    │   ├─ [1278] TraceGenerator::call(8)
+    │   │   └─ ← [Return]
+    │   ├─ [1589] TraceGenerator::call(8)
     │   │   ├─ emit DummyEvent(i: 8)
-    │   │   └─ ← [Stop] 
-    │   ├─ [1278] TraceGenerator::call(9)
+    │   │   └─ ← [Stop]
+    │   ├─ [1589] TraceGenerator::call(9)
     │   │   ├─ emit DummyEvent(i: 9)
-    │   │   └─ ← [Stop] 
-    │   └─ ← [Stop] 
-    └─ ← [Stop] 
+    │   │   └─ ← [Stop]
+    │   └─ ← [Stop]
+    └─ ← [Stop]
 ...
 "#]]);
 });
@@ -1772,17 +1779,17 @@ contract ATest is DSTest {
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-[PASS] testResetGas() (gas: 40)
-[PASS] testResetGas1() (gas: 40)
-[PASS] testResetGas2() (gas: 40)
+[PASS] testResetGas() (gas: 96)
+[PASS] testResetGas1() (gas: 96)
+[PASS] testResetGas2() (gas: 96)
 [PASS] testResetGas3() (gas: [..])
 [PASS] testResetGas4() (gas: [..])
-[PASS] testResetGas5() (gas: 40)
-[PASS] testResetGas6() (gas: 40)
-[PASS] testResetGas7() (gas: 49)
+[PASS] testResetGas5() (gas: 96)
+[PASS] testResetGas6() (gas: 96)
+[PASS] testResetGas7() (gas: 96)
 [PASS] testResetGas8() (gas: [..])
-[PASS] testResetGas9() (gas: 40)
-[PASS] testResetNegativeGas() (gas: 0)
+[PASS] testResetGas9() (gas: 96)
+[PASS] testResetNegativeGas() (gas: 96)
 ...
 "#]]);
 });
@@ -1888,11 +1895,10 @@ forgetest_init!(test_assume_no_revert, |prj, cmd| {
     prj.insert_vm();
     prj.clear();
 
-    let config = Config {
-        fuzz: { FuzzConfig { runs: 100, seed: Some(U256::from(100)), ..Default::default() } },
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.fuzz.runs = 100;
+        config.fuzz.seed = Some(U256::from(100));
+    });
 
     prj.add_source(
         "Counter.t.sol",
@@ -2117,8 +2123,8 @@ forgetest_init!(should_generate_junit_xml_report, |prj, cmd| {
             <system-out>[FAIL: panic: assertion failed (0x01)] test_junit_assert_fail() ([GAS])</system-out>
         </testcase>
         <testcase name="test_junit_revert_fail()" time="[..]">
-            <failure message="revert: Revert"/>
-            <system-out>[FAIL: revert: Revert] test_junit_revert_fail() ([GAS])</system-out>
+            <failure message="Revert"/>
+            <system-out>[FAIL: Revert] test_junit_revert_fail() ([GAS])</system-out>
         </testcase>
         <system-out>Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]</system-out>
     </testsuite>
@@ -2331,7 +2337,6 @@ Logs:
 
 // <https://github.com/foundry-rs/foundry/issues/8995>
 forgetest_init!(metadata_bytecode_traces, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.add_source(
         "ParentProxy.sol",
         r#"
@@ -2392,10 +2397,10 @@ Ran 1 test for test/MetadataTraceTest.t.sol:MetadataTraceTest
 Traces:
   [..] MetadataTraceTest::test_proxy_trace()
     ├─ [..] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 236 bytes of code
+    │   └─ ← [Return] 481 bytes of code
     ├─ [..] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   └─ ← [Return] 62 bytes of code
-    └─ ← [Stop] 
+    └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
@@ -2417,10 +2422,10 @@ Ran 1 test for test/MetadataTraceTest.t.sol:MetadataTraceTest
 Traces:
   [..] MetadataTraceTest::test_proxy_trace()
     ├─ [..] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 182 bytes of code
+    │   └─ ← [Return] 427 bytes of code
     ├─ [..] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   └─ ← [Return] 8 bytes of code
-    └─ ← [Stop] 
+    └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
@@ -2449,12 +2454,201 @@ contract Dummy {
     assert!(dump_path.exists());
 });
 
+forgetest_init!(test_assume_no_revert_with_data, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.runs = 60;
+        config.fuzz.seed = Some(U256::from(100));
+    });
+
+    prj.add_source(
+        "AssumeNoRevertTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+interface Vm {
+    struct PotentialRevert {
+        address reverter;
+        bool partialMatch;
+        bytes revertData;
+    }
+    function expectRevert() external;
+    function assumeNoRevert() external pure;
+    function assumeNoRevert(PotentialRevert calldata revertData) external pure;
+    function assumeNoRevert(PotentialRevert[] calldata revertData) external pure;
+    function expectRevert(bytes4 revertData, uint64 count) external;
+}
+
+contract ReverterB {
+    /// @notice has same error selectors as contract below to test the `reverter` param
+    error MyRevert();
+    error SpecialRevertWithData(uint256 x);
+
+    function revertIf2(uint256 x) public pure returns (bool) {
+        if (x == 2) {
+            revert MyRevert();
+        }
+        return true;
+    }
+
+    function revertWithData() public pure returns (bool) {
+        revert SpecialRevertWithData(2);
+    }
+}
+
+contract Reverter {
+    error MyRevert();
+    error RevertWithData(uint256 x);
+    error UnusedError();
+    error ExpectedRevertCountZero();
+
+    ReverterB public immutable subReverter;
+
+    constructor() {
+        subReverter = new ReverterB();
+    }
+
+    function myFunction() public pure returns (bool) {
+        revert MyRevert();
+    }
+
+    function revertIf2(uint256 value) public pure returns (bool) {
+        if (value == 2) {
+            revert MyRevert();
+        }
+        return true;
+    }
+
+    function revertWithDataIf2(uint256 value) public pure returns (bool) {
+        if (value == 2) {
+            revert RevertWithData(2);
+        }
+        return true;
+    }
+
+    function twoPossibleReverts(uint256 x) public pure returns (bool) {
+        if (x == 2) {
+            revert MyRevert();
+        } else if (x == 3) {
+            revert RevertWithData(3);
+        }
+        return true;
+    }
+
+    function revertIf2Or3ExpectedRevertZero(uint256 x) public pure returns (bool) {
+        if (x == 2) {
+            revert ExpectedRevertCountZero();
+        } else if (x == 3) {
+            revert MyRevert();
+        }
+        return true;
+    }
+}
+
+contract ReverterTest is Test {
+    Reverter reverter;
+    Vm _vm = Vm(VM_ADDRESS);
+
+    function setUp() public {
+        reverter = new Reverter();
+    }
+
+    /// @dev Test that `assumeNoRevert` does not reject an unanticipated error selector
+    function testAssume_wrongSelector_fails(uint256 x) public view {
+        _vm.assumeNoRevert(Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.UnusedError.selector), partialMatch: false, reverter: address(0)}));
+        reverter.revertIf2(x);
+    }
+
+    /// @dev Test that `assumeNoRevert` does not reject an unanticipated error with extra data
+    function testAssume_wrongData_fails(uint256 x) public view {
+        _vm.assumeNoRevert(Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.RevertWithData.selector, 3), partialMatch: false, reverter: address(0)}));
+        reverter.revertWithDataIf2(x);
+    }
+
+    /// @dev Test that `assumeNoRevert` correctly rejects an error selector from a different contract
+    function testAssumeWithReverter_fails(uint256 x) public view {
+        ReverterB subReverter = (reverter.subReverter());
+        _vm.assumeNoRevert(Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.MyRevert.selector), partialMatch: false, reverter: address(reverter)}));
+        subReverter.revertIf2(x);
+    }
+
+    /// @dev Test that `assumeNoRevert` correctly rejects one of two different error selectors when supplying a specific reverter
+    function testMultipleAssumes_OneWrong_fails(uint256 x) public view {
+        Vm.PotentialRevert[] memory revertData = new Vm.PotentialRevert[](2);
+        revertData[0] = Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.MyRevert.selector), partialMatch: false, reverter: address(reverter)});
+        revertData[1] = Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.RevertWithData.selector, 4), partialMatch: false, reverter: address(reverter)});
+        _vm.assumeNoRevert(revertData);
+        reverter.twoPossibleReverts(x);
+    }
+
+    /// @dev Test that `assumeNoRevert` assumptions are cleared after the first non-cheatcode external call
+    function testMultipleAssumesClearAfterCall_fails(uint256 x) public view {
+        Vm.PotentialRevert[] memory revertData = new Vm.PotentialRevert[](2);
+        revertData[0] = Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.MyRevert.selector), partialMatch: false, reverter: address(0)});
+        revertData[1] = Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.RevertWithData.selector, 4), partialMatch: false, reverter: address(reverter)});
+        _vm.assumeNoRevert(revertData);
+        reverter.twoPossibleReverts(x);
+
+        reverter.twoPossibleReverts(2);
+    }
+
+    /// @dev Test that `assumeNoRevert` correctly rejects a generic assumeNoRevert call after any specific reason is provided
+    function testMultipleAssumes_ThrowOnGenericNoRevert_AfterSpecific_fails(bytes4 selector) public view {
+        _vm.assumeNoRevert(Vm.PotentialRevert({revertData: abi.encode(selector), partialMatch: false, reverter: address(0)}));
+        _vm.assumeNoRevert();
+        reverter.twoPossibleReverts(2);
+    }
+
+    function testAssumeThenExpectCountZeroFails(uint256 x) public {
+        _vm.assumeNoRevert(
+            Vm.PotentialRevert({
+                revertData: abi.encodeWithSelector(Reverter.MyRevert.selector),
+                partialMatch: false,
+                reverter: address(0)
+            })
+        );
+        _vm.expectRevert(Reverter.ExpectedRevertCountZero.selector, 0);
+        reverter.revertIf2Or3ExpectedRevertZero(x);
+    }
+
+    function testExpectCountZeroThenAssumeFails(uint256 x) public {
+        _vm.expectRevert(Reverter.ExpectedRevertCountZero.selector, 0);
+        _vm.assumeNoRevert(
+            Vm.PotentialRevert({
+                revertData: abi.encodeWithSelector(Reverter.MyRevert.selector),
+                partialMatch: false,
+                reverter: address(0)
+            })
+        );
+        reverter.revertIf2Or3ExpectedRevertZero(x);
+    }
+
+}"#,
+    )
+    .unwrap();
+    cmd.args(["test", "--mc", "ReverterTest"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 8 tests for src/AssumeNoRevertTest.t.sol:ReverterTest
+[FAIL: expected 0 reverts with reason: 0x92fa317b, but got one; counterexample: [..]] testAssumeThenExpectCountZeroFails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: MyRevert(); counterexample: calldata=[..]] testAssumeWithReverter_fails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: RevertWithData(2); counterexample: [..]] testAssume_wrongData_fails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: MyRevert(); counterexample: [..]] testAssume_wrongSelector_fails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: expected 0 reverts with reason: 0x92fa317b, but got one; counterexample: [..]] testExpectCountZeroThenAssumeFails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: MyRevert(); counterexample: [..]] testMultipleAssumesClearAfterCall_fails(uint256) (runs: 0, [AVG_GAS])
+[FAIL: RevertWithData(3); counterexample: [..]] testMultipleAssumes_OneWrong_fails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: vm.assumeNoRevert: you must make another external call prior to calling assumeNoRevert again; counterexample: [..]] testMultipleAssumes_ThrowOnGenericNoRevert_AfterSpecific_fails(bytes4) (runs: [..], [AVG_GAS])
+...
+
+"#]]);
+});
+
 forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
 
     let (_api, handle) = spawn(NodeConfig::test().silent()).await;
 
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.insert_vm();
     prj.insert_ds_test();
     prj.insert_console();
@@ -2530,7 +2724,6 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
         import {console} from "../src/console.sol";
 
         contract GetBroadcastTest is DSTest {
-
             Vm constant vm = Vm(HEVM_ADDRESS);
 
             function test_getLatestBroacast() external {
@@ -2593,9 +2786,9 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
                 address deployedAddress = vm.getDeployment(
                     "Counter",
                     31337
-                );   
+                );
 
-                assertEq(deployedAddress, address(0x78280279172ED4C0E65BCE5Ee9DFdcd828f837DB));
+                assertEq(deployedAddress, address(0xD32c10E38A626Db0b0978B1A5828eb2957665668));
             }
 
             function test_getDeployments() public {
@@ -2605,10 +2798,9 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
                 );
 
                 assertEq(deployments.length, 2);
-                assertEq(deployments[0], address(0x78280279172ED4C0E65BCE5Ee9DFdcd828f837DB)); // Create2 address - latest deployment
+                assertEq(deployments[0], address(0xD32c10E38A626Db0b0978B1A5828eb2957665668)); // Create2 address - latest deployment
                 assertEq(deployments[1], address(0x5FbDB2315678afecb367f032d93F642f64180aa3)); // Create address - oldest deployment
             }
-            
 }
     "#;
 
@@ -2693,7 +2885,7 @@ contract ForkTest is Test {
     cmd.args(["test", "--mt", "test_fork_err_message"]).assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/ForkTest.t.sol:ForkTest
-[FAIL: vm.createSelectFork: Could not instantiate forked environment with provider eth-mainnet.g.alchemy.com] test_fork_err_message() ([GAS])
+[FAIL: vm.createSelectFork: could not instantiate forked environment with provider eth-mainnet.g.alchemy.com; failed to get latest block number; [..]] test_fork_err_message() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 
@@ -2703,32 +2895,28 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 // Tests that test traces display state changes when running with verbosity.
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(should_show_state_changes, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
-
     cmd.args(["test", "--mt", "test_Increment", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
 Traces:
-  [87464] CounterTest::setUp()
-    ├─ [47297] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
-    │   └─ ← [Return] 236 bytes of code
-    ├─ [2387] Counter::setNumber(0)
-    │   └─ ← [Stop] 
-    └─ ← [Stop] 
+  [137242] CounterTest::setUp()
+    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [2592] Counter::setNumber(0)
+    │   └─ ← [Stop]
+    └─ ← [Stop]
 
-  [31293] CounterTest::test_Increment()
-    ├─ [22337] Counter::increment()
+  [31851] CounterTest::test_Increment()
+    ├─ [22418] Counter::increment()
     │   ├─  storage changes:
     │   │   @ 0: 0 → 1
-    │   └─ ← [Stop] 
-    ├─ [281] Counter::number() [staticcall]
+    │   └─ ← [Stop]
+    ├─ [424] Counter::number() [staticcall]
     │   └─ ← [Return] 1
     ├─ [0] VM::assertEq(1, 1) [staticcall]
-    │   └─ ← [Return] 
-    ├─  storage changes:
-    │   @ 0: 0 → 1
-    └─ ← [Stop] 
+    │   └─ ← [Return]
+    └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
@@ -2754,7 +2942,7 @@ contract ContractTest {
 ...
 Failing tests:
 Encountered 1 failing test in test/Foo.t.sol:ContractTest
-[FAIL: EVM error; transaction validation error: call gas cost exceeds the gas limit] setUp() ([GAS])
+[FAIL: EVM error; transaction validation error: call [GAS_COST] exceeds the [GAS_LIMIT]] setUp() ([GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -2764,7 +2952,6 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 // Tests that `start/stopAndReturn` debugTraceRecording does not panic when running with
 // verbosity > 3. <https://github.com/foundry-rs/foundry/issues/9526>
 forgetest_init!(should_not_panic_on_debug_trace_verbose, |prj, cmd| {
-    prj.write_config(Config { optimizer: Some(true), ..Default::default() });
     prj.add_test(
         "DebugTraceRecordingTest.t.sol",
         r#"
@@ -2793,7 +2980,7 @@ Ran 1 test for test/DebugTraceRecordingTest.t.sol:DebugTraceRecordingTest
 [PASS] test_start_stop_recording() ([GAS])
 Traces:
   [..] DebugTraceRecordingTest::test_start_stop_recording()
-    └─ ← [Stop] 
+    └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
@@ -2803,36 +2990,879 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
     );
 });
 
-forgetest!(test_fail_deprecation_warning, |prj, cmd| {
-    prj.insert_ds_test();
-
-    prj.add_source(
-        "WarnDeprecationTestFail.t.sol",
-        r#"
-    import "./test.sol";
-    contract WarnDeprecationTestFail is DSTest {
-        function testFail_deprecated() public {
-            revert("deprecated");
-        }
-
-        function testFail_deprecated2() public {
-            revert("deprecated2");
-        }
-    }
-    "#,
-    )
-    .unwrap();
-
-    cmd.forge_fuse()
-        .args(["test", "--mc", "WarnDeprecationTestFail"])
-        .assert_success()
-        .stderr_eq(r#"Warning: `testFail*` has been deprecated and will be removed in the next release. Consider changing to test_Revert[If|When]_Condition and expecting a revert. Found deprecated testFail* function(s): testFail_deprecated, testFail_deprecated2.
-"#);
-});
-
 #[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(colored_traces, |prj, cmd| {
     cmd.args(["test", "--mt", "test_Increment", "--color", "always", "-vvvvv"])
         .assert_success()
         .stdout_eq(file!["../fixtures/colored_traces.svg": TermSvg]);
+});
+
+// Tests that traces for successful tests can be suppressed by using `-s` flag.
+// <https://github.com/foundry-rs/foundry/issues/9864>
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(should_only_show_failed_tests_trace, |prj, cmd| {
+    prj.add_test(
+        "SuppressTracesTest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract SuppressTracesTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        counter.setNumber(0);
+    }
+
+    function test_increment_success() public {
+        console.log("test increment success");
+        counter.increment();
+        assertEq(counter.number(), 1);
+    }
+
+    function test_increment_failure() public {
+        console.log("test increment failure");
+        counter.increment();
+        assertEq(counter.number(), 100);
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    // Show traces and logs for failed test only.
+    cmd.args(["test", "--mc", "SuppressTracesTest", "-vvvv", "-s"]).assert_failure().stdout_eq(
+        str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/SuppressTracesTest.t.sol:SuppressTracesTest
+[FAIL: assertion failed: 1 != 100] test_increment_failure() ([GAS])
+Logs:
+  test increment failure
+
+Traces:
+  [137242] SuppressTracesTest::setUp()
+    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [2592] Counter::setNumber(0)
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+  [35178] SuppressTracesTest::test_increment_failure()
+    ├─ [0] console::log("test increment failure") [staticcall]
+    │   └─ ← [Stop]
+    ├─ [22418] Counter::increment()
+    │   └─ ← [Stop]
+    ├─ [424] Counter::number() [staticcall]
+    │   └─ ← [Return] 1
+    ├─ [0] VM::assertEq(1, 100) [staticcall]
+    │   └─ ← [Revert] assertion failed: 1 != 100
+    └─ ← [Revert] assertion failed: 1 != 100
+
+[PASS] test_increment_success() ([GAS])
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/SuppressTracesTest.t.sol:SuppressTracesTest
+[FAIL: assertion failed: 1 != 100] test_increment_failure() ([GAS])
+
+Encountered a total of 1 failing tests, 1 tests succeeded
+
+"#]],
+    );
+
+    // Show traces and logs for all tests.
+    cmd.forge_fuse()
+        .args(["test", "--mc", "SuppressTracesTest", "-vvvv"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 2 tests for test/SuppressTracesTest.t.sol:SuppressTracesTest
+[FAIL: assertion failed: 1 != 100] test_increment_failure() ([GAS])
+Logs:
+  test increment failure
+
+Traces:
+  [137242] SuppressTracesTest::setUp()
+    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [2592] Counter::setNumber(0)
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+  [35178] SuppressTracesTest::test_increment_failure()
+    ├─ [0] console::log("test increment failure") [staticcall]
+    │   └─ ← [Stop]
+    ├─ [22418] Counter::increment()
+    │   └─ ← [Stop]
+    ├─ [424] Counter::number() [staticcall]
+    │   └─ ← [Return] 1
+    ├─ [0] VM::assertEq(1, 100) [staticcall]
+    │   └─ ← [Revert] assertion failed: 1 != 100
+    └─ ← [Revert] assertion failed: 1 != 100
+
+[PASS] test_increment_success() ([GAS])
+Logs:
+  test increment success
+
+Traces:
+  [35229] SuppressTracesTest::test_increment_success()
+    ├─ [0] console::log("test increment success") [staticcall]
+    │   └─ ← [Stop]
+    ├─ [22418] Counter::increment()
+    │   └─ ← [Stop]
+    ├─ [424] Counter::number() [staticcall]
+    │   └─ ← [Return] 1
+    ├─ [0] VM::assertEq(1, 1) [staticcall]
+    │   └─ ← [Return]
+    └─ ← [Stop]
+
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/SuppressTracesTest.t.sol:SuppressTracesTest
+[FAIL: assertion failed: 1 != 100] test_increment_failure() ([GAS])
+
+Encountered a total of 1 failing tests, 1 tests succeeded
+
+"#]]);
+});
+
+forgetest_init!(catch_test_deployment_failure, |prj, cmd| {
+    prj.add_test(
+        "TestDeploymentFailure.t.sol",
+        r#"
+import "forge-std/Test.sol";
+contract TestDeploymentFailure is Test {
+
+    constructor() {
+        require(false);
+    }
+
+    function setUp() public {
+        require(true);
+    }
+
+    function test_something() public {
+        require(1 == 1);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["t", "--mt", "test_something"]).assert_failure().stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/TestDeploymentFailure.t.sol:TestDeploymentFailure
+[FAIL: EvmError: Revert] constructor() ([GAS])
+..."#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10012>
+forgetest_init!(state_diff_recording_with_revert, |prj, cmd| {
+    prj.add_test(
+        "TestStateDiffRevertFailure.t.sol",
+        r#"
+import "forge-std/Test.sol";
+contract StateDiffRevertAtSameDepthTest is Test {
+    function test_something() public {
+        CounterTestA counter = new CounterTestA();
+        counter.doSomething();
+    }
+}
+
+contract CounterTestA is Test {
+    function doSomething() public {
+        vm.startStateDiffRecording();
+        require(1 > 2);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["t", "--mt", "test_something"]).assert_failure();
+});
+
+// <https://github.com/foundry-rs/foundry/issues/5521>
+forgetest_init!(should_apply_pranks_per_recorded_depth, |prj, cmd| {
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import "forge-std/Test.sol";
+contract CounterTest is Test {
+    function test_stackPrank() public {
+        address player = makeAddr("player");
+        SenderLogger senderLogger = new SenderLogger();
+        Contract c = new Contract();
+
+        senderLogger.log(); // Log(ContractTest, DefaultSender)
+        vm.startPrank(player, player);
+        senderLogger.log(); // Log(player, player)
+        c.f(); // vm.startPrank(player)
+        senderLogger.log(); // Log(ContractTest, player) <- ContractTest should be player
+        vm.stopPrank();
+    }
+}
+
+contract Contract {
+    Vm public constant vm = Vm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+
+    function f() public {
+        vm.startPrank(msg.sender);
+    }
+}
+
+contract SenderLogger {
+    event Log(address, address);
+
+    function log() public {
+        emit Log(msg.sender, tx.origin);
+    }
+}
+    "#,
+    )
+    .unwrap();
+    // Emits
+    // Log(: player: [], : player: []) instead
+    // Log(: ContractTest: [], : player: [])
+    cmd.args(["test", "--mt", "test_stackPrank", "-vvvv"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Counter.t.sol:CounterTest
+[PASS] test_stackPrank() ([GAS])
+Traces:
+  [..] CounterTest::test_stackPrank()
+    ├─ [..] VM::addr(<pk>) [staticcall]
+    │   └─ ← [Return] player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C]
+    ├─ [..] VM::label(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], "player")
+    │   └─ ← [Return]
+    ├─ [..] → new SenderLogger@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 255 bytes of code
+    ├─ [..] → new Contract@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    │   └─ ← [Return] 542 bytes of code
+    ├─ [..] SenderLogger::log()
+    │   ├─ emit Log(: CounterTest: [0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496], : DefaultSender: [0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38])
+    │   └─ ← [Stop]
+    ├─ [..] VM::startPrank(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
+    │   └─ ← [Return]
+    ├─ [..] SenderLogger::log()
+    │   ├─ emit Log(: player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], : player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
+    │   └─ ← [Stop]
+    ├─ [..] Contract::f()
+    │   ├─ [..] VM::startPrank(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
+    │   │   └─ ← [Return]
+    │   └─ ← [Stop]
+    ├─ [..] SenderLogger::log()
+    │   ├─ emit Log(: player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], : player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
+    │   └─ ← [Stop]
+    ├─ [..] VM::stopPrank()
+    │   └─ ← [Return]
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10060>
+forgetest_init!(should_redact_pk_in_sign_delegation, |prj, cmd| {
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import "forge-std/Test.sol";
+contract CounterTest is Test {
+    function testCheckDelegation() external {
+        (address alice, uint256 key) = makeAddrAndKey("alice");
+        vm.signDelegation(address(0), key);
+        vm.signAndAttachDelegation(address(0), key);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "testCheckDelegation", "-vvvv"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Counter.t.sol:CounterTest
+[PASS] testCheckDelegation() ([GAS])
+Traces:
+  [..] CounterTest::testCheckDelegation()
+    ├─ [0] VM::addr(<pk>) [staticcall]
+    │   └─ ← [Return] alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6]
+    ├─ [0] VM::label(alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6], "alice")
+    │   └─ ← [Return]
+    ├─ [0] VM::signDelegation(0x0000000000000000000000000000000000000000, "<pk>")
+    │   └─ ← [Return] (0, 0x38db2a0ada75402af7cd5bdb8248a1a5b4fec65fdafea4f935084f00dc2ff3c5, 0x29ce7b1c82f9ceaec21f12d690ba8fe6ecba65869caf6ab2d85d79890dc42df2, 1, 0x0000000000000000000000000000000000000000)
+    ├─ [0] VM::signAndAttachDelegation(0x0000000000000000000000000000000000000000, "<pk>")
+    │   └─ ← [Return] (0, 0x38db2a0ada75402af7cd5bdb8248a1a5b4fec65fdafea4f935084f00dc2ff3c5, 0x29ce7b1c82f9ceaec21f12d690ba8fe6ecba65869caf6ab2d85d79890dc42df2, 1, 0x0000000000000000000000000000000000000000)
+    └─ ← [Stop]
+...
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10068>
+forgetest_init!(can_upload_selectors_with_path, |prj, cmd| {
+    prj.add_source(
+        "CounterV1.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function setNumberV1(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function incrementV1() public {
+        number++;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "CounterV2.sol",
+        r#"
+contract CounterV2 {
+    uint256 public number;
+
+    function setNumberV2(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function incrementV2() public {
+        number++;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    // Upload Counter without path fails as there are multiple contracts with same name.
+    cmd.args(["selectors", "upload", "Counter"]).assert_failure().stderr_eq(str![[r#"
+...
+Error: Multiple contracts found with the name `Counter`
+...
+
+"#]]);
+
+    // Upload without contract name should fail.
+    cmd.forge_fuse().args(["selectors", "upload", "src/Counter.sol"]).assert_failure().stderr_eq(
+        str![[r#"
+...
+Error: No contract name provided.
+...
+
+"#]],
+    );
+
+    // Upload single CounterV2.
+    cmd.forge_fuse().args(["selectors", "upload", "CounterV2"]).assert_success().stdout_eq(str![[
+        r#"
+...
+Uploading selectors for CounterV2...
+...
+Selectors successfully uploaded to OpenChain
+...
+
+"#
+    ]]);
+
+    // Upload CounterV1 with path.
+    cmd.forge_fuse()
+        .args(["selectors", "upload", "src/CounterV1.sol:Counter"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Uploading selectors for Counter...
+...
+Selectors successfully uploaded to OpenChain
+...
+
+"#]]);
+
+    // Upload Counter with path.
+    cmd.forge_fuse()
+        .args(["selectors", "upload", "src/Counter.sol:Counter"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Uploading selectors for Counter...
+...
+Selectors successfully uploaded to OpenChain
+...
+
+"#]]);
+});
+
+// tests `interceptInitcode` function
+forgetest_init!(intercept_initcode, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.insert_ds_test();
+    prj.insert_vm();
+    prj.clear();
+
+    prj.add_source(
+        "InterceptInitcode.t.sol",
+        r#"
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+
+contract SimpleContract {
+    uint256 public value;
+    constructor(uint256 _value) {
+        value = _value;
+    }
+}
+
+contract InterceptInitcodeTest is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+
+    function testInterceptRegularCreate() public {
+        // Set up interception
+        vm.interceptInitcode();
+
+        // Try to create a contract - this should revert with the initcode
+        bytes memory initcode;
+        try new SimpleContract(42) {
+            assert(false);
+        } catch (bytes memory interceptedInitcode) {
+            initcode = interceptedInitcode;
+        }
+
+        // Verify the initcode contains the constructor argument
+        assertTrue(initcode.length > 0, "initcode should not be empty");
+
+        // The constructor argument is encoded as a 32-byte value at the end of the initcode
+        // We need to convert the last 32 bytes to uint256
+        uint256 value;
+        assembly {
+            value := mload(add(add(initcode, 0x20), sub(mload(initcode), 32)))
+        }
+        assertEq(value, 42, "initcode should contain constructor arg");
+    }
+
+    function testInterceptCreate2() public {
+        // Set up interception
+        vm.interceptInitcode();
+
+        // Try to create a contract with CREATE2 - this should revert with the initcode
+        bytes memory initcode;
+        try new SimpleContract(1337) {
+            assert(false);
+        } catch (bytes memory interceptedInitcode) {
+            initcode = interceptedInitcode;
+        }
+
+        // Verify the initcode contains the constructor argument
+        assertTrue(initcode.length > 0, "initcode should not be empty");
+
+        // The constructor argument is encoded as a 32-byte value at the end of the initcode
+        uint256 value;
+        assembly {
+            value := mload(add(add(initcode, 0x20), sub(mload(initcode), 32)))
+        }
+        assertEq(value, 1337, "initcode should contain constructor arg");
+    }
+
+    function testInterceptMultiple() public {
+        // First interception
+        vm.interceptInitcode();
+        bytes memory initcode1;
+        try new SimpleContract(1) {
+            assert(false);
+        } catch (bytes memory interceptedInitcode) {
+            initcode1 = interceptedInitcode;
+        }
+
+        // Second interception
+        vm.interceptInitcode();
+        bytes memory initcode2;
+        try new SimpleContract(2) {
+            assert(false);
+        } catch (bytes memory interceptedInitcode) {
+            initcode2 = interceptedInitcode;
+        }
+
+        // Verify different initcodes
+        assertTrue(initcode1.length > 0, "first initcode should not be empty");
+        assertTrue(initcode2.length > 0, "second initcode should not be empty");
+
+        // Extract constructor arguments from both initcodes
+        uint256 value1;
+        uint256 value2;
+        assembly {
+            value1 := mload(add(add(initcode1, 0x20), sub(mload(initcode1), 32)))
+            value2 := mload(add(add(initcode2, 0x20), sub(mload(initcode2), 32)))
+        }
+        assertEq(value1, 1, "first initcode should contain first arg");
+        assertEq(value2, 2, "second initcode should contain second arg");
+    }
+}
+     "#,
+    )
+    .unwrap();
+    cmd.args(["test", "-vvvvv"]).assert_success();
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10296>
+// <https://github.com/foundry-rs/foundry/issues/10552>
+forgetest_init!(should_preserve_fork_state_setup, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import "forge-std/Test.sol";
+import {StdChains} from "forge-std/StdChains.sol";
+
+contract CounterTest is Test {
+    struct Domain {
+        StdChains.Chain chain;
+        uint256 forkId;
+    }
+
+    struct Bridge {
+        Domain source;
+        Domain destination;
+        uint256 someVal;
+    }
+
+    struct SomeStruct {
+        Domain domain;
+        Bridge[] bridges;
+    }
+
+    mapping(uint256 => SomeStruct) internal data;
+
+    function setUp() public {
+        // Temporary workaround for `https://eth.llamarpc.com/` being down
+        setChain("mainnet", ChainData({
+            name: "mainnet",
+            rpcUrl: "https://reth-ethereum.ithaca.xyz/rpc",
+            chainId: 1
+        }));
+
+        StdChains.Chain memory chain1 = getChain("mainnet");
+        StdChains.Chain memory chain2 = getChain("base");
+        Domain memory domain1 = Domain(chain1, vm.createFork(chain1.rpcUrl, 22253716));
+        Domain memory domain2 = Domain(chain2, vm.createFork(chain2.rpcUrl, 28839981));
+        data[1].domain = domain1;
+        data[2].domain = domain2;
+
+        vm.selectFork(domain1.forkId);
+
+        data[2].bridges.push(Bridge(domain1, domain2, 123));
+        vm.selectFork(data[2].domain.forkId);
+        vm.selectFork(data[1].domain.forkId);
+        data[2].bridges.push(Bridge(domain1, domain2, 456));
+
+        assertEq(data[2].bridges.length, 2);
+    }
+
+    function test_assert_storage() public {
+        vm.selectFork(data[2].domain.forkId);
+        assertEq(data[2].bridges.length, 2);
+    }
+
+    function test_modify_and_storage() public {
+        data[3].domain = Domain(getChain("base"), vm.createFork(getChain("base").rpcUrl, 28839981));
+        data[3].bridges.push(Bridge(data[1].domain, data[2].domain, 123));
+        data[3].bridges.push(Bridge(data[1].domain, data[2].domain, 456));
+
+        vm.selectFork(data[2].domain.forkId);
+        assertEq(data[3].bridges.length, 2);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mc", "CounterTest"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/Counter.t.sol:CounterTest
+[PASS] test_assert_storage() ([GAS])
+[PASS] test_modify_and_storage() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10544>
+forgetest_init!(should_not_panic_on_cool, |prj, cmd| {
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CounterTest is Test {
+    Counter counter = new Counter();
+
+    function testCoolPanic() public {
+        address alice = makeAddr("alice");
+        vm.deal(alice, 10000 ether);
+        counter.setNumber(1);
+        vm.cool(address(counter));
+        vm.prank(alice);
+        payable(address(counter)).transfer(1 ether);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mc", "CounterTest"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Counter.t.sol:CounterTest
+[FAIL: EvmError: Revert] testCoolPanic() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/Counter.t.sol:CounterTest
+[FAIL: EvmError: Revert] testCoolPanic() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+"#]]);
+});
+
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(detailed_revert_when_calling_non_contract_address, |prj, cmd| {
+    prj.add_test(
+        "NonContractCallRevertTest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+interface ICounter {
+    function increment() external;
+    function number() external returns (uint256);
+    function random() external returns (uint256);
+}
+
+contract NonContractCallRevertTest is Test {
+    Counter public counter;
+    address constant ADDRESS = 0xdEADBEeF00000000000000000000000000000000;
+
+    function setUp() public {
+        counter = new Counter();
+        counter.setNumber(1);
+    }
+
+    function test_non_supported_selector_call_failure() public {
+        console.log("test non supported fn selector call failure");
+        ICounter(address(counter)).random();
+    }
+
+    function test_non_contract_call_failure() public {
+        console.log("test non contract call failure");
+        ICounter(ADDRESS).number();
+    }
+
+    function test_non_contract_void_call_failure() public {
+        console.log("test non contract (void) call failure");
+        ICounter(ADDRESS).increment();
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mc", "NonContractCallRevertTest", "-vvv"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 3 tests for test/NonContractCallRevertTest.t.sol:NonContractCallRevertTest
+[FAIL: call to non-contract address 0xdEADBEeF00000000000000000000000000000000] test_non_contract_call_failure() ([GAS])
+Logs:
+  test non contract call failure
+
+Traces:
+  [6350] NonContractCallRevertTest::test_non_contract_call_failure()
+    ├─ [0] console::log("test non contract call failure") [staticcall]
+    │   └─ ← [Stop]
+    ├─ [0] 0xdEADBEeF00000000000000000000000000000000::number()
+    │   └─ ← [Stop]
+    └─ ← [Revert] call to non-contract address 0xdEADBEeF00000000000000000000000000000000
+
+[FAIL: call to non-contract address 0xdEADBEeF00000000000000000000000000000000] test_non_contract_void_call_failure() ([GAS])
+Logs:
+  test non contract (void) call failure
+
+Traces:
+  [6215] NonContractCallRevertTest::test_non_contract_void_call_failure()
+    ├─ [0] console::log("test non contract (void) call failure") [staticcall]
+    │   └─ ← [Stop]
+    └─ ← [Revert] call to non-contract address 0xdEADBEeF00000000000000000000000000000000
+
+[FAIL: EvmError: Revert] test_non_supported_selector_call_failure() ([GAS])
+Logs:
+  test non supported fn selector call failure
+
+Traces:
+  [8620] NonContractCallRevertTest::test_non_supported_selector_call_failure()
+    ├─ [0] console::log("test non supported fn selector call failure") [staticcall]
+    │   └─ ← [Stop]
+    ├─ [145] Counter::random()
+    │   └─ ← [Revert] unrecognized function selector 0x5ec01e4d for contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f, which has no fallback function.
+    └─ ← [Revert] EvmError: Revert
+
+Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 3 failed, 0 skipped (3 total tests)
+
+Failing tests:
+Encountered 3 failing tests in test/NonContractCallRevertTest.t.sol:NonContractCallRevertTest
+[FAIL: call to non-contract address 0xdEADBEeF00000000000000000000000000000000] test_non_contract_call_failure() ([GAS])
+[FAIL: call to non-contract address 0xdEADBEeF00000000000000000000000000000000] test_non_contract_void_call_failure() ([GAS])
+[FAIL: EvmError: Revert] test_non_supported_selector_call_failure() ([GAS])
+
+Encountered a total of 3 failing tests, 0 tests succeeded
+
+"#]]);
+});
+
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(detailed_revert_when_delegatecalling_unlinked_library, |prj, cmd| {
+    prj.add_test(
+        "NonContractDelegateCallRevertTest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+library TestLibrary {
+    function foo(uint256 a) public pure returns (uint256) {
+        return a * 2;
+    }
+}
+
+contract LibraryCaller {
+    address public lib;
+
+    constructor(address _lib) {
+        lib = _lib;
+    }
+
+    function foobar(uint256 val) public returns (uint256) {
+        (bool success, bytes memory data) = lib.delegatecall(
+            abi.encodeWithSelector(TestLibrary.foo.selector, val)
+        );
+
+        assert(success);
+        return abi.decode(data, (uint256));
+    }
+}
+
+contract NonContractDelegateCallRevertTest is Test {
+    function test_unlinked_library_call_failure() public {
+        console.log("Test: Simulating call to unlinked library");
+        LibraryCaller caller = new LibraryCaller(0xdEADBEeF00000000000000000000000000000000);
+
+        caller.foobar(10);
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mc", "NonContractDelegateCallRevertTest", "-vvv"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/NonContractDelegateCallRevertTest.t.sol:NonContractDelegateCallRevertTest
+[FAIL: delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)] test_unlinked_library_call_failure() ([GAS])
+Logs:
+  Test: Simulating call to unlinked library
+
+Traces:
+  [255303] NonContractDelegateCallRevertTest::test_unlinked_library_call_failure()
+    ├─ [0] console::log("Test: Simulating call to unlinked library") [staticcall]
+    │   └─ ← [Stop]
+    ├─ [214746] → new LibraryCaller@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 960 bytes of code
+    ├─ [3896] LibraryCaller::foobar(10)
+    │   ├─ [0] 0xdEADBEeF00000000000000000000000000000000::foo(10) [delegatecall]
+    │   │   └─ ← [Stop]
+    │   └─ ← [Revert] delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)
+    └─ ← [Revert] delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/NonContractDelegateCallRevertTest.t.sol:NonContractDelegateCallRevertTest
+[FAIL: delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)] test_unlinked_library_call_failure() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+"#]]);
+});
+
+// This test is a copy of `error_event_decode_with_cache` in cast/tests/cli/selectors.rs
+// but it uses `forge build` to check that the project selectors are cached by default.
+forgetest_init!(build_with_selectors_cache, |prj, cmd| {
+    prj.add_source(
+        "LocalProjectContract",
+        r#"
+contract ContractWithCustomError {
+    error AnotherValueTooHigh(uint256, address);
+    event MyUniqueEventWithinLocalProject(uint256 a, address b);
+}
+   "#,
+    )
+    .unwrap();
+    // Build and cache project selectors.
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    // Assert cast can decode custom error with local cache.
+    cmd.cast_fuse()
+        .args(["decode-error", "0x7191bc6200000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000D0004F"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+AnotherValueTooHigh(uint256,address)
+101
+0x0000000000000000000000000000000000D0004F
+
+"#]]);
+    // Assert cast can decode event with local cache.
+    cmd.cast_fuse()
+        .args(["decode-event", "0xbd3699995dcc867b64dbb607be2c33be38df9134bef1178df13bfb9446e73104000000000000000000000000000000000000000000000000000000000000004e00000000000000000000000000000000000000000000000000000dd00000004e"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+MyUniqueEventWithinLocalProject(uint256,address)
+78
+0x00000000000000000000000000000DD00000004e
+
+"#]]);
 });

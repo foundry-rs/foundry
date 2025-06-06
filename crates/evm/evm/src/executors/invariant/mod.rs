@@ -2,7 +2,7 @@ use crate::{
     executors::{Executor, RawCallResult},
     inspectors::Fuzzer,
 };
-use alloy_primitives::{Address, Bytes, FixedBytes, Selector, U256};
+use alloy_primitives::{map::HashMap, Address, Bytes, FixedBytes, Selector, U256};
 use alloy_sol_types::{sol, SolCall};
 use eyre::{eyre, ContextCompat, Result};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
@@ -30,7 +30,7 @@ use proptest::{
     test_runner::{TestCaseError, TestRunner},
 };
 use result::{assert_after_invariant, assert_invariants, can_continue};
-use revm::primitives::HashMap;
+use revm::state::Account;
 use shrink::shrink_sequence;
 use std::{
     cell::RefCell,
@@ -348,7 +348,7 @@ impl<'a> InvariantExecutor<'a> {
 
             // We stop the run immediately if we have reverted, and `fail_on_revert` is set.
             if self.config.fail_on_revert && invariant_test.reverts() > 0 {
-                return Err(TestCaseError::fail("Revert occurred."))
+                return Err(TestCaseError::fail("call reverted"))
             }
 
             while current_run.depth < self.config.depth {
@@ -362,7 +362,7 @@ impl<'a> InvariantExecutor<'a> {
                 }
 
                 let tx = current_run.inputs.last().ok_or_else(|| {
-                    TestCaseError::fail("No input generated to call fuzzed target.")
+                    TestCaseError::fail("no input generated to called fuzz target")
                 })?;
 
                 // Execute call from the randomly generated sequence without committing state.
@@ -375,9 +375,7 @@ impl<'a> InvariantExecutor<'a> {
                         tx.call_details.calldata.clone(),
                         U256::ZERO,
                     )
-                    .map_err(|e| {
-                        TestCaseError::fail(format!("Could not make raw evm call: {e}"))
-                    })?;
+                    .map_err(|e| TestCaseError::fail(e.to_string()))?;
 
                 let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
                 if self.config.show_metrics {
@@ -394,13 +392,21 @@ impl<'a> InvariantExecutor<'a> {
                         invariant_test.set_error(InvariantFuzzError::MaxAssumeRejects(
                             self.config.max_assume_rejects,
                         ));
-                        return Err(TestCaseError::fail("Max number of vm.assume rejects reached."))
+                        return Err(TestCaseError::fail(
+                            "reached maximum number of `vm.assume` rejects",
+                        ));
                     }
                 } else {
                     // Commit executed call result.
                     current_run.executor.commit(&mut call_result);
 
                     // Collect data for fuzzing from the state changeset.
+                    // This step updates the state dictionary and therefore invalidates the
+                    // ValueTree in use by the current run. This manifestsitself in proptest
+                    // observing a different input case than what it was called with, and creates
+                    // inconsistencies whenever proptest tries to use the input case after test
+                    // execution.
+                    // See <https://github.com/foundry-rs/foundry/issues/9764>.
                     let mut state_changeset = call_result.state_changeset.clone();
                     if !call_result.reverted {
                         collect_data(
@@ -446,7 +452,7 @@ impl<'a> InvariantExecutor<'a> {
                     }
                     // If test cannot continue then stop current run and exit test suite.
                     if !result.can_continue {
-                        return Err(TestCaseError::fail("Test cannot continue."))
+                        return Err(TestCaseError::fail("test cannot continue"))
                     }
 
                     invariant_test.set_last_call_results(result.call_result);
@@ -592,27 +598,27 @@ impl<'a> InvariantExecutor<'a> {
     ///
     /// targetArtifactSelectors > excludeArtifacts > targetArtifacts
     pub fn select_contract_artifacts(&mut self, invariant_address: Address) -> Result<()> {
-        let result = self
+        let targeted_artifact_selectors = self
             .executor
             .call_sol_default(invariant_address, &IInvariantTest::targetArtifactSelectorsCall {});
 
         // Insert them into the executor `targeted_abi`.
         for IInvariantTest::FuzzArtifactSelector { artifact, selectors } in
-            result.targetedArtifactSelectors
+            targeted_artifact_selectors
         {
             let identifier = self.validate_selected_contract(artifact, &selectors)?;
             self.artifact_filters.targeted.entry(identifier).or_default().extend(selectors);
         }
 
-        let selected = self
+        let targeted_artifacts = self
             .executor
             .call_sol_default(invariant_address, &IInvariantTest::targetArtifactsCall {});
-        let excluded = self
+        let excluded_artifacts = self
             .executor
             .call_sol_default(invariant_address, &IInvariantTest::excludeArtifactsCall {});
 
         // Insert `excludeArtifacts` into the executor `excluded_abi`.
-        for contract in excluded.excludedArtifacts {
+        for contract in excluded_artifacts {
             let identifier = self.validate_selected_contract(contract, &[])?;
 
             if !self.artifact_filters.excluded.contains(&identifier) {
@@ -642,7 +648,7 @@ impl<'a> InvariantExecutor<'a> {
 
         // Insert `targetArtifacts` into the executor `targeted_abi`, if they have not been seen
         // before.
-        for contract in selected.targetedArtifacts {
+        for contract in targeted_artifacts {
             let identifier = self.validate_selected_contract(contract, &[])?;
 
             if !self.artifact_filters.targeted.contains_key(&identifier) &&
@@ -684,14 +690,10 @@ impl<'a> InvariantExecutor<'a> {
         &self,
         to: Address,
     ) -> Result<(SenderFilters, FuzzRunIdentifiedContracts)> {
-        let targeted_senders = self
-            .executor
-            .call_sol_default(to, &IInvariantTest::targetSendersCall {})
-            .targetedSenders;
-        let mut excluded_senders = self
-            .executor
-            .call_sol_default(to, &IInvariantTest::excludeSendersCall {})
-            .excludedSenders;
+        let targeted_senders =
+            self.executor.call_sol_default(to, &IInvariantTest::targetSendersCall {});
+        let mut excluded_senders =
+            self.executor.call_sol_default(to, &IInvariantTest::excludeSendersCall {});
         // Extend with default excluded addresses - https://github.com/foundry-rs/foundry/issues/4163
         excluded_senders.extend([
             CHEATCODE_ADDRESS,
@@ -702,19 +704,18 @@ impl<'a> InvariantExecutor<'a> {
         excluded_senders.extend(PRECOMPILES);
         let sender_filters = SenderFilters::new(targeted_senders, excluded_senders);
 
-        let selected = self
-            .executor
-            .call_sol_default(to, &IInvariantTest::targetContractsCall {})
-            .targetedContracts;
-        let excluded = self
-            .executor
-            .call_sol_default(to, &IInvariantTest::excludeContractsCall {})
-            .excludedContracts;
+        let selected = self.executor.call_sol_default(to, &IInvariantTest::targetContractsCall {});
+        let excluded = self.executor.call_sol_default(to, &IInvariantTest::excludeContractsCall {});
 
         let contracts = self
             .setup_contracts
             .iter()
             .filter(|&(addr, (identifier, _))| {
+                // Include to address if explicitly set as target.
+                if *addr == to && selected.contains(&to) {
+                    return true;
+                }
+
                 *addr != to &&
                     *addr != CHEATCODE_ADDRESS &&
                     *addr != HARDHAT_CONSOLE_ADDRESS &&
@@ -751,8 +752,7 @@ impl<'a> InvariantExecutor<'a> {
     ) -> Result<()> {
         let interfaces = self
             .executor
-            .call_sol_default(invariant_address, &IInvariantTest::targetInterfacesCall {})
-            .targetedInterfaces;
+            .call_sol_default(invariant_address, &IInvariantTest::targetInterfacesCall {});
 
         // Since `targetInterfaces` returns a tuple array there is no guarantee
         // that the addresses are unique this map is used to merge functions of
@@ -767,8 +767,7 @@ impl<'a> InvariantExecutor<'a> {
             // Identifiers are specified as an array, so we loop through them.
             for identifier in artifacts {
                 // Try to find the contract by name or identifier in the project's contracts.
-                if let Some((_, contract)) =
-                    self.project_contracts.find_by_name_or_identifier(identifier)?
+                if let Some(abi) = self.project_contracts.find_abi_by_name_or_identifier(identifier)
                 {
                     combined
                         // Check if there's an entry for the given key in the 'combined' map.
@@ -776,12 +775,10 @@ impl<'a> InvariantExecutor<'a> {
                         // If the entry exists, extends its ABI with the function list.
                         .and_modify(|entry| {
                             // Extend the ABI's function list with the new functions.
-                            entry.abi.functions.extend(contract.abi.functions.clone());
+                            entry.abi.functions.extend(abi.functions.clone());
                         })
                         // Otherwise insert it into the map.
-                        .or_insert_with(|| {
-                            TargetedContract::new(identifier.to_string(), contract.abi.clone())
-                        });
+                        .or_insert_with(|| TargetedContract::new(identifier.to_string(), abi));
                 }
             }
         }
@@ -798,7 +795,7 @@ impl<'a> InvariantExecutor<'a> {
         address: Address,
         targeted_contracts: &mut TargetedContracts,
     ) -> Result<()> {
-        for (address, (identifier, _)) in self.setup_contracts.iter() {
+        for (address, (identifier, _)) in self.setup_contracts {
             if let Some(selectors) = self.artifact_filters.targeted.get(identifier) {
                 self.add_address_with_functions(*address, selectors, false, targeted_contracts)?;
             }
@@ -807,14 +804,14 @@ impl<'a> InvariantExecutor<'a> {
         // Collect contract functions marked as target for fuzzing campaign.
         let selectors =
             self.executor.call_sol_default(address, &IInvariantTest::targetSelectorsCall {});
-        for IInvariantTest::FuzzSelector { addr, selectors } in selectors.targetedSelectors {
+        for IInvariantTest::FuzzSelector { addr, selectors } in selectors {
             self.add_address_with_functions(addr, &selectors, false, targeted_contracts)?;
         }
 
         // Collect contract functions excluded from fuzzing campaign.
-        let selectors =
+        let excluded_selectors =
             self.executor.call_sol_default(address, &IInvariantTest::excludeSelectorsCall {});
-        for IInvariantTest::FuzzSelector { addr, selectors } in selectors.excludedSelectors {
+        for IInvariantTest::FuzzSelector { addr, selectors } in excluded_selectors {
             self.add_address_with_functions(addr, &selectors, true, targeted_contracts)?;
         }
 
@@ -857,7 +854,7 @@ impl<'a> InvariantExecutor<'a> {
 /// randomly generated addresses.
 fn collect_data(
     invariant_test: &InvariantTest,
-    state_changeset: &mut HashMap<Address, revm::primitives::Account>,
+    state_changeset: &mut HashMap<Address, Account>,
     tx: &BasicTxDetails,
     call_result: &RawCallResult,
     run_depth: u32,

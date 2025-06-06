@@ -1,16 +1,16 @@
 //! Support for generating the state root for memdb storage
 
 use crate::eth::error::BlockchainError;
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{keccak256, map::HashMap, Address, B256, U256};
 use alloy_rlp::Encodable;
-use alloy_rpc_types::state::StateOverride;
+use alloy_rpc_types::{state::StateOverride, BlockOverrides};
 use alloy_trie::{HashBuilder, Nibbles};
-use foundry_evm::{
-    backend::DatabaseError,
-    revm::{
-        db::{CacheDB, DatabaseRef, DbAccount},
-        primitives::{AccountInfo, Bytecode, HashMap},
-    },
+use foundry_evm::backend::DatabaseError;
+use revm::{
+    bytecode::Bytecode,
+    context::BlockEnv,
+    database::{CacheDB, DatabaseRef, DbAccount},
+    state::AccountInfo,
 };
 
 pub fn build_root(values: impl IntoIterator<Item = (Nibbles, Vec<u8>)>) -> B256 {
@@ -70,16 +70,15 @@ pub fn trie_account_rlp(info: &AccountInfo, storage: &HashMap<U256, U256>) -> Ve
     out
 }
 
-/// Applies the given state overrides to the state, returning a new CacheDB state
-pub fn apply_state_override<D>(
+/// Applies the given state overrides to the given CacheDB
+pub fn apply_state_overrides<D>(
     overrides: StateOverride,
-    state: D,
-) -> Result<CacheDB<D>, BlockchainError>
+    cache_db: &mut CacheDB<D>,
+) -> Result<(), BlockchainError>
 where
     D: DatabaseRef<Error = DatabaseError>,
 {
-    let mut cache_db = CacheDB::new(state);
-    for (account, account_overrides) in overrides.iter() {
+    for (account, account_overrides) in &overrides {
         let mut account_info = cache_db.basic_ref(*account)?.unwrap_or_default();
 
         if let Some(nonce) = account_overrides.nonce {
@@ -114,11 +113,59 @@ where
                 )?;
             }
             (None, Some(account_state_diff)) => {
-                for (key, value) in account_state_diff.iter() {
+                for (key, value) in account_state_diff {
                     cache_db.insert_account_storage(*account, (*key).into(), (*value).into())?;
                 }
             }
         };
     }
-    Ok(cache_db)
+    Ok(())
+}
+
+/// Applies the given block overrides to the env and updates overridden block hashes in the db.
+pub fn apply_block_overrides<DB>(
+    overrides: BlockOverrides,
+    cache_db: &mut CacheDB<DB>,
+    env: &mut BlockEnv,
+) {
+    let BlockOverrides {
+        number,
+        difficulty,
+        time,
+        gas_limit,
+        coinbase,
+        random,
+        base_fee,
+        block_hash,
+    } = overrides;
+
+    if let Some(block_hashes) = block_hash {
+        // override block hashes
+        cache_db
+            .cache
+            .block_hashes
+            .extend(block_hashes.into_iter().map(|(num, hash)| (U256::from(num), hash)))
+    }
+
+    if let Some(number) = number {
+        env.number = number.saturating_to();
+    }
+    if let Some(difficulty) = difficulty {
+        env.difficulty = difficulty;
+    }
+    if let Some(time) = time {
+        env.timestamp = time;
+    }
+    if let Some(gas_limit) = gas_limit {
+        env.gas_limit = gas_limit;
+    }
+    if let Some(coinbase) = coinbase {
+        env.beneficiary = coinbase;
+    }
+    if let Some(random) = random {
+        env.prevrandao = Some(random);
+    }
+    if let Some(base_fee) = base_fee {
+        env.basefee = base_fee.saturating_to();
+    }
 }

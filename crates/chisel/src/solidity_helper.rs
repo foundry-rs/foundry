@@ -241,7 +241,7 @@ impl Hinter for SolidityHelper {
 
 impl Helper for SolidityHelper {}
 
-#[allow(non_upper_case_globals)]
+#[expect(non_upper_case_globals)]
 #[deny(unreachable_patterns)]
 fn token_style(token: &Token) -> Style {
     use solar_parse::{
