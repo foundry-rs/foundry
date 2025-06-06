@@ -216,13 +216,6 @@ impl ProviderBuilder {
         self
     }
 
-    /// Sets aggressive `max_retry` and `initial_backoff` values
-    ///
-    /// This is only recommend for local dev nodes
-    pub fn aggressive(self) -> Self {
-        self.max_retry(100).initial_backoff(100).local(true)
-    }
-
     /// Sets the JWT secret
     pub fn jwt(mut self, jwt: impl Into<String>) -> Self {
         self.jwt = Some(jwt.into());

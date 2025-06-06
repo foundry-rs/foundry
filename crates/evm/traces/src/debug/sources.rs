@@ -248,17 +248,6 @@ impl ContractSources {
         })
     }
 
-    /// Returns all (name, bytecode, source) sets.
-    pub fn entries(&self) -> impl Iterator<Item = (&str, &ArtifactData, &SourceData)> {
-        self.artifacts_by_name.iter().flat_map(|(name, artifacts)| {
-            artifacts.iter().filter_map(|artifact| {
-                let source =
-                    self.sources_by_id.get(artifact.build_id.as_str())?.get(&artifact.file_id)?;
-                Some((name.as_str(), artifact, source.as_ref()))
-            })
-        })
-    }
-
     pub fn find_source_mapping(
         &self,
         contract_name: &str,

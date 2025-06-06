@@ -1,6 +1,6 @@
 use crate::{
     debug::DebugTraceIdentifier,
-    identifier::{IdentifiedAddress, LocalTraceIdentifier, SignaturesIdentifier, TraceIdentifier},
+    identifier::{IdentifiedAddress, SignaturesIdentifier, TraceIdentifier},
     CallTrace, CallTraceArena, CallTraceNode, DecodedCallData,
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
@@ -67,12 +67,6 @@ impl CallTraceDecoderBuilder {
             self.decoder.collect_abi(&contract.abi, None);
         }
         self
-    }
-
-    /// Add known contracts to the decoder from a `LocalTraceIdentifier`.
-    #[inline]
-    pub fn with_local_identifier_abis(self, identifier: &LocalTraceIdentifier<'_>) -> Self {
-        self.with_known_contracts(identifier.contracts())
     }
 
     /// Sets the verbosity level of the decoder.

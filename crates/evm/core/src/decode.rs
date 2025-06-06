@@ -47,15 +47,11 @@ impl fmt::Display for SkipReason {
 
 /// Decode a set of logs, only returning logs from DSTest logging events and Hardhat's `console.log`
 pub fn decode_console_logs(logs: &[Log]) -> Vec<String> {
-    logs.iter().filter_map(decode_console_log).collect()
-}
-
-/// Decode a single log.
-///
-/// This function returns [None] if it is not a DSTest log or the result of a Hardhat
-/// `console.log`.
-pub fn decode_console_log(log: &Log) -> Option<String> {
-    console::ds::ConsoleEvents::decode_log(log).ok().map(|decoded| decoded.to_string())
+    logs.iter()
+        .filter_map(|log| {
+            console::ds::ConsoleEvents::decode_log(log).ok().map(|decoded| decoded.to_string())
+        })
+        .collect()
 }
 
 /// Decodes revert data.
@@ -91,16 +87,6 @@ impl RevertDecoder {
     /// Note that this is decently expensive as it will hash all errors for faster indexing.
     pub fn with_abi(mut self, abi: &JsonAbi) -> Self {
         self.extend_from_abi(abi);
-        self
-    }
-
-    /// Sets the ABI to use for error decoding, if it is present.
-    ///
-    /// Note that this is decently expensive as it will hash all errors for faster indexing.
-    pub fn with_abi_opt(mut self, abi: Option<&JsonAbi>) -> Self {
-        if let Some(abi) = abi {
-            self.extend_from_abi(abi);
-        }
         self
     }
 
