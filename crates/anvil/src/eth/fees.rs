@@ -323,7 +323,7 @@ impl FeeHistoryService {
                 .filter_map(|p| {
                     let target_gas = (p * gas_used / 100f64) as u64;
                     let mut sum_gas = 0;
-                    for (gas_used, effective_reward) in transactions.iter().cloned() {
+                    for (gas_used, effective_reward) in transactions.iter().copied() {
                         sum_gas += gas_used;
                         if target_gas <= sum_gas {
                             return Some(effective_reward)
