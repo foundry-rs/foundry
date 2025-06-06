@@ -4,13 +4,12 @@ use crate::eth::pool::{transactions::PoolTransaction, Pool};
 use alloy_primitives::TxHash;
 use futures::{
     channel::mpsc::Receiver,
-    stream::{Fuse, Stream, StreamExt},
+    stream::{Fuse, StreamExt},
     task::AtomicWaker,
 };
 use parking_lot::{lock_api::RwLockWriteGuard, RawRwLock, RwLock};
 use std::{
     fmt,
-    pin::Pin,
     sync::Arc,
     task::{ready, Context, Poll},
     time::Duration,
@@ -245,8 +244,8 @@ pub struct ReadyTransactionMiner {
 
 impl ReadyTransactionMiner {
     fn poll(&mut self, pool: &Arc<Pool>, cx: &mut Context<'_>) -> Poll<Vec<Arc<PoolTransaction>>> {
-        // drain the notification stream
-        while let Poll::Ready(Some(_hash)) = Pin::new(&mut self.rx).poll_next(cx) {
+        // always drain the notification stream so that we're woken up as soon as there's a new tx
+        while let Poll::Ready(Some(_hash)) = self.rx.poll_next_unpin(cx) {
             self.has_pending_txs = Some(true);
         }
 

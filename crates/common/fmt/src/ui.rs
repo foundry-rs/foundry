@@ -4,14 +4,15 @@ use alloy_consensus::{
     Eip658Value, Receipt, ReceiptWithBloom, Transaction as TxTrait, TxEnvelope, TxType, Typed2718,
 };
 use alloy_network::{
-    AnyHeader, AnyReceiptEnvelope, AnyRpcBlock, AnyTransactionReceipt, AnyTxEnvelope,
-    ReceiptResponse,
+    AnyHeader, AnyReceiptEnvelope, AnyRpcBlock, AnyRpcTransaction, AnyTransactionReceipt,
+    AnyTxEnvelope, ReceiptResponse,
 };
 use alloy_primitives::{hex, Address, Bloom, Bytes, FixedBytes, Uint, I256, U256, U64, U8};
 use alloy_rpc_types::{
     AccessListItem, Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
+use revm::context_interface::transaction::SignedAuthorization;
 use serde::Deserialize;
 
 /// length of the name column for pretty formatting `{:>20}{value}`
@@ -291,7 +292,7 @@ impl UIfmt for OtherFields {
         if !self.is_empty() {
             s.push('\n');
         }
-        for (key, value) in self.iter() {
+        for (key, value) in self {
             let val = EthValue::from(value.clone()).pretty();
             let offset = NAME_COLUMN_LEN.saturating_sub(key.len());
             s.push_str(key);
@@ -443,8 +444,9 @@ yParity              {}",
                     .pretty(),
                 self.authorization_list()
                     .as_ref()
-                    .map(|l| serde_json::to_string(&l).unwrap())
-                    .unwrap_or_default(),
+                    .map(|l| l.iter().collect::<Vec<_>>())
+                    .unwrap_or_default()
+                    .pretty(),
                 self.chain_id().pretty(),
                 self.gas_limit().pretty(),
                 self.tx_hash().pretty(),
@@ -515,7 +517,7 @@ type                 {}
 }
 impl UIfmt for Transaction {
     fn pretty(&self) -> String {
-        match &self.inner {
+        match &self.inner.inner() {
             TxEnvelope::Eip2930(tx) => format!(
                 "
 accessList           {}
@@ -543,7 +545,7 @@ yParity              {}",
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
                 self.chain_id().pretty(),
-                self.from.pretty(),
+                self.inner.signer().pretty(),
                 self.gas_limit().pretty(),
                 self.gas_price().pretty(),
                 self.inner.tx_hash().pretty(),
@@ -585,7 +587,7 @@ yParity              {}",
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
                 self.chain_id().pretty(),
-                self.from.pretty(),
+                self.inner.signer().pretty(),
                 self.gas_limit().pretty(),
                 tx.hash().pretty(),
                 self.input().pretty(),
@@ -631,7 +633,7 @@ yParity              {}",
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
                 self.chain_id().pretty(),
-                self.from.pretty(),
+                self.inner.signer().pretty(),
                 self.gas_limit().pretty(),
                 tx.hash().pretty(),
                 self.input().pretty(),
@@ -675,12 +677,13 @@ yParity              {}",
                     .pretty(),
                 self.authorization_list()
                     .as_ref()
-                    .map(|l| serde_json::to_string(&l).unwrap())
-                    .unwrap_or_default(),
+                    .map(|l| l.iter().collect::<Vec<_>>())
+                    .unwrap_or_default()
+                    .pretty(),
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
                 self.chain_id().pretty(),
-                self.from.pretty(),
+                self.inner.signer().pretty(),
                 self.gas_limit().pretty(),
                 tx.hash().pretty(),
                 self.input().pretty(),
@@ -713,7 +716,7 @@ v                    {}
 value                {}",
                 self.block_hash.pretty(),
                 self.block_number.pretty(),
-                self.from.pretty(),
+                self.inner.signer().pretty(),
                 self.gas_limit().pretty(),
                 self.gas_price().pretty(),
                 self.inner.tx_hash().pretty(),
@@ -752,11 +755,23 @@ effectiveGasPrice    {}
             ",
             self.block_hash.pretty(),
             self.block_number.pretty(),
-            self.from.pretty(),
+            self.inner.signer().pretty(),
             self.transaction_index.pretty(),
             self.effective_gas_price.pretty(),
             self.inner.pretty(),
         )
+    }
+}
+
+impl UIfmt for AnyRpcBlock {
+    fn pretty(&self) -> String {
+        self.0.pretty()
+    }
+}
+
+impl UIfmt for AnyRpcTransaction {
+    fn pretty(&self) -> String {
+        self.0.pretty()
     }
 }
 
@@ -769,7 +784,7 @@ impl<T: UIfmt> UIfmt for WithOtherFields<T> {
 /// Various numerical ethereum types used for pretty printing
 #[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum EthValue {
     U64(U64),
     U256(U256),
@@ -796,9 +811,24 @@ impl UIfmt for EthValue {
     }
 }
 
+impl UIfmt for SignedAuthorization {
+    fn pretty(&self) -> String {
+        let signed_authorization = serde_json::to_string(self).unwrap_or("<invalid>".to_string());
+
+        match self.recover_authority() {
+            Ok(authority) => format!(
+                "{{recoveredAuthority: {authority}, signedAuthority: {signed_authorization}}}",
+            ),
+            Err(e) => format!(
+                "{{recoveredAuthority: <error: {e}>, signedAuthority: {signed_authorization}}}",
+            ),
+        }
+    }
+}
+
 /// Returns the `UiFmt::pretty()` formatted attribute of the transactions
 pub fn get_pretty_tx_attr(transaction: &Transaction<AnyTxEnvelope>, attr: &str) -> Option<String> {
-    let sig = match &transaction.inner {
+    let sig = match &transaction.inner.inner() {
         AnyTxEnvelope::Ethereum(envelope) => match &envelope {
             TxEnvelope::Eip2930(tx) => Some(tx.signature()),
             TxEnvelope::Eip1559(tx) => Some(tx.signature()),
@@ -811,7 +841,7 @@ pub fn get_pretty_tx_attr(transaction: &Transaction<AnyTxEnvelope>, attr: &str) 
     match attr {
         "blockHash" | "block_hash" => Some(transaction.block_hash.pretty()),
         "blockNumber" | "block_number" => Some(transaction.block_number.pretty()),
-        "from" => Some(transaction.from.pretty()),
+        "from" => Some(transaction.inner.signer().pretty()),
         "gas" => Some(transaction.gas_limit().pretty()),
         "gasPrice" | "gas_price" => Some(Transaction::gas_price(transaction).pretty()),
         "hash" => Some(alloy_network::TransactionResponse::tx_hash(transaction).pretty()),
@@ -855,7 +885,7 @@ pub fn get_pretty_block_attr(block: &AnyRpcBlock, attr: &str) -> Option<String> 
         other => {
             if let Some(value) = block.other.get(other) {
                 let val = EthValue::from(value.clone());
-                return Some(val.pretty())
+                return Some(val.pretty());
             }
             None
         }
@@ -958,6 +988,7 @@ requestsHash         {}",
 mod tests {
     use super::*;
     use alloy_primitives::B256;
+    use alloy_rpc_types::Authorization;
     use similar_asserts::assert_eq;
     use std::str::FromStr;
 
@@ -1460,5 +1491,21 @@ l1GasUsed            1600
 "#;
 
         assert_eq!(formatted.trim(), expected.trim());
+    }
+
+    #[test]
+    fn test_uifmt_for_signed_authorization() {
+        let inner = Authorization {
+            chain_id: U256::from(1),
+            address: "0x000000000000000000000000000000000000dead".parse::<Address>().unwrap(),
+            nonce: 42,
+        };
+        let signed_authorization =
+            SignedAuthorization::new_unchecked(inner, 1, U256::from(20), U256::from(30));
+
+        assert_eq!(
+            signed_authorization.pretty(),
+            r#"{recoveredAuthority: 0xf3eaBD0de6Ca1aE7fC4D81FfD6C9a40e5D5D7e30, signedAuthority: {"chainId":"0x1","address":"0x000000000000000000000000000000000000dead","nonce":"0x2a","yParity":"0x1","r":"0x14","s":"0x1e"}}"#
+        );
     }
 }

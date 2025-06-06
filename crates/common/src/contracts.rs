@@ -1,6 +1,7 @@
 //! Commonly used contract types and functions.
 
 use crate::compile::PathOrContractInfo;
+use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Event, Function, JsonAbi};
 use alloy_primitives::{hex, Address, Bytes, Selector, B256};
 use eyre::{OptionExt, Result};
@@ -28,7 +29,7 @@ const CALL_PROTECTION_BYTECODE_PREFIX: [u8; 21] =
     hex!("730000000000000000000000000000000000000000");
 
 /// Subset of [CompactBytecode] excluding sourcemaps.
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct BytecodeData {
     pub object: Option<BytecodeObject>,
@@ -123,31 +124,46 @@ impl ContractsByArtifact {
 
     /// Finds a contract which has a similar bytecode as `code`.
     pub fn find_by_creation_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
-        self.find_by_code(code, 0.1, ContractData::bytecode)
+        self.find_by_code(code, 0.1, true, ContractData::bytecode)
     }
 
     /// Finds a contract which has a similar deployed bytecode as `code`.
     pub fn find_by_deployed_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
-        self.find_by_code(code, 0.15, ContractData::deployed_bytecode)
+        self.find_by_code(code, 0.15, false, ContractData::deployed_bytecode)
     }
 
     /// Finds a contract based on provided bytecode and accepted match score.
+    /// If strip constructor args flag is true then removes args from bytecode to compare.
     fn find_by_code(
         &self,
         code: &[u8],
         accepted_score: f64,
+        strip_ctor_args: bool,
         get: impl Fn(&ContractData) -> Option<&Bytes>,
     ) -> Option<ArtifactWithContractRef<'_>> {
         self.iter()
             .filter_map(|(id, contract)| {
                 if let Some(deployed_bytecode) = get(contract) {
+                    let mut code = code;
+                    if strip_ctor_args && code.len() > deployed_bytecode.len() {
+                        // Try to decode ctor args with contract abi.
+                        if let Some(constructor) = contract.abi.constructor() {
+                            let constructor_args = &code[deployed_bytecode.len()..];
+                            if constructor.abi_decode_input(constructor_args).is_ok() {
+                                // If we can decode args with current abi then remove args from
+                                // code to compare.
+                                code = &code[..deployed_bytecode.len()]
+                            }
+                        }
+                    };
+
                     let score = bytecode_diff_score(deployed_bytecode.as_ref(), code);
                     (score <= accepted_score).then_some((score, (id, contract)))
                 } else {
                     None
                 }
             })
-            .min_by(|(score1, _), (score2, _)| score1.partial_cmp(score2).unwrap())
+            .min_by(|(score1, _), (score2, _)| score1.total_cmp(score2))
             .map(|(_, data)| data)
     }
 
@@ -264,7 +280,7 @@ impl ContractsByArtifact {
             eyre::bail!("{id} has more than one implementation.");
         }
 
-        Ok(contracts.first().cloned())
+        Ok(contracts.first().copied())
     }
 
     /// Finds abi for contract which has the same contract name or identifier as `id`.
@@ -438,6 +454,29 @@ pub fn find_target_path(project: &Project, identifier: &PathOrContractInfo) -> R
     match identifier {
         PathOrContractInfo::Path(path) => Ok(canonicalized(project.root().join(path))),
         PathOrContractInfo::ContractInfo(info) => {
+            if let Some(path) = info.path.as_ref() {
+                let path = canonicalized(project.root().join(path));
+                let sources = project.sources()?;
+                let contract_path = sources
+                    .iter()
+                    .find_map(|(src_path, _)| {
+                        if **src_path == path {
+                            return Some(src_path.clone());
+                        }
+                        None
+                    })
+                    .ok_or_else(|| {
+                        eyre::eyre!(
+                            "Could not find source file for contract `{}` at {}",
+                            info.name,
+                            path.strip_prefix(project.root()).unwrap().display()
+                        )
+                    })?;
+                return Ok(contract_path)
+            }
+            // If ContractInfo.path hasn't been provided we try to find the contract using the name.
+            // This will fail if projects have multiple contracts with the same name. In that case,
+            // path must be specified.
             let path = project.find_contract_path(&info.name)?;
             Ok(path)
         }

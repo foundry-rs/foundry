@@ -42,6 +42,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         out: "out-test".into(),
         libs: vec!["lib-test".into()],
         cache: true,
+        dynamic_test_linking: false,
         cache_path: "test-cache".into(),
         snapshots: "snapshots".into(),
         gas_snapshot_check: false,
@@ -118,6 +119,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         eth_rpc_timeout: None,
         eth_rpc_headers: None,
         etherscan_api_key: None,
+        etherscan_api_version: None,
         etherscan: Default::default(),
         verbosity: 4,
         remappings: vec![Remapping::from_str("forge-std/=lib/forge-std/").unwrap().into()],
@@ -146,6 +148,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         build_info: false,
         build_info_path: None,
         fmt: Default::default(),
+        lint: Default::default(),
         doc: Default::default(),
         bind_json: Default::default(),
         fs_permissions: Default::default(),
@@ -162,12 +165,11 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         assertions_revert: true,
         legacy_assertions: false,
         extra_args: vec![],
-        eof_version: None,
         odyssey: false,
         transaction_timeout: 120,
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
-        eof: false,
+        script_execution_protection: true,
         _non_exhaustive: (),
     };
     prj.write_config(input.clone());
@@ -485,6 +487,18 @@ forgetest!(can_set_optimizer_runs, |prj, cmd| {
 
     let config = prj.config_from_output(["--optimizer-runs", "300"]);
     assert_eq!(config.optimizer_runs, Some(300));
+});
+
+// test that use_literal_content works
+forgetest!(can_set_use_literal_content, |prj, cmd| {
+    // explicitly set use_literal_content
+    prj.update_config(|config| config.use_literal_content = false);
+
+    let config = cmd.config();
+    assert_eq!(config.use_literal_content, false);
+
+    let config = prj.config_from_output(["--use-literal-content"]);
+    assert_eq!(config.use_literal_content, true);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/9665>
@@ -959,6 +973,7 @@ remappings = ["forge-std/=lib/forge-std/src/"]
 auto_detect_remappings = true
 libraries = []
 cache = true
+dynamic_test_linking = false
 cache_path = "cache"
 snapshots = "snapshots"
 gas_snapshot_check = false
@@ -968,7 +983,7 @@ allow_paths = []
 include_paths = []
 skip = []
 force = false
-evm_version = "cancun"
+evm_version = "prague"
 gas_reports = ["*"]
 gas_reports_ignore = []
 gas_reports_include_tests = false
@@ -1024,17 +1039,17 @@ assertions_revert = true
 legacy_assertions = false
 odyssey = false
 transaction_timeout = 120
-eof = false
 additional_compiler_profiles = []
 compilation_restrictions = []
-
-[[profile.default.fs_permissions]]
-access = "read"
-path = "out"
+script_execution_protection = true
 
 [profile.default.rpc_storage_caching]
 chains = "all"
 endpoints = "all"
+
+[[profile.default.fs_permissions]]
+access = "read"
+path = "out"
 
 [fmt]
 line_length = 120
@@ -1051,6 +1066,11 @@ wrap_comments = false
 ignore = []
 contract_new_lines = false
 sort_imports = false
+
+[lint]
+severity = []
+exclude_lints = []
+ignore = []
 
 [doc]
 out = "docs"
@@ -1116,6 +1136,7 @@ exclude = []
   "auto_detect_remappings": true,
   "libraries": [],
   "cache": true,
+  "dynamic_test_linking": false,
   "cache_path": "cache",
   "snapshots": "snapshots",
   "gas_snapshot_check": false,
@@ -1125,7 +1146,7 @@ exclude = []
   "include_paths": [],
   "skip": [],
   "force": false,
-  "evm_version": "cancun",
+  "evm_version": "prague",
   "gas_reports": [
     "*"
   ],
@@ -1144,6 +1165,7 @@ exclude = []
   "eth_rpc_timeout": null,
   "eth_rpc_headers": null,
   "etherscan_api_key": null,
+  "etherscan_api_version": null,
   "ignored_error_codes": [
     "license",
     "code-size",
@@ -1250,6 +1272,11 @@ exclude = []
     "contract_new_lines": false,
     "sort_imports": false
   },
+  "lint": {
+    "severity": [],
+    "exclude_lints": [],
+    "ignore": []
+  },
   "doc": {
     "out": "docs",
     "title": "",
@@ -1281,9 +1308,9 @@ exclude = []
   "legacy_assertions": false,
   "odyssey": false,
   "transaction_timeout": 120,
-  "eof": false,
   "additional_compiler_profiles": [],
-  "compilation_restrictions": []
+  "compilation_restrictions": [],
+  "script_execution_protection": true
 }
 
 "#]]);
@@ -1685,7 +1712,7 @@ contract Counter {
     let v1_profile = SettingsOverrides {
         name: "v1".to_string(),
         via_ir: Some(true),
-        evm_version: Some(EvmVersion::Cancun),
+        evm_version: Some(EvmVersion::Prague),
         optimizer: None,
         optimizer_runs: Some(44444444),
         bytecode_hash: None,
@@ -1771,19 +1798,19 @@ contract Counter {
 
     let (via_ir, evm_version, enabled, runs) = artifact_settings("Counter.sol/Counter.json");
     assert_eq!(None, via_ir);
-    assert_eq!("\"cancun\"", evm_version.unwrap().to_string());
+    assert_eq!("\"prague\"", evm_version.unwrap().to_string());
     assert_eq!("false", enabled.unwrap().to_string());
     assert_eq!("200", runs.unwrap().to_string());
 
     let (via_ir, evm_version, enabled, runs) = artifact_settings("v1/Counter.sol/Counter.json");
     assert_eq!("true", via_ir.unwrap().to_string());
-    assert_eq!("\"cancun\"", evm_version.unwrap().to_string());
+    assert_eq!("\"prague\"", evm_version.unwrap().to_string());
     assert_eq!("true", enabled.unwrap().to_string());
     assert_eq!("44444444", runs.unwrap().to_string());
 
     let (via_ir, evm_version, enabled, runs) = artifact_settings("v2/Counter.sol/Counter.json");
     assert_eq!("true", via_ir.unwrap().to_string());
-    assert_eq!("\"cancun\"", evm_version.unwrap().to_string());
+    assert_eq!("\"prague\"", evm_version.unwrap().to_string());
     assert_eq!("true", enabled.unwrap().to_string());
     assert_eq!("111", runs.unwrap().to_string());
 

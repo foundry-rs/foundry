@@ -1,4 +1,5 @@
 //! Script Sequence and related types.
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 #[macro_use]
 extern crate foundry_common;

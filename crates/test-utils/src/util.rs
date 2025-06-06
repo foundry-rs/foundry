@@ -48,7 +48,7 @@ static TEMPLATE_LOCK: LazyLock<PathBuf> =
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// The default Solc version used when compiling tests.
-pub const SOLC_VERSION: &str = "0.8.27";
+pub const SOLC_VERSION: &str = "0.8.30";
 
 /// Another Solc version used when compiling tests.
 ///
@@ -213,7 +213,7 @@ impl ExtTester {
     }
 }
 
-/// Initializes a project with `forge init` at the given path.
+/// Initializes a project with `forge init` at the given path from a template directory.
 ///
 /// This should be called after an empty project is created like in
 /// [some of this crate's macros](crate::forgetest_init).
@@ -226,7 +226,9 @@ impl ExtTester {
 /// This used to use a `static` `Lazy`, but this approach does not with `cargo-nextest` because it
 /// runs each test in a separate process. Instead, we use a global lock file to ensure that only one
 /// test can initialize the template at a time.
-#[allow(clippy::disallowed_macros)]
+///
+/// This sets the project's solc version to the [`SOLC_VERSION`].
+#[expect(clippy::disallowed_macros)]
 pub fn initialize(target: &Path) {
     println!("initializing {}", target.display());
 
@@ -235,7 +237,7 @@ pub fn initialize(target: &Path) {
 
     // Initialize the global template if necessary.
     let mut lock = crate::fd_lock::new_lock(TEMPLATE_LOCK.as_path());
-    let mut _read = Some(lock.read().unwrap());
+    let mut _read = lock.read().unwrap();
     if fs::read(&*TEMPLATE_LOCK).unwrap() != b"1" {
         // We are the first to acquire the lock:
         // - initialize a new empty temp project;
@@ -246,7 +248,7 @@ pub fn initialize(target: &Path) {
         // but `TempProject` does not currently allow this: https://github.com/foundry-rs/compilers/issues/22
 
         // Release the read lock and acquire a write lock, initializing the lock file.
-        _read = None;
+        drop(_read);
 
         let mut write = lock.write().unwrap();
 
@@ -289,7 +291,7 @@ pub fn initialize(target: &Path) {
 
         // Release the write lock and acquire a new read lock.
         drop(write);
-        _read = Some(lock.read().unwrap());
+        _read = lock.read().unwrap();
     }
 
     println!("- copying template dir from {}", tpath.display());
@@ -772,7 +774,7 @@ pub struct TestCommand {
     /// The actual command we use to control the process.
     cmd: Command,
     // initial: Command,
-    current_dir_lock: Option<parking_lot::lock_api::MutexGuard<'static, parking_lot::RawMutex, ()>>,
+    current_dir_lock: Option<parking_lot::MutexGuard<'static, ()>>,
     stdin_fun: Option<Box<dyn FnOnce(ChildStdin)>>,
     /// If true, command output is redacted.
     redact_output: bool,
@@ -1006,6 +1008,8 @@ fn test_redactions() -> snapbox::Redactions {
             ("[SOLC_VERSION]", r"Solc( version)? \d+.\d+.\d+"),
             ("[ELAPSED]", r"(finished )?in \d+(\.\d+)?\w?s( \(.*?s CPU time\))?"),
             ("[GAS]", r"[Gg]as( used)?: \d+"),
+            ("[GAS_COST]", r"[Gg]as cost\s*\(\d+\)"),
+            ("[GAS_LIMIT]", r"[Gg]as limit\s*\(\d+\)"),
             ("[AVG_GAS]", r"μ: \d+, ~: \d+"),
             ("[FILE]", r"-->.*\.sol"),
             ("[FILE]", r"Location(.|\n)*\.rs(.|\n)*Backtrace"),
@@ -1017,7 +1021,10 @@ fn test_redactions() -> snapbox::Redactions {
             ("[SAVED_SENSITIVE_VALUES]", r"Sensitive values saved to: .*\.json"),
             ("[ESTIMATED_GAS_PRICE]", r"Estimated gas price:\s*(\d+(\.\d+)?)\s*gwei"),
             ("[ESTIMATED_TOTAL_GAS_USED]", r"Estimated total gas used for script: \d+"),
-            ("[ESTIMATED_AMOUNT_REQUIRED]", r"Estimated amount required:\s*(\d+(\.\d+)?)\s*ETH"),
+            (
+                "[ESTIMATED_AMOUNT_REQUIRED]",
+                r"Estimated amount required:\s*(\d+(\.\d+)?)\s*[A-Z]{3}",
+            ),
         ];
         for (placeholder, re) in redactions {
             r.insert(placeholder, Regex::new(re).expect(re)).expect(re);

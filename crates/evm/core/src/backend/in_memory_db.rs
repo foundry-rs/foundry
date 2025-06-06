@@ -4,8 +4,10 @@ use crate::state_snapshot::StateSnapshots;
 use alloy_primitives::{Address, B256, U256};
 use foundry_fork_db::DatabaseError;
 use revm::{
-    db::{CacheDB, DatabaseRef, EmptyDB},
-    primitives::{Account, AccountInfo, Bytecode, HashMap as Map},
+    bytecode::Bytecode,
+    database::{CacheDB, DatabaseRef, EmptyDB},
+    primitives::HashMap as Map,
+    state::{Account, AccountInfo},
     Database, DatabaseCommit,
 };
 
@@ -168,7 +170,7 @@ mod tests {
     fn mem_db_insert_basic_default() {
         let mut db = MemDb::default();
         let address = Address::from_word(b256!(
-            "000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045"
+            "0x000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045"
         ));
 
         let info = Database::basic(&mut db, address).unwrap();

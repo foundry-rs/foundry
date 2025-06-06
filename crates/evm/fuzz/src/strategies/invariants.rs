@@ -34,7 +34,7 @@ pub fn override_call_strat(
                 // Choose a random contract if target selected by lazy strategy is not in fuzz run
                 // identified contracts. This can happen when contract is created in `setUp` call
                 // but is not included in targetContracts.
-                contracts.values().choose(&mut rand::thread_rng()).unwrap()
+                contracts.values().choose(&mut rand::rng()).unwrap()
             });
             let fuzzed_functions: Vec<_> = contract.abi_fuzzed_functions().cloned().collect();
             any::<prop::sample::Index>().prop_map(move |index| index.get(&fuzzed_functions).clone())
@@ -115,7 +115,6 @@ pub fn fuzz_contract_with_calldata(
     // We need to compose all the strategies generated for each parameter in all possible
     // combinations.
     // `prop_oneof!` / `TupleUnion` `Arc`s for cheap cloning.
-    #[allow(clippy::arc_with_non_send_sync)]
     prop_oneof![
         60 => fuzz_calldata(func.clone(), fuzz_fixtures),
         40 => fuzz_calldata_from_state(func, fuzz_state),

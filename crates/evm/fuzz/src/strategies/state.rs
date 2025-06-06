@@ -5,13 +5,14 @@ use alloy_primitives::{
     map::{AddressIndexSet, B256IndexSet, HashMap},
     Address, Bytes, Log, B256, U256,
 };
+use foundry_common::ignore_metadata_hash;
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::utils::StateChangeset;
 use parking_lot::{lock_api::RwLockReadGuard, RawRwLock, RwLock};
 use revm::{
-    db::{CacheDB, DatabaseRef, DbAccount},
-    interpreter::opcode,
-    primitives::AccountInfo,
+    bytecode::opcode,
+    database::{CacheDB, DatabaseRef, DbAccount},
+    state::AccountInfo,
 };
 use std::{collections::BTreeMap, fmt, sync::Arc};
 
@@ -38,7 +39,7 @@ impl EvmFuzzState {
         deployed_libs: &[Address],
     ) -> Self {
         // Sort accounts to ensure deterministic dictionary generation from the same setUp state.
-        let mut accs = db.accounts.iter().collect::<Vec<_>>();
+        let mut accs = db.cache.accounts.iter().collect::<Vec<_>>();
         accs.sort_by_key(|(address, _)| *address);
 
         // Create fuzz dictionary and insert values from db state.
@@ -178,7 +179,7 @@ impl FuzzDictionary {
         if let Some(function) = function {
             if !function.outputs.is_empty() {
                 // Decode result and collect samples to be used in subsequent fuzz runs.
-                if let Ok(decoded_result) = function.abi_decode_output(result, false) {
+                if let Ok(decoded_result) = function.abi_decode_output(result) {
                     self.insert_sample_values(decoded_result, run_depth);
                 }
             }
@@ -194,7 +195,7 @@ impl FuzzDictionary {
             // Try to decode log with events from contract abi.
             if let Some(abi) = abi {
                 for event in abi.events() {
-                    if let Ok(decoded_event) = event.decode_log(log, false) {
+                    if let Ok(decoded_event) = event.decode_log(log) {
                         samples.extend(decoded_event.indexed);
                         samples.extend(decoded_event.body);
                         log_decoded = true;
@@ -248,7 +249,7 @@ impl FuzzDictionary {
             // Insert push bytes
             if let Some(code) = &account_info.code {
                 self.insert_address(*address);
-                self.collect_push_bytes(code.bytes_slice());
+                self.collect_push_bytes(ignore_metadata_hash(code.original_byte_slice()));
             }
         }
     }

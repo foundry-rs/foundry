@@ -77,7 +77,6 @@ impl FuzzedExecutor {
     /// test case.
     ///
     /// Returns a list of all the consumed gas and calldata of every fuzz case
-    #[allow(clippy::too_many_arguments)]
     pub fn fuzz(
         &self,
         func: &Function,
@@ -208,7 +207,7 @@ impl FuzzedExecutor {
                 } else {
                     result.reason = (!reason.is_empty()).then_some(reason);
                     let args = if let Some(data) = calldata.get(4..) {
-                        func.abi_decode_input(data, false).unwrap_or_default()
+                        func.abi_decode_input(data).unwrap_or_default()
                     } else {
                         vec![]
                     };

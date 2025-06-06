@@ -164,7 +164,7 @@ impl TestOutcome {
         }
 
         sh_println!("\nFailing tests:")?;
-        for (suite_name, suite) in outcome.results.iter() {
+        for (suite_name, suite) in &outcome.results {
             let failed = suite.failed();
             if failed == 0 {
                 continue;
@@ -205,7 +205,7 @@ impl TestOutcome {
 #[derive(Clone, Debug, Serialize)]
 pub struct SuiteResult {
     /// Wall clock time it took to execute all tests in this suite.
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "foundry_common::serde_helpers::duration")]
     pub duration: Duration,
     /// Individual test results: `test fn signature -> TestResult`.
     pub test_results: BTreeMap<String, TestResult>,
@@ -409,6 +409,7 @@ pub struct TestResult {
     /// Labeled addresses
     pub labeled_addresses: AddressHashMap<String>,
 
+    #[serde(with = "foundry_common::serde_helpers::duration")]
     pub duration: Duration,
 
     /// pc breakpoint char map
@@ -611,7 +612,7 @@ impl TestResult {
     }
 
     /// Returns the invariant test result.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn invariant_result(
         &mut self,
         gas_report_traces: Vec<Vec<CallTraceArena>>,

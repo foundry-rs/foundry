@@ -264,7 +264,7 @@ impl<'a> InlineLink<'a> {
     /// Returns the name of the referenced item and its arguments, if any.
     ///
     /// Eg: `safeMint-address-uint256-` returns `("safeMint", ["address", "uint256"])`
-    #[allow(unused)]
+    #[expect(unused)]
     fn ref_name_exact(&self) -> (&str, impl Iterator<Item = &str> + '_) {
         let identifier = self.exact_identifier();
         let mut iter = identifier.split('-');

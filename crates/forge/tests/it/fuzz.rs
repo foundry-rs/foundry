@@ -16,7 +16,7 @@ async fn test_fuzz() {
         .exclude_tests(r"invariantCounter|testIncrement\(address\)|testNeedle\(uint256\)|testSuccessChecker\(uint256\)|testSuccessChecker2\(int256\)|testSuccessChecker3\(uint32\)|testStorageOwner\(address\)|testImmutableOwner\(address\)")
         .exclude_paths("invariant");
     let mut runner = TEST_DATA_DEFAULT.runner();
-    let suite_result = runner.test_collect(&filter);
+    let suite_result = runner.test_collect(&filter).unwrap();
 
     assert!(!suite_result.is_empty());
 
@@ -53,7 +53,7 @@ async fn test_successful_fuzz_cases() {
         .exclude_tests(r"invariantCounter|testIncrement\(address\)|testNeedle\(uint256\)")
         .exclude_paths("invariant");
     let mut runner = TEST_DATA_DEFAULT.runner();
-    let suite_result = runner.test_collect(&filter);
+    let suite_result = runner.test_collect(&filter).unwrap();
 
     assert!(!suite_result.is_empty());
 
@@ -88,7 +88,7 @@ async fn test_fuzz_collection() {
         config.fuzz.runs = 1000;
         config.fuzz.seed = Some(U256::from(6u32));
     });
-    let results = runner.test_collect(&filter);
+    let results = runner.test_collect(&filter).unwrap();
 
     assert_multiple(
         &results,
@@ -122,6 +122,7 @@ async fn test_persist_fuzz_failure() {
             });
             runner
                 .test_collect(&filter)
+                .unwrap()
                 .get("default/fuzz/FuzzFailurePersist.t.sol:FuzzFailurePersistTest")
                 .unwrap()
                 .test_results
@@ -253,7 +254,7 @@ forgetest_init!(test_fuzz_timeout, |prj, cmd| {
 import {Test} from "forge-std/Test.sol";
 
 contract FuzzTimeoutTest is Test {
-    /// forge-config: default.fuzz.max-test-rejects = 10000
+    /// forge-config: default.fuzz.max-test-rejects = 50000
     /// forge-config: default.fuzz.timeout = 1
     function test_fuzz_bound(uint256 a) public pure {
         vm.assume(a == 0);

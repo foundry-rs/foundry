@@ -7,7 +7,7 @@ use crate::{
 use alloy_network::EthereumWallet;
 use alloy_primitives::{map::B256HashSet, B256};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockNumberOrTag, BlockTransactionsKind, Filter};
+use alloy_rpc_types::{BlockNumberOrTag, Filter};
 use anvil::{spawn, NodeConfig};
 use futures::StreamExt;
 
@@ -54,13 +54,8 @@ async fn get_past_events() {
 
     // and we can fetch the events at a block hash
     // let hash = provider.get_block(1).await.unwrap().unwrap().hash.unwrap();
-    let hash = provider
-        .get_block_by_number(BlockNumberOrTag::from(1), BlockTransactionsKind::Hashes)
-        .await
-        .unwrap()
-        .unwrap()
-        .header
-        .hash;
+    let hash =
+        provider.get_block_by_number(BlockNumberOrTag::from(1)).await.unwrap().unwrap().header.hash;
 
     let filter = Filter::new()
         .address(simple_storage_address)
@@ -191,10 +186,7 @@ async fn watch_events() {
         assert_eq!(log.1.block_number.unwrap(), starting_block_number + i + 1);
 
         let hash = provider
-            .get_block_by_number(
-                BlockNumberOrTag::from(starting_block_number + i + 1),
-                false.into(),
-            )
+            .get_block_by_number(BlockNumberOrTag::from(starting_block_number + i + 1))
             .await
             .unwrap()
             .unwrap()

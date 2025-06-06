@@ -73,7 +73,7 @@ contract Verify is Unique {
     .unwrap();
 }
 
-#[allow(clippy::disallowed_macros)]
+#[expect(clippy::disallowed_macros)]
 fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Result<()> {
     // Give Etherscan some time to verify the contract.
     Retry::new(retries, Duration::from_secs(30)).run(|| -> eyre::Result<()> {
@@ -158,7 +158,7 @@ fn deploy_contract(
         .unwrap_or_else(|| panic!("Failed to parse deployer {output}"))
 }
 
-#[allow(clippy::disallowed_macros)]
+#[expect(clippy::disallowed_macros)]
 fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand) {
     // only execute if keys present
     if let Some(info) = info {
@@ -189,7 +189,7 @@ fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: Te
     }
 }
 
-#[allow(clippy::disallowed_macros)]
+#[expect(clippy::disallowed_macros)]
 fn guess_constructor_args(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand) {
     // only execute if keys present
     if let Some(info) = info {
@@ -230,7 +230,7 @@ fn guess_constructor_args(info: Option<EnvExternalities>, prj: TestProject, mut 
     }
 }
 
-#[allow(clippy::disallowed_macros)]
+#[expect(clippy::disallowed_macros)]
 /// Executes create --verify on the given chain
 fn create_verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand) {
     // only execute if keys present

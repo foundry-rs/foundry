@@ -1,6 +1,6 @@
 //! Wrappers for transactions.
 
-use alloy_consensus::{Transaction, TxEnvelope};
+use alloy_consensus::{transaction::SignerRecoverable, Transaction, TxEnvelope};
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network::AnyTransactionReceipt;
 use alloy_primitives::{Address, TxKind, U256};
@@ -58,9 +58,9 @@ impl TransactionReceiptWithRevertReason {
 
         if let Some(block_hash) = self.receipt.block_hash {
             let mut call_request: WithOtherFields<TransactionRequest> =
-                transaction.inner.inner.clone().into();
-            call_request.set_from(transaction.inner.from);
-            match provider.call(&call_request).block(BlockId::Hash(block_hash.into())).await {
+                transaction.inner.inner.clone_inner().into();
+            call_request.set_from(transaction.inner.inner.signer());
+            match provider.call(call_request).block(BlockId::Hash(block_hash.into())).await {
                 Err(e) => return Ok(extract_revert_reason(e.to_string())),
                 Ok(_) => eyre::bail!("no revert reason as transaction succeeded"),
             }
@@ -175,20 +175,6 @@ pub fn get_pretty_tx_receipt_attr(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_extract_revert_reason() {
-        let error_string_1 = "server returned an error response: error code 3: execution reverted: Transaction too old";
-        let error_string_2 = "server returned an error response: error code 3: Invalid signature";
-
-        assert_eq!(extract_revert_reason(error_string_1), Some("Transaction too old".to_string()));
-        assert_eq!(extract_revert_reason(error_string_2), None);
-    }
-}
-
 /// Used for broadcasting transactions
 /// A transaction can either be a [`TransactionRequest`] waiting to be signed
 /// or a [`TxEnvelope`], already signed
@@ -212,7 +198,7 @@ impl TransactionMaybeSigned {
     /// Creates a new signed transaction for broadcast.
     pub fn new_signed(
         tx: TxEnvelope,
-    ) -> core::result::Result<Self, alloy_primitives::SignatureError> {
+    ) -> core::result::Result<Self, alloy_consensus::crypto::RecoveryError> {
         let from = tx.recover_signer()?;
         Ok(Self::Signed { tx, from })
     }
@@ -286,9 +272,23 @@ impl From<TransactionRequest> for TransactionMaybeSigned {
 }
 
 impl TryFrom<TxEnvelope> for TransactionMaybeSigned {
-    type Error = alloy_primitives::SignatureError;
+    type Error = alloy_consensus::crypto::RecoveryError;
 
     fn try_from(tx: TxEnvelope) -> core::result::Result<Self, Self::Error> {
         Self::new_signed(tx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_revert_reason() {
+        let error_string_1 = "server returned an error response: error code 3: execution reverted: Transaction too old";
+        let error_string_2 = "server returned an error response: error code 3: Invalid signature";
+
+        assert_eq!(extract_revert_reason(error_string_1), Some("Transaction too old".to_string()));
+        assert_eq!(extract_revert_reason(error_string_2), None);
     }
 }

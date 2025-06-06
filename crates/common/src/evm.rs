@@ -280,7 +280,6 @@ impl EvmArgs {
 
 /// We have to serialize chain IDs and not names because when extracting an EVM `Env`, it expects
 /// `chain_id` to be `u64`.
-#[allow(clippy::trivially_copy_pass_by_ref)]
 fn id<S: serde::Serializer>(chain: &Option<Chain>, s: S) -> Result<S::Ok, S::Error> {
     if let Some(chain) = chain {
         s.serialize_u64(chain.id())
