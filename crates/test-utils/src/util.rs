@@ -147,6 +147,12 @@ impl ExtTester {
         }
 
         let (prj, mut test_cmd) = setup_forge(self.name, self.style.clone());
+        // Export vyper and forge in test command - workaround for snekmate venom tests.
+        if let Some(vyper) = &prj.inner.project().compiler.vyper {
+            test_cmd.env("vyper", &vyper.path);
+            test_cmd
+                .env("forge", prj.exe_root.join(format!("../forge{}", env::consts::EXE_SUFFIX)));
+        }
 
         // Wipe the default structure.
         prj.wipe();
