@@ -7,7 +7,7 @@ use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types::{
     state::{StateOverride, StateOverridesBuilder},
-    BlockId, BlockNumberOrTag,
+    BlockId, BlockNumberOrTag, BlockOverrides,
 };
 use clap::Parser;
 use eyre::Result;
@@ -148,6 +148,10 @@ pub struct CallArgs {
     /// Format: address:slot:value
     #[arg(long = "override-state-diff", value_name = "ADDRESS:SLOT:VALUE")]
     pub state_diff_overrides: Option<Vec<String>>,
+
+    /// Override the time field of a block
+    #[arg(long = "override-time", value_name = "BLOCK:TIME")]
+    pub time_overrides: Option<Vec<String>>,
 }
 
 #[derive(Debug, Parser)]
@@ -180,6 +184,7 @@ impl CallArgs {
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::from_provider(figment)?.sanitized();
         let state_overrides = self.get_state_overrides()?;
+        let block_overrides = self.get_block_overrides()?;
 
         let Self {
             to,
@@ -308,7 +313,9 @@ impl CallArgs {
 
         sh_println!(
             "{}",
-            Cast::new(provider).call(&tx, func.as_ref(), block, state_overrides).await?
+            Cast::new(provider)
+                .call(&tx, func.as_ref(), block, state_overrides, block_overrides)
+                .await?
         )?;
 
         Ok(())
@@ -368,6 +375,21 @@ impl CallArgs {
 
         Ok(Some(state_overrides_builder.build()))
     }
+
+    /// Parse state overrides from command line arguments.
+    pub fn get_block_overrides(&self) -> eyre::Result<Option<BlockOverrides>> {
+        if [self.time_overrides.as_ref()].iter().all(Option::is_none) {
+            return Ok(None);
+        }
+        let mut block_overrides = BlockOverrides::default();
+
+        for override_str in self.time_overrides.as_ref().unwrap() {
+            let (block_number, time) = time_value_override(override_str)?;
+            block_overrides = block_overrides.with_number(block_number).with_time(time);
+        }
+
+        Ok(Some(block_overrides))
+    }
 }
 
 impl figment::Provider for CallArgs {
@@ -408,6 +430,14 @@ fn address_slot_value_override(address_override: &str) -> Result<(Address, U256,
         captures[2].parse()?, // Slot (U256)
         captures[3].parse()?, // Value (U256)
     ))
+}
+
+/// Parse an override string in the format block:time
+fn time_value_override(input: &str) -> Result<(U256, u64), eyre::Report> {
+    let (block_str, time_str) = input.split_once(':').ok_or_else(|| {
+        eyre::eyre!("Invalid override `{input}`. Expected format: <block>:<time>")
+    })?;
+    Ok((block_str.parse()?, time_str.parse()?))
 }
 
 #[cfg(test)]
