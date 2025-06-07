@@ -14,6 +14,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+serde_ignored = "0.1"
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
 foundry-compilers = { workspace = true, features = ["svm-solc"] }
 
