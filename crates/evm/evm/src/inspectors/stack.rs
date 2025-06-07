@@ -22,8 +22,8 @@ use revm::{
     },
     context_interface::CreateScheme,
     interpreter::{
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, EOFCreateInputs,
-        EOFCreateKind, Gas, InstructionResult, Interpreter, InterpreterResult,
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas, InstructionResult,
+        Interpreter, InterpreterResult,
     },
     state::{Account, AccountStatus},
     Inspector,
@@ -578,32 +578,6 @@ impl InspectorStackRefMut<'_> {
         outcome.clone()
     }
 
-    fn do_eofcreate_end(
-        &mut self,
-        ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
-        call: &EOFCreateInputs,
-        outcome: &mut CreateOutcome,
-    ) -> CreateOutcome {
-        let result = outcome.result.result;
-        call_inspectors!(
-            #[ret]
-            [&mut self.tracer, &mut self.cheatcodes, &mut self.printer],
-            |inspector| {
-                let previous_outcome = outcome.clone();
-                inspector.eofcreate_end(ecx, call, outcome);
-
-                // If the inspector returns a different status or a revert with a non-empty message,
-                // we assume it wants to tell us something
-                let different = outcome.result.result != result ||
-                    (outcome.result.result == InstructionResult::Revert &&
-                        outcome.output() != previous_outcome.output());
-                different.then_some(outcome.clone())
-            },
-        );
-
-        outcome.clone()
-    }
-
     fn transact_inner(
         &mut self,
         ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
@@ -1029,77 +1003,6 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
             self.top_level_frame_end(ecx, outcome.result.result);
         }
     }
-
-    fn eofcreate(
-        &mut self,
-        ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
-        create: &mut EOFCreateInputs,
-    ) -> Option<CreateOutcome> {
-        if self.in_inner_context && ecx.journaled_state.depth == 1 {
-            self.adjust_evm_data_for_inner_context(ecx);
-            return None;
-        }
-
-        if ecx.journaled_state.depth == 0 {
-            self.top_level_frame_start(ecx);
-        }
-
-        call_inspectors!(
-            #[ret]
-            [&mut self.tracer, &mut self.coverage, &mut self.cheatcodes],
-            |inspector| inspector.eofcreate(ecx, create).map(Some),
-        );
-
-        if matches!(create.kind, EOFCreateKind::Tx { .. }) &&
-            self.enable_isolation &&
-            !self.in_inner_context &&
-            ecx.journaled_state.depth == 1
-        {
-            let init_code = match &mut create.kind {
-                EOFCreateKind::Tx { initdata } => initdata.clone(),
-                EOFCreateKind::Opcode { .. } => unreachable!(),
-            };
-
-            let (result, address) = self.transact_inner(
-                ecx,
-                TxKind::Create,
-                create.caller,
-                init_code,
-                create.gas_limit,
-                create.value,
-            );
-            return Some(CreateOutcome { result, address });
-        }
-
-        None
-    }
-
-    fn eofcreate_end(
-        &mut self,
-        ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
-        call: &EOFCreateInputs,
-        outcome: &mut CreateOutcome,
-    ) {
-        // We are processing inner context outputs in the outer context, so need to avoid processing
-        // twice.
-        if self.in_inner_context && ecx.journaled_state.depth == 1 {
-            return;
-        }
-
-        self.do_eofcreate_end(ecx, call, outcome);
-
-        if ecx.journaled_state.depth == 0 {
-            self.top_level_frame_end(ecx, outcome.result.result);
-        }
-    }
-
-    fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
-        call_inspectors!([&mut self.tracer, &mut self.printer], |inspector| {
-            Inspector::<EthEvmContext<&mut dyn DatabaseExt>>::selfdestruct(
-                inspector, contract, target, value,
-            )
-        });
-    }
 }
 
 impl InspectorExt for InspectorStackRefMut<'_> {
@@ -1183,23 +1086,6 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStack {
         outcome: &mut CreateOutcome,
     ) {
         self.as_mut().create_end(context, call, outcome)
-    }
-
-    fn eofcreate(
-        &mut self,
-        context: &mut EthEvmContext<&mut dyn DatabaseExt>,
-        create: &mut EOFCreateInputs,
-    ) -> Option<CreateOutcome> {
-        self.as_mut().eofcreate(context, create)
-    }
-
-    fn eofcreate_end(
-        &mut self,
-        context: &mut EthEvmContext<&mut dyn DatabaseExt>,
-        call: &EOFCreateInputs,
-        outcome: &mut CreateOutcome,
-    ) {
-        self.as_mut().eofcreate_end(context, call, outcome)
     }
 
     fn initialize_interp(

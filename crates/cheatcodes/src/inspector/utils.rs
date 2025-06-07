@@ -1,7 +1,7 @@
 use super::Ecx;
 use crate::inspector::Cheatcodes;
 use alloy_primitives::{Address, Bytes, U256};
-use revm::interpreter::{CreateInputs, CreateScheme, EOFCreateInputs, EOFCreateKind};
+use revm::interpreter::{CreateInputs, CreateScheme};
 
 /// Common behaviour of legacy and EOF create inputs.
 pub(crate) trait CommonCreateInput {
@@ -13,7 +13,6 @@ pub(crate) trait CommonCreateInput {
     fn set_caller(&mut self, caller: Address);
     fn log_debug(&self, cheatcode: &mut Cheatcodes, scheme: &CreateScheme);
     fn allow_cheatcodes(&self, cheatcodes: &mut Cheatcodes, ecx: Ecx) -> Address;
-    fn computed_created_address(&self) -> Option<Address>;
 }
 
 impl CommonCreateInput for &mut CreateInputs {
@@ -53,45 +52,5 @@ impl CommonCreateInput for &mut CreateInputs {
         let created_address = self.created_address(old_nonce);
         cheatcodes.allow_cheatcodes_on_create(ecx, self.caller, created_address);
         created_address
-    }
-    fn computed_created_address(&self) -> Option<Address> {
-        None
-    }
-}
-
-impl CommonCreateInput for &mut EOFCreateInputs {
-    fn caller(&self) -> Address {
-        self.caller
-    }
-    fn gas_limit(&self) -> u64 {
-        self.gas_limit
-    }
-    fn value(&self) -> U256 {
-        self.value
-    }
-    fn init_code(&self) -> Bytes {
-        match &self.kind {
-            EOFCreateKind::Tx { initdata } => initdata.clone(),
-            EOFCreateKind::Opcode { initcode, .. } => initcode.raw.clone(),
-        }
-    }
-    fn scheme(&self) -> Option<CreateScheme> {
-        None
-    }
-    fn set_caller(&mut self, caller: Address) {
-        self.caller = caller;
-    }
-    fn log_debug(&self, cheatcode: &mut Cheatcodes, _scheme: &CreateScheme) {
-        debug!(target: "cheatcodes", tx=?cheatcode.broadcastable_transactions.back().unwrap(), "broadcastable eofcreate");
-    }
-    fn allow_cheatcodes(&self, cheatcodes: &mut Cheatcodes, ecx: Ecx) -> Address {
-        let created_address =
-            <&mut EOFCreateInputs as CommonCreateInput>::computed_created_address(self)
-                .unwrap_or_default();
-        cheatcodes.allow_cheatcodes_on_create(ecx, self.caller, created_address);
-        created_address
-    }
-    fn computed_created_address(&self) -> Option<Address> {
-        self.kind.created_address().copied()
     }
 }
