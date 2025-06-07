@@ -34,7 +34,7 @@ pub struct ScriptSequence {
     /// None if sequence should not be saved to disk (e.g. part of a multi-chain sequence)
     pub paths: Option<(PathBuf, PathBuf)>,
     pub returns: HashMap<String, NestedValue>,
-    pub timestamp: u64,
+    pub timestamp: u128,
     pub chain: u64,
     pub commit: Option<String>,
 }
@@ -101,7 +101,7 @@ impl ScriptSequence {
 
         let Some((path, sensitive_path)) = self.paths.clone() else { return Ok(()) };
 
-        self.timestamp = now().as_secs();
+        self.timestamp = now().as_millis();
         let ts_name = format!("run-{}.json", self.timestamp);
 
         let sensitive_script_sequence: SensitiveScriptSequence = self.clone().into();

@@ -1,5 +1,5 @@
 use crate::linter::{EarlyLintPass, EarlyLintVisitor, Lint, LintContext, Linter};
-use foundry_compilers::solc::SolcLanguage;
+use foundry_compilers::{solc::SolcLanguage, ProjectPathsConfig};
 use foundry_config::lint::Severity;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use solar_ast::{visit::Visit, Arena};
@@ -22,8 +22,9 @@ pub mod med;
 
 /// Linter implementation to analyze Solidity source code responsible for identifying
 /// vulnerabilities gas optimizations, and best practices.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SolidityLinter {
+    path_config: ProjectPathsConfig,
     severity: Option<Vec<Severity>>,
     lints_included: Option<Vec<SolLint>>,
     lints_excluded: Option<Vec<SolLint>>,
@@ -32,8 +33,9 @@ pub struct SolidityLinter {
 }
 
 impl SolidityLinter {
-    pub fn new() -> Self {
+    pub fn new(path_config: ProjectPathsConfig) -> Self {
         Self {
+            path_config,
             severity: None,
             lints_included: None,
             lints_excluded: None,
@@ -73,10 +75,14 @@ impl SolidityLinter {
         let _ = sess.enter(|| -> Result<(), diagnostics::ErrorGuaranteed> {
             // Declare all available passes and lints
             let mut passes_and_lints = Vec::new();
-            passes_and_lints.extend(gas::create_lint_passes());
             passes_and_lints.extend(high::create_lint_passes());
             passes_and_lints.extend(med::create_lint_passes());
             passes_and_lints.extend(info::create_lint_passes());
+
+            // Do not apply gas-severity rules on tests and scripts
+            if !self.path_config.is_test_or_script(file) {
+                passes_and_lints.extend(gas::create_lint_passes());
+            }
 
             // Filter based on linter config
             let mut passes: Vec<Box<dyn EarlyLintPass<'_>>> = passes_and_lints
@@ -159,7 +165,7 @@ pub enum SolLintError {
 pub struct SolLint {
     id: &'static str,
     description: &'static str,
-    help: Option<&'static str>,
+    help: &'static str,
     severity: Severity,
 }
 
@@ -173,7 +179,7 @@ impl Lint for SolLint {
     fn description(&self) -> &'static str {
         self.description
     }
-    fn help(&self) -> Option<&'static str> {
+    fn help(&self) -> &'static str {
         self.help
     }
 }

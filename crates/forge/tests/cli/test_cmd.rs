@@ -1582,7 +1582,7 @@ contract ATest is Test {
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-[PASS] test_negativeGas() (gas: 0)
+[PASS] test_negativeGas() (gas: 96)
 ...
 "#]]);
 });
@@ -1779,17 +1779,17 @@ contract ATest is DSTest {
 
     cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-[PASS] testResetGas() (gas: 40)
-[PASS] testResetGas1() (gas: 40)
-[PASS] testResetGas2() (gas: 40)
+[PASS] testResetGas() (gas: 96)
+[PASS] testResetGas1() (gas: 96)
+[PASS] testResetGas2() (gas: 96)
 [PASS] testResetGas3() (gas: [..])
 [PASS] testResetGas4() (gas: [..])
-[PASS] testResetGas5() (gas: 40)
-[PASS] testResetGas6() (gas: 40)
-[PASS] testResetGas7() (gas: 49)
+[PASS] testResetGas5() (gas: 96)
+[PASS] testResetGas6() (gas: 96)
+[PASS] testResetGas7() (gas: 96)
 [PASS] testResetGas8() (gas: [..])
-[PASS] testResetGas9() (gas: 40)
-[PASS] testResetNegativeGas() (gas: 0)
+[PASS] testResetGas9() (gas: 96)
+[PASS] testResetNegativeGas() (gas: 96)
 ...
 "#]]);
 });
@@ -2788,7 +2788,7 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
                     31337
                 );
 
-                assertEq(deployedAddress, address(0x90d4E26f2e78feDf488c7F3C46B8053a0515c71F));
+                assertEq(deployedAddress, address(0xD32c10E38A626Db0b0978B1A5828eb2957665668));
             }
 
             function test_getDeployments() public {
@@ -2798,7 +2798,7 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
                 );
 
                 assertEq(deployments.length, 2);
-                assertEq(deployments[0], address(0x90d4E26f2e78feDf488c7F3C46B8053a0515c71F)); // Create2 address - latest deployment
+                assertEq(deployments[0], address(0xD32c10E38A626Db0b0978B1A5828eb2957665668)); // Create2 address - latest deployment
                 assertEq(deployments[1], address(0x5FbDB2315678afecb367f032d93F642f64180aa3)); // Create address - oldest deployment
             }
 }
@@ -3306,9 +3306,9 @@ Traces:
     ├─ [0] VM::label(alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6], "alice")
     │   └─ ← [Return]
     ├─ [0] VM::signDelegation(0x0000000000000000000000000000000000000000, "<pk>")
-    │   └─ ← [Return] (0, 0x38db2a0ada75402af7cd5bdb8248a1a5b4fec65fdafea4f935084f00dc2ff3c5, 0x29ce7b1c82f9ceaec21f12d690ba8fe6ecba65869caf6ab2d85d79890dc42df2, 1, 0x0000000000000000000000000000000000000000)
+    │   └─ ← [Return] (0, 0x3d6ad67cc3dc94101a049f85f96937513a05485ae0f8b27545d25c4f71b12cf9, 0x3c0f2d62834f59d6ef0209e8a935f80a891a236eb18ac0e3700dd8f7ac8ae279, 0, 0x0000000000000000000000000000000000000000)
     ├─ [0] VM::signAndAttachDelegation(0x0000000000000000000000000000000000000000, "<pk>")
-    │   └─ ← [Return] (0, 0x38db2a0ada75402af7cd5bdb8248a1a5b4fec65fdafea4f935084f00dc2ff3c5, 0x29ce7b1c82f9ceaec21f12d690ba8fe6ecba65869caf6ab2d85d79890dc42df2, 1, 0x0000000000000000000000000000000000000000)
+    │   └─ ← [Return] (0, 0x3d6ad67cc3dc94101a049f85f96937513a05485ae0f8b27545d25c4f71b12cf9, 0x3c0f2d62834f59d6ef0209e8a935f80a891a236eb18ac0e3700dd8f7ac8ae279, 0, 0x0000000000000000000000000000000000000000)
     └─ ← [Stop]
 ...
 
@@ -3825,6 +3825,44 @@ Encountered 1 failing test in test/NonContractDelegateCallRevertTest.t.sol:NonCo
 [FAIL: delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)] test_unlinked_library_call_failure() ([GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
+
+"#]]);
+});
+
+// This test is a copy of `error_event_decode_with_cache` in cast/tests/cli/selectors.rs
+// but it uses `forge build` to check that the project selectors are cached by default.
+forgetest_init!(build_with_selectors_cache, |prj, cmd| {
+    prj.add_source(
+        "LocalProjectContract",
+        r#"
+contract ContractWithCustomError {
+    error AnotherValueTooHigh(uint256, address);
+    event MyUniqueEventWithinLocalProject(uint256 a, address b);
+}
+   "#,
+    )
+    .unwrap();
+    // Build and cache project selectors.
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    // Assert cast can decode custom error with local cache.
+    cmd.cast_fuse()
+        .args(["decode-error", "0x7191bc6200000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000D0004F"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+AnotherValueTooHigh(uint256,address)
+101
+0x0000000000000000000000000000000000D0004F
+
+"#]]);
+    // Assert cast can decode event with local cache.
+    cmd.cast_fuse()
+        .args(["decode-event", "0xbd3699995dcc867b64dbb607be2c33be38df9134bef1178df13bfb9446e73104000000000000000000000000000000000000000000000000000000000000004e00000000000000000000000000000000000000000000000000000dd00000004e"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+MyUniqueEventWithinLocalProject(uint256,address)
+78
+0x00000000000000000000000000000DD00000004e
 
 "#]]);
 });

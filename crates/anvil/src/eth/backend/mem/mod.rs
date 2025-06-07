@@ -780,11 +780,17 @@ impl Backend {
 
     /// Returns [`BlobParams`] corresponding to the current spec.
     pub fn blob_params(&self) -> BlobParams {
-        if self.env.read().evm_env.cfg_env.spec >= SpecId::PRAGUE {
-            BlobParams::prague()
-        } else {
-            BlobParams::cancun()
+        let spec_id = self.env.read().evm_env.cfg_env.spec;
+
+        if spec_id >= SpecId::OSAKA {
+            return BlobParams::osaka();
         }
+
+        if spec_id >= SpecId::PRAGUE {
+            return BlobParams::prague();
+        }
+
+        BlobParams::cancun()
     }
 
     /// Returns an error if EIP1559 is not active (pre Berlin)
@@ -988,8 +994,8 @@ impl Backend {
             // Defaults to block number for compatibility with existing state files.
             let fork_num_and_hash = self.get_fork().map(|f| (f.block_number(), f.block_hash()));
 
+            let best_number = state.best_block_number.unwrap_or(block.number);
             if let Some((number, hash)) = fork_num_and_hash {
-                let best_number = state.best_block_number.unwrap_or(block.number);
                 trace!(target: "backend", state_block_number=?best_number, fork_block_number=?number);
                 // If the state.block_number is greater than the fork block number, set best number
                 // to the state block number.
@@ -1012,7 +1018,6 @@ impl Backend {
                     self.blockchain.storage.write().best_hash = hash;
                 }
             } else {
-                let best_number = state.best_block_number.unwrap_or(block.number);
                 self.blockchain.storage.write().best_number = best_number;
 
                 // Set the current best block hash;
@@ -1607,7 +1612,6 @@ impl Backend {
                 let mut log_index = 0;
                 let mut gas_used = 0;
                 let mut transactions = Vec::with_capacity(calls.len());
-                let mut receipts = Vec::new();
                 let mut logs= Vec::new();
 
                 // apply state overrides before executing the transactions
@@ -1680,6 +1684,7 @@ impl Backend {
                         request,
                         Signature::new(Default::default(), Default::default(), false),
                     )?;
+                    let tx_hash = tx.hash();
                     let rpc_tx = transaction_build(
                         None,
                         MaybeImpersonatedTransaction::impersonated(tx, from),
@@ -1713,20 +1718,15 @@ impl Backend {
                                 removed: false,
 
                                 block_hash: None,
-                                transaction_hash: None,
+                                transaction_hash: Some(tx_hash),
                             })
                             .collect(),
                     };
-                    let receipt = Receipt {
-                        status: result.is_success().into(),
-                        cumulative_gas_used: result.gas_used(),
-                        logs:sim_res.logs.clone()
-                    };
-                    receipts.push(receipt.with_bloom());
                     logs.extend(sim_res.logs.clone().iter().map(|log| log.inner.clone()));
                     log_index += sim_res.logs.len();
                     call_res.push(sim_res);
                 }
+
                 let transactions_envelopes: Vec<AnyTxEnvelope> = transactions
                 .iter()
                 .map(|tx| AnyTxEnvelope::from(tx.clone()))
@@ -1736,7 +1736,6 @@ impl Backend {
                     transactions_root: calculate_transaction_root(&transactions_envelopes),
                     receipts_root: calculate_receipt_root(&transactions_envelopes),
                     parent_hash: Default::default(),
-                    ommers_hash: Default::default(),
                     beneficiary: block_env.beneficiary,
                     state_root: Default::default(),
                     difficulty: Default::default(),
@@ -1753,6 +1752,7 @@ impl Backend {
                     excess_blob_gas: None,
                     parent_beacon_block_root: None,
                     requests_hash: None,
+                    ..Default::default()
                 };
                 let mut block = alloy_rpc_types::Block {
                     header: AnyRpcHeader {
@@ -1768,6 +1768,12 @@ impl Backend {
 
                 if !return_full_transactions {
                     block.transactions.convert_to_hashes();
+                }
+
+                for res in &mut call_res {
+                    res.logs.iter_mut().for_each(|log| {
+                        log.block_hash = Some(block.header.hash);
+                    });
                 }
 
                 let simulated_block = SimulatedBlock {
@@ -2284,7 +2290,7 @@ impl Backend {
                         .number
                 }
                 BlockId::Number(num) => match num {
-                    BlockNumber::Latest | BlockNumber::Pending => self.best_number(),
+                    BlockNumber::Latest | BlockNumber::Pending => current,
                     BlockNumber::Earliest => U64::ZERO.to::<u64>(),
                     BlockNumber::Number(num) => num,
                     BlockNumber::Safe => current.saturating_sub(self.slots_in_an_epoch),
@@ -2927,7 +2933,7 @@ impl Backend {
                     .zip(storage_proofs)
                     .map(|(key, proof)| {
                         let storage_key: U256 = key.into();
-                        let value = account.storage.get(&storage_key).cloned().unwrap_or_default();
+                        let value = account.storage.get(&storage_key).copied().unwrap_or_default();
                         StorageProof { key: JsonStorageKey::Hash(key), value, proof }
                     })
                     .collect(),
@@ -3178,8 +3184,8 @@ impl TransactionValidator for Backend {
                 // 1. no gas cost check required since already have prepaid gas from L1
                 // 2. increment account balance by deposited amount before checking for sufficient
                 //    funds `tx.value <= existing account value + deposited value`
-                if value > account.balance + U256::from(deposit_tx.mint.unwrap_or_default()) {
-                    warn!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance + U256::from(deposit_tx.mint.unwrap_or_default()), value, *pending.sender());
+                if value > account.balance + U256::from(deposit_tx.mint) {
+                    warn!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance + U256::from(deposit_tx.mint), value, *pending.sender());
                     return Err(InvalidTransactionError::InsufficientFunds);
                 }
             }

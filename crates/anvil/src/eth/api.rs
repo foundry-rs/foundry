@@ -356,6 +356,9 @@ impl EthApi {
             EthRequest::SetBalance(addr, val) => {
                 self.anvil_set_balance(addr, val).await.to_rpc_result()
             }
+            EthRequest::AddBalance(addr, val) => {
+                self.anvil_add_balance(addr, val).await.to_rpc_result()
+            }
             EthRequest::DealERC20(addr, token_addr, val) => {
                 self.anvil_deal_erc20(addr, token_addr, val).await.to_rpc_result()
             }
@@ -995,7 +998,7 @@ impl EthApi {
         node_info!("eth_signTransaction");
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
-            self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
+            self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)
         })?;
 
         let (nonce, _) = self.request_nonce(&request, from).await?;
@@ -1024,7 +1027,7 @@ impl EthApi {
         node_info!("eth_sendTransaction");
 
         let from = request.from.map(Ok).unwrap_or_else(|| {
-            self.accounts()?.first().cloned().ok_or(BlockchainError::NoSignerAvailable)
+            self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)
         })?;
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
 
@@ -1856,6 +1859,16 @@ impl EthApi {
         Ok(())
     }
 
+    /// Increases the balance of an account.
+    ///
+    /// Handler for RPC call: `anvil_addBalance`
+    pub async fn anvil_add_balance(&self, address: Address, balance: U256) -> Result<()> {
+        node_info!("anvil_addBalance");
+        let current_balance = self.backend.get_balance(address, None).await?;
+        self.backend.set_balance(address, current_balance + balance).await?;
+        Ok(())
+    }
+
     /// Deals ERC20 tokens to a address
     ///
     /// Handler for RPC call: `anvil_dealERC20`
@@ -2172,7 +2185,7 @@ impl EthApi {
                         let from = tx_req.from.map(Ok).unwrap_or_else(|| {
                             self.accounts()?
                                 .first()
-                                .cloned()
+                                .copied()
                                 .ok_or(BlockchainError::NoSignerAvailable)
                         })?;
 

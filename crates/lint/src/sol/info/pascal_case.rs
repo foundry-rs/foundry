@@ -10,8 +10,7 @@ declare_forge_lint!(
     PASCAL_CASE_STRUCT,
     Severity::Info,
     "pascal-case-struct",
-    "structs should use PascalCase",
-    "https://docs.soliditylang.org/en/latest/style-guide.html#struct-names"
+    "structs should use PascalCase"
 );
 
 impl<'ast> EarlyLintPass<'ast> for PascalCaseStruct {

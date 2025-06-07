@@ -54,7 +54,7 @@ use revm::{
     context_interface::{transaction::SignedAuthorization, CreateScheme},
     handler::FrameResult,
     interpreter::{
-        interpreter_types::{Jumps, LoopControl, MemoryTr},
+        interpreter_types::{Jumps, MemoryTr},
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas, Host,
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
     },
@@ -371,10 +371,10 @@ pub struct Cheatcodes {
     /// execution block environment.
     pub block: Option<BlockEnv>,
 
-    /// Currently active EIP-7702 delegation that will be consumed when building the next
+    /// Currently active EIP-7702 delegations that will be consumed when building the next
     /// transaction. Set by `vm.attachDelegation()` and consumed via `.take()` during
     /// transaction construction.
-    pub active_delegation: Option<SignedAuthorization>,
+    pub active_delegations: Vec<SignedAuthorization>,
 
     /// The active EIP-4844 blob that will be attached to the next call.
     pub active_blob_sidecar: Option<BlobTransactionSidecar>,
@@ -517,7 +517,7 @@ impl Cheatcodes {
             labels: config.labels.clone(),
             config,
             block: Default::default(),
-            active_delegation: Default::default(),
+            active_delegations: Default::default(),
             active_blob_sidecar: Default::default(),
             gas_price: Default::default(),
             pranks: Default::default(),
@@ -571,6 +571,11 @@ impl Cheatcodes {
     /// Sets the unlocked wallets.
     pub fn set_wallets(&mut self, wallets: Wallets) {
         self.wallets = Some(wallets);
+    }
+
+    /// Adds a delegation to the active delegations list.
+    pub fn add_delegation(&mut self, authorization: SignedAuthorization) {
+        self.active_delegations.push(authorization);
     }
 
     /// Decodes the input data and applies the cheatcode.
@@ -1136,8 +1141,11 @@ impl Cheatcodes {
                         ..Default::default()
                     };
 
-                    match (self.active_delegation.take(), self.active_blob_sidecar.take()) {
-                        (Some(_), Some(_)) => {
+                    let active_delegations = std::mem::take(&mut self.active_delegations);
+                    // Set active blob sidecar, if any.
+                    if let Some(blob_sidecar) = self.active_blob_sidecar.take() {
+                        // Ensure blob and delegation are not set for the same tx.
+                        if !active_delegations.is_empty() {
                             let msg = "both delegation and blob are active; `attachBlob` and `attachDelegation` are not compatible";
                             return Some(CallOutcome {
                                 result: InterpreterResult {
@@ -1148,21 +1156,22 @@ impl Cheatcodes {
                                 memory_offset: call.return_memory_offset.clone(),
                             });
                         }
-                        (Some(auth_list), None) => {
-                            tx_req.authorization_list = Some(vec![auth_list]);
-                            tx_req.sidecar = None;
+                        tx_req.set_blob_sidecar(blob_sidecar);
+                    }
 
-                            // Increment nonce to reflect the signed authorization.
-                            account.info.nonce += 1;
+                    // Apply active EIP-7702 delegations, if any.
+                    if !active_delegations.is_empty() {
+                        for auth in &active_delegations {
+                            let Ok(authority) = auth.recover_authority() else {
+                                continue;
+                            };
+                            if authority == broadcast.new_origin {
+                                // Increment nonce of broadcasting account to reflect signed
+                                // authorization.
+                                account.info.nonce += 1;
+                            }
                         }
-                        (None, Some(blob_sidecar)) => {
-                            tx_req.set_blob_sidecar(blob_sidecar);
-                            tx_req.authorization_list = None;
-                        }
-                        (None, None) => {
-                            tx_req.sidecar = None;
-                            tx_req.authorization_list = None;
-                        }
+                        tx_req.authorization_list = Some(active_delegations);
                     }
 
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
@@ -1845,9 +1854,10 @@ impl Cheatcodes {
         if let Some(paused_gas) = self.gas_metering.paused_frames.last() {
             // Keep gas constant if paused.
             // Make sure we record the memory changes so that memory expansion is not paused.
-            let memory = interpreter.control.gas.memory;
+            let memory = *interpreter.control.gas.memory();
             interpreter.control.gas = *paused_gas;
-            interpreter.control.gas.memory = memory;
+            interpreter.control.gas.memory_mut().words_num = memory.words_num;
+            interpreter.control.gas.memory_mut().expansion_cost = memory.expansion_cost;
         } else {
             // Record frame paused gas.
             self.gas_metering.paused_frames.push(interpreter.control.gas);
@@ -1889,7 +1899,7 @@ impl Cheatcodes {
 
     #[cold]
     fn meter_gas_reset(&mut self, interpreter: &mut Interpreter) {
-        interpreter.control.gas = Gas::new(interpreter.control.gas().limit());
+        interpreter.control.gas = Gas::new(interpreter.control.gas.limit());
         self.gas_metering.reset = false;
     }
 

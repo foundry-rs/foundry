@@ -120,7 +120,7 @@ pub mod soldeer;
 use soldeer::{SoldeerConfig, SoldeerDependencyConfig};
 
 mod vyper;
-use vyper::VyperConfig;
+pub use vyper::{normalize_evm_version_vyper, VyperConfig};
 
 mod bind_json;
 use bind_json::BindJsonConfig;
@@ -1497,7 +1497,7 @@ impl Config {
             extra_output.push(ContractOutputSelection::Metadata);
         }
 
-        ConfigurableArtifacts::new(extra_output, self.extra_output_files.iter().cloned())
+        ConfigurableArtifacts::new(extra_output, self.extra_output_files.iter().copied())
     }
 
     /// Parses all libraries in the form of
@@ -1568,7 +1568,7 @@ impl Config {
     /// - evm version
     pub fn vyper_settings(&self) -> Result<VyperSettings, SolcError> {
         Ok(VyperSettings {
-            evm_version: Some(self.evm_version),
+            evm_version: Some(normalize_evm_version_vyper(self.evm_version)),
             optimize: self.vyper.optimize,
             bytecode_metadata: None,
             // TODO: We don't yet have a way to deserialize other outputs correctly, so request only
@@ -2334,7 +2334,7 @@ impl Default for Config {
             allow_paths: vec![],
             include_paths: vec![],
             force: false,
-            evm_version: EvmVersion::Cancun,
+            evm_version: EvmVersion::Prague,
             gas_reports: vec!["*".to_string()],
             gas_reports_ignore: vec![],
             gas_reports_include_tests: false,
