@@ -2605,8 +2605,7 @@ mod tests {
     };
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
-    use std::env;
-    use std::{fs::File, io::Write};
+    use std::{env, fs::File, io::Write};
     use tempfile::tempdir;
     use tracing_test::traced_test;
     use NamedChain::Moonbeam;
