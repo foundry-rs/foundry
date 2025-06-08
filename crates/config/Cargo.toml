@@ -57,6 +57,7 @@ path-slash = "0.2"
 similar-asserts.workspace = true
 figment = { workspace = true, features = ["test"] }
 tempfile.workspace = true
+tracing-test = "0.2"
 
 [features]
 isolate-by-default = []

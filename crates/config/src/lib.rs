@@ -120,7 +120,7 @@ pub mod soldeer;
 use soldeer::{SoldeerConfig, SoldeerDependencyConfig};
 
 mod vyper;
-pub use vyper::{normalize_evm_version_vyper, VyperConfig};
+use vyper::VyperConfig;
 
 mod bind_json;
 use bind_json::BindJsonConfig;
@@ -642,23 +642,29 @@ impl Config {
         Self::from_provider(provider)
     }
 
-    fn from_figment(figment: Figment) -> Result<Self, ExtractConfigError> {
-        let file_path = Path::new("foundry.toml");
-        if let Ok(raw) = fs::read_to_string(&file_path) {
-            let deserializer = toml::Deserializer::new(&raw);
-            let mut ignored = Vec::new();
-            let _: Result<Self, _> = serde_ignored::deserialize(deserializer, |path| {
-                ignored.push(path.to_string());
-            });
+    /// Read `foundry.toml`, collect any unknown keys, and log a warning.
+    fn warn_unknown_keys() -> Result<(), ExtractConfigError> {
+        let path = Path::new(Self::FILE_NAME);
 
+        // if the file exists & is readable, deserialize and collect ignored keys
+        if let Ok(raw) = fs::read_to_string(path) {
+            let mut ignored = Vec::new();
+            let deserializer = toml::Deserializer::new(&raw);
+
+            // collect every ignored field name
+            let _: Result<Self, _> =
+                serde_ignored::deserialize(deserializer, |field| ignored.push(field.to_string()));
+
+            // if we found any, log a single warning with a list
             if !ignored.is_empty() {
-                warn!(
-                    "Found unknown config keys in {}: {}",
-                    file_path.display(),
-                    ignored.join(", ")
-                );
+                warn!("Found unknown config keys in {}: {}", Self::FILE_NAME, ignored.join(", "));
             }
         }
+        Ok(())
+    }
+
+    fn from_figment(figment: Figment) -> Result<Self, ExtractConfigError> {
+        Self::warn_unknown_keys()?;
 
         let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
         config.profile = figment.profile().clone();
@@ -1139,9 +1145,9 @@ impl Config {
 
     /// Whether caching should be enabled for the given chain id
     pub fn enable_caching(&self, endpoint: &str, chain_id: impl Into<u64>) -> bool {
-        !self.no_storage_caching &&
-            self.rpc_storage_caching.enable_for_chain_id(chain_id.into()) &&
-            self.rpc_storage_caching.enable_for_endpoint(endpoint)
+        !self.no_storage_caching
+            && self.rpc_storage_caching.enable_for_chain_id(chain_id.into())
+            && self.rpc_storage_caching.enable_for_endpoint(endpoint)
     }
 
     /// Returns the `ProjectPathsConfig` sub set of the config.
@@ -1497,7 +1503,7 @@ impl Config {
             extra_output.push(ContractOutputSelection::Metadata);
         }
 
-        ConfigurableArtifacts::new(extra_output, self.extra_output_files.iter().copied())
+        ConfigurableArtifacts::new(extra_output, self.extra_output_files.iter().cloned())
     }
 
     /// Parses all libraries in the form of
@@ -1568,7 +1574,7 @@ impl Config {
     /// - evm version
     pub fn vyper_settings(&self) -> Result<VyperSettings, SolcError> {
         Ok(VyperSettings {
-            evm_version: Some(normalize_evm_version_vyper(self.evm_version)),
+            evm_version: Some(self.evm_version),
             optimize: self.vyper.optimize,
             bytecode_metadata: None,
             // TODO: We don't yet have a way to deserialize other outputs correctly, so request only
@@ -2030,8 +2036,8 @@ impl Config {
             let file_name = block.file_name();
             let filepath = if file_type.is_dir() {
                 block.path().join("storage.json")
-            } else if file_type.is_file() &&
-                file_name.to_string_lossy().chars().all(char::is_numeric)
+            } else if file_type.is_file()
+                && file_name.to_string_lossy().chars().all(char::is_numeric)
             {
                 block.path()
             } else {
@@ -2334,7 +2340,7 @@ impl Default for Config {
             allow_paths: vec![],
             include_paths: vec![],
             force: false,
-            evm_version: EvmVersion::Prague,
+            evm_version: EvmVersion::Cancun,
             gas_reports: vec!["*".to_string()],
             gas_reports_ignore: vec![],
             gas_reports_include_tests: false,
@@ -2599,8 +2605,10 @@ mod tests {
     };
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
+    use std::env;
     use std::{fs::File, io::Write};
     use tempfile::tempdir;
+    use tracing_test::traced_test;
     use NamedChain::Moonbeam;
 
     // Helper function to clear `__warnings` in config, since it will be populated during loading
@@ -4994,5 +5002,45 @@ mod tests {
 
             Ok(())
         });
+    }
+
+    #[traced_test]
+    #[test]
+    fn warn_unknown_keys_logs_warning_for_unknown_keys() {
+        let dir = tempdir().expect("failed to create temp dir");
+        let path = dir.path().join("foundry.toml");
+        fs::write(&path, "optimizor = false\n").expect("Failed to write foundry.toml");
+
+        let old_dir = env::current_dir().expect("failed to get current dir");
+        env::set_current_dir(&dir).expect("failed to set current dir");
+
+        let _ = Config::warn_unknown_keys();
+
+        assert!(
+            logs_contain("Found unknown config keys") && logs_contain("optimizor"),
+            "Expected a warning log containing 'optimizor'"
+        );
+
+        env::set_current_dir(old_dir).expect("failed to restore dir");
+    }
+
+    #[traced_test]
+    #[test]
+    fn warn_unknown_keys_logs_nothing_for_valid_keys() {
+        let dir = tempdir().expect("failed to create temp dir");
+        let path = dir.path().join("foundry.toml");
+        fs::write(&path, "optimizer = false\n").expect("Failed to write foundry.toml");
+
+        let old_dir = env::current_dir().expect("failed to get current dir");
+        env::set_current_dir(&dir).expect("failed to set current dir");
+
+        let _ = Config::warn_unknown_keys();
+
+        assert!(
+            !logs_contain("Found unknown config keys"),
+            "Did not expect a warning for only valid keys"
+        );
+
+        env::set_current_dir(old_dir).expect("failed to restore dir");
     }
 }
