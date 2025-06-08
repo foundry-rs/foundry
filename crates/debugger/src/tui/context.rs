@@ -345,10 +345,5 @@ fn is_jump(step: &CallTraceStep, prev: &CallTraceStep) -> bool {
     }
 
     let immediate_len = prev.immediate_bytes.as_ref().map_or(0, |b| b.len());
-
-    if step.pc != prev.pc + 1 + immediate_len {
-        true
-    } else {
-        step.code_section_idx != prev.code_section_idx
-    }
+    step.pc != prev.pc + 1 + immediate_len
 }

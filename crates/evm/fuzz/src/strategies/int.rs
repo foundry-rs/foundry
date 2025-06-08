@@ -123,10 +123,10 @@ impl IntStrategy {
     fn generate_edge_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
         let rng = runner.rng();
 
-        let offset = I256::from_raw(U256::from(rng.gen_range(0..4)));
+        let offset = I256::from_raw(U256::from(rng.random_range(0..4)));
         let umax: U256 = (U256::from(1) << (self.bits - 1)) - U256::from(1);
         // Choose if we want values around min, -0, +0, or max
-        let kind = rng.gen_range(0..4);
+        let kind = rng.random_range(0..4);
         let start = match kind {
             0 => {
                 I256::overflowing_from_sign_and_abs(Sign::Negative, umax + U256::from(1)).0 + offset
@@ -146,7 +146,7 @@ impl IntStrategy {
         }
 
         // Generate value tree from fixture.
-        let fixture = &self.fixtures[runner.rng().gen_range(0..self.fixtures.len())];
+        let fixture = &self.fixtures[runner.rng().random_range(0..self.fixtures.len())];
         if let Some(int_fixture) = fixture.as_int() {
             if int_fixture.1 == self.bits {
                 return Ok(IntValueTree::new(int_fixture.0, false));
@@ -162,15 +162,15 @@ impl IntStrategy {
         let rng = runner.rng();
 
         // generate random number of bits uniformly
-        let bits = rng.gen_range(0..=self.bits);
+        let bits = rng.random_range(0..=self.bits);
 
         if bits == 0 {
             return Ok(IntValueTree::new(I256::ZERO, false))
         }
 
         // init 2 128-bit randoms
-        let mut higher: u128 = rng.gen_range(0..=u128::MAX);
-        let mut lower: u128 = rng.gen_range(0..=u128::MAX);
+        let mut higher: u128 = rng.random_range(0..=u128::MAX);
+        let mut lower: u128 = rng.random_range(0..=u128::MAX);
 
         // cut 2 randoms according to bits size
         match bits - 1 {
@@ -192,7 +192,7 @@ impl IntStrategy {
 
         // we have a small bias here, i.e. intN::min will never be generated
         // but it's ok since it's generated in `fn generate_edge_tree(...)`
-        let sign = if rng.gen_bool(0.5) { Sign::Positive } else { Sign::Negative };
+        let sign = if rng.random_bool(0.5) { Sign::Positive } else { Sign::Negative };
         let (start, _) = I256::overflowing_from_sign_and_abs(sign, U256::from_limbs(inner));
 
         Ok(IntValueTree::new(start, false))
@@ -205,7 +205,7 @@ impl Strategy for IntStrategy {
 
     fn new_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
         let total_weight = self.random_weight + self.fixtures_weight + self.edge_weight;
-        let bias = runner.rng().gen_range(0..total_weight);
+        let bias = runner.rng().random_range(0..total_weight);
         // randomly select one of 3 strategies
         match bias {
             x if x < self.edge_weight => self.generate_edge_tree(runner),

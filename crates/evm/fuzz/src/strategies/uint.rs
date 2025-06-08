@@ -111,8 +111,8 @@ impl UintStrategy {
     fn generate_edge_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
         let rng = runner.rng();
         // Choose if we want values around 0 or max
-        let is_min = rng.gen_bool(0.5);
-        let offset = U256::from(rng.gen_range(0..4));
+        let is_min = rng.random_bool(0.5);
+        let offset = U256::from(rng.random_range(0..4));
         let start = if is_min { offset } else { self.type_max().saturating_sub(offset) };
         Ok(UintValueTree::new(start, false))
     }
@@ -124,7 +124,7 @@ impl UintStrategy {
         }
 
         // Generate value tree from fixture.
-        let fixture = &self.fixtures[runner.rng().gen_range(0..self.fixtures.len())];
+        let fixture = &self.fixtures[runner.rng().random_range(0..self.fixtures.len())];
         if let Some(uint_fixture) = fixture.as_uint() {
             if uint_fixture.1 == self.bits {
                 return Ok(UintValueTree::new(uint_fixture.0, false));
@@ -140,11 +140,11 @@ impl UintStrategy {
         let rng = runner.rng();
 
         // generate random number of bits uniformly
-        let bits = rng.gen_range(0..=self.bits);
+        let bits = rng.random_range(0..=self.bits);
 
         // init 2 128-bit randoms
-        let mut higher: u128 = rng.gen_range(0..=u128::MAX);
-        let mut lower: u128 = rng.gen_range(0..=u128::MAX);
+        let mut higher: u128 = rng.random_range(0..=u128::MAX);
+        let mut lower: u128 = rng.random_range(0..=u128::MAX);
 
         // cut 2 randoms according to bits size
         match bits {
@@ -182,7 +182,7 @@ impl Strategy for UintStrategy {
     type Value = U256;
     fn new_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
         let total_weight = self.random_weight + self.fixtures_weight + self.edge_weight;
-        let bias = runner.rng().gen_range(0..total_weight);
+        let bias = runner.rng().random_range(0..total_weight);
         // randomly select one of 3 strategies
         match bias {
             x if x < self.edge_weight => self.generate_edge_tree(runner),

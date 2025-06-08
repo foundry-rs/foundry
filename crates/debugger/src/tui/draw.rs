@@ -375,11 +375,10 @@ impl TUIContext<'_> {
             .collect::<Vec<_>>();
 
         let title = format!(
-            "Address: {} | PC: {} | Gas used in call: {} | Code section: {}",
+            "Address: {} | PC: {} | Gas used in call: {}",
             self.address(),
             self.current_step().pc,
             self.current_step().gas_used,
-            self.current_step().code_section_idx,
         );
         let block = Block::default().title(title).borders(Borders::ALL);
         let list = List::new(items)
