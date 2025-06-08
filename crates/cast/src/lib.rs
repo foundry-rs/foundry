@@ -135,7 +135,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// account_override.balance = Some(U256::from(1000));
     /// state_override.insert(to, account_override);
     /// let state_override_object = StateOverridesBuilder::default().build();
-    /// let block_override_object = BlockOverride::default();
+    /// let block_override_object = BlockOverrides::default();
     ///
     /// let cast = Cast::new(alloy_provider);
     /// let data = cast.call(&tx, None, None, Some(state_override_object), Some(block_override_object)).await?;
