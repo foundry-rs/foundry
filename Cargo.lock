@@ -1014,7 +1014,7 @@ dependencies = [
 
 [[package]]
 name = "anvil"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -1080,7 +1080,7 @@ dependencies = [
 
 [[package]]
 name = "anvil-core"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -1104,7 +1104,7 @@ dependencies = [
 
 [[package]]
 name = "anvil-rpc"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -1112,7 +1112,7 @@ dependencies = [
 
 [[package]]
 name = "anvil-server"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "anvil-rpc",
  "async-trait",
@@ -2346,7 +2346,7 @@ checksum = "df8670b8c7b9dae1793364eafadf7239c40d669904660c5960d74cfd80b46a53"
 
 [[package]]
 name = "cast"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -2446,7 +2446,7 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chisel"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
@@ -3775,7 +3775,7 @@ checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "forge"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-chains",
  "alloy-dyn-abi",
@@ -3859,7 +3859,7 @@ dependencies = [
 
 [[package]]
 name = "forge-doc"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-primitives",
  "derive_more 2.0.1",
@@ -3882,7 +3882,7 @@ dependencies = [
 
 [[package]]
 name = "forge-fmt"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-primitives",
  "ariadne",
@@ -3898,7 +3898,7 @@ dependencies = [
 
 [[package]]
 name = "forge-lint"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "foundry-compilers",
  "foundry-config",
@@ -3912,7 +3912,7 @@ dependencies = [
 
 [[package]]
 name = "forge-script"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -3957,7 +3957,7 @@ dependencies = [
 
 [[package]]
 name = "forge-script-sequence"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-network",
  "alloy-primitives",
@@ -3973,7 +3973,7 @@ dependencies = [
 
 [[package]]
 name = "forge-sol-macro-gen"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-sol-macro-expander",
  "alloy-sol-macro-input",
@@ -3989,7 +3989,7 @@ dependencies = [
 
 [[package]]
 name = "forge-verify"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
@@ -4050,7 +4050,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-cheatcodes"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -4087,7 +4087,6 @@ dependencies = [
  "parking_lot",
  "proptest",
  "rand 0.9.1",
- "rand_chacha 0.9.0",
  "revm",
  "revm-inspectors",
  "semver 1.0.26",
@@ -4101,7 +4100,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-cheatcodes-spec"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-sol-types",
  "foundry-macros",
@@ -4112,7 +4111,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-cli"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-chains",
  "alloy-dyn-abi",
@@ -4160,7 +4159,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-common"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -4215,7 +4214,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-common-fmt"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -4342,7 +4341,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-config"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-chains",
  "alloy-primitives",
@@ -4381,7 +4380,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-debugger"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-primitives",
  "crossterm",
@@ -4399,7 +4398,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-evm"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-evm",
@@ -4427,7 +4426,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-evm-abi"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -4439,7 +4438,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-evm-core"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -4476,7 +4475,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-evm-coverage"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-primitives",
  "eyre",
@@ -4491,7 +4490,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-evm-fuzz"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
@@ -4515,7 +4514,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-evm-traces"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
@@ -4565,7 +4564,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-linking"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-primitives",
  "foundry-compilers",
@@ -4575,7 +4574,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-macros"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "proc-macro-error2",
  "proc-macro2",
@@ -4599,7 +4598,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-test-utils"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-primitives",
  "alloy-provider",
@@ -4625,7 +4624,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-wallets"
-version = "1.2.2"
+version = "1.2.3"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -7102,17 +7101,17 @@ dependencies = [
 
 [[package]]
 name = "proptest"
-version = "1.6.0"
+version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14cae93065090804185d3b75f0bf93b8eeda30c7a9b4a33d3bdb3988d6229e50"
+checksum = "6fcdab19deb5195a31cf7726a210015ff1496ba1464fd42cb4f537b8b01b471f"
 dependencies = [
  "bit-set",
  "bit-vec",
  "bitflags 2.9.1",
  "lazy_static",
  "num-traits",
- "rand 0.8.5",
- "rand_chacha 0.3.1",
+ "rand 0.9.1",
+ "rand_chacha 0.9.0",
  "rand_xorshift",
  "regex-syntax 0.8.5",
  "rusty-fork",
@@ -7148,7 +7147,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.101",
@@ -7390,11 +7389,11 @@ dependencies = [
 
 [[package]]
 name = "rand_xorshift"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d25bf25ec5ae4a3f1b92f929810509a2f53d7dca2f50b794ff57e3face536c8f"
+checksum = "513962919efc330f829edb2535844d1b912b0fbe2ca165d613e4e8788bb05a5a"
 dependencies = [
- "rand_core 0.6.4",
+ "rand_core 0.9.3",
 ]
 
 [[package]]
@@ -8664,7 +8663,7 @@ dependencies = [
  "derive_builder",
  "derive_more 2.0.1",
  "dunce",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "itoa",
  "lasso",
  "match_cfg",
@@ -8676,7 +8675,7 @@ dependencies = [
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 1.0.69",
+ "thiserror 2.0.12",
  "tracing",
  "unicode-width 0.2.0",
 ]
@@ -8701,7 +8700,7 @@ dependencies = [
  "alloy-primitives",
  "bitflags 2.9.1",
  "bumpalo",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -9012,7 +9011,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.12",
  "url",
  "zip",
 ]

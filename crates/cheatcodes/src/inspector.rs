@@ -46,8 +46,7 @@ use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
 use foundry_wallets::multi_wallet::MultiWallet;
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
-use rand::{Rng, SeedableRng};
-use rand_chacha::ChaChaRng;
+use rand::Rng;
 use revm::{
     bytecode::opcode as op,
     context::{result::EVMError, BlockEnv, JournalTr, LocalContext, TransactionType},
@@ -371,10 +370,10 @@ pub struct Cheatcodes {
     /// execution block environment.
     pub block: Option<BlockEnv>,
 
-    /// Currently active EIP-7702 delegation that will be consumed when building the next
+    /// Currently active EIP-7702 delegations that will be consumed when building the next
     /// transaction. Set by `vm.attachDelegation()` and consumed via `.take()` during
     /// transaction construction.
-    pub active_delegation: Option<SignedAuthorization>,
+    pub active_delegations: Vec<SignedAuthorization>,
 
     /// The active EIP-4844 blob that will be attached to the next call.
     pub active_blob_sidecar: Option<BlobTransactionSidecar>,
@@ -485,9 +484,6 @@ pub struct Cheatcodes {
     /// strategies.
     test_runner: Option<TestRunner>,
 
-    /// Temp Rng since proptest hasn't been updated to rand 0.9
-    rng: Option<ChaChaRng>,
-
     /// Ignored traces.
     pub ignored_traces: IgnoredTraces,
 
@@ -517,7 +513,7 @@ impl Cheatcodes {
             labels: config.labels.clone(),
             config,
             block: Default::default(),
-            active_delegation: Default::default(),
+            active_delegations: Default::default(),
             active_blob_sidecar: Default::default(),
             gas_price: Default::default(),
             pranks: Default::default(),
@@ -552,7 +548,6 @@ impl Cheatcodes {
             arbitrary_storage: Default::default(),
             deprecated: Default::default(),
             wallets: Default::default(),
-            rng: Default::default(),
         }
     }
 
@@ -571,6 +566,11 @@ impl Cheatcodes {
     /// Sets the unlocked wallets.
     pub fn set_wallets(&mut self, wallets: Wallets) {
         self.wallets = Some(wallets);
+    }
+
+    /// Adds a delegation to the active delegations list.
+    pub fn add_delegation(&mut self, authorization: SignedAuthorization) {
+        self.active_delegations.push(authorization);
     }
 
     /// Decodes the input data and applies the cheatcode.
@@ -871,8 +871,11 @@ impl Cheatcodes {
                         ..Default::default()
                     };
 
-                    match (self.active_delegation.take(), self.active_blob_sidecar.take()) {
-                        (Some(_), Some(_)) => {
+                    let active_delegations = std::mem::take(&mut self.active_delegations);
+                    // Set active blob sidecar, if any.
+                    if let Some(blob_sidecar) = self.active_blob_sidecar.take() {
+                        // Ensure blob and delegation are not set for the same tx.
+                        if !active_delegations.is_empty() {
                             let msg = "both delegation and blob are active; `attachBlob` and `attachDelegation` are not compatible";
                             return Some(CallOutcome {
                                 result: InterpreterResult {
@@ -883,21 +886,22 @@ impl Cheatcodes {
                                 memory_offset: call.return_memory_offset.clone(),
                             });
                         }
-                        (Some(auth_list), None) => {
-                            tx_req.authorization_list = Some(vec![auth_list]);
-                            tx_req.sidecar = None;
+                        tx_req.set_blob_sidecar(blob_sidecar);
+                    }
 
-                            // Increment nonce to reflect the signed authorization.
-                            account.info.nonce += 1;
+                    // Apply active EIP-7702 delegations, if any.
+                    if !active_delegations.is_empty() {
+                        for auth in &active_delegations {
+                            let Ok(authority) = auth.recover_authority() else {
+                                continue;
+                            };
+                            if authority == broadcast.new_origin {
+                                // Increment nonce of broadcasting account to reflect signed
+                                // authorization.
+                                account.info.nonce += 1;
+                            }
                         }
-                        (None, Some(blob_sidecar)) => {
-                            tx_req.set_blob_sidecar(blob_sidecar);
-                            tx_req.authorization_list = None;
-                        }
-                        (None, None) => {
-                            tx_req.sidecar = None;
-                            tx_req.authorization_list = None;
-                        }
+                        tx_req.authorization_list = Some(active_delegations);
                     }
 
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
@@ -982,12 +986,7 @@ impl Cheatcodes {
     }
 
     pub fn rng(&mut self) -> &mut impl Rng {
-        // Prop test uses rand 8 whereas alloy-core has been bumped to rand 9
-        // self.test_runner().rng()
-        self.rng.get_or_insert_with(|| match self.config.seed {
-            Some(seed) => ChaChaRng::from_seed(seed.to_be_bytes::<32>()),
-            None => ChaChaRng::from_os_rng(),
-        })
+        self.test_runner().rng()
     }
 
     pub fn test_runner(&mut self) -> &mut TestRunner {
