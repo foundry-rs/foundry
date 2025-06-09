@@ -318,7 +318,7 @@ k256 = "0.13"
 mesc = "0.3"
 num-format = "0.4"
 parking_lot = "0.12"
-proptest = "1"
+proptest = "1.7.0"
 rand = "0.9"
 rand_08 = { package = "rand", version = "0.8" }
 rand_chacha = "0.9.0"

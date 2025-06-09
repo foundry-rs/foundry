@@ -420,7 +420,7 @@ edition = "2021"
                 r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", rev = "{alloy_rev}", features = ["sol-types", "contract"] }}"#,
             )
         } else {
-            r#"alloy = { git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }"#.to_string()
+            r#"alloy = { version = "1.0", features = ["sol-types", "contract"] }"#.to_string()
         }
     }
 }
