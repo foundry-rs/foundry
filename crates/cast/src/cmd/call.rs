@@ -149,11 +149,9 @@ pub struct CallArgs {
     #[arg(long = "override-state-diff", value_name = "ADDRESS:SLOT:VALUE")]
     pub state_diff_overrides: Option<Vec<String>>,
 
-    /// Override the time field of a block
-    ///
-    /// Format: block:time
-    #[arg(long = "override-time", value_name = "BLOCK:TIME")]
-    pub time_overrides: Option<Vec<String>>,
+    /// Override the block timestamp.
+    #[arg(long = "block.time", value_name = "TIME")]
+    pub block_time: Option<u64>,
 }
 
 #[derive(Debug, Parser)]
@@ -381,18 +379,12 @@ impl CallArgs {
     /// Parse state overrides from command line arguments.
     pub fn get_block_overrides(&self) -> eyre::Result<Option<BlockOverrides>> {
         // Early return if no override set - <https://github.com/foundry-rs/foundry/issues/10705>
-        if [self.time_overrides.as_ref()].iter().all(Option::is_none) {
+        if self.block_time.as_ref().is_none() {
             return Ok(None);
         }
-        let mut block_overrides = BlockOverrides::default();
 
-        for override_str in self.time_overrides.as_ref().unwrap() {
-            let (block_number, time) = time_value_override(override_str)?;
-            block_overrides =
-                block_overrides.with_number(block_number.parse()?).with_time(time.parse()?);
-        }
-
-        Ok(Some(block_overrides))
+        let block_overrides = BlockOverrides::default();
+        Ok(Some(block_overrides.with_time(self.block_time.unwrap())))
     }
 }
 
@@ -434,14 +426,6 @@ fn address_slot_value_override(address_override: &str) -> Result<(Address, U256,
         captures[2].parse()?, // Slot (U256)
         captures[3].parse()?, // Value (U256)
     ))
-}
-
-/// Parse an override string in the format block:time
-fn time_value_override(input: &str) -> Result<(&str, &str), eyre::Report> {
-    let (block_str, time_str) = input.split_once(':').ok_or_else(|| {
-        eyre::eyre!("Invalid override `{input}`. Expected format: <block>:<time>")
-    })?;
-    Ok((block_str, time_str))
 }
 
 #[cfg(test)]
