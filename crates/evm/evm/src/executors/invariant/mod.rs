@@ -479,7 +479,7 @@ impl<'a> InvariantExecutor<'a> {
                 }
 
                 // To occasionally intermix new txs
-                let generate_new = self.runner.rng().gen_ratio(1, 10);
+                let generate_new = self.runner.rng().random_ratio(1, 10);
                 // Initial sequence's length is less than depth
                 let must_generate =
                     current_run.depth as usize > initial_seq.len().saturating_sub(1);

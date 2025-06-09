@@ -317,8 +317,8 @@ impl TxCorpusManager {
                 .current();
             let rng = test_runner.rng();
             let corpus_len = self.in_memory_corpus.len();
-            let primary = &self.in_memory_corpus[rng.gen_range(0..corpus_len)];
-            let secondary = &self.in_memory_corpus[rng.gen_range(0..corpus_len)];
+            let primary = &self.in_memory_corpus[rng.random_range(0..corpus_len)];
+            let secondary = &self.in_memory_corpus[rng.random_range(0..corpus_len)];
 
             match mutation_type {
                 MutationType::Splice => {
@@ -326,11 +326,11 @@ impl TxCorpusManager {
                     if should_evict {
                         self.current_mutated = Some(primary.uuid);
                     }
-                    let start1 = rng.gen_range(0..primary.tx_seq.len());
-                    let end1 = rng.gen_range(start1..primary.tx_seq.len());
+                    let start1 = rng.random_range(0..primary.tx_seq.len());
+                    let end1 = rng.random_range(start1..primary.tx_seq.len());
 
-                    let start2 = rng.gen_range(0..secondary.tx_seq.len());
-                    let end2 = rng.gen_range(start2..secondary.tx_seq.len());
+                    let start2 = rng.random_range(0..secondary.tx_seq.len());
+                    let end2 = rng.random_range(start2..secondary.tx_seq.len());
 
                     for tx in primary.tx_seq.iter().take(end1).skip(start1) {
                         new_seq.push(tx.clone());
@@ -340,15 +340,15 @@ impl TxCorpusManager {
                     }
                 }
                 MutationType::Repeat => {
-                    let corpus = if rng.gen::<bool>() { primary } else { secondary };
+                    let corpus = if rng.random::<bool>() { primary } else { secondary };
                     trace!(target: "corpus", "repeat {}", corpus.uuid);
                     if should_evict {
                         self.current_mutated = Some(corpus.uuid);
                     }
                     new_seq = corpus.tx_seq.clone();
-                    let start = rng.gen_range(0..corpus.tx_seq.len());
-                    let end = rng.gen_range(start..corpus.tx_seq.len());
-                    let item_idx = rng.gen_range(0..corpus.tx_seq.len());
+                    let start = rng.random_range(0..corpus.tx_seq.len());
+                    let end = rng.random_range(start..corpus.tx_seq.len());
+                    let item_idx = rng.random_range(0..corpus.tx_seq.len());
                     let repeated = vec![new_seq[item_idx].clone(); end - start];
                     new_seq.splice(start..end, repeated);
                 }
@@ -359,42 +359,43 @@ impl TxCorpusManager {
                     }
                     for (tx1, tx2) in primary.tx_seq.iter().zip(secondary.tx_seq.iter()) {
                         // chunks?
-                        let tx = if rng.gen::<bool>() { tx1.clone() } else { tx2.clone() };
+                        let tx = if rng.random::<bool>() { tx1.clone() } else { tx2.clone() };
                         new_seq.push(tx);
                     }
                 }
                 MutationType::Prefix => {
-                    let corpus = if rng.gen::<bool>() { primary } else { secondary };
+                    let corpus = if rng.random::<bool>() { primary } else { secondary };
                     trace!(target: "corpus", "overwrite prefix of {}", corpus.uuid);
                     if should_evict {
                         self.current_mutated = Some(corpus.uuid);
                     }
                     new_seq = corpus.tx_seq.clone();
-                    for i in 0..rng.gen_range(0..=new_seq.len()) {
+                    for i in 0..rng.random_range(0..=new_seq.len()) {
                         new_seq[i] = self.new_tx(test_runner)?;
                     }
                 }
                 MutationType::Suffix => {
-                    let corpus = if rng.gen::<bool>() { primary } else { secondary };
+                    let corpus = if rng.random::<bool>() { primary } else { secondary };
                     trace!(target: "corpus", "overwrite suffix of {}", corpus.uuid);
                     if should_evict {
                         self.current_mutated = Some(corpus.uuid);
                     }
                     new_seq = corpus.tx_seq.clone();
-                    for i in new_seq.len() - rng.gen_range(0..new_seq.len())..corpus.tx_seq.len() {
+                    for i in new_seq.len() - rng.random_range(0..new_seq.len())..corpus.tx_seq.len()
+                    {
                         new_seq[i] = self.new_tx(test_runner)?;
                     }
                 }
                 MutationType::Abi => {
                     let targets = test.targeted_contracts.targets.lock();
-                    let corpus = if rng.gen::<bool>() { primary } else { secondary };
+                    let corpus = if rng.random::<bool>() { primary } else { secondary };
                     trace!(target: "corpus", "ABI mutate args of {}", corpus.uuid);
                     if should_evict {
                         self.current_mutated = Some(corpus.uuid);
                     }
                     new_seq = corpus.tx_seq.clone();
 
-                    let idx = rng.gen_range(0..new_seq.len());
+                    let idx = rng.random_range(0..new_seq.len());
                     let tx = new_seq.get_mut(idx).unwrap();
                     if let (_, Some(function)) = targets.fuzzed_artifacts(tx) {
                         // TODO add call_value to call details and mutate it as well as sender some
@@ -402,12 +403,14 @@ impl TxCorpusManager {
                         if !function.inputs.is_empty() {
                             let mut new_function = function.clone();
                             let mut arg_mutation_rounds =
-                                rng.gen_range(0..=function.inputs.len()).max(1);
+                                rng.random_range(0..=function.inputs.len()).max(1);
                             let round_arg_idx: Vec<usize> = if function.inputs.len() <= 1 {
                                 vec![0]
                             } else {
                                 (0..arg_mutation_rounds)
-                                    .map(|_| test_runner.rng().gen_range(0..function.inputs.len()))
+                                    .map(|_| {
+                                        test_runner.rng().random_range(0..function.inputs.len())
+                                    })
                                     .collect()
                             };
                             // TODO mutation strategy for individual ABI types

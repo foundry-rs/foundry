@@ -116,7 +116,10 @@ pub struct EtherscanABIResponse {
 macro_rules! format_param {
     ($param:expr) => {{
         let param = $param;
-        format!("{}{}", param.ty, if param.is_complex_type() { " memory" } else { "" })
+        let memory = param.is_complex_type() ||
+            param.selector_type() == "string" ||
+            param.selector_type() == "bytes";
+        format!("{}{}", param.ty, if memory { " memory" } else { "" })
     }};
 }
 
