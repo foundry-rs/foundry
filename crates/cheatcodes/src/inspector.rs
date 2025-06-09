@@ -46,8 +46,7 @@ use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
 use foundry_wallets::multi_wallet::MultiWallet;
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
-use rand::{Rng, SeedableRng};
-use rand_chacha::ChaChaRng;
+use rand::Rng;
 use revm::{
     bytecode::opcode as op,
     context::{result::EVMError, BlockEnv, JournalTr, LocalContext, TransactionType},
@@ -485,9 +484,6 @@ pub struct Cheatcodes {
     /// strategies.
     test_runner: Option<TestRunner>,
 
-    /// Temp Rng since proptest hasn't been updated to rand 0.9
-    rng: Option<ChaChaRng>,
-
     /// Ignored traces.
     pub ignored_traces: IgnoredTraces,
 
@@ -552,7 +548,6 @@ impl Cheatcodes {
             arbitrary_storage: Default::default(),
             deprecated: Default::default(),
             wallets: Default::default(),
-            rng: Default::default(),
         }
     }
 
@@ -1256,12 +1251,7 @@ impl Cheatcodes {
     }
 
     pub fn rng(&mut self) -> &mut impl Rng {
-        // Prop test uses rand 8 whereas alloy-core has been bumped to rand 9
-        // self.test_runner().rng()
-        self.rng.get_or_insert_with(|| match self.config.seed {
-            Some(seed) => ChaChaRng::from_seed(seed.to_be_bytes::<32>()),
-            None => ChaChaRng::from_os_rng(),
-        })
+        self.test_runner().rng()
     }
 
     pub fn test_runner(&mut self) -> &mut TestRunner {
