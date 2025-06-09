@@ -4234,8 +4234,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.17.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d14093062732cc5085a2ad6eb5ec1f20e5b6704b86fc4eeef7ba15f53f75178d"
+source = "git+https://github.com/foundry-rs/compilers.git?rev=e4a9b04#e4a9b049d08e43899f9eebd2be56edaac04fef07"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4248,7 +4247,7 @@ dependencies = [
  "fs_extra",
  "futures-util",
  "home",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "path-slash",
  "rand 0.8.5",
  "rayon",
@@ -4271,8 +4270,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.17.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2dfbae2e37ccb536b7dd85303fb0f006902a71218587f649129e9311e2ea646"
+source = "git+https://github.com/foundry-rs/compilers.git?rev=e4a9b04#e4a9b049d08e43899f9eebd2be56edaac04fef07"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -4281,8 +4279,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.17.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d17f0a8f8c4ff296546cdb1985a460542bb39ab853815de8ba51b43c134e4051"
+source = "git+https://github.com/foundry-rs/compilers.git?rev=e4a9b04#e4a9b049d08e43899f9eebd2be56edaac04fef07"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4293,7 +4290,6 @@ dependencies = [
  "semver 1.0.26",
  "serde",
  "serde_json",
- "serde_repr",
  "thiserror 2.0.12",
  "tokio",
  "tracing",
@@ -4304,8 +4300,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.17.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e87c18e3fed59ac0b7012f690eb3b0cc0e289e8e60601f438d427d9d85b8760"
+source = "git+https://github.com/foundry-rs/compilers.git?rev=e4a9b04#e4a9b049d08e43899f9eebd2be56edaac04fef07"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4319,8 +4314,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.17.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "053b13c3ee670c41e86235df99805bdfedd88a5efb6bbe697925b69028218481"
+source = "git+https://github.com/foundry-rs/compilers.git?rev=e4a9b04#e4a9b049d08e43899f9eebd2be56edaac04fef07"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -8313,17 +8307,6 @@ checksum = "59fab13f937fa393d08645bf3a84bdfe86e296747b506ada67bb15f10f218b2a"
 dependencies = [
  "itoa",
  "serde",
-]
-
-[[package]]
-name = "serde_repr"
-version = "0.1.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "175ee3e80ae9982737ca543e96133087cbd9a485eecc3bc4de9c1a37b47ea59c"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.101",
 ]
 
 [[package]]
