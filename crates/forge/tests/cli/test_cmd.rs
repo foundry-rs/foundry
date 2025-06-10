@@ -981,8 +981,7 @@ contract Contract2Test is Test {
     let failures_content = std::fs::read_to_string(prj.root().join("cache/test-failures")).unwrap();
     assert!(
         failures_content.contains("testSameName"),
-        "Expected test name in failure file, got: {}",
-        failures_content
+        "Expected test name in failure file, got: {failures_content}"
     );
 });
 
