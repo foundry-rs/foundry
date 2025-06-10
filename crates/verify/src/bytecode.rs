@@ -18,7 +18,7 @@ use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest,
 };
 use clap::{Parser, ValueHint};
-use eyre::{eyre, Context, OptionExt, Result};
+use eyre::{Context, OptionExt, Result};
 use foundry_cli::{
     opts::EtherscanOpts,
     utils::{self, read_constructor_args_file, LoadConfig},
