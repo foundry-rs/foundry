@@ -1,6 +1,7 @@
 //! Chisel is a fast, utilitarian, and verbose Solidity REPL.
 
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 #[macro_use]
 extern crate foundry_common;

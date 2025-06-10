@@ -163,6 +163,7 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
 pub fn has_different_gas_calc(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
         return chain.is_arbitrum() ||
+            chain.is_elastic() ||
             matches!(
                 chain,
                 NamedChain::Acala |
@@ -179,10 +180,7 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                     NamedChain::Moonbeam |
                     NamedChain::MoonbeamDev |
                     NamedChain::Moonriver |
-                    NamedChain::Metis |
-                    NamedChain::Abstract |
-                    NamedChain::ZkSync |
-                    NamedChain::ZkSyncTestnet
+                    NamedChain::Metis
             );
     }
     false
@@ -440,7 +438,10 @@ pub async fn print_traces(
 
 /// Traverse the artifacts in the project to generate local signatures and merge them into the cache
 /// file.
-pub fn cache_local_signatures(output: &ProjectCompileOutput, cache_dir: &Path) -> Result<()> {
+pub fn cache_local_signatures(output: &ProjectCompileOutput) -> Result<()> {
+    let Some(cache_dir) = Config::foundry_cache_dir() else {
+        eyre::bail!("Failed to get `cache_dir` to generate local signatures.");
+    };
     let path = cache_dir.join("signatures");
     let mut signatures = SignaturesCache::load(&path);
     for (_, artifact) in output.artifacts() {
