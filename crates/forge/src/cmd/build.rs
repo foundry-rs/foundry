@@ -102,8 +102,8 @@ impl BuildArgs {
             .ignore_eip_3860(self.ignore_eip_3860)
             .bail(!format_json);
 
-        // Configure linter if enabled in config
-        if project.compiler.solc.is_some() {
+        // Configure linter if enabled in config and lint_on_build is true
+        if project.compiler.solc.is_some() && config.lint.lint_on_build {
             let linter = SolidityLinter::new(config.project_paths())
                 .with_json_emitter(format_json)
                 .with_description(!format_json)
