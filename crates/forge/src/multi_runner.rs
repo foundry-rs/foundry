@@ -95,8 +95,9 @@ impl MultiContractRunner {
         filter: &'b dyn TestFilter,
     ) -> impl Iterator<Item = &'a Function> + 'b {
         self.matching_contracts(filter)
-            .flat_map(|(_, c)| c.abi.functions())
-            .filter(|func| is_matching_test(func, filter))
+            .flat_map(|(id, c)| c.abi.functions().map(move |func| (id, func)))
+            .filter(|(id, func)| is_matching_test_in_context(func, id, filter))
+            .map(|(_, func)| func)
     }
 
     /// Returns an iterator over all test functions in contracts that match the filter.
@@ -120,7 +121,7 @@ impl MultiContractRunner {
                 let tests = c
                     .abi
                     .functions()
-                    .filter(|func| is_matching_test(func, filter))
+                    .filter(|func| is_matching_test_in_context(func, id, filter))
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();
                 (source, name, tests)
@@ -551,10 +552,41 @@ impl MultiContractRunnerBuilder {
 
 pub fn matches_contract(id: &ArtifactId, abi: &JsonAbi, filter: &dyn TestFilter) -> bool {
     (filter.matches_path(&id.source) && filter.matches_contract(&id.name)) &&
-        abi.functions().any(|func| is_matching_test(func, filter))
+        abi.functions().any(|func| is_matching_test_in_context(func, id, filter))
 }
 
 /// Returns `true` if the function is a test function that matches the given filter.
 pub(crate) fn is_matching_test(func: &Function, filter: &dyn TestFilter) -> bool {
     func.is_any_test() && filter.matches_test(&func.signature())
+}
+
+/// Returns `true` if the function is a test function that matches the given filter in the context of a specific contract.
+pub(crate) fn is_matching_test_in_context(func: &Function, artifact_id: &ArtifactId, filter: &dyn TestFilter) -> bool {
+    if !func.is_any_test() {
+        return false;
+    }
+    
+    // Check the original signature first
+    if filter.matches_test(&func.signature()) {
+        return true;
+    }
+    
+    // Check if this is a qualified rerun scenario by looking for qualified failures
+    // This is a bit of a hack - we read the config to check for qualified failures
+    // TODO: This should be passed through the filter context instead
+    if let Ok(config) = Config::load() {
+        if let Some(qualified_failures) = crate::cmd::test::last_run_failures_qualified(&config) {
+            if let Some(test_name) = func.signature().split("(").next() {
+                let contract_name = artifact_id.name.as_str();
+                // Check if this specific contract/test combination is in the failures
+                for (failed_contract, failed_test) in qualified_failures {
+                    if failed_contract == contract_name && failed_test == test_name {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    
+    false
 }
