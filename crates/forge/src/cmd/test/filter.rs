@@ -157,9 +157,7 @@ impl TestFilter for FilterArgs {
         }
         
         // Fall back to default behavior for non-qualified scenarios
-        // For legacy patterns, we typically only have test patterns, not contract patterns
-        // We need to check the full signature for test matching
-        self.matches_contract(contract_name) && self.matches_test(&format!("{}()", test_name))
+        self.matches_contract(contract_name) && self.matches_test(test_name)
     }
 }
 
