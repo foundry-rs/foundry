@@ -42,6 +42,11 @@ pub struct FilterArgs {
     /// Only show coverage for files that do not match the specified regex pattern.
     #[arg(long = "no-match-coverage", visible_alias = "nmco", value_name = "REGEX")]
     pub coverage_pattern_inverse: Option<regex::Regex>,
+
+    /// Qualified test failures from --rerun (contract, test) pairs.
+    /// This is not a CLI argument, but is populated internally when --rerun is used.
+    #[arg(skip)]
+    pub qualified_failures: Option<Vec<(String, String)>>,
 }
 
 impl FilterArgs {
@@ -52,7 +57,8 @@ impl FilterArgs {
             self.contract_pattern.is_none() &&
             self.contract_pattern_inverse.is_none() &&
             self.path_pattern.is_none() &&
-            self.path_pattern_inverse.is_none()
+            self.path_pattern_inverse.is_none() &&
+            self.qualified_failures.is_none()
     }
 
     /// Merges the set filter globs with the config's values
@@ -138,6 +144,23 @@ impl TestFilter for FilterArgs {
         }
         ok
     }
+
+    fn matches_qualified_test(&self, contract_name: &str, test_name: &str) -> bool {
+        // If we have qualified failures, only match those specific combinations
+        if let Some(qualified_failures) = &self.qualified_failures {
+            for (failed_contract, failed_test) in qualified_failures {
+                if failed_contract == contract_name && failed_test == test_name {
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        // Fall back to default behavior for non-qualified scenarios
+        // For legacy patterns, we typically only have test patterns, not contract patterns
+        // We need to check the full signature for test matching
+        self.matches_contract(contract_name) && self.matches_test(&format!("{}()", test_name))
+    }
 }
 
 impl fmt::Display for FilterArgs {
@@ -219,6 +242,10 @@ impl TestFilter for ProjectPathsAwareFilter {
         // we don't want to test files that belong to a library
         path = path.strip_prefix(&self.paths.root).unwrap_or(path);
         self.args_filter.matches_path(path) && !self.paths.has_library_ancestor(path)
+    }
+
+    fn matches_qualified_test(&self, contract_name: &str, test_name: &str) -> bool {
+        self.args_filter.matches_qualified_test(contract_name, test_name)
     }
 }
 

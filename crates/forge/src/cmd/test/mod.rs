@@ -823,7 +823,12 @@ impl TestArgs {
     pub fn filter(&self, config: &Config) -> Result<ProjectPathsAwareFilter> {
         let mut filter = self.filter.clone();
         if self.rerun {
-            filter.test_pattern = last_run_failures(config);
+            // Try to load qualified failures first, fall back to legacy pattern matching
+            if let Some(qualified_failures) = last_run_failures_qualified(config) {
+                filter.qualified_failures = Some(qualified_failures);
+            } else {
+                filter.test_pattern = last_run_failures(config);
+            }
         }
         if filter.path_pattern.is_some() {
             if self.path.is_some() {
@@ -956,20 +961,36 @@ pub fn last_run_failures_qualified(config: &Config) -> Option<Vec<(String, Strin
 /// Persist filter with last test run failures (only if there's any failure).
 fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
     if outcome.failed() > 0 && fs::create_file(&config.test_failures_file).is_ok() {
-        let mut filter = String::new();
-        let mut failures = outcome.into_tests_cloned()
+        let failures: Vec<_> = outcome.into_tests_cloned()
             .filter(|test| test.result.status.is_failure())
-            .peekable();
+            .collect();
         
-        while let Some(test) = failures.next() {
+        if failures.is_empty() {
+            return;
+        }
+        
+        // Use qualified format if there are multiple contracts in the test run
+        // This is a conservative approach that ensures no ambiguity
+        let use_qualified = outcome.results.len() > 1;
+        
+        let mut filter = String::new();
+        let mut first = true;
+        
+        for test in failures {
             if test.signature.is_any_test() {
                 if let Some(test_match) = test.signature.split("(").next() {
-                    // Create a unique pattern that combines contract and test name
-                    // Use the contract name (extracted from artifact_id) + test name
-                    let contract_name = test.artifact_id.split(':').last().unwrap_or(&test.artifact_id);
-                    filter.push_str(&format!("{}_{}", contract_name, test_match));
-                    if failures.peek().is_some() {
+                    if !first {
                         filter.push('|');
+                    }
+                    first = false;
+                    
+                    if use_qualified {
+                        // Use qualified format when failures come from multiple contracts
+                        let contract_name = test.artifact_id.split(':').last().unwrap_or(&test.artifact_id);
+                        filter.push_str(&format!("{}_{}", contract_name, test_match));
+                    } else {
+                        // Use legacy format when all failures come from the same contract
+                        filter.push_str(test_match);
                     }
                 }
             }

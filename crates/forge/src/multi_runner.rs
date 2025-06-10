@@ -566,27 +566,11 @@ pub(crate) fn is_matching_test_in_context(func: &Function, artifact_id: &Artifac
         return false;
     }
     
-    // Check the original signature first
-    if filter.matches_test(&func.signature()) {
-        return true;
-    }
+    // Extract the test name from the function signature
+    let signature = func.signature();
+    let test_name = signature.split("(").next().unwrap_or(&signature);
+    let contract_name = artifact_id.name.as_str();
     
-    // Check if this is a qualified rerun scenario by looking for qualified failures
-    // This is a bit of a hack - we read the config to check for qualified failures
-    // TODO: This should be passed through the filter context instead
-    if let Ok(config) = Config::load() {
-        if let Some(qualified_failures) = crate::cmd::test::last_run_failures_qualified(&config) {
-            if let Some(test_name) = func.signature().split("(").next() {
-                let contract_name = artifact_id.name.as_str();
-                // Check if this specific contract/test combination is in the failures
-                for (failed_contract, failed_test) in qualified_failures {
-                    if failed_contract == contract_name && failed_test == test_name {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    
-    false
+    // Use qualified test matching which properly handles both qualified and legacy scenarios
+    filter.matches_qualified_test(contract_name, test_name)
 }

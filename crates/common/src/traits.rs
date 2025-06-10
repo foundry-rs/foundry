@@ -15,6 +15,14 @@ pub trait TestFilter: Send + Sync {
 
     /// Returns a contract with the given path should be included.
     fn matches_path(&self, path: &Path) -> bool;
+
+    /// Returns whether a specific test in a specific contract should be included.
+    /// This enables more precise filtering for scenarios like --rerun where we need
+    /// to match exact contract/test combinations rather than just test names.
+    fn matches_qualified_test(&self, contract_name: &str, test_name: &str) -> bool {
+        // Default implementation for backward compatibility
+        self.matches_contract(contract_name) && self.matches_test(test_name)
+    }
 }
 
 /// Extension trait for `Function`.
