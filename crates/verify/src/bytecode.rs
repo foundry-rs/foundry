@@ -14,7 +14,7 @@ use alloy_provider::{
 };
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest};
 use clap::{Parser, ValueHint};
-use eyre::{Context, OptionExt, Result};
+use eyre::{eyre, Context, OptionExt, Result};
 use foundry_cli::{
     opts::EtherscanOpts,
     utils::{self, read_constructor_args_file, LoadConfig},
@@ -26,6 +26,8 @@ use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, utils::configure_tx_req_e
 use foundry_evm_core::AsEnvMut;
 use revm::state::AccountInfo;
 use std::path::PathBuf;
+use alloy_provider::ext::TraceApi;
+use alloy_rpc_types::trace::parity::{Action, CreateAction, CreateOutput, TraceOutput};
 
 impl_figment_convert!(VerifyBytecodeArgs);
 
@@ -353,10 +355,20 @@ impl VerifyBytecodeArgs {
                     None => unreachable!("creation tx input is None"),
                 }
             } else {
-                eyre::bail!(
-                    "Could not extract the creation code for contract at address {}",
-                    self.address
-                );
+                let mut creation_bytecode = None;
+                let traces = provider.trace_transaction(creation_data.transaction_hash).await.unwrap_or_default();
+                for trace in traces {
+                    if let Some(TraceOutput::Create(CreateOutput { address, .. })) = trace.trace.result {
+                        if address == self.address {
+                            creation_bytecode = match trace.trace.action {
+                                Action::Create(CreateAction { init, .. }) => Some(init),
+                                _ => None,
+                            };
+                        }
+                    }
+                }
+
+                &creation_bytecode.ok_or_else(|| eyre::eyre!("Could not extract the creation code for contract at address {}", self.address))?
             };
 
         // In some cases, Etherscan will return incorrect constructor arguments. If this
