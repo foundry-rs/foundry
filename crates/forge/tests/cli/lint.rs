@@ -68,7 +68,7 @@ forgetest!(can_use_config_ignore, |prj, cmd| {
 
     // Check config for `ignore`
     prj.update_config(|config| {
-        config.lint = LinterConfig { 
+        config.lint = LinterConfig {
             severity: vec![],
             exclude_lints: vec![],
             ignore: vec!["src/ContractWithLints.sol".into()],
@@ -167,7 +167,8 @@ forgetest!(can_override_config_lint, |prj, cmd| {
             lint_on_build: true,
         };
     });
-    cmd.arg("lint").args(["--only-lint", "incorrect-shift"]).assert_success().stderr_eq(str![[r#"
+    cmd.arg("lint").args(["--only-lint", "incorrect-shift"]).assert_success().stderr_eq(str![[
+        r#"
 warning[incorrect-shift]: the order of args in a shift operation is incorrect
   [FILE]:13:26
    |
@@ -177,7 +178,8 @@ warning[incorrect-shift]: the order of args in a shift operation is incorrect
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
 
 
-"#]]);
+"#
+    ]]);
 });
 
 forgetest!(build_runs_linter_by_default, |prj, cmd| {
@@ -277,12 +279,12 @@ forgetest!(build_with_json_uses_json_linter_output, |prj, cmd| {
 
     // Run forge build with --json flag - should use JSON formatter for linting
     let output = cmd.arg("build").arg("--json").assert_success();
-    
+
     // Should contain JSON linting output
     let stderr = String::from_utf8_lossy(&output.get_output().stderr);
     assert!(stderr.contains("\"code\""));
     assert!(stderr.contains("divide-before-multiply"));
-    
+
     // Should also contain JSON compilation output
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
     assert!(stdout.contains("\"errors\""));

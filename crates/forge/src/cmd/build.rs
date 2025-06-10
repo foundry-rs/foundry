@@ -107,26 +107,24 @@ impl BuildArgs {
             let linter = SolidityLinter::new(config.project_paths())
                 .with_json_emitter(format_json)
                 .with_description(!format_json)
-                .with_severity(
-                    if config.lint.severity.is_empty() {
-                        None
-                    } else {
-                        Some(config.lint.severity.clone())
-                    }
-                )
-                .without_lints(
-                    if config.lint.exclude_lints.is_empty() {
-                        None
-                    } else {
-                        Some(
-                            config.lint.exclude_lints
-                                .iter()
-                                .filter_map(|s| forge_lint::sol::SolLint::try_from(s.as_str()).ok())
-                                .collect()
-                        )
-                    }
-                );
-            
+                .with_severity(if config.lint.severity.is_empty() {
+                    None
+                } else {
+                    Some(config.lint.severity.clone())
+                })
+                .without_lints(if config.lint.exclude_lints.is_empty() {
+                    None
+                } else {
+                    Some(
+                        config
+                            .lint
+                            .exclude_lints
+                            .iter()
+                            .filter_map(|s| forge_lint::sol::SolLint::try_from(s.as_str()).ok())
+                            .collect(),
+                    )
+                });
+
             compiler = compiler.linter(linter);
         }
 

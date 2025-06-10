@@ -7,9 +7,9 @@ use crate::{
     term::SpinnerReporter,
     TestFunctionExt,
 };
-use forge_lint::{linter::Linter, sol::SolidityLinter};
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Color, Table};
 use eyre::Result;
+use forge_lint::{linter::Linter, sol::SolidityLinter};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     artifacts::{remappings::Remapping, BytecodeObject, Contract, Source},
@@ -364,11 +364,9 @@ impl ProjectCompiler {
         // Collect Solidity source files from the project root
         let solidity_files: Vec<_> = source_files_iter(
             &self.project_root,
-            &["sol"] // Only Solidity files
+            &["sol"], // Only Solidity files
         )
-        .filter(|path| {
-            path.extension().is_some_and(|ext| ext == "sol")
-        })
+        .filter(|path| path.extension().is_some_and(|ext| ext == "sol"))
         .collect();
 
         if !solidity_files.is_empty() {
