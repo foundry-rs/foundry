@@ -228,12 +228,13 @@ impl DependencyInstallOpts {
                     let mut msg = String::with_capacity(128);
                     msg.push_str("forge install: ");
                     msg.push_str(dep.name());
+
                     if let Some(tag) = &installed_tag {
+                        msg.push_str("\n\n");
+
                         if let Some(dep_id) = &dep_id {
-                            msg.push_str("\n\n");
                             msg.push_str(dep_id.to_string().as_str());
                         } else {
-                            msg.push_str("\n\n");
                             msg.push_str(tag);
                         }
                     }
@@ -247,11 +248,11 @@ impl DependencyInstallOpts {
 
             let mut msg = format!("    {} {}", "Installed".green(), dep.name);
             if let Some(tag) = dep.tag.or(installed_tag) {
+                msg.push(' ');
+
                 if let Some(dep_id) = dep_id {
-                    msg.push(' ');
                     msg.push_str(dep_id.to_string().as_str());
                 } else {
-                    msg.push(' ');
                     msg.push_str(tag.as_str());
                 }
             }

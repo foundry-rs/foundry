@@ -75,15 +75,15 @@ impl UpdateArgs {
 
         // fetch the latest changes for each submodule (recursively if flag is set)
         let git = Git::new(&root);
+        let update_paths = self.update_dep_paths(&foundry_lock);
+        trace!(?update_paths, "updating deps at");
+
         if self.recursive {
             // update submodules recursively
-            let update_paths = self.update_dep_paths(&foundry_lock);
-            trace!(?update_paths, "updating deps at");
             git.submodule_update(self.force, true, false, true, update_paths)?;
         } else {
-            let update_paths = self.update_dep_paths(&foundry_lock);
             let is_empty = update_paths.is_empty();
-            trace!(?update_paths, "updating deps at");
+
             // update submodules
             git.submodule_update(self.force, true, false, false, update_paths)?;
 
