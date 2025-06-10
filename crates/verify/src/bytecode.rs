@@ -9,10 +9,14 @@ use crate::{
 };
 use alloy_primitives::{hex, Address, Bytes, TxKind, U256};
 use alloy_provider::{
+    ext::TraceApi,
     network::{AnyTxEnvelope, TransactionBuilder},
     Provider,
 };
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest};
+use alloy_rpc_types::{
+    trace::parity::{Action, CreateAction, CreateOutput, TraceOutput},
+    BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest,
+};
 use clap::{Parser, ValueHint};
 use eyre::{eyre, Context, OptionExt, Result};
 use foundry_cli::{
@@ -26,8 +30,6 @@ use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, utils::configure_tx_req_e
 use foundry_evm_core::AsEnvMut;
 use revm::state::AccountInfo;
 use std::path::PathBuf;
-use alloy_provider::ext::TraceApi;
-use alloy_rpc_types::trace::parity::{Action, CreateAction, CreateOutput, TraceOutput};
 
 impl_figment_convert!(VerifyBytecodeArgs);
 
@@ -343,33 +345,41 @@ impl VerifyBytecodeArgs {
         };
 
         // Extract creation code from creation tx input.
-        let maybe_creation_code =
-            if receipt.to.is_none() && receipt.contract_address == Some(self.address) {
-                match &transaction.input.input {
-                    Some(input) => &input[..],
-                    None => unreachable!("creation tx input is None"),
-                }
-            } else if receipt.to == Some(DEFAULT_CREATE2_DEPLOYER) {
-                match &transaction.input.input {
-                    Some(input) => &input[32..],
-                    None => unreachable!("creation tx input is None"),
-                }
-            } else {
-                let mut creation_bytecode = None;
-                let traces = provider.trace_transaction(creation_data.transaction_hash).await.unwrap_or_default();
-                for trace in traces {
-                    if let Some(TraceOutput::Create(CreateOutput { address, .. })) = trace.trace.result {
-                        if address == self.address {
-                            creation_bytecode = match trace.trace.action {
-                                Action::Create(CreateAction { init, .. }) => Some(init),
-                                _ => None,
-                            };
-                        }
-                    }
-                }
+        let maybe_creation_code = if receipt.to.is_none() &&
+            receipt.contract_address == Some(self.address)
+        {
+            match &transaction.input.input {
+                Some(input) => &input[..],
+                None => unreachable!("creation tx input is None"),
+            }
+        } else if receipt.to == Some(DEFAULT_CREATE2_DEPLOYER) {
+            match &transaction.input.input {
+                Some(input) => &input[32..],
+                None => unreachable!("creation tx input is None"),
+            }
+        } else {
+            // Try to get creation bytecode from tx trace.
+            let traces = provider
+                .trace_transaction(creation_data.transaction_hash)
+                .await
+                .unwrap_or_default();
 
-                &creation_bytecode.ok_or_else(|| eyre::eyre!("Could not extract the creation code for contract at address {}", self.address))?
-            };
+            let creation_bytecode =
+                traces.iter().find_map(|trace| match (&trace.trace.result, &trace.trace.action) {
+                    (
+                        Some(TraceOutput::Create(CreateOutput { address, .. })),
+                        Action::Create(CreateAction { init, .. }),
+                    ) if *address == self.address => Some(init.clone()),
+                    _ => None,
+                });
+
+            &creation_bytecode.ok_or_else(|| {
+                eyre::eyre!(
+                    "Could not extract the creation code for contract at address {}",
+                    self.address
+                )
+            })?
+        };
 
         // In some cases, Etherscan will return incorrect constructor arguments. If this
         // happens, try extracting arguments ourselves.
