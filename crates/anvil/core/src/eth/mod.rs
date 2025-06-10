@@ -380,10 +380,18 @@ pub enum EthRequest {
     #[serde(
         rename = "anvil_dealERC20",
         alias = "hardhat_dealERC20",
-        alias = "anvil_setERC20Balance",
-        alias = "tenderly_setErc20Balance"
+        alias = "anvil_setERC20Balance"
     )]
     DealERC20(Address, Address, #[serde(deserialize_with = "deserialize_number")] U256),
+
+    /// Sets the ERC20 allowance for a spender
+    #[serde(rename = "anvil_setERC20Allowance")]
+    SetERC20Allowance(
+        Address,
+        Address,
+        Address,
+        #[serde(deserialize_with = "deserialize_number")] U256,
+    ),
 
     /// Sets the code of a contract
     #[serde(rename = "anvil_setCode", alias = "hardhat_setCode")]
