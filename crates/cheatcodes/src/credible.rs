@@ -119,7 +119,8 @@ impl Cheatcode for assertionExCall {
 
         // if transaction execution reverted, bail
         if !tx_validation.result_and_state.result.is_success() {
-            let decoded_error = decode_revert_error(&tx_validation.result_and_state.result);
+            let decoded_error =
+                decode_invalidated_assertion(&tx_validation.result_and_state.result);
             executor.console_log(ccx, &format!("Transaction reverted: {}", decoded_error.reason()));
             bail!("Transaction Reverted");
         }
@@ -158,7 +159,7 @@ impl Cheatcode for assertionExCall {
                         "[selector {}:index {}]",
                         assertion_fn.id.fn_selector, fn_selector_index
                     );
-                    let revert = decode_revert_error(assertion_fn.as_result());
+                    let revert = decode_invalidated_assertion(assertion_fn.as_result());
                     (key, revert)
                 })
                 .collect();
@@ -179,7 +180,57 @@ impl Cheatcode for assertionExCall {
     }
 }
 
-fn decode_revert_error(revert: &ExecutionResult) -> Revert {
-    Revert::abi_decode(&revert.clone().into_output().unwrap_or_default(), false)
-        .unwrap_or(Revert::new(("Unknown Revert Reason".to_string(),)))
+fn decode_invalidated_assertion(execution_result: &ExecutionResult) -> Revert {
+    let result = execution_result;
+    match result {
+        ExecutionResult::Success{..} => Revert {
+            reason: "Tried to decode invalidated assertion, but result was success. This is a bug in phoundry. Please report to the Phylax team.".to_string(),
+        },
+        ExecutionResult::Revert{output, ..} => {
+            Revert::abi_decode(output, true)
+                .unwrap_or(Revert::new(("Unknown Revert Reason".to_string(),)))
+        },
+        ExecutionResult::Halt{reason, ..} => Revert {
+            reason: format!("Halt reason: {reason:#?}"),
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::Bytes;
+    use revm::primitives::{HaltReason, Output, SuccessReason};
+
+    #[test]
+    fn test_decode_revert_error_success() {
+        // Test case 1: When result is success
+        let result = ExecutionResult::Success {
+            gas_used: 0,
+            gas_refunded: 0,
+            logs: vec![],
+            output: Output::Call(Bytes::new()),
+            reason: SuccessReason::Return,
+        };
+        let revert = decode_invalidated_assertion(&result);
+        assert_eq!(revert.reason(), "Tried to decode invalidated assertion, but result was success. This is a bug in phoundry. Please report to the Phylax team.");
+    }
+
+    #[test]
+    fn test_decode_revert_error_revert() {
+        let revert_reason = "Something is a bit fky wuky";
+        let revert_output = Revert::new((revert_reason.to_string(),)).abi_encode();
+        let result = ExecutionResult::Revert { output: revert_output.into(), gas_used: 0 };
+        let revert = decode_invalidated_assertion(&result);
+        assert_eq!(revert.reason(), revert_reason);
+    }
+
+    #[test]
+    fn test_decode_revert_error_halt() {
+        let halt_reason = HaltReason::CallTooDeep;
+        let result = ExecutionResult::Halt { reason: halt_reason, gas_used: 0 };
+
+        let revert = decode_invalidated_assertion(&result);
+        assert_eq!(revert.reason(), "Halt reason: CallTooDeep");
+    }
 }
