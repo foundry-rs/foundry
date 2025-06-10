@@ -7,7 +7,7 @@ use crate::{
 use alloy_chains::NamedChain;
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{address, b256, bytes, uint, Address, Bytes, TxHash, TxKind, U256, U64};
-use alloy_provider::Provider;
+use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{
     anvil::Forking,
     request::{TransactionInput, TransactionRequest},
@@ -1586,9 +1586,10 @@ async fn test_fork_get_account() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_reset_anvil_acc_7702() {
     let fork_block_number = 22673283u64;
+    let fork_url = rpc::next_http_archive_rpc_url();
     let (_api, handle) = spawn(
         NodeConfig::test()
-            .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))
+            .with_eth_rpc_url(Some(fork_url.clone()))
             .with_fork_block_number(Some(fork_block_number)),
     )
     .await;
@@ -1597,29 +1598,19 @@ async fn test_reset_anvil_acc_7702() {
 
     let accounts = handle.dev_accounts().collect::<Vec<_>>();
     let account = accounts[0];
-    let bob = accounts[1];
 
-    // Check if they have 7702 delegation
+    // Verify the default account has been delegated
+    let fork_provider = ProviderBuilder::new().connect_http(fork_url.parse().unwrap());
+    let fork_code = fork_provider.get_code_at(account).await.unwrap();
+    assert!(fork_code.starts_with(&[0xef, 0x01, 0x00]));
+
+    // Check that anvil backend resets it.
     let code = provider
         .get_code_at(account)
         .block_id(BlockId::number(fork_block_number - 1))
         .await
         .unwrap();
 
+    // Code reset by the anvil backend.
     assert!(code.is_empty());
-
-    let eth_call = TransactionRequest::default()
-        .from(address!("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"))
-        .to(account)
-        .with_input(bytes!("0x"))
-        .with_value(U256::from(100u64));
-
-    println!("Calling with 7702 delegation: {eth_call:?}");
-
-    let res = provider
-        .call(WithOtherFields::new(eth_call))
-        .block(BlockId::number(fork_block_number - 1))
-        .await;
-
-    println!("Call result: {res:?}");
 }
