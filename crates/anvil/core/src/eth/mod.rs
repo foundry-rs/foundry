@@ -373,6 +373,10 @@ pub enum EthRequest {
     )]
     DealERC20(Address, Address, #[serde(deserialize_with = "deserialize_number")] U256),
 
+    /// Sets the ERC20 allowance for a spender
+    #[serde(rename = "anvil_setERC20Allowance")]
+    SetERC20Allowance(Address, Address, Address, #[serde(deserialize_with = "deserialize_number")] U256),
+
     /// Sets the code of a contract
     #[serde(rename = "anvil_setCode", alias = "hardhat_setCode")]
     SetCode(Address, Bytes),

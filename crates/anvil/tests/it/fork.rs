@@ -1491,6 +1491,31 @@ async fn test_set_erc20_balance() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_set_erc20_allowance() {
+    let config: NodeConfig = fork_config();
+    let owner = config.genesis_accounts[0].address();
+    let spender = config.genesis_accounts[1].address();
+    let (api, handle) = spawn(config).await;
+
+    let provider = handle.http_provider();
+
+    alloy_sol_types::sol! {
+       #[sol(rpc)]
+       contract ERC20 {
+            function allowance(address owner, address spender) external view returns (uint256);
+       }
+    }
+    let dai = address!("0x6B175474E89094C44Da98b954EedeAC495271d0F");
+    let erc20 = ERC20::new(dai, provider);
+    let value = U256::from(500);
+
+    api.anvil_set_erc20_allowance(owner, spender, dai, value).await.unwrap();
+
+    let allowance = erc20.allowance(owner, spender).call().await.unwrap();
+    assert_eq!(allowance, value);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_reset_updates_cache_path_when_rpc_url_not_provided() {
     let config: NodeConfig = fork_config();
 
