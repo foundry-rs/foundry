@@ -362,6 +362,10 @@ impl EthApi {
             EthRequest::DealERC20(addr, token_addr, val) => {
                 self.anvil_deal_erc20(addr, token_addr, val).await.to_rpc_result()
             }
+            EthRequest::SetERC20Allowance(owner, spender, token_addr, val) => self
+                .anvil_set_erc20_allowance(owner, spender, token_addr, val)
+                .await
+                .to_rpc_result(),
             EthRequest::SetCode(addr, code) => {
                 self.anvil_set_code(addr, code).await.to_rpc_result()
             }
@@ -1937,6 +1941,77 @@ impl EthApi {
 
         // unable to set the balance
         Err(BlockchainError::Message("Unable to set ERC20 balance, no slot found".to_string()))
+    }
+
+    /// Sets the ERC20 allowance for a spender
+    ///
+    /// Handler for RPC call: `anvil_set_erc20_allowance`
+    pub async fn anvil_set_erc20_allowance(
+        &self,
+        owner: Address,
+        spender: Address,
+        token_address: Address,
+        amount: U256,
+    ) -> Result<()> {
+        node_info!("anvil_setERC20Allowance");
+
+        sol! {
+            #[sol(rpc)]
+            contract IERC20 {
+                function allowance(address owner, address spender) external view returns (uint256);
+            }
+        }
+
+        let calldata = IERC20::allowanceCall { owner, spender }.abi_encode();
+        let tx = TransactionRequest::default().with_to(token_address).with_input(calldata.clone());
+
+        // first collect all the slots that are used by the allowance call
+        let access_list_result =
+            self.create_access_list(WithOtherFields::new(tx.clone()), None).await?;
+        let access_list = access_list_result.access_list;
+
+        // now we can iterate over all the accessed slots and try to find the one that contains the
+        // allowance by overriding the slot and checking the `allowanceCall` result
+        for item in access_list.0 {
+            if item.address != token_address {
+                continue;
+            };
+            for slot in &item.storage_keys {
+                let account_override = AccountOverride::default()
+                    .with_state_diff(std::iter::once((*slot, B256::from(amount.to_be_bytes()))));
+
+                let state_override = StateOverridesBuilder::default()
+                    .append(token_address, account_override)
+                    .build();
+
+                let evm_override = EvmOverrides::state(Some(state_override));
+
+                let Ok(result) =
+                    self.call(WithOtherFields::new(tx.clone()), None, evm_override).await
+                else {
+                    // overriding this slot failed
+                    continue;
+                };
+
+                let Ok(result_allowance) = U256::abi_decode(&result) else {
+                    // response returned something other than a U256
+                    continue;
+                };
+
+                if result_allowance == amount {
+                    self.anvil_set_storage_at(
+                        token_address,
+                        U256::from_be_bytes(slot.0),
+                        B256::from(amount.to_be_bytes()),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            }
+        }
+
+        // unable to set the allowance
+        Err(BlockchainError::Message("Unable to set ERC20 allowance, no slot found".to_string()))
     }
 
     /// Sets the code of a contract.
