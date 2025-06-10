@@ -369,7 +369,6 @@ pub enum EthRequest {
         rename = "anvil_dealERC20",
         alias = "hardhat_dealERC20",
         alias = "anvil_setERC20Balance",
-        alias = "tenderly_setErc20Balance"
     )]
     DealERC20(Address, Address, #[serde(deserialize_with = "deserialize_number")] U256),
 
