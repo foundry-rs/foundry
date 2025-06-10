@@ -155,7 +155,7 @@ impl TestFilter for FilterArgs {
             }
             return false;
         }
-        
+
         // Fall back to default behavior for non-qualified scenarios
         self.matches_contract(contract_name) && self.matches_test(test_name)
     }

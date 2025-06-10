@@ -949,7 +949,11 @@ pub fn last_run_failures_qualified(config: &Config) -> Option<Vec<(String, Strin
                         }
                     })
                     .collect::<Vec<_>>();
-                if failures.is_empty() { None } else { Some(failures) }
+                if failures.is_empty() {
+                    None
+                } else {
+                    Some(failures)
+                }
             } else {
                 None
             }
@@ -961,21 +965,20 @@ pub fn last_run_failures_qualified(config: &Config) -> Option<Vec<(String, Strin
 /// Persist filter with last test run failures (only if there's any failure).
 fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
     if outcome.failed() > 0 && fs::create_file(&config.test_failures_file).is_ok() {
-        let failures: Vec<_> = outcome.into_tests_cloned()
-            .filter(|test| test.result.status.is_failure())
-            .collect();
-        
+        let failures: Vec<_> =
+            outcome.into_tests_cloned().filter(|test| test.result.status.is_failure()).collect();
+
         if failures.is_empty() {
             return;
         }
-        
+
         // Use qualified format if there are multiple contracts in the test run
         // This is a conservative approach that ensures no ambiguity
         let use_qualified = outcome.results.len() > 1;
-        
+
         let mut filter = String::new();
         let mut first = true;
-        
+
         for test in failures {
             if test.signature.is_any_test() {
                 if let Some(test_match) = test.signature.split("(").next() {
@@ -983,11 +986,12 @@ fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
                         filter.push('|');
                     }
                     first = false;
-                    
+
                     if use_qualified {
                         // Use qualified format when failures come from multiple contracts
-                        let contract_name = test.artifact_id.split(':').last().unwrap_or(&test.artifact_id);
-                        filter.push_str(&format!("{}_{}", contract_name, test_match));
+                        let contract_name =
+                            test.artifact_id.split(':').next_back().unwrap_or(&test.artifact_id);
+                        filter.push_str(&format!("{contract_name}_{test_match}"));
                     } else {
                         // Use legacy format when all failures come from the same contract
                         filter.push_str(test_match);

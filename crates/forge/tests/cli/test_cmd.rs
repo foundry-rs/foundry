@@ -936,7 +936,7 @@ Encountered a total of 2 failing tests, 0 tests succeeded
 // <https://github.com/foundry-rs/foundry/issues/10693>
 forgetest_init!(should_replay_failures_only_correct_contract, |prj, cmd| {
     prj.wipe_contracts();
-    
+
     // Create two contracts with tests that have the same name
     prj.add_test(
         "Contract1.t.sol",
@@ -951,9 +951,9 @@ contract Contract1Test is Test {
      "#,
     )
     .unwrap();
-    
+
     prj.add_test(
-        "Contract2.t.sol", 
+        "Contract2.t.sol",
         r#"
 import {Test} from "forge-std/Test.sol";
 
@@ -976,11 +976,14 @@ contract Contract2Test is Test {
     // Before the fix, this would run 2 tests (both testSameName functions)
     // After the fix, this should run only 1 test (only the specific failing one)
     cmd.forge_fuse().args(["test", "--rerun"]).assert_failure();
-    
+
     // Additional verification: Check the test failures file exists and contains our test
     let failures_content = std::fs::read_to_string(prj.root().join("cache/test-failures")).unwrap();
-    assert!(failures_content.contains("testSameName"), 
-           "Expected test name in failure file, got: {}", failures_content);
+    assert!(
+        failures_content.contains("testSameName"),
+        "Expected test name in failure file, got: {}",
+        failures_content
+    );
 });
 
 // <https://github.com/foundry-rs/foundry/issues/9285>
