@@ -5,7 +5,7 @@ import "ds-test/test.sol";
 import "cheats/Vm.sol";
 
 contract GasSnapshotTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
     uint256 public slot0;
     Flare public flare;
@@ -15,33 +15,33 @@ contract GasSnapshotTest is DSTest {
     }
 
     function testSnapshotGasSectionExternal() public {
-        vm.startSnapshotGas("testAssertGasExternal");
+        VM.startSnapshotGas("testAssertGasExternal");
         flare.run(1);
-        uint256 gasUsed = vm.stopSnapshotGas();
+        uint256 gasUsed = VM.stopSnapshotGas();
 
         assertGt(gasUsed, 0);
     }
 
     function testSnapshotGasSectionInternal() public {
-        vm.startSnapshotGas("testAssertGasInternalA");
+        VM.startSnapshotGas("testAssertGasInternalA");
         slot0 = 1;
-        vm.stopSnapshotGas();
+        VM.stopSnapshotGas();
 
-        vm.startSnapshotGas("testAssertGasInternalB");
+        VM.startSnapshotGas("testAssertGasInternalB");
         slot0 = 2;
-        vm.stopSnapshotGas();
+        VM.stopSnapshotGas();
 
-        vm.startSnapshotGas("testAssertGasInternalC");
+        VM.startSnapshotGas("testAssertGasInternalC");
         slot0 = 0;
-        vm.stopSnapshotGas();
+        VM.stopSnapshotGas();
 
-        vm.startSnapshotGas("testAssertGasInternalD");
+        VM.startSnapshotGas("testAssertGasInternalD");
         slot0 = 1;
-        vm.stopSnapshotGas();
+        VM.stopSnapshotGas();
 
-        vm.startSnapshotGas("testAssertGasInternalE");
+        VM.startSnapshotGas("testAssertGasInternalE");
         slot0 = 2;
-        vm.stopSnapshotGas();
+        VM.stopSnapshotGas();
     }
 
     // Writes to `GasSnapshotTest` group with custom names.
@@ -50,9 +50,9 @@ contract GasSnapshotTest is DSTest {
         uint256 b = 456;
         uint256 c = 789;
 
-        vm.snapshotValue("a", a);
-        vm.snapshotValue("b", b);
-        vm.snapshotValue("c", c);
+        VM.snapshotValue("a", a);
+        VM.snapshotValue("b", b);
+        VM.snapshotValue("c", c);
     }
 
     // Writes to same `GasSnapshotTest` group with custom names.
@@ -61,9 +61,9 @@ contract GasSnapshotTest is DSTest {
         uint256 e = 456;
         uint256 f = 789;
 
-        vm.snapshotValue("d", d);
-        vm.snapshotValue("e", e);
-        vm.snapshotValue("f", f);
+        VM.snapshotValue("d", d);
+        VM.snapshotValue("e", e);
+        VM.snapshotValue("f", f);
     }
 
     // Writes to `CustomGroup` group with custom names.
@@ -73,9 +73,9 @@ contract GasSnapshotTest is DSTest {
         uint256 i = 456;
         uint256 q = 789;
 
-        vm.snapshotValue("CustomGroup", "q", q);
-        vm.snapshotValue("CustomGroup", "i", i);
-        vm.snapshotValue("CustomGroup", "o", o);
+        VM.snapshotValue("CustomGroup", "q", q);
+        VM.snapshotValue("CustomGroup", "i", i);
+        VM.snapshotValue("CustomGroup", "o", o);
     }
 
     // Writes to `CustomGroup` group with custom names.
@@ -85,50 +85,50 @@ contract GasSnapshotTest is DSTest {
         uint256 e = 456;
         uint256 z = 789;
 
-        vm.snapshotValue("CustomGroup", "z", z);
-        vm.snapshotValue("CustomGroup", "x", x);
-        vm.snapshotValue("CustomGroup", "e", e);
+        VM.snapshotValue("CustomGroup", "z", z);
+        VM.snapshotValue("CustomGroup", "x", x);
+        VM.snapshotValue("CustomGroup", "e", e);
     }
 
     // Writes to `GasSnapshotTest` group with `testSnapshotGasDefault` name.
     function testSnapshotGasSectionDefaultGroupStop() public {
-        vm.startSnapshotGas("testSnapshotGasSection");
+        VM.startSnapshotGas("testSnapshotGasSection");
 
         flare.run(256);
 
-        // vm.stopSnapshotGas() will use the last snapshot name.
-        uint256 gasUsed = vm.stopSnapshotGas();
+        // VM.stopSnapshotGas() will use the last snapshot name.
+        uint256 gasUsed = VM.stopSnapshotGas();
         assertGt(gasUsed, 0);
     }
 
     // Writes to `GasSnapshotTest` group with `testSnapshotGasCustom` name.
     function testSnapshotGasSectionCustomGroupStop() public {
-        vm.startSnapshotGas("CustomGroup", "testSnapshotGasSection");
+        VM.startSnapshotGas("CustomGroup", "testSnapshotGasSection");
 
         flare.run(256);
 
-        // vm.stopSnapshotGas() will use the last snapshot name, even with custom group.
-        uint256 gasUsed = vm.stopSnapshotGas();
+        // VM.stopSnapshotGas() will use the last snapshot name, even with custom group.
+        uint256 gasUsed = VM.stopSnapshotGas();
         assertGt(gasUsed, 0);
     }
 
     // Writes to `GasSnapshotTest` group with `testSnapshotGasSection` name.
     function testSnapshotGasSectionName() public {
-        vm.startSnapshotGas("testSnapshotGasSectionName");
+        VM.startSnapshotGas("testSnapshotGasSectionName");
 
         flare.run(256);
 
-        uint256 gasUsed = vm.stopSnapshotGas("testSnapshotGasSectionName");
+        uint256 gasUsed = VM.stopSnapshotGas("testSnapshotGasSectionName");
         assertGt(gasUsed, 0);
     }
 
     // Writes to `CustomGroup` group with `testSnapshotGasSection` name.
     function testSnapshotGasSectionGroupName() public {
-        vm.startSnapshotGas("CustomGroup", "testSnapshotGasSectionGroupName");
+        VM.startSnapshotGas("CustomGroup", "testSnapshotGasSectionGroupName");
 
         flare.run(256);
 
-        uint256 gasUsed = vm.stopSnapshotGas("CustomGroup", "testSnapshotGasSectionGroupName");
+        uint256 gasUsed = VM.stopSnapshotGas("CustomGroup", "testSnapshotGasSectionGroupName");
         assertGt(gasUsed, 0);
     }
 
@@ -136,7 +136,7 @@ contract GasSnapshotTest is DSTest {
     function testSnapshotGasLastCallName() public {
         flare.run(1);
 
-        uint256 gasUsed = vm.snapshotGasLastCall("testSnapshotGasLastCallName");
+        uint256 gasUsed = VM.snapshotGasLastCall("testSnapshotGasLastCallName");
         assertGt(gasUsed, 0);
     }
 
@@ -144,13 +144,13 @@ contract GasSnapshotTest is DSTest {
     function testSnapshotGasLastCallGroupName() public {
         flare.run(1);
 
-        uint256 gasUsed = vm.snapshotGasLastCall("CustomGroup", "testSnapshotGasLastCallGroupName");
+        uint256 gasUsed = VM.snapshotGasLastCall("CustomGroup", "testSnapshotGasLastCallGroupName");
         assertGt(gasUsed, 0);
     }
 }
 
 contract GasComparisonTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
     uint256 public slot0;
     uint256 public slot1;
@@ -159,30 +159,30 @@ contract GasComparisonTest is DSTest {
 
     function testGasComparisonEmpty() public {
         // Start a cheatcode snapshot.
-        vm.startSnapshotGas("ComparisonGroup", "testGasComparisonEmptyA");
-        uint256 a = vm.stopSnapshotGas();
+        VM.startSnapshotGas("ComparisonGroup", "testGasComparisonEmptyA");
+        uint256 a = VM.stopSnapshotGas();
 
         // Start a comparitive Solidity snapshot.
         _snapStart();
         uint256 b = _snapEnd();
-        vm.snapshotValue("ComparisonGroup", "testGasComparisonEmptyB", b);
+        VM.snapshotValue("ComparisonGroup", "testGasComparisonEmptyB", b);
 
         assertEq(a, b);
     }
 
     function testGasComparisonInternalCold() public {
         // Start a cheatcode snapshot.
-        vm.startSnapshotGas("ComparisonGroup", "testGasComparisonInternalColdA");
+        VM.startSnapshotGas("ComparisonGroup", "testGasComparisonInternalColdA");
         slot0 = 1;
-        uint256 a = vm.stopSnapshotGas();
+        uint256 a = VM.stopSnapshotGas();
 
         // Start a comparitive Solidity snapshot.
         _snapStart();
         slot1 = 1;
         uint256 b = _snapEnd();
-        vm.snapshotValue("ComparisonGroup", "testGasComparisonInternalColdB", b);
+        VM.snapshotValue("ComparisonGroup", "testGasComparisonInternalColdB", b);
 
-        vm.assertApproxEqAbs(a, b, 6);
+        VM.assertApproxEqAbs(a, b, 6);
     }
 
     function testGasComparisonInternalWarm() public {
@@ -190,17 +190,17 @@ contract GasComparisonTest is DSTest {
         slot0 = 1;
 
         // Start a cheatcode snapshot.
-        vm.startSnapshotGas("ComparisonGroup", "testGasComparisonInternalWarmA");
+        VM.startSnapshotGas("ComparisonGroup", "testGasComparisonInternalWarmA");
         slot0 = 2;
-        uint256 a = vm.stopSnapshotGas();
+        uint256 a = VM.stopSnapshotGas();
 
         // Start a comparitive Solidity snapshot.
         _snapStart();
         slot0 = 3;
         uint256 b = _snapEnd();
-        vm.snapshotValue("ComparisonGroup", "testGasComparisonInternalWarmB", b);
+        VM.snapshotValue("ComparisonGroup", "testGasComparisonInternalWarmB", b);
 
-        vm.assertApproxEqAbs(a, b, 6);
+        VM.assertApproxEqAbs(a, b, 6);
     }
 
     function testGasComparisonExternal() public {
@@ -209,30 +209,30 @@ contract GasComparisonTest is DSTest {
         target.update(1);
 
         // Start a cheatcode snapshot.
-        vm.startSnapshotGas("ComparisonGroup", "testGasComparisonExternalA");
+        VM.startSnapshotGas("ComparisonGroup", "testGasComparisonExternalA");
         target.update(2);
-        uint256 a = vm.stopSnapshotGas();
+        uint256 a = VM.stopSnapshotGas();
 
         // Start a comparitive Solidity snapshot.
         _snapStart();
         target.update(3);
         uint256 b = _snapEnd();
-        vm.snapshotValue("ComparisonGroup", "testGasComparisonExternalB", b);
+        VM.snapshotValue("ComparisonGroup", "testGasComparisonExternalB", b);
 
         assertEq(a, b);
     }
 
     function testGasComparisonCreate() public {
         // Start a cheatcode snapshot.
-        vm.startSnapshotGas("ComparisonGroup", "testGasComparisonCreateA");
+        VM.startSnapshotGas("ComparisonGroup", "testGasComparisonCreateA");
         new TargetC();
-        uint256 a = vm.stopSnapshotGas();
+        uint256 a = VM.stopSnapshotGas();
 
         // Start a comparitive Solidity snapshot.
         _snapStart();
         new TargetC();
         uint256 b = _snapEnd();
-        vm.snapshotValue("ComparisonGroup", "testGasComparisonCreateB", b);
+        VM.snapshotValue("ComparisonGroup", "testGasComparisonCreateB", b);
 
         assertEq(a, b);
     }
@@ -243,15 +243,15 @@ contract GasComparisonTest is DSTest {
         target.update(1);
 
         // Start a cheatcode snapshot.
-        vm.startSnapshotGas("ComparisonGroup", "testGasComparisonNestedCallsA");
+        VM.startSnapshotGas("ComparisonGroup", "testGasComparisonNestedCallsA");
         target.update(2);
-        uint256 a = vm.stopSnapshotGas();
+        uint256 a = VM.stopSnapshotGas();
 
         // Start a comparitive Solidity snapshot.
         _snapStart();
         target.update(3);
         uint256 b = _snapEnd();
-        vm.snapshotValue("ComparisonGroup", "testGasComparisonNestedCallsB", b);
+        VM.snapshotValue("ComparisonGroup", "testGasComparisonNestedCallsB", b);
 
         assertEq(a, b);
     }
@@ -262,15 +262,15 @@ contract GasComparisonTest is DSTest {
         flare.run(1);
 
         // Start a cheatcode snapshot.
-        vm.startSnapshotGas("ComparisonGroup", "testGasComparisonFlareA");
+        VM.startSnapshotGas("ComparisonGroup", "testGasComparisonFlareA");
         flare.run(256);
-        uint256 a = vm.stopSnapshotGas();
+        uint256 a = VM.stopSnapshotGas();
 
         // Start a comparitive Solidity snapshot.
         _snapStart();
         flare.run(256);
         uint256 b = _snapEnd();
-        vm.snapshotValue("ComparisonGroup", "testGasComparisonFlareB", b);
+        VM.snapshotValue("ComparisonGroup", "testGasComparisonFlareB", b);
 
         assertEq(a, b);
     }

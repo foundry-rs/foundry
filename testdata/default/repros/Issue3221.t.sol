@@ -6,29 +6,29 @@ import "cheats/Vm.sol";
 
 // https://github.com/foundry-rs/foundry/issues/3221
 contract Issue3221Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
     uint256 fork1;
     uint256 fork2;
 
     function setUp() public {
-        fork1 = vm.createFork("sepolia", 5565573);
-        fork2 = vm.createFork("avaxTestnet", 12880747);
+        fork1 = VM.createFork("sepolia", 5565573);
+        fork2 = VM.createFork("avaxTestnet", 12880747);
     }
 
     function testForkNonce() public {
         address user = address(0xF0959944122fb1ed4CfaBA645eA06EED30427BAA);
 
         // Loads but doesn't touch
-        assertEq(vm.getNonce(user), 0);
+        assertEq(VM.getNonce(user), 0);
 
-        vm.selectFork(fork2);
-        assertEq(vm.getNonce(user), 3);
-        vm.prank(user);
+        VM.selectFork(fork2);
+        assertEq(VM.getNonce(user), 3);
+        VM.prank(user);
         new Counter();
 
-        vm.selectFork(fork1);
-        assertEq(vm.getNonce(user), 1);
-        vm.prank(user);
+        VM.selectFork(fork1);
+        assertEq(VM.getNonce(user), 1);
+        VM.prank(user);
         new Counter();
     }
 }

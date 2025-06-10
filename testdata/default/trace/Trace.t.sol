@@ -52,7 +52,7 @@ contract RecursiveCall {
 }
 
 contract TraceTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
     uint256 nodeId = 0;
     RecursiveCall first;
@@ -63,7 +63,7 @@ contract TraceTest is DSTest {
 
     function create() public returns (RecursiveCall) {
         RecursiveCall node = new RecursiveCall(address(this));
-        vm.label(address(node), string(abi.encodePacked("Node ", uintToString(nodeId++))));
+        VM.label(address(node), string(abi.encodePacked("Node ", uintToString(nodeId++))));
 
         return node;
     }

@@ -6,17 +6,17 @@ import "cheats/Vm.sol";
 
 // https://github.com/foundry-rs/foundry/issues/3596
 contract Issue3596Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
     function testDealTransfer() public {
-        address addr = vm.addr(1337);
-        vm.startPrank(addr);
-        vm.deal(addr, 20000001 ether);
+        address addr = VM.addr(1337);
+        VM.startPrank(addr);
+        VM.deal(addr, 20000001 ether);
         payable(address(this)).transfer(20000000 ether);
 
         Nested nested = new Nested();
         nested.doStuff();
-        vm.stopPrank();
+        VM.stopPrank();
     }
 }
 

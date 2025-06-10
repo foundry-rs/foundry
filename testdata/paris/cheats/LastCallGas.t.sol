@@ -29,7 +29,7 @@ contract Target {
 }
 
 abstract contract LastCallGasFixture is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
     Target public target;
 
     struct Gas {
@@ -39,8 +39,8 @@ abstract contract LastCallGasFixture is DSTest {
     }
 
     function testRevertNoCachedLastCallGas() public {
-        vm._expectCheatcodeRevert();
-        vm.lastCallGas();
+        VM._expectCheatcodeRevert();
+        VM.lastCallGas();
     }
 
     function _setup() internal {
@@ -71,19 +71,19 @@ contract LastCallGasIsolatedTest is LastCallGasFixture {
     function testRecordLastCallGas() public {
         _setup();
         _performCall();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 21064, gasMemoryUsed: 0, gasRefunded: 0}));
+        _assertGas(VM.lastCallGas(), Gas({gasTotalUsed: 21064, gasMemoryUsed: 0, gasRefunded: 0}));
 
         _performCall();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 21064, gasMemoryUsed: 0, gasRefunded: 0}));
+        _assertGas(VM.lastCallGas(), Gas({gasTotalUsed: 21064, gasMemoryUsed: 0, gasRefunded: 0}));
 
         _performCall();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 21064, gasMemoryUsed: 0, gasRefunded: 0}));
+        _assertGas(VM.lastCallGas(), Gas({gasTotalUsed: 21064, gasMemoryUsed: 0, gasRefunded: 0}));
     }
 
     function testRecordGasRefund() public {
         _setup();
         _performRefund();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 21380, gasMemoryUsed: 0, gasRefunded: 4800}));
+        _assertGas(VM.lastCallGas(), Gas({gasTotalUsed: 21380, gasMemoryUsed: 0, gasRefunded: 4800}));
     }
 }
 
@@ -92,18 +92,18 @@ contract LastCallGasDefaultTest is LastCallGasFixture {
     function testRecordLastCallGas() public {
         _setup();
         _performCall();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 64, gasMemoryUsed: 0, gasRefunded: 0}));
+        _assertGas(VM.lastCallGas(), Gas({gasTotalUsed: 64, gasMemoryUsed: 0, gasRefunded: 0}));
 
         _performCall();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 64, gasMemoryUsed: 0, gasRefunded: 0}));
+        _assertGas(VM.lastCallGas(), Gas({gasTotalUsed: 64, gasMemoryUsed: 0, gasRefunded: 0}));
 
         _performCall();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 64, gasMemoryUsed: 0, gasRefunded: 0}));
+        _assertGas(VM.lastCallGas(), Gas({gasTotalUsed: 64, gasMemoryUsed: 0, gasRefunded: 0}));
     }
 
     function testRecordGasRefund() public {
         _setup();
         _performRefund();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 216, gasMemoryUsed: 0, gasRefunded: 19900}));
+        _assertGas(VM.lastCallGas(), Gas({gasTotalUsed: 216, gasMemoryUsed: 0, gasRefunded: 19900}));
     }
 }

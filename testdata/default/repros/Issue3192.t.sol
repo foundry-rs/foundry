@@ -6,18 +6,18 @@ import "cheats/Vm.sol";
 
 // https://github.com/foundry-rs/foundry/issues/3192
 contract Issue3192Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
     uint256 fork1;
     uint256 fork2;
 
     function setUp() public {
-        fork1 = vm.createFork("mainnet", 7475589);
-        fork2 = vm.createFork("mainnet", 12880747);
-        vm.selectFork(fork1);
+        fork1 = VM.createFork("mainnet", 7475589);
+        fork2 = VM.createFork("mainnet", 12880747);
+        VM.selectFork(fork1);
     }
 
     function testForkSwapSelect() public {
-        assertEq(fork1, vm.activeFork());
-        vm.selectFork(fork2);
+        assertEq(fork1, VM.activeFork());
+        VM.selectFork(fork2);
     }
 }

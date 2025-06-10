@@ -12,7 +12,7 @@ struct FuzzSelector {
 // https://github.com/foundry-rs/foundry/issues/7219
 
 contract Handler is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
     function thisFunctionReverts() external {
         if (block.number < 10) {} else {
@@ -22,8 +22,8 @@ contract Handler is DSTest {
 
     function advanceTime(uint256 blocks) external {
         blocks = blocks % 10;
-        vm.roll(block.number + blocks);
-        vm.warp(block.timestamp + blocks * 12);
+        VM.roll(block.number + blocks);
+        VM.warp(block.timestamp + blocks * 12);
     }
 }
 

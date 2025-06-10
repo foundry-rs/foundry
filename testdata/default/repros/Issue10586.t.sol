@@ -5,15 +5,15 @@ import "ds-test/test.sol";
 import "cheats/Vm.sol";
 
 contract Target is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
     function setChainId() public {
-        vm.chainId(123);
+        VM.chainId(123);
     }
 }
 
 contract Issue10586Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
     Target public target;
 
@@ -32,7 +32,7 @@ contract Issue10586Test is DSTest {
         assertEq(block.chainid, 123);
 
         // Set the chainId to 100.
-        vm.chainId(100);
+        VM.chainId(100);
 
         // The chainId is set to 100 in the block.
         assertEq(block.chainid, 100);

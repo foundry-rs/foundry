@@ -6,20 +6,20 @@ import "cheats/Vm.sol";
 
 // https://github.com/foundry-rs/foundry/issues/2984
 contract Issue2984Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
     uint256 fork;
     uint256 snapshot;
 
     function setUp() public {
-        fork = vm.createSelectFork("avaxTestnet", 12880747);
-        snapshot = vm.snapshotState();
+        fork = VM.createSelectFork("avaxTestnet", 12880747);
+        snapshot = VM.snapshotState();
     }
 
     function testForkRevertSnapshot() public {
-        vm.revertToState(snapshot);
+        VM.revertToState(snapshot);
     }
 
     function testForkSelectSnapshot() public {
-        uint256 fork2 = vm.createSelectFork("avaxTestnet", 12880749);
+        uint256 fork2 = VM.createSelectFork("avaxTestnet", 12880749);
     }
 }

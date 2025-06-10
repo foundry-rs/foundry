@@ -5,41 +5,41 @@ import "ds-test/test.sol";
 import "cheats/Vm.sol";
 
 contract RandomCheatcodesTest is DSTest {
-    Vm vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
-    int128 constant min = -170141183460469231731687303715884105728;
-    int128 constant max = 170141183460469231731687303715884105727;
+    int128 constant MIN = -170141183460469231731687303715884105728;
+    int128 constant MAX = 170141183460469231731687303715884105727;
 
     function test_int128() public {
-        vm._expectCheatcodeRevert("vm.randomInt: number of bits cannot exceed 256");
-        int256 val = vm.randomInt(type(uint256).max);
+        VM._expectCheatcodeRevert("VM.randomInt: number of bits cannot exceed 256");
+        int256 val = VM.randomInt(type(uint256).max);
 
-        val = vm.randomInt(128);
-        assertGe(val, min);
-        assertLe(val, max);
+        val = VM.randomInt(128);
+        assertGe(val, MIN);
+        assertLe(val, MAX);
     }
 
     /// forge-config: default.allow_internal_expect_revert = true
     function testReverttIf_int128() public {
-        int256 val = vm.randomInt(128);
-        vm.expectRevert("Error: a > b not satisfied [int]");
-        require(val > max, "Error: a > b not satisfied [int]");
+        int256 val = VM.randomInt(128);
+        VM.expectRevert("Error: a > b not satisfied [int]");
+        require(val > MAX, "Error: a > b not satisfied [int]");
     }
 
     function test_address() public {
-        address fresh_address = vm.randomAddress();
-        assert(fresh_address != address(this));
-        assert(fresh_address != address(vm));
+        address freshAddress = VM.randomAddress();
+        assert(freshAddress != address(this));
+        assert(freshAddress != address(VM));
     }
 
     function test_randomUintLimit() public {
-        vm._expectCheatcodeRevert("vm.randomUint: number of bits cannot exceed 256");
-        uint256 val = vm.randomUint(type(uint256).max);
+        VM._expectCheatcodeRevert("VM.randomUint: number of bits cannot exceed 256");
+        VM.randomUint(type(uint256).max);
     }
 
     function test_randomUints(uint256 x) public {
-        x = vm.randomUint(0, 256);
-        uint256 freshUint = vm.randomUint(x);
+        x = VM.randomUint(0, 256);
+        uint256 freshUint = VM.randomUint(x);
 
         assert(0 <= freshUint);
         if (x == 256) {
@@ -50,7 +50,7 @@ contract RandomCheatcodesTest is DSTest {
     }
 
     function test_randomSymbolicWord() public {
-        uint256 freshUint192 = vm.randomUint(192);
+        uint256 freshUint192 = VM.randomUint(192);
 
         assert(0 <= freshUint192);
         assert(freshUint192 <= type(uint192).max);
@@ -58,49 +58,49 @@ contract RandomCheatcodesTest is DSTest {
 }
 
 contract RandomBytesTest is DSTest {
-    Vm vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
-    bytes1 local_byte;
-    bytes local_bytes;
+    bytes1 localByte;
+    bytes localBytes;
 
-    function manip_symbolic_bytes(bytes memory b) public {
+    function manipSymbolicBytes(bytes memory b) public {
         uint256 middle = b.length / 2;
         b[middle] = hex"aa";
     }
 
     function test_symbolic_bytes_revert() public {
-        vm._expectCheatcodeRevert();
-        bytes memory val = vm.randomBytes(type(uint256).max);
+        VM._expectCheatcodeRevert();
+        VM.randomBytes(type(uint256).max);
     }
 
     function test_symbolic_bytes_1() public {
-        uint256 length = uint256(vm.randomUint(1, type(uint8).max));
-        bytes memory fresh_bytes = vm.randomBytes(length);
-        uint256 index = uint256(vm.randomUint(1));
+        uint256 length = uint256(VM.randomUint(1, type(uint8).max));
+        bytes memory freshBytes = VM.randomBytes(length);
+        uint256 index = uint256(VM.randomUint(1));
 
-        local_byte = fresh_bytes[index];
-        assertEq(fresh_bytes[index], local_byte);
+        localByte = freshBytes[index];
+        assertEq(freshBytes[index], localByte);
     }
 
     function test_symbolic_bytes_2() public {
-        uint256 length = uint256(vm.randomUint(1, type(uint8).max));
-        bytes memory fresh_bytes = vm.randomBytes(length);
+        uint256 length = uint256(VM.randomUint(1, type(uint8).max));
+        bytes memory freshBytes = VM.randomBytes(length);
 
-        local_bytes = fresh_bytes;
-        assertEq(fresh_bytes, local_bytes);
+        localBytes = freshBytes;
+        assertEq(freshBytes, localBytes);
     }
 
     function test_symbolic_bytes_3() public {
-        uint256 length = uint256(vm.randomUint(1, type(uint8).max));
-        bytes memory fresh_bytes = vm.randomBytes(length);
+        uint256 length = uint256(VM.randomUint(1, type(uint8).max));
+        bytes memory freshBytes = VM.randomBytes(length);
 
-        manip_symbolic_bytes(fresh_bytes);
-        assertEq(hex"aa", fresh_bytes[length / 2]);
+        manipSymbolicBytes(freshBytes);
+        assertEq(hex"aa", freshBytes[length / 2]);
     }
 
     function test_symbolic_bytes_length(uint8 l) public {
-        vm.assume(0 < l);
-        bytes memory fresh_bytes = vm.randomBytes(l);
-        assertEq(fresh_bytes.length, l);
+        VM.assume(0 < l);
+        bytes memory freshBytes = VM.randomBytes(l);
+        assertEq(freshBytes.length, l);
     }
 }

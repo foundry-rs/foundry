@@ -5,7 +5,7 @@ import "ds-test/test.sol";
 import "cheats/Vm.sol";
 
 contract MemSafetyTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
     ////////////////////////////////////////////////////////////////
     //                           MSTORE                           //
@@ -15,7 +15,7 @@ contract MemSafetyTest is DSTest {
     ///      will not cause the test to fail while using the `MSTORE` opcode.
     function testExpectSafeMemory_MSTORE() public {
         // Allow memory writes in the range of [0x80, 0xA0) within this context
-        vm.expectSafeMemory(0x80, 0xA0);
+        VM.expectSafeMemory(0x80, 0xA0);
 
         // Write to memory within the range using `MSTORE`
         assembly {
@@ -27,8 +27,8 @@ contract MemSafetyTest is DSTest {
     ///      will not cause the test to fail while using the `MSTORE` opcode.
     function testExpectSafeMemory_multiRange_MSTORE() public {
         // Allow memory writes in the range of [0x80, 0x100) and [0x120, 0x140) within this context
-        vm.expectSafeMemory(0x80, 0x100);
-        vm.expectSafeMemory(0x120, 0x140);
+        VM.expectSafeMemory(0x80, 0x100);
+        VM.expectSafeMemory(0x120, 0x140);
 
         // Write to memory within the range using `MSTORE`
         assembly {
@@ -45,7 +45,7 @@ contract MemSafetyTest is DSTest {
     ///      will not cause the test to fail while using the `MSTORE8` opcode.
     function testExpectSafeMemory_MSTORE8() public {
         // Allow memory writes in the range of [0x80, 0x81) within this context
-        vm.expectSafeMemory(0x80, 0x81);
+        VM.expectSafeMemory(0x80, 0x81);
 
         // Write to memory within the range using `MSTORE8`
         assembly {
@@ -57,8 +57,8 @@ contract MemSafetyTest is DSTest {
     ///      will not cause the test to fail while using the `MSTORE8` opcode.
     function testExpectSafeMemory_multiRange_MSTORE8() public {
         // Allow memory writes in the range of [0x80, 0x100) and [0x120, 0x121) within this context
-        vm.expectSafeMemory(0x80, 0x100);
-        vm.expectSafeMemory(0x120, 0x121);
+        VM.expectSafeMemory(0x80, 0x100);
+        VM.expectSafeMemory(0x120, 0x121);
 
         // Write to memory within the range using `MSTORE8`
         assembly {
@@ -75,7 +75,7 @@ contract MemSafetyTest is DSTest {
     ///      will not cause the test to fail while using the `CALLDATACOPY` opcode.
     function testExpectSafeMemory_CALLDATACOPY(uint256 _x) public {
         // Allow memory writes in the range of [0x80, 0xA0) within this context
-        vm.expectSafeMemory(0x80, 0xA0);
+        VM.expectSafeMemory(0x80, 0xA0);
 
         // Write to memory within the range using `CALLDATACOPY`
         assembly {
@@ -91,7 +91,7 @@ contract MemSafetyTest is DSTest {
     ///      will not cause the test to fail while using the `CODECOPY` opcode.
     function testExpectSafeMemory_CODECOPY() public {
         // Allow memory writes in the range of [0x80, 0xA0) within this context
-        vm.expectSafeMemory(0x80, 0xA0);
+        VM.expectSafeMemory(0x80, 0xA0);
 
         // Write to memory within the range using `CODECOPY`
         assembly {
@@ -114,7 +114,7 @@ contract MemSafetyTest is DSTest {
         bytes memory payload = abi.encodeWithSelector(SubContext.giveReturndata.selector);
 
         // Allow memory writes in the range of [0x80, 0x100) within this context
-        vm.expectSafeMemory(0x80, 0x100);
+        VM.expectSafeMemory(0x80, 0x100);
 
         // Create a new SubContext contract and call `giveReturndata` on it.
         _doCallReturnData(address(sc), payload, 0x80, 0x60);
@@ -133,7 +133,7 @@ contract MemSafetyTest is DSTest {
     ///      will not cause the test to fail while using the `EXTCODECOPY` opcode.
     function testExpectSafeMemory_EXTCODECOPY() public {
         // Allow memory writes in the range of [0x80, 0xA0) within this context
-        vm.expectSafeMemory(0x80, 0xA0);
+        VM.expectSafeMemory(0x80, 0xA0);
 
         // Write to memory within the range using `EXTCODECOPY`
         assembly {
@@ -156,7 +156,7 @@ contract MemSafetyTest is DSTest {
         bytes memory payload = abi.encodeWithSelector(SubContext.giveReturndata.selector);
 
         // Allow memory writes in the range of [0x80, 0x100) within this context
-        vm.expectSafeMemory(0x80, 0x100);
+        VM.expectSafeMemory(0x80, 0x100);
 
         // Create a new SubContext contract and call `giveReturndata` on it.
         _doCallReturnData(address(sc), payload, 0x80, 0x60);
@@ -176,7 +176,7 @@ contract MemSafetyTest is DSTest {
         bytes memory payload = abi.encodeWithSelector(SubContext.giveReturndata.selector);
 
         // Allow memory writes in the range of [0x80, 0x100) within this context
-        vm.expectSafeMemory(0x80, 0x100);
+        VM.expectSafeMemory(0x80, 0x100);
 
         // Create a new SubContext contract and call `giveReturndata` on it.
         _doCallCodeReturnData(address(sc), payload, 0x80, 0x60);
@@ -196,7 +196,7 @@ contract MemSafetyTest is DSTest {
         bytes memory payload = abi.encodeWithSelector(SubContext.giveReturndata.selector);
 
         // Allow memory writes in the range of [0x80, 0x100) within this context
-        vm.expectSafeMemory(0x80, 0x100);
+        VM.expectSafeMemory(0x80, 0x100);
 
         // Create a new SubContext contract and call `giveReturndata` on it.
         _doStaticCallReturnData(address(sc), payload, 0x80, 0x60);
@@ -216,7 +216,7 @@ contract MemSafetyTest is DSTest {
         bytes memory payload = abi.encodeWithSelector(SubContext.giveReturndata.selector);
 
         // Allow memory writes in the range of [0x80, 0x100) within this context
-        vm.expectSafeMemory(0x80, 0x100);
+        VM.expectSafeMemory(0x80, 0x100);
 
         // Create a new SubContext contract and call `giveReturndata` on it.
         _doDelegateCallReturnData(address(sc), payload, 0x80, 0x60);
@@ -229,7 +229,7 @@ contract MemSafetyTest is DSTest {
     /// @dev Tests that expanding memory within the range given to `expectSafeMemory`
     ///      will not cause the test to fail while using the `MLOAD` opcode.
     function testExpectSafeMemory_MLOAD() public {
-        vm.expectSafeMemory(0x80, 0x120);
+        VM.expectSafeMemory(0x80, 0x120);
 
         // This should not revert. Ugly hack to make sure the mload isn't optimized
         // out.
@@ -244,9 +244,9 @@ contract MemSafetyTest is DSTest {
     ///      will cause the test to fail while using the `MLOAD` opcode.
     /// forge-config: default.allow_internal_expect_revert = true
     function testExpectSafeMemory_MLOAD_REVERT() public {
-        vm.expectSafeMemory(0x80, 0x100);
+        VM.expectSafeMemory(0x80, 0x100);
 
-        vm.expectRevert();
+        VM.expectRevert();
 
         // This should revert. Ugly hack to make sure the mload isn't optimized
         // out.
@@ -264,7 +264,7 @@ contract MemSafetyTest is DSTest {
     /// @dev Tests that expanding memory within the range given to `expectSafeMemory`
     ///      will not cause the test to fail while using the `SHA3` opcode.
     function testExpectSafeMemory_SHA3() public {
-        vm.expectSafeMemory(0x80, 0x120);
+        VM.expectSafeMemory(0x80, 0x120);
 
         // This should not revert. Ugly hack to make sure the sha3 isn't optimized
         // out.
@@ -285,7 +285,7 @@ contract MemSafetyTest is DSTest {
     /// @dev Tests that expanding memory within the range given to `expectSafeMemory`
     ///      will not cause the test to fail while using the `LOG0` opcode.
     function testExpectSafeMemory_LOG0() public {
-        vm.expectSafeMemory(0x80, 0x120);
+        VM.expectSafeMemory(0x80, 0x120);
 
         // This should not revert.
         assembly {
@@ -297,8 +297,8 @@ contract MemSafetyTest is DSTest {
     ///      will cause the test to fail while using the `LOG0` opcode.
     /// forge-config: default.allow_internal_expect_revert = true
     function testExpectSafeMemory_LOG0_REVERT() public {
-        vm.expectSafeMemory(0x80, 0x100);
-        vm.expectRevert();
+        VM.expectSafeMemory(0x80, 0x100);
+        VM.expectRevert();
         // This should revert.
         assembly {
             log0(0x100, 0x20)
@@ -312,7 +312,7 @@ contract MemSafetyTest is DSTest {
     /// @dev Tests that expanding memory within the range given to `expectSafeMemory`
     ///      will not cause the test to fail while using the `CREATE` opcode.
     function testExpectSafeMemory_CREATE() public {
-        vm.expectSafeMemory(0x80, 0x120);
+        VM.expectSafeMemory(0x80, 0x120);
 
         // This should not revert.
         assembly {
@@ -323,7 +323,7 @@ contract MemSafetyTest is DSTest {
     /// @dev Tests that expanding memory within the range given to `expectSafeMemory`
     ///      will not cause the test to fail while using the `CREATE2` opcode.
     function testExpectSafeMemory_CREATE2() public {
-        vm.expectSafeMemory(0x80, 0x120);
+        VM.expectSafeMemory(0x80, 0x120);
 
         // This should not revert.
         assembly {
@@ -338,7 +338,7 @@ contract MemSafetyTest is DSTest {
     /// @dev Tests that expanding memory within the range given to `expectSafeMemory`
     ///      will not cause the test to fail while using the `RETURN` opcode.
     function testExpectSafeMemory_RETURN() public {
-        vm.expectSafeMemory(0x80, 0x120);
+        VM.expectSafeMemory(0x80, 0x120);
 
         // This should not revert.
         assembly {
@@ -356,7 +356,7 @@ contract MemSafetyTest is DSTest {
         bytes memory payload = abi.encodeWithSelector(SubContext.doRevert.selector, 0x100, 0x20);
 
         // Expect memory in the range of [0x00, 0x120] to be safe in the next subcontext
-        vm.expectSafeMemoryCall(0x00, 0x120);
+        VM.expectSafeMemoryCall(0x00, 0x120);
 
         // Call `doRevert` on the SubContext contract and ensure it did revert with zero
         // data.
@@ -379,7 +379,7 @@ contract MemSafetyTest is DSTest {
         bytes memory payload = abi.encodeWithSelector(SubContext.doMstore8.selector, 0x120, 0xc0ffee);
 
         // Allow memory writes in the range of [0x80, 0x100) within this context
-        vm.expectSafeMemory(0x80, 0x100);
+        VM.expectSafeMemory(0x80, 0x100);
 
         // Should not revert- the `expectSafeMemory` cheatcode operates at a
         // per-depth level.
@@ -395,7 +395,7 @@ contract MemSafetyTest is DSTest {
         bytes memory payload = abi.encodeWithSelector(SubContext.doMstore8.selector, 0x120, 0xFF);
 
         // Allow memory writes in the range of [0x80, 0x100) within this context
-        vm.expectSafeMemory(0x80, 0x100);
+        VM.expectSafeMemory(0x80, 0x100);
 
         // Should not revert- the `expectSafeMemory` cheatcode operates at a
         // per-depth level.
@@ -414,7 +414,7 @@ contract MemSafetyTest is DSTest {
         bytes memory payload = abi.encodeWithSelector(SubContext.doMstore.selector, 0x80, 0xc0ffee);
 
         // Allow memory writes in the range of [0x80, 0xA0) within the next created subcontext
-        vm.expectSafeMemoryCall(0x80, 0xA0);
+        VM.expectSafeMemoryCall(0x80, 0xA0);
 
         // Should not revert- the memory write in this subcontext is within the allowed range.
         _doCall(address(sc), payload);
@@ -431,13 +431,13 @@ contract MemSafetyTest is DSTest {
             initPtr := mload(0x40)
         }
 
-        vm.expectSafeMemory(initPtr, initPtr + 0x20);
+        VM.expectSafeMemory(initPtr, initPtr + 0x20);
         assembly {
             // write to allowed range
             mstore(initPtr, 0x01)
         }
 
-        vm.stopExpectSafeMemory();
+        VM.stopExpectSafeMemory();
 
         assembly {
             // write ouside allowed range, this should be fine
@@ -453,14 +453,14 @@ contract MemSafetyTest is DSTest {
             initPtr := mload(0x40)
         }
 
-        vm.expectSafeMemory(initPtr, initPtr + 0x20);
+        VM.expectSafeMemory(initPtr, initPtr + 0x20);
         assembly {
             // write outside of allowed range, this should revert
             mstore(initPtr, 0x01)
             mstore(0x40, add(initPtr, 0x20))
         }
 
-        vm.stopExpectSafeMemory();
+        VM.stopExpectSafeMemory();
     }
 
     ////////////////////////////////////////////////////////////////

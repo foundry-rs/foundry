@@ -12,7 +12,7 @@ interface IERC20 {
 }
 
 contract TransactOnForkTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
     IERC20 constant USDT = IERC20(0xdAC17F958D2ee523a2206206994597C13D831ec7);
 
@@ -20,8 +20,8 @@ contract TransactOnForkTest is DSTest {
 
     function testTransact() public {
         // A random block https://etherscan.io/block/17134913
-        uint256 fork = vm.createFork("mainnet", 17134913);
-        vm.selectFork(fork);
+        uint256 fork = VM.createFork("mainnet", 17134913);
+        VM.selectFork(fork);
         // a random transfer transaction in the next block: https://etherscan.io/tx/0xaf6201d435b216a858c580e20512a16136916d894aa33260650e164e3238c771
         bytes32 tx = 0xaf6201d435b216a858c580e20512a16136916d894aa33260650e164e3238c771;
 
@@ -37,7 +37,7 @@ contract TransactOnForkTest is DSTest {
         uint256 expectedSenderBalance = sender.balance - transferAmount;
 
         // execute the transaction
-        vm.transact(tx);
+        VM.transact(tx);
 
         // recipient received transfer
         assertEq(recipient.balance, expectedRecipientBalance);
@@ -48,8 +48,8 @@ contract TransactOnForkTest is DSTest {
 
     function testTransactCooperatesWithCheatcodes() public {
         // A random block https://etherscan.io/block/16260609
-        uint256 fork = vm.createFork("mainnet", 16260609);
-        vm.selectFork(fork);
+        uint256 fork = VM.createFork("mainnet", 16260609);
+        VM.selectFork(fork);
 
         // a random ERC20 USDT transfer transaction in the next block: https://etherscan.io/tx/0x33350512fec589e635865cbdb38fa3a20a2aa160c52611f1783d0ba24ad13c8c
         bytes32 tx = 0x33350512fec589e635865cbdb38fa3a20a2aa160c52611f1783d0ba24ad13c8c;
@@ -76,17 +76,17 @@ contract TransactOnForkTest is DSTest {
         // vm.expectCall(address(USDT), abi.encodeWithSelector(IERC20.transfer.selector, recipient, transferAmount));
 
         // expect a Transfer event to be emitted
-        vm.expectEmit(true, true, false, true, address(USDT));
+        VM.expectEmit(true, true, false, true, address(USDT));
         emit Transfer(address(sender), address(recipient), transferAmount);
 
         // start recording logs
-        vm.recordLogs();
+        VM.recordLogs();
 
         // execute the transaction
-        vm.transact(tx);
+        VM.transact(tx);
 
         // extract recorded logs
-        Vm.Log[] memory logs = vm.getRecordedLogs();
+        Vm.Log[] memory logs = VM.getRecordedLogs();
 
         senderBalance = USDT.balanceOf(sender);
         recipientBalance = USDT.balanceOf(recipient);
