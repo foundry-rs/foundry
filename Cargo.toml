@@ -28,7 +28,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.2.2"
+version = "1.2.3"
 edition = "2021"
 # Remember to update clippy.toml as well
 rust-version = "1.87"
@@ -39,6 +39,11 @@ repository = "https://github.com/foundry-rs/foundry"
 exclude = ["benches/", "tests/", "test-data/", "testdata/"]
 
 [workspace.lints.clippy]
+borrow_as_ptr = "warn"
+branches_sharing_code = "warn"
+clear_with_drain = "warn"
+cloned_instead_of_copied = "warn"
+collection_is_never_read = "warn"
 dbg-macro = "warn"
 explicit_iter_loop = "warn"
 manual-string-new = "warn"
@@ -313,7 +318,7 @@ k256 = "0.13"
 mesc = "0.3"
 num-format = "0.4"
 parking_lot = "0.12"
-proptest = "1"
+proptest = "1.7.0"
 rand = "0.9"
 rand_08 = { package = "rand", version = "0.8" }
 rand_chacha = "0.9.0"
