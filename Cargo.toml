@@ -397,8 +397,8 @@ zip-extract = "=0.2.1"
 # alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
 
 ## alloy-evm
-# alloy-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "dce752f" }
-# alloy-op-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "dce752f" }
+alloy-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "14fab1f" }
+alloy-op-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "14fab1f" }
 
 ## revm
 # revm = { git = "https://github.com/bluealloy/revm.git", rev = "b5808253" }
@@ -407,4 +407,4 @@ revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", 
 
 ## foundry
 # foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "855dee4" }
-# foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "811a61a" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "621d528" }
