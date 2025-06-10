@@ -4187,6 +4187,7 @@ dependencies = [
  "comfy-table",
  "dunce",
  "eyre",
+ "forge-lint",
  "foundry-block-explorers",
  "foundry-common-fmt",
  "foundry-compilers",

@@ -13,7 +13,7 @@ contract ContractWithLints {
 
     function incorrectShiftHigh() public {
         uint256 localValue = 50;
-        result = 8 >> localValue;
+        uint256 result = 8 >> localValue;
     }
     function divideBeforeMultiplyMedium() public {
         (1 / 2) * 3;
@@ -157,19 +157,123 @@ forgetest!(can_override_config_lint, |prj, cmd| {
             ..Default::default()
         };
     });
-    cmd.arg("lint").args(["--only-lint", "incorrect-shift"]).assert_success().stderr_eq(str![[
-        r#"
+    cmd.arg("lint").args(["--only-lint", "incorrect-shift"]).assert_success().stderr_eq(str![[r#"
 warning[incorrect-shift]: the order of args in a shift operation is incorrect
-  [FILE]:13:18
+  [FILE]:13:26
    |
-13 |         result = 8 >> localValue;
-   |                  ---------------
+13 |         uint256 result = 8 >> localValue;
+   |                          ---------------
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
 
 
-"#
-    ]]);
+"#]]);
+});
+
+forgetest!(build_runs_linter_by_default, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source("ContractWithLints", CONTRACT).unwrap();
+
+    // Configure linter to show only medium severity lints
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![LintSeverity::Med],
+            exclude_lints: vec!["incorrect-shift".into()],
+            ..Default::default()
+        };
+    });
+
+    // Run forge build and expect linting output before compilation
+    cmd.arg("build").assert_success().stderr_eq(str![[r#"
+warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+  [FILE]:16:9
+   |
+16 |         (1 / 2) * 3;
+   |         -----------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
+
+
+"#]]).stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (2072): Unused local variable.
+  [FILE]:13:9:
+   |
+13 |         uint256 result = 8 >> localValue;
+   |         ^^^^^^^^^^^^^^
+
+Warning (6133): Statement has no effect.
+  [FILE]:16:9:
+   |
+16 |         (1 / 2) * 3;
+   |         ^^^^^^^^^^^
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:11:5:
+   |
+11 |     function incorrectShiftHigh() public {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:15:5:
+   |
+15 |     function divideBeforeMultiplyMedium() public {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:18:5:
+   |
+18 |     function unoptimizedHashGas(uint256 a, uint256 b) public view {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+
+"#]]);
+});
+
+forgetest!(build_respects_quiet_flag_for_linting, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source("ContractWithLints", CONTRACT).unwrap();
+
+    // Configure linter to show medium severity lints
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![LintSeverity::Med],
+            exclude_lints: vec!["incorrect-shift".into()],
+            ..Default::default()
+        };
+    });
+
+    // Run forge build with --quiet flag - should not show linting output
+    cmd.arg("build").arg("--quiet").assert_success().stderr_eq(str![[""]]).stdout_eq(str![[""]]);
+});
+
+forgetest!(build_with_json_uses_json_linter_output, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source("ContractWithLints", CONTRACT).unwrap();
+
+    // Configure linter to show medium severity lints
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![LintSeverity::Med],
+            exclude_lints: vec!["incorrect-shift".into()],
+            ..Default::default()
+        };
+    });
+
+    // Run forge build with --json flag - should use JSON formatter for linting
+    let output = cmd.arg("build").arg("--json").assert_success();
+    
+    // Should contain JSON linting output
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(stderr.contains("\"code\""));
+    assert!(stderr.contains("divide-before-multiply"));
+    
+    // Should also contain JSON compilation output
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(stdout.contains("\"errors\""));
+    assert!(stdout.contains("\"sources\""));
 });
 
 #[tokio::test]
