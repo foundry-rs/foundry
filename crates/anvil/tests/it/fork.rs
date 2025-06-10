@@ -1582,3 +1582,44 @@ async fn test_fork_get_account() {
 
     assert_eq!(alice_acc_init, alice_acc_prev_block);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reset_anvil_acc_7702() {
+    let fork_block_number = 22673283u64;
+    let (_api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))
+            .with_fork_block_number(Some(fork_block_number)),
+    )
+    .await;
+
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_accounts().collect::<Vec<_>>();
+    let account = accounts[0];
+    let bob = accounts[1];
+
+    // Check if they have 7702 delegation
+    let code = provider
+        .get_code_at(account)
+        .block_id(BlockId::number(fork_block_number - 1))
+        .await
+        .unwrap();
+
+    assert!(code.is_empty());
+
+    let eth_call = TransactionRequest::default()
+        .from(address!("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"))
+        .to(account)
+        .with_input(bytes!("0x"))
+        .with_value(U256::from(100u64));
+
+    println!("Calling with 7702 delegation: {eth_call:?}");
+
+    let res = provider
+        .call(WithOtherFields::new(eth_call))
+        .block(BlockId::number(fork_block_number - 1))
+        .await;
+
+    println!("Call result: {res:?}");
+}

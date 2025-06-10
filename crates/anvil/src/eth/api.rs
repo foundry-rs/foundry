@@ -10,7 +10,7 @@ use crate::{
         backend::{
             self,
             db::SerializableState,
-            mem::{MIN_CREATE_GAS, MIN_TRANSACTION_GAS},
+            mem::{is_default_anvil_acc, MIN_CREATE_GAS, MIN_TRANSACTION_GAS},
             notifications::NewBlockNotifications,
             validate::TransactionValidator,
         },
@@ -908,7 +908,12 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
-                    return Ok(fork.get_code(address, number).await?)
+                    let code = fork.get_code(address, number).await?;
+                    // Resets the 7702 delegation code set on the default anvil account
+                    if is_default_anvil_acc(address) && code.starts_with(&[0xef, 0x01, 0x00]) {
+                        return Ok(Bytes::new())
+                    }
+                    return Ok(code)
                 }
             }
         }

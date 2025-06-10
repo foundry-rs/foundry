@@ -75,7 +75,7 @@ use alloy_rpc_types::{
     EIP1186AccountProofResponse as AccountProof, EIP1186StorageProof as StorageProof, Filter,
     Header as AlloyHeader, Index, Log, Transaction, TransactionReceipt,
 };
-use alloy_serde::{OtherFields, WithOtherFields};
+use alloy_serde::{quantity::vec, OtherFields, WithOtherFields};
 use alloy_signer::Signature;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles};
@@ -3384,4 +3384,9 @@ pub fn op_haltreason_to_instruction_result(op_reason: OpHaltReason) -> Instructi
         OpHaltReason::Base(eth_h) => eth_h.into(),
         OpHaltReason::FailedDeposit => InstructionResult::Stop,
     }
+}
+
+pub fn is_default_anvil_acc(address: Address) -> bool {
+    let default_accs = vec![address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")];
+    default_accs.contains(&address)
 }
