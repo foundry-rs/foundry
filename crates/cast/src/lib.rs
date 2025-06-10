@@ -1,6 +1,7 @@
 //! Cast is a Swiss Army knife for interacting with Ethereum applications from the command line.
 
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 use alloy_consensus::TxEnvelope;
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
@@ -36,6 +37,7 @@ use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
 use foundry_evm_core::ic::decode_instructions;
 use futures::{future::Either, FutureExt, StreamExt};
+use op_alloy_consensus::OpTxEnvelope;
 use rayon::prelude::*;
 use std::{
     borrow::Cow,
@@ -136,7 +138,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// let state_override_object = StateOverridesBuilder::default().build();
     ///
     /// let cast = Cast::new(alloy_provider);
-    /// let data = cast.call(&tx, None, None, state_override_object).await?;
+    /// let data = cast.call(&tx, None, None, Some(state_override_object)).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
@@ -146,15 +148,14 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         req: &WithOtherFields<TransactionRequest>,
         func: Option<&Function>,
         block: Option<BlockId>,
-        state_override: StateOverride,
+        state_override: Option<StateOverride>,
     ) -> Result<String> {
-        let res = self
-            .provider
-            .call(req.clone())
-            .block(block.unwrap_or_default())
-            .overrides(state_override)
-            .await?;
+        let mut call = self.provider.call(req.clone()).block(block.unwrap_or_default());
+        if let Some(state_override) = state_override {
+            call = call.overrides(state_override)
+        }
 
+        let res = call.await?;
         let mut decoded = vec![];
 
         if let Some(func) = func {
@@ -789,7 +790,10 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         };
 
         Ok(if raw {
-            format!("0x{}", hex::encode(tx.inner.inner.encoded_2718()))
+            // also consider opstack deposit transactions
+            let either_tx = tx.try_into_either::<OpTxEnvelope>()?;
+            let encoded = either_tx.encoded_2718();
+            format!("0x{}", hex::encode(encoded))
         } else if let Some(field) = field {
             get_pretty_tx_attr(&tx.inner, field.as_str())
                 .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?

@@ -1,8 +1,9 @@
 //! Contains various tests related to `forge script`.
 
 use crate::constants::TEMPLATE_CONTRACT;
+use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{address, hex, Address, Bytes};
-use anvil::{spawn, EthereumHardfork, NodeConfig};
+use anvil::{spawn, NodeConfig};
 use forge_script_sequence::ScriptSequence;
 use foundry_test_utils::{
     rpc::{self, next_http_archive_rpc_url},
@@ -2575,7 +2576,7 @@ Chain 31337
 
 accessList           []
 chainId              31337
-gasLimit             228231
+gasLimit             [..]
 gasPrice             
 input                [..]
 maxFeePerBlobGas     
@@ -2856,4 +2857,157 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 
 "#]]);
+});
+
+// Tests EIP-7702 with multiple auth <https://github.com/foundry-rs/foundry/issues/10551>
+// Alice sends 5 ETH from Bob to Receiver1 and 1 ETH to Receiver2
+forgetest_async!(can_broadcast_txes_with_multiple_auth, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "BatchCallDelegation.sol",
+        r#"
+contract BatchCallDelegation {
+    event CallExecuted(address indexed to, uint256 indexed value, bytes data, bool success);
+
+    struct Call {
+        bytes data;
+        address to;
+        uint256 value;
+    }
+
+    function execute(Call[] calldata calls) external payable {
+        for (uint256 i = 0; i < calls.length; i++) {
+            Call memory call = calls[i];
+            (bool success,) = call.to.call{value: call.value}(call.data);
+            require(success, "call reverted");
+            emit CallExecuted(call.to, call.value, call.data, success);
+        }
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    prj.add_script(
+            "BatchCallDelegationScript.s.sol",
+            r#"
+import {Script, console} from "forge-std/Script.sol";
+import {Vm} from "forge-std/Vm.sol";
+import {BatchCallDelegation} from "../src/BatchCallDelegation.sol";
+
+contract BatchCallDelegationScript is Script {
+    // Alice's address and private key (EOA with no initial contract code).
+    address payable ALICE_ADDRESS = payable(0x70997970C51812dc3A010C7d01b50e0d17dc79C8);
+    uint256 constant ALICE_PK = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
+
+    // Bob's address and private key (Bob will execute transactions on Alice's behalf).
+    address constant BOB_ADDRESS = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC;
+    uint256 constant BOB_PK = 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a;
+
+    address constant RECEIVER_1 = 0x14dC79964da2C08b23698B3D3cc7Ca32193d9955;
+    address constant RECEIVER_2 = 0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc;
+
+    uint256 constant DEPLOYER_PK = 0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6;
+
+    function run() public {
+        BatchCallDelegation.Call[] memory aliceCalls = new BatchCallDelegation.Call[](1);
+        aliceCalls[0] = BatchCallDelegation.Call({to: RECEIVER_1, value: 5 ether, data: ""});
+
+        BatchCallDelegation.Call[] memory bobCalls = new BatchCallDelegation.Call[](2);
+        bobCalls[0] = BatchCallDelegation.Call({to: RECEIVER_1, value: 5 ether, data: ""});
+        bobCalls[1] = BatchCallDelegation.Call({to: RECEIVER_2, value: 1 ether, data: ""});
+
+        vm.startBroadcast(DEPLOYER_PK);
+        BatchCallDelegation batcher = new BatchCallDelegation();
+        vm.stopBroadcast();
+
+        vm.startBroadcast(ALICE_PK);
+        vm.signAndAttachDelegation(address(batcher), ALICE_PK);
+        vm.signAndAttachDelegation(address(batcher), BOB_PK);
+        vm.signAndAttachDelegation(address(batcher), BOB_PK);
+
+        BatchCallDelegation(BOB_ADDRESS).execute(bobCalls);
+
+        vm.stopBroadcast();
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(node_config).await;
+
+    cmd.args([
+        "script",
+        "script/BatchCallDelegationScript.s.sol",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--non-interactive",
+        "--slow",
+        "--broadcast",
+        "--evm-version",
+        "prague",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+
+## Setting up 1 EVM.
+
+==========================
+
+Chain 31337
+
+[ESTIMATED_GAS_PRICE]
+
+[ESTIMATED_TOTAL_GAS_USED]
+
+[ESTIMATED_AMOUNT_REQUIRED]
+
+==========================
+
+
+==========================
+
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+[SAVED_TRANSACTIONS]
+
+[SAVED_SENSITIVE_VALUES]
+
+
+"#]]);
+
+    // Alice nonce should be 2 (tx sender and one auth)
+    let alice_acc = api
+        .get_account(address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"), None)
+        .await
+        .unwrap();
+    assert_eq!(alice_acc.nonce, 2);
+
+    // Bob nonce should be 2 (two auths) and balance reduced by 6 ETH.
+    let bob_acc = api
+        .get_account(address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"), None)
+        .await
+        .unwrap();
+    assert_eq!(bob_acc.nonce, 2);
+    assert_eq!(bob_acc.balance.to_string(), "94000000000000000000");
+
+    // Receiver balances should be updated with 5 ETH and 1 ETH.
+    let receiver1 = api
+        .get_account(address!("0x14dC79964da2C08b23698B3D3cc7Ca32193d9955"), None)
+        .await
+        .unwrap();
+    assert_eq!(receiver1.nonce, 0);
+    assert_eq!(receiver1.balance.to_string(), "105000000000000000000");
+    let receiver2 = api
+        .get_account(address!("0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc"), None)
+        .await
+        .unwrap();
+    assert_eq!(receiver2.nonce, 0);
+    assert_eq!(receiver2.balance.to_string(), "101000000000000000000");
 });

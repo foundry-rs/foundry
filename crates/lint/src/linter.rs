@@ -31,9 +31,7 @@ pub trait Lint {
     fn id(&self) -> &'static str;
     fn severity(&self) -> Severity;
     fn description(&self) -> &'static str;
-    fn help(&self) -> Option<&'static str> {
-        None
-    }
+    fn help(&self) -> &'static str;
 }
 
 pub struct LintContext<'s> {
@@ -48,19 +46,14 @@ impl<'s> LintContext<'s> {
 
     // Helper method to emit diagnostics easily from passes
     pub fn emit<L: Lint>(&self, lint: &'static L, span: Span) {
-        let (desc, help) = match (self.desc, lint.help()) {
-            (true, Some(help)) => (lint.description(), help),
-            (true, None) => (lint.description(), ""),
-            (false, _) => ("", ""),
-        };
-
+        let desc = if self.desc { lint.description() } else { "" };
         let diag: DiagBuilder<'_, ()> = self
             .sess
             .dcx
             .diag(lint.severity().into(), desc)
             .code(DiagId::new_str(lint.id()))
             .span(MultiSpan::from_span(span))
-            .help(help);
+            .help(lint.help());
 
         diag.emit();
     }
