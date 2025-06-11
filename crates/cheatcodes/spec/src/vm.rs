@@ -2879,7 +2879,7 @@ interface Vm {
     #[cheatcode(group = Utilities)]
     function shuffle(uint256[] calldata array) external returns (uint256[] memory);
 
-    /// Randomly shuffles an array.
+    /// Set RNG seed.
     #[cheatcode(group = Utilities)]
     function setSeed(uint256 seed) external;
 

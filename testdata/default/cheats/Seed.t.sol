@@ -18,8 +18,11 @@ contract SeedTest is DSTest {
         // Reset the seed and verify the result is the same
         vm.setSeed(seed);
         uint256 rand2 = uint256(vm.randomUint());
+
+        uint256 rand3 = uint256(vm.randomUint());
         // If the seed is the same, the random value must be equal
         assertEq(rand1, rand2);
+        assertTrue(rand1 != rand3);
     }
 
     function testSeedChangesRandom() public {
@@ -33,5 +36,57 @@ contract SeedTest is DSTest {
 
         // Values must be different
         assertTrue(randA != randB, "Random value must be different if seed is different");
+    }
+
+    function testSeedAffectsShuffle() public {
+        // Use a known seed
+        uint256 seed = 123456789;
+        vm.setSeed(seed);
+
+        // Create two identical arrays
+        uint256[] memory array1 = new uint256[](5);
+        uint256[] memory array2 = new uint256[](5);
+        for (uint256 i = 0; i < 5; i++) {
+            array1[i] = i;
+            array2[i] = i;
+        }
+
+        // Shuffle both arrays with the same seed
+        array1 = vm.shuffle(array1);
+        vm.setSeed(seed); // Reset the seed to get the same shuffle pattern
+        array2 = vm.shuffle(array2);
+
+        // Compare elements - they should be identical after shuffle
+        for (uint256 i = 0; i < array1.length; i++) {
+            assertEq(array1[i], array2[i], "Arrays should be identical with same seed");
+        }
+    }
+
+    function testDifferentSeedsProduceDifferentShuffles() public {
+        // Create the initial array
+        uint256[] memory array1 = new uint256[](5);
+        uint256[] memory array2 = new uint256[](5);
+        for (uint256 i = 0; i < 5; i++) {
+            array1[i] = i;
+            array2[i] = i;
+        }
+
+        // Use first seed
+        vm.setSeed(1);
+        array1 = vm.shuffle(array1);
+
+        // Use second seed
+        vm.setSeed(2);
+        array2 = vm.shuffle(array2);
+
+        // Arrays should be different (we'll check at least one difference exists)
+        bool foundDifference = false;
+        for (uint256 i = 0; i < array1.length; i++) {
+            if (array1[i] != array2[i]) {
+                foundDifference = true;
+                break;
+            }
+        }
+        assertTrue(foundDifference, "Arrays should be different with different seeds");
     }
 }

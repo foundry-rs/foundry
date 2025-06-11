@@ -9683,7 +9683,7 @@
     {
       "func": {
         "id": "setSeed",
-        "description": "Randomly shuffles an array.",
+        "description": "Set RNG seed.",
         "declaration": "function setSeed(uint256 seed) external;",
         "visibility": "external",
         "mutability": "",
