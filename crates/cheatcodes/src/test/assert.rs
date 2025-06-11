@@ -1,5 +1,5 @@
 use crate::{CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::{hex, I256, U256};
+use alloy_primitives::{hex, I256, U256, U512};
 use foundry_evm_core::{
     abi::console::{format_units_int, format_units_uint},
     backend::GLOBAL_FAIL_SLOT,
@@ -484,35 +484,12 @@ fn assert_not_eq<'a, T: PartialEq>(left: &'a T, right: &'a T) -> ComparisonResul
     }
 }
 
-fn get_delta_uint(left: U256, right: U256) -> U256 {
-    if left > right {
-        left - right
-    } else {
-        right - left
-    }
-}
-
-fn get_delta_int(left: I256, right: I256) -> U256 {
-    let (left_sign, left_abs) = left.into_sign_and_abs();
-    let (right_sign, right_abs) = right.into_sign_and_abs();
-
-    if left_sign == right_sign {
-        if left_abs > right_abs {
-            left_abs - right_abs
-        } else {
-            right_abs - left_abs
-        }
-    } else {
-        left_abs + right_abs
-    }
-}
-
 fn uint_assert_approx_eq_abs(
     left: U256,
     right: U256,
     max_delta: U256,
 ) -> Result<Vec<u8>, Box<EqAbsAssertionError<U256, U256>>> {
-    let delta = get_delta_uint(left, right);
+    let delta = left.abs_diff(right);
 
     if delta <= max_delta {
         Ok(Default::default())
@@ -526,7 +503,7 @@ fn int_assert_approx_eq_abs(
     right: I256,
     max_delta: U256,
 ) -> Result<Vec<u8>, Box<EqAbsAssertionError<I256, U256>>> {
-    let delta = get_delta_int(left, right);
+    let delta = (left - right).unsigned_abs();
 
     if delta <= max_delta {
         Ok(Default::default())
@@ -542,21 +519,23 @@ fn uint_assert_approx_eq_rel(
 ) -> Result<Vec<u8>, EqRelAssertionError<U256>> {
     if right.is_zero() {
         if left.is_zero() {
-            return Ok(Default::default())
+            return Ok(Default::default());
         } else {
             return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
                 left,
                 right,
                 max_delta,
                 real_delta: EqRelDelta::Undefined,
-            })))
+            })));
         };
     }
 
-    let delta = get_delta_uint(left, right)
-        .checked_mul(U256::pow(U256::from(10), EQ_REL_DELTA_RESOLUTION))
-        .ok_or(EqRelAssertionError::Overflow)? /
-        right;
+    // avoid overflow in the multiplication by using U512 to hold the temporary result
+    let delta = U512::from(left.abs_diff(right))
+        * U512::from(10).pow(U512::from(EQ_REL_DELTA_RESOLUTION))
+        / U512::from(right);
+    let delta =
+        U256::checked_from_limbs_slice(delta.as_limbs()).ok_or(EqRelAssertionError::Overflow)?;
 
     if delta <= max_delta {
         Ok(Default::default())
@@ -577,22 +556,23 @@ fn int_assert_approx_eq_rel(
 ) -> Result<Vec<u8>, EqRelAssertionError<I256>> {
     if right.is_zero() {
         if left.is_zero() {
-            return Ok(Default::default())
+            return Ok(Default::default());
         } else {
             return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
                 left,
                 right,
                 max_delta,
                 real_delta: EqRelDelta::Undefined,
-            })))
+            })));
         }
     }
 
-    let (_, abs_right) = right.into_sign_and_abs();
-    let delta = get_delta_int(left, right)
-        .checked_mul(U256::pow(U256::from(10), EQ_REL_DELTA_RESOLUTION))
-        .ok_or(EqRelAssertionError::Overflow)? /
-        abs_right;
+    // avoid overflow in the multiplication by using U512 to hold the temporary result
+    let delta = U512::from((left - right).unsigned_abs())
+        * U512::from(10).pow(U512::from(EQ_REL_DELTA_RESOLUTION))
+        / U512::from(right.unsigned_abs());
+    let delta =
+        U256::checked_from_limbs_slice(delta.as_limbs()).ok_or(EqRelAssertionError::Overflow)?;
 
     if delta <= max_delta {
         Ok(Default::default())
