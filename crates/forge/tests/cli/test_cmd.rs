@@ -975,7 +975,14 @@ contract Contract2Test is Test {
     // This is the key test: --rerun should NOT run both contracts with same test name
     // Before the fix, this would run 2 tests (both testSameName functions)
     // After the fix, this should run only 1 test (only the specific failing one)
-    cmd.forge_fuse().args(["test", "--rerun"]).assert_failure();
+    let output = cmd.forge_fuse().args(["test", "--rerun"]).assert_failure();
+
+    // Verify that only 1 test is executed (not 2)
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(
+        stdout.contains("0 tests passed, 1 failed, 0 skipped (1 total tests)"),
+        "Expected exactly 1 test to be executed (the failing one), but got different count in stdout: {stdout}"
+    );
 
     // Additional verification: Check the test failures file exists and contains our test
     let failures_content = std::fs::read_to_string(prj.root().join("cache/test-failures")).unwrap();

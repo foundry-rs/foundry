@@ -928,10 +928,8 @@ pub fn last_run_failures_qualified(config: &Config) -> Option<Vec<(String, Strin
             // Parse qualified pattern format: ContractName_testName or legacy format
             if content.contains('_') && !content.contains('|') {
                 // Single qualified failure
-                if let Some(pos) = content.rfind('_') {
-                    let (contract_part, test_part) = content.split_at(pos);
-                    let test_name = &test_part[1..]; // Remove the '_' prefix
-                    Some(vec![(contract_part.to_string(), test_name.to_string())])
+                if let Some((contract_name, test_name)) = split_qualified_test_name(&content) {
+                    Some(vec![(contract_name, test_name)])
                 } else {
                     None
                 }
@@ -939,15 +937,7 @@ pub fn last_run_failures_qualified(config: &Config) -> Option<Vec<(String, Strin
                 // Multiple qualified failures separated by |
                 let failures = content
                     .split('|')
-                    .filter_map(|part| {
-                        if let Some(pos) = part.rfind('_') {
-                            let (contract_part, test_part) = part.split_at(pos);
-                            let test_name = &test_part[1..]; // Remove the '_' prefix
-                            Some((contract_part.to_string(), test_name.to_string()))
-                        } else {
-                            None
-                        }
-                    })
+                    .filter_map(|part| split_qualified_test_name(part))
                     .collect::<Vec<_>>();
                 if failures.is_empty() {
                     None
@@ -959,6 +949,30 @@ pub fn last_run_failures_qualified(config: &Config) -> Option<Vec<(String, Strin
             }
         }
         Err(_) => None,
+    }
+}
+
+/// Split a qualified test name into contract name and test name parts.
+/// Looks for the pattern ContractName_test... since test functions must start with "test".
+fn split_qualified_test_name(qualified_name: &str) -> Option<(String, String)> {
+    // Look for _test, _testFail, _testFuzz, _invariant_ patterns
+    if let Some(test_start) = qualified_name.find("_test") {
+        let contract_part = &qualified_name[..test_start];
+        let test_part = &qualified_name[test_start + 1..]; // Skip the '_'
+        Some((contract_part.to_string(), test_part.to_string()))
+    } else if let Some(test_start) = qualified_name.find("_invariant_") {
+        let contract_part = &qualified_name[..test_start];
+        let test_part = &qualified_name[test_start + 1..]; // Skip the '_'
+        Some((contract_part.to_string(), test_part.to_string()))
+    } else {
+        // Fallback to the original behavior if no test pattern is found
+        if let Some(pos) = qualified_name.rfind('_') {
+            let (contract_part, test_part) = qualified_name.split_at(pos);
+            let test_name = &test_part[1..]; // Remove the '_' prefix
+            Some((contract_part.to_string(), test_name.to_string()))
+        } else {
+            None
+        }
     }
 }
 
