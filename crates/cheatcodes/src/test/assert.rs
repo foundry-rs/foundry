@@ -543,14 +543,14 @@ fn uint_assert_approx_eq_rel(
 ) -> Result<Vec<u8>, EqRelAssertionError<U256>> {
     if right.is_zero() {
         if left.is_zero() {
-            return Ok(Default::default());
+            return Ok(Default::default())
         } else {
             return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
                 left,
                 right,
                 max_delta,
                 real_delta: EqRelDelta::Undefined,
-            })));
+            })))
         };
     }
 
@@ -575,14 +575,14 @@ fn int_assert_approx_eq_rel(
 ) -> Result<Vec<u8>, EqRelAssertionError<I256>> {
     if right.is_zero() {
         if left.is_zero() {
-            return Ok(Default::default());
+            return Ok(Default::default())
         } else {
             return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
                 left,
                 right,
                 max_delta,
                 real_delta: EqRelDelta::Undefined,
-            })));
+            })))
         }
     }
 
