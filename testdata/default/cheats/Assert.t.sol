@@ -814,6 +814,9 @@ contract AssertionsTest is DSTest {
         );
         vm.assertApproxEqRel(uint256(1), uint256(0), uint256(0));
 
+        vm._expectCheatcodeRevert(bytes("assertion failed: overflow in delta calculation"));
+        vm.assertApproxEqRel(0, type(uint256).max, 1);
+
         vm.assertApproxEqRel(type(int256).min, type(int256).max, 2e18);
         vm.assertApproxEqRel(uint256(0), type(uint256).max, 1e18);
         vm.assertApproxEqRel(uint256(0), uint256(0), uint256(0));
