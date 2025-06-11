@@ -152,6 +152,10 @@ pub struct CallArgs {
     /// Override the block timestamp.
     #[arg(long = "block.time", value_name = "TIME")]
     pub block_time: Option<u64>,
+
+    /// Override the block number.
+    #[arg(long = "block.number", value_name = "NUMBER")]
+    pub block_number: Option<u64>,
 }
 
 #[derive(Debug, Parser)]
@@ -379,12 +383,15 @@ impl CallArgs {
     /// Parse state overrides from command line arguments.
     pub fn get_block_overrides(&self) -> eyre::Result<Option<BlockOverrides>> {
         // Early return if no override set - <https://github.com/foundry-rs/foundry/issues/10705>
-        if self.block_time.as_ref().is_none() {
+        if [self.block_time.as_ref(), self.block_number.as_ref()].iter().all(Option::is_none) {
             return Ok(None);
         }
 
-        let block_overrides = BlockOverrides::default();
-        Ok(Some(block_overrides.with_time(self.block_time.unwrap())))
+        let block_overrides = BlockOverrides::default()
+            .with_number(U256::from(self.block_number.unwrap()))
+            .with_time(self.block_time.unwrap());
+
+        Ok(Some(block_overrides))
     }
 }
 
