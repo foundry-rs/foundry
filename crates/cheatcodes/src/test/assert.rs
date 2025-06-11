@@ -499,7 +499,7 @@ fn get_delta_int(left: I256, right: I256) -> U256 {
     }
 }
 
-/// Calculates the relative delta an absolute difference.
+/// Calculates the relative delta for an absolute difference.
 ///
 /// Avoids overflow in the multiplication by using [`U512`] to hold the intermediary result.
 fn calc_delta_full<T>(abs_diff: U256, right: U256) -> Result<U256, EqRelAssertionError<T>> {
