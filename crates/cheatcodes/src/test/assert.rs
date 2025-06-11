@@ -452,6 +452,15 @@ impl_assertions! {
     (assertApproxEqRelDecimal_2Call, assertApproxEqRelDecimal_3Call),
 }
 
+/// Calculates the relative delta an absolute difference.
+///
+/// Avoids overflow in the multiplication by using [`U512`] to hold the intermediary result.
+fn calc_delta_full<T>(abs_diff: U256, right: U256) -> Result<U256, EqRelAssertionError<T>> {
+    let delta = U512::from(abs_diff) * U512::from(10).pow(U512::from(EQ_REL_DELTA_RESOLUTION))
+        / U512::from(right);
+    U256::checked_from_limbs_slice(delta.as_limbs()).ok_or(EqRelAssertionError::Overflow)
+}
+
 fn assert_true(condition: bool) -> Result<Vec<u8>, SimpleAssertionError> {
     if condition {
         Ok(Default::default())
@@ -530,12 +539,7 @@ fn uint_assert_approx_eq_rel(
         };
     }
 
-    // avoid overflow in the multiplication by using U512 to hold the temporary result
-    let delta = U512::from(left.abs_diff(right))
-        * U512::from(10).pow(U512::from(EQ_REL_DELTA_RESOLUTION))
-        / U512::from(right);
-    let delta =
-        U256::checked_from_limbs_slice(delta.as_limbs()).ok_or(EqRelAssertionError::Overflow)?;
+    let delta = calc_delta_full::<U256>(left.abs_diff(right), right)?;
 
     if delta <= max_delta {
         Ok(Default::default())
@@ -567,12 +571,7 @@ fn int_assert_approx_eq_rel(
         }
     }
 
-    // avoid overflow in the multiplication by using U512 to hold the temporary result
-    let delta = U512::from((left - right).unsigned_abs())
-        * U512::from(10).pow(U512::from(EQ_REL_DELTA_RESOLUTION))
-        / U512::from(right.unsigned_abs());
-    let delta =
-        U256::checked_from_limbs_slice(delta.as_limbs()).ok_or(EqRelAssertionError::Overflow)?;
+    let delta = calc_delta_full::<I256>((left - right).unsigned_abs(), right.unsigned_abs())?;
 
     if delta <= max_delta {
         Ok(Default::default())
