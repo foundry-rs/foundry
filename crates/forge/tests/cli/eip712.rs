@@ -57,23 +57,41 @@ library Structs2 {
 
     cmd.forge_fuse().args(["eip712", path.to_string_lossy().as_ref()]).assert_success().stdout_eq(
         str![[r#"
-Foo(Bar bar)Art(uint256 id)Bar(Art art)
+Structs.sol > Structs > Foo:
+ - type: Foo(Bar bar)Art(uint256 id)Bar(Art art)
+ - hash: 0x6d9b732373bd999fde4072274c752e03f7437067dd75521eb406d8edf1d30f7d
 
-Bar(Art art)Art(uint256 id)
+Structs.sol > Structs > Bar:
+ - type: Bar(Art art)Art(uint256 id)
+ - hash: 0xadeb03f4f98fb57c05c9a79d8dd2348220e9bd9fd332ec2fbd92479e5695a596
 
-Art(uint256 id)
+Structs.sol > Structs > Art:
+ - type: Art(uint256 id)
+ - hash: 0xbfeb9da97f9dbc2403e9d5ec3853f36414cae141d772601f24e0097d159d302b
 
-Complex(Foo foo2,Foo_1[] foos,Rec[][] recs)Art(uint256 id)Bar(Art art)Foo(uint256 id)Foo_1(Bar bar)Rec(Rec[] rec)
+Structs.sol > Structs > Complex:
+ - type: Complex(Foo foo2,Foo_1[] foos,Rec[][] recs)Art(uint256 id)Bar(Art art)Foo(uint256 id)Foo_1(Bar bar)Rec(Rec[] rec)
+ - hash: 0xfb0a234a82efcade7c031ebb4c58afd7f5f242ca67ed06f4050c60044dcee425
 
-Rec(Rec[] rec)
+Structs.sol > Structs > Rec:
+ - type: Rec(Rec[] rec)
+ - hash: 0x5f060eb740f5aee93a910587a100458c724479d189f6dd67ac39048bf312102e
 
-Foo(uint256 id)
+Structs.sol > Structs2 > Foo:
+ - type: Foo(uint256 id)
+ - hash: 0xb93d8bb2877cd5cc51979d9fe85339ab570714a6fd974225e2a763851092497e
 
-Rec(Bar[] bar)Bar(Rec rec)
+Structs.sol > Structs2 > Rec:
+ - type: Rec(Bar[] bar)Bar(Rec rec)
+ - hash: 0xe9dded72c72648f27772620cb4e10b773ce31a3ea26ef980c0b39d1834242cda
 
-Bar(Rec rec)Rec(Bar[] bar)
+Structs.sol > Structs2 > Bar:
+ - type: Bar(Rec rec)Rec(Bar[] bar)
+ - hash: 0x164eba932ecde04ec75feba228664d08f29c88d6a67e531757e023e6063c3b2c
 
-FooBar(Foo[] foos,Bar[] bars,Foo_1 foo,Bar_1 bar,Rec[] recs,Rec_1 rec)Art(uint256 id)Bar(Rec rec)Bar_1(Art art)Foo(uint256 id)Foo_1(Bar_1 bar)Rec(Bar[] bar)Rec_1(Rec_1[] rec)
+Structs.sol > Structs2 > FooBar:
+ - type: FooBar(Foo[] foos,Bar[] bars,Foo_1 foo,Bar_1 bar,Rec[] recs,Rec_1 rec)Art(uint256 id)Bar(Rec rec)Bar_1(Art art)Foo(uint256 id)Foo_1(Bar_1 bar)Rec(Bar[] bar)Rec_1(Rec_1[] rec)
+ - hash: 0xce88f333fe5b5d4901ceb2569922ffe741cda3afc383a63d34ed2c3d565e42d8
 
 
 "#]],
