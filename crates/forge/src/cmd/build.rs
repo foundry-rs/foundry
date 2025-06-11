@@ -1,6 +1,7 @@
 use super::{install, watch::WatchArgs};
 use clap::Parser;
 use eyre::Result;
+use forge_lint::sol::SolidityLinter;
 use foundry_cli::{
     opts::BuildOpts,
     utils::{cache_local_signatures, LoadConfig},
@@ -93,13 +94,39 @@ impl BuildArgs {
         }
 
         let format_json = shell::is_json();
-        let compiler = ProjectCompiler::new()
+        let mut compiler = ProjectCompiler::new()
             .files(files)
             .dynamic_test_linking(config.dynamic_test_linking)
             .print_names(self.names)
             .print_sizes(self.sizes)
             .ignore_eip_3860(self.ignore_eip_3860)
             .bail(!format_json);
+
+        // Configure linter if enabled in config and lint_on_build is true
+        if project.compiler.solc.is_some() && config.lint.lint_on_build {
+            let linter = SolidityLinter::new(config.project_paths())
+                .with_json_emitter(format_json)
+                .with_description(!format_json)
+                .with_severity(if config.lint.severity.is_empty() {
+                    None
+                } else {
+                    Some(config.lint.severity.clone())
+                })
+                .without_lints(if config.lint.exclude_lints.is_empty() {
+                    None
+                } else {
+                    Some(
+                        config
+                            .lint
+                            .exclude_lints
+                            .iter()
+                            .filter_map(|s| forge_lint::sol::SolLint::try_from(s.as_str()).ok())
+                            .collect(),
+                    )
+                });
+
+            compiler = compiler.linter(linter);
+        }
 
         let output = compiler.compile(&project)?;
 

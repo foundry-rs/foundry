@@ -1208,6 +1208,11 @@ Compiler run successful!
 forgetest!(can_build_after_failure, |prj, cmd| {
     prj.insert_ds_test();
 
+    // Disable linting during build to avoid linting output interfering with test assertions
+    prj.update_config(|config| {
+        config.lint.lint_on_build = false;
+    });
+
     prj.add_source(
         "ATest.t.sol",
         r#"

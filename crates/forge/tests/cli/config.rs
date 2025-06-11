@@ -1071,6 +1071,7 @@ sort_imports = false
 severity = []
 exclude_lints = []
 ignore = []
+lint_on_build = true
 
 [doc]
 out = "docs"
@@ -1275,7 +1276,8 @@ exclude = []
   "lint": {
     "severity": [],
     "exclude_lints": [],
-    "ignore": []
+    "ignore": [],
+    "lint_on_build": true
   },
   "doc": {
     "out": "docs",
