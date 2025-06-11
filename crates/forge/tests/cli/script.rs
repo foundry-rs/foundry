@@ -3364,6 +3364,7 @@ setting fwd resolution (test.forge.eth -> 0x3Aa5ebB10DC797CAC828524e59A333d0A371
 done (txn hash: 0xa9784c67594c205300438a07c383cea3dd57924f6fec4cdf5b2a1c8ed67e77d2)
 setting rev resolution (0x3Aa5ebB10DC797CAC828524e59A333d0A371443c -> test.forge.eth) ...
 done (txn hash: 0x4a7b46717dc075d85ef71fcbbfc5523b72dae7ef46146aa7ae0af03d84088881)
+visit https://app.enscribe.xyz/explore/31337/0x3Aa5ebB10DC797CAC828524e59A333d0A371443c to see the contract details.
 
 [SAVED_TRANSACTIONS]
 

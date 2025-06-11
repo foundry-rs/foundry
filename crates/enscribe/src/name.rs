@@ -145,6 +145,8 @@ pub async fn set_primary_name(
         .await?;
     }
 
+    sh_println!("visit https://app.enscribe.xyz/explore/{chain_id}/{contract_addr} to see the contract details.")?;
+
     Ok(())
 }
 
