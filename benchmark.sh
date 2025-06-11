@@ -7,14 +7,15 @@
 set -e
 
 # Configuration
-BENCHMARK_DIR="./benchmark_repos"
-RESULTS_DIR="./benchmark_results"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BENCHMARK_DIR="${SCRIPT_DIR}/benchmark_repos"
+RESULTS_DIR="${SCRIPT_DIR}/benchmark_results"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 RESULTS_FILE="${RESULTS_DIR}/foundry_multi_version_benchmark_${TIMESTAMP}.md"
 JSON_RESULTS_DIR="${RESULTS_DIR}/json_${TIMESTAMP}"
 
 # Foundry versions to benchmark (can be modified via command line)
-DEFAULT_FOUNDRY_VERSIONS=("stable" "nightly" "v1.0.0")
+DEFAULT_FOUNDRY_VERSIONS=("stable" "nightly")
 FOUNDRY_VERSIONS=("${FOUNDRY_VERSIONS[@]:-${DEFAULT_FOUNDRY_VERSIONS[@]}}")
 
 # Repository configurations
@@ -186,8 +187,8 @@ benchmark_repository() {
     cd "$repo_dir"
     
     # Check if it's a valid Foundry project
-    if [ ! -f "foundry.toml" ] && [ ! -f "forge.toml" ]; then
-        log_warn "No foundry.toml or forge.toml found in $repo_name, skipping..."
+    if [ ! -f "foundry.toml" ]; then
+        log_warn "No foundry.toml found in $repo_name, skipping..."
         cd - > /dev/null
         return 0
     fi
@@ -212,31 +213,29 @@ benchmark_repository() {
         # Benchmark 1: forge test
         log_info "Running 'forge test' benchmark for $repo_name (Foundry $version)..."
         hyperfine \
-            --runs 3 \
+            --runs 5 \
+            --prepare 'forge build' \
             --warmup 1 \
             --export-json "${version_results_dir}/test_results.json" \
-            "forge test" \
-            2>/dev/null || log_warn "forge test benchmark failed for $repo_name (Foundry $version)"
+            "forge test" || log_warn "forge test benchmark failed for $repo_name (Foundry $version)"
         
         # Benchmark 2: forge build (no cache)
         log_info "Running 'forge build' (no cache) benchmark for $repo_name (Foundry $version)..."
         hyperfine \
-            --runs 3 \
-            --cleanup 'forge clean' \
+            --runs 5 \
+            --prepare 'forge clean' \
             --export-json "${version_results_dir}/build_no_cache_results.json" \
-            "forge build" \
-            2>/dev/null || log_warn "forge build (no cache) benchmark failed for $repo_name (Foundry $version)"
+            "forge build" || log_warn "forge build (no cache) benchmark failed for $repo_name (Foundry $version)"
         
         # Benchmark 3: forge build (with cache)
         log_info "Running 'forge build' (with cache) benchmark for $repo_name (Foundry $version)..."
         # First build to populate cache
-        forge build > /dev/null 2>&1 || true
         hyperfine \
             --runs 5 \
+            --prepare 'forge build' \
             --warmup 1 \
             --export-json "${version_results_dir}/build_with_cache_results.json" \
-            "forge build" \
-            2>/dev/null || log_warn "forge build (with cache) benchmark failed for $repo_name (Foundry $version)"
+            "forge build" || log_warn "forge build (with cache) benchmark failed for $repo_name (Foundry $version)"
         
         # Store version info for this benchmark
         forge --version | head -n1 > "${version_results_dir}/forge_version.txt" 2>/dev/null || echo "unknown" > "${version_results_dir}/forge_version.txt"
@@ -281,7 +280,7 @@ compile_results() {
     log_info "Compiling multi-version benchmark results..."
     
     cat > "$RESULTS_FILE" << EOF
-# Foundry Multi-Version Benchmarking Results
+# Forge Benchmarking Results
 
 **Generated on:** $(date)
 **Hyperfine Version:** $(hyperfine --version)
@@ -293,8 +292,8 @@ compile_results() {
 This report contains comprehensive benchmarking results comparing different Foundry versions across multiple projects.
 The following benchmarks were performed:
 
-1. **forge test** - Running the test suite (3 runs, 1 warmup)
-2. **forge build (no cache)** - Clean build without cache (3 runs, cache cleaned after each run)
+1. **forge test** - Running the test suite (5 runs, 1 warmup)
+2. **forge build (no cache)** - Clean build without cache (5 runs, cache cleaned after each run)
 3. **forge build (with cache)** - Build with warm cache (5 runs, 1 warmup)
 
 ---
@@ -303,7 +302,7 @@ The following benchmarks were performed:
 
 EOF
 
-    # Create comparison tables for each benchmark type
+    # Create unified comparison tables for each benchmark type
     local benchmark_types=("test" "build_no_cache" "build_with_cache")
     local benchmark_names=("forge test" "forge build (no cache)" "forge build (with cache)")
     
@@ -313,26 +312,28 @@ EOF
         
         echo "### $bench_name" >> "$RESULTS_FILE"
         echo "" >> "$RESULTS_FILE"
-        echo "Times in seconds (lower is better):" >> "$RESULTS_FILE"
+        echo "Mean execution time in seconds (lower is better):" >> "$RESULTS_FILE"
         echo "" >> "$RESULTS_FILE"
         
-        # Create table header
-        echo -n "| Project " >> "$RESULTS_FILE"
+        # Create table header with proper column names
+        local header_row="| Project"
         for version in "${FOUNDRY_VERSIONS[@]}"; do
-            echo -n "| $version " >> "$RESULTS_FILE"
+            header_row+=" | $version (s)"
         done
-        echo "|" >> "$RESULTS_FILE"
+        header_row+=" |"
+        echo "$header_row" >> "$RESULTS_FILE"
         
-        # Create table separator
-        echo -n "|:---" >> "$RESULTS_FILE"
+        # Create table separator with proper alignment
+        local separator_row="|------"
         for version in "${FOUNDRY_VERSIONS[@]}"; do
-            echo -n "|---:" >> "$RESULTS_FILE"
+            separator_row+="|--------:"
         done
-        echo "|" >> "$RESULTS_FILE"
+        separator_row+="|"
+        echo "$separator_row" >> "$RESULTS_FILE"
         
         # Add data rows
         for repo_name in "${REPO_NAMES[@]}"; do
-            echo -n "| **$repo_name** " >> "$RESULTS_FILE"
+            local data_row="| **$repo_name**"
             
             for version in "${FOUNDRY_VERSIONS[@]}"; do
                 local clean_version="${version//v/}"
@@ -341,9 +342,10 @@ EOF
                 local json_file="${version_results_dir}/${bench_type}_results.json"
                 
                 local mean_time=$(extract_mean_time "$json_file")
-                echo -n "| $mean_time " >> "$RESULTS_FILE"
+                data_row+=" | $mean_time"
             done
-            echo "|" >> "$RESULTS_FILE"
+            data_row+=" |"
+            echo "$data_row" >> "$RESULTS_FILE"
         done
         echo "" >> "$RESULTS_FILE"
         echo "" >> "$RESULTS_FILE"
