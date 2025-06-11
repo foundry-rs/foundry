@@ -37,6 +37,7 @@ use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
 use foundry_evm_core::ic::decode_instructions;
 use futures::{future::Either, FutureExt, StreamExt};
+use op_alloy_consensus::OpTxEnvelope;
 use rayon::prelude::*;
 use std::{
     borrow::Cow,
@@ -789,7 +790,10 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         };
 
         Ok(if raw {
-            format!("0x{}", hex::encode(tx.inner.inner.encoded_2718()))
+            // also consider opstack deposit transactions
+            let either_tx = tx.try_into_either::<OpTxEnvelope>()?;
+            let encoded = either_tx.encoded_2718();
+            format!("0x{}", hex::encode(encoded))
         } else if let Some(field) = field {
             get_pretty_tx_attr(&tx.inner, field.as_str())
                 .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?
