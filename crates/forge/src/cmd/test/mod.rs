@@ -935,10 +935,8 @@ pub fn last_run_failures_qualified(config: &Config) -> Option<Vec<(String, Strin
                 }
             } else if content.contains('_') {
                 // Multiple qualified failures separated by |
-                let failures = content
-                    .split('|')
-                    .filter_map(split_qualified_test_name)
-                    .collect::<Vec<_>>();
+                let failures =
+                    content.split('|').filter_map(split_qualified_test_name).collect::<Vec<_>>();
                 if failures.is_empty() {
                     None
                 } else {
