@@ -1107,7 +1107,7 @@ shrink_run_limit = 5000
 max_assume_rejects = 65536
 gas_report_samples = 256
 failure_persist_dir = "cache/invariant"
-show_metrics = false
+show_metrics = true
 show_solidity = false
 
 [labels]
@@ -1214,7 +1214,7 @@ exclude = []
     "max_assume_rejects": 65536,
     "gas_report_samples": 256,
     "failure_persist_dir": "cache/invariant",
-    "show_metrics": false,
+    "show_metrics": true,
     "timeout": null,
     "show_solidity": false
   },
