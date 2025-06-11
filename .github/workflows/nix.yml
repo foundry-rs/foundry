@@ -6,7 +6,6 @@ on:
     - cron: "0 0 * * SUN"
   workflow_dispatch:
     # Needed so we can run it manually
-  push:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
