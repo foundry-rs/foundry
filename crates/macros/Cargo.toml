@@ -19,7 +19,7 @@ test = false
 doc = false
 
 [dependencies]
+proc-macro-error2 = "2"
 proc-macro2.workspace = true
 quote.workspace = true
 syn.workspace = true
-proc-macro-error2 = "2"

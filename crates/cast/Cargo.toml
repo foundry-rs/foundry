@@ -34,6 +34,7 @@ alloy-chains.workspace = true
 alloy-consensus = { workspace = true, features = ["serde", "kzg"] }
 alloy-contract.workspace = true
 alloy-dyn-abi.workspace = true
+alloy-ens = { workspace = true, features = ["provider"] }
 alloy-json-abi.workspace = true
 alloy-json-rpc.workspace = true
 alloy-network.workspace = true
@@ -52,7 +53,6 @@ alloy-signer-local = { workspace = true, features = ["mnemonic", "keystore"] }
 alloy-signer.workspace = true
 alloy-sol-types.workspace = true
 alloy-transport.workspace = true
-alloy-ens = { workspace = true, features = ["provider"] }
 
 op-alloy-flz.workspace = true
 op-alloy-consensus = { workspace = true, features = ["alloy-compat"] }
@@ -75,6 +75,7 @@ clap_complete = "4"
 clap_complete_fig = "4"
 comfy-table.workspace = true
 dunce.workspace = true
+evmole.workspace = true
 itertools.workspace = true
 regex = { workspace = true, default-features = false }
 rpassword = "7"
@@ -83,7 +84,6 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "signal"] }
 tracing.workspace = true
 yansi.workspace = true
-evmole.workspace = true
 
 [dev-dependencies]
 anvil.workspace = true

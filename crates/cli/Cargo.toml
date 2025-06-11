@@ -14,29 +14,30 @@ workspace = true
 
 [dependencies]
 forge-fmt.workspace = true
+foundry-block-explorers.workspace = true
 foundry-common.workspace = true
 foundry-config.workspace = true
 foundry-debugger.workspace = true
 foundry-evm.workspace = true
 foundry-wallets.workspace = true
-foundry-block-explorers.workspace = true
 
 foundry-compilers = { workspace = true, features = ["full"] }
 solar-sema.workspace = true
 
-alloy-eips.workspace = true
+alloy-chains.workspace = true
 alloy-dyn-abi.workspace = true
+alloy-eips.workspace = true
+alloy-ens = { workspace = true, features = ["provider"] }
 alloy-json-abi.workspace = true
 alloy-primitives.workspace = true
 alloy-provider.workspace = true
 alloy-rlp.workspace = true
-alloy-chains.workspace = true
-alloy-ens = { workspace = true, features = ["provider"] }
 
 cfg-if = "1.0"
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 color-eyre.workspace = true
 dotenvy = "0.15"
+dunce.workspace = true
 eyre.workspace = true
 futures.workspace = true
 indicatif.workspace = true
@@ -44,6 +45,7 @@ itertools.workspace = true
 mimalloc = { workspace = true, optional = true }
 rayon.workspace = true
 regex = { workspace = true, default-features = false }
+rustls = { workspace = true, features = ["ring"] }
 serde_json.workspace = true
 serde.workspace = true
 strsim = "0.11"
@@ -53,8 +55,6 @@ tracing-subscriber = { workspace = true, features = ["registry", "env-filter"] }
 tracing.workspace = true
 tracy-client = { workspace = true, optional = true, features = ["demangle"] }
 yansi.workspace = true
-rustls = { workspace = true, features = ["ring"] }
-dunce.workspace = true
 
 tracing-tracy = { version = "0.11", optional = true }
 

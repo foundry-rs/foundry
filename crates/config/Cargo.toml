@@ -25,6 +25,7 @@ revm.workspace = true
 solar-parse.workspace = true
 solar-interface.workspace = true
 
+clap = { version = "4", features = ["derive"] }
 dirs.workspace = true
 dunce.workspace = true
 eyre.workspace = true
@@ -47,7 +48,6 @@ toml_edit = "0.22"
 tracing.workspace = true
 walkdir.workspace = true
 yansi.workspace = true
-clap = { version = "4", features = ["derive"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 path-slash = "0.2"

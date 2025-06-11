@@ -18,6 +18,7 @@ foundry-cheatcodes-spec.workspace = true
 foundry-common.workspace = true
 foundry-config.workspace = true
 foundry-evm-abi.workspace = true
+foundry-fork-db.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-evm.workspace = true
@@ -34,7 +35,6 @@ alloy-network.workspace = true
 alloy-consensus.workspace = true
 alloy-rpc-types.workspace = true
 alloy-sol-types.workspace = true
-foundry-fork-db.workspace = true
 
 revm = { workspace = true, features = [
     "std",
