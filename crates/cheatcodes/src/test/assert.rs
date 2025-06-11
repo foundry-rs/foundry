@@ -452,15 +452,6 @@ impl_assertions! {
     (assertApproxEqRelDecimal_2Call, assertApproxEqRelDecimal_3Call),
 }
 
-/// Calculates the relative delta an absolute difference.
-///
-/// Avoids overflow in the multiplication by using [`U512`] to hold the intermediary result.
-fn calc_delta_full<T>(abs_diff: U256, right: U256) -> Result<U256, EqRelAssertionError<T>> {
-    let delta = U512::from(abs_diff) * U512::from(10).pow(U512::from(EQ_REL_DELTA_RESOLUTION))
-        / U512::from(right);
-    U256::checked_from_limbs_slice(delta.as_limbs()).ok_or(EqRelAssertionError::Overflow)
-}
-
 fn assert_true(condition: bool) -> Result<Vec<u8>, SimpleAssertionError> {
     if condition {
         Ok(Default::default())
@@ -493,6 +484,30 @@ fn assert_not_eq<'a, T: PartialEq>(left: &'a T, right: &'a T) -> ComparisonResul
     }
 }
 
+fn get_delta_int(left: I256, right: I256) -> U256 {
+    let (left_sign, left_abs) = left.into_sign_and_abs();
+    let (right_sign, right_abs) = right.into_sign_and_abs();
+
+    if left_sign == right_sign {
+        if left_abs > right_abs {
+            left_abs - right_abs
+        } else {
+            right_abs - left_abs
+        }
+    } else {
+        left_abs + right_abs
+    }
+}
+
+/// Calculates the relative delta an absolute difference.
+///
+/// Avoids overflow in the multiplication by using [`U512`] to hold the intermediary result.
+fn calc_delta_full<T>(abs_diff: U256, right: U256) -> Result<U256, EqRelAssertionError<T>> {
+    let delta = U512::from(abs_diff) * U512::from(10).pow(U512::from(EQ_REL_DELTA_RESOLUTION))
+        / U512::from(right);
+    U256::checked_from_limbs_slice(delta.as_limbs()).ok_or(EqRelAssertionError::Overflow)
+}
+
 fn uint_assert_approx_eq_abs(
     left: U256,
     right: U256,
@@ -512,7 +527,7 @@ fn int_assert_approx_eq_abs(
     right: I256,
     max_delta: U256,
 ) -> Result<Vec<u8>, Box<EqAbsAssertionError<I256, U256>>> {
-    let delta = (left - right).unsigned_abs();
+    let delta = get_delta_int(left, right);
 
     if delta <= max_delta {
         Ok(Default::default())
@@ -571,7 +586,7 @@ fn int_assert_approx_eq_rel(
         }
     }
 
-    let delta = calc_delta_full::<I256>((left - right).unsigned_abs(), right.unsigned_abs())?;
+    let delta = calc_delta_full::<I256>(get_delta_int(left, right), right.unsigned_abs())?;
 
     if delta <= max_delta {
         Ok(Default::default())
