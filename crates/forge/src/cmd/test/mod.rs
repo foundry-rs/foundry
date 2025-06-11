@@ -937,7 +937,7 @@ pub fn last_run_failures_qualified(config: &Config) -> Option<Vec<(String, Strin
                 // Multiple qualified failures separated by |
                 let failures = content
                     .split('|')
-                    .filter_map(|part| split_qualified_test_name(part))
+                    .filter_map(split_qualified_test_name)
                     .collect::<Vec<_>>();
                 if failures.is_empty() {
                     None
