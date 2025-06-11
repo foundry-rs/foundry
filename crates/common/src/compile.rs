@@ -9,6 +9,7 @@ use crate::{
 };
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Color, Table};
 use eyre::Result;
+use forge_lint::{linter::Linter, sol::SolidityLinter};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     artifacts::{remappings::Remapping, BytecodeObject, Contract, Source},
@@ -20,6 +21,7 @@ use foundry_compilers::{
     project::Preprocessor,
     report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
+    utils::source_files_iter,
     Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
 };
 use num_format::{Locale, ToFormattedString};
@@ -64,6 +66,9 @@ pub struct ProjectCompiler {
 
     /// Whether to compile with dynamic linking tests and scripts.
     dynamic_test_linking: bool,
+
+    /// Optional linter to run on Solidity files during compilation.
+    linter: Option<SolidityLinter>,
 }
 
 impl Default for ProjectCompiler {
@@ -87,6 +92,7 @@ impl ProjectCompiler {
             ignore_eip_3860: false,
             files: Vec::new(),
             dynamic_test_linking: false,
+            linter: None,
         }
     }
 
@@ -144,6 +150,13 @@ impl ProjectCompiler {
     #[inline]
     pub fn dynamic_test_linking(mut self, preprocess: bool) -> Self {
         self.dynamic_test_linking = preprocess;
+        self
+    }
+
+    /// Sets the linter to run on Solidity files during compilation.
+    #[inline]
+    pub fn linter(mut self, linter: SolidityLinter) -> Self {
+        self.linter = Some(linter);
         self
     }
 
@@ -207,6 +220,13 @@ impl ProjectCompiler {
     {
         let quiet = self.quiet.unwrap_or(false);
         let bail = self.bail.unwrap_or(true);
+
+        // Run linting before compilation if linter is configured and we're not in quiet mode
+        if let Some(linter) = &self.linter {
+            if !quiet {
+                self.run_linter(linter)?;
+            }
+        }
 
         let output = with_compilation_reporter(quiet, || {
             tracing::debug!("compiling project");
@@ -334,6 +354,23 @@ impl ProjectCompiler {
                 "some contracts exceed the initcode size limit \
                  (EIP-3860: {CONTRACT_INITCODE_SIZE_LIMIT} bytes)"
             );
+        }
+
+        Ok(())
+    }
+
+    /// Runs the configured linter on project source files
+    fn run_linter(&self, linter: &SolidityLinter) -> Result<()> {
+        // Collect Solidity source files from the project root
+        let solidity_files: Vec<_> = source_files_iter(
+            &self.project_root,
+            &["sol"], // Only Solidity files
+        )
+        .filter(|path| path.extension().is_some_and(|ext| ext == "sol"))
+        .collect();
+
+        if !solidity_files.is_empty() {
+            linter.lint(&solidity_files);
         }
 
         Ok(())
