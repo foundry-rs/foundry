@@ -34,6 +34,9 @@ jobs:
       - uses: cachix/install-nix-action@v30
       - uses: actions/checkout@v4
 
+      - name: Update flake.lock
+        run: nix flake update
+
       - name: Activate nix env
         run: nix develop -c echo Ok
 
