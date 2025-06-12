@@ -1,39 +1,29 @@
 #!/bin/bash
 
-# Foundry Multi-Version Benchmarking Suite using hyperfine
+# Foundry Multi-Version Benchmarking Suite
 # This script benchmarks forge test and forge build commands across multiple repositories
 # and multiple Foundry versions for comprehensive performance comparison
 
 set -e
 
-# Configuration
+# Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Configuration
 BENCHMARK_DIR="${SCRIPT_DIR}/benchmark_repos"
 RESULTS_DIR="${SCRIPT_DIR}/benchmark_results"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 RESULTS_FILE="${RESULTS_DIR}/foundry_multi_version_benchmark_${TIMESTAMP}.md"
+LATEST_RESULTS_FILE="${SCRIPT_DIR}/LATEST.md"
 JSON_RESULTS_DIR="${RESULTS_DIR}/json_${TIMESTAMP}"
 
-# Foundry versions to benchmark (can be modified via command line)
-DEFAULT_FOUNDRY_VERSIONS=("stable" "nightly-ac0411d0e3b9632247c9aea9535472eda09a57ae" "nightly") # nightly-ac0 with linter not included in forge build.
-FOUNDRY_VERSIONS=("${FOUNDRY_VERSIONS[@]:-${DEFAULT_FOUNDRY_VERSIONS[@]}}")
+# Load configuration
+source "${SCRIPT_DIR}/repos_and_versions.sh"
 
-# Repository configurations
-REPO_NAMES=(
-    "account"
-    "v4-core"
-    "solady"
-    "morpho-blue"
-    "spark-psm"
-)
-
-REPO_URLS=(
-    "https://github.com/ithacaxyz/account"
-    "https://github.com/Uniswap/v4-core"
-    "https://github.com/Vectorized/solady"
-    "https://github.com/morpho-org/morpho-blue"
-    "https://github.com/sparkdotfi/spark-psm"
-)
+# Load benchmark commands
+source "${SCRIPT_DIR}/commands/forge_test.sh"
+source "${SCRIPT_DIR}/commands/forge_build_no_cache.sh"
+source "${SCRIPT_DIR}/commands/forge_build_with_cache.sh"
 
 # Colors for output
 RED='\033[0;31m'
@@ -146,7 +136,7 @@ install_dependencies() {
     cd "$repo_dir"
     
     # Install forge dependencies
-    if [ -f "foundry.toml" ] || [ -f "forge.toml" ]; then
+    if [ -f "foundry.toml" ]; then
         forge install 2>/dev/null || true
     fi
     
@@ -165,7 +155,6 @@ benchmark_repository_for_version() {
     local repo_name=$1
     local version=$2
     local repo_dir="${BENCHMARK_DIR}/${repo_name}"
-    local log_prefix="[$repo_name:$version]"
     
     # Create a unique log file for this repo+version combination
     local log_file="${JSON_RESULTS_DIR}/${repo_name}_${version//[^a-zA-Z0-9]/_}_benchmark.log"
@@ -196,43 +185,19 @@ benchmark_repository_for_version() {
         
         echo "Running benchmarks for $repo_name with Foundry $version..."
         
-        # Benchmark 1: forge test
-        echo "Running 'forge test' benchmark..."
-        if hyperfine \
-            --runs 5 \
-            --prepare 'forge build' \
-            --warmup 1 \
-            --export-json "${version_results_dir}/test_results.json" \
-            "forge test" 2>>"$log_file.error"; then
-            echo "✓ forge test completed"
-        else
-            echo "✗ forge test failed"
-        fi
-        
-        # Benchmark 2: forge build (no cache)
-        echo "Running 'forge build' (no cache) benchmark..."
-        if hyperfine \
-            --runs 5 \
-            --prepare 'forge clean' \
-            --export-json "${version_results_dir}/build_no_cache_results.json" \
-            "forge build" 2>>"$log_file.error"; then
-            echo "✓ forge build (no cache) completed"
-        else
-            echo "✗ forge build (no cache) failed"
-        fi
-        
-        # Benchmark 3: forge build (with cache)
-        echo "Running 'forge build' (with cache) benchmark..."
-        if hyperfine \
-            --runs 5 \
-            --prepare 'forge build' \
-            --warmup 1 \
-            --export-json "${version_results_dir}/build_with_cache_results.json" \
-            "forge build" 2>>"$log_file.error"; then
-            echo "✓ forge build (with cache) completed"
-        else
-            echo "✗ forge build (with cache) failed"
-        fi
+        # Run all benchmark commands - fail fast if any command fails
+        benchmark_forge_test "$repo_name" "$version" "$version_results_dir" "$log_file" || {
+            echo "FATAL: forge test benchmark failed for $repo_name with Foundry $version" >> "$log_file"
+            exit 1
+        }
+        benchmark_forge_build_no_cache "$repo_name" "$version" "$version_results_dir" "$log_file" || {
+            echo "FATAL: forge build (no cache) benchmark failed for $repo_name with Foundry $version" >> "$log_file"
+            exit 1
+        }
+        benchmark_forge_build_with_cache "$repo_name" "$version" "$version_results_dir" "$log_file" || {
+            echo "FATAL: forge build (with cache) benchmark failed for $repo_name with Foundry $version" >> "$log_file"
+            exit 1
+        }
         
         # Store version info for this benchmark
         forge --version | head -n1 > "${version_results_dir}/forge_version.txt" 2>/dev/null || echo "unknown" > "${version_results_dir}/forge_version.txt"
@@ -258,7 +223,6 @@ benchmark_all_repositories_parallel() {
         
         # Launch all repositories in parallel
         local pids=()
-        local failed_repos=()
         
         for repo_name in "${REPO_NAMES[@]}"; do
             # Check if repo directory exists and is valid before starting background process
@@ -290,7 +254,8 @@ benchmark_all_repositories_parallel() {
                 completed=$((completed + 1))
                 log_info "Progress: $completed/$total repositories completed for Foundry $version"
             else
-                log_warn "One benchmark process failed (PID: $pid)"
+                log_error "Benchmark process failed (PID: $pid) for Foundry $version"
+                exit 1
             fi
         done
         
@@ -300,7 +265,6 @@ benchmark_all_repositories_parallel() {
         log_info "Individual benchmark logs available in: ${JSON_RESULTS_DIR}/*_${version//[^a-zA-Z0-9]/_}_benchmark.log"
     done
 }
-
 
 # Extract mean time from JSON result file
 extract_mean_time() {
@@ -334,7 +298,7 @@ get_forge_version() {
 
 # Compile results into markdown with comparison tables
 compile_results() {
-    log_info "Compiling multi-version benchmark results..."
+    log_info "Compiling benchmark results..."
     
     cat > "$RESULTS_FILE" << EOF
 # Forge Benchmarking Results
@@ -349,9 +313,9 @@ compile_results() {
 This report contains comprehensive benchmarking results comparing different Foundry versions across multiple projects.
 The following benchmarks were performed:
 
-1. **forge test** - Running the test suite (5 runs, 1 warmup)
-2. **forge build (no cache)** - Clean build without cache (5 runs, cache cleaned after each run)
-3. **forge build (with cache)** - Build with warm cache (5 runs, 1 warmup)
+1. **$(get_forge_test_description)**
+2. **$(get_forge_build_no_cache_description)**
+3. **$(get_forge_build_with_cache_description)**
 
 ---
 
@@ -360,12 +324,12 @@ The following benchmarks were performed:
 EOF
 
     # Create unified comparison tables for each benchmark type
-    local benchmark_types=("test" "build_no_cache" "build_with_cache")
-    local benchmark_names=("forge test" "forge build (no cache)" "forge build (with cache)")
+    local benchmark_commands=("forge_test" "forge_build_no_cache" "forge_build_with_cache")
     
-    for i in "${!benchmark_types[@]}"; do
-        local bench_type="${benchmark_types[$i]}"
-        local bench_name="${benchmark_names[$i]}"
+    for cmd in "${benchmark_commands[@]}"; do
+        local bench_name="${cmd//_/ }"
+        local bench_type=$(get_${cmd}_type)
+        local json_filename=$(get_${cmd}_json_filename)
         
         echo "### $bench_name" >> "$RESULTS_FILE"
         echo "" >> "$RESULTS_FILE"
@@ -396,7 +360,7 @@ EOF
                 local clean_version="${version//v/}"
                 clean_version="${clean_version//\./_}"
                 local version_results_dir="${JSON_RESULTS_DIR}/${repo_name}_${clean_version}"
-                local json_file="${version_results_dir}/${bench_type}_results.json"
+                local json_file="${version_results_dir}/${json_filename}"
                 
                 local mean_time=$(extract_mean_time "$json_file")
                 data_row+=" | $mean_time"
@@ -437,10 +401,10 @@ EOF
 
 ## Notes
 
-- All benchmarks were run with hyperfine
-- **forge test**: 3 runs with 1 warmup per version
-- **forge build (no cache)**: 3 runs with cache cleanup after each run
-- **forge build (with cache)**: 5 runs with 1 warmup on pre-warmed cache
+- All benchmarks were run with hyperfine in parallel mode
+- **$(get_forge_test_description)**
+- **$(get_forge_build_no_cache_description)**
+- **$(get_forge_build_with_cache_description)**
 - Results show mean execution time in seconds
 - N/A indicates benchmark failed or data unavailable
 
@@ -455,11 +419,14 @@ EOF
 Raw JSON benchmark data is available in: \`$JSON_RESULTS_DIR\`
 
 EOF
+
+    # Copy to LATEST.md
+    cp "$RESULTS_FILE" "$LATEST_RESULTS_FILE"
+    log_success "Latest results also saved to: $LATEST_RESULTS_FILE"
 }
 
 # Cleanup temporary files
 cleanup() {
-    # Clean up any temporary files (currently none used in multi-version approach)
     log_info "Cleanup completed"
 }
 
@@ -483,16 +450,16 @@ main() {
     done
     
     # Run benchmarks in parallel
-    log_info "Using parallel execution mode"
     benchmark_all_repositories_parallel
     
     # Compile results
     compile_results
     
-    log_success "Multi-version benchmarking complete!"
+    log_success "Benchmarking complete!"
     log_success "Results saved to: $RESULTS_FILE"
+    log_success "Latest results: $LATEST_RESULTS_FILE"
     log_success "Raw JSON data saved to: $JSON_RESULTS_DIR"
-    log_info "You can view the results with: cat $RESULTS_FILE"
+    log_info "You can view the results with: cat $LATEST_RESULTS_FILE"
 }
 
 # Parse command line arguments
@@ -513,7 +480,7 @@ parse_args() {
                 done
                 ;;
             --help|-h)
-                echo "Foundry Multi-Version Benchmarking Suite"
+                echo "Foundry Benchmarking Suite"
                 echo ""
                 echo "Usage: $0 [OPTIONS]"
                 echo ""
@@ -521,7 +488,7 @@ parse_args() {
                 echo "  --help, -h                Show this help message"
                 echo "  --version, -v             Show version information"
                 echo "  --versions <v1> <v2> ...  Specify Foundry versions to benchmark"
-                echo "                            (default: stable nightly v1.0.0)"
+                echo "                            (default: from repos_and_versions.sh)"
                 echo ""
                 echo "EXAMPLES:"
                 echo "  $0                                    # Use default versions (parallel)"
@@ -530,11 +497,7 @@ parse_args() {
                 echo ""
                 echo "This script benchmarks forge test and forge build commands across"
                 echo "multiple Foundry repositories and versions using hyperfine."
-                echo ""
-                echo "EXECUTION MODE:"
-                echo "  - Parallel: Install each Foundry version once, then run all repositories"
-                echo "    in parallel for that version. This provides much better performance."
-                echo ""
+
                 echo "Supported version formats:"
                 echo "  - stable, nightly (special tags)"
                 echo "  - v1.0.0, v1.1.0, etc. (specific versions)"
@@ -547,10 +510,10 @@ parse_args() {
                 echo "  3. Install each specified Foundry version"
                 echo "  4. Run benchmarks for each repo with each version in parallel"
                 echo "  5. Generate comparison tables in markdown format"
+                echo "  6. Save results to LATEST.md"
                 exit 0
                 ;;
             --version|-v)
-                echo "Foundry Multi-Version Benchmarking Suite v2.0.0"
                 exit 0
                 ;;
             *)
