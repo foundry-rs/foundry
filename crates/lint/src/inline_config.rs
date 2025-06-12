@@ -80,7 +80,12 @@ impl InlineConfig {
     /// # Panics
     ///
     /// Panics if `items` is not sorted in ascending order of [`Span`]s.
-    pub fn new(items: impl IntoIterator<Item = (Span, InlineConfigItem)>, src: &str) -> Self {
+    pub fn new(
+        items: impl IntoIterator<Item = (Span, InlineConfigItem)>,
+        lints: &[&'static str],
+        src: &str,
+    ) -> (Self, Vec<(String, Span)>) {
+        let mut invalid_ids: Vec<(String, Span)> = Vec::new();
         let mut disabled_ranges: HashMap<String, Vec<DisabledRange>> = HashMap::new();
         let mut disabled_blocks: HashMap<String, (usize, usize)> = HashMap::new();
         let mut prev_sp = Span::DUMMY;
@@ -92,6 +97,11 @@ impl InlineConfig {
 
             match item {
                 InlineConfigItem::DisableNextItem(lint) => {
+                    let lint = match validate_id(&mut invalid_ids, lints, lint, sp) {
+                        Some(lint) => lint,
+                        None => continue,
+                    };
+
                     use RawTokenKind::*;
                     let offset = sp.hi().to_usize();
                     let mut idx = offset;
@@ -119,6 +129,11 @@ impl InlineConfig {
                     }
                 }
                 InlineConfigItem::DisableLine(lint) => {
+                    let lint = match validate_id(&mut invalid_ids, lints, lint, sp) {
+                        Some(lint) => lint,
+                        None => continue,
+                    };
+
                     let mut prev_newline = src[..sp.lo().to_usize()]
                         .char_indices()
                         .rev()
@@ -137,6 +152,11 @@ impl InlineConfig {
                         .or_insert(vec![range]);
                 }
                 InlineConfigItem::DisableNextLine(lint) => {
+                    let lint = match validate_id(&mut invalid_ids, lints, lint, sp) {
+                        Some(lint) => lint,
+                        None => continue,
+                    };
+
                     let offset = sp.hi().to_usize();
                     let mut char_indices =
                         src[offset..].char_indices().skip_while(|(_, ch)| *ch != '\n').skip(1);
@@ -154,12 +174,22 @@ impl InlineConfig {
                     }
                 }
                 InlineConfigItem::DisableStart(lint) => {
+                    let lint = match validate_id(&mut invalid_ids, lints, lint, sp) {
+                        Some(lint) => lint,
+                        None => continue,
+                    };
+
                     disabled_blocks
                         .entry(lint)
                         .and_modify(|(_, depth)| *depth += 1)
                         .or_insert((sp.hi().to_usize(), 1));
                 }
                 InlineConfigItem::DisableEnd(lint) => {
+                    let lint = match validate_id(&mut invalid_ids, lints, lint, sp) {
+                        Some(lint) => lint,
+                        None => continue,
+                    };
+
                     if let Some((start, depth)) = disabled_blocks.get_mut(&lint) {
                         *depth = depth.saturating_sub(1);
 
@@ -182,10 +212,11 @@ impl InlineConfig {
             let range = DisabledRange { start, end: src.len(), loose: false };
             disabled_ranges.entry(lint).and_modify(|r| r.push(range)).or_insert(vec![range]);
         }
-        Self { disabled_ranges }
+
+        (Self { disabled_ranges }, invalid_ids)
     }
 
-    /// Check if the lint location is in a disabled range
+    /// Check if the lint location is in a disabled range.
     pub fn is_disabled(&self, span: Span, lint: &str) -> bool {
         if let Some(ranges) = self.disabled_ranges.get(lint) {
             return ranges.iter().any(|range| range.includes(span.to_range()));
@@ -197,9 +228,24 @@ impl InlineConfig {
 
         false
     }
+}
 
-    ///
-    pub fn lints_ids(&self) -> impl Iterator<Item = &String> + '_ {
-        self.disabled_ranges.iter().map(|(k, _)| k)
+/// Check if a set of lints contains a given (inline) lint id. If not, the invalid collector is
+/// updated.
+///
+/// Returns a boolan, so that the item can be skipped if the lint id is invalid.
+fn validate_id(
+    invalid_ids: &mut Vec<(String, Span)>,
+    lints: &[&'static str],
+    id: String,
+    span: Span,
+) -> Option<String> {
+    for lint in lints {
+        if *lint == id {
+            return Some(id);
+        }
     }
+
+    invalid_ids.push((id, span));
+    None
 }
