@@ -2,7 +2,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-pub mod comment;
+pub(crate) mod comment;
 pub mod comments;
 pub mod inline_config;
 pub mod linter;

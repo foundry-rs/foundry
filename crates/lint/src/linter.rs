@@ -1,12 +1,14 @@
 use foundry_compilers::Language;
 use foundry_config::lint::Severity;
-use solar_ast::{visit::Visit, Expr, ItemFunction, ItemStruct, VariableDefinition};
+use solar_ast::{Expr, ItemFunction, ItemStruct, VariableDefinition, visit::Visit};
 use solar_interface::{
+    Session, Span,
     data_structures::Never,
     diagnostics::{DiagBuilder, DiagId, MultiSpan},
-    Session, Span,
 };
 use std::{ops::ControlFlow, path::PathBuf};
+
+use crate::inline_config::InlineConfig;
 
 /// Trait representing a generic linter for analyzing and reporting issues in smart contract source
 /// code files. A linter can be implemented for any smart contract language supported by Foundry.
@@ -36,17 +38,18 @@ pub trait Lint {
 
 pub struct LintContext<'s> {
     sess: &'s Session,
-    desc: bool,
+    with_description: bool,
+    inline_config: InlineConfig,
 }
 
 impl<'s> LintContext<'s> {
-    pub fn new(sess: &'s Session, with_description: bool) -> Self {
-        Self { sess, desc: with_description }
+    pub fn new(sess: &'s Session, with_description: bool, config: InlineConfig) -> Self {
+        Self { sess, with_description, inline_config: config }
     }
 
     // Helper method to emit diagnostics easily from passes
     pub fn emit<L: Lint>(&self, lint: &'static L, span: Span) {
-        let desc = if self.desc { lint.description() } else { "" };
+        let desc = if self.with_description { lint.description() } else { "" };
         let diag: DiagBuilder<'_, ()> = self
             .sess
             .dcx
