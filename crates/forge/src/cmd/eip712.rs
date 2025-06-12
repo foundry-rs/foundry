@@ -9,7 +9,11 @@ use solar_sema::{
     ty::{Ty, TyKind},
     GcxWrapper, Hir,
 };
-use std::{collections::BTreeMap, fmt::Write, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    fmt::Write,
+    path::{Path, PathBuf},
+};
 
 foundry_config::impl_figment_convert!(Eip712Args, build);
 
@@ -82,7 +86,8 @@ impl<'hir> Resolver<'hir> {
         let strukt = self.hir.strukt(id).name.as_str();
         self.hir.strukt(id).contract.map_or(String::new(), |cid| {
             let full_name = self.gcx.get().contract_fully_qualified_name(cid).to_string();
-            let relevant = full_name.rsplit_once('/').map_or(&*full_name, |(_, part)| part);
+            let relevant =
+                Path::new(&full_name).file_name().and_then(|s| s.to_str()).unwrap_or(&full_name);
 
             if let Some((file, contract)) = relevant.rsplit_once(':') {
                 format!("{file} > {contract} > {strukt}")
