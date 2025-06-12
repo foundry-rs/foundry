@@ -5,7 +5,22 @@ contract AsmKeccak256 {
     bytes32 constant OTHER_HASH = keccak256(1234);
 
     constructor(uint256 a, uint256 b) {
-        keccak256(abi.encodePacked(a, b)); //~NOTE: hash using inline assembly to save gas
+        // forgelint: disable-next-line(asm-keccak256)
+        keccak256(abi.encodePacked(a, b));
+
+        keccak256(abi.encodePacked(a, b)); // forgelint: disable-line(asm-keccak256)
+
+        // forgelint: disable-start(asm-keccak256) ------
+        keccak256(abi.encodePacked(a, b)); //           |
+                                           //           |
+        // forgelint: disable-start(asm-keccak256) ---  |
+        keccak256(abi.encodePacked(a, b)); //         | |
+                                           //         | |
+        // forgelint: disable-end(asm-keccak256) -----  |
+        // forgelint: disable-end(asm-keccak256) --------
+
+        // forgelint: disable-next-line(invalid)
+        keccak256(abi.encodePacked(a, b));
     }
 
     function solidityHash(uint256 a, uint256 b) public view returns (bytes32) {

@@ -1,15 +1,15 @@
 note[asm-keccak256]: hash using inline assembly to save gas
- --> ROOT/testdata/Keccak256.sol:LL:CC
-  |
-8 |         keccak256(abi.encodePacked(a, b));
-  |         ---------
-  |
-  = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+  --> ROOT/testdata/Keccak256.sol:LL:CC
+   |
+22 |         keccak256(abi.encodePacked(a, b));
+   |         ---------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
 
 note[asm-keccak256]: hash using inline assembly to save gas
   --> ROOT/testdata/Keccak256.sol:LL:CC
    |
-12 |         bytes32 hash = keccak256(a);
+26 |         bytes32 hash = keccak256(a);
    |                        ---------
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
@@ -17,7 +17,7 @@ note[asm-keccak256]: hash using inline assembly to save gas
 note[asm-keccak256]: hash using inline assembly to save gas
   --> ROOT/testdata/Keccak256.sol:LL:CC
    |
-13 |         return keccak256(abi.encodePacked(a, b));
+27 |         return keccak256(abi.encodePacked(a, b));
    |                ---------
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256

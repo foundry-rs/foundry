@@ -88,6 +88,19 @@ impl SolidityLinter {
                 passes_and_lints.extend(gas::create_lint_passes());
             }
 
+            // Initialize the parser, get the AST, and process the inline-config
+            let mut parser = solar_parse::Parser::from_file(sess, &arena, path)?;
+            let file = sess
+                .source_map()
+                .load_file(&path)
+                .map_err(|e| sess.dcx.err(e.to_string()).emit())?;
+            let source = file.src.as_str();
+            let comments = Comments::new(&file);
+            let ast = parser.parse_file().map_err(|e| e.emit())?;
+            let inline_config = parse_inline_config(&sess, &comments, source);
+
+            validate_inline_lints(sess, &inline_config, &passes_and_lints);
+
             // Filter based on linter config
             let mut passes: Vec<Box<dyn EarlyLintPass<'_>>> = passes_and_lints
                 .into_iter()
@@ -112,17 +125,6 @@ impl SolidityLinter {
                     }
                 })
                 .collect();
-
-            // Initialize the parser and get the AST
-            let mut parser = solar_parse::Parser::from_file(sess, &arena, path)?;
-            let file = sess
-                .source_map()
-                .load_file(&path)
-                .map_err(|e| sess.dcx.err(e.to_string()).emit())?;
-            let source = file.src.as_str();
-            let comments = Comments::new(&file);
-            let ast = parser.parse_file().map_err(|e| e.emit())?;
-            let inline_config = parse_inline_config(&sess, &comments, source);
 
             // Initialize and run the visitor
             let ctx = LintContext::new(sess, self.with_description, inline_config);
@@ -166,7 +168,20 @@ impl Linter for SolidityLinter {
     }
 }
 
-fn parse_inline_config(sess: &Session, comments: &Comments, src: &str) -> InlineConfig {
+fn validate_inline_lints(
+    sess: &Session,
+    config: &InlineConfig,
+    passes_and_lints: &[(Box<dyn EarlyLintPass<'_>>, SolLint)],
+) {
+    for id in config.lints_ids() {
+        if !passes_and_lints.iter().any(|(_, lint)| id == lint.id()) {
+            let msg = format!("invalid lint id: {id}");
+            sess.dcx.err(msg).emit();
+        }
+    }
+}
+
+fn parse_inline_config<'s>(sess: &Session, comments: &Comments, src: &'s str) -> InlineConfig {
     let items = comments.iter().filter_map(|comment| {
         let mut item = comment.lines.first()?.as_str();
         if let Some(prefix) = comment.prefix() {
@@ -175,7 +190,7 @@ fn parse_inline_config(sess: &Session, comments: &Comments, src: &str) -> Inline
         if let Some(suffix) = comment.suffix() {
             item = item.strip_suffix(suffix).unwrap_or(item);
         }
-        let item = item.trim_start().strip_prefix("forgefmt:")?.trim();
+        let item = item.trim_start().strip_prefix("forgelint:")?.trim();
         let span = comment.span;
         match item.parse::<InlineConfigItem>() {
             Ok(item) => Some((span, item)),

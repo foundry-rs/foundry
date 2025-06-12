@@ -39,7 +39,7 @@ pub trait Lint {
 pub struct LintContext<'s> {
     sess: &'s Session,
     with_description: bool,
-    inline_config: InlineConfig,
+    pub inline_config: InlineConfig,
 }
 
 impl<'s> LintContext<'s> {
@@ -49,6 +49,10 @@ impl<'s> LintContext<'s> {
 
     // Helper method to emit diagnostics easily from passes
     pub fn emit<L: Lint>(&self, lint: &'static L, span: Span) {
+        if self.inline_config.is_disabled(span, lint.id()) {
+            return;
+        }
+
         let desc = if self.with_description { lint.description() } else { "" };
         let diag: DiagBuilder<'_, ()> = self
             .sess
