@@ -421,7 +421,6 @@ impl BundledState {
             let avg_gas_price = format_units(total_gas_price / sequence.receipts.len() as u64, 9)
                 .unwrap_or_else(|_| "N/A".to_string());
 
-            // Get the native token symbol for the chain using NamedChain
             let token_symbol = NamedChain::try_from(sequence.chain)
                 .unwrap_or_default()
                 .native_currency_symbol()

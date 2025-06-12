@@ -99,7 +99,6 @@ pub fn format_receipt(chain: Chain, receipt: &AnyTransactionReceipt) -> String {
                     .unwrap_or_else(|_| "N/A".into());
                 let gas_price =
                     format_units(U256::from(gas_price), 9).unwrap_or_else(|_| "N/A".into());
-                // Get the native token symbol for the chain using NamedChain
                 let token_symbol = NamedChain::try_from(chain)
                     .unwrap_or_default()
                     .native_currency_symbol()
