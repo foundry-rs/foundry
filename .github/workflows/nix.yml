@@ -16,7 +16,7 @@ jobs:
   update:
     runs-on: ubuntu-latest
     steps:
-      - uses: cachix/install-nix-action@v30
+      - uses: DeterminateSystems/determinate-nix-action@v3
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/update-flake-lock@main
         with:
@@ -31,7 +31,7 @@ jobs:
         runs-on: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.runs-on }}
     steps:
-      - uses: cachix/install-nix-action@v30
+      - uses: DeterminateSystems/determinate-nix-action@v3
       - uses: actions/checkout@v4
 
       - name: Activate nix env
