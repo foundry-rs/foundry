@@ -2,7 +2,7 @@ use crate::{
     build::LinkedBuildData, progress::ScriptProgress, sequence::ScriptSequenceKind,
     verify::BroadcastedState, ScriptArgs, ScriptConfig,
 };
-use alloy_chains::Chain;
+use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::TxEnvelope;
 use alloy_eips::{eip2718::Encodable2718, BlockId};
 use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
@@ -421,9 +421,15 @@ impl BundledState {
             let avg_gas_price = format_units(total_gas_price / sequence.receipts.len() as u64, 9)
                 .unwrap_or_else(|_| "N/A".to_string());
 
+            // Get the native token symbol for the chain using NamedChain
+            let token_symbol = NamedChain::try_from(sequence.chain)
+                .unwrap_or_default()
+                .native_currency_symbol()
+                .unwrap_or("ETH");
             seq_progress.inner.write().set_status(&format!(
-                "Total Paid: {} ETH ({} gas * avg {} gwei)\n",
+                "Total Paid: {} {} ({} gas * avg {} gwei)\n",
                 paid.trim_end_matches('0'),
+                token_symbol,
                 total_gas,
                 avg_gas_price.trim_end_matches('0').trim_end_matches('.')
             ));
