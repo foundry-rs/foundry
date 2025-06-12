@@ -15,7 +15,7 @@ RESULTS_FILE="${RESULTS_DIR}/foundry_multi_version_benchmark_${TIMESTAMP}.md"
 JSON_RESULTS_DIR="${RESULTS_DIR}/json_${TIMESTAMP}"
 
 # Foundry versions to benchmark (can be modified via command line)
-DEFAULT_FOUNDRY_VERSIONS=("stable" "nightly")
+DEFAULT_FOUNDRY_VERSIONS=("stable" "nightly-ac0411d0e3b9632247c9aea9535472eda09a57ae" "nightly") # nightly-ac0 with linter not included in forge build.
 FOUNDRY_VERSIONS=("${FOUNDRY_VERSIONS[@]:-${DEFAULT_FOUNDRY_VERSIONS[@]}}")
 
 # Repository configurations
@@ -74,28 +74,16 @@ install_foundry_version() {
     local version=$1
     log_info "Installing Foundry version: $version"
     
-    case "$version" in
-        "stable"|"nightly")
-            foundryup --install "$version" || {
-                log_error "Failed to install Foundry $version"
-                return 1
-            }
-            ;;
-        v*)
-            foundryup --install "$version" || {
-                log_error "Failed to install Foundry $version"
-                return 1
-            }
-            ;;
-        *)
-            log_error "Unsupported version format: $version"
-            return 1
-            ;;
-    esac
-    
-    # Verify installation
-    local installed_version=$(forge --version | head -n1 || echo "unknown")
-    log_success "Installed Foundry: $installed_version"
+    # Let foundryup handle any version format and determine validity
+    if foundryup --install "$version"; then
+        # Verify installation
+        local installed_version=$(forge --version | head -n1 || echo "unknown")
+        log_success "Installed Foundry: $installed_version"
+        return 0
+    else
+        log_error "Failed to install Foundry $version"
+        return 1
+    fi
 }
 
 # Check if required tools are installed
@@ -172,36 +160,32 @@ install_dependencies() {
     cd - > /dev/null
 }
 
-# Run benchmarks for a single repository across all Foundry versions
-benchmark_repository() {
+# Run benchmarks for a single repository with a specific Foundry version
+benchmark_repository_for_version() {
     local repo_name=$1
+    local version=$2
     local repo_dir="${BENCHMARK_DIR}/${repo_name}"
+    local log_prefix="[$repo_name:$version]"
     
-    log_info "Benchmarking repository: $repo_name across ${#FOUNDRY_VERSIONS[@]} Foundry versions"
+    # Create a unique log file for this repo+version combination
+    local log_file="${JSON_RESULTS_DIR}/${repo_name}_${version//[^a-zA-Z0-9]/_}_benchmark.log"
     
-    if [ ! -d "$repo_dir" ]; then
-        log_error "Repository directory not found: $repo_dir"
-        return 1
-    fi
-    
-    cd "$repo_dir"
-    
-    # Check if it's a valid Foundry project
-    if [ ! -f "foundry.toml" ]; then
-        log_warn "No foundry.toml found in $repo_name, skipping..."
-        cd - > /dev/null
-        return 0
-    fi
-    
-    # Benchmark each Foundry version
-    for version in "${FOUNDRY_VERSIONS[@]}"; do
-        log_info "Benchmarking $repo_name with Foundry $version"
+    {
+        echo "$(date): Starting benchmark for $repo_name with Foundry $version"
         
-        # Install the specific version
-        install_foundry_version "$version" || {
-            log_warn "Failed to install Foundry $version, skipping..."
-            continue
-        }
+        if [ ! -d "$repo_dir" ]; then
+            echo "ERROR: Repository directory not found: $repo_dir"
+            return 1
+        fi
+        
+        cd "$repo_dir"
+        
+        # Check if it's a valid Foundry project
+        if [ ! -f "foundry.toml" ]; then
+            echo "WARN: No foundry.toml found in $repo_name, skipping..."
+            cd - > /dev/null
+            return 0
+        fi
         
         # Clean version string for filenames (remove 'v' prefix, replace '.' with '_')
         local clean_version="${version//v/}"
@@ -210,40 +194,113 @@ benchmark_repository() {
         local version_results_dir="${JSON_RESULTS_DIR}/${repo_name}_${clean_version}"
         mkdir -p "$version_results_dir"
         
+        echo "Running benchmarks for $repo_name with Foundry $version..."
+        
         # Benchmark 1: forge test
-        log_info "Running 'forge test' benchmark for $repo_name (Foundry $version)..."
-        hyperfine \
+        echo "Running 'forge test' benchmark..."
+        if hyperfine \
             --runs 5 \
             --prepare 'forge build' \
             --warmup 1 \
             --export-json "${version_results_dir}/test_results.json" \
-            "forge test" || log_warn "forge test benchmark failed for $repo_name (Foundry $version)"
+            "forge test" 2>>"$log_file.error"; then
+            echo "✓ forge test completed"
+        else
+            echo "✗ forge test failed"
+        fi
         
         # Benchmark 2: forge build (no cache)
-        log_info "Running 'forge build' (no cache) benchmark for $repo_name (Foundry $version)..."
-        hyperfine \
+        echo "Running 'forge build' (no cache) benchmark..."
+        if hyperfine \
             --runs 5 \
             --prepare 'forge clean' \
             --export-json "${version_results_dir}/build_no_cache_results.json" \
-            "forge build" || log_warn "forge build (no cache) benchmark failed for $repo_name (Foundry $version)"
+            "forge build" 2>>"$log_file.error"; then
+            echo "✓ forge build (no cache) completed"
+        else
+            echo "✗ forge build (no cache) failed"
+        fi
         
         # Benchmark 3: forge build (with cache)
-        log_info "Running 'forge build' (with cache) benchmark for $repo_name (Foundry $version)..."
-        # First build to populate cache
-        hyperfine \
+        echo "Running 'forge build' (with cache) benchmark..."
+        if hyperfine \
             --runs 5 \
             --prepare 'forge build' \
             --warmup 1 \
             --export-json "${version_results_dir}/build_with_cache_results.json" \
-            "forge build" || log_warn "forge build (with cache) benchmark failed for $repo_name (Foundry $version)"
+            "forge build" 2>>"$log_file.error"; then
+            echo "✓ forge build (with cache) completed"
+        else
+            echo "✗ forge build (with cache) failed"
+        fi
         
         # Store version info for this benchmark
         forge --version | head -n1 > "${version_results_dir}/forge_version.txt" 2>/dev/null || echo "unknown" > "${version_results_dir}/forge_version.txt"
-    done
-    
-    cd - > /dev/null
-    log_success "Completed benchmarking for $repo_name across all versions"
+        
+        cd - > /dev/null
+        echo "$(date): Completed benchmark for $repo_name with Foundry $version"
+        
+    } > "$log_file" 2>&1
 }
+
+# Run benchmarks for all repositories in parallel for each Foundry version
+benchmark_all_repositories_parallel() {
+    for version in "${FOUNDRY_VERSIONS[@]}"; do
+        log_info "Installing Foundry version: $version"
+        
+        # Install the specific version once for all repositories
+        install_foundry_version "$version" || {
+            log_warn "Failed to install Foundry $version, skipping all repositories for this version..."
+            continue
+        }
+        
+        log_info "Starting parallel benchmarks for all repositories with Foundry $version"
+        
+        # Launch all repositories in parallel
+        local pids=()
+        local failed_repos=()
+        
+        for repo_name in "${REPO_NAMES[@]}"; do
+            # Check if repo directory exists and is valid before starting background process
+            local repo_dir="${BENCHMARK_DIR}/${repo_name}"
+            if [ ! -d "$repo_dir" ]; then
+                log_warn "Repository directory not found: $repo_dir, skipping..."
+                continue
+            fi
+            
+            if [ ! -f "${repo_dir}/foundry.toml" ]; then
+                log_warn "No foundry.toml found in $repo_name, skipping..."
+                continue
+            fi
+            
+            log_info "Launching background benchmark for $repo_name..."
+            benchmark_repository_for_version "$repo_name" "$version" &
+            local pid=$!
+            pids+=($pid)
+            echo "$repo_name:$pid" >> "${JSON_RESULTS_DIR}/parallel_pids_${version//[^a-zA-Z0-9]/_}.txt"
+        done
+        
+        # Wait for all repositories to complete
+        log_info "Waiting for ${#pids[@]} parallel benchmarks to complete for Foundry $version..."
+        local completed=0
+        local total=${#pids[@]}
+        
+        for pid in "${pids[@]}"; do
+            if wait "$pid"; then
+                completed=$((completed + 1))
+                log_info "Progress: $completed/$total repositories completed for Foundry $version"
+            else
+                log_warn "One benchmark process failed (PID: $pid)"
+            fi
+        done
+        
+        log_success "All repositories completed for Foundry $version ($completed/$total successful)"
+        
+        # Show summary of log files created
+        log_info "Individual benchmark logs available in: ${JSON_RESULTS_DIR}/*_${version//[^a-zA-Z0-9]/_}_benchmark.log"
+    done
+}
+
 
 # Extract mean time from JSON result file
 extract_mean_time() {
@@ -425,10 +482,9 @@ main() {
         install_dependencies "${BENCHMARK_DIR}/${REPO_NAMES[$i]}" "${REPO_NAMES[$i]}"
     done
     
-    # Run benchmarks across all versions
-    for repo_name in "${REPO_NAMES[@]}"; do
-        benchmark_repository "$repo_name"
-    done
+    # Run benchmarks in parallel
+    log_info "Using parallel execution mode"
+    benchmark_all_repositories_parallel
     
     # Compile results
     compile_results
@@ -468,22 +524,28 @@ parse_args() {
                 echo "                            (default: stable nightly v1.0.0)"
                 echo ""
                 echo "EXAMPLES:"
-                echo "  $0                                    # Use default versions"
+                echo "  $0                                    # Use default versions (parallel)"
                 echo "  $0 --versions stable nightly         # Benchmark stable and nightly only"
                 echo "  $0 --versions v1.0.0 v1.1.0 v1.2.0  # Benchmark specific versions"
                 echo ""
                 echo "This script benchmarks forge test and forge build commands across"
                 echo "multiple Foundry repositories and versions using hyperfine."
                 echo ""
+                echo "EXECUTION MODE:"
+                echo "  - Parallel: Install each Foundry version once, then run all repositories"
+                echo "    in parallel for that version. This provides much better performance."
+                echo ""
                 echo "Supported version formats:"
                 echo "  - stable, nightly (special tags)"
                 echo "  - v1.0.0, v1.1.0, etc. (specific versions)"
+                echo "  - nightly-<commit-hash> (specific nightly builds)"
+                echo "  - Any format supported by foundryup"
                 echo ""
                 echo "The script will:"
                 echo "  1. Install foundryup if not present"
                 echo "  2. Clone/update target repositories"
                 echo "  3. Install each specified Foundry version"
-                echo "  4. Run benchmarks for each repo with each version"
+                echo "  4. Run benchmarks for each repo with each version in parallel"
                 echo "  5. Generate comparison tables in markdown format"
                 exit 0
                 ;;
