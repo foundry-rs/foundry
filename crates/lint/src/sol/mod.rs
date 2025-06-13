@@ -3,13 +3,13 @@ use crate::{
     inline_config::{InlineConfig, InlineConfigItem},
     linter::{EarlyLintPass, EarlyLintVisitor, Lint, LintContext, Linter},
 };
-use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
+use foundry_compilers::{solc::SolcLanguage, ProjectPathsConfig};
 use foundry_config::lint::Severity;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use solar_ast::{Arena, visit::Visit};
+use solar_ast::{visit::Visit, Arena};
 use solar_interface::{
-    Session, SourceMap,
     diagnostics::{self, DiagCtxt, JsonEmitter},
+    Session, SourceMap,
 };
 use std::{
     path::{Path, PathBuf},
@@ -121,12 +121,12 @@ impl SolidityLinter {
             let mut parser = solar_parse::Parser::from_file(sess, &arena, path)?;
             let file = sess
                 .source_map()
-                .load_file(&path)
+                .load_file(path)
                 .map_err(|e| sess.dcx.err(e.to_string()).emit())?;
             let source = file.src.as_str();
             let comments = Comments::new(&file);
             let ast = parser.parse_file().map_err(|e| e.emit())?;
-            let inline_config = parse_inline_config(&sess, &comments, &lints, source);
+            let inline_config = parse_inline_config(sess, &comments, &lints, source);
 
             // Initialize and run the visitor
             let ctx = LintContext::new(sess, self.with_description, inline_config);
@@ -170,11 +170,11 @@ impl Linter for SolidityLinter {
     }
 }
 
-fn parse_inline_config<'s>(
+fn parse_inline_config(
     sess: &Session,
     comments: &Comments,
     lints: &[&'static str],
-    src: &'s str,
+    src: &str,
 ) -> InlineConfig {
     let items = comments.iter().filter_map(|comment| {
         let mut item = comment.lines.first()?.as_str();
