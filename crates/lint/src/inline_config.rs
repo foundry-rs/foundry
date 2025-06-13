@@ -5,36 +5,36 @@ use std::{collections::HashMap, fmt, str::FromStr};
 #[derive(Clone, Debug)]
 pub enum InlineConfigItem {
     /// Disables the next code item regardless of newlines
-    DisableNextItem(String),
+    DisableNextItem(Vec<String>),
     /// Disables formatting on the current line
-    DisableLine(String),
+    DisableLine(Vec<String>),
     /// Disables formatting between the next newline and the newline after
-    DisableNextLine(String),
+    DisableNextLine(Vec<String>),
     /// Disables formatting for any code that follows this and before the next "disable-end"
-    DisableStart(String),
+    DisableStart(Vec<String>),
     /// Disables formatting for any code that precedes this and after the previous "disable-start"
-    DisableEnd(String),
+    DisableEnd(Vec<String>),
 }
 
 impl FromStr for InlineConfigItem {
     type Err = InvalidInlineConfigItem;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (disable, relevant) = s.split_once('(').unwrap_or((s, ""));
-        let lint = if relevant.is_empty() || relevant == "all)" {
-            "all".to_string()
+        let lints = if relevant.is_empty() || relevant == "all)" {
+            vec!["all".to_string()]
         } else {
             match relevant.split_once(')') {
-                Some((lint, _)) => lint.to_string(),
+                Some((lint, _)) => lint.split(",").map(|s| s.trim().to_string()).collect(),
                 None => return Err(InvalidInlineConfigItem(s.into())),
             }
         };
 
         let res = match disable {
-            "disable-next-item" => Self::DisableNextItem(lint),
-            "disable-line" => Self::DisableLine(lint),
-            "disable-next-line" => Self::DisableNextLine(lint),
-            "disable-start" => Self::DisableStart(lint),
-            "disable-end" => Self::DisableEnd(lint),
+            "disable-next-item" => Self::DisableNextItem(lints),
+            "disable-line" => Self::DisableLine(lints),
+            "disable-next-line" => Self::DisableNextLine(lints),
+            "disable-start" => Self::DisableStart(lints),
+            "disable-end" => Self::DisableEnd(lints),
             s => return Err(InvalidInlineConfigItem(s.into())),
         };
 
@@ -84,8 +84,8 @@ impl InlineConfig {
         items: impl IntoIterator<Item = (Span, InlineConfigItem)>,
         lints: &[&'static str],
         src: &str,
-    ) -> (Self, Vec<(String, Span)>) {
-        let mut invalid_ids: Vec<(String, Span)> = Vec::new();
+    ) -> (Self, Vec<(Vec<String>, Span)>) {
+        let mut invalid_ids: Vec<(Vec<String>, Span)> = Vec::new();
         let mut disabled_ranges: HashMap<String, Vec<DisabledRange>> = HashMap::new();
         let mut disabled_blocks: HashMap<String, (usize, usize)> = HashMap::new();
         let mut prev_sp = Span::DUMMY;
@@ -96,9 +96,9 @@ impl InlineConfig {
             }
 
             match item {
-                InlineConfigItem::DisableNextItem(lint) => {
-                    let lint = match validate_id(&mut invalid_ids, lints, lint, sp) {
-                        Some(lint) => lint,
+                InlineConfigItem::DisableNextItem(ids) => {
+                    let lints = match validate_ids(&mut invalid_ids, lints, ids, sp) {
+                        Some(lints) => lints,
                         None => continue,
                     };
 
@@ -122,15 +122,17 @@ impl InlineConfig {
                             .map(|(idx, _)| idx)
                             .unwrap_or(src.len());
                         let range = DisabledRange { start, end, loose: true };
-                        disabled_ranges
-                            .entry(lint)
-                            .and_modify(|r| r.push(range))
-                            .or_insert(vec![range]);
+                        for lint in lints {
+                            disabled_ranges
+                                .entry(lint)
+                                .and_modify(|r| r.push(range))
+                                .or_insert(vec![range]);
+                        }
                     }
                 }
                 InlineConfigItem::DisableLine(lint) => {
-                    let lint = match validate_id(&mut invalid_ids, lints, lint, sp) {
-                        Some(lint) => lint,
+                    let lints = match validate_ids(&mut invalid_ids, lints, lint, sp) {
+                        Some(lints) => lints,
                         None => continue,
                     };
 
@@ -146,14 +148,16 @@ impl InlineConfig {
                     let end =
                         end_offset + next_newline.next().map(|(idx, _)| idx).unwrap_or_default();
                     let range = DisabledRange { start, end, loose: false };
-                    disabled_ranges
-                        .entry(lint)
-                        .and_modify(|r| r.push(range))
-                        .or_insert(vec![range]);
+                    for lint in lints {
+                        disabled_ranges
+                            .entry(lint)
+                            .and_modify(|r| r.push(range))
+                            .or_insert(vec![range]);
+                    }
                 }
-                InlineConfigItem::DisableNextLine(lint) => {
-                    let lint = match validate_id(&mut invalid_ids, lints, lint, sp) {
-                        Some(lint) => lint,
+                InlineConfigItem::DisableNextLine(ids) => {
+                    let lints = match validate_ids(&mut invalid_ids, lints, ids, sp) {
+                        Some(lints) => lints,
                         None => continue,
                     };
 
@@ -167,41 +171,44 @@ impl InlineConfig {
                             .map(|(idx, _)| offset + idx + 1)
                             .unwrap_or(src.len());
                         let range = DisabledRange { start, end, loose: false };
-                        disabled_ranges
-                            .entry(lint)
-                            .and_modify(|r| r.push(range))
-                            .or_insert(vec![range]);
-                    }
-                }
-                InlineConfigItem::DisableStart(lint) => {
-                    let lint = match validate_id(&mut invalid_ids, lints, lint, sp) {
-                        Some(lint) => lint,
-                        None => continue,
-                    };
-
-                    disabled_blocks
-                        .entry(lint)
-                        .and_modify(|(_, depth)| *depth += 1)
-                        .or_insert((sp.hi().to_usize(), 1));
-                }
-                InlineConfigItem::DisableEnd(lint) => {
-                    let lint = match validate_id(&mut invalid_ids, lints, lint, sp) {
-                        Some(lint) => lint,
-                        None => continue,
-                    };
-
-                    if let Some((start, depth)) = disabled_blocks.get_mut(&lint) {
-                        *depth = depth.saturating_sub(1);
-
-                        if *depth == 0 {
-                            let start = *start;
-                            _ = disabled_blocks.remove(&lint);
-                            let range =
-                                DisabledRange { start, end: sp.lo().to_usize(), loose: false };
+                        for lint in lints {
                             disabled_ranges
                                 .entry(lint)
                                 .and_modify(|r| r.push(range))
                                 .or_insert(vec![range]);
+                        }
+                    }
+                }
+                InlineConfigItem::DisableStart(ids) => {
+                    if let Some(lints) = validate_ids(&mut invalid_ids, lints, ids, sp) {
+                        for lint in lints {
+                            disabled_blocks
+                                .entry(lint)
+                                .and_modify(|(_, depth)| *depth += 1)
+                                .or_insert((sp.hi().to_usize(), 1));
+                        }
+                    }
+                }
+                InlineConfigItem::DisableEnd(ids) => {
+                    let lints = match validate_ids(&mut invalid_ids, lints, ids, sp) {
+                        Some(lint) => lint,
+                        None => continue,
+                    };
+
+                    for lint in lints {
+                        if let Some((start, depth)) = disabled_blocks.get_mut(&lint) {
+                            *depth = depth.saturating_sub(1);
+
+                            if *depth == 0 {
+                                let start = *start;
+                                _ = disabled_blocks.remove(&lint);
+                                let range =
+                                    DisabledRange { start, end: sp.lo().to_usize(), loose: false };
+                                disabled_ranges
+                                    .entry(lint)
+                                    .and_modify(|r| r.push(range))
+                                    .or_insert(vec![range]);
+                            }
                         }
                     }
                 }
@@ -234,18 +241,27 @@ impl InlineConfig {
 /// updated.
 ///
 /// Returns a boolan, so that the item can be skipped if the lint id is invalid.
-fn validate_id(
-    invalid_ids: &mut Vec<(String, Span)>,
+fn validate_ids(
+    invalid_ids: &mut Vec<(Vec<String>, Span)>,
     lints: &[&'static str],
-    id: String,
+    ids: Vec<String>,
     span: Span,
-) -> Option<String> {
-    for lint in lints {
-        if *lint == id {
-            return Some(id);
+) -> Option<Vec<String>> {
+    let mut not_found = Vec::new();
+    'ids: for id in &ids {
+        for lint in lints {
+            if *lint == id {
+                continue 'ids;
+            }
         }
+        not_found.push(id.to_owned());
     }
 
-    invalid_ids.push((id, span));
-    None
+    if not_found.is_empty() {
+        Some(ids)
+    } else {
+        invalid_ids.push((not_found, span));
+
+        None
+    }
 }

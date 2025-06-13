@@ -19,6 +19,7 @@ contract AsmKeccak256 {
         // forgelint: disable-end(asm-keccak256) -----  |
         // forgelint: disable-end(asm-keccak256) --------
 
+        // forgelint: disable-next-line(invalid1, asm-keccak256, invalid2)
         keccak256(abi.encodePacked(a, b));
     }
 
