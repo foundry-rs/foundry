@@ -80,21 +80,18 @@ foundryup --path ./git/foundry
 
 ---
 
-
 ## Uninstalling
 
-Foundry contains everything in a `.foundry` directory, usually located in `/home/user/.foundry/`.
+Foundry contains everything in a `.foundry` directory, usually located in `/home/<user>/.foundry/` on Linux, `/Users/<user>/.foundry/` on MacOS and `C:\Users\<user>\.foundry` on Windows where `<user>` is your username.
 
-- To uninstall Foundry remove the `.foundry` directory.
+To uninstall Foundry remove the `.foundry` directory.
 
 ##### Note: .foundry directory can contain keystores. Make sure to backup any keystores you want to keep.
 
-
 Remove Foundry from PATH:
 
-- Optionally Foundry can be removed from editing shell configuration file (`.bashrc`, `.zshrc`, etc.) and remove the line that adds Foundry to PATH:
+- Optionally Foundry can be removed from editing shell configuration file (`.bashrc`, `.zshrc`, etc.). To do so remove the line that adds Foundry to PATH:
 
-```
+```sh
 export PATH="$PATH:/home/user/.foundry/bin"
 ```
-
