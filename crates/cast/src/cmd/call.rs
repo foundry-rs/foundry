@@ -7,7 +7,7 @@ use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types::{
     state::{StateOverride, StateOverridesBuilder},
-    BlockId, BlockNumberOrTag,
+    BlockId, BlockNumberOrTag, BlockOverrides,
 };
 use clap::Parser;
 use eyre::Result;
@@ -148,6 +148,14 @@ pub struct CallArgs {
     /// Format: address:slot:value
     #[arg(long = "override-state-diff", value_name = "ADDRESS:SLOT:VALUE")]
     pub state_diff_overrides: Option<Vec<String>>,
+
+    /// Override the block timestamp.
+    #[arg(long = "block.time", value_name = "TIME")]
+    pub block_time: Option<u64>,
+
+    /// Override the block number.
+    #[arg(long = "block.number", value_name = "NUMBER")]
+    pub block_number: Option<u64>,
 }
 
 #[derive(Debug, Parser)]
@@ -180,6 +188,7 @@ impl CallArgs {
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::from_provider(figment)?.sanitized();
         let state_overrides = self.get_state_overrides()?;
+        let block_overrides = self.get_block_overrides()?;
 
         let Self {
             to,
@@ -308,7 +317,9 @@ impl CallArgs {
 
         sh_println!(
             "{}",
-            Cast::new(provider).call(&tx, func.as_ref(), block, state_overrides).await?
+            Cast::new(provider)
+                .call(&tx, func.as_ref(), block, state_overrides, block_overrides)
+                .await?
         )?;
 
         Ok(())
@@ -367,6 +378,20 @@ impl CallArgs {
         }
 
         Ok(Some(state_overrides_builder.build()))
+    }
+
+    /// Parse state overrides from command line arguments.
+    pub fn get_block_overrides(&self) -> eyre::Result<Option<BlockOverrides>> {
+        // Early return if no override set - <https://github.com/foundry-rs/foundry/issues/10705>
+        if [self.block_time.as_ref(), self.block_number.as_ref()].iter().all(Option::is_none) {
+            return Ok(None);
+        }
+
+        let block_overrides = BlockOverrides::default()
+            .with_number(U256::from(self.block_number.unwrap()))
+            .with_time(self.block_time.unwrap());
+
+        Ok(Some(block_overrides))
     }
 }
 
