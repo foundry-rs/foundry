@@ -68,7 +68,7 @@ foundryup -C 94bfdb2
 
 To install a local directory or repository (e.g. one located at `~/git/foundry`, assuming you're in the home directory)
 
-##### Note: --branch, --repo, and --version flags are ignored during local installations.
+#### Note: --branch, --repo, and --version flags are ignored during local installations.
 
 ```sh
 foundryup --path ./git/foundry
@@ -86,7 +86,7 @@ Foundry contains everything in a `.foundry` directory, usually located in `/home
 
 To uninstall Foundry remove the `.foundry` directory.
 
-##### Note: .foundry directory can contain keystores. Make sure to backup any keystores you want to keep.
+#### Note: .foundry directory can contain keystores. Make sure to backup any keystores you want to keep.
 
 Remove Foundry from PATH:
 
