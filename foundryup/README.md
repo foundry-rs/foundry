@@ -86,7 +86,7 @@ Foundry contains everything in a `.foundry` directory, usually located in `/home
 
 To uninstall Foundry remove the `.foundry` directory.
 
-#### Note: .foundry directory can contain keystores. Make sure to backup any keystores you want to keep.
+#### ⚠️: .foundry directory can contain keystores. Make sure to backup any keystores you want to keep.
 
 Remove Foundry from PATH:
 
