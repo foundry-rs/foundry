@@ -1,0 +1,178 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/forge/src/cmd/eip712.rs`."><title>eip712.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-84e720fa.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="forge" data-themes="" data-resource-suffix="" data-rustdoc-version="1.89.0-nightly (573a01569 2025-06-12)" data-channel="nightly" data-search-js="search-f7877310.js" data-settings-js="settings-5514c975.js" ><script src="../../../static.files/storage-4e99c027.js"></script><script defer src="../../../static.files/src-script-63605ae7.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-fd3af306.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-32bb7600.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">forge/cmd/</div>eip712.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="kw">use </span>clap::{Parser, ValueHint};
+<a href=#2 id=2 data-nosnippet>2</a><span class="kw">use </span><a href="https://docs.rs/eyre/0.6.12/eyre/type.Result.html">eyre::Result</a>;
+<a href=#3 id=3 data-nosnippet>3</a><span class="kw">use </span>foundry_cli::opts::{<a href="../../../foundry_cli/opts/build/utils/fn.solar_pcx_from_build_opts.html">solar_pcx_from_build_opts</a>, <a href="../../../foundry_cli/opts/build/core/struct.BuildOpts.html">BuildOpts</a>};
+<a href=#4 id=4 data-nosnippet>4</a><span class="kw">use </span>solar_parse::interface::Session;
+<a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>solar_sema::{
+<a href=#6 id=6 data-nosnippet>6</a>    hir::StructId,
+<a href=#7 id=7 data-nosnippet>7</a>    thread_local::ThreadLocal,
+<a href=#8 id=8 data-nosnippet>8</a>    ty::{Ty, TyKind},
+<a href=#9 id=9 data-nosnippet>9</a>    GcxWrapper, Hir,
+<a href=#10 id=10 data-nosnippet>10</a>};
+<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>std::{<a href="https://doc.rust-lang.org/nightly/alloc/collections/btree/map/struct.BTreeMap.html">collections::BTreeMap</a>, <a href="https://doc.rust-lang.org/nightly/core/fmt/trait.Write.html">fmt::Write</a>, <a href="https://doc.rust-lang.org/nightly/std/path/struct.PathBuf.html">path::PathBuf</a>};
+<a href=#12 id=12 data-nosnippet>12</a>
+<a href=#13 id=13 data-nosnippet>13</a><span class="macro">foundry_config::impl_figment_convert!</span>(<a href="#17-24">Eip712Args</a>, build);
+<a href=#14 id=14 data-nosnippet>14</a>
+<a href=#15 id=15 data-nosnippet>15</a><span class="doccomment">/// CLI arguments for `forge eip712`.
+<a href=#16 id=16 data-nosnippet>16</a></span><span class="attr">#[derive(Clone, Debug, Parser)]
+<a href=#17 id=17 data-nosnippet>17</a></span><span class="kw">pub struct </span><a href="#17-24">Eip712Args</a> {
+<a href=#18 id=18 data-nosnippet>18</a>    <span class="doccomment">/// The path to the file from which to read struct definitions.
+<a href=#19 id=19 data-nosnippet>19</a>    </span><span class="attr">#[arg(value_hint = ValueHint::FilePath, value_name = <span class="string">"PATH"</span>)]
+<a href=#20 id=20 data-nosnippet>20</a>    </span><span class="kw">pub </span>target_path: <a href="https://doc.rust-lang.org/nightly/std/path/struct.PathBuf.html">PathBuf</a>,
+<a href=#21 id=21 data-nosnippet>21</a>
+<a href=#22 id=22 data-nosnippet>22</a>    <span class="attr">#[command(flatten)]
+<a href=#23 id=23 data-nosnippet>23</a>    </span>build: <a href="../../../foundry_cli/opts/build/core/struct.BuildOpts.html">BuildOpts</a>,
+<a href=#24 id=24 data-nosnippet>24</a>}
+<a href=#25 id=25 data-nosnippet>25</a>
+<a href=#26 id=26 data-nosnippet>26</a><span class="kw">impl </span><a href="#17-24">Eip712Args</a> {
+<a href=#27 id=27 data-nosnippet>27</a>    <span class="kw">pub fn </span>run(<span class="self">self</span>) -&gt; <a class="prelude-ty" href="https://docs.rs/eyre/0.6.12/eyre/type.Result.html">Result</a>&lt;()&gt; {
+<a href=#28 id=28 data-nosnippet>28</a>        <span class="kw">let </span><span class="kw-2">mut </span>sess = Session::builder().with_stderr_emitter().build();
+<a href=#29 id=29 data-nosnippet>29</a>        <a href="#28">sess</a>.dcx = <a href="#28">sess</a>.dcx.set_flags(|flags| <a href="#29">flags</a>.track_diagnostics = <span class="bool-val">false</span>);
+<a href=#30 id=30 data-nosnippet>30</a>
+<a href=#31 id=31 data-nosnippet>31</a>        <span class="kw">let </span>result = <a href="#28">sess</a>.enter(|| -&gt; <a class="prelude-ty" href="https://docs.rs/eyre/0.6.12/eyre/type.Result.html">Result</a>&lt;()&gt; {
+<a href=#32 id=32 data-nosnippet>32</a>            <span class="comment">// Set up the parsing context with the project paths and sources.
+<a href=#33 id=33 data-nosnippet>33</a>            </span><span class="kw">let </span>parsing_context =
+<a href=#34 id=34 data-nosnippet>34</a>                <a href="../../../foundry_cli/opts/build/utils/fn.solar_pcx_from_build_opts.html">solar_pcx_from_build_opts</a>(<span class="kw-2">&amp;</span><a href="#28">sess</a>, <a class="self" href="#27">self</a>.build, <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(<a class="macro" href="https://doc.rust-lang.org/nightly/alloc/macro.vec.html">vec!</a>[<span class="self">self</span>.target_path]))<span class="question-mark">?</span>;
+<a href=#35 id=35 data-nosnippet>35</a>
+<a href=#36 id=36 data-nosnippet>36</a>            <span class="comment">// Parse and resolve
+<a href=#37 id=37 data-nosnippet>37</a>            </span><span class="kw">let </span>hir_arena = ThreadLocal::new();
+<a href=#38 id=38 data-nosnippet>38</a>            <span class="kw">if let </span><a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html#variant.Ok">Ok</a>(<span class="prelude-val">Some</span>(gcx)) = <a href="#33">parsing_context</a>.parse_and_lower(<span class="kw-2">&amp;</span><a href="#37">hir_arena</a>) {
+<a href=#39 id=39 data-nosnippet>39</a>                <span class="kw">let </span>resolver = <a href="#66-68">Resolver::new</a>(<a href="#38">gcx</a>);
+<a href=#40 id=40 data-nosnippet>40</a>                <span class="kw">for </span>id <span class="kw">in </span><span class="kw-2">&amp;</span>resolver.struct_ids() {
+<a href=#41 id=41 data-nosnippet>41</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(resolved) = resolver.resolve_struct_eip712(<span class="kw-2">*</span>id) {
+<a href=#42 id=42 data-nosnippet>42</a>                        <span class="kw">_ </span>= <span class="macro">sh_println!</span>(<span class="string">"{resolved}\n"</span>);
+<a href=#43 id=43 data-nosnippet>43</a>                    }
+<a href=#44 id=44 data-nosnippet>44</a>                }
+<a href=#45 id=45 data-nosnippet>45</a>            }
+<a href=#46 id=46 data-nosnippet>46</a>
+<a href=#47 id=47 data-nosnippet>47</a>            <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html#variant.Ok">Ok</a>(())
+<a href=#48 id=48 data-nosnippet>48</a>        });
+<a href=#49 id=49 data-nosnippet>49</a>
+<a href=#50 id=50 data-nosnippet>50</a>        <a class="macro" href="https://docs.rs/eyre/0.6.12/eyre/macro.ensure.html">eyre::ensure!</a>(result.is_ok() &amp;&amp; sess.dcx.has_errors().is_ok(), <span class="string">"failed parsing"</span>);
+<a href=#51 id=51 data-nosnippet>51</a>
+<a href=#52 id=52 data-nosnippet>52</a>        <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html#variant.Ok">Ok</a>(())
+<a href=#53 id=53 data-nosnippet>53</a>    }
+<a href=#54 id=54 data-nosnippet>54</a>}
+<a href=#55 id=55 data-nosnippet>55</a>
+<a href=#56 id=56 data-nosnippet>56</a><span class="doccomment">/// Generates the EIP-712 `encodeType` string for a given struct.
+<a href=#57 id=57 data-nosnippet>57</a>///
+<a href=#58 id=58 data-nosnippet>58</a>/// Requires a reference to the source HIR.
+<a href=#59 id=59 data-nosnippet>59</a></span><span class="kw">pub struct </span><a href="../../../forge/cmd/eip712/struct.Resolver.html">Resolver</a>&lt;<span class="lifetime">'hir</span>&gt; {
+<a href=#60 id=60 data-nosnippet>60</a>    hir: <span class="kw-2">&amp;</span><span class="lifetime">'hir </span>Hir&lt;<span class="lifetime">'hir</span>&gt;,
+<a href=#61 id=61 data-nosnippet>61</a>    gcx: GcxWrapper&lt;<span class="lifetime">'hir</span>&gt;,
+<a href=#62 id=62 data-nosnippet>62</a>}
+<a href=#63 id=63 data-nosnippet>63</a>
+<a href=#64 id=64 data-nosnippet>64</a><span class="kw">impl</span>&lt;<span class="lifetime">'hir</span>&gt; <a href="#59-62">Resolver</a>&lt;<span class="lifetime">'hir</span>&gt; {
+<a href=#65 id=65 data-nosnippet>65</a>    <span class="doccomment">/// Constructs a new [`Resolver`] for the supplied [`Hir`] instance.
+<a href=#66 id=66 data-nosnippet>66</a>    </span><span class="kw">pub fn </span>new(gcx: GcxWrapper&lt;<span class="lifetime">'hir</span>&gt;) -&gt; <span class="self">Self </span>{
+<a href=#67 id=67 data-nosnippet>67</a>        <span class="self">Self </span>{ hir: <span class="kw-2">&amp;</span><a href="#66">gcx</a>.get().hir, <a href="#66">gcx</a> }
+<a href=#68 id=68 data-nosnippet>68</a>    }
+<a href=#69 id=69 data-nosnippet>69</a>
+<a href=#70 id=70 data-nosnippet>70</a>    <span class="doccomment">/// Returns the [`StructId`]s of every user-defined struct in source order.
+<a href=#71 id=71 data-nosnippet>71</a>    </span><span class="kw">pub fn </span>struct_ids(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <a href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html">Vec</a>&lt;StructId&gt; {
+<a href=#72 id=72 data-nosnippet>72</a>        <a class="self" href="#71">self</a>.hir.strukt_ids().<a href="https://doc.rust-lang.org/nightly/core/iter/traits/iterator/trait.Iterator.html#tymethod.collect">collect</a>()
+<a href=#73 id=73 data-nosnippet>73</a>    }
+<a href=#74 id=74 data-nosnippet>74</a>
+<a href=#75 id=75 data-nosnippet>75</a>    <span class="doccomment">/// Converts a given struct into its EIP-712 `encodeType` representation.
+<a href=#76 id=76 data-nosnippet>76</a>    ///
+<a href=#77 id=77 data-nosnippet>77</a>    /// Returns `None` if the struct, or any of its fields, contains constructs
+<a href=#78 id=78 data-nosnippet>78</a>    /// not supported by EIP-712 (mappings, function types, errors, etc).
+<a href=#79 id=79 data-nosnippet>79</a>    </span><span class="kw">pub fn </span>resolve_struct_eip712(<span class="kw-2">&amp;</span><span class="self">self</span>, id: StructId) -&gt; <a class="prelude-ty" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html">Option</a>&lt;<a href="../../../forge/revm/primitives/hardfork/struct.String.html">String</a>&gt; {
+<a href=#80 id=80 data-nosnippet>80</a>        <span class="kw">let </span><span class="kw-2">mut </span>subtypes = <a href="https://doc.rust-lang.org/nightly/alloc/collections/btree/map/struct.BTreeMap.html#method.new">BTreeMap::new</a>();
+<a href=#81 id=81 data-nosnippet>81</a>        <a href="#80">subtypes</a>.<a href="https://doc.rust-lang.org/nightly/alloc/collections/btree/map/struct.BTreeMap.html#method.insert">insert</a>(<a class="self" href="#79">self</a>.hir.strukt(<a href="#79">id</a>).name.as_str().<a href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html#tymethod.into">into</a>(), <a href="#79">id</a>);
+<a href=#82 id=82 data-nosnippet>82</a>        <a class="self" href="#79">self</a>.<a href="#85-123">resolve_eip712_inner</a>(<a href="#79">id</a>, <span class="kw-2">&amp;mut </span><a href="#80">subtypes</a>, <span class="bool-val">true</span>, <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.None">None</a>)
+<a href=#83 id=83 data-nosnippet>83</a>    }
+<a href=#84 id=84 data-nosnippet>84</a>
+<a href=#85 id=85 data-nosnippet>85</a>    <span class="kw">fn </span>resolve_eip712_inner(
+<a href=#86 id=86 data-nosnippet>86</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#87 id=87 data-nosnippet>87</a>        id: StructId,
+<a href=#88 id=88 data-nosnippet>88</a>        subtypes: <span class="kw-2">&amp;mut </span><a href="https://doc.rust-lang.org/nightly/alloc/collections/btree/map/struct.BTreeMap.html">BTreeMap</a>&lt;<a href="../../../forge/revm/primitives/hardfork/struct.String.html">String</a>, StructId&gt;,
+<a href=#89 id=89 data-nosnippet>89</a>        append_subtypes: <a href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>,
+<a href=#90 id=90 data-nosnippet>90</a>        rename: <a class="prelude-ty" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html">Option</a>&lt;<span class="kw-2">&amp;</span><a href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a>&gt;,
+<a href=#91 id=91 data-nosnippet>91</a>    ) -&gt; <a class="prelude-ty" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html">Option</a>&lt;<a href="../../../forge/revm/primitives/hardfork/struct.String.html">String</a>&gt; {
+<a href=#92 id=92 data-nosnippet>92</a>        <span class="kw">let </span>def = <a class="self" href="#86">self</a>.hir.strukt(<a href="#87">id</a>);
+<a href=#93 id=93 data-nosnippet>93</a>        <span class="kw">let </span><span class="kw-2">mut </span>result = <a class="macro" href="https://doc.rust-lang.org/nightly/alloc/macro.format.html">format!</a>(<span class="string">"{}("</span>, rename.unwrap_or(def.name.as_str()));
+<a href=#94 id=94 data-nosnippet>94</a>
+<a href=#95 id=95 data-nosnippet>95</a>        <span class="kw">for </span>(idx, field_id) <span class="kw">in </span>def.fields.iter().enumerate() {
+<a href=#96 id=96 data-nosnippet>96</a>            <span class="kw">let </span>field = <span class="self">self</span>.hir.variable(<span class="kw-2">*</span>field_id);
+<a href=#97 id=97 data-nosnippet>97</a>            <span class="kw">let </span>ty = <span class="self">self</span>.resolve_type(<span class="self">self</span>.gcx.get().type_of_hir_ty(<span class="kw-2">&amp;</span>field.ty), subtypes)<span class="question-mark">?</span>;
+<a href=#98 id=98 data-nosnippet>98</a>
+<a href=#99 id=99 data-nosnippet>99</a>            <span class="macro">write!</span>(result, <span class="string">"{ty} {name}"</span>, name = field.name<span class="question-mark">?</span>.as_str()).ok()<span class="question-mark">?</span>;
+<a href=#100 id=100 data-nosnippet>100</a>
+<a href=#101 id=101 data-nosnippet>101</a>            <span class="kw">if </span>idx &lt; def.fields.len() - <span class="number">1 </span>{
+<a href=#102 id=102 data-nosnippet>102</a>                result.push(<span class="string">','</span>);
+<a href=#103 id=103 data-nosnippet>103</a>            }
+<a href=#104 id=104 data-nosnippet>104</a>        }
+<a href=#105 id=105 data-nosnippet>105</a>
+<a href=#106 id=106 data-nosnippet>106</a>        <a href="#93">result</a>.<a href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html#method.push">push</a>(<span class="string">')'</span>);
+<a href=#107 id=107 data-nosnippet>107</a>
+<a href=#108 id=108 data-nosnippet>108</a>        <span class="kw">if </span>append_subtypes {
+<a href=#109 id=109 data-nosnippet>109</a>            <span class="kw">for </span>(subtype_name, subtype_id) <span class="kw">in
+<a href=#110 id=110 data-nosnippet>110</a>                </span>subtypes.iter().map(|(name, id)| (name.clone(), <span class="kw-2">*</span>id)).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+<a href=#111 id=111 data-nosnippet>111</a>            {
+<a href=#112 id=112 data-nosnippet>112</a>                <span class="kw">if </span>subtype_id == id {
+<a href=#113 id=113 data-nosnippet>113</a>                    <span class="kw">continue
+<a href=#114 id=114 data-nosnippet>114</a>                </span>}
+<a href=#115 id=115 data-nosnippet>115</a>                <span class="kw">let </span>encoded_subtype =
+<a href=#116 id=116 data-nosnippet>116</a>                    <span class="self">self</span>.resolve_eip712_inner(subtype_id, subtypes, <span class="bool-val">false</span>, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>subtype_name))<span class="question-mark">?</span>;
+<a href=#117 id=117 data-nosnippet>117</a>
+<a href=#118 id=118 data-nosnippet>118</a>                result.push_str(<span class="kw-2">&amp;</span>encoded_subtype);
+<a href=#119 id=119 data-nosnippet>119</a>            }
+<a href=#120 id=120 data-nosnippet>120</a>        }
+<a href=#121 id=121 data-nosnippet>121</a>
+<a href=#122 id=122 data-nosnippet>122</a>        <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(<a href="#93">result</a>)
+<a href=#123 id=123 data-nosnippet>123</a>    }
+<a href=#124 id=124 data-nosnippet>124</a>
+<a href=#125 id=125 data-nosnippet>125</a>    <span class="kw">fn </span>resolve_type(
+<a href=#126 id=126 data-nosnippet>126</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#127 id=127 data-nosnippet>127</a>        ty: Ty&lt;<span class="lifetime">'hir</span>&gt;,
+<a href=#128 id=128 data-nosnippet>128</a>        subtypes: <span class="kw-2">&amp;mut </span><a href="https://doc.rust-lang.org/nightly/alloc/collections/btree/map/struct.BTreeMap.html">BTreeMap</a>&lt;<a href="../../../forge/revm/primitives/hardfork/struct.String.html">String</a>, StructId&gt;,
+<a href=#129 id=129 data-nosnippet>129</a>    ) -&gt; <a class="prelude-ty" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html">Option</a>&lt;<a href="../../../forge/revm/primitives/hardfork/struct.String.html">String</a>&gt; {
+<a href=#130 id=130 data-nosnippet>130</a>        <span class="kw">let </span>ty = <a href="#127">ty</a>.peel_refs();
+<a href=#131 id=131 data-nosnippet>131</a>        <span class="kw">match </span><a href="#130">ty</a>.kind {
+<a href=#132 id=132 data-nosnippet>132</a>            TyKind::Elementary(elem_ty) =&gt; <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(<a href="#132">elem_ty</a>.to_abi_str().<a href="../../../forge/revm/primitives/hardfork/trait.ToString.html">to_string</a>()),
+<a href=#133 id=133 data-nosnippet>133</a>            TyKind::Array(element_ty, size) =&gt; {
+<a href=#134 id=134 data-nosnippet>134</a>                <span class="kw">let </span>inner_type = <a class="self" href="#126">self</a>.<a href="#125-177">resolve_type</a>(<a href="#133">element_ty</a>, <a href="#128">subtypes</a>)<span class="question-mark">?</span>;
+<a href=#135 id=135 data-nosnippet>135</a>                <span class="kw">let </span>size = <a href="#133">size</a>.<a href="../../../forge/revm/primitives/hardfork/trait.ToString.html">to_string</a>();
+<a href=#136 id=136 data-nosnippet>136</a>                <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(<a class="macro" href="https://doc.rust-lang.org/nightly/alloc/macro.format.html">format!</a>(<span class="string">"{inner_type}[{size}]"</span>))
+<a href=#137 id=137 data-nosnippet>137</a>            }
+<a href=#138 id=138 data-nosnippet>138</a>            TyKind::DynArray(element_ty) =&gt; {
+<a href=#139 id=139 data-nosnippet>139</a>                <span class="kw">let </span>inner_type = <a class="self" href="#126">self</a>.<a href="#125-177">resolve_type</a>(<a href="#138">element_ty</a>, <a href="#128">subtypes</a>)<span class="question-mark">?</span>;
+<a href=#140 id=140 data-nosnippet>140</a>                <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(<a class="macro" href="https://doc.rust-lang.org/nightly/alloc/macro.format.html">format!</a>(<span class="string">"{inner_type}[]"</span>))
+<a href=#141 id=141 data-nosnippet>141</a>            }
+<a href=#142 id=142 data-nosnippet>142</a>            TyKind::Udvt(ty, <span class="kw">_</span>) =&gt; <a class="self" href="#126">self</a>.<a href="#125-177">resolve_type</a>(<a href="#142">ty</a>, <a href="#128">subtypes</a>),
+<a href=#143 id=143 data-nosnippet>143</a>            TyKind::Struct(id) =&gt; {
+<a href=#144 id=144 data-nosnippet>144</a>                <span class="kw">let </span>def = <a class="self" href="#126">self</a>.hir.strukt(<a href="#143">id</a>);
+<a href=#145 id=145 data-nosnippet>145</a>                <span class="kw">let </span>name = <span class="kw">match </span><a href="#128">subtypes</a>.<a href="https://doc.rust-lang.org/nightly/alloc/collections/btree/map/struct.BTreeMap.html#method.iter">iter</a>().<a href="https://doc.rust-lang.org/nightly/core/iter/traits/iterator/trait.Iterator.html#tymethod.find">find</a>(|(<span class="kw">_</span>, cached_id)| <a href="#143">id</a> == <span class="kw-2">**</span><a href="#145">cached_id</a>) {
+<a href=#146 id=146 data-nosnippet>146</a>                    <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>((name, <span class="kw">_</span>)) =&gt; <a href="#146">name</a>.<a href="../../../forge/revm/primitives/hardfork/trait.ToString.html">to_string</a>(),
+<a href=#147 id=147 data-nosnippet>147</a>                    <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.None"><a href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.None">None</a> </a>=&gt; {
+<a href=#148 id=148 data-nosnippet>148</a>                        <span class="comment">// Otherwise, assign new name
+<a href=#149 id=149 data-nosnippet>149</a>                        </span><span class="kw">let </span><span class="kw-2">mut </span>i = <span class="number">0</span>;
+<a href=#150 id=150 data-nosnippet>150</a>                        <span class="kw">let </span><span class="kw-2">mut </span>name = <a href="#144">def</a>.name.as_str().<a href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html#tymethod.into">into</a>();
+<a href=#151 id=151 data-nosnippet>151</a>                        <span class="kw">while </span>subtypes.contains_key(<span class="kw-2">&amp;</span>name) {
+<a href=#152 id=152 data-nosnippet>152</a>                            i += <span class="number">1</span>;
+<a href=#153 id=153 data-nosnippet>153</a>                            name = <span class="macro">format!</span>(<span class="string">"{}_{i}"</span>, def.name.as_str());
+<a href=#154 id=154 data-nosnippet>154</a>                        }
+<a href=#155 id=155 data-nosnippet>155</a>
+<a href=#156 id=156 data-nosnippet>156</a>                        <a href="#128">subtypes</a>.<a href="https://doc.rust-lang.org/nightly/alloc/collections/btree/map/struct.BTreeMap.html#method.insert">insert</a>(<a href="#150">name</a>.<a href="https://doc.rust-lang.org/nightly/core/clone/trait.Clone.html#tymethod.clone">clone</a>(), <a href="#143">id</a>);
+<a href=#157 id=157 data-nosnippet>157</a>
+<a href=#158 id=158 data-nosnippet>158</a>                        <span class="comment">// Recursively resolve fields to populate subtypes
+<a href=#159 id=159 data-nosnippet>159</a>                        </span><span class="kw">for </span>field_id <span class="kw">in </span>def.fields {
+<a href=#160 id=160 data-nosnippet>160</a>                            <span class="kw">let </span>field_ty =
+<a href=#161 id=161 data-nosnippet>161</a>                                <span class="self">self</span>.gcx.get().type_of_hir_ty(<span class="kw-2">&amp;</span><span class="self">self</span>.hir.variable(<span class="kw-2">*</span>field_id).ty);
+<a href=#162 id=162 data-nosnippet>162</a>                            <span class="self">self</span>.resolve_type(field_ty, subtypes)<span class="question-mark">?</span>;
+<a href=#163 id=163 data-nosnippet>163</a>                        }
+<a href=#164 id=164 data-nosnippet>164</a>                        <a href="#150">name</a>
+<a href=#165 id=165 data-nosnippet>165</a>                    }
+<a href=#166 id=166 data-nosnippet>166</a>                };
+<a href=#167 id=167 data-nosnippet>167</a>
+<a href=#168 id=168 data-nosnippet>168</a>                <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(<a href="#145">name</a>)
+<a href=#169 id=169 data-nosnippet>169</a>            }
+<a href=#170 id=170 data-nosnippet>170</a>            <span class="comment">// For now, map enums to `uint8`
+<a href=#171 id=171 data-nosnippet>171</a>            </span>TyKind::Enum(<span class="kw">_</span>) =&gt; <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(<span class="string">"uint8"</span>.<a href="../../../forge/revm/primitives/hardfork/trait.ToString.html">to_string</a>()),
+<a href=#172 id=172 data-nosnippet>172</a>            <span class="comment">// For now, map contracts to `address`
+<a href=#173 id=173 data-nosnippet>173</a>            </span>TyKind::Contract(<span class="kw">_</span>) =&gt; <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some">Some</a>(<span class="string">"address"</span>.<a href="../../../forge/revm/primitives/hardfork/trait.ToString.html">to_string</a>()),
+<a href=#174 id=174 data-nosnippet>174</a>            <span class="comment">// EIP-712 doesn't support tuples (should use structs), functions, mappings, nor errors
+<a href=#175 id=175 data-nosnippet>175</a>            </span><span class="kw">_ </span>=&gt; <a class="prelude-val" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.None">None</a>,
+<a href=#176 id=176 data-nosnippet>176</a>        }
+<a href=#177 id=177 data-nosnippet>177</a>    }
+<a href=#178 id=178 data-nosnippet>178</a>}</code></pre></div></section></main></body></html>

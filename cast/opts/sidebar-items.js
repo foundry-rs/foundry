@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CastSubcommand"],"fn":["parse_slot"],"struct":["Cast","ToBaseArgs"]};

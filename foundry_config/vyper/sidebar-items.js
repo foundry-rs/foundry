@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["normalize_evm_version_vyper"],"struct":["VyperConfig"]};

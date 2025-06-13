@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CreateScheme","TransactionType"],"mod":["block","cfg","context","local"],"trait":["Block","Cfg","ContextSetters","ContextTr","DBErrorMarker","Database","JournalTr","LocalContextTr","Transaction"],"type":["TransactTo"]};
