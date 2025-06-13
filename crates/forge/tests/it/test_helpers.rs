@@ -274,7 +274,7 @@ pub fn get_vyper() -> Vyper {
                  install it manually and add it to $PATH"
             ),
         };
-        let url = format!("https://github.com/vyperlang/vyper/releases/download/v0.4.0/vyper.0.4.0+commit.e9db8d9f.{suffix}");
+        let url = format!("https://github.com/vyperlang/vyper/releases/download/v0.4.2/vyper.0.4.2+commit.c216787f.{suffix}");
 
         let res = reqwest::Client::builder().build().unwrap().get(url).send().await.unwrap();
 
