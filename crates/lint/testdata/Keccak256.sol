@@ -22,14 +22,10 @@ contract AsmKeccak256 {
         keccak256(abi.encodePacked(a, b));
     }
 
+    // forgelint: disable-next-item(asm-keccak256)
     function solidityHashDisabled(uint256 a, uint256 b) public view returns (bytes32) {
-        // forgelint: disable-next-item(asm-keccak256)
-        bytes32 hash = keccak256(
-            a
-        );
-        return keccak256(
-            abi.encodePacked(a, b)
-        );
+        bytes32 hash = keccak256(a);
+        return keccak256(abi.encodePacked(a, b));
     }
 
     function solidityHash(uint256 a, uint256 b) public view returns (bytes32) {

@@ -216,11 +216,6 @@ impl InlineConfig {
     #[inline]
     pub fn is_disabled(&self, span: Span, lint: &str) -> bool {
         if let Some(ranges) = self.disabled_ranges.get(lint) {
-            if lint == "asm-keccak256" {
-                println!("SPAN: {:?}", span.to_range());
-                println!("DISABLED: {:?}", ranges);
-            }
-
             return ranges.iter().any(|range| range.includes(span.to_range()));
         }
 
