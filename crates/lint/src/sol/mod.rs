@@ -198,7 +198,7 @@ fn parse_inline_config<'s>(
     let (inline_config, invalid_lints) = InlineConfig::new(items, lints, src);
 
     for (id, span) in &invalid_lints {
-        sess.dcx.warn(format!("unknown lint id: '{id}'")).emit();
+        sess.dcx.warn(format!("unknown lint id: '{id}'")).span(*span).emit();
     }
 
     inline_config
