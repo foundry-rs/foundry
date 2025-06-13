@@ -6,26 +6,26 @@ import "cheats/Vm.sol";
 
 // https://github.com/foundry-rs/foundry/issues/3110
 abstract contract ZeroState is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
     // deployer and users
-    address public deployer = vm.addr(1);
+    address public deployer = VM.addr(1);
     Token aaveToken;
     uint256 public mainnetFork;
 
     function setUp() public virtual {
-        vm.label(deployer, "Deployer");
+        VM.label(deployer, "Deployer");
 
-        vm.startPrank(deployer);
-        mainnetFork = vm.createFork("mainnet");
-        vm.selectFork(mainnetFork);
+        VM.startPrank(deployer);
+        mainnetFork = VM.createFork("mainnet");
+        VM.selectFork(mainnetFork);
 
-        vm.rollFork(block.number - 20);
+        VM.rollFork(block.number - 20);
 
         // deploy tokens
         aaveToken = new Token();
-        vm.makePersistent(address(aaveToken));
-        vm.stopPrank();
+        VM.makePersistent(address(aaveToken));
+        VM.stopPrank();
     }
 }
 
@@ -38,7 +38,7 @@ abstract contract TestSate is ZeroState {
 
 contract TestFork is TestSate {
     function testFork() public {
-        vm.rollFork(block.number + 1);
+        VM.rollFork(block.number + 1);
         emit log_uint(aaveToken.balanceOf(deployer));
     }
 }

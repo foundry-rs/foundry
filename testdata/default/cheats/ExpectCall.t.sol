@@ -61,7 +61,7 @@ contract ProxyWithDelegateCall {
 }
 
 contract ExpectCallTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
     function exposed_callTargetNTimes(Contract target, uint256 a, uint256 b, uint256 times) public {
         for (uint256 i = 0; i < times; i++) {
@@ -75,35 +75,35 @@ contract ExpectCallTest is DSTest {
 
     function testExpectCallWithData() public {
         Contract target = new Contract();
-        vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
+        VM.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
         this.exposed_callTargetNTimes(target, 1, 2, 1);
     }
 
     function testExpectMultipleCallsWithData() public {
         Contract target = new Contract();
-        vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
+        VM.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
         // Even though we expect one call, we're using additive behavior, so getting more than one call is okay.
         this.exposed_callTargetNTimes(target, 1, 2, 2);
     }
 
     function testExpectMultipleCallsWithDataAdditive() public {
         Contract target = new Contract();
-        vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
-        vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
+        VM.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
+        VM.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
         this.exposed_callTargetNTimes(target, 1, 2, 2);
     }
 
     function testExpectMultipleCallsWithDataAdditiveLowerBound() public {
         Contract target = new Contract();
-        vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
-        vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
+        VM.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
+        VM.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
         this.exposed_callTargetNTimes(target, 1, 2, 3);
     }
 
     function testExpectInnerCall() public {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
-        vm.expectCall(address(inner), abi.encodeWithSelector(inner.numberB.selector));
+        VM.expectCall(address(inner), abi.encodeWithSelector(inner.numberB.selector));
         this.exposed_expectInnerCall(target);
     }
 
@@ -122,8 +122,8 @@ contract ExpectCallTest is DSTest {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
 
-        vm.expectCall(address(target), abi.encodeWithSelector(target.forwardPay.selector));
-        vm.expectCall(address(inner), abi.encodeWithSelector(inner.pay.selector));
+        VM.expectCall(address(target), abi.encodeWithSelector(target.forwardPay.selector));
+        VM.expectCall(address(inner), abi.encodeWithSelector(inner.pay.selector));
         this.exposed_forwardPay(target);
     }
 
@@ -133,8 +133,8 @@ contract ExpectCallTest is DSTest {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
 
-        vm.expectCall(address(target), abi.encodeWithSelector(target.sumInPlace.selector));
-        vm.expectCall(address(inner), abi.encodeWithSelector(inner.add.selector));
+        VM.expectCall(address(target), abi.encodeWithSelector(target.sumInPlace.selector));
+        VM.expectCall(address(inner), abi.encodeWithSelector(inner.add.selector));
         this.exposed_expectCallMultipleFunctionsFlattened(target, inner);
     }
 
@@ -145,26 +145,26 @@ contract ExpectCallTest is DSTest {
 
     function testExpectSelectorCall() public {
         Contract target = new Contract();
-        vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector));
+        VM.expectCall(address(target), abi.encodeWithSelector(target.add.selector));
         this.exposed_callTargetNTimes(target, 5, 5, 1);
     }
 
     function testExpectCallWithValue() public {
         Contract target = new Contract();
-        vm.expectCall(address(target), 1, abi.encodeWithSelector(target.pay.selector, 2));
+        VM.expectCall(address(target), 1, abi.encodeWithSelector(target.pay.selector, 2));
         this.exposed_expectCallWithValue(target, 1, 2);
     }
 
     function testExpectCallWithValueWithoutParameters() public {
         Contract target = new Contract();
-        vm.expectCall(address(target), 3, abi.encodeWithSelector(target.pay.selector));
+        VM.expectCall(address(target), 3, abi.encodeWithSelector(target.pay.selector));
         this.exposed_expectCallWithValue(target, 3, 100);
     }
 
     function testExpectCallWithValueAndGas() public {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
-        vm.expectCall(address(inner), 1, 50_000, abi.encodeWithSelector(inner.pay.selector, 1));
+        VM.expectCall(address(inner), 1, 50_000, abi.encodeWithSelector(inner.pay.selector, 1));
         this.exposed_forwardPay(target);
     }
 
@@ -175,7 +175,7 @@ contract ExpectCallTest is DSTest {
     function testExpectCallWithNoValueAndGas() public {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
-        vm.expectCall(address(inner), 0, 50_000, abi.encodeWithSelector(inner.add.selector, 1, 1));
+        VM.expectCall(address(inner), 0, 50_000, abi.encodeWithSelector(inner.add.selector, 1, 1));
         this.exposed_addHardGasLimit(target);
     }
 
@@ -186,14 +186,14 @@ contract ExpectCallTest is DSTest {
     function testExpectCallWithValueAndMinGas() public {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
-        vm.expectCallMinGas(address(inner), 1, 50_000, abi.encodeWithSelector(inner.pay.selector, 1));
+        VM.expectCallMinGas(address(inner), 1, 50_000, abi.encodeWithSelector(inner.pay.selector, 1));
         this.exposed_forwardPay(target);
     }
 
     function testExpectCallWithNoValueAndMinGas() public {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
-        vm.expectCallMinGas(address(inner), 0, 25_000, abi.encodeWithSelector(inner.add.selector, 1, 1));
+        VM.expectCallMinGas(address(inner), 0, 25_000, abi.encodeWithSelector(inner.add.selector, 1, 1));
         this.exposed_addHardGasLimit(target);
     }
 
@@ -201,17 +201,17 @@ contract ExpectCallTest is DSTest {
     function testExpectCallForProxyDelegateCall() public {
         ProxyWithDelegateCall proxyWithDelegateCall = new ProxyWithDelegateCall();
         SimpleCall simpleCall = new SimpleCall();
-        vm.expectCall(address(simpleCall), abi.encodeWithSignature("call()"));
+        VM.expectCall(address(simpleCall), abi.encodeWithSignature("call()"));
         proxyWithDelegateCall.delegateCall(simpleCall);
     }
 }
 
 contract ExpectCallCountTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
     function testExpectCallCountWithData() public {
         Contract target = new Contract();
-        vm.expectCall(address(target), abi.encodeWithSelector(Contract.add.selector, 1, 2), 3);
+        VM.expectCall(address(target), abi.encodeWithSelector(Contract.add.selector, 1, 2), 3);
         this.exposed_expectCallCountWithData(target);
     }
 
@@ -223,21 +223,21 @@ contract ExpectCallCountTest is DSTest {
 
     function testExpectZeroCallCountAssert() public {
         Contract target = new Contract();
-        vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2), 0);
+        VM.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2), 0);
         target.add(3, 3);
     }
 
     function testExpectCountInnerCall() public {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
-        vm.expectCall(address(inner), abi.encodeWithSelector(inner.numberB.selector), 1);
+        VM.expectCall(address(inner), abi.encodeWithSelector(inner.numberB.selector), 1);
         target.sum();
     }
 
     function testExpectCountInnerAndOuterCalls() public {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
-        vm.expectCall(address(inner), abi.encodeWithSelector(inner.numberB.selector), 2);
+        VM.expectCall(address(inner), abi.encodeWithSelector(inner.numberB.selector), 2);
         this.exposed_expectCountInnerAndOuterCalls(inner, target);
     }
 
@@ -252,19 +252,19 @@ contract ExpectCallCountTest is DSTest {
 
     function testExpectCallCountWithValue() public {
         Contract target = new Contract();
-        vm.expectCall(address(target), 1, abi.encodeWithSelector(target.pay.selector, 2), 1);
+        VM.expectCall(address(target), 1, abi.encodeWithSelector(target.pay.selector, 2), 1);
         this.exposed_pay{value: 1}(target, 1, 2);
     }
 
     function testExpectZeroCallCountValue() public {
         Contract target = new Contract();
-        vm.expectCall(address(target), 1, abi.encodeWithSelector(target.pay.selector, 2), 0);
+        VM.expectCall(address(target), 1, abi.encodeWithSelector(target.pay.selector, 2), 0);
         this.exposed_pay{value: 2}(target, 2, 2);
     }
 
     function testExpectCallCountWithValueWithoutParameters() public {
         Contract target = new Contract();
-        vm.expectCall(address(target), 3, abi.encodeWithSelector(target.pay.selector), 3);
+        VM.expectCall(address(target), 3, abi.encodeWithSelector(target.pay.selector), 3);
         this.exposed_expectCallCountWithValueWithoutParameters(target);
     }
 
@@ -277,7 +277,7 @@ contract ExpectCallCountTest is DSTest {
     function testExpectCallCountWithValueAndGas() public {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
-        vm.expectCall(address(inner), 1, 50_000, abi.encodeWithSelector(inner.pay.selector, 1), 2);
+        VM.expectCall(address(inner), 1, 50_000, abi.encodeWithSelector(inner.pay.selector, 1), 2);
         this.exposed_expectCallCountWithValueAndGas(target);
     }
 
@@ -295,21 +295,21 @@ contract ExpectCallCountTest is DSTest {
     function testExpectCallCountWithNoValueAndGas() public {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
-        vm.expectCall(address(inner), 0, 50_000, abi.encodeWithSelector(inner.add.selector, 1, 1), 1);
+        VM.expectCall(address(inner), 0, 50_000, abi.encodeWithSelector(inner.add.selector, 1, 1), 1);
         this.exposed_addHardGasLimit(target, 1);
     }
 
     function testExpectZeroCallCountWithNoValueAndWrongGas() public {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
-        vm.expectCall(address(inner), 0, 25_000, abi.encodeWithSelector(inner.add.selector, 1, 1), 0);
+        VM.expectCall(address(inner), 0, 25_000, abi.encodeWithSelector(inner.add.selector, 1, 1), 0);
         this.exposed_addHardGasLimit(target, 1);
     }
 
     function testExpectCallCountWithValueAndMinGas() public {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
-        vm.expectCallMinGas(address(inner), 1, 50_000, abi.encodeWithSelector(inner.pay.selector, 1), 1);
+        VM.expectCallMinGas(address(inner), 1, 50_000, abi.encodeWithSelector(inner.pay.selector, 1), 1);
         this.exposed_forwardPay(target);
     }
 
@@ -320,20 +320,20 @@ contract ExpectCallCountTest is DSTest {
     function testExpectCallCountWithNoValueAndMinGas() public {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
-        vm.expectCallMinGas(address(inner), 0, 25_000, abi.encodeWithSelector(inner.add.selector, 1, 1), 2);
+        VM.expectCallMinGas(address(inner), 0, 25_000, abi.encodeWithSelector(inner.add.selector, 1, 1), 2);
         this.exposed_addHardGasLimit(target, 2);
     }
 
     function testExpectCallZeroCountWithNoValueAndWrongMinGas() public {
         Contract inner = new Contract();
         NestedContract target = new NestedContract(inner);
-        vm.expectCallMinGas(address(inner), 0, 50_001, abi.encodeWithSelector(inner.add.selector, 1, 1), 0);
+        VM.expectCallMinGas(address(inner), 0, 50_001, abi.encodeWithSelector(inner.add.selector, 1, 1), 0);
         this.exposed_addHardGasLimit(target, 1);
     }
 }
 
 contract ExpectCallMixedTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
     function exposed_callTargetNTimes(Contract target, uint256 a, uint256 b, uint256 times) public {
         for (uint256 i = 0; i < times; i++) {
@@ -343,10 +343,10 @@ contract ExpectCallMixedTest is DSTest {
 
     function testExpectMatchPartialAndFull() public {
         Contract target = new Contract();
-        vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector), 2);
+        VM.expectCall(address(target), abi.encodeWithSelector(target.add.selector), 2);
         // Even if a partial match is specified, you should still be able to look for full matches
         // as one does not override the other.
-        vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
+        VM.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2));
         this.exposed_expectMatchPartialAndFull(target);
     }
 
@@ -357,10 +357,10 @@ contract ExpectCallMixedTest is DSTest {
 
     function testExpectMatchPartialAndFullFlipped() public {
         Contract target = new Contract();
-        vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector));
+        VM.expectCall(address(target), abi.encodeWithSelector(target.add.selector));
         // Even if a partial match is specified, you should still be able to look for full matches
         // as one does not override the other.
-        vm.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2), 2);
+        VM.expectCall(address(target), abi.encodeWithSelector(target.add.selector, 1, 2), 2);
         this.exposed_expectMatchPartialAndFullFlipped(target);
     }
 

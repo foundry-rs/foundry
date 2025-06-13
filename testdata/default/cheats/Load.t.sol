@@ -9,7 +9,7 @@ contract Storage {
 }
 
 contract LoadTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
     uint256 slot0 = 20;
     Storage store;
 
@@ -22,17 +22,17 @@ contract LoadTest is DSTest {
         assembly {
             slot := slot0.slot
         }
-        uint256 val = uint256(vm.load(address(this), bytes32(slot)));
+        uint256 val = uint256(VM.load(address(this), bytes32(slot)));
         assertEq(val, 20, "load failed");
     }
 
     function testLoadNotAvailableOnPrecompiles() public {
-        vm._expectCheatcodeRevert("cannot use precompile 0x0000000000000000000000000000000000000001 as an argument");
-        vm.load(address(1), bytes32(0));
+        VM._expectCheatcodeRevert("cannot use precompile 0x0000000000000000000000000000000000000001 as an argument");
+        VM.load(address(1), bytes32(0));
     }
 
     function testLoadOtherStorage() public {
-        uint256 val = uint256(vm.load(address(store), bytes32(0)));
+        uint256 val = uint256(VM.load(address(store), bytes32(0)));
         assertEq(val, 10, "load failed");
     }
 }
