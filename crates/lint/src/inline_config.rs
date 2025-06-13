@@ -96,6 +96,7 @@ impl InlineConfig {
             }
 
             match item {
+                // TODO: figure out why it doesn't work.
                 InlineConfigItem::DisableNextItem(ids) => {
                     let lints = match validate_ids(&mut invalid_ids, lints, ids, sp) {
                         Some(lints) => lints,
