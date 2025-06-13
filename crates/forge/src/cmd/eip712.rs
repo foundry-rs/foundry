@@ -1,3 +1,4 @@
+use alloy_primitives::keccak256;
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::opts::{solar_pcx_from_build_opts, BuildOpts};
@@ -8,7 +9,11 @@ use solar_sema::{
     ty::{Ty, TyKind},
     GcxWrapper, Hir,
 };
-use std::{collections::BTreeMap, fmt::Write, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    fmt::Write,
+    path::{Path, PathBuf},
+};
 
 foundry_config::impl_figment_convert!(Eip712Args, build);
 
@@ -39,7 +44,11 @@ impl Eip712Args {
                 let resolver = Resolver::new(gcx);
                 for id in &resolver.struct_ids() {
                     if let Some(resolved) = resolver.resolve_struct_eip712(*id) {
-                        _ = sh_println!("{resolved}\n");
+                        _ = sh_println!(
+                            "{label}:\n - type: {resolved}\n - hash: {hash}\n",
+                            label = resolver.get_struct_label(*id),
+                            hash = keccak256(resolved.as_bytes())
+                        );
                     }
                 }
             }
@@ -70,6 +79,22 @@ impl<'hir> Resolver<'hir> {
     /// Returns the [`StructId`]s of every user-defined struct in source order.
     pub fn struct_ids(&self) -> Vec<StructId> {
         self.hir.strukt_ids().collect()
+    }
+
+    /// Returns the label for a struct, with the format: `file.sol > MyContract > MyStruct`
+    pub fn get_struct_label(&self, id: StructId) -> String {
+        let strukt = self.hir.strukt(id).name.as_str();
+        self.hir.strukt(id).contract.map_or(String::new(), |cid| {
+            let full_name = self.gcx.get().contract_fully_qualified_name(cid).to_string();
+            let relevant =
+                Path::new(&full_name).file_name().and_then(|s| s.to_str()).unwrap_or(&full_name);
+
+            if let Some((file, contract)) = relevant.rsplit_once(':') {
+                format!("{file} > {contract} > {strukt}")
+            } else {
+                format!("{relevant} > {strukt}")
+            }
+        })
     }
 
     /// Converts a given struct into its EIP-712 `encodeType` representation.
