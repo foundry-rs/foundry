@@ -1,4 +1,8 @@
-use crate::linter::{EarlyLintPass, EarlyLintVisitor, Lint, LintContext, Linter};
+use crate::{
+    comments::Comments,
+    inline_config::{InlineConfig, InlineConfigItem},
+    linter::{EarlyLintPass, EarlyLintVisitor, Lint, LintContext, Linter},
+};
 use foundry_compilers::{solc::SolcLanguage, ProjectPathsConfig};
 use foundry_config::lint::Severity;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -69,7 +73,7 @@ impl SolidityLinter {
         self
     }
 
-    fn process_file(&self, sess: &Session, file: &Path) {
+    fn process_file(&self, sess: &Session, path: &Path) {
         let arena = Arena::new();
 
         let _ = sess.enter(|| -> Result<(), diagnostics::ErrorGuaranteed> {
@@ -80,9 +84,13 @@ impl SolidityLinter {
             passes_and_lints.extend(info::create_lint_passes());
 
             // Do not apply gas-severity rules on tests and scripts
-            if !self.path_config.is_test_or_script(file) {
+            if !self.path_config.is_test_or_script(path) {
                 passes_and_lints.extend(gas::create_lint_passes());
             }
+
+            // TODO: optimize
+            let lints: Vec<&'static str> =
+                passes_and_lints.iter().map(|(_, lint)| lint.id()).collect();
 
             // Filter based on linter config
             let mut passes: Vec<Box<dyn EarlyLintPass<'_>>> = passes_and_lints
@@ -109,12 +117,19 @@ impl SolidityLinter {
                 })
                 .collect();
 
-            // Initialize the parser and get the AST
-            let mut parser = solar_parse::Parser::from_file(sess, &arena, file)?;
+            // Initialize the parser, get the AST, and process the inline-config
+            let mut parser = solar_parse::Parser::from_file(sess, &arena, path)?;
+            let file = sess
+                .source_map()
+                .load_file(path)
+                .map_err(|e| sess.dcx.err(e.to_string()).emit())?;
+            let source = file.src.as_str();
+            let comments = Comments::new(&file);
             let ast = parser.parse_file().map_err(|e| e.emit())?;
+            let inline_config = parse_inline_config(sess, &comments, &lints, source);
 
             // Initialize and run the visitor
-            let ctx = LintContext::new(sess, self.with_description);
+            let ctx = LintContext::new(sess, self.with_description, inline_config);
             let mut visitor = EarlyLintVisitor { ctx: &ctx, passes: &mut passes };
             _ = visitor.visit_source_unit(&ast);
 
@@ -153,6 +168,41 @@ impl Linter for SolidityLinter {
             });
         });
     }
+}
+
+fn parse_inline_config(
+    sess: &Session,
+    comments: &Comments,
+    lints: &[&'static str],
+    src: &str,
+) -> InlineConfig {
+    let items = comments.iter().filter_map(|comment| {
+        let mut item = comment.lines.first()?.as_str();
+        if let Some(prefix) = comment.prefix() {
+            item = item.strip_prefix(prefix).unwrap_or(item);
+        }
+        if let Some(suffix) = comment.suffix() {
+            item = item.strip_suffix(suffix).unwrap_or(item);
+        }
+        let item = item.trim_start().strip_prefix("forgelint:")?.trim();
+        let span = comment.span;
+        match item.parse::<InlineConfigItem>() {
+            Ok(item) => Some((span, item)),
+            Err(e) => {
+                sess.dcx.warn(e.to_string()).span(span).emit();
+                None
+            }
+        }
+    });
+
+    let (inline_config, invalid_lints) = InlineConfig::new(items, lints, src);
+
+    for (ids, span) in &invalid_lints {
+        let msg = format!("unknown lint id: '{}'", ids.join("', '"));
+        sess.dcx.warn(msg).span(*span).emit();
+    }
+
+    inline_config
 }
 
 #[derive(Error, Debug)]
