@@ -4542,9 +4542,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-fork-db"
-version = "0.15.0"
+version = "0.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b02fb598e4a8ae7b7af7c256081a419b071eacf5e03537806b339b3151409403"
+checksum = "5e3ce9907d94f0371f17930a79ced2c2d9f09131da93f8678f21505ed43c1f39"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
