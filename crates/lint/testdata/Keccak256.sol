@@ -19,8 +19,17 @@ contract AsmKeccak256 {
         // forgelint: disable-end(asm-keccak256) -----  |
         // forgelint: disable-end(asm-keccak256) --------
 
-        // forgelint: disable-next-line(invalid1, asm-keccak256, invalid2)
         keccak256(abi.encodePacked(a, b));
+    }
+
+    function solidityHashDisabled(uint256 a, uint256 b) public view returns (bytes32) {
+        // forgelint: disable-next-item(asm-keccak256)
+        bytes32 hash = keccak256(
+            a
+        );
+        return keccak256(
+            abi.encodePacked(a, b)
+        );
     }
 
     function solidityHash(uint256 a, uint256 b) public view returns (bytes32) {

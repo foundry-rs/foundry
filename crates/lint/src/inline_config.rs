@@ -123,10 +123,7 @@ impl InlineConfig {
                             .unwrap_or(src.len());
                         let range = DisabledRange { start, end, loose: true };
                         for lint in lints {
-                            disabled_ranges
-                                .entry(lint)
-                                .and_modify(|r| r.push(range))
-                                .or_insert(vec![range]);
+                            disabled_ranges.entry(lint).or_insert_with(Vec::new).push(range)
                         }
                     }
                 }
@@ -149,10 +146,7 @@ impl InlineConfig {
                         end_offset + next_newline.next().map(|(idx, _)| idx).unwrap_or_default();
                     let range = DisabledRange { start, end, loose: false };
                     for lint in lints {
-                        disabled_ranges
-                            .entry(lint)
-                            .and_modify(|r| r.push(range))
-                            .or_insert(vec![range]);
+                        disabled_ranges.entry(lint).or_insert_with(Vec::new).push(range)
                     }
                 }
                 InlineConfigItem::DisableNextLine(ids) => {
@@ -172,10 +166,7 @@ impl InlineConfig {
                             .unwrap_or(src.len());
                         let range = DisabledRange { start, end, loose: false };
                         for lint in lints {
-                            disabled_ranges
-                                .entry(lint)
-                                .and_modify(|r| r.push(range))
-                                .or_insert(vec![range]);
+                            disabled_ranges.entry(lint).or_insert_with(Vec::new).push(range)
                         }
                     }
                 }
@@ -202,12 +193,10 @@ impl InlineConfig {
                             if *depth == 0 {
                                 let start = *start;
                                 _ = disabled_blocks.remove(&lint);
-                                let range =
-                                    DisabledRange { start, end: sp.lo().to_usize(), loose: false };
-                                disabled_ranges
-                                    .entry(lint)
-                                    .and_modify(|r| r.push(range))
-                                    .or_insert(vec![range]);
+
+                                disabled_ranges.entry(lint).or_insert_with(Vec::new).push(
+                                    DisabledRange { start, end: sp.lo().to_usize(), loose: false },
+                                )
                             }
                         }
                     }
@@ -224,8 +213,14 @@ impl InlineConfig {
     }
 
     /// Check if the lint location is in a disabled range.
+    #[inline]
     pub fn is_disabled(&self, span: Span, lint: &str) -> bool {
         if let Some(ranges) = self.disabled_ranges.get(lint) {
+            if lint == "asm-keccak256" {
+                println!("SPAN: {:?}", span.to_range());
+                println!("DISABLED: {:?}", ranges);
+            }
+
             return ranges.iter().any(|range| range.includes(span.to_range()));
         }
 
