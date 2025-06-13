@@ -3,6 +3,7 @@ use crate::{
     sequence::{get_commit_hash, ScriptSequenceKind},
     ScriptArgs, ScriptConfig,
 };
+use alloy_network::EthereumWallet;
 use alloy_primitives::{hex, Address};
 use eyre::{eyre, Result};
 use forge_script_sequence::{AdditionalContract, ScriptSequence};
@@ -37,6 +38,45 @@ impl BroadcastedState {
 
         for sequence in sequence.sequences_mut() {
             verify_contracts(sequence, &script_config.config, verify.clone()).await?;
+        }
+
+        Ok(())
+    }
+
+    /// sets an ENS name for the deployed contract
+    pub async fn set_ens_name(&mut self, config: &Config) -> Result<()> {
+        let contract_deployment_receipt = self
+            .sequence
+            .sequences()
+            .iter()
+            .filter_map(|s| {
+                let contract_deployment_receipt =
+                    s.receipts.iter().find(|r| r.contract_address.is_some());
+                contract_deployment_receipt
+            })
+            .next();
+
+        if let Some(receipt) = contract_deployment_receipt {
+            let signers = self.args.wallets.get_multi_wallet().await?.into_signers()?;
+            // todo abhi: simplify this instead of checking key via signers.filter() ...
+            if signers.contains_key(&receipt.from) {
+                let wallet = signers
+                    .into_iter()
+                    .filter(|(addr, _)| *addr == receipt.from)
+                    .map(|(_, signer)| EthereumWallet::new(signer))
+                    .next()
+                    .unwrap();
+
+                enscribe::set_primary_name(
+                    config,
+                    wallet,
+                    receipt.contract_address.unwrap(),
+                    self.args.ens_name.clone(),
+                    self.args.reverse_setter,
+                    "deployandname",
+                )
+                .await?;
+            }
         }
 
         Ok(())
