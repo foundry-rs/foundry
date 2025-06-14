@@ -95,8 +95,9 @@ impl MultiContractRunner {
         filter: &'b dyn TestFilter,
     ) -> impl Iterator<Item = &'a Function> + 'b {
         self.matching_contracts(filter)
-            .flat_map(|(_, c)| c.abi.functions())
-            .filter(|func| is_matching_test(func, filter))
+            .flat_map(|(id, c)| c.abi.functions().map(move |func| (id, func)))
+            .filter(|(id, func)| is_matching_test_in_context(func, id, filter))
+            .map(|(_, func)| func)
     }
 
     /// Returns an iterator over all test functions in contracts that match the filter.
@@ -120,7 +121,7 @@ impl MultiContractRunner {
                 let tests = c
                     .abi
                     .functions()
-                    .filter(|func| is_matching_test(func, filter))
+                    .filter(|func| is_matching_test_in_context(func, id, filter))
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();
                 (source, name, tests)
@@ -551,10 +552,30 @@ impl MultiContractRunnerBuilder {
 
 pub fn matches_contract(id: &ArtifactId, abi: &JsonAbi, filter: &dyn TestFilter) -> bool {
     (filter.matches_path(&id.source) && filter.matches_contract(&id.name)) &&
-        abi.functions().any(|func| is_matching_test(func, filter))
+        abi.functions().any(|func| is_matching_test_in_context(func, id, filter))
 }
 
 /// Returns `true` if the function is a test function that matches the given filter.
 pub(crate) fn is_matching_test(func: &Function, filter: &dyn TestFilter) -> bool {
     func.is_any_test() && filter.matches_test(&func.signature())
+}
+
+/// Returns `true` if the function is a test function that matches the given filter in the context
+/// of a specific contract.
+pub(crate) fn is_matching_test_in_context(
+    func: &Function,
+    artifact_id: &ArtifactId,
+    filter: &dyn TestFilter,
+) -> bool {
+    if !func.is_any_test() {
+        return false;
+    }
+
+    // Extract the test name from the function signature
+    let signature = func.signature();
+    let test_name = signature.split("(").next().unwrap_or(&signature);
+    let contract_name = artifact_id.name.as_str();
+
+    // Use qualified test matching which properly handles both qualified and legacy scenarios
+    filter.matches_qualified_test(contract_name, test_name)
 }
