@@ -1,12 +1,15 @@
 use foundry_compilers::Language;
 use foundry_config::lint::Severity;
-use solar_ast::{visit::Visit, Expr, ItemFunction, ItemStruct, VariableDefinition};
+use solar_ast::{
+    visit::Visit, Expr, ImportDirective, ItemContract, ItemFunction, ItemStruct, Symbol,
+    UsingDirective, VariableDefinition,
+};
 use solar_interface::{
     data_structures::Never,
     diagnostics::{DiagBuilder, DiagId, MultiSpan},
     Session, Span,
 };
-use std::{ops::ControlFlow, path::PathBuf};
+use std::{collections::HashMap, ops::ControlFlow, path::PathBuf};
 
 /// Trait representing a generic linter for analyzing and reporting issues in smart contract source
 /// code files. A linter can be implemented for any smart contract language supported by Foundry.
@@ -37,14 +40,37 @@ pub trait Lint {
 pub struct LintContext<'s> {
     sess: &'s Session,
     desc: bool,
+    unused_imports: HashMap<Symbol, Span>,
 }
 
 impl<'s> LintContext<'s> {
     pub fn new(sess: &'s Session, with_description: bool) -> Self {
-        Self { sess, desc: with_description }
+        Self { sess, desc: with_description, unused_imports: HashMap::new() }
     }
 
-    // Helper method to emit diagnostics easily from passes
+    pub fn add_import(&mut self, import: (Symbol, Span)) {
+        self.unused_imports.insert(import.0, import.1);
+    }
+
+    pub fn use_import(&mut self, import: Symbol) {
+        self.unused_imports.remove(&import);
+    }
+
+    /// Helper method to easily emit diagnostics for unused imports.
+    /// Should be called after all passes have finished.
+    ///
+    /// Clears the `unused_imports` map.
+    pub fn emit_unused_imports<L: Lint>(&mut self, lint: &'static L) {
+        let unused = std::mem::take(&mut self.unused_imports);
+        let mut spans = unused.into_values().collect::<Vec<Span>>();
+        spans.sort();
+
+        for span in spans.into_iter() {
+            self.emit(lint, span);
+        }
+    }
+
+    /// Helper method to emit diagnostics easily from passes
     pub fn emit<L: Lint>(&self, lint: &'static L, span: Span) {
         let desc = if self.desc { lint.description() } else { "" };
         let diag: DiagBuilder<'_, ()> = self
@@ -67,8 +93,26 @@ pub trait EarlyLintPass<'ast>: Send + Sync {
     fn check_item_function(&mut self, _ctx: &LintContext<'_>, _func: &'ast ItemFunction<'ast>) {}
     fn check_variable_definition(
         &mut self,
-        _ctx: &LintContext<'_>,
+        _ctx: &mut LintContext<'_>,
         _var: &'ast VariableDefinition<'ast>,
+    ) {
+    }
+    fn check_import_directive(
+        &mut self,
+        _ctx: &mut LintContext<'_>,
+        _import: &'ast ImportDirective<'ast>,
+    ) {
+    }
+    fn check_using_directive(
+        &mut self,
+        _ctx: &mut LintContext<'_>,
+        _using: &'ast UsingDirective<'ast>,
+    ) {
+    }
+    fn check_item_contract(
+        &mut self,
+        _ctx: &mut LintContext<'_>,
+        _contract: &'ast ItemContract<'ast>,
     ) {
     }
 
@@ -77,7 +121,7 @@ pub trait EarlyLintPass<'ast>: Send + Sync {
 
 /// Visitor struct for `EarlyLintPass`es
 pub struct EarlyLintVisitor<'a, 's, 'ast> {
-    pub ctx: &'a LintContext<'s>,
+    pub ctx: &'a mut LintContext<'s>,
     pub passes: &'a mut [Box<dyn EarlyLintPass<'ast> + 's>],
 }
 
@@ -122,6 +166,36 @@ where
             pass.check_item_function(self.ctx, func)
         }
         self.walk_item_function(func)
+    }
+
+    fn visit_import_directive(
+        &mut self,
+        import: &'ast ImportDirective<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            pass.check_import_directive(self.ctx, import);
+        }
+        self.walk_import_directive(import)
+    }
+
+    fn visit_using_directive(
+        &mut self,
+        using: &'ast UsingDirective<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            pass.check_using_directive(self.ctx, using);
+        }
+        self.walk_using_directive(using)
+    }
+
+    fn visit_item_contract(
+        &mut self,
+        contract: &'ast ItemContract<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            pass.check_item_contract(self.ctx, contract);
+        }
+        self.walk_item_contract(contract)
     }
 
     // TODO: Add methods for each required AST node type, mirroring `solar_ast::visit::Visit` method
