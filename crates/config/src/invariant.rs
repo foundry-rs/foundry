@@ -48,7 +48,7 @@ impl Default for InvariantConfig {
             max_assume_rejects: 65536,
             gas_report_samples: 256,
             failure_persist_dir: None,
-            show_metrics: false,
+            show_metrics: true,
             timeout: None,
             show_solidity: false,
         }
@@ -68,7 +68,7 @@ impl InvariantConfig {
             max_assume_rejects: 65536,
             gas_report_samples: 256,
             failure_persist_dir: Some(cache_dir),
-            show_metrics: false,
+            show_metrics: true,
             timeout: None,
             show_solidity: false,
         }

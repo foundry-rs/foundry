@@ -8,7 +8,7 @@ use std::str::FromStr;
 use yansi::Paint;
 
 /// Contains the config and rule set
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinterConfig {
     /// Specifies which lints to run based on severity.
     ///
@@ -20,6 +20,21 @@ pub struct LinterConfig {
 
     /// Globs to ignore
     pub ignore: Vec<String>,
+
+    /// Whether to run linting during `forge build`.
+    ///
+    /// Defaults to true. Set to false to disable automatic linting during builds.
+    pub lint_on_build: bool,
+}
+impl Default for LinterConfig {
+    fn default() -> Self {
+        Self {
+            lint_on_build: true,
+            severity: Vec::new(),
+            exclude_lints: Vec::new(),
+            ignore: Vec::new(),
+        }
+    }
 }
 
 /// Severity of a lint
