@@ -242,6 +242,7 @@ impl FromStr for GasSnapshotEntry {
                                         calls: calls.as_str().parse().unwrap(),
                                         reverts: reverts.as_str().parse().unwrap(),
                                         metrics: HashMap::default(),
+                                        failed_corpus_replays: 0,
                                     },
                                 })
                         }
@@ -488,7 +489,8 @@ mod tests {
                     runs: 256,
                     calls: 100,
                     reverts: 200,
-                    metrics: HashMap::default()
+                    metrics: HashMap::default(),
+                    failed_corpus_replays: 0,
                 }
             }
         );
@@ -507,7 +509,8 @@ mod tests {
                     runs: 256,
                     calls: 3840,
                     reverts: 2388,
-                    metrics: HashMap::default()
+                    metrics: HashMap::default(),
+                    failed_corpus_replays: 0,
                 }
             }
         );
