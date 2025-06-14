@@ -60,7 +60,7 @@ impl Default for InvariantConfig {
             corpus_min_mutations: 5,
             corpus_min_size: 0,
             failure_persist_dir: None,
-            show_metrics: false,
+            show_metrics: true,
             timeout: None,
             show_solidity: false,
         }
@@ -84,7 +84,7 @@ impl InvariantConfig {
             corpus_min_mutations: 5,
             corpus_min_size: 0,
             failure_persist_dir: Some(cache_dir),
-            show_metrics: false,
+            show_metrics: true,
             timeout: None,
             show_solidity: false,
         }

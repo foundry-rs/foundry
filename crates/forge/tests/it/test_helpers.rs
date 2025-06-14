@@ -156,7 +156,7 @@ impl ForgeTestProfile {
                     .unwrap()
                     .keep(),
             ),
-            show_metrics: false,
+            show_metrics: true,
             timeout: None,
             show_solidity: false,
         };

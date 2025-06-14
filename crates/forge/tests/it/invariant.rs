@@ -982,6 +982,13 @@ Compiler run successful!
 
 Ran 1 test for test/TimeoutTest.t.sol:TimeoutTest
 [PASS] invariant_counter_timeout() (runs: 0, calls: 0, reverts: 0)
+
+╭----------------+-----------+-------+---------+----------╮
+| Contract       | Selector  | Calls | Reverts | Discards |
++=========================================================+
+| TimeoutHandler | increment | [..]  | [..]    | [..]     |
+╰----------------+-----------+-------+---------+----------╯
+
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)

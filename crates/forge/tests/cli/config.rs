@@ -1072,6 +1072,7 @@ sort_imports = false
 severity = []
 exclude_lints = []
 ignore = []
+lint_on_build = true
 
 [doc]
 out = "docs"
@@ -1110,7 +1111,7 @@ corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
 failure_persist_dir = "cache/invariant"
-show_metrics = false
+show_metrics = true
 show_solidity = false
 
 [labels]
@@ -1221,7 +1222,7 @@ exclude = []
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
     "failure_persist_dir": "cache/invariant",
-    "show_metrics": false,
+    "show_metrics": true,
     "timeout": null,
     "show_solidity": false
   },
@@ -1283,7 +1284,8 @@ exclude = []
   "lint": {
     "severity": [],
     "exclude_lints": [],
-    "ignore": []
+    "ignore": [],
+    "lint_on_build": true
   },
   "doc": {
     "out": "docs",
