@@ -2,7 +2,6 @@ use crate::{DocBuilder, ParseItem, PreprocessorId, PreprocessorOutput};
 use alloy_primitives::map::HashMap;
 use std::{
     path::{Path, PathBuf},
-    slice::IterMut,
     sync::Mutex,
 };
 
@@ -123,19 +122,6 @@ impl DocumentContent {
             }
         }
     }
-
-    pub fn iter_items_mut(&mut self) -> ParseItemIterMut<'_> {
-        match self {
-            Self::Empty => ParseItemIterMut { next: None, other: None },
-            Self::Single(item) => ParseItemIterMut { next: Some(item), other: None },
-            Self::Constants(items) => {
-                ParseItemIterMut { next: None, other: Some(items.iter_mut()) }
-            }
-            Self::OverloadedFunctions(items) => {
-                ParseItemIterMut { next: None, other: Some(items.iter_mut()) }
-            }
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -146,27 +132,6 @@ pub struct ParseItemIter<'a> {
 
 impl<'a> Iterator for ParseItemIter<'a> {
     type Item = &'a ParseItem;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some(next) = self.next.take() {
-            return Some(next)
-        }
-        if let Some(other) = self.other.as_mut() {
-            return other.next()
-        }
-
-        None
-    }
-}
-
-#[derive(Debug)]
-pub struct ParseItemIterMut<'a> {
-    next: Option<&'a mut ParseItem>,
-    other: Option<IterMut<'a, ParseItem>>,
-}
-
-impl<'a> Iterator for ParseItemIterMut<'a> {
-    type Item = &'a mut ParseItem;
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(next) = self.next.take() {

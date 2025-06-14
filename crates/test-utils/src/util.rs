@@ -592,14 +592,6 @@ impl TestProject {
         config_paths_exist(&paths, self.inner.project().cached);
     }
 
-    /// Copies the project's root directory to the given target
-    #[track_caller]
-    pub fn copy_to(&self, target: impl AsRef<Path>) {
-        let target = target.as_ref();
-        pretty_err(target, fs::create_dir_all(target));
-        pretty_err(target, copy_dir(self.root(), target));
-    }
-
     /// Creates a file with contents `contents` in the test project's directory. The
     /// file will be deleted when the project is dropped.
     pub fn create_file(&self, path: impl AsRef<Path>, contents: &str) -> PathBuf {
@@ -851,11 +843,6 @@ impl TestCommand {
         V: AsRef<OsStr>,
     {
         self.cmd.envs(envs);
-    }
-
-    /// Unsets the environment variable `k` for the command.
-    pub fn unset_env(&mut self, k: impl AsRef<OsStr>) {
-        self.cmd.env_remove(k);
     }
 
     /// Set the working directory for this command.

@@ -99,18 +99,6 @@ impl MultiContractRunner {
             .filter(|func| is_matching_test(func, filter))
     }
 
-    /// Returns an iterator over all test functions in contracts that match the filter.
-    pub fn all_test_functions<'a: 'b, 'b>(
-        &'a self,
-        filter: &'b dyn TestFilter,
-    ) -> impl Iterator<Item = &'a Function> + 'b {
-        self.contracts
-            .iter()
-            .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
-            .flat_map(|(_, c)| c.abi.functions())
-            .filter(|func| func.is_any_test())
-    }
-
     /// Returns all matching tests grouped by contract grouped by file (file -> (contract -> tests))
     pub fn list(&self, filter: &dyn TestFilter) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
         self.matching_contracts(filter)

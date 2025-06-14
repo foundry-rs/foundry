@@ -18,7 +18,6 @@ use std::{
     env::temp_dir,
     fmt::Write,
     path::{Path, PathBuf},
-    str::FromStr,
 };
 
 use heck::ToSnakeCase;
@@ -56,18 +55,6 @@ pub struct MultiSolMacroGen {
 impl MultiSolMacroGen {
     pub fn new(artifacts_path: &Path, instances: Vec<SolMacroGen>) -> Self {
         Self { artifacts_path: artifacts_path.to_path_buf(), instances }
-    }
-
-    pub fn populate_expansion(&mut self, bindings_path: &Path) -> Result<()> {
-        for instance in &mut self.instances {
-            let path = bindings_path.join(format!("{}.rs", instance.name.to_lowercase()));
-            let expansion = fs::read_to_string(path).wrap_err("Failed to read file")?;
-
-            let tokens = TokenStream::from_str(&expansion)
-                .map_err(|e| eyre::eyre!("Failed to parse TokenStream: {e}"))?;
-            instance.expansion = Some(tokens);
-        }
-        Ok(())
     }
 
     pub fn generate_bindings(&mut self, all_derives: bool) -> Result<()> {
@@ -233,7 +220,7 @@ edition = "2021"
     }
 
     /// Attempts to detect the appropriate license.
-    pub fn parse_license_alias(license: &str) -> String {
+    fn parse_license_alias(license: &str) -> String {
         match license.trim().to_lowercase().as_str() {
             "mit" => "MIT".to_string(),
             "apache" | "apache2" | "apache20" | "apache2.0" => "Apache-2.0".to_string(),

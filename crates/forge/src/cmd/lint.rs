@@ -5,6 +5,7 @@ use forge_lint::{
     sol::{SolLint, SolLintError, SolidityLinter},
 };
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
+use foundry_common::fs;
 use foundry_compilers::{solc::SolcLanguage, utils::SOLC_EXTENSIONS};
 use foundry_config::{filter::expand_globs, impl_figment_convert_basic, lint::Severity};
 use std::path::PathBuf;
@@ -50,7 +51,7 @@ impl LintArgs {
         // Expand ignore globs and canonicalize from the get go
         let ignored = expand_globs(&config.root, config.lint.ignore.iter())?
             .iter()
-            .flat_map(foundry_common::fs::canonicalize_path)
+            .flat_map(fs::canonicalize_path)
             .collect::<Vec<_>>();
 
         let cwd = std::env::current_dir()?;

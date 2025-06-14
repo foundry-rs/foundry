@@ -185,11 +185,6 @@ impl ProjectPathsAwareFilter {
         &self.args_filter
     }
 
-    /// Returns the CLI arguments mutably.
-    pub fn args_mut(&mut self) -> &mut FilterArgs {
-        &mut self.args_filter
-    }
-
     /// Returns the project paths.
     pub fn paths(&self) -> &ProjectPathsConfig {
         &self.paths
