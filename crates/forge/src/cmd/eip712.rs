@@ -1,7 +1,8 @@
-use alloy_primitives::keccak256;
+use alloy_primitives::{keccak256, B256};
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::opts::{solar_pcx_from_build_opts, BuildOpts};
+use serde::Serialize;
 use solar_parse::interface::Session;
 use solar_sema::{
     hir::StructId,
@@ -24,8 +25,28 @@ pub struct Eip712Args {
     #[arg(value_hint = ValueHint::FilePath, value_name = "PATH")]
     pub target_path: PathBuf,
 
+    /// Output in JSON format.
+    #[arg(long, help = "Output in JSON format")]
+    pub json: bool,
+
     #[command(flatten)]
     build: BuildOpts,
+}
+
+#[derive(Debug, Serialize)]
+struct Eip712Output {
+    id: String,
+    #[serde(rename = "type")]
+    typ: String,
+    hash: B256,
+}
+
+impl std::fmt::Display for Eip712Output {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}:", self.id)?;
+        writeln!(f, " - type: {}", self.typ)?;
+        writeln!(f, " - hash: {}\n", self.hash)
+    }
 }
 
 impl Eip712Args {
@@ -42,13 +63,25 @@ impl Eip712Args {
             let hir_arena = ThreadLocal::new();
             if let Ok(Some(gcx)) = parsing_context.parse_and_lower(&hir_arena) {
                 let resolver = Resolver::new(gcx);
-                for id in &resolver.struct_ids() {
-                    if let Some(resolved) = resolver.resolve_struct_eip712(*id) {
-                        _ = sh_println!(
-                            "{label}:\n - type: {resolved}\n - hash: {hash}\n",
-                            label = resolver.get_struct_label(*id),
-                            hash = keccak256(resolved.as_bytes())
-                        );
+
+                let outputs = resolver
+                    .struct_ids()
+                    .iter()
+                    .filter_map(|id| {
+                        let resolved = resolver.resolve_struct_eip712(*id)?;
+                        Some(Eip712Output {
+                            id: resolver.get_struct_label(*id),
+                            hash: keccak256(resolved.as_bytes()),
+                            typ: resolved,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+
+                if self.json {
+                    sh_println!("{}", serde_json::to_string_pretty(&outputs)?)?;
+                } else {
+                    for output in &outputs {
+                        sh_print!("{}", output)?;
                     }
                 }
             }
