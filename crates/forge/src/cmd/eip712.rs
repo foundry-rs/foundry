@@ -45,7 +45,7 @@ impl std::fmt::Display for Eip712Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "{}:", self.id)?;
         writeln!(f, " - type: {}", self.typ)?;
-        writeln!(f, " - hash: {}\n", self.hash)
+        writeln!(f, " - hash: {}", self.hash)
     }
 }
 
@@ -81,7 +81,7 @@ impl Eip712Args {
                     sh_println!("{}", serde_json::to_string_pretty(&outputs)?)?;
                 } else {
                     for output in &outputs {
-                        sh_print!("{}", output)?;
+                        sh_print!("{}\n", output)?;
                     }
                 }
             }
