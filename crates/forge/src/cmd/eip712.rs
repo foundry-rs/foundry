@@ -1,6 +1,8 @@
+use alloy_primitives::{keccak256, B256};
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::opts::{solar_pcx_from_build_opts, BuildOpts};
+use serde::Serialize;
 use solar_parse::interface::Session;
 use solar_sema::{
     hir::StructId,
@@ -8,7 +10,11 @@ use solar_sema::{
     ty::{Ty, TyKind},
     GcxWrapper, Hir,
 };
-use std::{collections::BTreeMap, fmt::Write, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    fmt::{Display, Formatter, Result as FmtResult, Write},
+    path::{Path, PathBuf},
+};
 
 foundry_config::impl_figment_convert!(Eip712Args, build);
 
@@ -19,8 +25,28 @@ pub struct Eip712Args {
     #[arg(value_hint = ValueHint::FilePath, value_name = "PATH")]
     pub target_path: PathBuf,
 
+    /// Output in JSON format.
+    #[arg(long, help = "Output in JSON format")]
+    pub json: bool,
+
     #[command(flatten)]
     build: BuildOpts,
+}
+
+#[derive(Debug, Serialize)]
+struct Eip712Output {
+    path: String,
+    #[serde(rename = "type")]
+    typ: String,
+    hash: B256,
+}
+
+impl Display for Eip712Output {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        writeln!(f, "{}:", self.path)?;
+        writeln!(f, " - type: {}", self.typ)?;
+        writeln!(f, " - hash: {}", self.hash)
+    }
 }
 
 impl Eip712Args {
@@ -37,9 +63,25 @@ impl Eip712Args {
             let hir_arena = ThreadLocal::new();
             if let Ok(Some(gcx)) = parsing_context.parse_and_lower(&hir_arena) {
                 let resolver = Resolver::new(gcx);
-                for id in &resolver.struct_ids() {
-                    if let Some(resolved) = resolver.resolve_struct_eip712(*id) {
-                        _ = sh_println!("{resolved}\n");
+
+                let outputs = resolver
+                    .struct_ids()
+                    .iter()
+                    .filter_map(|id| {
+                        let resolved = resolver.resolve_struct_eip712(*id)?;
+                        Some(Eip712Output {
+                            path: resolver.get_struct_path(*id),
+                            hash: keccak256(resolved.as_bytes()),
+                            typ: resolved,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+
+                if self.json {
+                    sh_println!("{json}", json = serde_json::to_string_pretty(&outputs)?)?;
+                } else {
+                    for output in &outputs {
+                        sh_println!("{output}")?;
                     }
                 }
             }
@@ -70,6 +112,27 @@ impl<'hir> Resolver<'hir> {
     /// Returns the [`StructId`]s of every user-defined struct in source order.
     pub fn struct_ids(&self) -> Vec<StructId> {
         self.hir.strukt_ids().collect()
+    }
+
+    /// Returns the path for a struct, with the format: `file.sol > MyContract > MyStruct`
+    pub fn get_struct_path(&self, id: StructId) -> String {
+        let strukt = self.hir.strukt(id).name.as_str();
+        match self.hir.strukt(id).contract {
+            Some(cid) => {
+                let full_name = self.gcx.get().contract_fully_qualified_name(cid).to_string();
+                let relevant = Path::new(&full_name)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(&full_name);
+
+                if let Some((file, contract)) = relevant.rsplit_once(':') {
+                    format!("{file} > {contract} > {strukt}")
+                } else {
+                    format!("{relevant} > {strukt}")
+                }
+            }
+            None => strukt.to_string(),
+        }
     }
 
     /// Converts a given struct into its EIP-712 `encodeType` representation.
