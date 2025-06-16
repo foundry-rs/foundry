@@ -623,8 +623,13 @@ impl<'a> FunctionRunner<'a> {
             table_fixtures.push(&fixtures[..]);
         }
 
-        let progress =
-            start_fuzz_progress(self.cr.progress, self.cr.name, &func.name, fixtures_len as u32);
+        let progress = start_fuzz_progress(
+            self.cr.progress,
+            self.cr.name,
+            &func.name,
+            None,
+            fixtures_len as u32,
+        );
 
         for i in 0..fixtures_len {
             // Increment progress bar.
