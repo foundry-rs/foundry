@@ -24,7 +24,7 @@ use foundry_evm_fuzz::{
 use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
-use proptest::{prelude::Rng, strategy::Strategy, test_runner::TestRunner};
+use proptest::{strategy::Strategy, test_runner::TestRunner};
 use result::{assert_after_invariant, assert_invariants, can_continue};
 use revm::state::Account;
 use shrink::shrink_sequence;
@@ -401,8 +401,11 @@ impl<'a> InvariantExecutor<'a> {
 
                 // Collect line coverage from last fuzzed call.
                 invariant_test.merge_coverage(call_result.line_coverage.clone());
-                // Merge edge count with current history map and set new coverage in current run.
-                if call_result.merge_edge_coverage(&mut self.history_map) {
+                // If coverage guided fuzzing is enabled then merge edge count with current history
+                // map and set new coverage in current run.
+                if self.config.corpus_dir.is_some() &&
+                    call_result.merge_edge_coverage(&mut self.history_map)
+                {
                     current_run.new_coverage = true;
                 }
 
@@ -478,22 +481,12 @@ impl<'a> InvariantExecutor<'a> {
                     current_run.depth += 1;
                 }
 
-                // To occasionally intermix new txs
-                let generate_new = self.runner.rng().random_ratio(1, 10);
-                // Initial sequence's length is less than depth
-                let must_generate =
-                    current_run.depth as usize > initial_seq.len().saturating_sub(1);
-
-                if discarded || must_generate || generate_new {
-                    // Generates the next call from the run using the recently updated dictionary
-                    current_run.inputs.push(
-                        corpus_manager.new_tx(
-                            &mut invariant_test.execution_data.borrow_mut().branch_runner,
-                        )?,
-                    );
-                } else {
-                    current_run.inputs.push(initial_seq[current_run.depth as usize].clone());
-                }
+                current_run.inputs.push(corpus_manager.generate_next_input(
+                    &invariant_test,
+                    &initial_seq,
+                    discarded,
+                    current_run.depth as usize,
+                )?);
             }
 
             // Extend corpus with current run data.

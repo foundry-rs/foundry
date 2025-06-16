@@ -26,7 +26,8 @@ pub struct InvariantConfig {
     pub max_assume_rejects: u32,
     /// Number of runs to execute and include in the gas report.
     pub gas_report_samples: u32,
-    /// Path where invariant corpus is stored.
+    /// Path where invariant corpus is stored. If not configured then coverage guided fuzzing is
+    /// disabled.
     pub corpus_dir: Option<PathBuf>,
     /// Whether corpus to use gzip file compression and decompression.
     pub corpus_gzip: bool,

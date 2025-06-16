@@ -122,7 +122,7 @@ impl TxCorpusManager {
         let corpus_min_size = invariant_config.corpus_min_size;
         let mut failed_replays = 0;
 
-        // Early return if corpus dir not configured.
+        // Early return if corpus dir / coverage guided fuzzing not configured.
         let Some(corpus_dir) = &invariant_config.corpus_dir else {
             return Ok(Self {
                 tx_generator,
@@ -215,6 +215,11 @@ impl TxCorpusManager {
     /// Collects inputs from given invariant run, if new coverage produced.
     /// Persists call sequence (if corpus directory is configured) and updates in-memory corpus.
     pub fn collect_inputs(&mut self, test_run: &InvariantTestRun) {
+        // Early return if corpus dir / coverage guided fuzzing is not configured.
+        let Some(corpus_dir) = &self.corpus_dir else {
+            return;
+        };
+
         // Update stats of current mutated primary corpus.
         if let Some(uuid) = &self.current_mutated {
             if let Some(corpus) =
@@ -244,28 +249,26 @@ impl TxCorpusManager {
         let corpus_uuid = corpus.uuid;
 
         // Persist to disk if corpus dir is configured.
-        if let Some(corpus_dir) = &self.corpus_dir {
-            let write_result = if self.corpus_gzip {
-                foundry_common::fs::write_json_gzip_file(
-                    corpus_dir.join(format!("{corpus_uuid}{JSON_EXTENSION}.gz")).as_path(),
-                    &corpus.tx_seq,
-                )
-            } else {
-                foundry_common::fs::write_json_file(
-                    corpus_dir.join(format!("{corpus_uuid}{JSON_EXTENSION}")).as_path(),
-                    &corpus.tx_seq,
-                )
-            };
+        let write_result = if self.corpus_gzip {
+            foundry_common::fs::write_json_gzip_file(
+                corpus_dir.join(format!("{corpus_uuid}{JSON_EXTENSION}.gz")).as_path(),
+                &corpus.tx_seq,
+            )
+        } else {
+            foundry_common::fs::write_json_file(
+                corpus_dir.join(format!("{corpus_uuid}{JSON_EXTENSION}")).as_path(),
+                &corpus.tx_seq,
+            )
+        };
 
-            if let Err(err) = write_result {
-                debug!(target: "corpus", %err, "Failed to record call sequence {:?}", &corpus.tx_seq);
-            } else {
-                trace!(
-                    target: "corpus",
-                    "persisted {} inputs for new coverage in {corpus_uuid} corpus",
-                    &corpus.tx_seq.len()
-                );
-            }
+        if let Err(err) = write_result {
+            debug!(target: "corpus", %err, "Failed to record call sequence {:?}", &corpus.tx_seq);
+        } else {
+            trace!(
+                target: "corpus",
+                "persisted {} inputs for new coverage in {corpus_uuid} corpus",
+                &corpus.tx_seq.len()
+            );
         }
 
         // This includes reverting txs in the corpus and `can_continue` removes
@@ -278,6 +281,13 @@ impl TxCorpusManager {
     pub fn new_sequence(&mut self, test: &InvariantTest) -> eyre::Result<Vec<BasicTxDetails>> {
         let mut new_seq = vec![];
         let test_runner = &mut test.execution_data.borrow_mut().branch_runner;
+
+        // Early return with first_input only if corpus dir / coverage guided fuzzing not
+        // configured.
+        let Some(corpus_dir) = &self.corpus_dir else {
+            new_seq.push(self.new_tx(test_runner)?);
+            return Ok(new_seq);
+        };
 
         if !self.in_memory_corpus.is_empty() {
             // Flush oldest corpus mutated more than configured max mutations unless they are
@@ -293,18 +303,16 @@ impl TxCorpusManager {
                     debug!(target: "corpus", "evict corpus {uuid}");
 
                     // Flush to disk the seed metadata at the time of eviction.
-                    if let Some(corpus_dir) = &self.corpus_dir {
-                        let eviction_time = SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .expect("Time went backwards")
-                            .as_secs();
-                        foundry_common::fs::write_json_file(
-                            corpus_dir
-                                .join(format!("{uuid}-{eviction_time}-{METADATA_SUFFIX}"))
-                                .as_path(),
-                            &corpus,
-                        )?
-                    }
+                    let eviction_time = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .expect("Time went backwards")
+                        .as_secs();
+                    foundry_common::fs::write_json_file(
+                        corpus_dir
+                            .join(format!("{uuid}-{eviction_time}-{METADATA_SUFFIX}"))
+                            .as_path(),
+                        &corpus,
+                    )?;
                     // Remove corpus from memory.
                     self.in_memory_corpus.remove(index);
                 }
@@ -457,6 +465,37 @@ impl TxCorpusManager {
         trace!(target: "corpus", "new sequence of {} calls generated", new_seq.len());
 
         Ok(new_seq)
+    }
+
+    /// Returns the next call to be used in call sequence.
+    /// If coverage guided fuzzing is not configured or if previous input was discarded then this is
+    /// a new tx from strategy.
+    /// If running with coverage guided fuzzing it returns a new call only when sequence
+    /// does not have enough entries, or randomly. Otherwise, returns the next call from initial
+    /// sequence.
+    pub fn generate_next_input(
+        &mut self,
+        test: &InvariantTest,
+        sequence: &[BasicTxDetails],
+        discarded: bool,
+        depth: usize,
+    ) -> eyre::Result<BasicTxDetails> {
+        let test_runner = &mut test.execution_data.borrow_mut().branch_runner;
+
+        // Early return with new input if corpus dir / coverage guided fuzzing not configured or if
+        // call was discarded.
+        if self.corpus_dir.is_none() || discarded {
+            return self.new_tx(test_runner)
+        }
+
+        // When running with coverage guided fuzzing enabled then generate new sequence if initial
+        // sequence's length is less than depth or randomly, to occasionally intermix new txs.
+        if depth > sequence.len().saturating_sub(1) || test_runner.rng().random_ratio(1, 10) {
+            return self.new_tx(test_runner)
+        }
+
+        // Continue with the next call initial sequence
+        Ok(sequence[depth].clone())
     }
 
     /// Generates single call from invariant strategy.
