@@ -131,7 +131,7 @@ impl<'hir> Resolver<'hir> {
                     format!("{relevant} > {strukt}")
                 }
             }
-            None => format!("{strukt}"),
+            None => strukt.to_string(),
         }
     }
 
