@@ -12,7 +12,7 @@ use solar_sema::{
 };
 use std::{
     collections::BTreeMap,
-    fmt::Write,
+    fmt::{Display, Formatter, Result as FmtResult, Write},
     path::{Path, PathBuf},
 };
 
@@ -35,15 +35,15 @@ pub struct Eip712Args {
 
 #[derive(Debug, Serialize)]
 struct Eip712Output {
-    id: String,
+    path: String,
     #[serde(rename = "type")]
     typ: String,
     hash: B256,
 }
 
-impl std::fmt::Display for Eip712Output {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "{}:", self.id)?;
+impl Display for Eip712Output {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        writeln!(f, "{}:", self.path)?;
         writeln!(f, " - type: {}", self.typ)?;
         writeln!(f, " - hash: {}", self.hash)
     }
@@ -70,7 +70,7 @@ impl Eip712Args {
                     .filter_map(|id| {
                         let resolved = resolver.resolve_struct_eip712(*id)?;
                         Some(Eip712Output {
-                            id: resolver.get_struct_label(*id),
+                            path: resolver.get_struct_path(*id),
                             hash: keccak256(resolved.as_bytes()),
                             typ: resolved,
                         })
@@ -114,8 +114,8 @@ impl<'hir> Resolver<'hir> {
         self.hir.strukt_ids().collect()
     }
 
-    /// Returns the label for a struct, with the format: `file.sol > MyContract > MyStruct`
-    pub fn get_struct_label(&self, id: StructId) -> String {
+    /// Returns the path for a struct, with the format: `file.sol > MyContract > MyStruct`
+    pub fn get_struct_path(&self, id: StructId) -> String {
         let strukt = self.hir.strukt(id).name.as_str();
         self.hir.strukt(id).contract.map_or(String::new(), |cid| {
             let full_name = self.gcx.get().contract_fully_qualified_name(cid).to_string();
