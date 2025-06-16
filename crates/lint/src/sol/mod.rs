@@ -6,7 +6,7 @@ use crate::{
 use foundry_compilers::{solc::SolcLanguage, ProjectPathsConfig};
 use foundry_config::lint::Severity;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use solar_ast::{visit::Visit, Arena};
+use solar_ast::{visit::Visit, Arena, SourceUnit};
 use solar_interface::{
     diagnostics::{self, DiagCtxt, JsonEmitter},
     Session, SourceMap,
@@ -77,6 +77,14 @@ impl SolidityLinter {
         let arena = Arena::new();
 
         let _ = sess.enter(|| -> Result<(), diagnostics::ErrorGuaranteed> {
+            // Initialize the parser, get the AST, and process the inline-config
+            let mut parser = solar_parse::Parser::from_file(sess, &arena, path)?;
+            let file = sess
+                .source_map()
+                .load_file(path)
+                .map_err(|e| sess.dcx.err(e.to_string()).emit())?;
+            let ast = parser.parse_file().map_err(|e| e.emit())?;
+
             // Declare all available passes and lints
             let mut passes_and_lints = Vec::new();
             passes_and_lints.extend(high::create_lint_passes());
@@ -117,16 +125,10 @@ impl SolidityLinter {
                 })
                 .collect();
 
-            // Initialize the parser, get the AST, and process the inline-config
-            let mut parser = solar_parse::Parser::from_file(sess, &arena, path)?;
-            let file = sess
-                .source_map()
-                .load_file(path)
-                .map_err(|e| sess.dcx.err(e.to_string()).emit())?;
+            // Process the inline-config
             let source = file.src.as_str();
             let comments = Comments::new(&file);
-            let ast = parser.parse_file().map_err(|e| e.emit())?;
-            let inline_config = parse_inline_config(sess, &comments, &lints, source);
+            let inline_config = parse_inline_config(sess, &comments, &lints, &ast, source);
 
             // Initialize and run the visitor
             let ctx = LintContext::new(sess, self.with_description, inline_config);
@@ -170,10 +172,11 @@ impl Linter for SolidityLinter {
     }
 }
 
-fn parse_inline_config(
+fn parse_inline_config<'ast>(
     sess: &Session,
     comments: &Comments,
     lints: &[&'static str],
+    ast: &'ast SourceUnit<'ast>,
     src: &str,
 ) -> InlineConfig {
     let items = comments.iter().filter_map(|comment| {
@@ -184,7 +187,7 @@ fn parse_inline_config(
         if let Some(suffix) = comment.suffix() {
             item = item.strip_suffix(suffix).unwrap_or(item);
         }
-        let item = item.trim_start().strip_prefix("forgelint:")?.trim();
+        let item = item.trim_start().strip_prefix("forge-lint:")?.trim();
         let span = comment.span;
         match item.parse::<InlineConfigItem>() {
             Ok(item) => Some((span, item)),
@@ -195,7 +198,7 @@ fn parse_inline_config(
         }
     });
 
-    let (inline_config, invalid_lints) = InlineConfig::new(items, lints, src);
+    let (inline_config, invalid_lints) = InlineConfig::new(items, lints, &ast, src);
 
     for (ids, span) in &invalid_lints {
         let msg = format!("unknown lint id: '{}'", ids.join("', '"));

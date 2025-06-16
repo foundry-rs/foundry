@@ -5,24 +5,24 @@ contract AsmKeccak256 {
     bytes32 constant OTHER_HASH = keccak256(1234);
 
     constructor(uint256 a, uint256 b) {
-        // forgelint: disable-next-line(asm-keccak256)
+        // forge-lint: disable-next-line(asm-keccak256)
         keccak256(abi.encodePacked(a, b));
 
-        keccak256(abi.encodePacked(a, b)); // forgelint: disable-line(asm-keccak256)
+        keccak256(abi.encodePacked(a, b)); // forge-lint: disable-line(asm-keccak256)
 
-        // forgelint: disable-start(asm-keccak256) ------
+        // forge-lint: disable-start(asm-keccak256) ------
         keccak256(abi.encodePacked(a, b)); //           |
                                            //           |
-        // forgelint: disable-start(asm-keccak256) ---  |
+        // forge-lint: disable-start(asm-keccak256) ---  |
         keccak256(abi.encodePacked(a, b)); //         | |
                                            //         | |
-        // forgelint: disable-end(asm-keccak256) -----  |
-        // forgelint: disable-end(asm-keccak256) --------
+        // forge-lint: disable-end(asm-keccak256) -----  |
+        // forge-lint: disable-end(asm-keccak256) --------
 
         keccak256(abi.encodePacked(a, b));
     }
 
-    // forgelint: disable-next-item(asm-keccak256)
+    // forge-lint: disable-next-item(asm-keccak256)
     function solidityHashDisabled(uint256 a, uint256 b) public view returns (bytes32) {
         bytes32 hash = keccak256(a);
         return keccak256(abi.encodePacked(a, b));
@@ -40,5 +40,22 @@ contract AsmKeccak256 {
             mstore(0x20, b)
             let hashedVal := keccak256(0x00, 0x40)
         }
+    }
+}
+
+// forge-lint: disable-next-item(asm-keccak256)
+contract OtherAsmKeccak256 {
+    function contratDisabledHash(uint256 a, uint256 b) public view returns (bytes32) {
+        return keccak256(abi.encodePacked(a, b));
+    }
+
+    function contratDisabledHash2(uint256 a, uint256 b) public view returns (bytes32) {
+        return keccak256(abi.encodePacked(a, b));
+    }
+}
+
+contract YetAnotherAsmKeccak256 {
+    function nonDisabledHash(uint256 a, uint256 b) public view returns (bytes32) {
+        return keccak256(abi.encodePacked(a, b)); //~NOTE: hash using inline assembly to save gas
     }
 }

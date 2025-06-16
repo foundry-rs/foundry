@@ -1,5 +1,6 @@
-use solar_parse::{ast::Span, lexer::token::RawTokenKind};
-use std::{collections::HashMap, fmt, str::FromStr};
+use solar_ast::{visit::Visit, Item, SourceUnit};
+use solar_parse::ast::Span;
+use std::{collections::HashMap, fmt, marker::PhantomData, ops::ControlFlow, str::FromStr};
 
 /// An inline config item
 #[derive(Clone, Debug)]
@@ -80,14 +81,16 @@ impl InlineConfig {
     /// # Panics
     ///
     /// Panics if `items` is not sorted in ascending order of [`Span`]s.
-    pub fn new(
+    pub fn new<'ast>(
         items: impl IntoIterator<Item = (Span, InlineConfigItem)>,
         lints: &[&'static str],
+        ast: &'ast SourceUnit<'ast>,
         src: &str,
     ) -> (Self, Vec<(Vec<String>, Span)>) {
         let mut invalid_ids: Vec<(Vec<String>, Span)> = Vec::new();
         let mut disabled_ranges: HashMap<String, Vec<DisabledRange>> = HashMap::new();
         let mut disabled_blocks: HashMap<String, (usize, usize)> = HashMap::new();
+
         let mut prev_sp = Span::DUMMY;
         for (sp, item) in items {
             if cfg!(debug_assertions) {
@@ -96,37 +99,23 @@ impl InlineConfig {
             }
 
             match item {
-                // TODO: figure out why it doesn't work.
-                InlineConfigItem::DisableNextItem(ids) => {
-                    let lints = match validate_ids(&mut invalid_ids, lints, ids, sp) {
+                InlineConfigItem::DisableNextItem(lint) => {
+                    let lints = match validate_ids(&mut invalid_ids, lints, lint, sp) {
                         Some(lints) => lints,
                         None => continue,
                     };
 
-                    use RawTokenKind::*;
-                    let offset = sp.hi().to_usize();
-                    let mut idx = offset;
-                    let mut tokens = solar_parse::Cursor::new(&src[offset..])
-                        .map(|token| {
-                            let start = idx;
-                            idx += token.len as usize;
-                            (start, token)
-                        })
-                        .filter(|(_, t)| {
-                            !matches!(t.kind, LineComment { .. } | BlockComment { .. })
-                        })
-                        .skip_while(|(_, t)| matches!(t.kind, Whitespace));
-                    if let Some((mut start, _)) = tokens.next() {
-                        start += offset;
-                        let end = tokens
-                            .find(|(_, t)| !matches!(t.kind, Whitespace))
-                            .map(|(idx, _)| idx)
-                            .unwrap_or(src.len());
-                        let range = DisabledRange { start, end, loose: true };
+                    let comment_end = sp.hi().to_usize();
+
+                    if let Some(next_item) = NextItemFinder::new(comment_end).find(&ast) {
                         for lint in lints {
-                            disabled_ranges.entry(lint).or_default().push(range)
+                            disabled_ranges.entry(lint).or_default().push(DisabledRange {
+                                start: next_item.lo().to_usize(),
+                                end: next_item.hi().to_usize(),
+                                loose: false,
+                            });
                         }
-                    }
+                    };
                 }
                 InlineConfigItem::DisableLine(lint) => {
                     let lints = match validate_ids(&mut invalid_ids, lints, lint, sp) {
@@ -145,9 +134,12 @@ impl InlineConfig {
                         src[end_offset..].char_indices().skip_while(|(_, ch)| *ch != '\n');
                     let end =
                         end_offset + next_newline.next().map(|(idx, _)| idx).unwrap_or_default();
-                    let range = DisabledRange { start, end, loose: false };
                     for lint in lints {
-                        disabled_ranges.entry(lint).or_default().push(range)
+                        disabled_ranges.entry(lint).or_default().push(DisabledRange {
+                            start,
+                            end,
+                            loose: false,
+                        })
                     }
                 }
                 InlineConfigItem::DisableNextLine(ids) => {
@@ -165,9 +157,12 @@ impl InlineConfig {
                             .find(|(_, ch)| *ch == '\n')
                             .map(|(idx, _)| offset + idx + 1)
                             .unwrap_or(src.len());
-                        let range = DisabledRange { start, end, loose: false };
                         for lint in lints {
-                            disabled_ranges.entry(lint).or_default().push(range)
+                            disabled_ranges.entry(lint).or_default().push(DisabledRange {
+                                start,
+                                end,
+                                loose: false,
+                            })
                         }
                     }
                 }
@@ -208,8 +203,11 @@ impl InlineConfig {
         }
 
         for (lint, (start, _)) in disabled_blocks {
-            let range = DisabledRange { start, end: src.len(), loose: false };
-            disabled_ranges.entry(lint).or_default().push(range);
+            disabled_ranges.entry(lint).or_default().push(DisabledRange {
+                start,
+                end: src.len(),
+                loose: false,
+            });
         }
 
         (Self { disabled_ranges }, invalid_ids)
@@ -256,5 +254,47 @@ fn validate_ids(
         invalid_ids.push((not_found, span));
 
         None
+    }
+}
+
+/// An AST visitor that finds the first `Item` that starts after a given offset.
+#[derive(Debug, Default)]
+struct NextItemFinder<'ast> {
+    /// The offset to search after.
+    offset: usize,
+    /// The span of the found item, if any.
+    found_span: Option<Span>,
+    _pd: PhantomData<&'ast ()>,
+}
+
+impl<'ast> NextItemFinder<'ast> {
+    fn new(offset: usize) -> Self {
+        Self { offset, found_span: None, _pd: PhantomData }
+    }
+
+    /// Finds the next AST item which a span that begins after the `threashold`.
+    fn find(&mut self, ast: &'ast SourceUnit<'ast>) -> Option<Span> {
+        for item in ast.items.iter() {
+            if let ControlFlow::Break(()) = self.visit_item(item) {
+                break;
+            }
+        }
+
+        self.found_span
+    }
+}
+
+impl<'ast> Visit<'ast> for NextItemFinder<'ast> {
+    type BreakValue = ();
+
+    fn visit_item(&mut self, item: &'ast Item<'ast>) -> ControlFlow<Self::BreakValue> {
+        // Check if this item starts after the offset.
+        if item.span.lo().to_usize() > self.offset {
+            self.found_span = Some(item.span);
+            return ControlFlow::Break(());
+        }
+
+        // Otherwise, continue traversing inside this item.
+        self.walk_item(item)
     }
 }
