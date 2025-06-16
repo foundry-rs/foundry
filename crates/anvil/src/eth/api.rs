@@ -2906,7 +2906,7 @@ impl EthApi {
 
         // check certain fields to see if the request could be a simple transfer
         let maybe_transfer = (request.input.input().is_none() ||
-            request.input.input().map_or(false, |data| data.is_empty())) &&
+            request.input.input().is_some_and(|data| data.is_empty())) &&
             request.access_list.is_none() &&
             request.blob_versioned_hashes.is_none();
 
