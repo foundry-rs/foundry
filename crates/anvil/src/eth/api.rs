@@ -2905,9 +2905,10 @@ impl EthApi {
         let to = request.to.as_ref().and_then(TxKind::to);
 
         // check certain fields to see if the request could be a simple transfer
-        let maybe_transfer = request.input.input().is_none() &&
-            request.access_list.is_none() &&
-            request.blob_versioned_hashes.is_none();
+        let maybe_transfer = (request.input.input().is_none() || 
+        request.input.input().map_or(false, |data| data.is_empty())) &&
+        request.access_list.is_none() &&
+        request.blob_versioned_hashes.is_none();
 
         if maybe_transfer {
             if let Some(to) = to {
