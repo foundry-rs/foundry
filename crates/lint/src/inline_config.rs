@@ -5,7 +5,7 @@ use std::{collections::HashMap, fmt, marker::PhantomData, ops::ControlFlow, str:
 /// An inline config item
 #[derive(Clone, Debug)]
 pub enum InlineConfigItem {
-    /// Disables the next code item regardless of newlines
+    /// Disables the next code (AST) item regardless of newlines
     DisableNextItem(Vec<String>),
     /// Disables formatting on the current line
     DisableLine(Vec<String>),
@@ -107,7 +107,7 @@ impl InlineConfig {
 
                     let comment_end = sp.hi().to_usize();
 
-                    if let Some(next_item) = NextItemFinder::new(comment_end).find(&ast) {
+                    if let Some(next_item) = NextItemFinder::new(comment_end).find(ast) {
                         for lint in lints {
                             disabled_ranges.entry(lint).or_default().push(DisabledRange {
                                 start: next_item.lo().to_usize(),
@@ -272,7 +272,7 @@ impl<'ast> NextItemFinder<'ast> {
         Self { offset, found_span: None, _pd: PhantomData }
     }
 
-    /// Finds the next AST item which a span that begins after the `threashold`.
+    /// Finds the next AST item which a span that begins after the `offset`.
     fn find(&mut self, ast: &'ast SourceUnit<'ast>) -> Option<Span> {
         for item in ast.items.iter() {
             if let ControlFlow::Break(()) = self.visit_item(item) {

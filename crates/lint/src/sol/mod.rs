@@ -195,7 +195,7 @@ fn parse_inline_config<'ast>(
         }
     });
 
-    let (inline_config, invalid_lints) = InlineConfig::new(items, lints, &ast, src);
+    let (inline_config, invalid_lints) = InlineConfig::new(items, lints, ast, src);
 
     for (ids, span) in &invalid_lints {
         let msg = format!("unknown lint id: '{}'", ids.join("', '"));
