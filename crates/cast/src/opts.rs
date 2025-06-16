@@ -422,8 +422,30 @@ pub enum CastSubcommand {
         address: Option<Address>,
 
         /// The nonce of the deployer address.
-        #[arg(long)]
+        #[arg(
+            long,
+            conflicts_with = "salt",
+            conflicts_with = "init_code",
+            conflicts_with = "init_code_hash"
+        )]
         nonce: Option<u64>,
+
+        /// The salt for CREATE2 address computation.
+        #[arg(long, conflicts_with = "nonce")]
+        salt: Option<B256>,
+
+        /// The init code for CREATE2 address computation.
+        #[arg(
+            long,
+            requires = "salt",
+            conflicts_with = "init_code_hash",
+            conflicts_with = "nonce"
+        )]
+        init_code: Option<String>,
+
+        /// The init code hash for CREATE2 address computation.
+        #[arg(long, requires = "salt", conflicts_with = "init_code", conflicts_with = "nonce")]
+        init_code_hash: Option<B256>,
 
         #[command(flatten)]
         rpc: RpcOpts,

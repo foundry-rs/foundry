@@ -273,6 +273,14 @@ impl Cheatcode for shuffleCall {
     }
 }
 
+impl Cheatcode for setSeedCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { seed } = self;
+        ccx.state.set_seed(*seed);
+        Ok(Default::default())
+    }
+}
+
 /// Helper to generate a random `uint` value (with given bits or bounded if specified)
 /// from type strategy.
 fn random_uint(state: &mut Cheatcodes, bits: Option<U256>, bounds: Option<(U256, U256)>) -> Result {

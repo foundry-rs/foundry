@@ -57,23 +57,139 @@ library Structs2 {
 
     cmd.forge_fuse().args(["eip712", path.to_string_lossy().as_ref()]).assert_success().stdout_eq(
         str![[r#"
-Foo(Bar bar)Art(uint256 id)Bar(Art art)
+Structs.sol > Structs > Foo:
+ - type: Foo(Bar bar)Art(uint256 id)Bar(Art art)
+ - hash: 0x6d9b732373bd999fde4072274c752e03f7437067dd75521eb406d8edf1d30f7d
 
-Bar(Art art)Art(uint256 id)
+Structs.sol > Structs > Bar:
+ - type: Bar(Art art)Art(uint256 id)
+ - hash: 0xadeb03f4f98fb57c05c9a79d8dd2348220e9bd9fd332ec2fbd92479e5695a596
 
-Art(uint256 id)
+Structs.sol > Structs > Art:
+ - type: Art(uint256 id)
+ - hash: 0xbfeb9da97f9dbc2403e9d5ec3853f36414cae141d772601f24e0097d159d302b
 
-Complex(Foo foo2,Foo_1[] foos,Rec[][] recs)Art(uint256 id)Bar(Art art)Foo(uint256 id)Foo_1(Bar bar)Rec(Rec[] rec)
+Structs.sol > Structs > Complex:
+ - type: Complex(Foo foo2,Foo_1[] foos,Rec[][] recs)Art(uint256 id)Bar(Art art)Foo(uint256 id)Foo_1(Bar bar)Rec(Rec[] rec)
+ - hash: 0xfb0a234a82efcade7c031ebb4c58afd7f5f242ca67ed06f4050c60044dcee425
 
-Rec(Rec[] rec)
+Structs.sol > Structs > Rec:
+ - type: Rec(Rec[] rec)
+ - hash: 0x5f060eb740f5aee93a910587a100458c724479d189f6dd67ac39048bf312102e
 
-Foo(uint256 id)
+Structs.sol > Structs2 > Foo:
+ - type: Foo(uint256 id)
+ - hash: 0xb93d8bb2877cd5cc51979d9fe85339ab570714a6fd974225e2a763851092497e
 
-Rec(Bar[] bar)Bar(Rec rec)
+Structs.sol > Structs2 > Rec:
+ - type: Rec(Bar[] bar)Bar(Rec rec)
+ - hash: 0xe9dded72c72648f27772620cb4e10b773ce31a3ea26ef980c0b39d1834242cda
 
-Bar(Rec rec)Rec(Bar[] bar)
+Structs.sol > Structs2 > Bar:
+ - type: Bar(Rec rec)Rec(Bar[] bar)
+ - hash: 0x164eba932ecde04ec75feba228664d08f29c88d6a67e531757e023e6063c3b2c
 
-FooBar(Foo[] foos,Bar[] bars,Foo_1 foo,Bar_1 bar,Rec[] recs,Rec_1 rec)Art(uint256 id)Bar(Rec rec)Bar_1(Art art)Foo(uint256 id)Foo_1(Bar_1 bar)Rec(Bar[] bar)Rec_1(Rec_1[] rec)
+Structs.sol > Structs2 > FooBar:
+ - type: FooBar(Foo[] foos,Bar[] bars,Foo_1 foo,Bar_1 bar,Rec[] recs,Rec_1 rec)Art(uint256 id)Bar(Rec rec)Bar_1(Art art)Foo(uint256 id)Foo_1(Bar_1 bar)Rec(Bar[] bar)Rec_1(Rec_1[] rec)
+ - hash: 0xce88f333fe5b5d4901ceb2569922ffe741cda3afc383a63d34ed2c3d565e42d8
+
+
+"#]],
+    );
+
+    cmd.forge_fuse().args(["eip712", path.to_string_lossy().as_ref(), "--json"]).assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "path": "Structs.sol > Structs > Foo",
+    "type": "Foo(Bar bar)Art(uint256 id)Bar(Art art)",
+    "hash": "0x6d9b732373bd999fde4072274c752e03f7437067dd75521eb406d8edf1d30f7d"
+  },
+  {
+    "path": "Structs.sol > Structs > Bar",
+    "type": "Bar(Art art)Art(uint256 id)",
+    "hash": "0xadeb03f4f98fb57c05c9a79d8dd2348220e9bd9fd332ec2fbd92479e5695a596"
+  },
+  {
+    "path": "Structs.sol > Structs > Art",
+    "type": "Art(uint256 id)",
+    "hash": "0xbfeb9da97f9dbc2403e9d5ec3853f36414cae141d772601f24e0097d159d302b"
+  },
+  {
+    "path": "Structs.sol > Structs > Complex",
+    "type": "Complex(Foo foo2,Foo_1[] foos,Rec[][] recs)Art(uint256 id)Bar(Art art)Foo(uint256 id)Foo_1(Bar bar)Rec(Rec[] rec)",
+    "hash": "0xfb0a234a82efcade7c031ebb4c58afd7f5f242ca67ed06f4050c60044dcee425"
+  },
+  {
+    "path": "Structs.sol > Structs > Rec",
+    "type": "Rec(Rec[] rec)",
+    "hash": "0x5f060eb740f5aee93a910587a100458c724479d189f6dd67ac39048bf312102e"
+  },
+  {
+    "path": "Structs.sol > Structs2 > Foo",
+    "type": "Foo(uint256 id)",
+    "hash": "0xb93d8bb2877cd5cc51979d9fe85339ab570714a6fd974225e2a763851092497e"
+  },
+  {
+    "path": "Structs.sol > Structs2 > Rec",
+    "type": "Rec(Bar[] bar)Bar(Rec rec)",
+    "hash": "0xe9dded72c72648f27772620cb4e10b773ce31a3ea26ef980c0b39d1834242cda"
+  },
+  {
+    "path": "Structs.sol > Structs2 > Bar",
+    "type": "Bar(Rec rec)Rec(Bar[] bar)",
+    "hash": "0x164eba932ecde04ec75feba228664d08f29c88d6a67e531757e023e6063c3b2c"
+  },
+  {
+    "path": "Structs.sol > Structs2 > FooBar",
+    "type": "FooBar(Foo[] foos,Bar[] bars,Foo_1 foo,Bar_1 bar,Rec[] recs,Rec_1 rec)Art(uint256 id)Bar(Rec rec)Bar_1(Art art)Foo(uint256 id)Foo_1(Bar_1 bar)Rec(Bar[] bar)Rec_1(Rec_1[] rec)",
+    "hash": "0xce88f333fe5b5d4901ceb2569922ffe741cda3afc383a63d34ed2c3d565e42d8"
+  }
+]
+
+"#]],
+    );
+});
+
+forgetest!(test_eip712_free_standing_structs, |prj, cmd| {
+    let path = prj
+        .add_source(
+            "FreeStandingStructs.sol",
+            r#"
+// free-standing struct (outside a contract and lib)
+struct FreeStanding {
+    uint256 id;
+    string name;
+}
+
+contract InsideContract {
+    struct ContractStruct {
+        uint256 value;
+    }
+}
+
+library InsideLibrary {
+    struct LibraryStruct {
+        bytes32 hash;
+    }
+}
+"#,
+        )
+        .unwrap();
+
+    cmd.forge_fuse().args(["eip712", path.to_string_lossy().as_ref()]).assert_success().stdout_eq(
+        str![[r#"
+FreeStanding:
+ - type: FreeStanding(uint256 id,string name)
+ - hash: 0xfb3c934b2382873277133498bde6eb3914ab323e3bef8b373ebcd423969bf1a2
+
+FreeStandingStructs.sol > InsideContract > ContractStruct:
+ - type: ContractStruct(uint256 value)
+ - hash: 0xfb63263e7cf823ff50385a991cb1bd5c1ff46b58011119984d52f8736331e3fe
+
+FreeStandingStructs.sol > InsideLibrary > LibraryStruct:
+ - type: LibraryStruct(bytes32 hash)
+ - hash: 0x81d6d25f4d37549244d76a68f23ecdcbf3ae81e5a361ed6c492b6a2e126a2843
 
 
 "#]],
