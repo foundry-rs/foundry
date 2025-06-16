@@ -117,17 +117,22 @@ impl<'hir> Resolver<'hir> {
     /// Returns the path for a struct, with the format: `file.sol > MyContract > MyStruct`
     pub fn get_struct_path(&self, id: StructId) -> String {
         let strukt = self.hir.strukt(id).name.as_str();
-        self.hir.strukt(id).contract.map_or(String::new(), |cid| {
-            let full_name = self.gcx.get().contract_fully_qualified_name(cid).to_string();
-            let relevant =
-                Path::new(&full_name).file_name().and_then(|s| s.to_str()).unwrap_or(&full_name);
+        match self.hir.strukt(id).contract {
+            Some(cid) => {
+                let full_name = self.gcx.get().contract_fully_qualified_name(cid).to_string();
+                let relevant = Path::new(&full_name)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(&full_name);
 
-            if let Some((file, contract)) = relevant.rsplit_once(':') {
-                format!("{file} > {contract} > {strukt}")
-            } else {
-                format!("{relevant} > {strukt}")
+                if let Some((file, contract)) = relevant.rsplit_once(':') {
+                    format!("{file} > {contract} > {strukt}")
+                } else {
+                    format!("{relevant} > {strukt}")
+                }
             }
-        })
+            None => format!("{strukt}"),
+        }
     }
 
     /// Converts a given struct into its EIP-712 `encodeType` representation.

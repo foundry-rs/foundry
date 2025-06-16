@@ -151,6 +151,51 @@ Structs.sol > Structs2 > FooBar:
     );
 });
 
+forgetest!(test_eip712_free_standing_structs, |prj, cmd| {
+    let path = prj
+        .add_source(
+            "FreeStandingStructs.sol",
+            r#"
+// free-standing struct (outside a contract and lib)
+struct FreeStanding {
+    uint256 id;
+    string name;
+}
+
+contract InsideContract {
+    struct ContractStruct {
+        uint256 value;
+    }
+}
+
+library InsideLibrary {
+    struct LibraryStruct {
+        bytes32 hash;
+    }
+}
+"#,
+        )
+        .unwrap();
+
+    cmd.forge_fuse().args(["eip712", path.to_string_lossy().as_ref()]).assert_success().stdout_eq(
+        str![[r#"
+FreeStanding:
+ - type: FreeStanding(uint256 id,string name)
+ - hash: 0xfb3c934b2382873277133498bde6eb3914ab323e3bef8b373ebcd423969bf1a2
+
+FreeStandingStructs.sol > InsideContract > ContractStruct:
+ - type: ContractStruct(uint256 value)
+ - hash: 0xfb63263e7cf823ff50385a991cb1bd5c1ff46b58011119984d52f8736331e3fe
+
+FreeStandingStructs.sol > InsideLibrary > LibraryStruct:
+ - type: LibraryStruct(bytes32 hash)
+ - hash: 0x81d6d25f4d37549244d76a68f23ecdcbf3ae81e5a361ed6c492b6a2e126a2843
+
+
+"#]],
+    );
+});
+
 forgetest!(test_eip712_cheatcode_simple, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
