@@ -218,45 +218,43 @@ async fn test_can_use_fee_history() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_estimate_gas_empty_data() {
-   let (api, handle) = spawn(NodeConfig::test()).await;
-   let accounts = handle.dev_accounts().collect::<Vec<_>>();
-   let from = accounts[0];
-   let to = accounts[1];
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let accounts = handle.dev_accounts().collect::<Vec<_>>();
+    let from = accounts[0];
+    let to = accounts[1];
 
-   let tx_without_data = TransactionRequest::default()
-       .with_from(from)
-       .with_to(to)
-       .with_value(U256::from(1));
+    let tx_without_data =
+        TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
 
-   let gas_without_data = api
-       .estimate_gas(WithOtherFields::new(tx_without_data), None, Default::default())
-       .await
-       .unwrap();
+    let gas_without_data = api
+        .estimate_gas(WithOtherFields::new(tx_without_data), None, Default::default())
+        .await
+        .unwrap();
 
-   let tx_with_empty_data = TransactionRequest::default()
-       .with_from(from)
-       .with_to(to)
-       .with_value(U256::from(1))
-       .with_input(vec![]);
+    let tx_with_empty_data = TransactionRequest::default()
+        .with_from(from)
+        .with_to(to)
+        .with_value(U256::from(1))
+        .with_input(vec![]);
 
-   let gas_with_empty_data = api
-       .estimate_gas(WithOtherFields::new(tx_with_empty_data), None, Default::default())
-       .await
-       .unwrap();
+    let gas_with_empty_data = api
+        .estimate_gas(WithOtherFields::new(tx_with_empty_data), None, Default::default())
+        .await
+        .unwrap();
 
-   let tx_with_data = TransactionRequest::default()
-       .with_from(from)
-       .with_to(to)
-       .with_value(U256::from(1))
-       .with_input(vec![0x12, 0x34]);
+    let tx_with_data = TransactionRequest::default()
+        .with_from(from)
+        .with_to(to)
+        .with_value(U256::from(1))
+        .with_input(vec![0x12, 0x34]);
 
-   let gas_with_data = api
-       .estimate_gas(WithOtherFields::new(tx_with_data), None, Default::default())
-       .await
-       .unwrap();
+    let gas_with_data = api
+        .estimate_gas(WithOtherFields::new(tx_with_data), None, Default::default())
+        .await
+        .unwrap();
 
-   assert_eq!(gas_without_data, U256::from(GAS_TRANSFER));
-   assert_eq!(gas_with_empty_data, U256::from(GAS_TRANSFER));
-   assert!(gas_with_data > U256::from(GAS_TRANSFER));
-   assert_eq!(gas_without_data, gas_with_empty_data);
+    assert_eq!(gas_without_data, U256::from(GAS_TRANSFER));
+    assert_eq!(gas_with_empty_data, U256::from(GAS_TRANSFER));
+    assert!(gas_with_data > U256::from(GAS_TRANSFER));
+    assert_eq!(gas_without_data, gas_with_empty_data);
 }
