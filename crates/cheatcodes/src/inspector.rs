@@ -551,14 +551,6 @@ impl Cheatcodes {
         }
     }
 
-    pub fn set_seed(&mut self, seed: U256) {
-        let mut config = (*self.config).clone();
-        config.seed = Some(seed);
-        self.config = Arc::new(config);
-        self.rng = None;
-        self.test_runner = None;
-    }
-
     /// Returns the configured prank at given depth or the first prank configured at a lower depth.
     /// For example, if pranks configured for depth 1, 3 and 5, the prank for depth 4 is the one
     /// configured at depth 3.
@@ -1270,6 +1262,13 @@ impl Cheatcodes {
             ),
             None => TestRunner::new(proptest::test_runner::Config::default()),
         })
+    }
+
+    pub fn set_seed(&mut self, seed: U256) {
+        self.test_runner = Some(TestRunner::new_with_rng(
+            proptest::test_runner::Config::default(),
+            TestRng::from_seed(RngAlgorithm::ChaCha, &seed.to_be_bytes::<32>()),
+        ));
     }
 
     /// Returns existing or set a default `ArbitraryStorage` option.
