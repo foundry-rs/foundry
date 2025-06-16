@@ -78,10 +78,10 @@ impl Eip712Args {
                     .collect::<Vec<_>>();
 
                 if self.json {
-                    sh_println!("{}", serde_json::to_string_pretty(&outputs)?)?;
+                    sh_println!("{json}", json = serde_json::to_string_pretty(&outputs)?)?;
                 } else {
                     for output in &outputs {
-                        sh_print!("{}\n", output)?;
+                        sh_println!("{output}")?;
                     }
                 }
             }
