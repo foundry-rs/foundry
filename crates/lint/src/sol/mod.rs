@@ -96,34 +96,31 @@ impl SolidityLinter {
                 passes_and_lints.extend(gas::create_lint_passes());
             }
 
-            // TODO: optimize
-            let lints: Vec<&'static str> =
-                passes_and_lints.iter().map(|(_, lint)| lint.id()).collect();
-
             // Filter based on linter config
-            let mut passes: Vec<Box<dyn EarlyLintPass<'_>>> = passes_and_lints
-                .into_iter()
-                .filter_map(|(pass, lint)| {
-                    let matches_severity = match self.severity {
-                        Some(ref target) => target.contains(&lint.severity()),
-                        None => true,
-                    };
-                    let matches_lints_inc = match self.lints_included {
-                        Some(ref target) => target.contains(&lint),
-                        None => true,
-                    };
-                    let matches_lints_exc = match self.lints_excluded {
-                        Some(ref target) => target.contains(&lint),
-                        None => false,
-                    };
+            let (lints, mut passes): (Vec<&str>, Vec<Box<dyn EarlyLintPass<'_>>>) =
+                passes_and_lints
+                    .into_iter()
+                    .filter_map(|(pass, lint)| {
+                        let matches_severity = match self.severity {
+                            Some(ref target) => target.contains(&lint.severity()),
+                            None => true,
+                        };
+                        let matches_lints_inc = match self.lints_included {
+                            Some(ref target) => target.contains(&lint),
+                            None => true,
+                        };
+                        let matches_lints_exc = match self.lints_excluded {
+                            Some(ref target) => target.contains(&lint),
+                            None => false,
+                        };
 
-                    if matches_severity && matches_lints_inc && !matches_lints_exc {
-                        Some(pass)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
+                        if matches_severity && matches_lints_inc && !matches_lints_exc {
+                            Some((lint.id(), pass))
+                        } else {
+                            None
+                        }
+                    })
+                    .unzip();
 
             // Process the inline-config
             let source = file.src.as_str();
