@@ -263,7 +263,7 @@ impl PreprocessedState {
         let mut sess = Session::builder().with_stderr_emitter().build();
         sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
 
-        let result = sess.enter_parallel(|| -> Result<()> {
+        sess.enter_parallel(|| -> Result<()> {
             // Set up the parsing context with the project paths, without adding the source files
             let mut parsing_context = solar_pcx_from_solc_project(&sess, &project, &input, false);
 
@@ -297,9 +297,9 @@ impl PreprocessedState {
             if let Ok(Some(gcx)) = parsing_context.parse_and_lower(&hir_arena) {
                 let hir = &gcx.get().hir;
                 let resolver = Resolver::new(gcx);
-                for id in &resolver.struct_ids() {
-                    if let Some(schema) = resolver.resolve_struct_eip712(*id) {
-                        let def = hir.strukt(*id);
+                for id in resolver.struct_ids() {
+                    if let Some(schema) = resolver.resolve_struct_eip712(id) {
+                        let def = hir.strukt(id);
                         let source = hir.source(def.source);
 
                         if !target_files.contains(&source.file.stable_id) {
@@ -327,9 +327,9 @@ impl PreprocessedState {
                 }
             }
             Ok(())
-        });
+        })?;
 
-        eyre::ensure!(result.is_ok() && sess.dcx.has_errors().is_ok(), "failed parsing");
+        eyre::ensure!(sess.dcx.has_errors().is_ok(), "errors occurred");
 
         Ok(StructsState { structs_to_write, target_path })
     }
