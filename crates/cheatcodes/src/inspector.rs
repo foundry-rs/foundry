@@ -999,6 +999,13 @@ impl Cheatcodes {
         })
     }
 
+    pub fn set_seed(&mut self, seed: U256) {
+        self.test_runner = Some(TestRunner::new_with_rng(
+            proptest::test_runner::Config::default(),
+            TestRng::from_seed(RngAlgorithm::ChaCha, &seed.to_be_bytes::<32>()),
+        ));
+    }
+
     /// Returns existing or set a default `ArbitraryStorage` option.
     /// Used by `setArbitraryStorage` cheatcode to track addresses with arbitrary storage.
     pub fn arbitrary_storage(&mut self) -> &mut ArbitraryStorage {
