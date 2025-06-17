@@ -27,7 +27,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     fmt::Write,
     ops::ControlFlow,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -136,7 +136,7 @@ impl BindJsonArgs {
         project: &Project,
         version: Version,
         sources: Sources,
-        _target_path: &PathBuf,
+        _target_path: &Path,
     ) -> Result<Vec<StructToWrite>> {
         let settings = config.solc_settings()?;
         let include = &config.bind_json.include;
@@ -152,7 +152,7 @@ impl BindJsonArgs {
 
         sess.enter_parallel(|| -> Result<()> {
             // Set up the parsing context with the project paths, without adding the source files
-            let mut parsing_context = solar_pcx_from_solc_project(&sess, &project, &input, false);
+            let mut parsing_context = solar_pcx_from_solc_project(&sess, project, &input, false);
 
             let mut target_files = HashSet::new();
             for (path, source) in &input.input.sources {
@@ -200,7 +200,7 @@ impl BindJsonArgs {
                                     .contract
                                     .map(|id| hir.contract(id).name.as_str().into()),
                                 path: path
-                                    .strip_prefix(&root)
+                                    .strip_prefix(root)
                                     .unwrap_or_else(|_| path)
                                     .to_path_buf(),
                                 schema,
@@ -229,7 +229,7 @@ impl BindJsonArgs {
     ///   - Namespace of struct names used in function names and schema_* variables.
     ///
     /// Both of those might contain conflicts, so we need to resolve them.
-    fn resolve_conflicts(&self, structs_to_write: &mut Vec<StructToWrite>) {
+    fn resolve_conflicts(&self, structs_to_write: &mut [StructToWrite]) {
         // firstly, we resolve imported names conflicts
         // construct mapping name -> paths from which items with such name are imported
         let mut names_to_paths = BTreeMap::new();
