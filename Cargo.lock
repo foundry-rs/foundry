@@ -10811,8 +10811,3 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "foundry-compilers"
-version = "0.17.1"
-source = "git+https://github.com/foundry-rs/compilers.git?rev=e4a9b04#e4a9b049d08e43899f9eebd2be56edaac04fef07"
