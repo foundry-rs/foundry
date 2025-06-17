@@ -380,7 +380,7 @@ impl CallArgs {
         Ok(Some(state_overrides_builder.build()))
     }
 
-    /// Parse state overrides from command line arguments.
+    /// Parse block overrides from command line arguments.
     pub fn get_block_overrides(&self) -> eyre::Result<Option<BlockOverrides>> {
         let mut overrides = BlockOverrides::default();
         if let Some(number) = self.block_number {
