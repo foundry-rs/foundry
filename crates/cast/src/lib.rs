@@ -156,10 +156,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         if let Some(state_override) = state_override {
             call = call.overrides(state_override)
         }
-
-        if let Some(block_override) = block_override {
-            call = call.with_block_overrides(block_override)
-        }
+        call = call.with_block_overrides_opt(block_override);
 
         let res = call.await?;
         let mut decoded = vec![];

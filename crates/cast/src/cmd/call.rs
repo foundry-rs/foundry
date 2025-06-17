@@ -382,16 +382,18 @@ impl CallArgs {
 
     /// Parse state overrides from command line arguments.
     pub fn get_block_overrides(&self) -> eyre::Result<Option<BlockOverrides>> {
-        // Early return if no override set - <https://github.com/foundry-rs/foundry/issues/10705>
-        if [self.block_time.as_ref(), self.block_number.as_ref()].iter().all(Option::is_none) {
-            return Ok(None);
+        let mut overrides = BlockOverrides::default();
+        if let Some(number) = self.block_number {
+            overrides = overrides.with_number(U256::from(number));
         }
-
-        let block_overrides = BlockOverrides::default()
-            .with_number(U256::from(self.block_number.unwrap()))
-            .with_time(self.block_time.unwrap());
-
-        Ok(Some(block_overrides))
+        if let Some(time) = self.block_time {
+            overrides = overrides.with_time(time);
+        }
+        if overrides.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(overrides))
+        }
     }
 }
 
