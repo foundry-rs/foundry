@@ -54,42 +54,42 @@ impl Eip712Args {
         let mut sess = Session::builder().with_stderr_emitter().build();
         sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
 
-        let result = sess.enter(|| -> Result<()> {
+        sess.enter_parallel(|| -> Result<()> {
             // Set up the parsing context with the project paths and sources.
             let parsing_context =
                 solar_pcx_from_build_opts(&sess, self.build, Some(vec![self.target_path]))?;
 
             // Parse and resolve
             let hir_arena = ThreadLocal::new();
-            if let Ok(Some(gcx)) = parsing_context.parse_and_lower(&hir_arena) {
-                let resolver = Resolver::new(gcx);
+            let Ok(Some(gcx)) = parsing_context.parse_and_lower(&hir_arena) else {
+                return Err(eyre::eyre!("failed parsing"));
+            };
+            let resolver = Resolver::new(gcx);
 
-                let outputs = resolver
-                    .struct_ids()
-                    .iter()
-                    .filter_map(|id| {
-                        let resolved = resolver.resolve_struct_eip712(*id)?;
-                        Some(Eip712Output {
-                            path: resolver.get_struct_path(*id),
-                            hash: keccak256(resolved.as_bytes()),
-                            typ: resolved,
-                        })
+            let outputs = resolver
+                .struct_ids()
+                .filter_map(|id| {
+                    let resolved = resolver.resolve_struct_eip712(id)?;
+                    Some(Eip712Output {
+                        path: resolver.get_struct_path(id),
+                        hash: keccak256(resolved.as_bytes()),
+                        typ: resolved,
                     })
-                    .collect::<Vec<_>>();
+                })
+                .collect::<Vec<_>>();
 
-                if self.json {
-                    sh_println!("{json}", json = serde_json::to_string_pretty(&outputs)?)?;
-                } else {
-                    for output in &outputs {
-                        sh_println!("{output}")?;
-                    }
+            if self.json {
+                sh_println!("{json}", json = serde_json::to_string_pretty(&outputs)?)?;
+            } else {
+                for output in &outputs {
+                    sh_println!("{output}")?;
                 }
             }
 
             Ok(())
-        });
+        })?;
 
-        eyre::ensure!(result.is_ok() && sess.dcx.has_errors().is_ok(), "failed parsing");
+        eyre::ensure!(sess.dcx.has_errors().is_ok(), "errors occurred");
 
         Ok(())
     }
@@ -110,8 +110,8 @@ impl<'hir> Resolver<'hir> {
     }
 
     /// Returns the [`StructId`]s of every user-defined struct in source order.
-    pub fn struct_ids(&self) -> Vec<StructId> {
-        self.hir.strukt_ids().collect()
+    pub fn struct_ids(&self) -> impl Iterator<Item = StructId> {
+        self.hir.strukt_ids()
     }
 
     /// Returns the path for a struct, with the format: `file.sol > MyContract > MyStruct`
