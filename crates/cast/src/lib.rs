@@ -150,11 +150,15 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         func: Option<&Function>,
         block: Option<BlockId>,
         state_override: Option<StateOverride>,
-        _block_override: Option<BlockOverrides>,
+        block_override: Option<BlockOverrides>,
     ) -> Result<String> {
         let mut call = self.provider.call(req.clone()).block(block.unwrap_or_default());
         if let Some(state_override) = state_override {
             call = call.overrides(state_override)
+        }
+
+        if let Some(block_override) = block_override {
+            call = call.with_block_overrides(block_override)
         }
 
         let res = call.await?;
