@@ -152,11 +152,14 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         state_override: Option<StateOverride>,
         block_override: Option<BlockOverrides>,
     ) -> Result<String> {
-        let mut call = self.provider.call(req.clone()).block(block.unwrap_or_default());
+        let mut call = self
+            .provider
+            .call(req.clone())
+            .block(block.unwrap_or_default())
+            .with_block_overrides_opt(block_override);
         if let Some(state_override) = state_override {
             call = call.overrides(state_override)
         }
-        call = call.with_block_overrides_opt(block_override);
 
         let res = call.await?;
         let mut decoded = vec![];
