@@ -1,7 +1,7 @@
 use proc_macro2::{Delimiter, Group, Ident, TokenStream};
 use quote::{format_ident, quote};
 use syn::{
-    punctuated::Punctuated, Data, DataEnum, DataStruct, DeriveInput, Fields, Member, Token, Type,
+    Data, DataEnum, DataStruct, DeriveInput, Fields, Member, Token, Type, punctuated::Punctuated,
 };
 
 pub fn console_fmt(input: &DeriveInput) -> TokenStream {

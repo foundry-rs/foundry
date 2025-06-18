@@ -5,11 +5,11 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{Address, B256, Bytes};
 use foundry_compilers::{
+    Artifact, ArtifactId,
     artifacts::{CompactContractBytecodeCow, Libraries},
     contracts::ArtifactContracts,
-    Artifact, ArtifactId,
 };
 use semver::Version;
 use std::{
@@ -285,9 +285,9 @@ mod tests {
     use super::*;
     use alloy_primitives::{address, fixed_bytes, map::HashMap};
     use foundry_compilers::{
+        Project, ProjectCompileOutput, ProjectPathsConfig,
         multi::MultiCompiler,
         solc::{Solc, SolcCompiler},
-        Project, ProjectCompileOutput, ProjectPathsConfig,
     };
 
     struct LinkerTest {

@@ -11,15 +11,15 @@ use crate::{
     session_source::SessionSource,
 };
 use alloy_json_abi::{InternalType, JsonAbi};
-use alloy_primitives::{hex, Address};
+use alloy_primitives::{Address, hex};
 use forge_fmt::FormatterConfig;
 use foundry_config::RpcEndpointUrl;
 use foundry_evm::{
     decode::decode_console_logs,
     traces::{
-        decode_trace_arena,
+        CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, decode_trace_arena,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
-        render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
+        render_trace_arena,
     },
 };
 use regex::Regex;
@@ -960,7 +960,9 @@ impl ChiselDispatcher {
         result: &mut ChiselResult,
     ) -> eyre::Result<()> {
         if result.traces.is_empty() {
-            eyre::bail!("Unexpected error: No traces gathered. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
+            eyre::bail!(
+                "Unexpected error: No traces gathered. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml"
+            );
         }
 
         sh_println!("{}", "Traces:".green())?;

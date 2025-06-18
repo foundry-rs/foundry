@@ -4,7 +4,7 @@ use foundry_cli::{
     opts::Dependency,
     utils::{Git, LoadConfig},
 };
-use foundry_config::{impl_figment_convert_basic, Config};
+use foundry_config::{Config, impl_figment_convert_basic};
 use std::path::PathBuf;
 
 /// CLI arguments for `forge update`.

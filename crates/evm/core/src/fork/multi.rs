@@ -10,20 +10,20 @@ use alloy_primitives::map::HashMap;
 use alloy_provider::network::BlockResponse;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_config::Config;
-use foundry_fork_db::{cache::BlockchainDbMeta, BackendHandler, BlockchainDb, SharedBackend};
+use foundry_fork_db::{BackendHandler, BlockchainDb, SharedBackend, cache::BlockchainDbMeta};
 use futures::{
-    channel::mpsc::{channel, Receiver, Sender},
+    FutureExt, StreamExt,
+    channel::mpsc::{Receiver, Sender, channel},
     stream::{Fuse, Stream},
     task::{Context, Poll},
-    FutureExt, StreamExt,
 };
 use std::{
     fmt::{self, Write},
     pin::Pin,
     sync::{
-        atomic::AtomicUsize,
-        mpsc::{channel as oneshot_channel, Sender as OneshotSender},
         Arc,
+        atomic::AtomicUsize,
+        mpsc::{Sender as OneshotSender, channel as oneshot_channel},
     },
     time::Duration,
 };

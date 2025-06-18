@@ -5,8 +5,8 @@ use std::{
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result, Vm::*};
 use alloy_primitives::{
-    map::{hash_map::Entry, AddressHashMap, HashMap},
     Address, Bytes, LogData as RawLog, U256,
+    map::{AddressHashMap, HashMap, hash_map::Entry},
 };
 use revm::{
     context::JournalTr,

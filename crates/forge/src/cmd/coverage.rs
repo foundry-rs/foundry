@@ -1,24 +1,24 @@
 use super::{install, test::TestArgs, watch::WatchArgs};
 use crate::{
+    MultiContractRunnerBuilder,
     coverage::{
-        analysis::{SourceAnalysis, SourceFile, SourceFiles},
-        anchors::find_anchors,
         BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummaryReporter,
         DebugReporter, ItemAnchor, LcovReporter,
+        analysis::{SourceAnalysis, SourceFile, SourceFiles},
+        anchors::find_anchors,
     },
-    MultiContractRunnerBuilder,
 };
-use alloy_primitives::{map::HashMap, Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, U256, map::HashMap};
 use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, Result};
 use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
+    Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig,
     artifacts::{
-        sourcemap::SourceMap, CompactBytecode, CompactDeployedBytecode, SolcLanguage, Source,
+        CompactBytecode, CompactDeployedBytecode, SolcLanguage, Source, sourcemap::SourceMap,
     },
     compilers::multi::MultiCompiler,
-    Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig,
 };
 use foundry_config::Config;
 use foundry_evm::opts::EvmOpts;

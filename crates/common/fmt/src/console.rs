@@ -410,7 +410,7 @@ fn format_spec<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{address, B256};
+    use alloy_primitives::{B256, address};
     use foundry_macros::ConsoleFmt;
     use std::str::FromStr;
 

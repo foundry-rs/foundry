@@ -1,11 +1,11 @@
 use crate::{
-    document::DocumentContent, helpers::merge_toml_table, AsDoc, BufWriter, Document, ParseItem,
-    ParseSource, Parser, Preprocessor,
+    AsDoc, BufWriter, Document, ParseItem, ParseSource, Parser, Preprocessor,
+    document::DocumentContent, helpers::merge_toml_table,
 };
 use alloy_primitives::map::HashMap;
 use forge_fmt::{FormatterConfig, Visitable};
 use foundry_compilers::{compilers::solc::SOLC_EXTENSIONS, utils::source_files_iter};
-use foundry_config::{filter::expand_globs, DocConfig};
+use foundry_config::{DocConfig, filter::expand_globs};
 use itertools::Itertools;
 use mdbook::MDBook;
 use rayon::prelude::*;
@@ -361,11 +361,7 @@ impl DocBuilder {
                 Some(self.config.book.clone())
             } else {
                 let book_path = self.config.book.join("book.toml");
-                if book_path.is_file() {
-                    Some(book_path)
-                } else {
-                    None
-                }
+                if book_path.is_file() { Some(book_path) } else { None }
             }
         };
 

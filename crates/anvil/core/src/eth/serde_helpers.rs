@@ -2,7 +2,7 @@
 
 pub mod sequence {
     use serde::{
-        de::DeserializeOwned, ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer,
+        Deserialize, Deserializer, Serialize, Serializer, de::DeserializeOwned, ser::SerializeSeq,
     };
 
     pub fn serialize<S, T>(val: &T, s: S) -> Result<S::Ok, S::Error>

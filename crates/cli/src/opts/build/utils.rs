@@ -2,12 +2,12 @@ use crate::{opts::BuildOpts, utils::LoadConfig};
 
 use eyre::Result;
 use foundry_compilers::{
+    CompilerInput, Graph, Project,
     artifacts::{Source, Sources},
     multi::{MultiCompilerLanguage, MultiCompilerParsedSource},
     solc::{SolcLanguage, SolcVersionedInput},
-    CompilerInput, Graph, Project,
 };
-use solar_sema::{interface::Session, ParsingContext};
+use solar_sema::{ParsingContext, interface::Session};
 use std::path::PathBuf;
 
 /// Builds a Solar [`solar_sema::ParsingContext`] from [`BuildOpts`].

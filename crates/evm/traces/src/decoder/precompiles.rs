@@ -1,6 +1,6 @@
 use crate::{CallTrace, DecodedCallData};
-use alloy_primitives::{hex, Address, B256, U256};
-use alloy_sol_types::{abi, sol, SolCall};
+use alloy_primitives::{Address, B256, U256, hex};
+use alloy_sol_types::{SolCall, abi, sol};
 use foundry_evm_core::precompiles::{
     BLAKE_2F, EC_ADD, EC_MUL, EC_PAIRING, EC_RECOVER, IDENTITY, MOD_EXP, POINT_EVALUATION,
     RIPEMD_160, SHA_256,

@@ -1,8 +1,8 @@
 use clap::{Parser, ValueHint};
 use eyre::{Result, WrapErr};
 use foundry_cli::utils::LoadConfig;
-use foundry_compilers::{resolver::parse::SolData, Graph};
-use foundry_config::{impl_figment_convert_basic, Config};
+use foundry_compilers::{Graph, resolver::parse::SolData};
+use foundry_config::{Config, impl_figment_convert_basic};
 use itertools::Itertools;
 use solar_parse::{ast, ast::visit::Visit, interface::Session};
 use std::{

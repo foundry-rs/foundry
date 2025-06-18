@@ -6,24 +6,23 @@ use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
-    utils::{handle_traces, init_progress, TraceResult},
+    utils::{TraceResult, handle_traces, init_progress},
 };
-use foundry_common::{is_known_system_sender, shell, SYSTEM_TRANSACTION_TYPE};
+use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender, shell};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
-    figment::{
-        self,
-        value::{Dict, Map},
-        Figment, Metadata, Profile,
-    },
     Config,
+    figment::{
+        self, Figment, Metadata, Profile,
+        value::{Dict, Map},
+    },
 };
 use foundry_evm::{
+    Env,
     executors::{EvmError, TracingExecutor},
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
     utils::configure_tx_env,
-    Env,
 };
 use foundry_evm_core::env::AsEnvMut;
 

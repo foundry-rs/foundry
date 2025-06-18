@@ -3,7 +3,7 @@
 use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
 use alloy_primitives::U256;
 use forge::fuzz::CounterExample;
-use foundry_test_utils::{forgetest_init, str, Filter};
+use foundry_test_utils::{Filter, forgetest_init, str};
 use std::collections::BTreeMap;
 
 macro_rules! get_counterexample {
@@ -671,13 +671,7 @@ async fn test_invariant_after_invariant() {
                     None,
                     None,
                 ),
-                (
-                    "invariant_failure()",
-                    false,
-                    Some("invariant failure".into()),
-                    None,
-                    None,
-                ),
+                ("invariant_failure()", false, Some("invariant failure".into()), None, None),
                 ("invariant_success()", true, None, None, None),
             ],
         )]),

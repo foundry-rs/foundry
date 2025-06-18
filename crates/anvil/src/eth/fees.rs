@@ -96,19 +96,11 @@ impl FeeManager {
 
     /// Calculates the current blob gas price
     pub fn blob_gas_price(&self) -> u128 {
-        if self.is_eip4844() {
-            self.base_fee_per_blob_gas()
-        } else {
-            0
-        }
+        if self.is_eip4844() { self.base_fee_per_blob_gas() } else { 0 }
     }
 
     pub fn base_fee(&self) -> u64 {
-        if self.is_eip1559() {
-            *self.base_fee.read()
-        } else {
-            0
-        }
+        if self.is_eip1559() { *self.base_fee.read() } else { 0 }
     }
 
     pub fn is_min_priority_fee_enforced(&self) -> bool {
@@ -121,19 +113,11 @@ impl FeeManager {
     }
 
     pub fn excess_blob_gas_and_price(&self) -> Option<BlobExcessGasAndPrice> {
-        if self.is_eip4844() {
-            Some(*self.blob_excess_gas_and_price.read())
-        } else {
-            None
-        }
+        if self.is_eip4844() { Some(*self.blob_excess_gas_and_price.read()) } else { None }
     }
 
     pub fn base_fee_per_blob_gas(&self) -> u128 {
-        if self.is_eip4844() {
-            self.blob_excess_gas_and_price.read().blob_gasprice
-        } else {
-            0
-        }
+        if self.is_eip4844() { self.blob_excess_gas_and_price.read().blob_gasprice } else { 0 }
     }
 
     /// Returns the current gas price

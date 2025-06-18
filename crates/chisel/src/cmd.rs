@@ -122,25 +122,81 @@ impl From<ChiselCommand> for CmdDescriptor {
             // General
             ChiselCommand::Help => (&["help", "h"], "Display all commands", CmdCategory::General),
             ChiselCommand::Quit => (&["quit", "q"], "Quit Chisel", CmdCategory::General),
-            ChiselCommand::Exec => (&["exec <command> [args]", "e <command> [args]"], "Execute a shell command and print the output", CmdCategory::General),
+            ChiselCommand::Exec => (
+                &["exec <command> [args]", "e <command> [args]"],
+                "Execute a shell command and print the output",
+                CmdCategory::General,
+            ),
             // Session
-            ChiselCommand::Clear => (&["clear", "c"], "Clear current session source", CmdCategory::Session),
-            ChiselCommand::Source => (&["source", "so"], "Display the source code of the current session", CmdCategory::Session),
-            ChiselCommand::Save => (&["save [id]", "s [id]"], "Save the current session to cache", CmdCategory::Session),
-            ChiselCommand::Load => (&["load <id>", "l <id>"], "Load a previous session ID from cache", CmdCategory::Session),
-            ChiselCommand::ListSessions => (&["list", "ls"], "List all cached sessions", CmdCategory::Session),
-            ChiselCommand::ClearCache => (&["clearcache", "cc"], "Clear the chisel cache of all stored sessions", CmdCategory::Session),
-            ChiselCommand::Export => (&["export", "ex"], "Export the current session source to a script file", CmdCategory::Session),
-            ChiselCommand::Fetch => (&["fetch <addr> <name>", "fe <addr> <name>"], "Fetch the interface of a verified contract on Etherscan", CmdCategory::Session),
+            ChiselCommand::Clear => {
+                (&["clear", "c"], "Clear current session source", CmdCategory::Session)
+            }
+            ChiselCommand::Source => (
+                &["source", "so"],
+                "Display the source code of the current session",
+                CmdCategory::Session,
+            ),
+            ChiselCommand::Save => (
+                &["save [id]", "s [id]"],
+                "Save the current session to cache",
+                CmdCategory::Session,
+            ),
+            ChiselCommand::Load => (
+                &["load <id>", "l <id>"],
+                "Load a previous session ID from cache",
+                CmdCategory::Session,
+            ),
+            ChiselCommand::ListSessions => {
+                (&["list", "ls"], "List all cached sessions", CmdCategory::Session)
+            }
+            ChiselCommand::ClearCache => (
+                &["clearcache", "cc"],
+                "Clear the chisel cache of all stored sessions",
+                CmdCategory::Session,
+            ),
+            ChiselCommand::Export => (
+                &["export", "ex"],
+                "Export the current session source to a script file",
+                CmdCategory::Session,
+            ),
+            ChiselCommand::Fetch => (
+                &["fetch <addr> <name>", "fe <addr> <name>"],
+                "Fetch the interface of a verified contract on Etherscan",
+                CmdCategory::Session,
+            ),
             // Environment
-            ChiselCommand::Fork => (&["fork <url>", "f <url>"], "Fork an RPC for the current session. Supply 0 arguments to return to a local network", CmdCategory::Env),
-            ChiselCommand::Traces => (&["traces", "t"], "Enable / disable traces for the current session", CmdCategory::Env),
-            ChiselCommand::Calldata => (&["calldata [data]", "cd [data]"], "Set calldata (`msg.data`) for the current session (appended after function selector). Clears it if no argument provided.", CmdCategory::Env),
+            ChiselCommand::Fork => (
+                &["fork <url>", "f <url>"],
+                "Fork an RPC for the current session. Supply 0 arguments to return to a local network",
+                CmdCategory::Env,
+            ),
+            ChiselCommand::Traces => (
+                &["traces", "t"],
+                "Enable / disable traces for the current session",
+                CmdCategory::Env,
+            ),
+            ChiselCommand::Calldata => (
+                &["calldata [data]", "cd [data]"],
+                "Set calldata (`msg.data`) for the current session (appended after function selector). Clears it if no argument provided.",
+                CmdCategory::Env,
+            ),
             // Debug
-            ChiselCommand::MemDump => (&["memdump", "md"], "Dump the raw memory of the current state", CmdCategory::Debug),
-            ChiselCommand::StackDump => (&["stackdump", "sd"], "Dump the raw stack of the current state", CmdCategory::Debug),
-            ChiselCommand::Edit => (&["edit"], "Open the current session in an editor", CmdCategory::Session),
-            ChiselCommand::RawStack => (&["rawstack <var>", "rs <var>"], "Display the raw value of a variable's stack allocation. For variables that are > 32 bytes in length, this will display their memory pointer.", CmdCategory::Debug),
+            ChiselCommand::MemDump => {
+                (&["memdump", "md"], "Dump the raw memory of the current state", CmdCategory::Debug)
+            }
+            ChiselCommand::StackDump => (
+                &["stackdump", "sd"],
+                "Dump the raw stack of the current state",
+                CmdCategory::Debug,
+            ),
+            ChiselCommand::Edit => {
+                (&["edit"], "Open the current session in an editor", CmdCategory::Session)
+            }
+            ChiselCommand::RawStack => (
+                &["rawstack <var>", "rs <var>"],
+                "Display the raw value of a variable's stack allocation. For variables that are > 32 bytes in length, this will display their memory pointer.",
+                CmdCategory::Debug,
+            ),
         }
     }
 }

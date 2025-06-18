@@ -7,7 +7,7 @@ use clap_complete::generate;
 use eyre::Result;
 use foundry_cli::{handler, utils};
 use foundry_common::shell;
-use foundry_evm::inspectors::cheatcodes::{set_execution_context, ForgeContext};
+use foundry_evm::inspectors::cheatcodes::{ForgeContext, set_execution_context};
 
 /// Run the `forge` command line interface.
 pub fn run() -> Result<()> {

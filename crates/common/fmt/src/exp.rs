@@ -1,4 +1,4 @@
-use alloy_primitives::{Sign, I256, U256};
+use alloy_primitives::{I256, Sign, U256};
 use yansi::Paint;
 
 /// Returns the number expressed as a string in exponential notation

@@ -3,21 +3,21 @@ use super::{
     sequence::ScriptSequenceKind, transaction::ScriptTransactionBuilder,
 };
 use crate::{
-    broadcast::{estimate_gas, BundledState},
+    ScriptArgs, ScriptConfig, ScriptResult,
+    broadcast::{BundledState, estimate_gas},
     build::LinkedBuildData,
     execute::{ExecutionArtifacts, ExecutionData},
     sequence::get_commit_hash,
-    ScriptArgs, ScriptConfig, ScriptResult,
 };
 use alloy_chains::NamedChain;
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{map::HashMap, utils::format_units, Address, Bytes, TxKind};
+use alloy_primitives::{Address, Bytes, TxKind, map::HashMap, utils::format_units};
 use dialoguer::Confirm;
 use eyre::{Context, Result};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_different_gas_calc, now};
-use foundry_common::{shell, ContractData};
+use foundry_common::{ContractData, shell};
 use foundry_evm::traces::{decode_trace_arena, render_trace_arena};
 use futures::future::{join_all, try_join_all};
 use parking_lot::RwLock;

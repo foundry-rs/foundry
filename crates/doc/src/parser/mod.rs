@@ -3,7 +3,7 @@
 use forge_fmt::{FormatterConfig, Visitable, Visitor};
 use itertools::Itertools;
 use solang_parser::{
-    doccomment::{parse_doccomments, DocComment},
+    doccomment::{DocComment, parse_doccomments},
     pt::{
         Comment as SolangComment, EnumDefinition, ErrorDefinition, EventDefinition,
         FunctionDefinition, Identifier, Loc, SourceUnit, SourceUnitPart, StructDefinition,

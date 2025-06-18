@@ -1,8 +1,8 @@
 pub use alloy_evm::EvmEnv;
 use revm::{
+    Context, Database, Journal, JournalEntry,
     context::{BlockEnv, CfgEnv, JournalInner, JournalTr, TxEnv},
     primitives::hardfork::SpecId,
-    Context, Database, Journal, JournalEntry,
 };
 
 /// Helper container type for [`EvmEnv`] and [`TxEnv`].

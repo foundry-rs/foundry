@@ -1,9 +1,9 @@
 //! Support for generating the state root for memdb storage
 
 use crate::eth::error::BlockchainError;
-use alloy_primitives::{keccak256, map::HashMap, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, keccak256, map::HashMap};
 use alloy_rlp::Encodable;
-use alloy_rpc_types::{state::StateOverride, BlockOverrides};
+use alloy_rpc_types::{BlockOverrides, state::StateOverride};
 use alloy_trie::{HashBuilder, Nibbles};
 use foundry_evm::backend::DatabaseError;
 use revm::{

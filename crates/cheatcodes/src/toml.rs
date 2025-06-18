@@ -1,12 +1,12 @@
 //! Implementations of [`Toml`](spec::Group::Toml) cheatcodes.
 
 use crate::{
+    Cheatcode, Cheatcodes, Result,
+    Vm::*,
     json::{
         canonicalize_json_path, check_json_key_exists, parse_json, parse_json_coerce,
         parse_json_keys, resolve_type,
     },
-    Cheatcode, Cheatcodes, Result,
-    Vm::*,
 };
 use alloy_dyn_abi::DynSolType;
 use alloy_sol_types::SolValue;

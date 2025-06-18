@@ -3,12 +3,12 @@
 use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt};
 use alloy_json_abi::Event;
-use alloy_primitives::{address, b256, Address, U256};
+use alloy_primitives::{Address, U256, address, b256};
 use forge::{
     decode::decode_console_logs,
     result::{TestKind, TestStatus},
 };
-use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
+use foundry_config::{Config, FsPermissions, fs_permissions::PathPermission};
 use foundry_evm::{
     constants::HARDHAT_CONSOLE_ADDRESS,
     traces::{CallKind, CallTraceDecoder, DecodedCallData, TraceKind},

@@ -1,6 +1,6 @@
 use super::transaction::{TransactionInfo, TypedReceipt};
-use alloy_consensus::{proofs::calculate_transaction_root, Header, EMPTY_OMMER_ROOT_HASH};
-use alloy_primitives::{Address, Bloom, Bytes, B256, B64, U256};
+use alloy_consensus::{EMPTY_OMMER_ROOT_HASH, Header, proofs::calculate_transaction_root};
+use alloy_primitives::{Address, B64, B256, Bloom, Bytes, U256};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
 
 // Type alias to optionally support impersonated transactions

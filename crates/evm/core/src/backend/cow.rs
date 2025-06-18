@@ -2,12 +2,12 @@
 
 use super::BackendError;
 use crate::{
+    AsEnvMut, Env, EnvMut, InspectorExt,
     backend::{
-        diagnostic::RevertDiagnostic, Backend, DatabaseExt, JournaledState, LocalForkId,
-        RevertStateSnapshotAction,
+        Backend, DatabaseExt, JournaledState, LocalForkId, RevertStateSnapshotAction,
+        diagnostic::RevertDiagnostic,
     },
     fork::{CreateFork, ForkId},
-    AsEnvMut, Env, EnvMut, InspectorExt,
 };
 use alloy_evm::Evm;
 use alloy_genesis::GenesisAccount;
@@ -16,12 +16,12 @@ use alloy_rpc_types::TransactionRequest;
 use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
 use revm::{
+    Database, DatabaseCommit,
     bytecode::Bytecode,
     context_interface::result::ResultAndState,
     database::DatabaseRef,
-    primitives::{hardfork::SpecId, HashMap as Map},
+    primitives::{HashMap as Map, hardfork::SpecId},
     state::{Account, AccountInfo},
-    Database, DatabaseCommit,
 };
 use std::{borrow::Cow, collections::BTreeMap};
 

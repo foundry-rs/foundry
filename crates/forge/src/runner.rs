@@ -1,35 +1,34 @@
 //! The Forge test runner.
 
 use crate::{
-    fuzz::{invariant::BasicTxDetails, BaseCounterExample},
-    multi_runner::{is_matching_test, TestContract, TestRunnerConfig},
-    progress::{start_fuzz_progress, TestsProgress},
-    result::{SuiteResult, TestResult, TestSetup},
     MultiContractRunner, TestFilter,
+    fuzz::{BaseCounterExample, invariant::BasicTxDetails},
+    multi_runner::{TestContract, TestRunnerConfig, is_matching_test},
+    progress::{TestsProgress, start_fuzz_progress},
+    result::{SuiteResult, TestResult, TestSetup},
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
-use alloy_primitives::{address, map::HashMap, Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, U256, address, map::HashMap};
 use eyre::Result;
-use foundry_common::{contracts::ContractsByAddress, TestFunctionExt, TestFunctionKind};
+use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
 use foundry_compilers::utils::canonicalized;
 use foundry_config::{Config, InvariantConfig};
 use foundry_evm::{
     constants::CALLER,
     decode::RevertDecoder,
     executors::{
+        CallResult, EvmError, Executor, ITest, RawCallResult,
         fuzz::FuzzedExecutor,
         invariant::{
-            check_sequence, replay_error, replay_run, InvariantExecutor, InvariantFuzzError,
+            InvariantExecutor, InvariantFuzzError, check_sequence, replay_error, replay_run,
         },
-        CallResult, EvmError, Executor, ITest, RawCallResult,
     },
     fuzz::{
-        fixture_name,
+        CounterExample, FuzzFixtures, fixture_name,
         invariant::{CallDetails, InvariantContract},
-        CounterExample, FuzzFixtures,
     },
-    traces::{load_contracts, TraceKind, TraceMode},
+    traces::{TraceKind, TraceMode, load_contracts},
 };
 use itertools::Itertools;
 use proptest::test_runner::{
@@ -750,7 +749,8 @@ impl<'a> FunctionRunner<'a> {
                 invariant_contract.call_after_invariant,
             ) {
                 if !success {
-                    let _= sh_warn!("\
+                    let _ = sh_warn!(
+                        "\
                             Replayed invariant failure from {:?} file. \
                             Run `forge clean` or remove file to ignore failure and to continue invariant test campaign.",
                         failure_file.as_path()

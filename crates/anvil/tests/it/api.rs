@@ -6,16 +6,16 @@ use crate::{
 };
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{
+    Address, B256, ChainId, U256,
     map::{AddressHashMap, B256HashMap, HashMap},
-    Address, ChainId, B256, U256,
 };
 use alloy_provider::Provider;
 use alloy_rpc_types::{
-    request::TransactionRequest, state::AccountOverride, BlockId, BlockNumberOrTag,
-    BlockTransactions,
+    BlockId, BlockNumberOrTag, BlockTransactions, request::TransactionRequest,
+    state::AccountOverride,
 };
 use alloy_serde::WithOtherFields;
-use anvil::{eth::api::CLIENT_VERSION, spawn, NodeConfig, CHAIN_ID};
+use anvil::{CHAIN_ID, NodeConfig, eth::api::CLIENT_VERSION, spawn};
 use futures::join;
 use std::time::Duration;
 

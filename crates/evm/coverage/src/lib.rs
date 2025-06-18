@@ -9,8 +9,8 @@
 extern crate tracing;
 
 use alloy_primitives::{
-    map::{B256HashMap, HashMap},
     Bytes,
+    map::{B256HashMap, HashMap},
 };
 use analysis::SourceAnalysis;
 use eyre::Result;

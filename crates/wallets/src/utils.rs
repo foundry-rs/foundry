@@ -1,5 +1,5 @@
-use crate::{error::PrivateKeyError, PendingSigner, WalletSigner};
-use alloy_primitives::{hex::FromHex, B256};
+use crate::{PendingSigner, WalletSigner, error::PrivateKeyError};
+use alloy_primitives::{B256, hex::FromHex};
 use alloy_signer_ledger::HDPath as LedgerHDPath;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_signer_trezor::HDPath as TrezorHDPath;

@@ -1,5 +1,5 @@
 use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{Sign, I256, U256};
+use alloy_primitives::{I256, Sign, U256};
 use proptest::{
     prelude::Rng,
     strategy::{NewTree, Strategy, ValueTree},

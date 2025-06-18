@@ -1,7 +1,7 @@
 //! Coverage reports.
 
 use alloy_primitives::map::{HashMap, HashSet};
-use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Attribute, Cell, Color, Row, Table};
+use comfy_table::{Attribute, Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS};
 use evm_disassembler::disassemble_bytes;
 use foundry_common::fs;
 use semver::Version;

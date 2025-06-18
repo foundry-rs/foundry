@@ -1,11 +1,11 @@
 use crate::abi::VendingMachine;
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{bytes, U256};
+use alloy_primitives::{U256, bytes};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
-use anvil::{spawn, NodeConfig};
+use anvil::{NodeConfig, spawn};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_deploy_reverting() {

@@ -102,7 +102,9 @@ impl FromStr for Severity {
             "low" => Ok(Self::Low),
             "info" => Ok(Self::Info),
             "gas" => Ok(Self::Gas),
-            _ => Err(format!("unknown variant: found `{s}`, expected `one of `High`, `Med`, `Low`, `Info`, `Gas``")),
+            _ => Err(format!(
+                "unknown variant: found `{s}`, expected `one of `High`, `Med`, `Low`, `Info`, `Gas``"
+            )),
         }
     }
 }

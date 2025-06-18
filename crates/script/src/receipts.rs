@@ -1,8 +1,8 @@
 use alloy_chains::{Chain, NamedChain};
 use alloy_network::AnyTransactionReceipt;
-use alloy_primitives::{utils::format_units, TxHash, U256};
+use alloy_primitives::{TxHash, U256, utils::format_units};
 use alloy_provider::{PendingTransactionBuilder, PendingTransactionError, Provider, WatchTxError};
-use eyre::{eyre, Result};
+use eyre::{Result, eyre};
 use foundry_common::{provider::RetryProvider, retry, retry::RetryError, shell};
 use std::time::Duration;
 

@@ -1,9 +1,9 @@
 //! Helper for shutdown signals
 
 use futures::{
+    FutureExt,
     channel::oneshot,
     future::{FusedFuture, Shared},
-    FutureExt,
 };
 use std::{
     pin::Pin,

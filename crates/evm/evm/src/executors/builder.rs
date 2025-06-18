@@ -1,5 +1,5 @@
 use crate::{executors::Executor, inspectors::InspectorStackBuilder};
-use foundry_evm_core::{backend::Backend, Env};
+use foundry_evm_core::{Env, backend::Backend};
 use revm::primitives::hardfork::SpecId;
 
 /// The builder that allows to configure an evm [`Executor`] which a stack of optional

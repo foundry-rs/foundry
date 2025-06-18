@@ -1,34 +1,34 @@
 use std::ops::{Deref, DerefMut};
 
 use crate::{
-    backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, Env, InspectorExt,
+    Env, InspectorExt, backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
 };
 use alloy_consensus::constants::KECCAK_EMPTY;
 use alloy_evm::{
+    Evm, EvmEnv,
     eth::EthEvmContext,
     precompiles::{DynPrecompile, PrecompilesMap},
-    Evm, EvmEnv,
 };
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_fork_db::DatabaseError;
 use revm::{
+    Context, ExecuteEvm, Journal,
     context::{
-        result::{EVMError, HaltReason, ResultAndState},
         BlockEnv, CfgEnv, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr, LocalContext, TxEnv,
+        result::{EVMError, HaltReason, ResultAndState},
     },
     handler::{
-        instructions::EthInstructions, EthFrame, EthPrecompiles, FrameInitOrResult, FrameResult,
-        Handler, ItemOrResult, MainnetHandler,
+        EthFrame, EthPrecompiles, FrameInitOrResult, FrameResult, Handler, ItemOrResult,
+        MainnetHandler, instructions::EthInstructions,
     },
     inspector::InspectorHandler,
     interpreter::{
-        interpreter::EthInterpreter, return_ok, CallInput, CallInputs, CallOutcome, CallScheme,
-        CallValue, CreateInputs, CreateOutcome, FrameInput, Gas, InstructionResult,
-        InterpreterResult,
+        CallInput, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
+        FrameInput, Gas, InstructionResult, InterpreterResult, interpreter::EthInterpreter,
+        return_ok,
     },
-    precompile::{secp256r1::P256VERIFY, PrecompileSpecId, Precompiles},
+    precompile::{PrecompileSpecId, Precompiles, secp256r1::P256VERIFY},
     primitives::hardfork::SpecId,
-    Context, ExecuteEvm, Journal,
 };
 
 pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(

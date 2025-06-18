@@ -1,8 +1,8 @@
 use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
 use foundry_common::shell;
-use foundry_compilers::{artifacts::EvmVersion, Graph};
-use foundry_config::{normalize_evm_version_vyper, Config};
+use foundry_compilers::{Graph, artifacts::EvmVersion};
+use foundry_config::{Config, normalize_evm_version_vyper};
 use semver::Version;
 use serde::Serialize;
 use std::{collections::BTreeMap, path::PathBuf};

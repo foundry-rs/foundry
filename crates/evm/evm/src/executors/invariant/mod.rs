@@ -2,9 +2,9 @@ use crate::{
     executors::{Executor, RawCallResult},
     inspectors::Fuzzer,
 };
-use alloy_primitives::{map::HashMap, Address, Bytes, FixedBytes, Selector, U256};
-use alloy_sol_types::{sol, SolCall};
-use eyre::{eyre, ContextCompat, Result};
+use alloy_primitives::{Address, Bytes, FixedBytes, Selector, U256, map::HashMap};
+use alloy_sol_types::{SolCall, sol};
+use eyre::{ContextCompat, Result, eyre};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::InvariantConfig;
 use foundry_evm_core::{
@@ -15,12 +15,12 @@ use foundry_evm_core::{
     precompiles::PRECOMPILES,
 };
 use foundry_evm_fuzz::{
+    FuzzCase, FuzzFixtures, FuzzedCases,
     invariant::{
         ArtifactFilters, BasicTxDetails, FuzzRunIdentifiedContracts, InvariantContract,
         RandomCallGenerator, SenderFilters, TargetedContract, TargetedContracts,
     },
-    strategies::{invariant_strat, override_call_strat, EvmFuzzState},
-    FuzzCase, FuzzFixtures, FuzzedCases,
+    strategies::{EvmFuzzState, invariant_strat, override_call_strat},
 };
 use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use indicatif::ProgressBar;
@@ -34,7 +34,7 @@ use revm::state::Account;
 use shrink::shrink_sequence;
 use std::{
     cell::RefCell,
-    collections::{btree_map::Entry, HashMap as Map},
+    collections::{HashMap as Map, btree_map::Entry},
     sync::Arc,
 };
 
@@ -681,7 +681,9 @@ impl<'a> InvariantExecutor<'a> {
 
             return Ok(artifact.identifier())
         }
-        eyre::bail!("{contract} not found in the project. Allowed format: `contract_name` or `contract_path:contract_name`.");
+        eyre::bail!(
+            "{contract} not found in the project. Allowed format: `contract_name` or `contract_path:contract_name`."
+        );
     }
 
     /// Selects senders and contracts based on the contract methods `targetSenders() -> address[]`,

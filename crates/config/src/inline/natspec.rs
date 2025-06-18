@@ -1,17 +1,17 @@
-use super::{InlineConfigError, InlineConfigErrorKind, INLINE_CONFIG_PREFIX};
+use super::{INLINE_CONFIG_PREFIX, InlineConfigError, InlineConfigErrorKind};
 use figment::Profile;
 use foundry_compilers::{
-    artifacts::{ast::NodeType, Node},
     ProjectCompileOutput,
+    artifacts::{Node, ast::NodeType},
 };
 use itertools::Itertools;
 use serde_json::Value;
 use solar_parse::{
-    ast::{
-        interface::{self, Session},
-        Arena, CommentKind, Item, ItemKind,
-    },
     Parser,
+    ast::{
+        Arena, CommentKind, Item, ItemKind,
+        interface::{self, Session},
+    },
 };
 use std::{collections::BTreeMap, path::Path};
 

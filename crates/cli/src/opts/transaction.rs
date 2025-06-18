@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use crate::utils::{parse_ether_value, parse_json};
 use alloy_eips::{eip2930::AccessList, eip7702::SignedAuthorization};
-use alloy_primitives::{hex, Address, U256, U64};
+use alloy_primitives::{Address, U64, U256, hex};
 use alloy_rlp::Decodable;
 use clap::Parser;
 

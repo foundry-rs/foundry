@@ -5,7 +5,7 @@ use foundry_cli::{
     utils::{CommandUtils, Git, LoadConfig},
 };
 use foundry_common::fs;
-use foundry_config::{impl_figment_convert_basic, Config};
+use foundry_config::{Config, impl_figment_convert_basic};
 use regex::Regex;
 use semver::Version;
 use std::{
@@ -365,11 +365,7 @@ impl Installer<'_> {
             return Err(e)
         }
 
-        if is_branch {
-            Ok(tag)
-        } else {
-            Ok(String::new())
-        }
+        if is_branch { Ok(tag) } else { Ok(String::new()) }
     }
 
     /// disambiguate tag if it is a version tag

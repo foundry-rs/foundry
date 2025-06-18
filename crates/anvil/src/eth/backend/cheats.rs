@@ -1,6 +1,6 @@
 //! Support for "cheat codes" / bypass functions
 
-use alloy_primitives::{map::AddressHashSet, Address};
+use alloy_primitives::{Address, map::AddressHashSet};
 use parking_lot::RwLock;
 use std::sync::Arc;
 

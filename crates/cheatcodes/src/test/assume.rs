@@ -2,7 +2,7 @@ use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result};
 use alloy_primitives::Address;
 use foundry_evm_core::constants::MAGIC_ASSUME;
 use spec::Vm::{
-    assumeCall, assumeNoRevert_0Call, assumeNoRevert_1Call, assumeNoRevert_2Call, PotentialRevert,
+    PotentialRevert, assumeCall, assumeNoRevert_0Call, assumeNoRevert_1Call, assumeNoRevert_2Call,
 };
 use std::fmt::Debug;
 
@@ -46,11 +46,7 @@ impl AcceptableRevertParameters {
 impl Cheatcode for assumeCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { condition } = self;
-        if *condition {
-            Ok(Default::default())
-        } else {
-            Err(Error::from(MAGIC_ASSUME))
-        }
+        if *condition { Ok(Default::default()) } else { Err(Error::from(MAGIC_ASSUME)) }
     }
 }
 

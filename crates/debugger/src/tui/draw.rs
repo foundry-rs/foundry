@@ -3,14 +3,14 @@
 use super::context::TUIContext;
 use crate::op::OpcodeParam;
 use foundry_compilers::artifacts::sourcemap::SourceElement;
-use foundry_evm_core::buffer::{get_buffer_accesses, BufferKind};
+use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
 use foundry_evm_traces::debug::SourceData;
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
-    Frame,
 };
 use revm_inspectors::tracing::types::CallKind;
 use std::{collections::VecDeque, fmt::Write, io};

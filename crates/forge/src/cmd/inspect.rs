@@ -1,8 +1,8 @@
 use alloy_json_abi::{EventParam, InternalType, JsonAbi, Param};
 use alloy_primitives::{hex, keccak256};
 use clap::Parser;
-use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Table};
-use eyre::{eyre, Result};
+use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS};
+use eyre::{Result, eyre};
 use foundry_cli::opts::{BuildOpts, CompilerOpts};
 use foundry_common::{
     compile::{PathOrContractInfo, ProjectCompiler},
@@ -10,11 +10,11 @@ use foundry_common::{
 };
 use foundry_compilers::{
     artifacts::{
+        StorageLayout,
         output_selection::{
             BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
             EvmOutputSelection, EwasmOutputSelection,
         },
-        StorageLayout,
     },
     solc::SolcLanguage,
 };
@@ -585,10 +585,12 @@ mod tests {
         for &field in ContractArtifactField::ALL {
             if field == ContractArtifactField::StandardJson {
                 let selection: Result<ContractOutputSelection, _> = field.try_into();
-                assert!(selection
-                    .unwrap_err()
-                    .to_string()
-                    .eq("StandardJson is not supported for ContractOutputSelection"));
+                assert!(
+                    selection
+                        .unwrap_err()
+                        .to_string()
+                        .eq("StandardJson is not supported for ContractOutputSelection")
+                );
             } else {
                 let selection: ContractOutputSelection = field.try_into().unwrap();
                 assert_eq!(field, selection);

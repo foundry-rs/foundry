@@ -7,7 +7,7 @@ use crate::prelude::{
 };
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_json_abi::EventParam;
-use alloy_primitives::{hex, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, hex};
 use core::fmt::Debug;
 use eyre::{Result, WrapErr};
 use foundry_compilers::Artifact;
@@ -1025,7 +1025,9 @@ impl Type {
                     .collect::<Result<Vec<_>>>()?;
                 Ok(Some(DynSolType::Tuple(inner_types)))
             } else {
-                eyre::bail!("Could not find any definition in contract \"{contract_name}\" for type: {custom_type:?}")
+                eyre::bail!(
+                    "Could not find any definition in contract \"{contract_name}\" for type: {custom_type:?}"
+                )
             }
         } else {
             // Check if the custom type is a variable or function within the REPL contract before

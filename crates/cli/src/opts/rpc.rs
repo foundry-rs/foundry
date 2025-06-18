@@ -4,12 +4,12 @@ use clap::Parser;
 use eyre::Result;
 use foundry_block_explorers::EtherscanApiVersion;
 use foundry_config::{
+    Chain, Config,
     figment::{
-        self,
+        self, Metadata, Profile,
         value::{Dict, Map},
-        Metadata, Profile,
     },
-    impl_figment_convert_cast, Chain, Config,
+    impl_figment_convert_cast,
 };
 use foundry_wallets::WalletOpts;
 use serde::Serialize;

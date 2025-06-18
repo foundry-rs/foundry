@@ -1,14 +1,14 @@
 //! Support for polling based filters
 use crate::{
+    StorageInfo,
     eth::{backend::notifications::NewBlockNotifications, error::ToRpcResponseResult},
     pubsub::filter_logs,
-    StorageInfo,
 };
-use alloy_primitives::{map::HashMap, TxHash};
+use alloy_primitives::{TxHash, map::HashMap};
 use alloy_rpc_types::{Filter, FilteredParams, Log};
 use anvil_core::eth::subscription::SubscriptionId;
 use anvil_rpc::response::ResponseResult;
-use futures::{channel::mpsc::Receiver, Stream, StreamExt};
+use futures::{Stream, StreamExt, channel::mpsc::Receiver};
 use std::{
     pin::Pin,
     sync::Arc,

@@ -5,8 +5,9 @@ use eyre::{Context, Result};
 use foundry_block_explorers::Client;
 use foundry_cli::{opts::EtherscanOpts, utils::LoadConfig};
 use foundry_common::{
+    ContractsByArtifact,
     compile::{PathOrContractInfo, ProjectCompiler},
-    find_target_path, fs, shell, ContractsByArtifact,
+    find_target_path, fs, shell,
 };
 use foundry_config::load_config;
 use itertools::Itertools;

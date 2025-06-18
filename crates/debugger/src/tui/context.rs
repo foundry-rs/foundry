@@ -1,7 +1,7 @@
 //! Debugger context and event handler implementation.
 
-use crate::{debugger::DebuggerContext, DebugNode, ExitReason};
-use alloy_primitives::{hex, Address};
+use crate::{DebugNode, ExitReason, debugger::DebuggerContext};
+use alloy_primitives::{Address, hex};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use foundry_evm_core::buffer::BufferKind;
 use revm::bytecode::opcode::OpCode;

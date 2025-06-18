@@ -1,7 +1,7 @@
 //! Support for multiple RPC-endpoints
 
-use crate::resolve::{interpolate, UnresolvedEnvVarError, RE_PLACEHOLDER};
-use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
+use crate::resolve::{RE_PLACEHOLDER, UnresolvedEnvVarError, interpolate};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, ser::SerializeMap};
 use std::{
     collections::BTreeMap,
     fmt,

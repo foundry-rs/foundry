@@ -1,4 +1,4 @@
-use forge_fmt::{format_to, parse, solang_ext::AstEq, FormatterConfig};
+use forge_fmt::{FormatterConfig, format_to, parse, solang_ext::AstEq};
 use itertools::Itertools;
 use std::{fs, path::PathBuf};
 use tracing_subscriber::{EnvFilter, FmtSubscriber};

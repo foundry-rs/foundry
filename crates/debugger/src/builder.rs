@@ -1,9 +1,9 @@
 //! Debugger builder.
 
-use crate::{node::flatten_call_trace, DebugNode, Debugger};
-use alloy_primitives::{map::AddressHashMap, Address};
+use crate::{DebugNode, Debugger, node::flatten_call_trace};
+use alloy_primitives::{Address, map::AddressHashMap};
 use foundry_common::{evm::Breakpoints, get_contract_name};
-use foundry_evm_traces::{debug::ContractSources, CallTraceArena, CallTraceDecoder, Traces};
+use foundry_evm_traces::{CallTraceArena, CallTraceDecoder, Traces, debug::ContractSources};
 /// Debugger builder.
 #[derive(Debug, Default)]
 #[must_use = "builders do nothing unless you call `build` on them"]

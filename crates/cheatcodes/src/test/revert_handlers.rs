@@ -1,9 +1,9 @@
 use crate::{Error, Result};
-use alloy_primitives::{address, hex, Address, Bytes};
+use alloy_primitives::{Address, Bytes, address, hex};
 use alloy_sol_types::{SolError, SolValue};
 use foundry_common::ContractsByArtifact;
 use foundry_evm_core::decode::RevertDecoder;
-use revm::interpreter::{return_ok, InstructionResult};
+use revm::interpreter::{InstructionResult, return_ok};
 use spec::Vm;
 
 use super::{

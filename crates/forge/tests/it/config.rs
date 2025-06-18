@@ -1,14 +1,14 @@
 //! Test config.
 
 use forge::{
-    result::{SuiteResult, TestStatus},
     MultiContractRunner,
+    result::{SuiteResult, TestStatus},
 };
 use foundry_evm::{
     decode::decode_console_logs,
-    traces::{decode_trace_arena, render_trace_arena, CallTraceDecoderBuilder},
+    traces::{CallTraceDecoderBuilder, decode_trace_arena, render_trace_arena},
 };
-use foundry_test_utils::{init_tracing, Filter};
+use foundry_test_utils::{Filter, init_tracing};
 use futures::future::join_all;
 use itertools::Itertools;
 use revm::primitives::hardfork::SpecId;

@@ -57,14 +57,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     // - The build profile.
     // Example: forge 0.3.0-nightly+3cb96bde9b.1737036656.debug
     println!(
-            "cargo:rustc-env=FOUNDRY_SEMVER_VERSION={pkg_version}{version_suffix}+{sha_short}.{build_timestamp_unix}.{profile}"
-        );
+        "cargo:rustc-env=FOUNDRY_SEMVER_VERSION={pkg_version}{version_suffix}+{sha_short}.{build_timestamp_unix}.{profile}"
+    );
 
     // The short version information for the Foundry CLI.
     // - The latest version from Cargo.toml
     // - The short SHA of the latest commit.
     // Example: 0.3.0-dev (3cb96bde9b)
-    println!("cargo:rustc-env=FOUNDRY_SHORT_VERSION={pkg_version}{version_suffix} ({sha_short} {build_timestamp})");
+    println!(
+        "cargo:rustc-env=FOUNDRY_SHORT_VERSION={pkg_version}{version_suffix} ({sha_short} {build_timestamp})"
+    );
 
     // The long version information for the Foundry CLI.
     // - The latest version from Cargo.toml.
@@ -83,7 +85,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     // ```
     println!("cargo:rustc-env=FOUNDRY_LONG_VERSION_0=Version: {pkg_version}{version_suffix}");
     println!("cargo:rustc-env=FOUNDRY_LONG_VERSION_1=Commit SHA: {sha}");
-    println!("cargo:rustc-env=FOUNDRY_LONG_VERSION_2=Build Timestamp: {build_timestamp} ({build_timestamp_unix})");
+    println!(
+        "cargo:rustc-env=FOUNDRY_LONG_VERSION_2=Build Timestamp: {build_timestamp} ({build_timestamp_unix})"
+    );
     println!("cargo:rustc-env=FOUNDRY_LONG_VERSION_3=Build Profile: {profile}");
 
     Ok(())

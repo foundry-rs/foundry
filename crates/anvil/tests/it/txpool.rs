@@ -2,10 +2,10 @@
 
 use alloy_network::TransactionBuilder;
 use alloy_primitives::U256;
-use alloy_provider::{ext::TxPoolApi, Provider};
+use alloy_provider::{Provider, ext::TxPoolApi};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
-use anvil::{spawn, NodeConfig};
+use anvil::{NodeConfig, spawn};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn geth_txpool() {

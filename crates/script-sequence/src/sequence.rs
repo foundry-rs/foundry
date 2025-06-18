@@ -1,8 +1,8 @@
 use crate::transaction::TransactionWithMetadata;
 use alloy_network::AnyTransactionReceipt;
-use alloy_primitives::{hex, map::HashMap, TxHash};
+use alloy_primitives::{TxHash, hex, map::HashMap};
 use eyre::{ContextCompat, Result, WrapErr};
-use foundry_common::{fs, shell, TransactionMaybeSigned, SELECTOR_LEN};
+use foundry_common::{SELECTOR_LEN, TransactionMaybeSigned, fs, shell};
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};

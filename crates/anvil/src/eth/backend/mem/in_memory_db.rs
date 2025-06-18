@@ -7,7 +7,7 @@ use crate::{
     },
     mem::state::state_root,
 };
-use alloy_primitives::{map::HashMap, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, map::HashMap};
 use alloy_rpc_types::BlockId;
 use foundry_evm::backend::{BlockchainDb, DatabaseResult, StateSnapshot};
 use revm::{
@@ -148,7 +148,7 @@ impl MaybeForkedDatabase for MemDb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{address, Bytes};
+    use alloy_primitives::{Bytes, address};
     use revm::{bytecode::Bytecode, primitives::KECCAK_EMPTY};
     use std::collections::BTreeMap;
 

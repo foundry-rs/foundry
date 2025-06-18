@@ -7,7 +7,7 @@ use alloy_network::{
     AnyNetwork, AnyTypedTransaction, TransactionBuilder, TransactionBuilder4844,
     TransactionBuilder7702,
 };
-use alloy_primitives::{hex, Address, Bytes, TxKind, U256};
+use alloy_primitives::{Address, Bytes, TxKind, U256, hex};
 use alloy_provider::Provider;
 use alloy_rpc_types::{AccessList, Authorization, TransactionInput, TransactionRequest};
 use alloy_serde::WithOtherFields;

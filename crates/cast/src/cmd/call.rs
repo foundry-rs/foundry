@@ -1,29 +1,28 @@
 use crate::{
+    Cast,
     traces::TraceKind,
     tx::{CastTxBuilder, SenderKind},
-    Cast,
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types::{
-    state::{StateOverride, StateOverridesBuilder},
     BlockId, BlockNumberOrTag, BlockOverrides,
+    state::{StateOverride, StateOverridesBuilder},
 };
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
-    utils::{self, handle_traces, parse_ether_value, TraceResult},
+    utils::{self, TraceResult, handle_traces, parse_ether_value},
 };
 use foundry_common::shell;
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
-    figment::{
-        self,
-        value::{Dict, Map},
-        Figment, Metadata, Profile,
-    },
     Config,
+    figment::{
+        self, Figment, Metadata, Profile,
+        value::{Dict, Map},
+    },
 };
 use foundry_evm::{
     executors::TracingExecutor,
@@ -389,11 +388,7 @@ impl CallArgs {
         if let Some(time) = self.block_time {
             overrides = overrides.with_time(time);
         }
-        if overrides.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(overrides))
-        }
+        if overrides.is_empty() { Ok(None) } else { Ok(Some(overrides)) }
     }
 }
 

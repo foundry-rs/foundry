@@ -3,20 +3,19 @@ use crate::{opts::CompilerOpts, utils::LoadConfig};
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_compilers::{
-    artifacts::{remappings::Remapping, RevertStrings},
+    Project,
+    artifacts::{RevertStrings, remappings::Remapping},
     compilers::multi::MultiCompiler,
     utils::canonicalized,
-    Project,
 };
 use foundry_config::{
-    figment,
+    Config, Remappings, figment,
     figment::{
+        Figment, Metadata, Profile, Provider,
         error::Kind::InvalidType,
         value::{Dict, Map, Value},
-        Figment, Metadata, Profile, Provider,
     },
     filter::SkipBuildFilter,
-    Config, Remappings,
 };
 use serde::Serialize;
 use std::path::PathBuf;

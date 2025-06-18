@@ -2,7 +2,7 @@
 
 use crate::mem::storage::MinedTransaction;
 use alloy_consensus::Header;
-use alloy_primitives::{keccak256, map::HashMap, Address, Bytes, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, keccak256, map::HashMap};
 use alloy_rpc_types::BlockId;
 use anvil_core::eth::{
     block::Block,
@@ -13,16 +13,16 @@ use foundry_evm::backend::{
     BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertStateSnapshotAction, StateSnapshot,
 };
 use revm::{
+    Database, DatabaseCommit,
     bytecode::Bytecode,
     context::BlockEnv,
     database::{CacheDB, DatabaseRef, DbAccount},
     primitives::KECCAK_EMPTY,
     state::AccountInfo,
-    Database, DatabaseCommit,
 };
 use serde::{
-    de::{MapAccess, Visitor},
     Deserialize, Deserializer, Serialize,
+    de::{MapAccess, Visitor},
 };
 use std::{collections::BTreeMap, fmt, path::Path};
 

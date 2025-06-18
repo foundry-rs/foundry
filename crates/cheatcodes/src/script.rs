@@ -2,18 +2,18 @@
 
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*};
 use alloy_consensus::{SidecarBuilder, SimpleCoder};
-use alloy_primitives::{Address, Uint, B256, U256};
+use alloy_primitives::{Address, B256, U256, Uint};
 use alloy_rpc_types::Authorization;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
-use foundry_wallets::{multi_wallet::MultiWallet, WalletSigner};
+use foundry_wallets::{WalletSigner, multi_wallet::MultiWallet};
 use parking_lot::Mutex;
 use revm::{
     bytecode::Bytecode,
     context::JournalTr,
     context_interface::transaction::SignedAuthorization,
-    primitives::{hardfork::SpecId, KECCAK_EMPTY},
+    primitives::{KECCAK_EMPTY, hardfork::SpecId},
 };
 use std::sync::Arc;
 

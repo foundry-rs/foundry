@@ -4,7 +4,7 @@ use super::{
 };
 use alloy_primitives::Address;
 use alloy_provider::Provider;
-use clap::{command, Parser};
+use clap::{Parser, command};
 use eyre::Result;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},

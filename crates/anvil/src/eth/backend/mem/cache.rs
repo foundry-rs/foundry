@@ -119,11 +119,7 @@ fn build_tmp_dir(p: Option<&Path>) -> io::Result<TempDir> {
     let prefix = now.format("anvil-state-%d-%m-%Y-%H-%M").to_string();
     builder.prefix(&prefix);
 
-    if let Some(p) = p {
-        builder.tempdir_in(p)
-    } else {
-        builder.tempdir()
-    }
+    if let Some(p) = p { builder.tempdir_in(p) } else { builder.tempdir() }
 }
 
 #[cfg(test)]
@@ -136,20 +132,12 @@ mod tests {
         let dir = tempdir().unwrap();
         let p = dir.path();
         let cache_dir = build_tmp_dir(Some(p)).unwrap();
-        assert!(cache_dir
-            .path()
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .starts_with("anvil-state-"));
+        assert!(
+            cache_dir.path().file_name().unwrap().to_str().unwrap().starts_with("anvil-state-")
+        );
         let cache_dir = build_tmp_dir(None).unwrap();
-        assert!(cache_dir
-            .path()
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .starts_with("anvil-state-"));
+        assert!(
+            cache_dir.path().file_name().unwrap().to_str().unwrap().starts_with("anvil-state-")
+        );
     }
 }

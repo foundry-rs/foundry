@@ -2,11 +2,11 @@
 
 use crate::utils::http_provider_with_signer;
 use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{uint, Address, U256, U64};
+use alloy_primitives::{Address, U64, U256, uint};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
-use anvil::{eth::fees::INITIAL_BASE_FEE, spawn, NodeConfig};
+use anvil::{NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
 
 const GAS_TRANSFER: u64 = 21_000;
 
@@ -181,10 +181,11 @@ async fn test_tip_above_fee_cap() {
 
     let res = provider.send_transaction(tx.clone()).await;
     assert!(res.is_err());
-    assert!(res
-        .unwrap_err()
-        .to_string()
-        .contains("max priority fee per gas higher than max fee per gas"));
+    assert!(
+        res.unwrap_err()
+            .to_string()
+            .contains("max priority fee per gas higher than max fee per gas")
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -7,7 +7,7 @@ use crate::prelude::{SessionSource, SessionSourceConfig};
 use eyre::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use time::{format_description, OffsetDateTime};
+use time::{OffsetDateTime, format_description};
 
 /// A Chisel REPL Session
 #[derive(Debug, Serialize, Deserialize)]

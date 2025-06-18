@@ -1,12 +1,12 @@
-use crate::{foundry_toml_dirs, remappings_from_env_var, remappings_from_newline, Config};
+use crate::{Config, foundry_toml_dirs, remappings_from_env_var, remappings_from_newline};
 use figment::{
-    value::{Dict, Map},
     Error, Figment, Metadata, Profile, Provider,
+    value::{Dict, Map},
 };
 use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping};
 use std::{
     borrow::Cow,
-    collections::{btree_map::Entry, BTreeMap, HashSet},
+    collections::{BTreeMap, HashSet, btree_map::Entry},
     fs,
     path::{Path, PathBuf},
 };
@@ -451,11 +451,15 @@ mod tests {
 
         let result = remappings.into_inner();
         assert_eq!(result.len(), 2, "Should allow same name with different contexts");
-        assert!(result
-            .iter()
-            .any(|r| r.context == Some("test/".to_string()) && r.path == "test/Contract.sol"));
-        assert!(result
-            .iter()
-            .any(|r| r.context == Some("prod/".to_string()) && r.path == "prod/Contract.sol"));
+        assert!(
+            result
+                .iter()
+                .any(|r| r.context == Some("test/".to_string()) && r.path == "test/Contract.sol")
+        );
+        assert!(
+            result
+                .iter()
+                .any(|r| r.context == Some("prod/".to_string()) && r.path == "prod/Contract.sol")
+        );
     }
 }

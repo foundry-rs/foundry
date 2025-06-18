@@ -2,25 +2,26 @@ use alloy_json_abi::JsonAbi;
 use alloy_primitives::Address;
 use eyre::{Result, WrapErr};
 use foundry_common::{
-    compile::ProjectCompiler, fs, selectors::SelectorKind, shell, ContractsByArtifact,
-    TestFunctionExt,
+    ContractsByArtifact, TestFunctionExt, compile::ProjectCompiler, fs, selectors::SelectorKind,
+    shell,
 };
 use foundry_compilers::{
+    Artifact, ArtifactId, ProjectCompileOutput,
     artifacts::{CompactBytecode, Settings},
     cache::{CacheEntry, CompilerCache},
     utils::read_json_file,
-    Artifact, ArtifactId, ProjectCompileOutput,
 };
-use foundry_config::{error::ExtractConfigError, figment::Figment, Chain, Config, NamedChain};
+use foundry_config::{Chain, Config, NamedChain, error::ExtractConfigError, figment::Figment};
 use foundry_debugger::Debugger;
 use foundry_evm::{
     executors::{DeployResult, EvmError, RawCallResult},
     opts::EvmOpts,
     traces::{
+        CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
         debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena,
         identifier::{SignaturesCache, SignaturesIdentifier, TraceIdentifiers},
-        render_trace_arena_inner, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
+        render_trace_arena_inner,
     },
 };
 use std::{
@@ -118,7 +119,9 @@ pub fn get_cached_entry_by_name(
 pub fn ensure_clean_constructor(abi: &JsonAbi) -> Result<()> {
     if let Some(constructor) = &abi.constructor {
         if !constructor.inputs.is_empty() {
-            eyre::bail!("Contract constructor should have no arguments. Add those arguments to  `run(...)` instead, and call it with `--sig run(...)`.");
+            eyre::bail!(
+                "Contract constructor should have no arguments. Add those arguments to  `run(...)` instead, and call it with `--sig run(...)`."
+            );
         }
     }
     Ok(())

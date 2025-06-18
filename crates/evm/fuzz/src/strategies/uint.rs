@@ -169,11 +169,7 @@ impl UintStrategy {
     }
 
     fn type_max(&self) -> U256 {
-        if self.bits < 256 {
-            (U256::from(1) << self.bits) - U256::from(1)
-        } else {
-            U256::MAX
-        }
+        if self.bits < 256 { (U256::from(1) << self.bits) - U256::from(1) } else { U256::MAX }
     }
 }
 

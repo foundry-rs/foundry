@@ -5,19 +5,19 @@
 
 use crate::{
     dispatcher::PROMPT_ARROW,
-    prelude::{ChiselCommand, COMMAND_LEADER, PROMPT_ARROW_STR},
+    prelude::{COMMAND_LEADER, ChiselCommand, PROMPT_ARROW_STR},
 };
 use rustyline::{
+    Helper,
     completion::Completer,
     highlight::{CmdKind, Highlighter},
     hint::Hinter,
     validate::{ValidationContext, ValidationResult, Validator},
-    Helper,
 };
 use solar_parse::{
+    Lexer,
     interface::{Session, SessionGlobals},
     token::{Token, TokenKind},
-    Lexer,
 };
 use std::{borrow::Cow, ops::Range, str::FromStr};
 use yansi::{Color, Style};
@@ -147,11 +147,7 @@ impl SolidityHelper {
                 }
             }
         });
-        if depth == [0; 3] {
-            ValidationResult::Valid(None)
-        } else {
-            ValidationResult::Incomplete
-        }
+        if depth == [0; 3] { ValidationResult::Valid(None) } else { ValidationResult::Incomplete }
     }
 
     /// Formats `input` with `style` into `out`, without checking `style.wrapping` or

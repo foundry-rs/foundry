@@ -1,12 +1,12 @@
 //! Wrappers for transactions.
 
-use alloy_consensus::{transaction::SignerRecoverable, Transaction, TxEnvelope};
+use alloy_consensus::{Transaction, TxEnvelope, transaction::SignerRecoverable};
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network::AnyTransactionReceipt;
 use alloy_primitives::{Address, TxKind, U256};
 use alloy_provider::{
-    network::{AnyNetwork, ReceiptResponse, TransactionBuilder},
     Provider,
+    network::{AnyNetwork, ReceiptResponse, TransactionBuilder},
 };
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;

@@ -1,4 +1,4 @@
-use crate::{writer::traits::ParamLike, AsDoc, CommentTag, Comments, Deployment, Markdown};
+use crate::{AsDoc, CommentTag, Comments, Deployment, Markdown, writer::traits::ParamLike};
 use itertools::Itertools;
 use solang_parser::pt::{ErrorParameter, EventParameter, Parameter, VariableDeclaration};
 use std::{

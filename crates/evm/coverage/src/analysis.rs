@@ -2,8 +2,8 @@ use super::{CoverageItem, CoverageItemKind, SourceLocation};
 use alloy_primitives::map::HashMap;
 use foundry_common::TestFunctionExt;
 use foundry_compilers::artifacts::{
-    ast::{self, Ast, Node, NodeType},
     Source,
+    ast::{self, Ast, Node, NodeType},
 };
 use rayon::prelude::*;
 use std::sync::Arc;
