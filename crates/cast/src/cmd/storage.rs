@@ -344,7 +344,7 @@ fn add_storage_layout_output<C: Compiler<CompilerContract = Contract>>(project: 
 }
 
 fn is_storage_layout_empty(storage_layout: &Option<StorageLayout>) -> bool {
-    if let Some(ref s) = storage_layout {
+    if let Some(s) = storage_layout {
         s.storage.is_empty()
     } else {
         true
@@ -361,9 +361,9 @@ mod tests {
             StorageArgs::parse_from(["foundry-cli", "addr.eth", "--etherscan-api-key", "dummykey"]);
         assert_eq!(args.etherscan.key(), Some("dummykey".to_string()));
 
-        std::env::set_var("ETHERSCAN_API_KEY", "FXY");
+        unsafe { std::env::set_var("ETHERSCAN_API_KEY", "FXY"); }
         let config = args.load_config().unwrap();
-        std::env::remove_var("ETHERSCAN_API_KEY");
+        unsafe { std::env::remove_var("ETHERSCAN_API_KEY"); }
         assert_eq!(config.etherscan_api_key, Some("dummykey".to_string()));
 
         let key = config.get_etherscan_api_key(None).unwrap();

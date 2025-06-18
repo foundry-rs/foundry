@@ -30,7 +30,6 @@ use parking_lot::Mutex;
 use revm::primitives::hardfork::SpecId;
 use server::try_spawn_ipc;
 use std::{
-    future::Future,
     net::SocketAddr,
     pin::Pin,
     sync::Arc,

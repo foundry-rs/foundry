@@ -15,7 +15,7 @@ use futures::{
     channel::mpsc::{channel, Receiver, Sender},
     stream::{Fuse, Stream},
     task::{Context, Poll},
-    Future, FutureExt, StreamExt,
+    FutureExt, StreamExt,
 };
 use std::{
     fmt::{self, Write},

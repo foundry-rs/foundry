@@ -823,7 +823,7 @@ mod tests {
 
         assert!(err.downcast::<UnresolvedEnvVarError>().is_ok());
 
-        std::env::set_var("_CAN_EXTRACT_RPC_ALIAS", "123456");
+        unsafe { std::env::set_var("_CAN_EXTRACT_RPC_ALIAS", "123456"); }
         let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
         assert_eq!(config.eth_rpc_url, Some("polygonMumbai".to_string()));
         assert_eq!(
@@ -863,8 +863,8 @@ mod tests {
 
         assert!(err.downcast::<UnresolvedEnvVarError>().is_ok());
 
-        std::env::set_var("_EXTRACT_RPC_ALIAS", "123456");
-        std::env::set_var("_POLYSCAN_API_KEY", "polygonkey");
+        unsafe { std::env::set_var("_EXTRACT_RPC_ALIAS", "123456"); }
+        unsafe { std::env::set_var("_POLYSCAN_API_KEY", "polygonkey"); }
         let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
         assert_eq!(config.eth_rpc_url, Some("mumbai".to_string()));
         assert_eq!(
@@ -906,8 +906,8 @@ mod tests {
 
         assert!(err.downcast::<UnresolvedEnvVarError>().is_ok());
 
-        std::env::set_var("_SOLE_EXTRACT_RPC_ALIAS", "123456");
-        std::env::set_var("_SOLE_POLYSCAN_API_KEY", "polygonkey");
+        unsafe { std::env::set_var("_SOLE_EXTRACT_RPC_ALIAS", "123456"); }
+        unsafe { std::env::set_var("_SOLE_POLYSCAN_API_KEY", "polygonkey"); }
         let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
         assert_eq!(
             evm_opts.fork_url,

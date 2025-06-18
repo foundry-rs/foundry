@@ -132,7 +132,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Casts the current writer `w` as a `String` reference. Should only be used for debugging.
     unsafe fn buf_contents(&self) -> &String {
-        *(&raw const self.buf.w as *const &mut String)
+        unsafe { *(&raw const self.buf.w as *const &mut String) }
     }
 
     /// Casts the current `W` writer or the current temp buffer as a `String` reference.
@@ -140,7 +140,7 @@ impl<'a, W: Write> Formatter<'a, W> {
     #[expect(dead_code)]
     unsafe fn temp_buf_contents(&self) -> &String {
         match &self.temp_bufs[..] {
-            [] => self.buf_contents(),
+            [] => unsafe { self.buf_contents() },
             [.., buf] => &buf.w,
         }
     }
@@ -2383,7 +2383,7 @@ impl<W: Write> Visitor for Formatter<'_, W> {
                 Type::Bytes(n) => write_chunk!(self, loc.start(), "bytes{}", n)?,
                 Type::Rational => write_chunk!(self, loc.start(), "rational")?,
                 Type::DynamicBytes => write_chunk!(self, loc.start(), "bytes")?,
-                Type::Int(ref n) | Type::Uint(ref n) => {
+                &mut Type::Int(ref n) | &mut Type::Uint(ref n) => {
                     let int = if matches!(typ, Type::Int(_)) { "int" } else { "uint" };
                     match n {
                         256 => match self.config.int_types {
@@ -2961,7 +2961,7 @@ impl<W: Write> Visitor for Formatter<'_, W> {
                     |fmt, _| {
                         let chunks = fmt.items_to_chunks(
                             Some(stmt.loc().start()),
-                            params.iter_mut().map(|(loc, ref mut ident)| (*loc, ident)),
+                            params.iter_mut().map(|(loc, ident)| (*loc, ident)),
                         )?;
                         let multiline = fmt.are_chunks_separated_multiline("{})", &chunks, ",")?;
                         fmt.write_chunks_separated(&chunks, ",", multiline)?;

@@ -6,7 +6,6 @@ use bytes::{BufMut, BytesMut};
 use futures::{ready, Sink, Stream, StreamExt};
 use interprocess::local_socket::{self as ls, tokio::prelude::*};
 use std::{
-    future::Future,
     io,
     pin::Pin,
     task::{Context, Poll},

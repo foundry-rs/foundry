@@ -46,7 +46,7 @@ pub struct HexIdProvider {
 
 impl HexIdProvider {
     /// Generates a random hex encoded Id
-    pub fn gen(&self) -> String {
+    pub fn r#gen(&self) -> String {
         let id: String =
             (&mut rng()).sample_iter(Alphanumeric).map(char::from).take(self.len).collect();
         let out = hex::encode(id);
@@ -62,5 +62,5 @@ impl Default for HexIdProvider {
 
 /// Returns a new random hex identifier
 pub fn hex_id() -> String {
-    HexIdProvider::default().gen()
+    HexIdProvider::default().r#gen()
 }

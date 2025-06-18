@@ -15,7 +15,6 @@ use foundry_config::{Chain, Config, FigmentProviders};
 use futures::FutureExt;
 use rand_08::{rngs::StdRng, SeedableRng};
 use std::{
-    future::Future,
     net::IpAddr,
     path::{Path, PathBuf},
     pin::Pin,
@@ -287,27 +286,27 @@ impl NodeArgs {
     }
 
     fn account_generator(&self) -> AccountGenerator {
-        let mut gen = AccountGenerator::new(self.accounts as usize)
+        let mut r#gen = AccountGenerator::new(self.accounts as usize)
             .phrase(DEFAULT_MNEMONIC)
             .chain_id(self.evm.chain_id.unwrap_or(CHAIN_ID.into()));
         if let Some(ref mnemonic) = self.mnemonic {
-            gen = gen.phrase(mnemonic);
+            r#gen = r#gen.phrase(mnemonic);
         } else if let Some(count) = self.mnemonic_random {
             let mut rng = rand_08::thread_rng();
             let mnemonic = match Mnemonic::<English>::new_with_count(&mut rng, count) {
                 Ok(mnemonic) => mnemonic.to_phrase(),
                 Err(_) => DEFAULT_MNEMONIC.to_string(),
             };
-            gen = gen.phrase(mnemonic);
+            r#gen = r#gen.phrase(mnemonic);
         } else if let Some(seed) = self.mnemonic_seed {
             let mut seed = StdRng::seed_from_u64(seed);
             let mnemonic = Mnemonic::<English>::new(&mut seed).to_phrase();
-            gen = gen.phrase(mnemonic);
+            r#gen = r#gen.phrase(mnemonic);
         }
         if let Some(ref derivation) = self.derivation_path {
-            gen = gen.derivation_path(derivation);
+            r#gen = r#gen.derivation_path(derivation);
         }
-        gen
+        r#gen
     }
 
     /// Returns the location where to dump the state to.
@@ -920,11 +919,11 @@ mod tests {
             ["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec()
         );
 
-        env::set_var("ANVIL_IP_ADDR", "1.1.1.1");
+        unsafe { env::set_var("ANVIL_IP_ADDR", "1.1.1.1"); }
         let args = NodeArgs::parse_from(["anvil"]);
         assert_eq!(args.host, vec!["1.1.1.1".parse::<IpAddr>().unwrap()]);
 
-        env::set_var("ANVIL_IP_ADDR", "::1,1.1.1.1,2.2.2.2");
+        unsafe { env::set_var("ANVIL_IP_ADDR", "::1,1.1.1.1,2.2.2.2"); }
         let args = NodeArgs::parse_from(["anvil"]);
         assert_eq!(
             args.host,

@@ -20,7 +20,7 @@ impl Cheatcode for setEnvCall {
         } else if value.contains('\0') {
             Err(fmt_err!("environment variable value can't contain NUL character `\\0`"))
         } else {
-            env::set_var(key, value);
+            unsafe { env::set_var(key, value); }
             Ok(Default::default())
         }
     }
@@ -308,10 +308,10 @@ mod tests {
     fn parse_env_uint() {
         let key = "parse_env_uint";
         let value = "t";
-        env::set_var(key, value);
+        unsafe { env::set_var(key, value); }
 
         let err = env(key, &DynSolType::Uint(256)).unwrap_err().to_string();
         assert_eq!(err.matches("$parse_env_uint").count(), 2, "{err:?}");
-        env::remove_var(key);
+        unsafe { env::remove_var(key); }
     }
 }

@@ -9,7 +9,7 @@ use proptest::prelude::Strategy;
 
 /// Given a function, it returns a strategy which generates valid calldata
 /// for that function's input types, following declared test fixtures.
-pub fn fuzz_calldata(func: Function, fuzz_fixtures: &FuzzFixtures) -> impl Strategy<Value = Bytes> {
+pub fn fuzz_calldata(func: Function, fuzz_fixtures: &FuzzFixtures) -> impl Strategy<Value = Bytes> + use<> {
     // We need to compose all the strategies generated for each parameter in all
     // possible combinations, accounting any parameter declared fixture
     let strats = func
@@ -40,7 +40,7 @@ pub fn fuzz_calldata(func: Function, fuzz_fixtures: &FuzzFixtures) -> impl Strat
 pub fn fuzz_calldata_from_state(
     func: Function,
     state: &EvmFuzzState,
-) -> impl Strategy<Value = Bytes> {
+) -> impl Strategy<Value = Bytes> + use<> {
     let strats = func
         .inputs
         .iter()

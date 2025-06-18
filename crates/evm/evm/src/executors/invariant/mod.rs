@@ -514,7 +514,7 @@ impl<'a> InvariantExecutor<'a> {
         invariant_contract: &InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
         deployed_libs: &[Address],
-    ) -> Result<(InvariantTest, impl Strategy<Value = BasicTxDetails>)> {
+    ) -> Result<(InvariantTest, impl Strategy<Value = BasicTxDetails> + use<>)> {
         // Finds out the chosen deployed contracts and/or senders.
         self.select_contract_artifacts(invariant_contract.address)?;
         let (targeted_senders, targeted_contracts) =
