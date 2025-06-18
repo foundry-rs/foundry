@@ -6,6 +6,41 @@
 
 set -e
 
+# Main execution
+main() {
+    log_info "Starting Foundry Multi-Version Benchmarking Suite..."
+    log_info "Testing Foundry versions: ${FOUNDRY_VERSIONS[*]}"
+    log_info "Testing repositories: ${REPO_NAMES[*]}"
+    
+    # Setup
+    check_dependencies
+    setup_directories
+    
+    # Ensure cleanup on exit
+    trap cleanup EXIT
+    
+    # Install all Foundry versions upfront 
+    install_all_foundry_versions
+    
+    # Clone/update repositories
+    for i in "${!REPO_NAMES[@]}"; do
+        clone_or_update_repo "${REPO_NAMES[$i]}" "${REPO_URLS[$i]}"
+        install_dependencies "${BENCHMARK_DIR}/${REPO_NAMES[$i]}" "${REPO_NAMES[$i]}"
+    done
+    
+    # Run benchmarks in parallel
+    benchmark_all_repositories_parallel
+    
+    # Compile results
+    compile_results
+    
+    log_success "Benchmarking complete!"
+    log_success "Results saved to: $RESULTS_FILE"
+    log_success "Latest results: $LATEST_RESULTS_FILE"
+    log_success "Raw JSON data saved to: $JSON_RESULTS_DIR"
+    log_info "You can view the results with: cat $LATEST_RESULTS_FILE"
+}
+
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -469,41 +504,6 @@ EOF
 # Cleanup temporary files
 cleanup() {
     log_info "Cleanup completed"
-}
-
-# Main execution
-main() {
-    log_info "Starting Foundry Multi-Version Benchmarking Suite..."
-    log_info "Testing Foundry versions: ${FOUNDRY_VERSIONS[*]}"
-    log_info "Testing repositories: ${REPO_NAMES[*]}"
-    
-    # Setup
-    check_dependencies
-    setup_directories
-    
-    # Ensure cleanup on exit
-    trap cleanup EXIT
-    
-    # Install all Foundry versions upfront (preprocessing step)
-    install_all_foundry_versions
-    
-    # Clone/update repositories
-    for i in "${!REPO_NAMES[@]}"; do
-        clone_or_update_repo "${REPO_NAMES[$i]}" "${REPO_URLS[$i]}"
-        install_dependencies "${BENCHMARK_DIR}/${REPO_NAMES[$i]}" "${REPO_NAMES[$i]}"
-    done
-    
-    # Run benchmarks in parallel
-    benchmark_all_repositories_parallel
-    
-    # Compile results
-    compile_results
-    
-    log_success "Benchmarking complete!"
-    log_success "Results saved to: $RESULTS_FILE"
-    log_success "Latest results: $LATEST_RESULTS_FILE"
-    log_success "Raw JSON data saved to: $JSON_RESULTS_DIR"
-    log_info "You can view the results with: cat $LATEST_RESULTS_FILE"
 }
 
 # Parse command line arguments
