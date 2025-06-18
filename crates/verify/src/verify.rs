@@ -357,9 +357,7 @@ impl VerifyArgs {
                 }
 
                 let profile = profiles.into_iter().next().unwrap().to_owned();
-                let settings = cache.profiles.get(&profile).expect("must be present");
-
-                settings
+                cache.profiles.get(&profile).expect("must be present");
             } else if project.additional_settings.is_empty() {
                 &project.settings
             } else {
