@@ -1423,7 +1423,7 @@ impl SimpleCast {
     /// assert_eq!(Cast::parse_units("2.5", 6)?, "2500000");
     /// assert_eq!(Cast::parse_units("1.0", 12)?, "1000000000000"); // 12 decimals
     /// assert_eq!(Cast::parse_units("1.23", 3)?, "1230"); // 3 decimals
-    ///     
+    ///
     /// # Ok(())
     /// # }
     /// ```
@@ -1445,7 +1445,7 @@ impl SimpleCast {
     /// assert_eq!(Cast::format_units("2500000", 6)?, "2.500000");
     /// assert_eq!(Cast::format_units("1000000000000", 12)?, "1"); // 12 decimals
     /// assert_eq!(Cast::format_units("1230", 3)?, "1.230"); // 3 decimals
-    ///     
+    ///
     /// # Ok(())
     /// # }
     /// ```
