@@ -362,6 +362,10 @@ impl EthApi {
             EthRequest::DealERC20(addr, token_addr, val) => {
                 self.anvil_deal_erc20(addr, token_addr, val).await.to_rpc_result()
             }
+            EthRequest::SetERC20Allowance(owner, spender, token_addr, val) => self
+                .anvil_set_erc20_allowance(owner, spender, token_addr, val)
+                .await
+                .to_rpc_result(),
             EthRequest::SetCode(addr, code) => {
                 self.anvil_set_code(addr, code).await.to_rpc_result()
             }
@@ -1869,6 +1873,73 @@ impl EthApi {
         Ok(())
     }
 
+    /// Helper function to find the storage slot for an ERC20 function call by testing slots
+    /// from an access list until one produces the expected result.
+    ///
+    /// Rather than trying to reverse-engineer the storage layout, this function uses a
+    /// "trial and error" approach: try overriding each slot that the function accesses,
+    /// and see which one actually affects the function's return value.
+    ///
+    /// ## Parameters
+    /// - `token_address`: The ERC20 token contract address
+    /// - `calldata`: The encoded function call (e.g., `balanceOf(user)` or `allowance(owner,
+    ///   spender)`)
+    /// - `expected_value`: The value we want to set (balance or allowance amount)
+    ///
+    /// ## Returns
+    /// The storage slot (B256) that contains the target ERC20 data, or an error if no slot is
+    /// found.
+    async fn find_erc20_storage_slot(
+        &self,
+        token_address: Address,
+        calldata: Bytes,
+        expected_value: U256,
+    ) -> Result<B256> {
+        let tx = TransactionRequest::default().with_to(token_address).with_input(calldata.clone());
+
+        // first collect all the slots that are used by the function call
+        let access_list_result =
+            self.create_access_list(WithOtherFields::new(tx.clone()), None).await?;
+        let access_list = access_list_result.access_list;
+
+        // iterate over all the accessed slots and try to find the one that contains the
+        // target value by overriding the slot and checking the function call result
+        for item in access_list.0 {
+            if item.address != token_address {
+                continue;
+            };
+            for slot in &item.storage_keys {
+                let account_override = AccountOverride::default().with_state_diff(std::iter::once(
+                    (*slot, B256::from(expected_value.to_be_bytes())),
+                ));
+
+                let state_override = StateOverridesBuilder::default()
+                    .append(token_address, account_override)
+                    .build();
+
+                let evm_override = EvmOverrides::state(Some(state_override));
+
+                let Ok(result) =
+                    self.call(WithOtherFields::new(tx.clone()), None, evm_override).await
+                else {
+                    // overriding this slot failed
+                    continue;
+                };
+
+                let Ok(result_value) = U256::abi_decode(&result) else {
+                    // response returned something other than a U256
+                    continue;
+                };
+
+                if result_value == expected_value {
+                    return Ok(*slot);
+                }
+            }
+        }
+
+        Err(BlockchainError::Message("Unable to find storage slot".to_string()))
+    }
+
     /// Deals ERC20 tokens to a address
     ///
     /// Handler for RPC call: `anvil_dealERC20`
@@ -1887,56 +1958,61 @@ impl EthApi {
             }
         }
 
-        let calldata = IERC20::balanceOfCall { target: address }.abi_encode();
-        let tx = TransactionRequest::default().with_to(token_address).with_input(calldata.clone());
+        let calldata = IERC20::balanceOfCall { target: address }.abi_encode().into();
 
-        // first collect all the slots that are used by the balanceOf call
-        let access_list_result =
-            self.create_access_list(WithOtherFields::new(tx.clone()), None).await?;
-        let access_list = access_list_result.access_list;
+        // Find the storage slot that contains the balance
+        let slot =
+            self.find_erc20_storage_slot(token_address, calldata, balance).await.map_err(|_| {
+                BlockchainError::Message("Unable to set ERC20 balance, no slot found".to_string())
+            })?;
 
-        // now we can iterate over all the accessed slots and try to find the one that contains the
-        // balance by overriding the slot and checking the `balanceOfCall` of
-        for item in access_list.0 {
-            if item.address != token_address {
-                continue;
-            };
-            for slot in &item.storage_keys {
-                let account_override = AccountOverride::default()
-                    .with_state_diff(std::iter::once((*slot, B256::from(balance.to_be_bytes()))));
+        // Set the storage slot to the desired balance
+        self.anvil_set_storage_at(
+            token_address,
+            U256::from_be_bytes(slot.0),
+            B256::from(balance.to_be_bytes()),
+        )
+        .await?;
 
-                let state_override = StateOverridesBuilder::default()
-                    .append(token_address, account_override)
-                    .build();
+        Ok(())
+    }
 
-                let evm_override = EvmOverrides::state(Some(state_override));
+    /// Sets the ERC20 allowance for a spender
+    ///
+    /// Handler for RPC call: `anvil_set_erc20_allowance`
+    pub async fn anvil_set_erc20_allowance(
+        &self,
+        owner: Address,
+        spender: Address,
+        token_address: Address,
+        amount: U256,
+    ) -> Result<()> {
+        node_info!("anvil_setERC20Allowance");
 
-                let Ok(result) =
-                    self.call(WithOtherFields::new(tx.clone()), None, evm_override).await
-                else {
-                    // overriding this slot failed
-                    continue;
-                };
-
-                let Ok(result_balance) = U256::abi_decode(&result) else {
-                    // response returned something other than a U256
-                    continue;
-                };
-
-                if result_balance == balance {
-                    self.anvil_set_storage_at(
-                        token_address,
-                        U256::from_be_bytes(slot.0),
-                        B256::from(balance.to_be_bytes()),
-                    )
-                    .await?;
-                    return Ok(());
-                }
+        sol! {
+            #[sol(rpc)]
+            contract IERC20 {
+                function allowance(address owner, address spender) external view returns (uint256);
             }
         }
 
-        // unable to set the balance
-        Err(BlockchainError::Message("Unable to set ERC20 balance, no slot found".to_string()))
+        let calldata = IERC20::allowanceCall { owner, spender }.abi_encode().into();
+
+        // Find the storage slot that contains the allowance
+        let slot =
+            self.find_erc20_storage_slot(token_address, calldata, amount).await.map_err(|_| {
+                BlockchainError::Message("Unable to set ERC20 allowance, no slot found".to_string())
+            })?;
+
+        // Set the storage slot to the desired allowance
+        self.anvil_set_storage_at(
+            token_address,
+            U256::from_be_bytes(slot.0),
+            B256::from(amount.to_be_bytes()),
+        )
+        .await?;
+
+        Ok(())
     }
 
     /// Sets the code of a contract.
@@ -2829,7 +2905,9 @@ impl EthApi {
         let to = request.to.as_ref().and_then(TxKind::to);
 
         // check certain fields to see if the request could be a simple transfer
-        let maybe_transfer = request.input.input().is_none() &&
+        let maybe_transfer = (request.input.input().is_none() ||
+            request.input.input().is_some_and(|data| data.is_empty())) &&
+            request.authorization_list.is_none() &&
             request.access_list.is_none() &&
             request.blob_versioned_hashes.is_none();
 

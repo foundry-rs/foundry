@@ -116,6 +116,8 @@ pub enum TestFunctionKind {
     FuzzTest { should_fail: bool },
     /// `invariant*` or `statefulFuzz*`.
     InvariantTest,
+    /// `table*`, with arguments.
+    TableTest,
     /// `afterInvariant`.
     AfterInvariant,
     /// `fixture*`.
@@ -140,6 +142,7 @@ impl TestFunctionKind {
             _ if name.starts_with("invariant") || name.starts_with("statefulFuzz") => {
                 Self::InvariantTest
             }
+            _ if name.starts_with("table") => Self::TableTest,
             _ if name.eq_ignore_ascii_case("setup") => Self::Setup,
             _ if name.eq_ignore_ascii_case("afterinvariant") => Self::AfterInvariant,
             _ if name.starts_with("fixture") => Self::Fixture,
@@ -156,6 +159,7 @@ impl TestFunctionKind {
             Self::FuzzTest { should_fail: false } => "fuzz",
             Self::FuzzTest { should_fail: true } => "fuzz fail",
             Self::InvariantTest => "invariant",
+            Self::TableTest => "table",
             Self::AfterInvariant => "afterInvariant",
             Self::Fixture => "fixture",
             Self::Unknown => "unknown",
@@ -171,7 +175,10 @@ impl TestFunctionKind {
     /// Returns `true` if this function is a unit, fuzz, or invariant test.
     #[inline]
     pub const fn is_any_test(&self) -> bool {
-        matches!(self, Self::UnitTest { .. } | Self::FuzzTest { .. } | Self::InvariantTest)
+        matches!(
+            self,
+            Self::UnitTest { .. } | Self::FuzzTest { .. } | Self::TableTest | Self::InvariantTest
+        )
     }
 
     /// Returns `true` if this function is a test that should fail.
@@ -196,6 +203,12 @@ impl TestFunctionKind {
     #[inline]
     pub const fn is_invariant_test(&self) -> bool {
         matches!(self, Self::InvariantTest)
+    }
+
+    /// Returns `true` if this function is a table test.
+    #[inline]
+    pub const fn is_table_test(&self) -> bool {
+        matches!(self, Self::TableTest)
     }
 
     /// Returns `true` if this function is an `afterInvariant` function.
