@@ -41,8 +41,6 @@ pub fn override_call_strat(
         };
 
         func.prop_flat_map({
-            let fuzz_state = fuzz_state.clone();
-            let fuzz_fixtures = fuzz_fixtures.clone();
             move |func| {
                 fuzz_contract_with_calldata(fuzz_state.clone(), fuzz_fixtures.clone(), target_address, func)
             }
@@ -70,8 +68,6 @@ pub fn invariant_strat(
     let senders = Rc::new(senders);
     any::<prop::sample::Selector>()
         .prop_flat_map({
-            let fuzz_state = fuzz_state.clone();
-            let fuzz_fixtures = fuzz_fixtures.clone();
             move |selector| {
                 let contracts = contracts.targets.lock();
                 let functions = contracts.fuzzed_functions();

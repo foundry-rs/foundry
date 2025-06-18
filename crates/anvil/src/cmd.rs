@@ -286,27 +286,27 @@ impl NodeArgs {
     }
 
     fn account_generator(&self) -> AccountGenerator {
-        let mut r#gen = AccountGenerator::new(self.accounts as usize)
+        let mut generate = AccountGenerator::new(self.accounts as usize)
             .phrase(DEFAULT_MNEMONIC)
             .chain_id(self.evm.chain_id.unwrap_or(CHAIN_ID.into()));
         if let Some(ref mnemonic) = self.mnemonic {
-            r#gen = r#gen.phrase(mnemonic);
+            generate = generate.phrase(mnemonic);
         } else if let Some(count) = self.mnemonic_random {
             let mut rng = rand_08::thread_rng();
             let mnemonic = match Mnemonic::<English>::new_with_count(&mut rng, count) {
                 Ok(mnemonic) => mnemonic.to_phrase(),
                 Err(_) => DEFAULT_MNEMONIC.to_string(),
             };
-            r#gen = r#gen.phrase(mnemonic);
+            generate = generate.phrase(mnemonic);
         } else if let Some(seed) = self.mnemonic_seed {
             let mut seed = StdRng::seed_from_u64(seed);
             let mnemonic = Mnemonic::<English>::new(&mut seed).to_phrase();
-            r#gen = r#gen.phrase(mnemonic);
+            generate = generate.phrase(mnemonic);
         }
         if let Some(ref derivation) = self.derivation_path {
-            r#gen = r#gen.derivation_path(derivation);
+            generate = generate.derivation_path(derivation);
         }
-        r#gen
+        generate
     }
 
     /// Returns the location where to dump the state to.

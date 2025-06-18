@@ -57,12 +57,11 @@ impl LintArgs {
         let input = match &self.paths[..] {
             [] => {
                 // Retrieve the project paths, and filter out the ignored ones.
-                let project_paths = config
+                config
                     .project_paths::<SolcLanguage>()
                     .input_files_iter()
                     .filter(|p| !(ignored.contains(p) || ignored.contains(&cwd.join(p))))
-                    .collect();
-                project_paths
+                    .collect()
             }
             paths => {
                 // Override default excluded paths and only lint the input files.

@@ -63,9 +63,7 @@ impl Remappings {
     /// Consumes the wrapper and returns the inner remappings vector.
     pub fn into_inner(self) -> Vec<Remapping> {
         let mut seen = HashSet::new();
-        let remappings =
-            self.remappings.iter().filter(|r| seen.insert(Self::filter_key(r))).cloned().collect();
-        remappings
+        self.remappings.iter().filter(|r| seen.insert(Self::filter_key(r))).cloned().collect()
     }
 
     /// Push an element to the remappings vector, but only if it's not already present.
