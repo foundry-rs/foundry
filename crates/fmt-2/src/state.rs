@@ -3,7 +3,11 @@ use super::{
     comments::Comments,
     pp::{self, Token},
 };
-use crate::{iter::IterDelimited, pp::BreakToken, FormatterConfig, InlineConfig};
+use crate::{
+    iter::{IterDelimited, IteratorPosition},
+    pp::BreakToken,
+    FormatterConfig, InlineConfig,
+};
 use foundry_config::fmt as config;
 use itertools::{Either, Itertools};
 use solar_parse::{
@@ -1306,33 +1310,18 @@ impl<'ast> State<'_, 'ast> {
                     self.end();
 
                     // Handle 'catch' clauses
-                    let mut should_indent = false;
+                    let mut should_break = false;
                     for (pos, ast::TryCatchClause { name, args, block }) in other.iter().delimited()
                     {
-                        // Add extra indent if all prev 'catch' stmts are empty
-                        if pos.is_first && block.is_empty() {
-                            should_indent = true;
-                        } else if should_indent && !block.is_empty() {
-                            should_indent = false;
-                        }
-                        if should_indent {
-                            self.space();
-                            self.s.offset(self.ind);
-                        } else {
-                            self.nbsp();
-                        }
-
+                        self.handle_try_catch_indent(&mut should_break, block.is_empty(), pos);
                         self.word("catch ");
                         if !args.is_empty() {
                             if let Some(name) = name {
-                                // self.ibox(0);
                                 self.print_ident(name);
                                 self.print_parameter_list(args);
                                 self.nbsp();
-                                // self.end();
                             }
                         }
-
                         self.print_block(block, span);
                     }
                 }
@@ -1581,6 +1570,30 @@ impl<'ast> State<'_, 'ast> {
         let yul::ExprCall { name, arguments } = expr;
         self.print_ident(name);
         self.print_tuple(arguments, Self::print_yul_expr, get_span!());
+    }
+
+    fn handle_try_catch_indent(
+        &mut self,
+        should_break: &mut bool,
+        empty_block: bool,
+        pos: IteratorPosition,
+    ) {
+        // Add extra indent if all prev 'catch' stmts are empty
+        if *should_break {
+            self.nbsp();
+        } else {
+            if empty_block {
+                self.space();
+                self.s.offset(self.ind);
+            } else {
+                if pos.is_first {
+                    self.nbsp();
+                } else {
+                    self.space();
+                }
+                *should_break = true;
+            }
+        }
     }
 }
 
