@@ -1,6 +1,7 @@
 //! A Solidity formatter
 
 use crate::{
+    FormatterConfig, InlineConfig, IntTypes,
     buffer::*,
     chunk::*,
     comments::{
@@ -12,7 +13,6 @@ use crate::{
     solang_ext::{pt::*, *},
     string::{QuoteState, QuotedStringExt},
     visit::{Visitable, Visitor},
-    FormatterConfig, InlineConfig, IntTypes,
 };
 use alloy_primitives::Address;
 use foundry_config::fmt::{HexUnderscore, MultilineFuncHeaderStyle, SingleLineBlockStyle};
@@ -1412,11 +1412,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                 .quote_state_char_indices()
                 .find_map(
                     |(state, _, ch)| {
-                        if matches!(state, QuoteState::Opening(_)) {
-                            Some(ch)
-                        } else {
-                            None
-                        }
+                        if matches!(state, QuoteState::Opening(_)) { Some(ch) } else { None }
                     },
                 )
                 .expect("Could not find quote character for quoted string")

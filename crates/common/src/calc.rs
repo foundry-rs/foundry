@@ -19,11 +19,7 @@ pub fn median_sorted(values: &[u64]) -> u64 {
 
     let len = values.len();
     let mid = len / 2;
-    if len % 2 == 0 {
-        (values[mid - 1] + values[mid]) / 2
-    } else {
-        values[mid]
-    }
+    if len % 2 == 0 { (values[mid - 1] + values[mid]) / 2 } else { values[mid] }
 }
 
 #[cfg(test)]

@@ -11,22 +11,22 @@ use parking_lot::Mutex;
 use std::{
     path::PathBuf,
     sync::{
-        atomic::{AtomicU8, Ordering},
         Arc,
+        atomic::{AtomicU8, Ordering},
     },
     time::Duration,
 };
 use tokio::process::Command as TokioCommand;
 use watchexec::{
+    Watchexec,
     action::ActionHandler,
     command::{Command, Program},
     job::{CommandState, Job},
     paths::summarise_events_to_env,
-    Watchexec,
 };
 use watchexec_events::{
-    filekind::{AccessKind, FileEventKind},
     Event, Priority, ProcessEnd, Tag,
+    filekind::{AccessKind, FileEventKind},
 };
 use watchexec_signals::Signal;
 use yansi::{Color, Paint};

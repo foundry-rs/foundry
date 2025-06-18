@@ -1,7 +1,7 @@
 use super::test;
 use crate::result::{SuiteTestResult, TestKindReport, TestOutcome};
-use alloy_primitives::{map::HashMap, U256};
-use clap::{builder::RangedU64ValueParser, Parser, ValueHint};
+use alloy_primitives::{U256, map::HashMap};
+use clap::{Parser, ValueHint, builder::RangedU64ValueParser};
 use eyre::{Context, Result};
 use foundry_cli::utils::STATIC_FUZZ_SEED;
 use regex::Regex;

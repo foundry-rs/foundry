@@ -6,8 +6,8 @@ use foundry_config::{
 };
 use rand::seq::SliceRandom;
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     LazyLock,
+    atomic::{AtomicUsize, Ordering},
 };
 
 fn shuffled<T>(mut vec: Vec<T>) -> Vec<T> {
@@ -128,11 +128,7 @@ fn archive_urls(is_ws: bool) -> &'static [String] {
         urls
     }
 
-    if is_ws {
-        &WS
-    } else {
-        &HTTP
-    }
+    if is_ws { &WS } else { &HTTP }
 }
 
 /// Returns the next etherscan api key.
@@ -159,11 +155,7 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
         // For Mainnet pick one of Reth nodes.
         let idx = next_idx() % RETH_HOSTS.len();
         let host = RETH_HOSTS[idx];
-        if is_ws {
-            format!("{host}/ws")
-        } else {
-            format!("{host}/rpc")
-        }
+        if is_ws { format!("{host}/ws") } else { format!("{host}/rpc") }
     } else {
         // DRPC for other networks used in tests.
         let idx = next_idx() % DRPC_KEYS.len();

@@ -1,8 +1,8 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
 use alloy_network::AnyRpcTransaction;
 use alloy_primitives::{
-    map::{HashMap, HashSet},
     Address, TxHash,
+    map::{HashMap, HashSet},
 };
 use anvil_core::eth::transaction::{PendingTransaction, TypedTransaction};
 use parking_lot::RwLock;

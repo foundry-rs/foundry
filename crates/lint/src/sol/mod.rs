@@ -1,11 +1,11 @@
 use crate::linter::{EarlyLintPass, EarlyLintVisitor, Lint, LintContext, Linter};
-use foundry_compilers::{solc::SolcLanguage, ProjectPathsConfig};
+use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
 use foundry_config::lint::Severity;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use solar_ast::{visit::Visit, Arena};
+use solar_ast::{Arena, visit::Visit};
 use solar_interface::{
-    diagnostics::{self, DiagCtxt, JsonEmitter},
     Session, SourceMap,
+    diagnostics::{self, DiagCtxt, JsonEmitter},
 };
 use std::{
     path::{Path, PathBuf},

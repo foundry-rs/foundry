@@ -1,15 +1,15 @@
 use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
-use alloy_primitives::{hex, Address, Signature, B256, U256};
+use alloy_primitives::{Address, B256, Signature, U256, hex};
 use alloy_provider::Provider;
 use alloy_rpc_types::Authorization;
 use alloy_signer::{
-    k256::{elliptic_curve::sec1::ToEncodedPoint, SecretKey},
     Signer,
+    k256::{SecretKey, elliptic_curve::sec1::ToEncodedPoint},
 };
 use alloy_signer_local::{
-    coins_bip39::{English, Entropy, Mnemonic},
     MnemonicBuilder, PrivateKeySigner,
+    coins_bip39::{English, Entropy, Mnemonic},
 };
 use clap::Parser;
 use eyre::{Context, Result};
@@ -276,7 +276,10 @@ impl WalletSubcommands {
                         // If the path doesn't exist, it will fail to be canonicalized,
                         // so we attach more context to the error message.
                         Err(e) => {
-                            eyre::bail!("If you specified a directory, please make sure it exists, or create it before running `cast wallet new <DIR>`.\n{path} is not a directory.\nError: {}", e);
+                            eyre::bail!(
+                                "If you specified a directory, please make sure it exists, or create it before running `cast wallet new <DIR>`.\n{path} is not a directory.\nError: {}",
+                                e
+                            );
                         }
                     };
                     if !path.is_dir() {

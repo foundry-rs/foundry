@@ -3,11 +3,11 @@
 use crate::utils::{http_provider, http_provider_with_signer};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{b256, Address, TxHash, TxKind, U256};
+use alloy_primitives::{Address, TxHash, TxKind, U256, b256};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
-use anvil::{spawn, NodeConfig};
+use anvil::{NodeConfig, spawn};
 use op_alloy_consensus::TxDeposit;
 use op_alloy_rpc_types::OpTransactionFields;
 

@@ -1,14 +1,14 @@
 use alloy_consensus::BlockHeader;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::{
+    AnyTxEnvelope, TransactionResponse,
     eip2718::{
         EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
         LEGACY_TX_TYPE_ID,
     },
-    AnyTxEnvelope, TransactionResponse,
 };
-use alloy_primitives::{Address, Selector, TxKind, B256, U256};
-use alloy_provider::{network::BlockResponse, Network};
+use alloy_primitives::{Address, B256, Selector, TxKind, U256};
+use alloy_provider::{Network, network::BlockResponse};
 use alloy_rpc_types::{Transaction, TransactionRequest};
 use foundry_common::is_impersonated_tx;
 use foundry_config::NamedChain;

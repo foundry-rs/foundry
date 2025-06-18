@@ -4,24 +4,23 @@ use eyre::Result;
 use forge_lint::{linter::Linter, sol::SolidityLinter};
 use foundry_cli::{
     opts::BuildOpts,
-    utils::{cache_local_signatures, LoadConfig},
+    utils::{LoadConfig, cache_local_signatures},
 };
 use foundry_common::{compile::ProjectCompiler, shell};
 use foundry_compilers::{
-    compilers::{multi::MultiCompilerLanguage, Language},
+    Project, ProjectCompileOutput,
+    compilers::{Language, multi::MultiCompilerLanguage},
     solc::SolcLanguage,
     utils::source_files_iter,
-    Project, ProjectCompileOutput,
 };
 use foundry_config::{
+    Config,
     figment::{
-        self,
+        self, Metadata, Profile, Provider,
         error::Kind::InvalidType,
         value::{Dict, Map, Value},
-        Metadata, Profile, Provider,
     },
     filter::expand_globs,
-    Config,
 };
 use serde::Serialize;
 use std::path::PathBuf;

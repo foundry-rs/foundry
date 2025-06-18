@@ -1,8 +1,8 @@
 use super::{fuzz_calldata, fuzz_param_from_state};
 use crate::{
-    invariant::{BasicTxDetails, CallDetails, FuzzRunIdentifiedContracts, SenderFilters},
-    strategies::{fuzz_calldata_from_state, fuzz_param, EvmFuzzState},
     FuzzFixtures,
+    invariant::{BasicTxDetails, CallDetails, FuzzRunIdentifiedContracts, SenderFilters},
+    strategies::{EvmFuzzState, fuzz_calldata_from_state, fuzz_param},
 };
 use alloy_json_abi::Function;
 use alloy_primitives::Address;
@@ -42,7 +42,12 @@ pub fn override_call_strat(
 
         func.prop_flat_map({
             move |func| {
-                fuzz_contract_with_calldata(fuzz_state.clone(), fuzz_fixtures.clone(), target_address, func)
+                fuzz_contract_with_calldata(
+                    fuzz_state.clone(),
+                    fuzz_fixtures.clone(),
+                    target_address,
+                    func,
+                )
             }
         })
     })
@@ -72,7 +77,8 @@ pub fn invariant_strat(
                 let contracts = contracts.targets.lock();
                 let functions = contracts.fuzzed_functions();
                 let (target_address, target_function) = selector.select(functions);
-                let sender = select_random_sender(fuzz_state.clone(), senders.clone(), dictionary_weight);
+                let sender =
+                    select_random_sender(fuzz_state.clone(), senders.clone(), dictionary_weight);
                 let call_details = fuzz_contract_with_calldata(
                     fuzz_state.clone(),
                     fuzz_fixtures.clone(),

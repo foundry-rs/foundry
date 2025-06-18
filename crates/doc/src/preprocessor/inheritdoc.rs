@@ -1,6 +1,6 @@
 use super::{Preprocessor, PreprocessorId};
 use crate::{
-    document::DocumentContent, Comments, Document, ParseItem, ParseSource, PreprocessorOutput,
+    Comments, Document, ParseItem, ParseSource, PreprocessorOutput, document::DocumentContent,
 };
 use alloy_primitives::map::HashMap;
 use forge_fmt::solang_ext::SafeUnwrap;

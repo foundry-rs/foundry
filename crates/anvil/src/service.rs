@@ -1,14 +1,14 @@
 //! background service
 
 use crate::{
+    NodeResult,
     eth::{
         fees::FeeHistoryService,
         miner::Miner,
-        pool::{transactions::PoolTransaction, Pool},
+        pool::{Pool, transactions::PoolTransaction},
     },
     filter::Filters,
-    mem::{storage::MinedBlockOutcome, Backend},
-    NodeResult,
+    mem::{Backend, storage::MinedBlockOutcome},
 };
 use futures::{FutureExt, Stream, StreamExt};
 use std::{

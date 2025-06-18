@@ -4,15 +4,15 @@
 
 use crate::{abi::abi_decode_calldata, provider::runtime_transport::RuntimeTransportBuilder};
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{map::HashMap, Selector, B256};
+use alloy_primitives::{B256, Selector, map::HashMap};
 use eyre::Context;
 use itertools::Itertools;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     fmt,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };

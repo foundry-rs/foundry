@@ -10,13 +10,13 @@ use foundry_cli::{
 };
 use foundry_common::fs;
 use foundry_config::{
-    figment::{
-        value::{Dict, Map},
-        Metadata, Profile, Provider,
-    },
     Config,
+    figment::{
+        Metadata, Profile, Provider,
+        value::{Dict, Map},
+    },
 };
-use rustyline::{config::Configurer, error::ReadlineError, Editor};
+use rustyline::{Editor, config::Configurer, error::ReadlineError};
 use std::path::PathBuf;
 use tracing::debug;
 use yansi::Paint;
@@ -194,15 +194,19 @@ async fn dispatch_repl_line(dispatcher: &mut ChiselDispatcher, line: &str) -> Re
             if let Some(msg) = msg {
                 sh_println!("{}", msg.green())?;
             }
-        },
+        }
         DispatchResult::UnrecognizedCommand(e) => sh_err!("{e}")?,
         DispatchResult::SolangParserFailed(e) => {
             sh_err!("{}", "Compilation error".red())?;
             sh_eprintln!("{}", format!("{e:?}").red())?;
         }
         DispatchResult::FileIoError(e) => sh_err!("{}", format!("File IO - {e}").red())?,
-        DispatchResult::CommandFailed(msg) | DispatchResult::Failure(Some(msg)) => sh_err!("{}", msg.red())?,
-        DispatchResult::Failure(None) => sh_err!("Please report this bug as a github issue if it persists: https://github.com/foundry-rs/foundry/issues/new/choose")?,
+        DispatchResult::CommandFailed(msg) | DispatchResult::Failure(Some(msg)) => {
+            sh_err!("{}", msg.red())?
+        }
+        DispatchResult::Failure(None) => sh_err!(
+            "Please report this bug as a github issue if it persists: https://github.com/foundry-rs/foundry/issues/new/choose"
+        )?,
     }
     Ok(r.is_error())
 }

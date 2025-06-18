@@ -1,14 +1,14 @@
-use super::{runner::ScriptRunner, JsonResult, NestedValue, ScriptResult};
+use super::{JsonResult, NestedValue, ScriptResult, runner::ScriptRunner};
 use crate::{
+    ScriptArgs, ScriptConfig,
     build::{CompiledState, LinkedBuildData},
     simulate::PreSimulationState,
-    ScriptArgs, ScriptConfig,
 };
 use alloy_dyn_abi::FunctionExt;
 use alloy_json_abi::{Function, InternalType, JsonAbi};
 use alloy_primitives::{
-    map::{HashMap, HashSet},
     Address, Bytes,
+    map::{HashMap, HashSet},
 };
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionInput;
@@ -16,9 +16,9 @@ use eyre::{OptionExt, Result};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{ensure_clean_constructor, needs_setup};
 use foundry_common::{
+    ContractsByArtifact,
     fmt::{format_token, format_token_raw},
     provider::get_http_provider,
-    ContractsByArtifact,
 };
 use foundry_config::NamedChain;
 use foundry_debugger::Debugger;
@@ -26,9 +26,9 @@ use foundry_evm::{
     decode::decode_console_logs,
     inspectors::cheatcodes::BroadcastableTransactions,
     traces::{
-        decode_trace_arena,
+        CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, decode_trace_arena,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
-        render_trace_arena, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind,
+        render_trace_arena,
     },
 };
 use futures::future::join_all;
@@ -193,7 +193,9 @@ impl PreExecutionState {
                         let sender = tx.transaction.from().expect("no sender");
                         if let Some(ns) = new_sender {
                             if sender != ns {
-                                sh_warn!("You have more than one deployer who could predeploy libraries. Using `--sender` instead.")?;
+                                sh_warn!(
+                                    "You have more than one deployer who could predeploy libraries. Using `--sender` instead."
+                                )?;
                                 return Ok(None);
                             }
                         } else if sender != self.script_config.evm_opts.sender {

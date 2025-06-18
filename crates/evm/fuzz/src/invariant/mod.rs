@@ -10,7 +10,7 @@ pub use call_override::RandomCallGenerator;
 mod filters;
 pub use filters::{ArtifactFilters, SenderFilters};
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
-use foundry_evm_core::utils::{get_function, StateChangeset};
+use foundry_evm_core::utils::{StateChangeset, get_function};
 
 /// Contracts identified as targets during a fuzz run.
 ///

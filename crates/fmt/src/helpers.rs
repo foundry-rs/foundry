@@ -1,6 +1,6 @@
 use crate::{
-    inline_config::{InlineConfig, InvalidInlineConfigItem},
     Comments, Formatter, FormatterConfig, FormatterError, Visitable,
+    inline_config::{InlineConfig, InvalidInlineConfigItem},
 };
 use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
 use itertools::Itertools;

@@ -1,11 +1,13 @@
 //! Cheatcode EVM inspector.
 
 use crate::{
+    CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result,
+    Vm::{self, AccountAccess},
     evm::{
+        DealRecord, GasRecord, RecordAccess,
         mapping::{self, MappingSlots},
         mock::{MockCallDataContext, MockCallReturnData},
         prank::Prank,
-        DealRecord, GasRecord, RecordAccess,
     },
     inspector::utils::CommonCreateInput,
     script::{Broadcast, Wallets},
@@ -18,29 +20,26 @@ use crate::{
         revert_handlers,
     },
     utils::IgnoredTraces,
-    CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result,
-    Vm::{self, AccountAccess},
 };
 use alloy_consensus::BlobTransactionSidecar;
 use alloy_evm::eth::EthEvmContext;
 use alloy_network::TransactionBuilder4844;
 use alloy_primitives::{
-    hex,
+    Address, B256, Bytes, Log, TxKind, U256, hex,
     map::{AddressHashMap, HashMap, HashSet},
-    Address, Bytes, Log, TxKind, B256, U256,
 };
 use alloy_rpc_types::{
-    request::{TransactionInput, TransactionRequest},
     AccessList,
+    request::{TransactionInput, TransactionRequest},
 };
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
-use foundry_common::{evm::Breakpoints, TransactionMaybeSigned, SELECTOR_LEN};
+use foundry_common::{SELECTOR_LEN, TransactionMaybeSigned, evm::Breakpoints};
 use foundry_evm_core::{
+    InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
-    evm::{new_evm_with_existing_context, FoundryEvm},
-    InspectorExt,
+    evm::{FoundryEvm, new_evm_with_existing_context},
 };
 use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
 use foundry_wallets::multi_wallet::MultiWallet;
@@ -48,17 +47,17 @@ use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
 use revm::{
+    Inspector, Journal,
     bytecode::opcode as op,
-    context::{result::EVMError, BlockEnv, JournalTr, LocalContext, TransactionType},
-    context_interface::{transaction::SignedAuthorization, CreateScheme},
+    context::{BlockEnv, JournalTr, LocalContext, TransactionType, result::EVMError},
+    context_interface::{CreateScheme, transaction::SignedAuthorization},
     handler::FrameResult,
     interpreter::{
-        interpreter_types::{Jumps, MemoryTr},
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas, Host,
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
+        interpreter_types::{Jumps, MemoryTr},
     },
     state::EvmStorageSlot,
-    Inspector, Journal,
 };
 use serde_json::Value;
 use std::{
@@ -1182,8 +1181,7 @@ impl Cheatcodes {
                         debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
                     }
                 } else if broadcast.single_call {
-                    let msg =
-                    "`staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead";
+                    let msg = "`staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead";
                     return Some(CallOutcome {
                         result: InterpreterResult {
                             result: InstructionResult::Revert,
@@ -1655,11 +1653,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                         },
                     };
 
-                    if count != expected.count {
-                        Some((expected, count))
-                    } else {
-                        None
-                    }
+                    if count != expected.count { Some((expected, count)) } else { None }
                 })
                 .collect::<Vec<_>>();
 

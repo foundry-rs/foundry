@@ -1,11 +1,11 @@
 use crate::{
-    config::{ForkChoice, DEFAULT_MNEMONIC},
-    eth::{backend::db::SerializableState, pool::transactions::TransactionOrder, EthApi},
-    AccountGenerator, EthereumHardfork, NodeConfig, CHAIN_ID,
+    AccountGenerator, CHAIN_ID, EthereumHardfork, NodeConfig,
+    config::{DEFAULT_MNEMONIC, ForkChoice},
+    eth::{EthApi, backend::db::SerializableState, pool::transactions::TransactionOrder},
 };
 use alloy_genesis::Genesis;
 use alloy_op_hardforks::OpHardfork;
-use alloy_primitives::{utils::Unit, B256, U256};
+use alloy_primitives::{B256, U256, utils::Unit};
 use alloy_signer_local::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
 use clap::Parser;
@@ -13,15 +13,15 @@ use core::fmt;
 use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
 use futures::FutureExt;
-use rand_08::{rngs::StdRng, SeedableRng};
+use rand_08::{SeedableRng, rngs::StdRng};
 use std::{
     net::IpAddr,
     path::{Path, PathBuf},
     pin::Pin,
     str::FromStr,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     },
     task::{Context, Poll},
     time::Duration,
@@ -919,11 +919,15 @@ mod tests {
             ["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec()
         );
 
-        unsafe { env::set_var("ANVIL_IP_ADDR", "1.1.1.1"); }
+        unsafe {
+            env::set_var("ANVIL_IP_ADDR", "1.1.1.1");
+        }
         let args = NodeArgs::parse_from(["anvil"]);
         assert_eq!(args.host, vec!["1.1.1.1".parse::<IpAddr>().unwrap()]);
 
-        unsafe { env::set_var("ANVIL_IP_ADDR", "::1,1.1.1.1,2.2.2.2"); }
+        unsafe {
+            env::set_var("ANVIL_IP_ADDR", "::1,1.1.1.1,2.2.2.2");
+        }
         let args = NodeArgs::parse_from(["anvil"]);
         assert_eq!(
             args.host,

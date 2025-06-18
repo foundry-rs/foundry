@@ -1,6 +1,6 @@
 //! Uncategorised utilities.
 
-use alloy_primitives::{keccak256, B256, U256};
+use alloy_primitives::{B256, U256, keccak256};
 /// Block on a future using the current tokio runtime on the current thread.
 pub fn block_on<F: std::future::Future>(future: F) -> F::Output {
     block_on_handle(&tokio::runtime::Handle::current(), future)
@@ -48,9 +48,5 @@ pub fn ignore_metadata_hash(bytecode: &[u8]) -> &[u8] {
         return bytecode;
     }
     let (rest, metadata) = rest.split_at(rest.len() - metadata_len);
-    if ciborium::from_reader::<ciborium::Value, _>(metadata).is_ok() {
-        rest
-    } else {
-        bytecode
-    }
+    if ciborium::from_reader::<ciborium::Value, _>(metadata).is_ok() { rest } else { bytecode }
 }

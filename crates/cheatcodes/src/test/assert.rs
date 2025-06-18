@@ -1,5 +1,5 @@
 use crate::{CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::{hex, I256, U256};
+use alloy_primitives::{I256, U256, hex};
 use foundry_evm_core::{
     abi::console::{format_units_int, format_units_uint},
     backend::GLOBAL_FAIL_SLOT,
@@ -453,19 +453,11 @@ impl_assertions! {
 }
 
 fn assert_true(condition: bool) -> Result<Vec<u8>, SimpleAssertionError> {
-    if condition {
-        Ok(Default::default())
-    } else {
-        Err(SimpleAssertionError)
-    }
+    if condition { Ok(Default::default()) } else { Err(SimpleAssertionError) }
 }
 
 fn assert_false(condition: bool) -> Result<Vec<u8>, SimpleAssertionError> {
-    if !condition {
-        Ok(Default::default())
-    } else {
-        Err(SimpleAssertionError)
-    }
+    if !condition { Ok(Default::default()) } else { Err(SimpleAssertionError) }
 }
 
 fn assert_eq<'a, T: PartialEq>(left: &'a T, right: &'a T) -> ComparisonResult<'a, T> {
@@ -485,11 +477,7 @@ fn assert_not_eq<'a, T: PartialEq>(left: &'a T, right: &'a T) -> ComparisonResul
 }
 
 fn get_delta_uint(left: U256, right: U256) -> U256 {
-    if left > right {
-        left - right
-    } else {
-        right - left
-    }
+    if left > right { left - right } else { right - left }
 }
 
 fn get_delta_int(left: I256, right: I256) -> U256 {
@@ -497,11 +485,7 @@ fn get_delta_int(left: I256, right: I256) -> U256 {
     let (right_sign, right_abs) = right.into_sign_and_abs();
 
     if left_sign == right_sign {
-        if left_abs > right_abs {
-            left_abs - right_abs
-        } else {
-            right_abs - left_abs
-        }
+        if left_abs > right_abs { left_abs - right_abs } else { right_abs - left_abs }
     } else {
         left_abs + right_abs
     }
