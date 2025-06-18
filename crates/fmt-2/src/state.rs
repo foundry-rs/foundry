@@ -1319,6 +1319,7 @@ impl<'ast> State<'_, 'ast> {
                     self.ibox(0);
                     self.word("try ");
                     self.print_expr(expr);
+                    self.print_trailing_comment(expr.span, first.args.first().map(|p| p.span.lo()));
                     self.nbsp();
                     if !args.is_empty() {
                         self.word("returns ");
@@ -1336,9 +1337,13 @@ impl<'ast> State<'_, 'ast> {
                         self.word("catch ");
                         if !args.is_empty() {
                             if let Some(name) = name {
+                                self.ibox(0);
                                 self.print_ident(name);
-                                self.print_parameter_list(args, true);
-                                self.nbsp();
+                            }
+                            self.print_parameter_list(args, true);
+                            self.nbsp();
+                            if name.is_some() {
+                                self.end();
                             }
                         }
                         self.print_block(block, span);
@@ -1390,7 +1395,7 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn print_block(&mut self, block: &'ast [ast::Stmt<'ast>], span: Span) {
-        self.print_block_inner(block, Self::print_stmt, span, false, false);
+        self.print_block_inner(block, Self::print_stmt, |b| b.span, span, false, false);
     }
 
     // Body of a if/loop.
@@ -1400,7 +1405,14 @@ impl<'ast> State<'_, 'ast> {
         } else {
             std::slice::from_ref(stmt)
         };
-        self.print_block_inner(stmts, Self::print_stmt, stmt.span, attempt_single_line, true)
+        self.print_block_inner(
+            stmts,
+            Self::print_stmt,
+            |b| b.span,
+            stmt.span,
+            attempt_single_line,
+            true,
+        )
     }
 
     fn print_yul_block(
@@ -1409,13 +1421,21 @@ impl<'ast> State<'_, 'ast> {
         span: Span,
         attempt_single_line: bool,
     ) {
-        self.print_block_inner(block, Self::print_yul_stmt, span, attempt_single_line, false);
+        self.print_block_inner(
+            block,
+            Self::print_yul_stmt,
+            |b| b.span,
+            span,
+            attempt_single_line,
+            false,
+        );
     }
 
     fn print_block_inner<T>(
         &mut self,
         block: &'ast [T],
         mut print: impl FnMut(&mut Self, &'ast T),
+        mut get_block_span: impl FnMut(&'ast T) -> Span,
         span: Span,
         attempt_single_line: bool,
         attempt_omit_braces: bool,
@@ -1430,7 +1450,7 @@ impl<'ast> State<'_, 'ast> {
                 self.space();
             }
             print(self, &block[0]);
-            self.print_comments(span.hi());
+            self.print_comments_skip_ws(get_block_span(&block[0]).hi());
             if attempt_omit_braces {
                 self.s.scan_break(BreakToken { post_break: Some('}'), ..Default::default() });
                 self.s.offset(-self.ind);
@@ -1448,7 +1468,7 @@ impl<'ast> State<'_, 'ast> {
                 print(self, stmt);
                 self.hardbreak_if_not_bol();
             }
-            self.print_comments_skip_ws(span.hi());
+            self.print_comments_skip_ws(block.last().map_or(span.hi(), |b| get_block_span(b).hi()));
             self.s.offset(-self.ind);
             self.end();
             self.word("}");
