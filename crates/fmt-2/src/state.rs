@@ -1289,18 +1289,54 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::StmtKind::Revert(path, args) => self.print_emit_revert("revert", path, args),
             ast::StmtKind::Try(ast::StmtTry { expr, clauses }) => {
-                self.word("try ");
-                self.print_expr(expr);
-                for (pos, ast::TryCatchClause { name, args, block }) in clauses.iter().delimited() {
-                    self.word(if pos.is_first { " returns" } else { " catch" });
-                    if let Some(name) = name {
-                        self.nbsp();
-                        self.print_ident(name);
-                    }
-                    self.print_parameter_list(args);
+                self.cbox(0);
+                if let Some((first, other)) = clauses.split_first() {
+                    // Handle 'try' clause
+                    let ast::TryCatchClause { args, block, .. } = first;
+                    self.ibox(0);
+                    self.word("try ");
+                    self.print_expr(expr);
                     self.nbsp();
+                    if !args.is_empty() {
+                        self.word("returns ");
+                        self.print_parameter_list(args);
+                        self.nbsp();
+                    }
                     self.print_block(block, span);
+                    self.end();
+
+                    // Handle 'catch' clauses
+                    let mut should_indent = false;
+                    for (pos, ast::TryCatchClause { name, args, block }) in other.iter().delimited()
+                    {
+                        // Add extra indent if all prev 'catch' stmts are empty
+                        if pos.is_first && block.is_empty() {
+                            should_indent = true;
+                        } else if should_indent && !block.is_empty() {
+                            should_indent = false;
+                        }
+                        if should_indent {
+                            self.space();
+                            self.s.offset(self.ind);
+                        } else {
+                            self.nbsp();
+                        }
+
+                        self.word("catch ");
+                        if !args.is_empty() {
+                            if let Some(name) = name {
+                                // self.ibox(0);
+                                self.print_ident(name);
+                                self.print_parameter_list(args);
+                                self.nbsp();
+                                // self.end();
+                            }
+                        }
+
+                        self.print_block(block, span);
+                    }
                 }
+                self.end();
             }
             ast::StmtKind::UncheckedBlock(block) => {
                 self.word("unchecked ");
