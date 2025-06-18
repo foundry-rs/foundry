@@ -1340,3 +1340,113 @@ contract InvariantTest is Test {
 "#]],
     );
 });
+
+// Tests that reserved test functions are not fuzzed when test is set as target.
+// <https://github.com/foundry-rs/foundry/issues/10469>
+forgetest_init!(invariant_target_test_contract_selectors, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 10;
+        config.invariant.depth = 100;
+    });
+    prj.add_test(
+        "InvariantTargetTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantTargetTest is Test {
+    bool fooCalled;
+    bool testSanityCalled;
+    bool testTableCalled;
+    uint256 invariantCalledNum;
+    uint256 setUpCalledNum;
+
+    function setUp() public {
+       targetContract(address(this));
+    }
+
+    function beforeTestSetup() public {
+    }
+
+    // Only this selector should be targeted.
+    function foo() public {
+        fooCalled = true;
+    }
+
+    function fixtureCalled() public returns (bool[] memory) {
+    }
+
+    function table_sanity(bool called) public {
+        testTableCalled = called;
+    }
+
+    function test_sanity() public {
+        testSanityCalled = true;
+    }
+
+    function afterInvariant() public {
+    }
+
+    function invariant_foo_called() public view {
+    }
+
+    function invariant_testSanity_considered_target() public {
+    }
+
+    function invariant_setUp_considered_target() public {
+        setUpCalledNum++;
+    }
+
+    function invariant_considered_target() public {
+        invariantCalledNum++;
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mc", "InvariantTargetTest", "--mt", "invariant"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 4 tests for test/InvariantTargetTest.t.sol:InvariantTargetTest
+[PASS] invariant_considered_target() (runs: 10, calls: 1000, reverts: 0)
+
+╭---------------------+----------+-------+---------+----------╮
+| Contract            | Selector | Calls | Reverts | Discards |
++=============================================================+
+| InvariantTargetTest | foo      | 1000  | 0       | 0        |
+╰---------------------+----------+-------+---------+----------╯
+
+[PASS] invariant_foo_called() (runs: 10, calls: 1000, reverts: 0)
+
+╭---------------------+----------+-------+---------+----------╮
+| Contract            | Selector | Calls | Reverts | Discards |
++=============================================================+
+| InvariantTargetTest | foo      | 1000  | 0       | 0        |
+╰---------------------+----------+-------+---------+----------╯
+
+[PASS] invariant_setUp_considered_target() (runs: 10, calls: 1000, reverts: 0)
+
+╭---------------------+----------+-------+---------+----------╮
+| Contract            | Selector | Calls | Reverts | Discards |
++=============================================================+
+| InvariantTargetTest | foo      | 1000  | 0       | 0        |
+╰---------------------+----------+-------+---------+----------╯
+
+[PASS] invariant_testSanity_considered_target() (runs: 10, calls: 1000, reverts: 0)
+
+╭---------------------+----------+-------+---------+----------╮
+| Contract            | Selector | Calls | Reverts | Discards |
++=============================================================+
+| InvariantTargetTest | foo      | 1000  | 0       | 0        |
+╰---------------------+----------+-------+---------+----------╯
+
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
+
+"#]]);
+});

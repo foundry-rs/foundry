@@ -46,6 +46,7 @@ mod replay;
 pub use replay::{replay_error, replay_run};
 
 mod result;
+use foundry_common::TestFunctionExt;
 pub use result::InvariantFuzzTestResult;
 use serde::{Deserialize, Serialize};
 
@@ -795,6 +796,28 @@ impl<'a> InvariantExecutor<'a> {
         address: Address,
         targeted_contracts: &mut TargetedContracts,
     ) -> Result<()> {
+        if let Some(target) = targeted_contracts.get(&address) {
+            // If test contract is a target, then include only state-changing functions
+            // that are not reserved.
+            let selectors: Vec<_> = target
+                .abi
+                .functions()
+                .filter_map(|func| {
+                    if matches!(
+                        func.state_mutability,
+                        alloy_json_abi::StateMutability::Pure |
+                            alloy_json_abi::StateMutability::View
+                    ) || func.is_reserved()
+                    {
+                        None
+                    } else {
+                        Some(func.selector())
+                    }
+                })
+                .collect();
+            self.add_address_with_functions(address, &selectors, false, targeted_contracts)?;
+        }
+
         for (address, (identifier, _)) in self.setup_contracts {
             if let Some(selectors) = self.artifact_filters.targeted.get(identifier) {
                 self.add_address_with_functions(*address, selectors, false, targeted_contracts)?;
