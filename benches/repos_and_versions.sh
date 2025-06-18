@@ -11,7 +11,6 @@
 #   - Any format supported by foundryup
 FOUNDRY_VERSIONS=(
     "stable"
-    "nightly-ac0411d0e3b9632247c9aea9535472eda09a57ae"
     "nightly"
 )
 
