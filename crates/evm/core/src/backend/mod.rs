@@ -767,14 +767,36 @@ impl Backend {
         env: &mut EnvWithHandlerCfg,
         inspector: &mut I,
     ) -> eyre::Result<ResultAndState> {
+        self.inspect_inner(env, inspector, false)
+    }
+
+    /// Executes the configured test call of the `env` without committing state changes and
+    /// skipping transaction preverification.
+    #[instrument(name = "inspect", level = "debug", skip_all)]
+    pub fn inspect_preverified<I: InspectorExt>(
+        &mut self,
+        env: &mut EnvWithHandlerCfg,
+        inspector: &mut I,
+    ) -> eyre::Result<ResultAndState> {
+        self.inspect_inner(env, inspector, true)
+    }
+
+    #[instrument(name = "inspect", level = "debug", skip_all)]
+    pub fn inspect_inner<I: InspectorExt>(
+        &mut self,
+        env: &mut EnvWithHandlerCfg,
+        inspector: &mut I,
+        skip_preverification: bool,
+    ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
         let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector);
 
-        let res = evm.transact().wrap_err("EVM error")?;
+        let res = if skip_preverification { evm.transact_preverified() } else { evm.transact() };
+        let inner_res = res.wrap_err("EVM error")?;
 
         env.env = evm.context.evm.inner.env;
 
-        Ok(res)
+        Ok(inner_res)
     }
 
     /// Returns true if the address is a precompile

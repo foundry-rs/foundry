@@ -90,6 +90,8 @@ pub struct Executor {
     gas_limit: u64,
     /// Whether `failed()` should be called on the test contract to determine if the test failed.
     legacy_assertions: bool,
+    /// skips transaction preverification
+    skip_preverification: bool,
 }
 
 impl Executor {
@@ -121,7 +123,7 @@ impl Executor {
             },
         );
 
-        Self { backend, env, inspector, gas_limit, legacy_assertions }
+        Self { backend, env, inspector, gas_limit, legacy_assertions, skip_preverification: false }
     }
 
     fn clone_with_backend(&self, backend: Backend) -> Self {
@@ -192,6 +194,16 @@ impl Executor {
     /// failed.
     pub fn set_legacy_assertions(&mut self, legacy_assertions: bool) {
         self.legacy_assertions = legacy_assertions;
+    }
+
+    /// Returns whether preverification of transactions should be skipped
+    pub fn skip_preverification(&self) -> bool {
+        self.skip_preverification
+    }
+
+    /// Sets whether preverification of transactions should be skipped
+    pub fn set_skip_preverification(&mut self, skip_preverification: bool) {
+        self.skip_preverification = skip_preverification;
     }
 
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
@@ -451,8 +463,13 @@ impl Executor {
     #[instrument(name = "transact", level = "debug", skip_all)]
     pub fn transact_with_env(&mut self, mut env: EnvWithHandlerCfg) -> eyre::Result<RawCallResult> {
         let mut inspector = self.inspector().clone();
+        let skip_preverification = self.skip_preverification;
         let backend = self.backend_mut();
-        let result = backend.inspect(&mut env, &mut inspector)?;
+        let result = if skip_preverification {
+            backend.inspect_preverified(&mut env, &mut inspector)?
+        } else {
+            backend.inspect(&mut env, &mut inspector)?
+        };
         let mut result =
             convert_executed_result(env, inspector, result, backend.has_state_snapshot_failure())?;
         self.commit(&mut result);

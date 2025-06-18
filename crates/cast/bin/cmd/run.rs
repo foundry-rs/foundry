@@ -94,6 +94,10 @@ pub struct RunArgs {
     /// Use current project artifacts for trace decoding.
     #[arg(long, visible_alias = "la")]
     pub with_local_artifacts: bool,
+
+    /// Skip transaction preverification (nonce etc.)
+    #[arg(long, visible_alias = "sp")]
+    pub skip_preverification: bool,
 }
 
 impl RunArgs {
@@ -181,6 +185,7 @@ impl RunArgs {
             odyssey,
             create2_deployer,
         );
+        executor.set_skip_preverification(self.skip_preverification);
         let mut env =
             EnvWithHandlerCfg::new_with_spec_id(Box::new(env.clone()), executor.spec_id());
 
