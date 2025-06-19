@@ -1,13 +1,4 @@
-use alloy_primitives::Address;
-use revm::{
-    precompile::{PrecompileSpecId, Precompiles},
-    primitives::hardfork::SpecId,
-};
 use std::fmt;
-
-pub fn get_precompiles_for(spec_id: SpecId) -> Vec<Address> {
-    Precompiles::new(PrecompileSpecId::from_spec_id(spec_id)).addresses().copied().collect()
-}
 
 /// wrapper type that displays byte as hex
 pub struct HexDisplay<'a>(&'a [u8]);
