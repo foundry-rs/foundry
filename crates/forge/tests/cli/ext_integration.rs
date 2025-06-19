@@ -70,7 +70,6 @@ fn solady() {
 #[cfg(not(feature = "isolate-by-default"))]
 fn snekmate() {
     ExtTester::new("pcaversaccio", "snekmate", "601031d244475b160a00f73053532528bf665cc3")
-        .args(["--nmc", "ERC4626VaultTest"])
         .install_command(&["pnpm", "install", "--prefer-offline"])
         // Try npm if pnpm fails / is not installed.
         .install_command(&["npm", "install", "--prefer-offline"])
