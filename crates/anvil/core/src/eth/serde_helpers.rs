@@ -52,6 +52,7 @@ pub mod empty_params {
 
 /// A module that deserializes either a BlockNumberOrTag, or a simple number.
 pub mod lenient_block_number {
+    pub use alloy_eips::eip1898::LenientBlockNumberOrTag;
     use alloy_rpc_types::BlockNumberOrTag;
     use serde::{Deserialize, Deserializer};
 
@@ -63,24 +64,7 @@ pub mod lenient_block_number {
     where
         D: Deserializer<'de>,
     {
-        let num = <[LenientBlockNumber; 1]>::deserialize(deserializer)?[0].into();
+        let num = <[LenientBlockNumberOrTag; 1]>::deserialize(deserializer)?[0].into();
         Ok(num)
-    }
-
-    /// Various block number representations, See [`lenient_block_number()`]
-    #[derive(Clone, Copy, Deserialize)]
-    #[serde(untagged)]
-    pub enum LenientBlockNumber {
-        BlockNumber(BlockNumberOrTag),
-        Num(u64),
-    }
-
-    impl From<LenientBlockNumber> for BlockNumberOrTag {
-        fn from(b: LenientBlockNumber) -> Self {
-            match b {
-                LenientBlockNumber::BlockNumber(b) => b,
-                LenientBlockNumber::Num(b) => b.into(),
-            }
-        }
     }
 }
