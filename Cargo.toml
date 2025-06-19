@@ -207,7 +207,7 @@ enscribe = { path = "crates/enscribe" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.18.0", default-features = false }
-foundry-compilers = { version = "0.17.1", default-features = false }
+foundry-compilers = { version = "0.17.3", default-features = false }
 foundry-fork-db = "0.15"
 solang-parser = { version = "=0.3.9", package = "foundry-solang-parser" }
 solar-ast = { version = "=0.1.4", default-features = false }
@@ -216,28 +216,28 @@ solar-interface = { version = "=0.1.4", default-features = false }
 solar-sema = { version = "=0.1.4", default-features = false }
 
 ## alloy
-alloy-consensus = { version = "1.0.9", default-features = false }
-alloy-contract = { version = "1.0.9", default-features = false }
-alloy-eips = { version = "1.0.9", default-features = false }
-alloy-ens = { version = "1.0.9", default-features = false }
-alloy-genesis = { version = "1.0.9", default-features = false }
-alloy-json-rpc = { version = "1.0.9", default-features = false }
-alloy-network = { version = "1.0.9", default-features = false }
-alloy-provider = { version = "1.0.9", default-features = false }
-alloy-pubsub = { version = "1.0.9", default-features = false }
-alloy-rpc-client = { version = "1.0.9", default-features = false }
-alloy-rpc-types = { version = "1.0.9", default-features = true }
-alloy-serde = { version = "1.0.9", default-features = false }
-alloy-signer = { version = "1.0.9", default-features = false }
-alloy-signer-aws = { version = "1.0.9", default-features = false }
-alloy-signer-gcp = { version = "1.0.9", default-features = false }
-alloy-signer-ledger = { version = "1.0.9", default-features = false }
-alloy-signer-local = { version = "1.0.9", default-features = false }
-alloy-signer-trezor = { version = "1.0.9", default-features = false }
-alloy-transport = { version = "1.0.9", default-features = false }
-alloy-transport-http = { version = "1.0.9", default-features = false }
-alloy-transport-ipc = { version = "1.0.9", default-features = false }
-alloy-transport-ws = { version = "1.0.9", default-features = false }
+alloy-consensus = { version = "1.0.11", default-features = false }
+alloy-contract = { version = "1.0.11", default-features = false }
+alloy-eips = { version = "1.0.11", default-features = false }
+alloy-ens = { version = "1.0.11", default-features = false }
+alloy-genesis = { version = "1.0.11", default-features = false }
+alloy-json-rpc = { version = "1.0.11", default-features = false }
+alloy-network = { version = "1.0.11", default-features = false }
+alloy-provider = { version = "1.0.11", default-features = false }
+alloy-pubsub = { version = "1.0.11", default-features = false }
+alloy-rpc-client = { version = "1.0.11", default-features = false }
+alloy-rpc-types = { version = "1.0.11", default-features = true }
+alloy-serde = { version = "1.0.11", default-features = false }
+alloy-signer = { version = "1.0.11", default-features = false }
+alloy-signer-aws = { version = "1.0.11", default-features = false }
+alloy-signer-gcp = { version = "1.0.11", default-features = false }
+alloy-signer-ledger = { version = "1.0.11", default-features = false }
+alloy-signer-local = { version = "1.0.11", default-features = false }
+alloy-signer-trezor = { version = "1.0.11", default-features = false }
+alloy-transport = { version = "1.0.11", default-features = false }
+alloy-transport-http = { version = "1.0.11", default-features = false }
+alloy-transport-ipc = { version = "1.0.11", default-features = false }
+alloy-transport-ws = { version = "1.0.11", default-features = false }
 alloy-hardforks = { version = "0.2.6", default-features = false }
 alloy-op-hardforks = { version = "0.2.6", default-features = false }
 
@@ -409,5 +409,5 @@ zip-extract = "=0.2.1"
 # revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "a625c04" }
 
 ## foundry
-# foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "855dee4" }
+# foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "e4a9b04" }
 # foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "811a61a" }
