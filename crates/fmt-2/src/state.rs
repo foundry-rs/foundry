@@ -1320,7 +1320,9 @@ impl<'ast> State<'_, 'ast> {
                     self.word("try ");
                     self.print_expr(expr);
                     self.print_trailing_comment(expr.span, first.args.first().map(|p| p.span.lo()));
-                    self.nbsp();
+                    if !self.is_beginning_of_line() {
+                        self.nbsp();
+                    }
                     if !args.is_empty() {
                         self.word("returns ");
                         self.print_parameter_list(args, true);
@@ -1337,7 +1339,7 @@ impl<'ast> State<'_, 'ast> {
                         self.word("catch ");
                         if !args.is_empty() {
                             if let Some(name) = name {
-                                self.ibox(0);
+                                self.cbox(0);
                                 self.print_ident(name);
                             }
                             self.print_parameter_list(args, true);
