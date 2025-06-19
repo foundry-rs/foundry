@@ -19,7 +19,7 @@ use alloy_provider::{
 };
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{
-    state::StateOverride, BlockId, BlockNumberOrTag, Filter, TransactionRequest,
+    state::StateOverride, BlockId, BlockNumberOrTag, BlockOverrides, Filter, TransactionRequest,
 };
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
@@ -110,7 +110,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::{Address, U256, Bytes};
-    /// use alloy_rpc_types::{TransactionRequest, state::{StateOverride, AccountOverride}};
+    /// use alloy_rpc_types::{TransactionRequest, BlockOverrides, state::{StateOverride, AccountOverride}};
     /// use alloy_serde::WithOtherFields;
     /// use cast::Cast;
     /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
@@ -136,9 +136,10 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// account_override.balance = Some(U256::from(1000));
     /// state_override.insert(to, account_override);
     /// let state_override_object = StateOverridesBuilder::default().build();
+    /// let block_override_object = BlockOverrides::default();
     ///
     /// let cast = Cast::new(alloy_provider);
-    /// let data = cast.call(&tx, None, None, Some(state_override_object)).await?;
+    /// let data = cast.call(&tx, None, None, Some(state_override_object), Some(block_override_object)).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
@@ -149,8 +150,13 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         func: Option<&Function>,
         block: Option<BlockId>,
         state_override: Option<StateOverride>,
+        block_override: Option<BlockOverrides>,
     ) -> Result<String> {
-        let mut call = self.provider.call(req.clone()).block(block.unwrap_or_default());
+        let mut call = self
+            .provider
+            .call(req.clone())
+            .block(block.unwrap_or_default())
+            .with_block_overrides_opt(block_override);
         if let Some(state_override) = state_override {
             call = call.overrides(state_override)
         }
