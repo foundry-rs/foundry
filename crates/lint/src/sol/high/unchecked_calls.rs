@@ -115,7 +115,7 @@ impl<'ast> Visit<'ast> for UncheckedCallChecker<'_, '_> {
             }
             // Check multi-variable declarations: `(bool success, ) = target.call(data);`
             StmtKind::DeclMulti(vars, expr) => {
-                if is_low_level_call(expr) && vars.first().map_or(true, |v| v.is_none()) {
+                if is_low_level_call(expr) && vars.first().is_none_or(|v| v.is_none()) {
                     self.ctx.emit(&UNCHECKED_CALL, stmt.span);
                 }
             }
@@ -162,7 +162,7 @@ fn is_low_level_call(expr: &Expr<'_>) -> bool {
 /// target.call(...)`
 fn is_unchecked_tuple_assignment(expr: &Expr<'_>) -> bool {
     if let ExprKind::Tuple(elements) = &expr.kind {
-        elements.first().map_or(true, |e| e.is_none())
+        elements.first().is_none_or(|e| e.is_none())
     } else {
         false
     }
