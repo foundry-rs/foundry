@@ -5,6 +5,7 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar_ast::{visit::Visit, Expr, ExprKind, ItemFunction, Stmt, StmtKind};
+use solar_interface::kw;
 use std::ops::ControlFlow;
 
 declare_forge_lint!(
@@ -56,25 +57,20 @@ impl<'ast> Visit<'ast> for UncheckedTransferERC20Checker<'_, '_> {
 }
 
 /// Checks if an expression is an ERC20 `transfer` or `transferFrom` call.
+/// `function ERC20.transfer(to, amount)`
+/// `function ERC20.transferFrom(from, to, amount)`
 ///
 /// Validates both the method name and argument count to avoid false positives
 /// from other functions that happen to be named "transfer".
 fn is_erc20_transfer_call(expr: &Expr<'_>) -> bool {
-    match &expr.kind {
-        ExprKind::Call(call_expr, args) => {
-            // Must be a member access pattern: `token.transfer(...)`
-            if let ExprKind::Member(_, member) = &call_expr.kind {
-                let method_name = member.as_str();
-                // function ERC20.transfer(to, amount)
-                // function ERC20.transferFrom(from, to, amount)
-                (args.len() == 2 && method_name == "transfer") ||
-                    (args.len() == 3 && method_name == "transferFrom")
-            } else {
-                false
-            }
+    if let ExprKind::Call(call_expr, args) = &expr.kind {
+        // Must be a member access pattern: `token.transfer(...)`
+        if let ExprKind::Member(_, member) = &call_expr.kind {
+            return (args.len() == 2 && member.as_str() == "transfer") ||
+                (args.len() == 3 && member.as_str() == "transferFrom")
         }
-        _ => false,
     }
+    false
 }
 
 // -- UNCKECKED LOW-LEVEL CALLS -------------------------------------------------------------------
@@ -133,27 +129,21 @@ impl<'ast> Visit<'ast> for UncheckedCallChecker<'_, '_> {
 /// - `target.staticcall(...)`
 /// - `target.call{value: x}(...)`
 fn is_low_level_call(expr: &Expr<'_>) -> bool {
-    match &expr.kind {
-        ExprKind::Call(call_expr, _args) => {
-            // Check the callee expression
-            let callee = match &call_expr.kind {
-                // Handle call options like {value: x}
-                ExprKind::CallOptions(inner_expr, _) => inner_expr,
-                // Direct call without options
-                _ => call_expr,
-            };
+    if let ExprKind::Call(call_expr, _args) = &expr.kind {
+        // Check the callee expression
+        let callee = match &call_expr.kind {
+            // Handle call options like {value: x}
+            ExprKind::CallOptions(inner_expr, _) => inner_expr,
+            // Direct call without options
+            _ => call_expr,
+        };
 
-            // Must be a member access pattern: `target.call(...)`
-            if let ExprKind::Member(_, member) = &callee.kind {
-                let method_name = member.as_str();
-                // Check for low-level call methods
-                matches!(method_name, "call" | "delegatecall" | "staticcall")
-            } else {
-                false
-            }
+        if let ExprKind::Member(_, member) = &callee.kind {
+            // Check for low-level call methods
+            return matches!(member.name, kw::Call | kw::Delegatecall | kw::Staticcall)
         }
-        _ => false,
     }
+    false
 }
 
 /// Checks if a tuple assignment doesn't properly check the success value.
