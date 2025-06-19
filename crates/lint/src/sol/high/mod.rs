@@ -4,15 +4,13 @@ use crate::{
 };
 
 mod incorrect_shift;
-mod unchecked_call;
-mod unchecked_transfer_erc20;
+mod unchecked_calls;
 
 use incorrect_shift::INCORRECT_SHIFT;
-use unchecked_call::UNCHECKED_CALL;
-use unchecked_transfer_erc20::UNCHECKED_TRANSFER_ERC20;
+use unchecked_calls::{UNCHECKED_CALL, ERC20_UNCHECKED_TRANSFER};
 
 register_lints!(
     (IncorrectShift, (INCORRECT_SHIFT)),
     (UncheckedCall, (UNCHECKED_CALL)),
-    (UncheckedTransferERC20, (UNCHECKED_TRANSFER_ERC20))
+    (UncheckedTransferERC20, (ERC20_UNCHECKED_TRANSFER))
 );

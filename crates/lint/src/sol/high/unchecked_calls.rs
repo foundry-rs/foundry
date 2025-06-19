@@ -1,10 +1,10 @@
-use super::UncheckedCall;
+use super::{UncheckedCall, UncheckedTransferERC20};
 use crate::{
     declare_forge_lint,
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use solar_ast::{visit::Visit, Expr, ExprKind, ItemFunction, Stmt, StmtKind, VariableDefinition};
+use solar_ast::{visit::Visit, Expr, ExprKind, ItemFunction, Stmt, StmtKind};
 use std::ops::ControlFlow;
 
 declare_forge_lint!(
@@ -13,6 +13,71 @@ declare_forge_lint!(
     "unchecked-call",
     "Low-level calls should check the success return value"
 );
+
+declare_forge_lint!(
+    ERC20_UNCHECKED_TRANSFER,
+    Severity::High,
+    "erc20-unchecked-transfer",
+    "ERC20 'transfer' and 'transferFrom' calls should check the return value"
+);
+
+// -- ERC20 UNCKECKED TRANSFERS -------------------------------------------------------------------
+
+impl<'ast> EarlyLintPass<'ast> for UncheckedTransferERC20 {
+    fn check_item_function(&mut self, ctx: &LintContext<'_>, func: &'ast ItemFunction<'ast>) {
+        if let Some(body) = &func.body {
+            let mut checker = UncheckedTransferERC20Checker { ctx };
+            let _ = checker.visit_block(body);
+        }
+    }
+}
+
+/// Visitor that detects unchecked ERC20 transfer calls within function bodies.
+///
+/// Unchecked transfers appear as standalone expression statements.
+/// When a transfer's return value is used (in require, assignment, etc.), it's part
+/// of a larger expression and won't be flagged.
+struct UncheckedTransferERC20Checker<'a, 's> {
+    ctx: &'a LintContext<'s>,
+}
+
+impl<'ast> Visit<'ast> for UncheckedTransferERC20Checker<'_, '_> {
+    type BreakValue = ();
+
+    fn visit_stmt(&mut self, stmt: &'ast Stmt<'ast>) -> ControlFlow<Self::BreakValue> {
+        // Only expression statements can contain unchecked transfers.
+        if let StmtKind::Expr(expr) = &stmt.kind {
+            if is_erc20_transfer_call(expr) {
+                self.ctx.emit(&ERC20_UNCHECKED_TRANSFER, expr.span);
+            }
+        }
+        self.walk_stmt(stmt)
+    }
+}
+
+/// Checks if an expression is an ERC20 `transfer` or `transferFrom` call.
+///
+/// Validates both the method name and argument count to avoid false positives
+/// from other functions that happen to be named "transfer".
+fn is_erc20_transfer_call(expr: &Expr<'_>) -> bool {
+    match &expr.kind {
+        ExprKind::Call(call_expr, args) => {
+            // Must be a member access pattern: `token.transfer(...)`
+            if let ExprKind::Member(_, member) = &call_expr.kind {
+                let method_name = member.as_str();
+                // function ERC20.transfer(to, amount)
+                // function ERC20.transferFrom(from, to, amount)
+                (args.len() == 2 && method_name == "transfer") ||
+                    (args.len() == 3 && method_name == "transferFrom")
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+// -- UNCKECKED LOW-LEVEL CALLS -------------------------------------------------------------------
 
 impl<'ast> EarlyLintPass<'ast> for UncheckedCall {
     fn check_item_function(&mut self, ctx: &LintContext<'_>, func: &'ast ItemFunction<'ast>) {
@@ -42,8 +107,7 @@ impl<'ast> Visit<'ast> for UncheckedCallChecker<'_, '_> {
                 if is_low_level_call(expr) {
                     self.ctx.emit(&UNCHECKED_CALL, expr.span);
                 } else if let ExprKind::Assign(lhs, _, rhs) = &expr.kind {
-                    // Check assignments to existing variables: `(, existingVar) =
-                    // target.call(data);`
+                    // Check assignments to existing vars: `(, existingVar) = target.call(data);`
                     if is_low_level_call(rhs) && is_unchecked_tuple_assignment(lhs) {
                         self.ctx.emit(&UNCHECKED_CALL, expr.span);
                     }
@@ -51,7 +115,7 @@ impl<'ast> Visit<'ast> for UncheckedCallChecker<'_, '_> {
             }
             // Check multi-variable declarations: `(bool success, ) = target.call(data);`
             StmtKind::DeclMulti(vars, expr) => {
-                if is_low_level_call(expr) && is_unchecked_multi_declaration(vars) {
+                if is_low_level_call(expr) && vars.first().map_or(true, |v| v.is_none()) {
                     self.ctx.emit(&UNCHECKED_CALL, stmt.span);
                 }
             }
@@ -92,22 +156,13 @@ fn is_low_level_call(expr: &Expr<'_>) -> bool {
     }
 }
 
-/// Checks if a multi-variable declaration doesn't properly check the success value.
-///
-/// Returns true if the first variable (success) is None: `(, bytes memory data) = target.call(...)`
-fn is_unchecked_multi_declaration(vars: &[Option<VariableDefinition<'_>>]) -> bool {
-    vars.len() == 2 && vars.first().map_or(true, |v| v.is_none())
-}
-
 /// Checks if a tuple assignment doesn't properly check the success value.
 ///
-/// Returns true if the expression is a tuple where:
-/// - All elements are empty/underscore
-/// - The first element (success position) is empty/underscore
+/// Returns true if the first variable (success) is None: `(, bytes memory data) =
+/// target.call(...)`
 fn is_unchecked_tuple_assignment(expr: &Expr<'_>) -> bool {
     if let ExprKind::Tuple(elements) = &expr.kind {
-        // Check if the tuple is empty or the first element is None (underscore)
-        elements.is_empty() || elements.first().map_or(true, |e| e.is_none())
+        elements.first().map_or(true, |e| e.is_none())
     } else {
         false
     }
