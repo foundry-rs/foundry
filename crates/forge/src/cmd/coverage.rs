@@ -75,6 +75,10 @@ pub struct CoverageArgs {
     #[arg(long)]
     include_libs: bool,
 
+    /// Whether to exclude tests from the coverage report.
+    #[arg(long)]
+    exclude_tests: bool,
+
     /// The coverage reporters to use. Constructed from the other fields.
     #[arg(skip)]
     reporters: Vec<Box<dyn CoverageReporter>>,
@@ -194,8 +198,10 @@ impl CoverageArgs {
         for (path, source_file, version) in output.output().sources.sources_with_version() {
             report.add_source(version.clone(), source_file.id as usize, path.clone());
 
-            // Filter out dependencies.
-            if !self.include_libs && project_paths.has_library_ancestor(path) {
+            // Filter out libs dependencies and tests.
+            if (!self.include_libs && project_paths.has_library_ancestor(path)) ||
+                (self.exclude_tests && project_paths.is_test(path))
+            {
                 continue;
             }
 

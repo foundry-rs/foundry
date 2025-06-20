@@ -118,7 +118,7 @@ pub mod soldeer;
 use soldeer::{SoldeerConfig, SoldeerDependencyConfig};
 
 mod vyper;
-pub use vyper::{normalize_evm_version_vyper, VyperConfig};
+pub use vyper::VyperConfig;
 
 mod bind_json;
 use bind_json::BindJsonConfig;
@@ -1549,7 +1549,7 @@ impl Config {
     /// - evm version
     pub fn vyper_settings(&self) -> Result<VyperSettings, SolcError> {
         Ok(VyperSettings {
-            evm_version: Some(normalize_evm_version_vyper(self.evm_version)),
+            evm_version: Some(self.evm_version),
             optimize: self.vyper.optimize,
             bytecode_metadata: None,
             // TODO: We don't yet have a way to deserialize other outputs correctly, so request only
