@@ -234,7 +234,7 @@ impl<'hir> Visit<'hir> for BytecodeDependencyCollector<'hir> {
                         for &var in clause.args {
                             self.visit_nested_var(var)?;
                         }
-                        for stmt in clause.block {
+                        for stmt in clause.block.stmts {
                             self.visit_stmt(stmt)?;
                         }
                     }

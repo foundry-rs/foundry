@@ -152,7 +152,7 @@ impl ForgeTestProfile {
                     .unwrap()
                     .keep(),
             ),
-            show_metrics: false,
+            show_metrics: true,
             timeout: None,
             show_solidity: false,
         };
@@ -274,7 +274,7 @@ pub fn get_vyper() -> Vyper {
                  install it manually and add it to $PATH"
             ),
         };
-        let url = format!("https://github.com/vyperlang/vyper/releases/download/v0.4.0/vyper.0.4.0+commit.e9db8d9f.{suffix}");
+        let url = format!("https://github.com/vyperlang/vyper/releases/download/v0.4.3/vyper.0.4.3+commit.bff19ea2.{suffix}");
 
         let res = reqwest::Client::builder().build().unwrap().get(url).send().await.unwrap();
 
@@ -332,7 +332,7 @@ pub static TEST_DATA_DEFAULT: LazyLock<ForgeTestData> =
 pub static TEST_DATA_PARIS: LazyLock<ForgeTestData> =
     LazyLock::new(|| ForgeTestData::new(ForgeTestProfile::Paris));
 
-/// Data for tests requiring Cancun support on Solc and EVM level.
+/// Data for tests requiring Prague support on Solc and EVM level.
 pub static TEST_DATA_MULTI_VERSION: LazyLock<ForgeTestData> =
     LazyLock::new(|| ForgeTestData::new(ForgeTestProfile::MultiVersion));
 

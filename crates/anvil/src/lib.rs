@@ -1,6 +1,7 @@
 //! Anvil is a fast local Ethereum development node.
 
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 use crate::{
     eth::{
@@ -18,6 +19,7 @@ use crate::{
     shutdown::Signal,
     tasks::TaskManager,
 };
+use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
 use eth::backend::fork::ClientFork;
@@ -25,6 +27,7 @@ use eyre::Result;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
+use revm::primitives::hardfork::SpecId;
 use server::try_spawn_ipc;
 use std::{
     future::Future,
@@ -47,8 +50,7 @@ pub use config::{
 };
 
 mod hardfork;
-pub use hardfork::{EthereumHardfork, OptimismHardfork};
-
+pub use alloy_hardforks::EthereumHardfork;
 /// ethereum related implementations
 pub mod eth;
 /// Evm related abstractions
@@ -198,6 +200,11 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
 
     let fee_history_cache = Arc::new(Mutex::new(Default::default()));
     let fee_history_service = FeeHistoryService::new(
+        match backend.spec_id() {
+            SpecId::OSAKA => BlobParams::osaka(),
+            SpecId::PRAGUE => BlobParams::prague(),
+            _ => BlobParams::cancun(),
+        },
         backend.new_block_notifications(),
         Arc::clone(&fee_history_cache),
         StorageInfo::new(Arc::clone(&backend)),

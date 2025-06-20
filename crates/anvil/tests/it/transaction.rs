@@ -2,6 +2,7 @@ use crate::{
     abi::{Greeter, Multicall, SimpleStorage},
     utils::{connect_pubsub, http_provider_with_signer},
 };
+use alloy_hardforks::EthereumHardfork;
 use alloy_network::{EthereumWallet, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{address, hex, map::B256HashSet, Address, Bytes, FixedBytes, U256};
 use alloy_provider::{Provider, WsConnect};
@@ -12,7 +13,7 @@ use alloy_rpc_types::{
 };
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::SolValue;
-use anvil::{spawn, EthereumHardfork, NodeConfig};
+use anvil::{spawn, NodeConfig};
 use eyre::Ok;
 use futures::{future::join_all, FutureExt, StreamExt};
 use std::{str::FromStr, time::Duration};

@@ -93,11 +93,11 @@ impl ResolveArgs {
                         .collect();
 
                     let evm_version = if shell::verbosity() > 1 {
-                        Some(
-                            EvmVersion::default()
-                                .normalize_version_solc(version)
-                                .unwrap_or_default(),
-                        )
+                        let evm = EvmVersion::default()
+                            .normalize_version_solc(version)
+                            .unwrap_or_default();
+
+                        Some(evm)
                     } else {
                         None
                     };

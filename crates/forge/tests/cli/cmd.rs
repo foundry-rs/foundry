@@ -1208,6 +1208,11 @@ Compiler run successful!
 forgetest!(can_build_after_failure, |prj, cmd| {
     prj.insert_ds_test();
 
+    // Disable linting during build to avoid linting output interfering with test assertions
+    prj.update_config(|config| {
+        config.lint.lint_on_build = false;
+    });
+
     prj.add_source(
         "ATest.t.sol",
         r#"
@@ -3673,7 +3678,7 @@ forgetest_init!(can_inspect_standard_json, |prj, cmd| {
         ]
       }
     },
-    "evmVersion": "cancun",
+    "evmVersion": "prague",
     "viaIR": false,
     "libraries": {}
   }
@@ -3868,4 +3873,23 @@ Compiler run successful!
 Generating bindings for 1 contracts
 Bindings have been generated to [..]"#
     ]]);
+});
+
+// forge bind e2e
+forgetest_init!(can_bind_e2e, |prj, cmd| {
+    cmd.args(["bind"]).assert_success().stdout_eq(str![[r#"No files changed, compilation skipped
+Generating bindings for 2 contracts
+Bindings have been generated to [..]"#]]);
+
+    let bindings_path = prj.root().join("out/bindings");
+
+    assert!(bindings_path.exists(), "Bindings directory should exist");
+    let out = Command::new("cargo")
+        .arg("build")
+        .current_dir(&bindings_path)
+        .output()
+        .expect("Failed to run cargo build");
+    // RUn `cargo build`
+
+    assert!(out.status.success(), "Cargo build should succeed");
 });
