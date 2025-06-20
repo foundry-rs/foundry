@@ -237,6 +237,24 @@ You can use those same `cast` subcommands against your `anvil` instance:
 cast block-number
 ```
 
+### Offline Mode
+
+Anvil now supports running forks in fully offline mode. This is useful when you need to run Anvil in environments without internet access:
+
+First, save the fork state while online:
+
+```sh
+anvil --fork-url https://eth.merkle.io --dump-state state.json
+```
+
+Later, run Anvil in offline mode using the saved state:
+
+```sh
+anvil --fork-url https://eth.merkle.io --load-state state.json --offline
+```
+
+The `--offline` flag ensures Anvil won't make any RPC calls to the fork URL, operating entirely from the loaded state.
+
 ---
 
 Run `anvil --help` to explore the full list of available features and their usage.

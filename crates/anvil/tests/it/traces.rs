@@ -17,7 +17,7 @@ use alloy_provider::{
     ext::{DebugApi, TraceApi},
 };
 use alloy_rpc_types::{
-    TransactionRequest,
+    BlockNumberOrTag, TransactionRequest,
     state::StateOverride,
     trace::{
         filter::{TraceFilter, TraceFilterMode},
@@ -1013,6 +1013,52 @@ fault: function(log) {}
     assert_eq!(actual, expected);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_block_by_number() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let amount = U256::from(1000);
+
+    // Send a transaction
+    let tx = TransactionRequest::default().to(to).value(amount).from(from);
+    let tx = WithOtherFields::new(tx);
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let block_number = receipt.block_number.unwrap();
+
+    // Trace the block by number using the API directly
+    let traces = api
+        .backend
+        .debug_trace_block_by_number(
+            BlockNumberOrTag::Number(block_number),
+            GethDebugTracingOptions::default()
+                .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer)),
+        )
+        .await
+        .unwrap();
+
+    // Should have one trace for the transaction
+    assert_eq!(traces.len(), 1);
+
+    // Backend returns Vec<TraceResult>
+    match &traces[0] {
+        alloy_rpc_types::trace::geth::TraceResult::Success { result, .. } => match result {
+            GethTrace::CallTracer(call_frame) => {
+                assert_eq!(call_frame.from, from);
+                assert_eq!(call_frame.to.unwrap(), to);
+                assert_eq!(call_frame.value, Some(amount));
+            }
+            _ => unreachable!("expected CallTracer"),
+        },
+        alloy_rpc_types::trace::geth::TraceResult::Error { error, .. } => {
+            panic!("trace failed: {}", error);
+        }
+    }
+}
+
 #[cfg(feature = "js-tracer")]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_debug_trace_transaction_js_tracer() {
@@ -1272,5 +1318,51 @@ async fn test_debug_trace_transaction_pre_state_tracer() {
             }
         }
         _ => unreachable!(),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_block_by_hash() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let amount = U256::from(2000);
+
+    // Send a transaction
+    let tx = TransactionRequest::default().to(to).value(amount).from(from);
+    let tx = WithOtherFields::new(tx);
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let block_hash = receipt.block_hash.unwrap();
+
+    // Trace the block by hash using the API directly
+    let traces = api
+        .backend
+        .debug_trace_block_by_hash(
+            block_hash,
+            GethDebugTracingOptions::default()
+                .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer)),
+        )
+        .await
+        .unwrap();
+
+    // Should have one trace for the transaction
+    assert_eq!(traces.len(), 1);
+
+    // Backend returns Vec<TraceResult>
+    match &traces[0] {
+        alloy_rpc_types::trace::geth::TraceResult::Success { result, .. } => match result {
+            GethTrace::CallTracer(call_frame) => {
+                assert_eq!(call_frame.from, from);
+                assert_eq!(call_frame.to.unwrap(), to);
+                assert_eq!(call_frame.value, Some(amount));
+            }
+            _ => unreachable!("expected CallTracer"),
+        },
+        alloy_rpc_types::trace::geth::TraceResult::Error { error, .. } => {
+            panic!("trace failed: {}", error);
+        }
     }
 }
