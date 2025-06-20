@@ -17,6 +17,18 @@ use solar_parse::{
 };
 use std::borrow::Cow;
 
+/// Formatting style for comma-separated lists
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ListFormat {
+    /// Breaks all elements if any break.
+    Consistent,
+    /// Attempts to fit all elements in one line, before breaking consistently.
+    Compact,
+    /// If the list contains just one element, it will print unboxed (will not break).
+    /// Otherwise, will break consistently.
+    Inline,
+}
+
 // TODO(dani): trailing comments should always be passed Some
 
 pub(super) struct State<'sess, 'ast> {
@@ -213,13 +225,32 @@ impl<'sess> State<'sess, '_> {
         }
     }
 
-    fn print_tuple<'a, T, P, S>(&mut self, values: &'a [T], print: P, get_span: S, compact: bool)
-    where
+    fn print_tuple<'a, T, P, S>(
+        &mut self,
+        values: &'a [T],
+        mut print: P,
+        mut get_span: S,
+        format: ListFormat,
+    ) where
         P: FnMut(&mut Self, &'a T),
         S: FnMut(&T) -> Option<Span>,
     {
+        // Format single-item inline lists directly without boxes
+        if values.len() == 1 {
+            if let ListFormat::Inline = format {
+                if let Some(span) = get_span(&values[0]) {
+                    self.print_comments(span.lo());
+                }
+                self.word("(");
+                print(self, &values[0]);
+                self.word(")");
+                return;
+            }
+        }
+
+        // Otherwise, use commasep
         self.word("(");
-        self.commasep(values, print, get_span, compact);
+        self.commasep(values, print, get_span, matches!(format, ListFormat::Compact));
         self.word(")");
     }
 
@@ -586,7 +617,7 @@ impl<'ast> State<'_, 'ast> {
             self.nbsp();
             self.print_ident(&name);
         }
-        self.print_parameter_list(parameters, false);
+        self.print_parameter_list(parameters, ListFormat::Consistent);
         self.end();
 
         // Attributes.
@@ -614,7 +645,7 @@ impl<'ast> State<'_, 'ast> {
         if !returns.is_empty() {
             self.space();
             self.word("returns ");
-            self.print_parameter_list(returns, false);
+            self.print_parameter_list(returns, ListFormat::Consistent);
         }
 
         if let Some(body) = body {
@@ -657,7 +688,7 @@ impl<'ast> State<'_, 'ast> {
         let ast::ItemError { name, parameters } = err;
         self.word("error ");
         self.print_ident(name);
-        self.print_parameter_list(parameters, false);
+        self.print_parameter_list(parameters, ListFormat::Consistent);
         self.word(";");
     }
 
@@ -665,7 +696,7 @@ impl<'ast> State<'_, 'ast> {
         let ast::ItemEvent { name, parameters, anonymous } = event;
         self.word("event ");
         self.print_ident(name);
-        self.print_parameter_list(parameters, false);
+        self.print_parameter_list(parameters, ListFormat::Consistent);
         if *anonymous {
             self.word(" anonymous");
         }
@@ -729,9 +760,9 @@ impl<'ast> State<'_, 'ast> {
     fn print_parameter_list(
         &mut self,
         parameters: &'ast [ast::VariableDefinition<'ast>],
-        compact: bool,
+        format: ListFormat,
     ) {
-        self.print_tuple(parameters, Self::print_var, get_span!(), compact);
+        self.print_tuple(parameters, Self::print_var, get_span!(), format);
     }
 
     fn print_docs(&mut self, docs: &'ast ast::DocComments<'ast>) {
@@ -1018,7 +1049,12 @@ impl<'ast> State<'_, 'ast> {
             if self.config.override_spacing {
                 self.nbsp();
             }
-            self.print_tuple(paths, |this, path| this.print_path(path), get_span!(()), false);
+            self.print_tuple(
+                paths,
+                |this, path| this.print_path(path),
+                get_span!(()),
+                ListFormat::Consistent,
+            );
         }
     }
 
@@ -1132,11 +1168,16 @@ impl<'ast> State<'_, 'ast> {
                     }
                 },
                 |e| e.as_deref().map(|e| e.span),
-                false,
+                ListFormat::Consistent,
             ),
             ast::ExprKind::TypeCall(ty) => {
                 self.word("type");
-                self.print_tuple(std::slice::from_ref(ty), Self::print_ty, get_span!(), false);
+                self.print_tuple(
+                    std::slice::from_ref(ty),
+                    Self::print_ty,
+                    get_span!(),
+                    ListFormat::Consistent,
+                );
             }
             ast::ExprKind::Type(ty) => self.print_ty(ty),
             ast::ExprKind::Unary(un_op, expr) => {
@@ -1175,7 +1216,12 @@ impl<'ast> State<'_, 'ast> {
 
         match kind {
             ast::CallArgsKind::Unnamed(exprs) => {
-                self.print_tuple(exprs, |this, e| this.print_expr(e), get_span!(), false);
+                self.print_tuple(
+                    exprs,
+                    |this, e| this.print_expr(e),
+                    get_span!(),
+                    ListFormat::Consistent,
+                );
             }
             ast::CallArgsKind::Named(named_args) => {
                 self.word("(");
@@ -1221,7 +1267,12 @@ impl<'ast> State<'_, 'ast> {
                     self.nbsp();
                 }
                 if !flags.is_empty() {
-                    self.print_tuple(flags, Self::print_ast_str_lit, get_span!(), false);
+                    self.print_tuple(
+                        flags,
+                        Self::print_ast_str_lit,
+                        get_span!(),
+                        ListFormat::Consistent,
+                    );
                 }
                 self.print_yul_block(block, span, false);
             }
@@ -1235,7 +1286,7 @@ impl<'ast> State<'_, 'ast> {
                         }
                     },
                     |v| v.as_ref().map(|v| v.span),
-                    false,
+                    ListFormat::Consistent,
                 );
                 self.word(" = ");
                 self.neverbreak();
@@ -1329,7 +1380,7 @@ impl<'ast> State<'_, 'ast> {
                     }
                     if !args.is_empty() {
                         self.word("returns ");
-                        self.print_parameter_list(args, true);
+                        self.print_parameter_list(args, ListFormat::Compact);
                         self.nbsp();
                     }
                     self.print_block(block, *try_span);
@@ -1349,7 +1400,7 @@ impl<'ast> State<'_, 'ast> {
                             if let Some(name) = name {
                                 self.print_ident(name);
                             }
-                            self.print_parameter_list(args, true);
+                            self.print_parameter_list(args, ListFormat::Inline);
                             self.nbsp();
                         }
                         self.print_block(block, *catch_span);
@@ -1386,7 +1437,12 @@ impl<'ast> State<'_, 'ast> {
 
     fn print_if_cond(&mut self, kw: &'static str, cond: &'ast ast::Expr<'ast>) {
         self.word_nbsp(kw);
-        self.print_tuple(std::slice::from_ref(cond), Self::print_expr, get_span!(), false);
+        self.print_tuple(
+            std::slice::from_ref(cond),
+            Self::print_expr,
+            get_span!(),
+            ListFormat::Consistent,
+        );
     }
 
     fn print_emit_revert(
@@ -1568,7 +1624,12 @@ impl<'ast> State<'_, 'ast> {
                 self.ibox(0);
                 self.word("function ");
                 self.print_ident(name);
-                self.print_tuple(parameters, Self::print_ident, get_span!(), false);
+                self.print_tuple(
+                    parameters,
+                    Self::print_ident,
+                    get_span!(),
+                    ListFormat::Consistent,
+                );
                 self.nbsp();
                 if !returns.is_empty() {
                     self.word("-> ");
@@ -1614,7 +1675,7 @@ impl<'ast> State<'_, 'ast> {
     fn print_yul_expr_call(&mut self, expr: &'ast yul::ExprCall<'ast>) {
         let yul::ExprCall { name, arguments } = expr;
         self.print_ident(name);
-        self.print_tuple(arguments, Self::print_yul_expr, get_span!(), false);
+        self.print_tuple(arguments, Self::print_yul_expr, get_span!(), ListFormat::Consistent);
     }
 
     fn handle_try_catch_indent(
