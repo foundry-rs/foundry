@@ -8,7 +8,11 @@ out.json
 .claude
 CLAUDE.md
 .env
-node_modules
+
+# npm
 dist
-bin
+npm/bin
+node_modules
+package-lock.json
+
 _
