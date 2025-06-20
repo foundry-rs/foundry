@@ -54,6 +54,7 @@ use yansi::Paint;
 
 mod filter;
 mod summary;
+
 use crate::{result::TestKind, traces::render_trace_arena_inner};
 pub use filter::FilterArgs;
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
