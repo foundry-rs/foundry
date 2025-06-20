@@ -5,5 +5,8 @@ testdata/cheats/Vm.sol linguist-generated
 *.rs diff=rust
 crates/lint/testdata/* text eol=lf
 
+bun.lock linguist-language=JSON-with-Comments
+
+.env.example linguist-generated=Dotenv
 dprint.json linguist-language=JSON-with-Comments
 .devcontainer/devcontainer.json linguist-language=JSON-with-Comments
