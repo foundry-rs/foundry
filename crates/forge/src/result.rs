@@ -76,24 +76,6 @@ impl TestOutcome {
     }
 
     /// Flattens the test outcome into a list of individual tests.
-    // TODO: Replace this with `tests` and make it return `TestRef<'_>`
-    pub fn into_tests_cloned(&self) -> impl Iterator<Item = SuiteTestResult> + '_ {
-        self.results
-            .iter()
-            .flat_map(|(file, suite)| {
-                suite
-                    .test_results
-                    .iter()
-                    .map(move |(sig, result)| (file.clone(), sig.clone(), result.clone()))
-            })
-            .map(|(artifact_id, signature, result)| SuiteTestResult {
-                artifact_id,
-                signature,
-                result,
-            })
-    }
-
-    /// Flattens the test outcome into a list of individual tests.
     pub fn into_tests(self) -> impl Iterator<Item = SuiteTestResult> {
         self.results
             .into_iter()

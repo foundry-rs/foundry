@@ -21,16 +21,6 @@ impl StorageInfo {
         Self { backend }
     }
 
-    /// Returns the receipts of the current block
-    pub fn current_receipts(&self) -> Option<Vec<TypedReceipt>> {
-        self.backend.mined_receipts(self.backend.best_hash())
-    }
-
-    /// Returns the current block
-    pub fn current_block(&self) -> Option<Block> {
-        self.backend.get_block(self.backend.best_number())
-    }
-
     /// Returns the receipts of the block with the given hash
     pub fn receipts(&self, hash: B256) -> Option<Vec<TypedReceipt>> {
         self.backend.mined_receipts(hash)

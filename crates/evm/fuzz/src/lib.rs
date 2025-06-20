@@ -284,11 +284,6 @@ impl FuzzedCases {
         &self.cases
     }
 
-    #[inline]
-    pub fn into_cases(self) -> Vec<FuzzCase> {
-        self.cases
-    }
-
     /// Get the last [FuzzCase]
     #[inline]
     pub fn last(&self) -> Option<&FuzzCase> {
@@ -317,32 +312,6 @@ impl FuzzedCases {
             .iter()
             .map(|c| if with_stipend { c.gas } else { c.gas.saturating_sub(c.stipend) })
             .collect()
-    }
-
-    /// Returns the case with the highest gas usage
-    #[inline]
-    pub fn highest(&self) -> Option<&FuzzCase> {
-        self.cases.last()
-    }
-
-    /// Returns the case with the lowest gas usage
-    #[inline]
-    pub fn lowest(&self) -> Option<&FuzzCase> {
-        self.cases.first()
-    }
-
-    /// Returns the highest amount of gas spent on a fuzz case
-    #[inline]
-    pub fn highest_gas(&self, with_stipend: bool) -> u64 {
-        self.highest()
-            .map(|c| if with_stipend { c.gas } else { c.gas - c.stipend })
-            .unwrap_or_default()
-    }
-
-    /// Returns the lowest amount of gas spent on a fuzz case
-    #[inline]
-    pub fn lowest_gas(&self) -> u64 {
-        self.lowest().map(|c| c.gas).unwrap_or_default()
     }
 }
 

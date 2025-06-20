@@ -5,10 +5,8 @@ use alloy_primitives::U256;
 use forge::{MultiContractRunner, MultiContractRunnerBuilder};
 use foundry_cli::utils::install_crypto_provider;
 use foundry_compilers::{
-    artifacts::{EvmVersion, Libraries, Settings},
-    compilers::multi::MultiCompiler,
-    utils::RuntimeOrHandle,
-    Project, ProjectCompileOutput, SolcConfig, Vyper,
+    artifacts::EvmVersion, compilers::multi::MultiCompiler, utils::RuntimeOrHandle, Project,
+    ProjectCompileOutput, Vyper,
 };
 use foundry_config::{
     fs_permissions::PathPermission, Config, FsPermissions, FuzzConfig, FuzzDictionaryConfig,
@@ -56,22 +54,6 @@ impl ForgeTestProfile {
 
     pub fn root(&self) -> PathBuf {
         PathBuf::from(TESTDATA)
-    }
-
-    /// Configures the solc settings for the test profile.
-    pub fn solc_config(&self) -> SolcConfig {
-        let libs =
-            ["fork/Fork.t.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4".to_string()];
-
-        let mut settings =
-            Settings { libraries: Libraries::parse(&libs).unwrap(), ..Default::default() };
-
-        if matches!(self, Self::Paris) {
-            settings.evm_version = Some(EvmVersion::Paris);
-        }
-
-        let settings = SolcConfig::builder().settings(settings).build();
-        SolcConfig { settings }
     }
 
     /// Build [Config] for test profile.

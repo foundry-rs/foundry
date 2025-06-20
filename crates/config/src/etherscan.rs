@@ -290,14 +290,6 @@ impl ResolvedEtherscanConfig {
         })
     }
 
-    /// Sets the chain value and consumes the type
-    ///
-    /// This is only used to set derive the appropriate Cache path for the etherscan client
-    pub fn with_chain(mut self, chain: impl Into<Chain>) -> Self {
-        self.set_chain(chain);
-        self
-    }
-
     /// Sets the chain value
     pub fn set_chain(&mut self, chain: impl Into<Chain>) -> &mut Self {
         let chain = chain.into();
@@ -361,22 +353,6 @@ pub enum EtherscanApiKey {
 }
 
 impl EtherscanApiKey {
-    /// Returns the key variant
-    pub fn as_key(&self) -> Option<&str> {
-        match self {
-            Self::Key(url) => Some(url),
-            Self::Env(_) => None,
-        }
-    }
-
-    /// Returns the env variant
-    pub fn as_env(&self) -> Option<&str> {
-        match self {
-            Self::Env(val) => Some(val),
-            Self::Key(_) => None,
-        }
-    }
-
     /// Returns the key this type holds
     ///
     /// # Error
