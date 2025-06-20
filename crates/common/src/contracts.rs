@@ -184,8 +184,8 @@ impl ContractsByArtifact {
             };
 
             let len = match deployed_code {
-                BytecodeObject::Bytecode(ref bytes) => bytes.len(),
-                BytecodeObject::Unlinked(ref bytes) => bytes.len() / 2,
+                BytecodeObject::Bytecode(bytes) => bytes.len(),
+                BytecodeObject::Unlinked(bytes) => bytes.len() / 2,
             };
 
             if len != code.len() {
@@ -206,10 +206,10 @@ impl ContractsByArtifact {
             // See https://docs.soliditylang.org/en/latest/contracts.html#call-protection-for-libraries and
             // https://github.com/NomicFoundation/hardhat/blob/af7807cf38842a4f56e7f4b966b806e39631568a/packages/hardhat-verify/src/internal/solc/bytecode.ts#L172
             let has_call_protection = match deployed_code {
-                BytecodeObject::Bytecode(ref bytes) => {
+                BytecodeObject::Bytecode(bytes) => {
                     bytes.starts_with(&CALL_PROTECTION_BYTECODE_PREFIX)
                 }
-                BytecodeObject::Unlinked(ref bytes) => {
+                BytecodeObject::Unlinked(bytes) => {
                     if let Ok(bytes) =
                         Bytes::from_str(&bytes[..CALL_PROTECTION_BYTECODE_PREFIX.len() * 2])
                     {
@@ -231,8 +231,8 @@ impl ContractsByArtifact {
                 let right = offset.start as usize;
 
                 let matched = match deployed_code {
-                    BytecodeObject::Bytecode(ref bytes) => bytes[left..right] == code[left..right],
-                    BytecodeObject::Unlinked(ref bytes) => {
+                    BytecodeObject::Bytecode(bytes) => bytes[left..right] == code[left..right],
+                    BytecodeObject::Unlinked(bytes) => {
                         if let Ok(bytes) = Bytes::from_str(&bytes[left * 2..right * 2]) {
                             bytes == code[left..right]
                         } else {
@@ -250,8 +250,8 @@ impl ContractsByArtifact {
 
             if left < code.len() {
                 match deployed_code {
-                    BytecodeObject::Bytecode(ref bytes) => bytes[left..] == code[left..],
-                    BytecodeObject::Unlinked(ref bytes) => {
+                    BytecodeObject::Bytecode(bytes) => bytes[left..] == code[left..],
+                    BytecodeObject::Unlinked(bytes) => {
                         if let Ok(bytes) = Bytes::from_str(&bytes[left * 2..]) {
                             bytes == code[left..]
                         } else {

@@ -455,11 +455,11 @@ mod tests {
             MultiWalletOpts::parse_from(["foundry-cli", "--keystores", "my/keystore/path"]);
         assert_eq!(args.keystore_paths, Some(vec!["my/keystore/path".to_string()]));
 
-        std::env::set_var("ETH_KEYSTORE", "MY_KEYSTORE");
+        unsafe { std::env::set_var("ETH_KEYSTORE", "MY_KEYSTORE"); }
         let args: MultiWalletOpts = MultiWalletOpts::parse_from(["foundry-cli"]);
         assert_eq!(args.keystore_paths, Some(vec!["MY_KEYSTORE".to_string()]));
 
-        std::env::remove_var("ETH_KEYSTORE");
+        unsafe { std::env::remove_var("ETH_KEYSTORE"); }
     }
 
     #[test]

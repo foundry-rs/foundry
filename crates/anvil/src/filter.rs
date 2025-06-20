@@ -61,7 +61,7 @@ impl Filters {
     /// Returns the original `Filter` of an `eth_newFilter`
     pub async fn get_log_filter(&self, id: &str) -> Option<Filter> {
         let filters = self.active_filters.lock().await;
-        if let Some((EthFilter::Logs(ref log), _)) = filters.get(id) {
+        if let Some((EthFilter::Logs(log), _)) = filters.get(id) {
             return log.filter.filter.clone()
         }
         None

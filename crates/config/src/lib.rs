@@ -3018,7 +3018,7 @@ mod tests {
                 .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain.into()))
                 .is_err());
 
-            std::env::set_var(env_key, env_value);
+            unsafe { std::env::set_var(env_key, env_value); }
 
             assert_eq!(
                 config
@@ -3041,7 +3041,7 @@ mod tests {
                 "via etherscan_api_key"
             );
 
-            std::env::remove_var(env_key);
+            unsafe { std::env::remove_var(env_key); }
             Ok(())
         });
     }

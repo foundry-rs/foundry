@@ -287,7 +287,7 @@ impl ContractSources {
                 source_map.get(pc as usize)
             }?;
             // if the source element has an index, find the sourcemap for that index
-            let res = source_element
+            source_element
                 .index()
                 // if index matches current file_id, return current source code
                 .and_then(|index| {
@@ -299,9 +299,7 @@ impl ContractSources {
                         .get(&artifact.build_id)?
                         .get(&source_element.index()?)
                         .map(|source| (source_element.clone(), source.as_ref()))
-                });
-
-            res
+                })
         })
     }
 }

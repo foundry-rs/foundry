@@ -3,7 +3,6 @@
 use crate::shutdown::Shutdown;
 use futures::{FutureExt, Stream, StreamExt};
 use std::{
-    future::Future,
     pin::Pin,
     task::{Context, Poll},
 };

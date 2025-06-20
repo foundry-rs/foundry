@@ -8,7 +8,7 @@ use alloy_primitives::B256;
 use alloy_provider::Provider;
 use alloy_rpc_types::anvil::Forking;
 use futures::StreamExt;
-use std::{fmt, future::Future};
+use std::fmt;
 use tokio::{runtime::Handle, task::JoinHandle};
 
 pub mod block_listener;

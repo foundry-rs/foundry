@@ -13,7 +13,6 @@ use crate::{
 use futures::{FutureExt, Stream, StreamExt};
 use std::{
     collections::VecDeque,
-    future::Future,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},

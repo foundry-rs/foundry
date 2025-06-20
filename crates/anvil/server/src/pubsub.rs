@@ -11,7 +11,6 @@ use serde::de::DeserializeOwned;
 use std::{
     collections::VecDeque,
     fmt,
-    future::Future,
     hash::Hash,
     pin::Pin,
     sync::Arc,

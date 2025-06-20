@@ -8,7 +8,7 @@ use foundry_block_explorers::{
     contract::ContractMetadata, errors::EtherscanError, Client, EtherscanApiVersion,
 };
 use foundry_config::Chain;
-use std::{future::Future, pin::Pin};
+use std::pin::Pin;
 
 pub fn encode_args<I, S>(inputs: &[Param], args: I) -> Result<Vec<DynSolValue>>
 where

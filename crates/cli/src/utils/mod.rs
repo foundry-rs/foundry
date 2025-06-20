@@ -10,7 +10,6 @@ use foundry_config::{Chain, Config};
 use serde::de::DeserializeOwned;
 use std::{
     ffi::OsStr,
-    future::Future,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
     time::{Duration, SystemTime, UNIX_EPOCH},

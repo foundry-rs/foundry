@@ -41,7 +41,7 @@ impl<T: UIfmt> UIfmt for &T {
 
 impl<T: UIfmt> UIfmt for Option<T> {
     fn pretty(&self) -> String {
-        if let Some(ref inner) = self {
+        if let Some(inner) = self {
             inner.pretty()
         } else {
             String::new()

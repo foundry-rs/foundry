@@ -8,7 +8,7 @@ use foundry_block_explorers::{
 use foundry_common::compile::etherscan_project;
 use foundry_config::{Chain, Config};
 use futures::{
-    future::{join_all, Future},
+    future::join_all,
     stream::{FuturesUnordered, Stream, StreamExt},
     task::{Context, Poll},
 };
