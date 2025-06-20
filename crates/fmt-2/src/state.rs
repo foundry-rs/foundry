@@ -90,6 +90,28 @@ impl<'sess> State<'sess, '_> {
         self.print_comments_inner(pos, true)
     }
 
+    /// Print comments inline without adding line breaks. Only works for `CommentStyle::Trailing`.
+    ///
+    ///  Used for comments within syntax like `try /* comment */ do.something() {`.
+    fn print_inline_comments(&mut self, pos: BytePos) -> bool {
+        let mut printed = false;
+        while let Some(cmnt) = self.peek_comment() {
+            if cmnt.pos() >= pos {
+                break;
+            }
+            let cmnt = self.next_comment().unwrap();
+            printed = true;
+
+            if matches!(cmnt.style, CommentStyle::Mixed | CommentStyle::Trailing) {
+                for line in cmnt.lines {
+                    self.word(line);
+                }
+                self.nbsp();
+            }
+        }
+        printed
+    }
+
     fn print_comments_inner(&mut self, pos: BytePos, skip_ws: bool) -> Option<CommentStyle> {
         let mut has_comment = None;
         while let Some(cmnt) = self.peek_comment() {
@@ -1368,7 +1390,7 @@ impl<'ast> State<'_, 'ast> {
                     let ast::TryCatchClause { args, block, span: try_span, .. } = first;
                     self.ibox(0);
                     self.word("try ");
-                    self.print_comments(expr.span.lo());
+                    self.print_inline_comments(expr.span.lo());
                     self.print_expr(expr);
                     self.print_comments_skip_ws(
                         args.first().map(|p| p.span.lo()).unwrap_or_else(|| expr.span.lo()),
@@ -1391,10 +1413,10 @@ impl<'ast> State<'_, 'ast> {
                         other.iter().delimited()
                     {
                         self.handle_try_catch_indent(&mut should_break, block.is_empty(), pos);
-                        self.print_comments_skip_ws(catch_span.lo());
+                        self.print_inline_comments(catch_span.lo());
                         self.word("catch ");
                         if !args.is_empty() {
-                            self.print_comments_skip_ws(args[0].span.lo());
+                            self.print_inline_comments(args[0].span.lo());
                             if let Some(name) = name {
                                 self.print_ident(name);
                             }
