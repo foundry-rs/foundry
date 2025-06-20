@@ -387,9 +387,8 @@ casttest!(wallet_sign_typed_data_file, |_prj, cmd| {
 "#]]);
 });
 
-// tests that `cast wallet sign typed-data` currently fails with type names containing colons
-// This test demonstrates the bug described in https://github.com/foundry-rs/foundry/issues/10765
-// The error occurs because the parser cannot handle colons in EIP-712 type names
+// tests that `cast wallet sign typed-data` passes with type names containing colons
+//  <https://github.com/foundry-rs/foundry/issues/10765>
 casttest!(wallet_sign_typed_data_with_colon_fails, |_prj, cmd| {
     let typed_data_with_colon = r#"{
         "types": {
@@ -422,15 +421,14 @@ casttest!(wallet_sign_typed_data_with_colon_fails, |_prj, cmd| {
         "0x0000000000000000000000000000000000000000000000000000000000000001",
         "--data",
         typed_data_with_colon,
-    ]).assert_failure().stderr_eq(str![[r#"
-Error: failed to parse json file: data did not match any variant of untagged enum StrOrVal
+    ]).assert_success().stdout_eq(str![[r#"
+0xf91c67e845a4d468d1f876f457ffa01e65468641fc121453705242d21de39b266c278592b085814ab1e9adc938cc26b1d64bb61f80b437df077777c4283612291b
 
 "#]]);
 });
 
 // tests that the same data without colon works correctly
-// This demonstrates that the issue is specifically with the colon character
-// Related to https://github.com/foundry-rs/foundry/issues/10765
+// <https://github.com/foundry-rs/foundry/issues/10765>
 casttest!(wallet_sign_typed_data_without_colon_works, |_prj, cmd| {
     let typed_data_without_colon = r#"{
         "types": {
@@ -463,7 +461,8 @@ casttest!(wallet_sign_typed_data_without_colon_works, |_prj, cmd| {
         "0x0000000000000000000000000000000000000000000000000000000000000001",
         "--data",
         typed_data_without_colon,
-    ]).assert_success();
+    ])
+    .assert_success();
 });
 
 // tests that `cast wallet sign-auth message` outputs the expected signature
