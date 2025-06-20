@@ -376,9 +376,93 @@ impl MultiWalletOpts {
         Ok(None)
     }
 
+    /// Returns Trezor hardware wallet signers if the trezor flag is set.
+    ///
+    /// This implementation includes infrastructure for session_id reuse to avoid
+    /// repeated passphrase entry when multiple TrezorSigner instances are created.
+    ///
+    /// # Current Status
+    ///
+    /// The infrastructure is in place to support session_id reuse, but the actual
+    /// session_id extraction is currently limited by the alloy-signer-trezor crate
+    /// which doesn't expose the session_id after TrezorSigner creation.
+    ///
+    /// # How it works
+    ///
+    /// 1. Creates the first TrezorSigner which establishes a new session with the device
+    /// 2. Attempts to extract the session_id from this first connection (currently returns None)
+    /// 3. For subsequent TrezorSigner instances, tries to reuse the session_id if available
+    /// 4. Falls back to creating new sessions if session_id is not available
+    ///
+    /// # Complete Solution Requirements
+    ///
+    /// To fully implement session_id reuse, the alloy-signer-trezor crate would need
+    /// to be modified to either:
+    /// - Expose the session_id from TrezorSigner instances
+    /// - Provide a method to clone/share sessions between instances
+    /// - Allow session_id to be retrieved after successful connection
+    ///
+    /// # Related Issue
+    ///
+    /// This addresses issue #9388: "trezor session_id reuse across multiple TrezorSigner instances"
     pub async fn trezors(&self) -> Result<Option<Vec<WalletSigner>>> {
         if self.trezor {
-            create_hw_wallets!(self, utils::create_trezor_signer, wallets);
+            let mut wallets = vec![];
+
+            // Get the first wallet and attempt to extract session_id for reuse
+            let (first_wallet, session_id) = if let Some(hd_paths) = &self.hd_paths {
+                if !hd_paths.is_empty() {
+                    utils::create_trezor_signer_and_get_session(Some(&hd_paths[0]), 0).await?
+                } else {
+                    utils::create_trezor_signer_and_get_session(None, 0).await?
+                }
+            } else if let Some(mnemonic_indexes) = &self.mnemonic_indexes {
+                if !mnemonic_indexes.is_empty() {
+                    utils::create_trezor_signer_and_get_session(None, mnemonic_indexes[0]).await?
+                } else {
+                    utils::create_trezor_signer_and_get_session(None, 0).await?
+                }
+            } else {
+                utils::create_trezor_signer_and_get_session(None, 0).await?
+            };
+
+            wallets.push(first_wallet);
+
+            // For subsequent wallets, try to reuse the session_id if available
+            // Currently, session_id will be None due to limitations in alloy-signer-trezor
+            // but the infrastructure is in place for when this becomes available
+
+            // Create remaining wallets from HD paths if any (starting from index 1)
+            if let Some(hd_paths) = &self.hd_paths {
+                for path in hd_paths.iter().skip(1) {
+                    let hw = if session_id.is_some() {
+                        utils::create_trezor_signer_with_session(Some(path), 0, session_id).await?
+                    } else {
+                        // Fallback to creating without session reuse
+                        utils::create_trezor_signer(Some(path), 0).await?
+                    };
+                    wallets.push(hw);
+                }
+            }
+
+            // Create wallets from mnemonic indexes if any
+            let skip_first_index =
+                self.hd_paths.is_some() && !self.hd_paths.as_ref().unwrap().is_empty();
+            if let Some(mnemonic_indexes) = &self.mnemonic_indexes {
+                let start_index = if skip_first_index { 0 } else { 1 };
+
+                for mnemonic_index in mnemonic_indexes.iter().skip(start_index) {
+                    let hw = if session_id.is_some() {
+                        utils::create_trezor_signer_with_session(None, *mnemonic_index, session_id)
+                            .await?
+                    } else {
+                        // Fallback to creating without session reuse
+                        utils::create_trezor_signer(None, *mnemonic_index).await?
+                    };
+                    wallets.push(hw);
+                }
+            }
+
             return Ok(Some(wallets));
         }
         Ok(None)
