@@ -349,6 +349,8 @@ yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 path-slash = "0.2"
 jiff = "0.2"
 heck = "0.5"
+uuid = "1.17.0"
+flate2 = "1.1"
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
