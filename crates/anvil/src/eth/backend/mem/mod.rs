@@ -24,7 +24,6 @@ use crate::{
         macros::node_info,
         pool::transactions::PoolTransaction,
         sign::build_typed_transaction,
-        util::get_precompiles_for,
     },
     inject_precompiles,
     mem::{
@@ -514,10 +513,6 @@ impl Backend {
     /// Whether we're forked off some remote client
     pub fn is_fork(&self) -> bool {
         self.fork.read().is_some()
-    }
-
-    pub fn precompiles(&self) -> Vec<Address> {
-        get_precompiles_for(self.env.read().evm_env.cfg_env.spec)
     }
 
     /// Resets the fork to a fresh state
