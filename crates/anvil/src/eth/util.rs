@@ -1,13 +1,5 @@
-use alloy_primitives::{hex, Address};
+use alloy_primitives::hex;
 use itertools::Itertools;
-use revm::{
-    precompile::{PrecompileSpecId, Precompiles},
-    primitives::hardfork::SpecId,
-};
-
-pub fn get_precompiles_for(spec_id: SpecId) -> Vec<Address> {
-    Precompiles::new(PrecompileSpecId::from_spec_id(spec_id)).addresses().copied().collect()
-}
 
 /// Formats values as hex strings, separated by commas.
 pub fn hex_fmt_many<I, T>(i: I) -> String
