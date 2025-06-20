@@ -389,7 +389,7 @@ casttest!(wallet_sign_typed_data_file, |_prj, cmd| {
 
 // tests that `cast wallet sign typed-data` passes with type names containing colons
 //  <https://github.com/foundry-rs/foundry/issues/10765>
-casttest!(wallet_sign_typed_data_with_colon_fails, |_prj, cmd| {
+casttest!(wallet_sign_typed_data_with_colon_succeeds, |_prj, cmd| {
     let typed_data_with_colon = r#"{
         "types": {
             "EIP712Domain": [
