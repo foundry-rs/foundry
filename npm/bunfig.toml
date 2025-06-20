@@ -1,2 +1,8 @@
-bun.run = true
 telemetry = false
+
+run.bun = true
+bun.run = true
+
+logLevel = "debug"
+
+"@foundry-rs" = { token = "$NPM_TOKEN", url = "https://registry.npmjs.org" }
