@@ -12,6 +12,7 @@ use foundry_test_utils::{
         next_etherscan_api_key, next_http_archive_rpc_url, next_http_rpc_endpoint,
         next_rpc_endpoint, next_ws_rpc_endpoint,
     },
+    snapbox::IntoData as _,
     str,
     util::OutputExt,
 };
@@ -157,6 +158,60 @@ casttest!(finds_block, |_prj, cmd| {
 "#]]);
 });
 
+// tests that we can create a new wallet
+casttest!(new_wallet, |_prj, cmd| {
+    cmd.args(["wallet", "new"]).assert_success().stdout_eq(str![[r#"
+Successfully created new keypair.
+[ADDRESS]
+[PRIVATE_KEY]
+
+"#]]);
+});
+
+// tests that we can create a new wallet (verbose variant)
+casttest!(new_wallet_verbose, |_prj, cmd| {
+    cmd.args(["wallet", "new", "-v"]).assert_success().stdout_eq(str![[r#"
+Successfully created new keypair.
+[ADDRESS]
+[PUBLIC_KEY]
+[PRIVATE_KEY]
+
+"#]]);
+});
+
+// tests that we can create a new wallet with json output
+casttest!(new_wallet_json, |_prj, cmd| {
+    cmd.args(["wallet", "new", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "address": "{...}",
+    "private_key": "{...}"
+  }
+]
+
+"#]]
+        .is_json(),
+    );
+});
+
+// tests that we can create a new wallet with json output (verbose variant)
+casttest!(new_wallet_json_verbose, |_prj, cmd| {
+    cmd.args(["wallet", "new", "--json", "-v"]).assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "address": "{...}",
+    "public_key": "{...}",
+    "private_key": "{...}"
+  }
+]
+
+"#]]
+        .is_json(),
+    );
+});
+
 // tests that we can create a new wallet with keystore
 casttest!(new_wallet_keystore_with_password, |_prj, cmd| {
     cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test"])
@@ -164,6 +219,18 @@ casttest!(new_wallet_keystore_with_password, |_prj, cmd| {
         .stdout_eq(str![[r#"
 Created new encrypted keystore file: [..]
 [ADDRESS]
+
+"#]]);
+});
+
+// tests that we can create a new wallet with keystore (verbose variant)
+casttest!(new_wallet_keystore_with_password_verbose, |_prj, cmd| {
+    cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "-v"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Created new encrypted keystore file: [..]
+[ADDRESS]
+[PUBLIC_KEY]
 
 "#]]);
 });
@@ -551,7 +618,8 @@ casttest!(wallet_mnemonic_from_entropy, |_prj, cmd| {
         "0xdf9bf37e6fcdf9bf37e6fcdf9bf37e3c",
     ])
     .assert_success()
-    .stdout_eq(str![[r#"
+    .stdout_eq(
+        str![[r#"
 Generating mnemonic from provided entropy...
 Successfully generated a new mnemonic.
 Phrase:
@@ -571,7 +639,50 @@ Address:     0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
 Private key: 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
 
 
-"#]]);
+"#]]
+        .raw(),
+    );
+});
+
+// tests that `cast wallet new-mnemonic --entropy` outputs the expected mnemonic (verbose variant)
+casttest!(wallet_mnemonic_from_entropy_verbose, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "new-mnemonic",
+        "--accounts",
+        "3",
+        "--entropy",
+        "0xdf9bf37e6fcdf9bf37e6fcdf9bf37e3c",
+        "-v",
+    ])
+    .assert_success()
+    .stdout_eq(
+        str![[r#"
+Generating mnemonic from provided entropy...
+Successfully generated a new mnemonic.
+Phrase:
+test test test test test test test test test test test junk
+
+Accounts:
+- Account 0:
+Address:     0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Public key:  0x8318535b54105d4a7aae60c08fc45f9687181b4fdfc625bd1a753fa7397fed753547f11ca8696646f2f3acb08e31016afac23e630c5d11f59f61fef57b0d2aa5
+Private key: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+
+- Account 1:
+Address:     0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+Public key:  0xba5734d8f7091719471e7f7ed6b9df170dc70cc661ca05e688601ad984f068b0d67351e5f06073092499336ab0839ef8a521afd334e53807205fa2f08eec74f4
+Private key: 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+
+- Account 2:
+Address:     0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
+Public key:  0x9d9031e97dd78ff8c15aa86939de9b1e791066a0224e331bc962a2099a7b1f0464b8bbafe1535f2301c72c2cb3535b172da30b02686ab0393d348614f157fbdb
+Private key: 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
+
+
+"#]]
+        .raw(),
+    );
 });
 
 // tests that `cast wallet new-mnemonic --json` outputs the expected mnemonic
@@ -600,6 +711,44 @@ casttest!(wallet_mnemonic_from_entropy_json, |_prj, cmd| {
     },
     {
       "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+      "private_key": "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
+    }
+  ]
+}
+
+"#]]);
+});
+
+// tests that `cast wallet new-mnemonic --json` outputs the expected mnemonic (verbose variant)
+casttest!(wallet_mnemonic_from_entropy_json_verbose, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "new-mnemonic",
+        "--accounts",
+        "3",
+        "--entropy",
+        "0xdf9bf37e6fcdf9bf37e6fcdf9bf37e3c",
+        "--json",
+        "-v",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+{
+  "mnemonic": "test test test test test test test test test test test junk",
+  "accounts": [
+    {
+      "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "public_key": "0x8318535b54105d4a7aae60c08fc45f9687181b4fdfc625bd1a753fa7397fed753547f11ca8696646f2f3acb08e31016afac23e630c5d11f59f61fef57b0d2aa5",
+      "private_key": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+    },
+    {
+      "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      "public_key": "0xba5734d8f7091719471e7f7ed6b9df170dc70cc661ca05e688601ad984f068b0d67351e5f06073092499336ab0839ef8a521afd334e53807205fa2f08eec74f4",
+      "private_key": "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+    },
+    {
+      "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+      "public_key": "0x9d9031e97dd78ff8c15aa86939de9b1e791066a0224e331bc962a2099a7b1f0464b8bbafe1535f2301c72c2cb3535b172da30b02686ab0393d348614f157fbdb",
       "private_key": "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
     }
   ]
