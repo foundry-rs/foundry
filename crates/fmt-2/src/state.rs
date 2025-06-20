@@ -236,16 +236,14 @@ impl<'sess> State<'sess, '_> {
         S: FnMut(&T) -> Option<Span>,
     {
         // Format single-item inline lists directly without boxes
-        if values.len() == 1 {
-            if let ListFormat::Inline = format {
-                if let Some(span) = get_span(&values[0]) {
-                    self.print_comments(span.lo());
-                }
-                self.word("(");
-                print(self, &values[0]);
-                self.word(")");
-                return;
+        if values.len() == 1 && matches!(format, ListFormat::Inline) {
+            if let Some(span) = get_span(&values[0]) {
+                self.print_comments(span.lo());
             }
+            self.word("(");
+            print(self, &values[0]);
+            self.word(")");
+            return;
         }
 
         // Otherwise, use commasep
@@ -1522,6 +1520,25 @@ impl<'ast> State<'_, 'ast> {
                 self.word("}");
             }
             self.end();
+        }
+        // Special handling for empty blocks, as they could have comments.
+        else if block.len() == 0 {
+            if let Some(comment) = self.peek_comment() {
+                if !matches!(comment.style, CommentStyle::Mixed) {
+                    self.word("{}");
+                    self.print_comments_skip_ws(span.hi());
+                } else {
+                    self.s.cbox(self.ind);
+                    self.word("{");
+                    self.space();
+                    self.print_comments_skip_ws(span.hi());
+                    self.zerobreak();
+                    self.word("}");
+                    self.end();
+                }
+            } else {
+                self.word("{}");
+            }
         } else {
             self.word("{");
             self.s.cbox(self.ind);
