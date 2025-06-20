@@ -54,10 +54,50 @@ impl Printer {
         self.spaces(SIZE_INFINITY as usize);
     }
 
+    pub fn last_token_is_hardbreak(&self) -> bool {
+        if let Some(token) = self.last_token() {
+            return token.is_hardbreak();
+        }
+
+        false
+    }
+
     pub fn is_beginning_of_line(&self) -> bool {
         match self.last_token() {
             Some(last_token) => last_token.is_hardbreak(),
             None => self.out.is_empty() || self.out.ends_with('\n'),
+        }
+    }
+
+    pub fn is_bol_or_only_ind(&self) -> bool {
+        for i in self.buf.index_range().rev() {
+            let token = &self.buf[i].token;
+            if token.is_hardbreak() || matches!(token, Token::Begin(_)) {
+                return true;
+            }
+            if Self::token_has_non_whitespace_content(token) {
+                return false;
+            }
+        }
+
+        let last_line =
+            if let Some(pos) = self.out.rfind('\n') { &self.out[pos + 1..] } else { &self.out[..] };
+
+        last_line.trim().is_empty()
+    }
+
+    fn token_has_non_whitespace_content(token: &Token) -> bool {
+        match token {
+            Token::String(s) => !s.trim().is_empty(),
+            Token::Break(bt) => {
+                if let Some(char) = bt.pre_break {
+                    !char.is_whitespace()
+                } else {
+                    false
+                }
+            }
+            Token::Begin(_) => false,
+            Token::End => false,
         }
     }
 

@@ -90,9 +90,9 @@ impl<'sess> State<'sess, '_> {
         self.print_comments_inner(pos, true)
     }
 
-    /// Print comments inline without adding line breaks. Only works for `CommentStyle::Trailing`.
+    /// Print comments inline without adding line breaks.
     ///
-    ///  Used for comments within syntax like `try /* comment */ do.something() {`.
+    /// Only works for trailing and mixed [`CommentStyle`].
     fn print_inline_comments(&mut self, pos: BytePos) -> bool {
         let mut printed = false;
         while let Some(cmnt) = self.peek_comment() {
@@ -106,7 +106,7 @@ impl<'sess> State<'sess, '_> {
                 for line in cmnt.lines {
                     self.word(line);
                 }
-                self.nbsp();
+                self.space();
             }
         }
         printed
@@ -163,7 +163,7 @@ impl<'sess> State<'sess, '_> {
                 }
             }
             CommentStyle::Trailing => {
-                if !self.is_beginning_of_line() {
+                if !self.is_bol_or_only_ind() {
                     self.nbsp();
                 }
                 if cmnt.lines.len() == 1 {
@@ -216,7 +216,7 @@ impl<'sess> State<'sess, '_> {
     fn print_remaining_comments(&mut self) {
         // If there aren't any remaining comments, then we need to manually
         // make sure there is a line break at the end.
-        if self.peek_comment().is_none() && !self.is_beginning_of_line() {
+        if self.peek_comment().is_none() && !self.is_bol_or_only_ind() {
             self.hardbreak();
         }
         while let Some(cmnt) = self.next_comment() {
@@ -327,11 +327,17 @@ impl<'sess> State<'sess, '_> {
             }
         }
         if compact {
+            if !self.last_token_is_hardbreak() {
+                self.end();
+                self.zerobreak();
+            }
+            self.s.offset(-self.ind);
+            self.end();
+        } else {
+            self.zerobreak();
+            self.s.offset(-self.ind);
             self.end();
         }
-        self.zerobreak();
-        self.s.offset(-self.ind);
-        self.end();
     }
 }
 
@@ -1413,6 +1419,7 @@ impl<'ast> State<'_, 'ast> {
                         other.iter().delimited()
                     {
                         self.handle_try_catch_indent(&mut should_break, block.is_empty(), pos);
+                        self.ibox(0);
                         self.print_inline_comments(catch_span.lo());
                         self.word("catch ");
                         if !args.is_empty() {
@@ -1424,6 +1431,7 @@ impl<'ast> State<'_, 'ast> {
                             self.nbsp();
                         }
                         self.print_block(block, *catch_span);
+                        self.end();
                     }
                 }
                 self.end();
@@ -1725,16 +1733,28 @@ impl<'ast> State<'_, 'ast> {
     ) {
         // Add extra indent if all prev 'catch' stmts are empty
         if *should_break {
-            self.nbsp();
+            if self.is_bol_or_only_ind() {
+                self.zerobreak();
+            } else {
+                self.nbsp();
+            }
         } else {
             if empty_block {
-                self.space();
+                if self.is_bol_or_only_ind() {
+                    self.zerobreak();
+                } else {
+                    self.space();
+                }
                 self.s.offset(self.ind);
             } else {
                 if pos.is_first {
                     self.nbsp();
                 } else {
-                    self.space();
+                    if self.is_bol_or_only_ind() {
+                        self.zerobreak();
+                    } else {
+                        self.space();
+                    }
                 }
                 *should_break = true;
             }

@@ -39,10 +39,10 @@ contract TryStatement {
         }
 
         try unknown.lookupMultipleValues() returns (uint256, uint256, uint256, uint256, uint256) {} catch Error(string memory) {} catch {}
- 
+
         try unknown.lookupMultipleValues() returns (uint256, uint256, uint256, uint256, uint256) {
             unknown.doSomething();
-        } 
+        }
         catch Error(string memory) {
              unknown.handleError();
         }
@@ -55,11 +55,13 @@ contract TryStatement {
         catch /* comment6 */ {}
 
         // comment7
-        try unknown.empty() { // comment8 
+        try unknown.empty() { // comment8
             unknown.doSomething();
         } /* comment9 */ catch /* comment10 */ Error(string memory) {
             unknown.handleError();
         } catch Panic /* comment11 */ (uint) {
+            unknown.handleError();
+        } /* extremelly long comment12 should break the line */ catch /* comment13 */ Error(string memory) {
             unknown.handleError();
         } catch {}
     }
