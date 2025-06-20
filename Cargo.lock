@@ -4421,6 +4421,7 @@ dependencies = [
  "alloy-evm",
  "alloy-json-abi",
  "alloy-primitives",
+ "alloy-rpc-types",
  "alloy-sol-types",
  "eyre",
  "foundry-cheatcodes",

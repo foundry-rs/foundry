@@ -10,7 +10,7 @@ use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, BlockOverrides,
 };
 use clap::Parser;
-use eyre::Result;
+use eyre::{Context, Result};
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, handle_traces, parse_ether_value, TraceResult},
@@ -256,6 +256,17 @@ impl CallArgs {
             env.evm_env.cfg_env.disable_block_gas_limit = true;
             env.evm_env.block_env.gas_limit = u64::MAX;
 
+            // Apply the block overrides.
+            if let Some(block_overrides) = block_overrides {
+                if let Some(number) = block_overrides.number {
+                    env.evm_env.block_env.number =
+                        u64::try_from(number).wrap_err("block number out of range")?;
+                }
+                if let Some(time) = block_overrides.time {
+                    env.evm_env.block_env.timestamp = time;
+                }
+            }
+
             let trace_mode = TraceMode::Call
                 .with_debug(debug)
                 .with_decode_internal(if decode_internal {
@@ -271,6 +282,7 @@ impl CallArgs {
                 trace_mode,
                 odyssey,
                 create2_deployer,
+                state_overrides,
             )?;
 
             let value = tx.value.unwrap_or_default();
