@@ -4212,6 +4212,7 @@ dependencies = [
  "jiff",
  "num-format",
  "path-slash",
+ "regex",
  "reqwest",
  "semver 1.0.26",
  "serde",

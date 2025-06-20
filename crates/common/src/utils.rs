@@ -1,6 +1,8 @@
 //! Uncategorised utilities.
 
-use alloy_primitives::{keccak256, B256, U256};
+use alloy_primitives::{hex, keccak256, Bytes, B256, U256};
+use foundry_compilers::artifacts::BytecodeObject;
+use regex::Regex;
 /// Block on a future using the current tokio runtime on the current thread.
 pub fn block_on<F: std::future::Future>(future: F) -> F::Output {
     block_on_handle(&tokio::runtime::Handle::current(), future)
@@ -52,5 +54,22 @@ pub fn ignore_metadata_hash(bytecode: &[u8]) -> &[u8] {
         rest
     } else {
         bytecode
+    }
+}
+
+/// Strips all __$xxx$__ placeholders from the bytecode if it's an unlinked bytecode.
+/// by replacing them with 20 zero bytes.
+/// This is useful for matching bytecodes to a contract source, and for the source map,
+/// in which the actual address of the placeholder isn't important.
+pub fn strip_bytecode_placeholders(bytecode: &BytecodeObject) -> Option<Bytes> {
+    match &bytecode {
+        BytecodeObject::Bytecode(bytes) => Some(bytes.clone()),
+        BytecodeObject::Unlinked(s) => {
+            // Replace all __$xxx$__ placeholders with 32 zero bytes
+            let re = Regex::new(r"__\$.{34}\$__").expect("invalid regex");
+            let s = re.replace_all(s, "00".repeat(40));
+            let bytes = hex::decode(s.as_bytes());
+            Some(bytes.ok()?.into())
+        }
     }
 }
