@@ -73,7 +73,7 @@ pub fn batch_build_ots_traces(traces: Vec<LocalizedTransactionTrace>) -> Vec<Tra
                     depth: trace.trace.trace_address.len() as u32,
                     from: call.from,
                     to: call.to,
-                    value: call.value,
+                    value: Some(call.value),
                     input: call.input,
                     output,
                 }),
@@ -418,7 +418,7 @@ impl EthApi {
                 txs.iter().skip(page * page_size).take(page_size).cloned().collect(),
             ),
             BlockTransactions::Hashes(txs) => BlockTransactions::Hashes(
-                txs.iter().skip(page * page_size).take(page_size).cloned().collect(),
+                txs.iter().skip(page * page_size).take(page_size).copied().collect(),
             ),
             BlockTransactions::Uncle => unreachable!(),
         };

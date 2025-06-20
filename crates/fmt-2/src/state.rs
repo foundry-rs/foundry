@@ -576,6 +576,7 @@ impl<'ast> State<'_, 'ast> {
             virtual_,
             ref override_,
             ref returns,
+            ..
         } = *header;
         self.cbox(0);
 
@@ -1315,11 +1316,14 @@ impl<'ast> State<'_, 'ast> {
                 self.cbox(0);
                 if let Some((first, other)) = clauses.split_first() {
                     // Handle 'try' clause
-                    let ast::TryCatchClause { args, block, .. } = first;
+                    let ast::TryCatchClause { args, block, span: try_span, .. } = first;
                     self.ibox(0);
                     self.word("try ");
+                    self.print_comments(expr.span.lo());
                     self.print_expr(expr);
-                    self.print_trailing_comment(expr.span, first.args.first().map(|p| p.span.lo()));
+                    self.print_comments_skip_ws(
+                        args.first().map(|p| p.span.lo()).unwrap_or_else(|| expr.span.lo()),
+                    );
                     if !self.is_beginning_of_line() {
                         self.nbsp();
                     }
@@ -1328,27 +1332,27 @@ impl<'ast> State<'_, 'ast> {
                         self.print_parameter_list(args, true);
                         self.nbsp();
                     }
-                    self.print_block(block, span);
+                    self.print_block(block, *try_span);
+                    self.print_trailing_comment(*try_span, other.first().map(|c| c.span.lo()));
                     self.end();
 
                     // Handle 'catch' clauses
                     let mut should_break = false;
-                    for (pos, ast::TryCatchClause { name, args, block }) in other.iter().delimited()
+                    for (pos, ast::TryCatchClause { name, args, block, span: catch_span }) in
+                        other.iter().delimited()
                     {
                         self.handle_try_catch_indent(&mut should_break, block.is_empty(), pos);
+                        self.print_comments_skip_ws(catch_span.lo());
                         self.word("catch ");
                         if !args.is_empty() {
+                            self.print_comments_skip_ws(args[0].span.lo());
                             if let Some(name) = name {
-                                self.cbox(0);
                                 self.print_ident(name);
                             }
                             self.print_parameter_list(args, true);
                             self.nbsp();
-                            if name.is_some() {
-                                self.end();
-                            }
                         }
-                        self.print_block(block, span);
+                        self.print_block(block, *catch_span);
                     }
                 }
                 self.end();

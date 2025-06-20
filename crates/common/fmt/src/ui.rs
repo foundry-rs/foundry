@@ -12,7 +12,7 @@ use alloy_rpc_types::{
     AccessListItem, Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
-use revm_primitives::SignedAuthorization;
+use revm::context_interface::transaction::SignedAuthorization;
 use serde::Deserialize;
 
 /// length of the name column for pretty formatting `{:>20}{value}`

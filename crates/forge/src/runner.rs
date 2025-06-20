@@ -7,7 +7,7 @@ use crate::{
     result::{SuiteResult, TestResult, TestSetup},
     MultiContractRunner, TestFilter,
 };
-use alloy_dyn_abi::DynSolValue;
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{address, map::HashMap, Address, Bytes, U256};
 use eyre::Result;
@@ -31,6 +31,7 @@ use foundry_evm::{
     },
     traces::{load_contracts, TraceKind, TraceMode},
 };
+use itertools::Itertools;
 use proptest::test_runner::{
     FailurePersistence, FileFailurePersistence, RngAlgorithm, TestError, TestRng, TestRunner,
 };
@@ -512,6 +513,7 @@ impl<'a> FunctionRunner<'a> {
         match kind {
             TestFunctionKind::UnitTest { .. } => self.run_unit_test(func),
             TestFunctionKind::FuzzTest { .. } => self.run_fuzz_test(func),
+            TestFunctionKind::TableTest => self.run_table_test(func),
             TestFunctionKind::InvariantTest => {
                 let test_bytecode = &self.cr.contract.bytecode;
                 self.run_invariant_test(
@@ -563,6 +565,116 @@ impl<'a> FunctionRunner<'a> {
         let success =
             self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result, false);
         self.result.single_result(success, reason, raw_call_result);
+        self.result
+    }
+
+    /// Runs a table test.
+    /// The parameters dataset (table) is created from defined parameter fixtures, therefore each
+    /// test table parameter should have the same number of fixtures defined.
+    /// E.g. for table test
+    /// - `table_test(uint256 amount, bool swap)` fixtures are defined as
+    /// - `uint256[] public fixtureAmount = [2, 5]`
+    /// - `bool[] public fixtureSwap = [true, false]` The `table_test` is then called with the pair
+    ///   of args `(2, true)` and `(5, false)`.
+    fn run_table_test(mut self, func: &Function) -> TestResult {
+        // Prepare unit test execution.
+        if self.prepare_test(func).is_err() {
+            return self.result;
+        }
+
+        // Extract and validate fixtures for the first table test parameter.
+        let Some(first_param) = func.inputs.first() else {
+            self.result.single_fail(Some("Table test should have at least one parameter".into()));
+            return self.result;
+        };
+
+        let Some(first_param_fixtures) =
+            &self.setup.fuzz_fixtures.param_fixtures(first_param.name())
+        else {
+            self.result.single_fail(Some("Table test should have fixtures defined".into()));
+            return self.result;
+        };
+
+        if first_param_fixtures.is_empty() {
+            self.result.single_fail(Some("Table test should have at least one fixture".into()));
+            return self.result;
+        }
+
+        let fixtures_len = first_param_fixtures.len();
+        let mut table_fixtures = vec![&first_param_fixtures[..]];
+
+        // Collect fixtures for remaining parameters.
+        for param in &func.inputs[1..] {
+            let param_name = param.name();
+            let Some(fixtures) = &self.setup.fuzz_fixtures.param_fixtures(param.name()) else {
+                self.result.single_fail(Some(format!("No fixture defined for param {param_name}")));
+                return self.result;
+            };
+
+            if fixtures.len() != fixtures_len {
+                self.result.single_fail(Some(format!(
+                    "{} fixtures defined for {param_name} (expected {})",
+                    fixtures.len(),
+                    fixtures_len
+                )));
+                return self.result;
+            }
+
+            table_fixtures.push(&fixtures[..]);
+        }
+
+        let progress =
+            start_fuzz_progress(self.cr.progress, self.cr.name, &func.name, fixtures_len as u32);
+
+        for i in 0..fixtures_len {
+            // Increment progress bar.
+            if let Some(progress) = progress.as_ref() {
+                progress.inc(1);
+            }
+
+            let args = table_fixtures.iter().map(|row| row[i].clone()).collect_vec();
+            let (mut raw_call_result, reason) = match self.executor.call(
+                self.sender,
+                self.address,
+                func,
+                &args,
+                U256::ZERO,
+                Some(self.revert_decoder()),
+            ) {
+                Ok(res) => (res.raw, None),
+                Err(EvmError::Execution(err)) => (err.raw, Some(err.reason)),
+                Err(EvmError::Skip(reason)) => {
+                    self.result.single_skip(reason);
+                    return self.result;
+                }
+                Err(err) => {
+                    self.result.single_fail(Some(err.to_string()));
+                    return self.result;
+                }
+            };
+
+            let is_success =
+                self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result, false);
+            // Record counterexample if test fails.
+            if !is_success {
+                self.result.counterexample =
+                    Some(CounterExample::Single(BaseCounterExample::from_fuzz_call(
+                        Bytes::from(func.abi_encode_input(&args).unwrap()),
+                        args,
+                        raw_call_result.traces.clone(),
+                    )));
+                self.result.single_result(false, reason, raw_call_result);
+                return self.result;
+            }
+
+            // If it's the last iteration and all other runs succeeded, then use last call result
+            // for logs and traces.
+            if i == fixtures_len - 1 {
+                self.result.single_result(true, None, raw_call_result);
+                return self.result;
+            }
+        }
+
         self.result
     }
 
@@ -826,14 +938,10 @@ impl<'a> FunctionRunner<'a> {
         if self.cr.contract.abi.functions().filter(|func| func.name.is_before_test_setup()).count() ==
             1
         {
-            for calldata in self
-                .executor
-                .call_sol_default(
-                    address,
-                    &ITest::beforeTestSetupCall { testSelector: func.selector() },
-                )
-                .beforeTestCalldata
-            {
+            for calldata in self.executor.call_sol_default(
+                address,
+                &ITest::beforeTestSetupCall { testSelector: func.selector() },
+            ) {
                 // Apply before test configured calldata.
                 match self.executor.to_mut().transact_raw(
                     self.tcfg.sender,
