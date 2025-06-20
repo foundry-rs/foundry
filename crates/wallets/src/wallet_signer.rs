@@ -53,6 +53,14 @@ impl WalletSigner {
         Ok(Self::Trezor(trezor))
     }
 
+    pub async fn from_trezor_path_with_session(
+        path: TrezorHDPath,
+        session_id: Option<u64>,
+    ) -> Result<Self> {
+        let trezor = TrezorSigner::new(path, session_id).await?;
+        Ok(Self::Trezor(trezor))
+    }
+
     pub async fn from_aws(key_id: String) -> Result<Self> {
         #[cfg(feature = "aws-kms")]
         {
