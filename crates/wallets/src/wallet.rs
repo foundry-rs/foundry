@@ -84,9 +84,28 @@ pub struct WalletOpts {
     /// Use Google Cloud Key Management Service.
     #[arg(long, help_heading = "Wallet options - remote", hide = !cfg!(feature = "gcp-kms"))]
     pub gcp: bool,
+
+    /// Use a browser wallet (e.g., MetaMask).
+    #[arg(long, help_heading = "Wallet options - browser", hide = !cfg!(feature = "browser"))]
+    pub browser: bool,
+
+    /// Port for the browser wallet server.
+    #[arg(
+        long,
+        help_heading = "Wallet options - browser",
+        value_name = "PORT",
+        default_value = "9545",
+        requires = "browser"
+    )]
+    pub browser_port: u16,
 }
 
 impl WalletOpts {
+    /// Check if this wallet option represents a browser wallet
+    pub fn is_browser_wallet(&self) -> bool {
+        self.browser
+    }
+
     pub async fn signer(&self) -> Result<WalletSigner> {
         trace!("start finding signer");
 
@@ -106,6 +125,8 @@ impl WalletOpts {
             let key_name = std::env::var("GCP_KEY_NAME")?;
             let key_version = std::env::var("GCP_KEY_VERSION")?.parse()?;
             WalletSigner::from_gcp(project_id, location, keyring, key_name, key_version).await?
+        } else if self.browser {
+            WalletSigner::from_browser(self.browser_port).await?
         } else if let Some(raw_wallet) = self.raw.signer()? {
             raw_wallet
         } else if let Some(path) = utils::maybe_get_keystore_path(
@@ -130,7 +151,7 @@ impl WalletOpts {
 Error accessing local wallet. Did you set a private key, mnemonic or keystore?
 Run the command with --help flag for more information or use the corresponding CLI
 flag to set your key via:
---private-key, --mnemonic-path, --aws, --gcp, --interactive, --trezor or --ledger.
+--private-key, --mnemonic-path, --aws, --gcp, --browser, --interactive, --trezor or --ledger.
 Alternatively, when using the `cast send` or `cast mktx` commands with a local node
 or RPC that has unlocked accounts, the --unlocked or --ethsign flags can be used,
 respectively. The sender address can be specified by setting the `ETH_FROM` environment
@@ -198,6 +219,8 @@ mod tests {
             trezor: false,
             aws: false,
             gcp: false,
+            browser: false,
+            browser_port: 9545,
         };
         match wallet.signer().await {
             Ok(_) => {

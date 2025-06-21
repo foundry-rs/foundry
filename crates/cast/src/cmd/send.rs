@@ -4,6 +4,7 @@ use crate::{
 };
 use alloy_ens::NameOrAddress;
 use alloy_network::{AnyNetwork, EthereumWallet};
+use alloy_primitives::{hex, TxKind};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
@@ -140,11 +141,14 @@ impl SendTxArgs {
 
         let timeout = timeout.unwrap_or(config.transaction_timeout);
 
+        // Check if we're using a browser wallet
+        let using_browser_wallet = eth.wallet.browser;
+
         // Case 1:
         // Default to sending via eth_sendTransaction if the --unlocked flag is passed.
         // This should be the only way this RPC method is used as it requires a local node
         // or remote RPC with unlocked accounts.
-        if unlocked {
+        if unlocked && !using_browser_wallet {
             // only check current chain id if it was specified in the config
             if let Some(config_chain) = config.chain {
                 let current_chain_id = provider.get_chain_id().await?;
@@ -177,6 +181,47 @@ impl SendTxArgs {
             let from = signer.address();
 
             tx::validate_from_address(eth.wallet.from, from)?;
+
+            // Special handling for browser wallets
+            if using_browser_wallet {
+                // Browser wallets need to use a different flow
+                // They handle signing in the browser via eth_sendTransaction
+                if let foundry_wallets::WalletSigner::Browser(ref browser_signer) = signer {
+                    // Get the actual chain ID from the provider
+                    let chain_id = provider.get_chain_id().await?;
+                    // Build the transaction
+                    let (tx_request, _) = builder.build(from).await?;
+                    
+                    // Send via browser wallet
+                    let to_address = match tx_request.to {
+                        Some(TxKind::Call(addr)) => Some(addr),
+                        _ => None,
+                    };
+                    
+                    let tx_hash = browser_signer.send_transaction_via_browser(
+                        to_address,
+                        tx_request.value.map(|v| v.to_string()),
+                        tx_request.input.input.clone().map(|d| format!("0x{}", hex::encode(d.as_ref()))),
+                        tx_request.gas.map(|g| g.to_string()),
+                        tx_request.gas_price.map(|p| p.to_string()),
+                        tx_request.max_fee_per_gas.map(|f| f.to_string()),
+                        tx_request.max_priority_fee_per_gas.map(|f| f.to_string()),
+                        tx_request.nonce.map(|n| n as u64),
+                        Some(chain_id),
+                    ).await?;
+                    
+                    if cast_async {
+                        sh_println!("{tx_hash:#x}")?;
+                    } else {
+                        let receipt = Cast::new(&provider)
+                            .receipt(format!("{tx_hash:#x}"), None, confirmations, Some(timeout), false)
+                            .await?;
+                        sh_println!("{receipt}")?;
+                    }
+                    
+                    return Ok(());
+                }
+            }
 
             let (tx, _) = builder.build(&signer).await?;
 
