@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Foundry Browser Wallet</title>
+    <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+    <div id="app">
+        <div class="container">
+            <div class="card">
+                <h1>⚒️ Foundry Browser Wallet</h1>
+                <p class="subtitle">Connect your wallet to send transactions</p>
+                
+                <!-- Status Display -->
+                <div id="status-container" class="status">
+                    <div class="status-row">
+                        <span class="status-label">Status:</span>
+                        <span id="connection-status" class="status-value">Checking...</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Account:</span>
+                        <span id="account-address" class="status-value address">None</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Network:</span>
+                        <span id="network-name" class="chain-badge">Unknown</span>
+                    </div>
+                </div>
+
+                <!-- Connect Button -->
+                <div id="connect-container">
+                    <button id="connect-button" class="btn btn-primary" onclick="connectWallet()">
+                        Connect Wallet
+                    </button>
+                </div>
+
+                <!-- Transaction Display (hidden by default) -->
+                <div id="transaction-container" style="display: none;">
+                    <h3>📤 Transaction Request</h3>
+                    <div id="transaction-details" class="tx-details"></div>
+                    <div id="transaction-actions" class="button-group">
+                        <button class="btn btn-primary" onclick="approveTransaction()">✅ Approve</button>
+                        <button class="btn btn-secondary btn-reject" onclick="rejectTransaction()">❌ Reject</button>
+                    </div>
+                    <div id="transaction-status"></div>
+                </div>
+
+                <!-- Error Display -->
+                <div id="error-container" class="error-message" style="display: none;">
+                    <p id="error-message"></p>
+                </div>
+
+                <div class="footer">
+                    <div class="warning-message">
+                        Keep this window open while using Foundry
+                    </div>
+                    <div class="warning-message" style="margin-top: 0.5rem; font-size: 0.8rem; opacity: 0.8;">
+                        💡 For better security, consider using a hardware wallet with your browser wallet
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/utils.js"></script>
+    <script src="/js/wallet.js"></script>
+    <script src="/js/polling.js"></script>
+    <script src="/js/main.js"></script>
+</body>
+</html>
