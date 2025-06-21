@@ -3,10 +3,15 @@
   "incremental": true,
   "indentWidth": 2,
   "useTabs": false,
-  "includes": ["**/*.{ts,tsx,js,jsx,json,jsonc,md,toml,yml,yaml,rs,Dockerfile}"],
+  "includes": [
+    "*.md",
+    "*.{toml}",
+    "Dockerfile",
+    "*.{yml,yaml}",
+    "*.{json,jsonc}",
+    "*.{js,cjs,mjs,d.ts,d.cts,d.mts,ts,tsx,jsx}"
+  ],
   "excludes": [
-    "**/.git",
-    "**/dist",
     "**/build",
     "**/abi/**",
     "**/target",
@@ -20,8 +25,7 @@
     "**/node_modules",
     "**/cheatcodes/**",
     ".github/scripts/**",
-    ".github/ISSUE_TEMPLATE/**",
-    "crates/forge/tests/fixtures/**"
+    ".github/ISSUE_TEMPLATE/**"
   ],
   "plugins": [
     "https://plugins.dprint.dev/toml-0.7.0.wasm",
@@ -31,16 +35,12 @@
     "https://plugins.dprint.dev/typescript-0.95.7.wasm",
     "https://plugins.dprint.dev/g-plane/pretty_yaml-v0.5.1.wasm"
   ],
-  "typescript": {
-    "quoteStyle": "alwaysSingle",
-    "quoteProps": "asNeeded",
-    "semiColons": "asi",
-    "useTabs": false,
-    "useBraces": "preferNone",
-    "trailingCommas": "never",
-    "arrowFunction.useParentheses": "preferNone",
-    "exportDeclaration.sortTypeOnlyExports": "none",
-    "importDeclaration.sortTypeOnlyImports": "none"
+  "markdown": {
+    "lineWidth": 100,
+    "textWrap": "maintain"
+  },
+  "toml": {
+    "columnWidth": 100
   },
   "json": {
     "useTabs": false,
@@ -48,11 +48,15 @@
     "trailingCommas": "never",
     "array.preferSingleLine": true
   },
-  "toml": {
-    "columnWidth": 100
-  },
-  "markdown": {
-    "lineWidth": 100,
-    "textWrap": "maintain"
+  "typescript": {
+    "useTabs": false,
+    "semiColons": "asi",
+    "quoteProps": "asNeeded",
+    "useBraces": "preferNone",
+    "trailingCommas": "never",
+    "quoteStyle": "alwaysSingle",
+    "arrowFunction.useParentheses": "preferNone",
+    "exportDeclaration.sortTypeOnlyExports": "none",
+    "importDeclaration.sortTypeOnlyImports": "none"
   }
 }
