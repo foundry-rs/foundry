@@ -118,7 +118,7 @@ pub mod soldeer;
 use soldeer::{SoldeerConfig, SoldeerDependencyConfig};
 
 mod vyper;
-pub use vyper::{normalize_evm_version_vyper, VyperConfig};
+pub use vyper::VyperConfig;
 
 mod bind_json;
 use bind_json::BindJsonConfig;
@@ -1059,6 +1059,7 @@ impl Config {
             }
         };
         remove_test_dir(&self.fuzz.failure_persist_dir);
+        remove_test_dir(&self.invariant.corpus_dir);
         remove_test_dir(&self.invariant.failure_persist_dir);
 
         Ok(())
@@ -1548,7 +1549,7 @@ impl Config {
     /// - evm version
     pub fn vyper_settings(&self) -> Result<VyperSettings, SolcError> {
         Ok(VyperSettings {
-            evm_version: Some(normalize_evm_version_vyper(self.evm_version)),
+            evm_version: Some(self.evm_version),
             optimize: self.vyper.optimize,
             bytecode_metadata: None,
             // TODO: We don't yet have a way to deserialize other outputs correctly, so request only
@@ -4537,6 +4538,7 @@ mod tests {
                     runs: 512,
                     depth: 10,
                     failure_persist_dir: Some(PathBuf::from("cache/invariant")),
+                    corpus_dir: None,
                     ..Default::default()
                 }
             );

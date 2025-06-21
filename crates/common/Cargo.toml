@@ -73,6 +73,8 @@ anstyle.workspace = true
 terminal_size.workspace = true
 ciborium.workspace = true
 
+flate2.workspace = true
+
 [build-dependencies]
 chrono.workspace = true
 vergen = { workspace = true, features = ["build", "git", "gitcl"] }

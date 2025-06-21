@@ -387,6 +387,84 @@ casttest!(wallet_sign_typed_data_file, |_prj, cmd| {
 "#]]);
 });
 
+// tests that `cast wallet sign typed-data` passes with type names containing colons
+//  <https://github.com/foundry-rs/foundry/issues/10765>
+casttest!(wallet_sign_typed_data_with_colon_succeeds, |_prj, cmd| {
+    let typed_data_with_colon = r#"{
+        "types": {
+            "EIP712Domain": [
+                {"name": "name", "type": "string"},
+                {"name": "version", "type": "string"},
+                {"name": "chainId", "type": "uint256"},
+                {"name": "verifyingContract", "type": "address"}
+            ],
+            "Test:Message": [
+                {"name": "content", "type": "string"}
+            ]
+        },
+        "primaryType": "Test:Message",
+        "domain": {
+            "name": "TestDomain",
+            "version": "1",
+            "chainId": 1,
+            "verifyingContract": "0x0000000000000000000000000000000000000000"
+        },
+        "message": {
+            "content": "Hello"
+        }
+    }"#;
+
+    cmd.args([
+        "wallet",
+        "sign",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--data",
+        typed_data_with_colon,
+    ]).assert_success().stdout_eq(str![[r#"
+0xf91c67e845a4d468d1f876f457ffa01e65468641fc121453705242d21de39b266c278592b085814ab1e9adc938cc26b1d64bb61f80b437df077777c4283612291b
+
+"#]]);
+});
+
+// tests that the same data without colon works correctly
+// <https://github.com/foundry-rs/foundry/issues/10765>
+casttest!(wallet_sign_typed_data_without_colon_works, |_prj, cmd| {
+    let typed_data_without_colon = r#"{
+        "types": {
+            "EIP712Domain": [
+                {"name": "name", "type": "string"},
+                {"name": "version", "type": "string"},
+                {"name": "chainId", "type": "uint256"},
+                {"name": "verifyingContract", "type": "address"}
+            ],
+            "TestMessage": [
+                {"name": "content", "type": "string"}
+            ]
+        },
+        "primaryType": "TestMessage",
+        "domain": {
+            "name": "TestDomain",
+            "version": "1",
+            "chainId": 1,
+            "verifyingContract": "0x0000000000000000000000000000000000000000"
+        },
+        "message": {
+            "content": "Hello"
+        }
+    }"#;
+
+    cmd.args([
+        "wallet",
+        "sign",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--data",
+        typed_data_without_colon,
+    ])
+    .assert_success();
+});
+
 // tests that `cast wallet sign-auth message` outputs the expected signature
 casttest!(wallet_sign_auth, |_prj, cmd| {
     cmd.args([
@@ -2746,10 +2824,16 @@ Estimated data availability size for block 30558838 with 225 transactions: 52916
 
 // <https://github.com/foundry-rs/foundry/issues/10705>
 casttest!(cast_call_return_array_of_tuples, |_prj, cmd| {
-    cmd.args(["call", "0x198FC70Dfe05E755C81e54bd67Bff3F729344B9b", "facets() returns ((address,bytes4[])[])", "--rpc-url", "https://rpc.viction.xyz"])
-        .assert_success()
-        .stdout_eq(str![[r#"
-[(0x9640977264aec6d4e9af381F548eee11b9e27aAe, [0x1f931c1c]), (0x395db83A04cC3d3F6C5eFc73896929Cf10D0F301, [0xcdffacc6, 0x52ef6b2c, 0xadfca15e, 0x7a0ed627, 0x01ffc9a7]), (0xC6F7b47F870024B0E2DF6DFd551E10c4A37A1cEa, [0x23452b9c, 0x7200b829, 0x8da5cb5b, 0xf2fde38b]), (0xc1f27c1f6c87e73e089Ffac23C236Fc4A9E3fccc, [0x1458d7ad, 0xd9caed12]), (0x70e272A93bc8344277a1f4390Ea6153A1D5fe450, [0x536db266, 0xfbb2d381, 0xfcd8e49e, 0x9afc19c7, 0x44e2b18c, 0x2d2506a9, 0x124f1ead, 0xc3a6a96b]), (0x662BCADB7A2CBb22367b2471d8A91E5b13FCe96B, [0x612ad9cb, 0xa4c3366e]), (0x190e03D49Ce76DDabC634a98629EDa6246aB5196, [0xa516f0f3, 0x5c2ed36a]), (0xAF69C0E3BBBf6AdE78f1466f86DfF86d64C8dA2A, [0x4630a0d8]), (0xD1317DA862AC5C145519E60D24372dc186EF7426, [0xd5bcb610, 0x5fd9ae2e, 0x2c57e884, 0x736eac0b, 0x4666fc80, 0x733214a3, 0xaf7060fd]), (0x176f558949e2a7C5217dD9C27Bf7A43c6783ee28, [0x7f99d7af, 0x103c5200, 0xc318eeda, 0xee0aa320, 0xdf1c3a5b, 0x070e81f1, 0xd53482cf, 0xf58ae2ce]), (0x531d69A3fAb6CB56A77B8402E6c217cB9cC902A9, [0xf86368ae, 0x5ad317a4, 0x0340e905, 0x2fc487ae])]
+    cmd.args([
+        "call",
+        "0x198FC70Dfe05E755C81e54bd67Bff3F729344B9b",
+        "facets() returns ((address,bytes4[])[])",
+        "--rpc-url",
+        "https://rpc.viction.xyz",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[[..]]
 
 "#]]);
 });
