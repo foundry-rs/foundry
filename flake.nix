@@ -28,6 +28,7 @@
               # test dependencies
               solc
               vyper
+              dprint
               nodejs
             ];
             buildInputs = lib.optionals pkgs.stdenv.isDarwin
