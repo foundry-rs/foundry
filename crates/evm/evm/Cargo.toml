@@ -52,3 +52,4 @@ thiserror.workspace = true
 tracing.workspace = true
 indicatif.workspace = true
 serde.workspace = true
+uuid.workspace = true

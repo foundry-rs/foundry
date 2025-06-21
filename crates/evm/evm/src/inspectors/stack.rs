@@ -1,5 +1,5 @@
 use super::{
-    Cheatcodes, CheatsConfig, ChiselState, CoverageCollector, CustomPrintTracer, Fuzzer,
+    Cheatcodes, CheatsConfig, ChiselState, CustomPrintTracer, Fuzzer, LineCoverageCollector,
     LogCollector, RevertDiagnostic, ScriptExecutionInspector, TracingInspector,
 };
 use alloy_evm::{eth::EthEvmContext, Evm};
@@ -28,6 +28,7 @@ use revm::{
     state::{Account, AccountStatus},
     Inspector,
 };
+use revm_inspectors::edge_cov::EdgeCovInspector;
 use std::{
     ops::{Deref, DerefMut},
     sync::Arc,
@@ -54,8 +55,8 @@ pub struct InspectorStackBuilder {
     pub trace_mode: TraceMode,
     /// Whether logs should be collected.
     pub logs: Option<bool>,
-    /// Whether coverage info should be collected.
-    pub coverage: Option<bool>,
+    /// Whether line coverage info should be collected.
+    pub line_coverage: Option<bool>,
     /// Whether to print all opcode traces into the console. Useful for debugging the EVM.
     pub print: Option<bool>,
     /// The chisel state inspector.
@@ -128,10 +129,10 @@ impl InspectorStackBuilder {
         self
     }
 
-    /// Set whether to collect coverage information.
+    /// Set whether to collect line coverage information.
     #[inline]
-    pub fn coverage(mut self, yes: bool) -> Self {
-        self.coverage = Some(yes);
+    pub fn line_coverage(mut self, yes: bool) -> Self {
+        self.line_coverage = Some(yes);
         self
     }
 
@@ -183,7 +184,7 @@ impl InspectorStackBuilder {
             fuzzer,
             trace_mode,
             logs,
-            coverage,
+            line_coverage,
             print,
             chisel_state,
             enable_isolation,
@@ -209,8 +210,8 @@ impl InspectorStackBuilder {
         if let Some(chisel_state) = chisel_state {
             stack.set_chisel(chisel_state);
         }
-
-        stack.collect_coverage(coverage.unwrap_or(false));
+        stack.collect_line_coverage(line_coverage.unwrap_or(false));
+        stack.collect_edge_coverage(true);
         stack.collect_logs(logs.unwrap_or(true));
         stack.print(print.unwrap_or(false));
         stack.tracing(trace_mode);
@@ -258,7 +259,8 @@ pub struct InspectorData {
     pub logs: Vec<Log>,
     pub labels: AddressHashMap<String>,
     pub traces: Option<SparsedTraceArena>,
-    pub coverage: Option<HitMaps>,
+    pub line_coverage: Option<HitMaps>,
+    pub edge_coverage: Option<Vec<u8>>,
     pub cheatcodes: Option<Cheatcodes>,
     pub chisel_state: Option<(Vec<U256>, Vec<u8>, InstructionResult)>,
 }
@@ -296,7 +298,8 @@ pub struct InspectorStack {
 #[derive(Default, Clone, Debug)]
 pub struct InspectorStackInner {
     pub chisel_state: Option<ChiselState>,
-    pub coverage: Option<CoverageCollector>,
+    pub line_coverage: Option<LineCoverageCollector>,
+    pub edge_coverage: Option<EdgeCovInspector>,
     pub fuzzer: Option<Fuzzer>,
     pub log_collector: Option<LogCollector>,
     pub printer: Option<CustomPrintTracer>,
@@ -355,7 +358,7 @@ impl InspectorStack {
                     )*
                 };
             }
-            push!(cheatcodes, chisel_state, coverage, fuzzer, log_collector, printer, tracer);
+            push!(cheatcodes, chisel_state, line_coverage, fuzzer, log_collector, printer, tracer);
             if self.enable_isolation {
                 enabled.push("isolation");
             }
@@ -404,10 +407,16 @@ impl InspectorStack {
         self.chisel_state = Some(ChiselState::new(final_pc));
     }
 
-    /// Set whether to enable the coverage collector.
+    /// Set whether to enable the line coverage collector.
     #[inline]
-    pub fn collect_coverage(&mut self, yes: bool) {
-        self.coverage = yes.then(Default::default);
+    pub fn collect_line_coverage(&mut self, yes: bool) {
+        self.line_coverage = yes.then(Default::default);
+    }
+
+    /// Set whether to enable the edge coverage collector.
+    #[inline]
+    pub fn collect_edge_coverage(&mut self, yes: bool) {
+        self.edge_coverage = yes.then(EdgeCovInspector::new); // TODO configurable edge size?
     }
 
     /// Set whether to enable call isolation.
@@ -469,7 +478,15 @@ impl InspectorStack {
     pub fn collect(self) -> InspectorData {
         let Self {
             mut cheatcodes,
-            inner: InspectorStackInner { chisel_state, coverage, log_collector, tracer, .. },
+            inner:
+                InspectorStackInner {
+                    chisel_state,
+                    line_coverage,
+                    edge_coverage,
+                    log_collector,
+                    tracer,
+                    ..
+                },
         } = self;
 
         let traces = tracer.map(|tracer| tracer.into_traces()).map(|arena| {
@@ -497,7 +514,8 @@ impl InspectorStack {
                 .map(|cheatcodes| cheatcodes.labels.clone())
                 .unwrap_or_default(),
             traces,
-            coverage: coverage.map(|coverage| coverage.finish()),
+            line_coverage: line_coverage.map(|line_coverage| line_coverage.finish()),
+            edge_coverage: edge_coverage.map(|edge_coverage| edge_coverage.into_hitcount()),
             cheatcodes,
             chisel_state: chisel_state.and_then(|state| state.state),
         }
@@ -661,7 +679,7 @@ impl InspectorStackRefMut<'_> {
         for (addr, mut acc) in res.state {
             let Some(acc_mut) = ecx.journaled_state.state.get_mut(&addr) else {
                 ecx.journaled_state.state.insert(addr, acc);
-                continue
+                continue;
             };
 
             // make sure accounts that were warmed earlier do not become cold
@@ -676,7 +694,7 @@ impl InspectorStackRefMut<'_> {
             for (key, val) in acc.storage {
                 let Some(slot_mut) = acc_mut.storage.get_mut(&key) else {
                     acc_mut.storage.insert(key, val);
-                    continue
+                    continue;
                 };
                 slot_mut.present_value = val.present_value;
                 slot_mut.is_cold &= val.is_cold;
@@ -769,7 +787,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
     ) {
         call_inspectors!(
             [
-                &mut self.coverage,
+                &mut self.line_coverage,
                 &mut self.tracer,
                 &mut self.cheatcodes,
                 &mut self.script_execution_inspector,
@@ -788,7 +806,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
             [
                 &mut self.fuzzer,
                 &mut self.tracer,
-                &mut self.coverage,
+                &mut self.line_coverage,
+                &mut self.edge_coverage,
                 &mut self.cheatcodes,
                 &mut self.script_execution_inspector,
                 &mut self.printer,
@@ -962,7 +981,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
 
         call_inspectors!(
             #[ret]
-            [&mut self.tracer, &mut self.coverage, &mut self.cheatcodes],
+            [&mut self.tracer, &mut self.line_coverage, &mut self.cheatcodes],
             |inspector| inspector.create(ecx, create).map(Some),
         );
 
