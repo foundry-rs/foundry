@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ChainHardfork"],"fn":["ethereum_hardfork_from_block_tag","spec_id_from_ethereum_hardfork","spec_id_from_optimism_hardfork"]};
