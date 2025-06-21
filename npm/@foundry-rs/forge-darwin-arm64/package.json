@@ -1,0 +1,37 @@
+{
+  "name": "@unfoundry/forge-darwin-arm64",
+  "version": "0.0.3",
+  "type": "module",
+  "homepage": "https://getfoundry.sh",
+  "description": "Fast and flexible Ethereum testing framework (macOS arm64)",
+  "bin": {
+    "forge": "./bin/forge"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin",
+    "package.json",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "directory": "npm",
+    "url": "https://github.com/foundry-rs/foundry"
+  },
+  "keywords": [
+    "foundry",
+    "testing",
+    "ethereum",
+    "solidity",
+    "blockchain",
+    "smart-contracts"
+  ]
+}
