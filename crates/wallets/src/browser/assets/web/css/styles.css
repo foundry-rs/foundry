@@ -1,0 +1,252 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0a0a0a;
+    color: #e4e4e7;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.container {
+    width: 100%;
+    max-width: 480px;
+    padding: 2rem;
+}
+
+.card {
+    background: #18181b;
+    border: 1px solid #27272a;
+    border-radius: 12px;
+    padding: 2rem;
+    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+    overflow: hidden;
+}
+
+h1 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+h3 {
+    font-size: 1.125rem;
+    margin: 1.5rem 0 1rem 0;
+}
+
+.subtitle {
+    color: #71717a;
+    margin-bottom: 2rem;
+    font-size: 0.875rem;
+}
+
+.status {
+    background: #27272a;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.status.connected {
+    border: 1px solid #16a34a;
+    background: #16a34a10;
+}
+
+.status-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.25rem 0;
+}
+
+.status-label {
+    color: #a1a1aa;
+    font-size: 0.875rem;
+}
+
+.status-value {
+    font-family: 'Courier New', monospace;
+    font-size: 0.875rem;
+}
+
+.status-value.connected {
+    color: #16a34a;
+}
+
+.address {
+    color: #3b82f6;
+    word-break: break-all;
+}
+
+.chain-badge {
+    background: #27272a;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    color: #a1a1aa;
+}
+
+#connect-container {
+    display: flex;
+    justify-content: center;
+    margin: 1.5rem 0;
+}
+
+.btn {
+    padding: 0.75rem 1.5rem;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn:disabled {
+    background: #27272a;
+    color: #71717a;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background: #3b82f6;
+    color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background: #2563eb;
+}
+
+.btn-secondary {
+    background: #27272a;
+    color: #e4e4e7;
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: #3f3f46;
+}
+
+.btn-reject {
+    background: #dc2626;
+}
+
+.btn-reject:hover:not(:disabled) {
+    background: #b91c1c;
+}
+
+.button-group {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+}
+
+.button-group button {
+    flex: 1;
+}
+
+#transaction-container {
+    width: 100%;
+    overflow: hidden;
+}
+
+.tx-details {
+    background: #27272a;
+    border-radius: 8px;
+    padding: 1rem;
+    margin: 1rem 0;
+    overflow: hidden;
+}
+
+.tx-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #3f3f46;
+}
+
+.tx-row:last-child {
+    border-bottom: none;
+}
+
+.tx-label {
+    color: #a1a1aa;
+    font-size: 0.875rem;
+}
+
+.tx-value {
+    font-family: 'Courier New', monospace;
+    font-size: 0.875rem;
+    word-break: break-all;
+    text-align: right;
+    max-width: 60%;
+}
+
+.success-message {
+    background: #16a34a10;
+    border: 1px solid #16a34a;
+    color: #16a34a;
+    padding: 1rem;
+    border-radius: 8px;
+    margin: 1rem 0;
+    word-break: break-all;
+    overflow-wrap: break-word;
+}
+
+.error-message {
+    background: #dc262610;
+    border: 1px solid #dc2626;
+    color: #dc2626;
+    padding: 1rem;
+    border-radius: 8px;
+    margin: 1rem 0;
+    word-break: break-all;
+    overflow-wrap: break-word;
+}
+
+.warning-message {
+    background: #27272a;
+    border-radius: 8px;
+    padding: 0.75rem;
+    margin-top: 1rem;
+    font-size: 0.875rem;
+    color: #71717a;
+    text-align: center;
+}
+
+.detecting {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: #71717a;
+    font-size: 0.875rem;
+}
+
+.spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid #3b82f6;
+    border-radius: 50%;
+    border-top-color: transparent;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.footer {
+    text-align: center;
+    color: #71717a;
+    font-size: 0.75rem;
+    margin-top: 2rem;
+}

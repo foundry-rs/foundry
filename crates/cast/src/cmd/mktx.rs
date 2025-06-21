@@ -77,6 +77,14 @@ impl MakeTxArgs {
     pub async fn run(self) -> Result<()> {
         let Self { to, mut sig, mut args, command, tx, path, eth, raw_unsigned, ethsign } = self;
 
+        // Check if browser wallet is being used
+        if eth.wallet.browser {
+            eyre::bail!(
+                "Browser wallets cannot create offline transactions. \
+                Use `cast send` instead to sign and broadcast in one step."
+            );
+        }
+
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
 
         let code = if let Some(MakeTxSubcommands::Create {
