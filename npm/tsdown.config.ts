@@ -2,9 +2,7 @@ import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import { defineConfig, type UserConfig } from 'tsdown'
 
-/**
- * this makes it so that the bin automatically runs if bun, deno, or node is installed
- */
+/* this makes it so that the bin automatically runs if bun, deno, or node is installed */
 const shebang = /* sh */ `#!/bin/sh
 //bin/true; (command -v bun && bun $0) || (command -v deno && deno --allow-all $0) || (command -v node && node $0) || exit 1
 
@@ -24,8 +22,8 @@ const config = {
       if (!packagePath) return
 
       NodeFS.readdirSync(packagePath, { withFileTypes: true })
-        .filter((item) => !['package.json', 'README.md'].includes(item.name))
-        .forEach((item) =>
+        .filter(item => !['package.json', 'README.md'].includes(item.name))
+        .forEach(item =>
           NodeFS.rmSync(NodePath.join(packagePath, item.name), {
             recursive: true,
             force: true

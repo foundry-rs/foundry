@@ -1,9 +1,9 @@
+import { colors } from '#utilities.ts'
 import * as NodeFS from 'node:fs'
 import * as NodeHttps from 'node:https'
 import * as NodePath from 'node:path'
 import * as Process from 'node:process'
 import * as NodeZlib from 'node:zlib'
-import { colors } from '#utilities.ts'
 import {
   type Architecture,
   type ArchitecturePlatform,
@@ -13,31 +13,30 @@ import {
   type Platform
 } from './const.ts'
 
-const platformSpecificPackage =
-  BINARY_DISTRIBUTION_PACKAGES[
-    `${Process.platform as Platform}-${Process.arch as Architecture}` as ArchitecturePlatform
-  ]
+const platformSpecificPackage = BINARY_DISTRIBUTION_PACKAGES[
+  `${Process.platform as Platform}-${Process.arch as Architecture}` as ArchitecturePlatform
+]
 
 const fallbackBinaryPath = NodePath.join(import.meta.dirname, BINARY_NAME)
 
 function makeRequest(url: string): Promise<NodeZlib.InputType> {
   return new Promise((resolve, reject) => {
-    NodeHttps.get(url, (response) => {
+    NodeHttps.get(url, response => {
       if (
-        response?.statusCode &&
-        response.statusCode >= 200 &&
-        response.statusCode < 300
+        response?.statusCode
+        && response.statusCode >= 200
+        && response.statusCode < 300
       ) {
         const chunks: Buffer[] = []
-        response.on('data', (chunk) => chunks.push(chunk))
+        response.on('data', chunk => chunks.push(chunk))
         response.on('end', () => {
           resolve(Buffer.concat(chunks))
         })
       } else if (
-        response?.statusCode &&
-        response.statusCode >= 300 &&
-        response.statusCode < 400 &&
-        response.headers.location
+        response?.statusCode
+        && response.statusCode >= 300
+        && response.statusCode < 400
+        && response.headers.location
       ) {
         // Follow redirects
         makeRequest(response.headers.location).then(resolve, reject)
@@ -48,7 +47,7 @@ function makeRequest(url: string): Promise<NodeZlib.InputType> {
           )
         )
       }
-    }).on('error', (error) => {
+    }).on('error', error => {
       reject(error)
     })
   })
@@ -84,7 +83,8 @@ function extractFileFromTarball(
 }
 
 async function downloadBinaryFromNpm() {
-  const url = `https://registry.npmjs.org/${platformSpecificPackage.name}/-/${platformSpecificPackage.path}-${BINARY_DISTRIBUTION_VERSION}.tgz`
+  const url =
+    `https://registry.npmjs.org/${platformSpecificPackage.name}/-/${platformSpecificPackage.path}-${BINARY_DISTRIBUTION_VERSION}.tgz`
   console.info(
     colors.green,
     'Downloading binary from:\n',

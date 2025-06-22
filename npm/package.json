@@ -2,13 +2,13 @@
   "private": true,
   "version": "0.0.2",
   "scripts": {
-    "check": "bun x @biomejs/biome check . --fix --unsafe --indent-style=space --semicolons=as-needed --trailing-commas=none --bracket-spacing=true --javascript-formatter-quote-style=single"
+    "build": "tsdown --config='tsdown.config.ts'"
   },
   "dependencies": {
-    "@types/bun": "^1.2.16",
-    "@types/node": "^24.0.3",
     "tsdown": "^0.12.8",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "@types/bun": "^1.2.17",
+    "@types/node": "^24.0.3"
   },
   "license": "MIT OR Apache-2.0"
 }

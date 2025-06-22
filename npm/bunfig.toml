@@ -3,6 +3,10 @@ telemetry = false
 run.bun = true
 bun.run = true
 
-logLevel = "debug"
+[install]
+auto = "auto"
 
+[install.scopes]
 "@foundry-rs" = { token = "$NPM_TOKEN", url = "https://registry.npmjs.org" }
+
+logLevel = "debug"

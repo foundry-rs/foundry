@@ -62,11 +62,11 @@ function main() {
     windowsHide: false
   })
 
-  child.on('close', (code) => {
+  child.on('close', code => {
     Process.exit(code)
   })
 
-  child.on('error', (error) => {
+  child.on('error', error => {
     console.error('Error executing forge:', error.message)
     Process.exit(1)
   })
