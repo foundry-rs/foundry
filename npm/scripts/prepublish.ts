@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
+import * as Bun from 'bun'
 import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import * as NodeUtil from 'node:util'
-import * as Bun from 'bun'
 import { colors } from '../src/utilities.ts'
 
 const nonGeneratedArtifacts = ['package.json', 'README.md']
@@ -21,7 +21,7 @@ const archMap = {
   aarch64: 'arm64'
 } as const
 
-main().catch((error) => {
+main().catch(error => {
   console.error(colors.red, error)
   process.exit(1)
 })
@@ -29,8 +29,7 @@ main().catch((error) => {
 async function main() {
   const platform = Bun.env.PLATFORM_NAME as keyof typeof platformMap
   const arch = Bun.env.ARCH as keyof typeof archMap
-  const profile =
-    Bun.env.NODE_ENV === 'production' ? 'release' : Bun.env.PROFILE || 'release'
+  const profile = Bun.env.NODE_ENV === 'production' ? 'release' : Bun.env.PROFILE || 'release'
 
   if (!platform)
     throw new Error('PLATFORM_NAME environment variable is not set')
@@ -69,8 +68,8 @@ async function main() {
     recursive: true
   })
   directoryItems
-    .filter((item) => !nonGeneratedArtifacts.includes(item.name))
-    .forEach((item) =>
+    .filter(item => !nonGeneratedArtifacts.includes(item.name))
+    .forEach(item =>
       NodeFS.rmSync(NodePath.join(packagePath, item.name), {
         recursive: true,
         force: true
@@ -80,9 +79,8 @@ async function main() {
   console.info(colors.green, 'Cleaned up package directory', colors.reset)
 
   // Use the forge_bin_path from GitHub Actions if available, otherwise construct it
-  const forgeBinPath =
-    values['forge-bin-path'] ||
-    (values.target
+  const forgeBinPath = values['forge-bin-path']
+    || (values.target
       ? `../target/${values.target}/${profile}/forge`
       : `../target/${values.arch}/${profile}/forge`)
 
@@ -93,10 +91,11 @@ async function main() {
     .nothrow()
     .quiet()
 
-  if (buildScripts.exitCode !== 0)
+  if (buildScripts.exitCode !== 0) {
     throw new Error(
       `Failed to build scripts: ${buildScripts.stderr.toString()}`
     )
+  }
 
   console.info(colors.green, buildScripts.stdout.toString(), colors.reset)
 

@@ -1,7 +1,7 @@
+import packageJSON from '#package.json' with { type: 'json' }
 import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import type * as Process from 'node:process'
-import packageJSON from '#package.json' with { type: 'json' }
 
 export const BINARY_DISTRIBUTION_VERSION = packageJSON.version
 

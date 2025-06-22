@@ -15,8 +15,8 @@
   ],
   "files": [
     "bin",
-    "package.json",
-    "README.md"
+    "README.md",
+    "package.json"
   ],
   "engines": {
     "node": ">=20"

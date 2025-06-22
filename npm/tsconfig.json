@@ -6,7 +6,9 @@
     "noEmit": true,
     "allowJs": true,
     "checkJs": true,
-    "lib": ["ESNext"],
+    "lib": [
+      "ESNext"
+    ],
     "target": "ESNext",
     "module": "ESNext",
     "skipLibCheck": true,
@@ -26,13 +28,32 @@
     "noFallthroughCasesInSwitch": true,
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
-    "types": ["node", "bun"],
+    "types": [
+      "bun",
+      "node"
+    ],
     "paths": {
-      "#*": ["./src/*"],
-      "#package.json": ["./package.json"]
+      "#*": [
+        "./src/*"
+      ],
+      "#package.json": [
+        "./package.json"
+      ]
     }
   },
-  "exclude": ["dist", "**/_/**", "node_modules"],
-  "include": ["src/**/*", "bin/**/*", "scripts/**/*"],
-  "files": ["env.d.ts", "tsdown.config.ts", "package.json"]
+  "exclude": [
+    "dist",
+    "**/_/**",
+    "node_modules"
+  ],
+  "include": [
+    "src/**/*",
+    "bin/**/*",
+    "scripts/**/*"
+  ],
+  "files": [
+    "env.d.ts",
+    "package.json",
+    "tsdown.config.ts"
+  ]
 }

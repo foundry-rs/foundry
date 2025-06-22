@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
+import * as Bun from 'bun'
 import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
-import * as Bun from 'bun'
 import { colors } from '../src/utilities.ts'
 
 /**
@@ -11,7 +11,7 @@ import { colors } from '../src/utilities.ts'
  *    - auto-bump versions in `optionalDependencies`,
  */
 
-main().catch((error) => {
+main().catch(error => {
   console.error(error)
   process.exit(1)
 })
@@ -69,11 +69,11 @@ async function main() {
   }
   console.info(colors.green, 'Packed file:', packedFile)
 
-  const publishPackage =
-    await Bun.$`bun publish --access='public' --verbose --registry='https://registry.npmjs.org' ./${packedFile}`
-      .cwd(packagePath)
-      .quiet()
-      .nothrow()
+  const publishPackage = await Bun
+    .$`bun publish --access='public' --verbose --registry='https://registry.npmjs.org' ./${packedFile}`
+    .cwd(packagePath)
+    .quiet()
+    .nothrow()
   console.info(publishPackage.stdout.toString())
   console.info(publishPackage.stderr.toString())
   if (publishPackage.exitCode !== 0)
