@@ -298,13 +298,10 @@ impl<'sess> State<'sess, '_> {
             return;
         }
 
+        self.s.cbox(self.ind);
+        self.zerobreak();
         if compact {
-            self.s.cbox(self.ind);
-            self.zerobreak();
             self.s.cbox(0);
-        } else {
-            self.s.cbox(self.ind);
-            self.zerobreak();
         }
         for (i, value) in values.iter().enumerate() {
             let span = get_span(value);
@@ -320,24 +317,21 @@ impl<'sess> State<'sess, '_> {
                 let next_pos = if is_last { None } else { get_span(&values[i + 1]).map(Span::lo) };
                 self.print_trailing_comment(span, next_pos);
             }
-            if !self.is_beginning_of_line() {
-                if !is_last {
-                    self.space();
-                }
+            if !is_last && !self.is_beginning_of_line() {
+                self.space();
             }
         }
+
         if compact {
             if !self.last_token_is_hardbreak() {
                 self.end();
                 self.zerobreak();
             }
-            self.s.offset(-self.ind);
-            self.end();
         } else {
             self.zerobreak();
-            self.s.offset(-self.ind);
-            self.end();
         }
+        self.s.offset(-self.ind);
+        self.end();
     }
 }
 
@@ -1552,7 +1546,7 @@ impl<'ast> State<'_, 'ast> {
             self.end();
         }
         // Special handling for empty blocks, as they could have comments.
-        else if block.len() == 0 {
+        else if block.is_empty() {
             if let Some(comment) = self.peek_comment() {
                 if !matches!(comment.style, CommentStyle::Mixed) {
                     self.word("{}");
@@ -1738,26 +1732,22 @@ impl<'ast> State<'_, 'ast> {
             } else {
                 self.nbsp();
             }
-        } else {
-            if empty_block {
-                if self.is_bol_or_only_ind() {
-                    self.zerobreak();
-                } else {
-                    self.space();
-                }
-                self.s.offset(self.ind);
+        } else if empty_block {
+            if self.is_bol_or_only_ind() {
+                self.zerobreak();
             } else {
-                if pos.is_first {
-                    self.nbsp();
-                } else {
-                    if self.is_bol_or_only_ind() {
-                        self.zerobreak();
-                    } else {
-                        self.space();
-                    }
-                }
-                *should_break = true;
+                self.space();
             }
+            self.s.offset(self.ind);
+        } else {
+            if pos.is_first {
+                self.nbsp();
+            } else if self.is_bol_or_only_ind() {
+                self.zerobreak();
+            } else {
+                self.space();
+            }
+            *should_break = true;
         }
     }
 }
