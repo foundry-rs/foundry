@@ -1,6 +1,8 @@
 // config: line_length = 40
 // config: override_spacing = true
-contract Contract {
+contract Contract layout at 69 {
+    bytes32 transient a;
+
     bytes32 private constant BYTES;
     bytes32
         private

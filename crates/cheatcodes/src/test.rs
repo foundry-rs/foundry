@@ -78,7 +78,7 @@ impl Cheatcode for skip_1Call {
         if *skipTest {
             // Skip should not work if called deeper than at test level.
             // Since we're not returning the magic skip bytes, this will cause a test failure.
-            ensure!(ccx.ecx.journaled_state.depth() <= 1, "`skip` can only be used at test level");
+            ensure!(ccx.ecx.journaled_state.depth <= 1, "`skip` can only be used at test level");
             Err([MAGIC_SKIP, reason.as_bytes()].concat().into())
         } else {
             Ok(Default::default())
@@ -124,24 +124,29 @@ fn get_chain(state: &mut Cheatcodes, chain_alias: &str) -> Result {
     // Parse the chain alias - works for both chain names and IDs
     let alloy_chain = AlloyChain::from_str(chain_alias)
         .map_err(|_| fmt_err!("invalid chain alias: {chain_alias}"))?;
+    let chain_name = alloy_chain.to_string();
+    let chain_id = alloy_chain.id();
 
     // Check if this is an unknown chain ID by comparing the name to the chain ID
     // When a numeric ID is passed for an unknown chain, alloy_chain.to_string() will return the ID
     // So if they match, it's likely an unknown chain ID
-    if alloy_chain.to_string() == alloy_chain.id().to_string() {
+    if chain_name == chain_id.to_string() {
         return Err(fmt_err!("invalid chain alias: {chain_alias}"));
     }
 
-    // First, try to get RPC URL from the user's config in foundry.toml
-    let rpc_url = state.config.rpc_endpoint(chain_alias).ok().and_then(|e| e.url().ok());
-
-    // If we couldn't get a URL from config, return an empty string
-    let rpc_url = rpc_url.unwrap_or_default();
+    // Try to retrieve RPC URL and chain alias from user's config in foundry.toml.
+    let (rpc_url, chain_alias) = if let Some(rpc_url) =
+        state.config.rpc_endpoint(&chain_name).ok().and_then(|e| e.url().ok())
+    {
+        (rpc_url, chain_name.clone())
+    } else {
+        (String::new(), chain_alias.to_string())
+    };
 
     let chain_struct = Chain {
-        name: alloy_chain.to_string(),
-        chainId: U256::from(alloy_chain.id()),
-        chainAlias: chain_alias.to_string(),
+        name: chain_name,
+        chainId: U256::from(chain_id),
+        chainAlias: chain_alias,
         rpcUrl: rpc_url,
     };
 

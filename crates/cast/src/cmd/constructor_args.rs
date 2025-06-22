@@ -1,5 +1,5 @@
 use super::{
-    creation_code::fetch_creation_code,
+    creation_code::fetch_creation_code_from_etherscan,
     interface::{fetch_abi_from_etherscan, load_abi_from_file},
 };
 use alloy_dyn_abi::DynSolType;
@@ -7,7 +7,6 @@ use alloy_primitives::{Address, Bytes};
 use alloy_provider::Provider;
 use clap::{command, Parser};
 use eyre::{eyre, OptionExt, Result};
-use foundry_block_explorers::Client;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::{self, LoadConfig},
@@ -37,12 +36,10 @@ impl ConstructorArgsArgs {
 
         let config = rpc.load_config()?;
         let provider = utils::get_provider(&config)?;
-        let api_key = etherscan.key().unwrap_or_default();
         let chain = provider.get_chain_id().await?;
         etherscan.chain = Some(chain.into());
-        let client = Client::new(chain.into(), api_key)?;
 
-        let bytecode = fetch_creation_code(contract, client, provider).await?;
+        let bytecode = fetch_creation_code_from_etherscan(contract, &etherscan, provider).await?;
 
         let args_arr = parse_constructor_args(bytecode, contract, &etherscan, abi_path).await?;
         for arg in args_arr {
