@@ -4,13 +4,6 @@ import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import { colors } from '../src/utilities.ts'
 
-/**
- * TODO:
- * - handle publishing `@foundry-rs/forge`
- *    - auto-bump own version,
- *    - auto-bump versions in `optionalDependencies`,
- */
-
 main().catch(error => {
   console.error(error)
   process.exit(1)
