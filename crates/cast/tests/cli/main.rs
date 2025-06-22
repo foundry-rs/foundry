@@ -387,6 +387,84 @@ casttest!(wallet_sign_typed_data_file, |_prj, cmd| {
 "#]]);
 });
 
+// tests that `cast wallet sign typed-data` passes with type names containing colons
+//  <https://github.com/foundry-rs/foundry/issues/10765>
+casttest!(wallet_sign_typed_data_with_colon_succeeds, |_prj, cmd| {
+    let typed_data_with_colon = r#"{
+        "types": {
+            "EIP712Domain": [
+                {"name": "name", "type": "string"},
+                {"name": "version", "type": "string"},
+                {"name": "chainId", "type": "uint256"},
+                {"name": "verifyingContract", "type": "address"}
+            ],
+            "Test:Message": [
+                {"name": "content", "type": "string"}
+            ]
+        },
+        "primaryType": "Test:Message",
+        "domain": {
+            "name": "TestDomain",
+            "version": "1",
+            "chainId": 1,
+            "verifyingContract": "0x0000000000000000000000000000000000000000"
+        },
+        "message": {
+            "content": "Hello"
+        }
+    }"#;
+
+    cmd.args([
+        "wallet",
+        "sign",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--data",
+        typed_data_with_colon,
+    ]).assert_success().stdout_eq(str![[r#"
+0xf91c67e845a4d468d1f876f457ffa01e65468641fc121453705242d21de39b266c278592b085814ab1e9adc938cc26b1d64bb61f80b437df077777c4283612291b
+
+"#]]);
+});
+
+// tests that the same data without colon works correctly
+// <https://github.com/foundry-rs/foundry/issues/10765>
+casttest!(wallet_sign_typed_data_without_colon_works, |_prj, cmd| {
+    let typed_data_without_colon = r#"{
+        "types": {
+            "EIP712Domain": [
+                {"name": "name", "type": "string"},
+                {"name": "version", "type": "string"},
+                {"name": "chainId", "type": "uint256"},
+                {"name": "verifyingContract", "type": "address"}
+            ],
+            "TestMessage": [
+                {"name": "content", "type": "string"}
+            ]
+        },
+        "primaryType": "TestMessage",
+        "domain": {
+            "name": "TestDomain",
+            "version": "1",
+            "chainId": 1,
+            "verifyingContract": "0x0000000000000000000000000000000000000000"
+        },
+        "message": {
+            "content": "Hello"
+        }
+    }"#;
+
+    cmd.args([
+        "wallet",
+        "sign",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--data",
+        typed_data_without_colon,
+    ])
+    .assert_success();
+});
+
 // tests that `cast wallet sign-auth message` outputs the expected signature
 casttest!(wallet_sign_auth, |_prj, cmd| {
     cmd.args([
