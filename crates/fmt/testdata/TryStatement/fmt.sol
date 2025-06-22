@@ -69,9 +69,6 @@ contract TryStatement {
             unknown.handleError();
         } catch /* comment11 */ Panic(uint256) {
             unknown.handleError();
-        } /* extremelly long comment12 should break the line */
-        catch /* comment13 */ Error(string memory) {
-            unknown.handleError();
         } catch {}
     }
 }

@@ -8617,7 +8617,7 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.1.4"
-source = "git+https://github.com/0xrusowsky/solar?branch=chore%2Fspan-try-catch#1731eaee0932a5228975a0c3582da82463cb2462"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#2020b272fb5d805f6487c9b5b439ab40cc79671c"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -8635,7 +8635,7 @@ dependencies = [
 [[package]]
 name = "solar-config"
 version = "0.1.4"
-source = "git+https://github.com/0xrusowsky/solar?branch=chore%2Fspan-try-catch#1731eaee0932a5228975a0c3582da82463cb2462"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#2020b272fb5d805f6487c9b5b439ab40cc79671c"
 dependencies = [
  "strum 0.27.1",
 ]
@@ -8643,7 +8643,7 @@ dependencies = [
 [[package]]
 name = "solar-data-structures"
 version = "0.1.4"
-source = "git+https://github.com/0xrusowsky/solar?branch=chore%2Fspan-try-catch#1731eaee0932a5228975a0c3582da82463cb2462"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#2020b272fb5d805f6487c9b5b439ab40cc79671c"
 dependencies = [
  "bumpalo",
  "index_vec",
@@ -8657,7 +8657,7 @@ dependencies = [
 [[package]]
 name = "solar-interface"
 version = "0.1.4"
-source = "git+https://github.com/0xrusowsky/solar?branch=chore%2Fspan-try-catch#1731eaee0932a5228975a0c3582da82463cb2462"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#2020b272fb5d805f6487c9b5b439ab40cc79671c"
 dependencies = [
  "annotate-snippets",
  "anstream",
@@ -8667,7 +8667,7 @@ dependencies = [
  "derive_more 2.0.1",
  "dunce",
  "inturn",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "itoa",
  "match_cfg",
  "normalize-path",
@@ -8678,7 +8678,7 @@ dependencies = [
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 2.0.12",
+ "thiserror 1.0.69",
  "tracing",
  "unicode-width 0.2.0",
 ]
@@ -8686,7 +8686,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.1.4"
-source = "git+https://github.com/0xrusowsky/solar?branch=chore%2Fspan-try-catch#1731eaee0932a5228975a0c3582da82463cb2462"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#2020b272fb5d805f6487c9b5b439ab40cc79671c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8696,12 +8696,12 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.1.4"
-source = "git+https://github.com/0xrusowsky/solar?branch=chore%2Fspan-try-catch#1731eaee0932a5228975a0c3582da82463cb2462"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#2020b272fb5d805f6487c9b5b439ab40cc79671c"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.9.1",
  "bumpalo",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -8716,7 +8716,7 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.1.4"
-source = "git+https://github.com/0xrusowsky/solar?branch=chore%2Fspan-try-catch#1731eaee0932a5228975a0c3582da82463cb2462"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#2020b272fb5d805f6487c9b5b439ab40cc79671c"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
