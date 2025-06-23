@@ -11,7 +11,7 @@ use alloy_signer_aws::AwsSignerError;
 use alloy_signer_gcp::GcpSignerError;
 
 #[cfg(feature = "browser")]
-use crate::browser::BrowserWalletError;
+use foundry_browser_wallet::BrowserWalletError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PrivateKeyError {

@@ -95,7 +95,8 @@ pub struct WalletOpts {
         help_heading = "Wallet options - browser",
         value_name = "PORT",
         default_value = "9545",
-        requires = "browser"
+        requires = "browser",
+        hide = !cfg!(feature = "browser")
     )]
     pub browser_port: u16,
 }

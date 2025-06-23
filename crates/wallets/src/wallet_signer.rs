@@ -23,6 +23,9 @@ use {
     },
 };
 
+#[cfg(feature = "browser")]
+use foundry_browser_wallet::BrowserSigner;
+
 pub type Result<T> = std::result::Result<T, WalletSignerError>;
 
 /// Wrapper enum around different signers.
@@ -42,7 +45,7 @@ pub enum WalletSigner {
     Gcp(GcpSigner),
     /// Wrapper around browser wallet signer (MetaMask, WalletConnect, etc.)
     #[cfg(feature = "browser")]
-    Browser(crate::browser::BrowserSigner),
+    Browser(BrowserSigner),
 }
 
 impl WalletSigner {
@@ -116,7 +119,7 @@ impl WalletSigner {
     pub async fn from_browser(port: u16) -> Result<Self> {
         #[cfg(feature = "browser")]
         {
-            let browser_signer = crate::browser::BrowserSigner::new(port)
+            let browser_signer = BrowserSigner::new(port)
                 .await
                 .map_err(|e| WalletSignerError::Browser(e.into()))?;
             Ok(Self::Browser(browser_signer))
@@ -236,17 +239,7 @@ impl Signer for WalletSigner {
     }
 
     fn chain_id(&self) -> Option<ChainId> {
-        match self {
-            Self::Local(inner) => inner.chain_id(),
-            Self::Ledger(inner) => inner.chain_id(),
-            Self::Trezor(inner) => inner.chain_id(),
-            #[cfg(feature = "aws-kms")]
-            Self::Aws(inner) => inner.chain_id(),
-            #[cfg(feature = "gcp-kms")]
-            Self::Gcp(inner) => inner.chain_id(),
-            #[cfg(feature = "browser")]
-            Self::Browser(inner) => inner.chain_id(),
-        }
+        delegate!(self, inner => inner.chain_id())
     }
 
     fn set_chain_id(&mut self, chain_id: Option<ChainId>) {

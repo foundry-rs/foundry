@@ -8,18 +8,12 @@
 #[macro_use]
 extern crate tracing;
 
-#[cfg(feature = "browser")]
-use hex as _;
-
 pub mod error;
 pub mod multi_wallet;
 pub mod raw_wallet;
 pub mod utils;
 pub mod wallet;
 pub mod wallet_signer;
-
-#[cfg(feature = "browser")]
-pub mod browser;
 
 pub use multi_wallet::MultiWalletOpts;
 pub use raw_wallet::RawWalletOpts;

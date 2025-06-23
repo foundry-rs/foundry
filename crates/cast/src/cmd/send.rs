@@ -4,7 +4,6 @@ use crate::{
 };
 use alloy_ens::NameOrAddress;
 use alloy_network::{AnyNetwork, EthereumWallet};
-use alloy_primitives::{hex, TxKind};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
@@ -187,28 +186,15 @@ impl SendTxArgs {
                 // Browser wallets need to use a different flow
                 // They handle signing in the browser via eth_sendTransaction
                 if let foundry_wallets::WalletSigner::Browser(ref browser_signer) = signer {
-                    // Get the actual chain ID from the provider
-                    let chain_id = provider.get_chain_id().await?;
                     // Build the transaction
                     let (tx_request, _) = builder.build(from).await?;
                     
-                    // Send via browser wallet
-                    let to_address = match tx_request.to {
-                        Some(TxKind::Call(addr)) => Some(addr),
-                        _ => None,
-                    };
+                    // Extract the inner TransactionRequest from WithOtherFields
+                    // The browser wallet expects TransactionRequest, not WithOtherFields<TransactionRequest>
+                    let inner_tx_request = tx_request.inner;
                     
-                    let tx_hash = browser_signer.send_transaction_via_browser(
-                        to_address,
-                        tx_request.value.map(|v| v.to_string()),
-                        tx_request.input.input.clone().map(|d| format!("0x{}", hex::encode(d.as_ref()))),
-                        tx_request.gas.map(|g| g.to_string()),
-                        tx_request.gas_price.map(|p| p.to_string()),
-                        tx_request.max_fee_per_gas.map(|f| f.to_string()),
-                        tx_request.max_priority_fee_per_gas.map(|f| f.to_string()),
-                        tx_request.nonce.map(|n| n as u64),
-                        Some(chain_id),
-                    ).await?;
+                    // Send via browser wallet using the new API with AlloyTxRequest
+                    let tx_hash = browser_signer.send_transaction_via_browser(inner_tx_request).await?;
                     
                     if cast_async {
                         sh_println!("{tx_hash:#x}")?;

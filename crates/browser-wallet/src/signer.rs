@@ -1,15 +1,16 @@
-use super::{
-    communication::{SigningRequest, SigningType, TransactionRequest},
-    server::BrowserWalletServer,
+use crate::{
+    BrowserTransaction, BrowserWalletServer, SignRequest,
 };
 use alloy_consensus::SignableTransaction;
 use alloy_network::TxSigner;
 use alloy_primitives::{Address, ChainId, Signature, B256};
-use alloy_signer::{Result, Signer};
+use alloy_rpc_types::TransactionRequest;
+use alloy_signer::{Result, Signer, SignerSync};
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use alloy_dyn_abi::TypedData;
 use async_trait::async_trait;
-use std::{str::FromStr, sync::Arc};
+use foundry_common::{sh_println};
+use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// Browser wallet signer that delegates signing to a connected browser wallet.
@@ -17,6 +18,10 @@ use tokio::sync::Mutex;
 /// This signer opens a local HTTP server and displays a web interface where users
 /// can connect their browser wallet (MetaMask, WalletConnect browser extension, etc.)
 /// to sign transactions.
+///
+/// # Standards
+/// - Follows EIP-1193 for Ethereum Provider JavaScript API
+/// - Supports EIP-712 for typed data signing
 #[derive(Clone, Debug)]
 pub struct BrowserSigner {
     server: Arc<Mutex<BrowserWalletServer>>,
@@ -37,11 +42,11 @@ impl BrowserSigner {
         let mut server = BrowserWalletServer::new(port);
         
         // Start the server
-        server.start().await.map_err(|e| alloy_signer::Error::other(e))?;
+        server.start().await.map_err(alloy_signer::Error::other)?;
         
         // Wait for wallet connection
-        println!("\n🌐 Opening browser for wallet connection...");
-        println!("Waiting for wallet connection...\n");
+        let _ = sh_println!("\n🌐 Opening browser for wallet connection...");
+        let _ = sh_println!("Waiting for wallet connection...\n");
         
         // Poll for connection (timeout after 5 minutes)
         let start = std::time::Instant::now();
@@ -49,8 +54,8 @@ impl BrowserSigner {
         
         loop {
             if let Some(connection) = server.get_connection() {
-                println!("✅ Wallet connected: {}", connection.address);
-                println!("   Chain ID: {}\n", connection.chain_id);
+                let _ = sh_println!("✅ Wallet connected: {}", connection.address);
+                let _ = sh_println!("   Chain ID: {}\n", connection.chain_id);
                 
                 return Ok(Self {
                     server: Arc::new(Mutex::new(server)),
@@ -72,45 +77,42 @@ impl BrowserSigner {
     /// This method is used by cast send when browser wallet is detected.
     pub async fn send_transaction_via_browser(
         &self,
-        to: Option<Address>,
-        value: Option<String>,
-        data: Option<String>,
-        gas: Option<String>,
-        gas_price: Option<String>,
-        max_fee_per_gas: Option<String>,
-        max_priority_fee_per_gas: Option<String>,
-        nonce: Option<u64>,
-        chain_id: Option<u64>,
+        tx_request: TransactionRequest,
     ) -> Result<B256> {
-        let request = TransactionRequest {
+        let request = BrowserTransaction {
             id: uuid::Uuid::new_v4().to_string(),
-            from: format!("{:?}", self.address),
-            to: to.map(|a| format!("{:?}", a)),
-            value: value.unwrap_or_else(|| "0".to_string()),
-            data,
-            gas,
-            gas_price,
-            max_fee_per_gas,
-            max_priority_fee_per_gas,
-            nonce,
-            chain_id: chain_id.unwrap_or(self.chain_id),
+            request: tx_request,
         };
         
         let server = self.server.lock().await;
         let tx_hash = server
             .request_transaction(request)
             .await
-            .map_err(|e| alloy_signer::Error::other(e))?;
-        
-        // Parse the transaction hash
-        let hash = tx_hash
-            .parse::<B256>()
-            .map_err(|e| alloy_signer::Error::other(format!("Invalid transaction hash: {}", e)))?;
+            .map_err(alloy_signer::Error::other)?;
         
         // Give the UI a moment to update before potentially shutting down
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         
-        Ok(hash)
+        Ok(tx_hash)
+    }
+}
+
+// Implement SignerSync trait as required by Alloy patterns
+impl SignerSync for BrowserSigner {
+    fn sign_hash_sync(&self, _hash: &B256) -> Result<Signature> {
+        Err(alloy_signer::Error::other(
+            "Browser wallets cannot sign raw hashes. Use sign_message or send_transaction instead."
+        ))
+    }
+
+    fn sign_message_sync(&self, _message: &[u8]) -> Result<Signature> {
+        Err(alloy_signer::Error::other(
+            "Browser signer requires async operations. Use sign_message instead."
+        ))
+    }
+
+    fn chain_id_sync(&self) -> Option<ChainId> {
+        Some(self.chain_id)
     }
 }
 
@@ -125,21 +127,22 @@ impl Signer for BrowserSigner {
     }
     
     async fn sign_message(&self, message: &[u8]) -> Result<Signature> {
-        let request = SigningRequest {
+        let request = SignRequest {
             id: uuid::Uuid::new_v4().to_string(),
-            from: format!("{:?}", self.address),
-            signing_type: SigningType::PersonalSign,
-            data: format!("0x{}", hex::encode(message)),
+            address: self.address,
+            message: format!("0x{}", hex::encode(message)),
+            sign_type: crate::SignType::PersonalSign,
         };
         
         let server = self.server.lock().await;
         let signature = server
             .request_signing(request)
             .await
-            .map_err(|e| alloy_signer::Error::other(e))?;
+            .map_err(alloy_signer::Error::other)?;
         
         // Parse the signature
-        Signature::from_str(&signature).map_err(|e| alloy_signer::Error::other(format!("Invalid signature: {}", e)))
+        Signature::try_from(signature.as_ref())
+            .map_err(|e| alloy_signer::Error::other(format!("Invalid signature: {e}")))
     }
     
     fn address(&self) -> Address {
@@ -171,25 +174,15 @@ impl Signer for BrowserSigner {
     }
     
     async fn sign_dynamic_typed_data(&self, payload: &TypedData) -> Result<Signature> {
-        // Serialize the typed data to JSON
-        let json_data = serde_json::to_string(payload)
-            .map_err(|e| alloy_signer::Error::other(format!("Failed to serialize typed data: {}", e)))?;
-        
-        let request = SigningRequest {
-            id: uuid::Uuid::new_v4().to_string(),
-            from: format!("{:?}", self.address),
-            signing_type: SigningType::SignTypedData,
-            data: json_data,
-        };
-        
         let server = self.server.lock().await;
         let signature = server
-            .request_signing(request)
+            .request_typed_data_signing(self.address, payload.clone())
             .await
-            .map_err(|e| alloy_signer::Error::other(e))?;
+            .map_err(alloy_signer::Error::other)?;
         
         // Parse the signature
-        Signature::from_str(&signature).map_err(|e| alloy_signer::Error::other(format!("Invalid signature: {}", e)))
+        Signature::try_from(signature.as_ref())
+            .map_err(|e| alloy_signer::Error::other(format!("Invalid signature: {e}")))
     }
 }
 

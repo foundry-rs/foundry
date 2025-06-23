@@ -1,0 +1,41 @@
+[package]
+name = "foundry-browser-wallet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-primitives.workspace = true
+alloy-signer = { workspace = true, features = ["eip712"] }
+alloy-rpc-types.workspace = true
+alloy-consensus.workspace = true
+alloy-network.workspace = true
+alloy-sol-types.workspace = true
+alloy-dyn-abi.workspace = true
+foundry-common.workspace = true
+
+axum.workspace = true
+tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros"] }
+tower.workspace = true
+tower-http = { workspace = true, features = ["cors", "set-header"] }
+uuid = { workspace = true, features = ["v4", "serde"] }
+hex = "0.4"
+parking_lot.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+webbrowser = "1.0"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+reqwest = { workspace = true, features = ["json"] }
+alloy-signer-local.workspace = true
+alloy-provider.workspace = true

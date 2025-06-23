@@ -49,6 +49,21 @@ h3 {
     font-size: 0.875rem;
 }
 
+/* Loading state animation */
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+}
+
+.status-value.initializing {
+    animation: pulse 1.5s ease-in-out infinite;
+    color: #60a5fa;
+}
+
 .status {
     background: #27272a;
     border-radius: 8px;
@@ -249,4 +264,16 @@ h3 {
     color: #71717a;
     font-size: 0.75rem;
     margin-top: 2rem;
+}
+
+.security-warning {
+    background: #f59e0b1a;
+    border: 1px solid #f59e0b;
+    color: #f59e0b;
+    padding: 1rem;
+    border-radius: 8px;
+    text-align: center;
+    font-size: 0.875rem;
+    margin-bottom: 1rem;
+    font-weight: 500;
 }
