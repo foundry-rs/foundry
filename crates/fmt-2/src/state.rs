@@ -103,6 +103,9 @@ impl<'sess> State<'sess, '_> {
             printed = true;
 
             if matches!(cmnt.style, CommentStyle::Mixed | CommentStyle::Trailing) {
+                if !self.last_token_is_space() && !self.is_bol_or_only_ind() {
+                    self.space();
+                }
                 for line in cmnt.lines {
                     self.word(line);
                 }
@@ -207,10 +210,13 @@ impl<'sess> State<'sess, '_> {
         self.comments.next()
     }
 
-    fn print_trailing_comment(&mut self, span: Span, next_pos: Option<BytePos>) {
+    fn print_trailing_comment(&mut self, span: Span, next_pos: Option<BytePos>) -> bool {
         if let Some(cmnt) = self.comments.trailing_comment(self.sm, span, next_pos) {
             self.print_comment(cmnt);
+            return true;
         }
+
+        false
     }
 
     fn print_remaining_comments(&mut self) {
@@ -250,6 +256,7 @@ impl<'sess> State<'sess, '_> {
     fn print_tuple<'a, T, P, S>(
         &mut self,
         values: &'a [T],
+        span: Span,
         mut print: P,
         mut get_span: S,
         format: ListFormat,
@@ -270,23 +277,24 @@ impl<'sess> State<'sess, '_> {
 
         // Otherwise, use commasep
         self.word("(");
-        self.commasep(values, print, get_span, matches!(format, ListFormat::Compact));
+        self.commasep(values, span, print, get_span, matches!(format, ListFormat::Compact));
         self.word(")");
     }
 
-    fn print_array<'a, T, P, S>(&mut self, values: &'a [T], print: P, get_span: S)
+    fn print_array<'a, T, P, S>(&mut self, values: &'a [T], span: Span, print: P, get_span: S)
     where
         P: FnMut(&mut Self, &'a T),
         S: FnMut(&T) -> Option<Span>,
     {
         self.word("[");
-        self.commasep(values, print, get_span, false);
+        self.commasep(values, span, print, get_span, true);
         self.word("]");
     }
 
     fn commasep<'a, T, P, S>(
         &mut self,
         values: &'a [T],
+        bracket_span: Span,
         mut print: P,
         mut get_span: S,
         compact: bool,
@@ -298,12 +306,19 @@ impl<'sess> State<'sess, '_> {
             return;
         }
 
+        let first_pos = get_span(&values[0]).map(Span::lo);
+        self.print_trailing_comment(bracket_span, first_pos);
+
         self.s.cbox(self.ind);
-        self.zerobreak();
+        if !self.last_token_is_hardbreak() {
+            self.zerobreak();
+        }
         if compact {
             self.s.cbox(0);
         }
+        let mut deind = true;
         for (i, value) in values.iter().enumerate() {
+            self.s.ibox(0);
             let span = get_span(value);
             if let Some(span) = span {
                 self.print_comments(span.lo());
@@ -315,22 +330,27 @@ impl<'sess> State<'sess, '_> {
             }
             if let Some(span) = span {
                 let next_pos = if is_last { None } else { get_span(&values[i + 1]).map(Span::lo) };
-                self.print_trailing_comment(span, next_pos);
+                if self.print_trailing_comment(span, next_pos) && is_last {
+                    // if a trailing comment is printed at the very end, we have to manually adjust
+                    // the offset to avoid having a double break.
+                    self.break_offset_if_not_bol(0, -self.ind);
+                    deind = false;
+                };
+                self.print_inline_comments(next_pos.unwrap_or(bracket_span.hi()));
             }
             if !is_last && !self.is_beginning_of_line() {
                 self.space();
             }
+            self.end();
         }
 
         if compact {
-            if !self.last_token_is_hardbreak() {
-                self.end();
-                self.zerobreak();
-            }
-        } else {
-            self.zerobreak();
+            self.end();
         }
-        self.s.offset(-self.ind);
+        if deind {
+            self.zerobreak();
+            self.s.offset(-self.ind);
+        }
         self.end();
     }
 }
@@ -637,7 +657,7 @@ impl<'ast> State<'_, 'ast> {
             self.nbsp();
             self.print_ident(&name);
         }
-        self.print_parameter_list(parameters, ListFormat::Consistent);
+        self.print_parameter_list(parameters, header.span, ListFormat::Consistent);
         self.end();
 
         // Attributes.
@@ -665,7 +685,7 @@ impl<'ast> State<'_, 'ast> {
         if !returns.is_empty() {
             self.space();
             self.word("returns ");
-            self.print_parameter_list(returns, ListFormat::Consistent);
+            self.print_parameter_list(returns, header.span, ListFormat::Consistent);
         }
 
         if let Some(body) = body {
@@ -708,7 +728,7 @@ impl<'ast> State<'_, 'ast> {
         let ast::ItemError { name, parameters } = err;
         self.word("error ");
         self.print_ident(name);
-        self.print_parameter_list(parameters, ListFormat::Consistent);
+        self.print_parameter_list(parameters, Span::DUMMY, ListFormat::Consistent);
         self.word(";");
     }
 
@@ -716,7 +736,7 @@ impl<'ast> State<'_, 'ast> {
         let ast::ItemEvent { name, parameters, anonymous } = event;
         self.word("event ");
         self.print_ident(name);
-        self.print_parameter_list(parameters, ListFormat::Consistent);
+        self.print_parameter_list(parameters, Span::DUMMY, ListFormat::Consistent);
         if *anonymous {
             self.word(" anonymous");
         }
@@ -780,9 +800,10 @@ impl<'ast> State<'_, 'ast> {
     fn print_parameter_list(
         &mut self,
         parameters: &'ast [ast::VariableDefinition<'ast>],
+        span: Span,
         format: ListFormat,
     ) {
-        self.print_tuple(parameters, Self::print_var, get_span!(), format);
+        self.print_tuple(parameters, span, Self::print_var, get_span!(), format);
     }
 
     fn print_docs(&mut self, docs: &'ast ast::DocComments<'ast>) {
@@ -1071,6 +1092,7 @@ impl<'ast> State<'_, 'ast> {
             }
             self.print_tuple(
                 paths,
+                *span,
                 |this, path| this.print_path(path),
                 get_span!(()),
                 ListFormat::Consistent,
@@ -1088,7 +1110,7 @@ impl<'ast> State<'_, 'ast> {
 
         match kind {
             ast::ExprKind::Array(exprs) => {
-                self.print_array(exprs, |this, e| this.print_expr(e), get_span!())
+                self.print_array(exprs, expr.span, |this, e| this.print_expr(e), get_span!())
             }
             ast::ExprKind::Assign(lhs, None, rhs) => {
                 self.ibox(0);
@@ -1182,6 +1204,7 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::ExprKind::Tuple(exprs) => self.print_tuple(
                 exprs,
+                span,
                 |this, expr| {
                     if let Some(expr) = expr {
                         this.print_expr(expr);
@@ -1194,6 +1217,7 @@ impl<'ast> State<'_, 'ast> {
                 self.word("type");
                 self.print_tuple(
                     std::slice::from_ref(ty),
+                    span,
                     Self::print_ty,
                     get_span!(),
                     ListFormat::Consistent,
@@ -1238,6 +1262,7 @@ impl<'ast> State<'_, 'ast> {
             ast::CallArgsKind::Unnamed(exprs) => {
                 self.print_tuple(
                     exprs,
+                    span,
                     |this, e| this.print_expr(e),
                     get_span!(),
                     ListFormat::Consistent,
@@ -1289,6 +1314,7 @@ impl<'ast> State<'_, 'ast> {
                 if !flags.is_empty() {
                     self.print_tuple(
                         flags,
+                        span,
                         Self::print_ast_str_lit,
                         get_span!(),
                         ListFormat::Consistent,
@@ -1300,6 +1326,7 @@ impl<'ast> State<'_, 'ast> {
             ast::StmtKind::DeclMulti(vars, expr) => {
                 self.print_tuple(
                     vars,
+                    span,
                     |this, var| {
                         if let Some(var) = var {
                             this.print_var(var);
@@ -1400,11 +1427,18 @@ impl<'ast> State<'_, 'ast> {
                     }
                     if !args.is_empty() {
                         self.word("returns ");
-                        self.print_parameter_list(args, ListFormat::Compact);
+                        self.print_parameter_list(args, *try_span, ListFormat::Compact);
                         self.nbsp();
                     }
                     self.print_block(block, *try_span);
-                    self.print_trailing_comment(*try_span, other.first().map(|c| c.span.lo()));
+
+                    let mut skip_ind = false;
+                    if self.print_trailing_comment(*try_span, other.first().map(|c| c.span.lo())) {
+                        // if a trailing comment is printed at the very end, we have to manually
+                        // adjust the offset to avoid having a double break.
+                        self.break_offset_if_not_bol(0, self.ind);
+                        skip_ind = true;
+                    };
                     self.end();
 
                     // Handle 'catch' clauses
@@ -1412,7 +1446,9 @@ impl<'ast> State<'_, 'ast> {
                     for (pos, ast::TryCatchClause { name, args, block, span: catch_span }) in
                         other.iter().delimited()
                     {
-                        self.handle_try_catch_indent(&mut should_break, block.is_empty(), pos);
+                        if !pos.is_first || !skip_ind {
+                            self.handle_try_catch_indent(&mut should_break, block.is_empty(), pos);
+                        }
                         self.ibox(0);
                         self.print_inline_comments(catch_span.lo());
                         self.word("catch ");
@@ -1421,7 +1457,7 @@ impl<'ast> State<'_, 'ast> {
                             if let Some(name) = name {
                                 self.print_ident(name);
                             }
-                            self.print_parameter_list(args, ListFormat::Inline);
+                            self.print_parameter_list(args, *catch_span, ListFormat::Inline);
                             self.nbsp();
                         }
                         self.print_block(block, *catch_span);
@@ -1461,6 +1497,7 @@ impl<'ast> State<'_, 'ast> {
         self.word_nbsp(kw);
         self.print_tuple(
             std::slice::from_ref(cond),
+            cond.span,
             Self::print_expr,
             get_span!(),
             ListFormat::Consistent,
@@ -1605,7 +1642,13 @@ impl<'ast> State<'_, 'ast> {
                 self.print_yul_expr(expr);
             }
             yul::StmtKind::AssignMulti(paths, expr_call) => {
-                self.commasep(paths, |this, path| this.print_path(path), get_span!(()), false);
+                self.commasep(
+                    paths,
+                    stmt.span,
+                    |this, path| this.print_path(path),
+                    get_span!(()),
+                    false,
+                );
                 self.word(" := ");
                 self.neverbreak();
                 self.print_yul_expr_call(expr_call);
@@ -1667,6 +1710,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_ident(name);
                 self.print_tuple(
                     parameters,
+                    span,
                     Self::print_ident,
                     get_span!(),
                     ListFormat::Consistent,
@@ -1674,7 +1718,7 @@ impl<'ast> State<'_, 'ast> {
                 self.nbsp();
                 if !returns.is_empty() {
                     self.word("-> ");
-                    self.commasep(returns, Self::print_ident, get_span!(), false);
+                    self.commasep(returns, stmt.span, Self::print_ident, get_span!(), false);
                     self.nbsp();
                 }
                 self.end();
@@ -1684,7 +1728,7 @@ impl<'ast> State<'_, 'ast> {
             yul::StmtKind::VarDecl(idents, expr) => {
                 self.ibox(0);
                 self.word("let ");
-                self.commasep(idents, Self::print_ident, get_span!(), false);
+                self.commasep(idents, stmt.span, Self::print_ident, get_span!(), false);
                 if let Some(expr) = expr {
                     self.word(" := ");
                     self.neverbreak();
@@ -1716,7 +1760,13 @@ impl<'ast> State<'_, 'ast> {
     fn print_yul_expr_call(&mut self, expr: &'ast yul::ExprCall<'ast>) {
         let yul::ExprCall { name, arguments } = expr;
         self.print_ident(name);
-        self.print_tuple(arguments, Self::print_yul_expr, get_span!(), ListFormat::Consistent);
+        self.print_tuple(
+            arguments,
+            Span::DUMMY,
+            Self::print_yul_expr,
+            get_span!(),
+            ListFormat::Consistent,
+        );
     }
 
     fn handle_try_catch_indent(

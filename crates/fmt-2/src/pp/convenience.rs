@@ -62,6 +62,14 @@ impl Printer {
         false
     }
 
+    pub fn last_token_is_space(&self) -> bool {
+        if let Some(token) = self.last_token() {
+            return token.is_space();
+        }
+
+        false
+    }
+
     pub fn is_beginning_of_line(&self) -> bool {
         match self.last_token() {
             Some(last_token) => last_token.is_hardbreak(),
@@ -164,6 +172,21 @@ impl Token {
             offset == 0 && blank_space == SIZE_INFINITY as usize && !never_break
         } else {
             false
+        }
+    }
+
+    pub(crate) fn is_space(&self) -> bool {
+        match self {
+            Self::Break(BreakToken {
+                offset,
+                blank_space,
+                pre_break: _,
+                post_break: _,
+                if_nonempty: _,
+                never_break: _,
+            }) => *offset == 0 && *blank_space == 1,
+            Self::String(s) => s.ends_with(' '),
+            _ => false,
         }
     }
 }
