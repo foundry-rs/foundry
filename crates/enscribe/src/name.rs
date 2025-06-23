@@ -1,11 +1,8 @@
-use crate::{
-    abi::{
-        EnsRegistry, EnsRegistry::recordExistsCall, Enscribe, NameWrapper,
-        NameWrapper::isWrappedCall, Ownable, Ownable::ownerCall, PublicResolver,
-        PublicResolver::addrCall, ReverseRegistrar,
-    },
-    logger::MetricLogger,
+use crate::abi::{
+    EnsRegistry, EnsRegistry::recordExistsCall, Enscribe, NameWrapper, NameWrapper::isWrappedCall,
+    Ownable, Ownable::ownerCall, PublicResolver, PublicResolver::addrCall, ReverseRegistrar,
 };
+use alloy_chains::NamedChain;
 use alloy_ens::namehash;
 use alloy_primitives::U256;
 use alloy_provider::{
@@ -20,21 +17,15 @@ use eyre::Result;
 use foundry_cli::utils;
 use foundry_common::sh_println;
 use foundry_config::Config;
-use serde::Deserialize;
+use names::{Generator, Name};
 
-pub(crate) static CONFIG_API_URL: &str = "https://app.enscribe.xyz/api/v1/config";
-pub(crate) static AUTO_GEN_NAME_API_URL: &str = "https://app.enscribe.xyz/api/v1/name";
-
-const BASE: u64 = 8453;
-const BASE_SEPOLIA: u64 = 84532;
-
-#[derive(Debug, Deserialize)]
-pub struct ChainConfigResponse {
-    reverse_registrar_addr: String,
-    ens_registry_addr: String,
-    public_resolver_addr: String,
-    name_wrapper_addr: String,
-    enscribe_addr: String,
+#[derive(Debug)]
+pub struct ChainConfig {
+    reverse_registrar_addr: Address,
+    ens_registry_addr: Address,
+    public_resolver_addr: Address,
+    name_wrapper_addr: Address,
+    enscribe_addr: Address,
     parent_name: String,
 }
 
@@ -44,7 +35,6 @@ pub async fn set_primary_name(
     contract_addr: Address,
     name: Option<String>,
     _is_reverse_setter: bool,
-    op_type: &str,
 ) -> Result<()> {
     let provider = utils::get_provider(config)?;
     let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
@@ -55,10 +45,10 @@ pub async fn set_primary_name(
     let sender_addr = provider.default_signer_address();
     let chain_id = provider.get_chain_id().await?;
     let config = get_config(chain_id).await?;
-    let reverse_registrar_addr: Address = config.reverse_registrar_addr.parse()?;
-    let ens_registry_addr: Address = config.ens_registry_addr.parse()?;
-    let public_resolver_addr: Address = config.public_resolver_addr.parse()?;
-    let name_wrapper_addr: Address = config.name_wrapper_addr.parse()?;
+    let reverse_registrar_addr: Address = config.reverse_registrar_addr;
+    let ens_registry_addr: Address = config.ens_registry_addr;
+    let public_resolver_addr: Address = config.public_resolver_addr;
+    let name_wrapper_addr: Address = config.name_wrapper_addr;
     let is_ownable = is_contract_ownable(&provider, contract_addr).await;
     let is_reverse_claimer =
         is_contract_reverse_claimer(&provider, contract_addr, sender_addr, ens_registry_addr)
@@ -79,15 +69,6 @@ pub async fn set_primary_name(
         let parent = name_splits[1];
         let tld = name_splits[2];
 
-        let logger = MetricLogger::new(
-            sender_addr.to_string(),
-            chain_id,
-            op_type.to_owned(),
-            contract_type,
-            contract_addr.to_string(),
-            name.clone(),
-        );
-
         let parent_name = format!("{parent}.{tld}");
         let parent_name_hash = namehash(&parent_name);
         let label_hash = keccak256(label);
@@ -103,7 +84,6 @@ pub async fn set_primary_name(
                 label,
                 parent_name_hash,
                 label_hash,
-                &logger,
             )
             .await?;
         }
@@ -117,35 +97,25 @@ pub async fn set_primary_name(
             is_reverse_claimer,
             sender_addr,
             reverse_registrar_addr,
-            &logger,
         )
         .await?;
     } else {
         sh_println!("auto generating name ...")?;
-        let label = get_auto_generated_name().await?;
+        let label = get_auto_generated_name();
         sh_println!("{label}.{}", config.parent_name)?;
-
-        let logger = MetricLogger::new(
-            sender_addr.to_string(),
-            chain_id,
-            op_type.to_owned(),
-            contract_type,
-            contract_addr.to_string(),
-            format!("{}.{}", label, config.parent_name,),
-        );
 
         enscribe_set_name(
             &provider,
-            config.enscribe_addr.parse()?,
+            config.enscribe_addr,
             contract_addr,
             &label,
             &config.parent_name,
-            &logger,
         )
         .await?;
     }
 
-    sh_println!("visit https://app.enscribe.xyz/explore/{chain_id}/{contract_addr} to see the contract details.")?;
+    sh_println!()?;
+    sh_println!("✨ Contract named: https://app.enscribe.xyz/explore/{chain_id}/{contract_addr}")?;
 
     Ok(())
 }
@@ -183,7 +153,6 @@ async fn enscribe_set_name<P: Provider<AnyNetwork>>(
     contract_addr: Address,
     label: &str,
     parent_name: &str,
-    logger: &MetricLogger,
 ) -> Result<()> {
     sh_println!("setting name via enscribe ...")?;
     let enscribe = Enscribe::new(enscribe_addr, provider);
@@ -193,7 +162,6 @@ async fn enscribe_set_name<P: Provider<AnyNetwork>>(
         .value(U256::from(100000000000000u64));
     let result = provider.send_transaction(tx.into_transaction_request()).await?.watch().await?;
     sh_println!("done (txn hash: {:?})", result)?;
-    logger.log("setName", &result.to_string()).await?;
     Ok(())
 }
 
@@ -221,11 +189,10 @@ async fn create_subname<P: Provider<AnyNetwork>>(
     label: &str,
     parent_name_hash: B256,
     label_hash: B256,
-    logger: &MetricLogger,
 ) -> Result<()> {
     // for Base chains, handle subname creation differently
     let chain_id = provider.get_chain_id().await?;
-    if chain_id == BASE || chain_id == BASE_SEPOLIA {
+    if chain_id == NamedChain::Base as u64 || chain_id == NamedChain::BaseSepolia as u64 {
         let ens_registry = EnsRegistry::new(ens_registry_addr, provider);
         let tx = ens_registry.setSubnodeRecord(
             parent_name_hash,
@@ -237,7 +204,6 @@ async fn create_subname<P: Provider<AnyNetwork>>(
         let result =
             provider.send_transaction(tx.into_transaction_request()).await?.watch().await?;
         sh_println!("done (txn hash: {:?})", result)?;
-        logger.log("createsubname", &result.to_string()).await?;
         return Ok(());
     }
 
@@ -260,7 +226,6 @@ async fn create_subname<P: Provider<AnyNetwork>>(
         let result =
             provider.send_transaction(tx.into_transaction_request()).await?.watch().await?;
         sh_println!("done (txn hash: {:?})", result)?;
-        logger.log("createsubname", &result.to_string()).await?;
     } else {
         let ens_registry = EnsRegistry::new(ens_registry_addr, provider);
         let tx = ens_registry.setSubnodeRecord(
@@ -273,7 +238,6 @@ async fn create_subname<P: Provider<AnyNetwork>>(
         let result =
             provider.send_transaction(tx.into_transaction_request()).await?.watch().await?;
         sh_println!("done (txn hash: {:?})", result)?;
-        logger.log("createsubname", &result.to_string()).await?;
     }
     Ok(())
 }
@@ -289,7 +253,6 @@ async fn set_resolutions<P: Provider<AnyNetwork>>(
     is_reverse_claimer: bool,
     sender_addr: Address,
     reverse_registrar_addr: Address,
-    logger: &MetricLogger,
 ) -> Result<()> {
     sh_println!("checking if fwd resolution already set ...")?;
     let public_resolver = PublicResolver::new(public_resolver_addr, provider);
@@ -303,7 +266,6 @@ async fn set_resolutions<P: Provider<AnyNetwork>>(
         let result =
             provider.send_transaction(tx.into_transaction_request()).await?.watch().await?;
         sh_println!("done (txn hash: {:?})", result)?;
-        logger.log("fwdres::setAddr", &result.to_string()).await?;
     } else {
         sh_println!("fwd resolution already set")?;
     }
@@ -316,7 +278,6 @@ async fn set_resolutions<P: Provider<AnyNetwork>>(
         let result =
             provider.send_transaction(tx.into_transaction_request()).await?.watch().await?;
         sh_println!("done (txn hash: {:?})", result)?;
-        logger.log("revres::setAddr", &result.to_string()).await?;
     } else {
         let reverse_registrar = ReverseRegistrar::new(reverse_registrar_addr, provider);
         let tx = reverse_registrar.setNameForAddr(
@@ -328,96 +289,43 @@ async fn set_resolutions<P: Provider<AnyNetwork>>(
         let result =
             provider.send_transaction(tx.into_transaction_request()).await?.watch().await?;
         sh_println!("done (txn hash: {:?})", result)?;
-        logger.log("revres::setAddr", &result.to_string()).await?;
     }
 
     Ok(())
 }
 
 /// fetches the chain config for `chaind_id` from the Enscribe API
-async fn get_config(chain_id: u64) -> Result<ChainConfigResponse> {
-    let client = reqwest::Client::new();
-    let response = client.get(format!("{CONFIG_API_URL}/{chain_id}")).send().await?;
+async fn get_config(chain_id: u64) -> Result<ChainConfig> {
+    let chain = NamedChain::try_from(chain_id)?;
 
-    let status = response.status();
-    if !status.is_success() {
-        let reverse_registrar_addr = std::env::var("REVERSE_REGISTRAR_ADDR")?;
-        let ens_registry_addr = std::env::var("ENS_REGISTRY_ADDR")?;
-        let public_resolver_addr = std::env::var("PUBLIC_RESOLVER_ADDR")?;
-        let name_wrapper_addr = std::env::var("NAME_WRAPPER_ADDR")?;
-        let enscribe_addr = std::env::var("ENSCRIBE_ADDR")?;
-        let parent_name = std::env::var("PARENT_NAME")?;
+    let reverse_registrar_addr = chain
+        .reverse_registrar_address()
+        .ok_or_else(|| eyre::eyre!("reverse registrar address not found"))?;
+    let ens_registry_addr = chain
+        .ens_registry_address()
+        .ok_or_else(|| eyre::eyre!("ens registry address not found"))?;
+    let public_resolver_addr = chain
+        .public_resolver_address()
+        .ok_or_else(|| eyre::eyre!("ens registry address not found"))?;
+    let name_wrapper_addr = chain
+        .name_wrapper_address()
+        .ok_or_else(|| eyre::eyre!("name wrapper address not found"))?;
+    let enscribe_addr =
+        chain.enscribe_address().ok_or_else(|| eyre::eyre!("enscribe address not found"))?;
+    let parent_name = chain.parent_name().ok_or_else(|| eyre::eyre!("parent name not found"))?;
 
-        return Ok(ChainConfigResponse {
-            reverse_registrar_addr,
-            ens_registry_addr,
-            public_resolver_addr,
-            name_wrapper_addr,
-            enscribe_addr,
-            parent_name,
-        });
-    }
-
-    let text = response.text().await?;
-    Ok(serde_json::from_str::<ChainConfigResponse>(&text)?)
+    Ok(ChainConfig {
+        reverse_registrar_addr,
+        ens_registry_addr,
+        public_resolver_addr,
+        name_wrapper_addr,
+        enscribe_addr,
+        parent_name,
+    })
 }
 
 /// fetches a random name from the Enscribe API
-async fn get_auto_generated_name() -> Result<String> {
-    let client = reqwest::Client::new();
-    let response = client.get(AUTO_GEN_NAME_API_URL).send().await?;
-    Ok(response.text().await?)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serial_test::serial;
-    use std::env;
-    use wiremock::{
-        matchers::{method, path},
-        Mock, MockServer, ResponseTemplate,
-    };
-
-    #[serial]
-    #[tokio::test(flavor = "current_thread")]
-    async fn test_get_config_fallback_to_env() {
-        // Setup environment fallback values
-        unsafe {
-            env::set_var("REVERSE_REGISTRAR_ADDR", "0xRev");
-            env::set_var("ENS_REGISTRY_ADDR", "0xEnsReg");
-            env::set_var("PUBLIC_RESOLVER_ADDR", "0xResolver");
-            env::set_var("NAME_WRAPPER_ADDR", "0xWrapper");
-            env::set_var("ENSCRIBE_ADDR", "0xEnscribe");
-            env::set_var("PARENT_NAME", "ens.eth");
-        }
-
-        // Start a mock server
-        let mock_server = MockServer::start().await;
-
-        // Return 404 to trigger env fallback
-        Mock::given(method("GET"))
-            .and(path("/123"))
-            .respond_with(ResponseTemplate::new(404))
-            .mount(&mock_server)
-            .await;
-
-        let config = get_config(123).await.unwrap();
-
-        assert_eq!(config.reverse_registrar_addr, "0xRev");
-        assert_eq!(config.ens_registry_addr, "0xEnsReg");
-        assert_eq!(config.public_resolver_addr, "0xResolver");
-        assert_eq!(config.name_wrapper_addr, "0xWrapper");
-        assert_eq!(config.enscribe_addr, "0xEnscribe");
-        assert_eq!(config.parent_name, "ens.eth");
-
-        unsafe {
-            env::remove_var("REVERSE_REGISTRAR_ADDR");
-            env::remove_var("ENS_REGISTRY_ADDR");
-            env::remove_var("PUBLIC_RESOLVER_ADDR");
-            env::remove_var("NAME_WRAPPER_ADDR");
-            env::remove_var("ENSCRIBE_ADDR");
-            env::remove_var("PARENT_NAME");
-        }
-    }
+fn get_auto_generated_name() -> String {
+    let mut generator = Generator::with_naming(Name::Numbered);
+    generator.next().unwrap()
 }

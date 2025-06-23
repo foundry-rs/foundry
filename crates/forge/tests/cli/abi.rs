@@ -3,6 +3,12 @@ use alloy_sol_types::sol;
 
 sol!(
     #[sol(rpc)]
+    Enscribe,
+    "test-data/Enscribe.json"
+);
+
+sol!(
+    #[sol(rpc)]
     ENSRegistry,
     "test-data/ENSRegistry.json"
 );

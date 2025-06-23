@@ -417,7 +417,6 @@ impl CreateArgs {
                 deployed_contract,
                 self.ens_name,
                 self.reverse_setter,
-                "deployandname",
             )
             .await?;
         }

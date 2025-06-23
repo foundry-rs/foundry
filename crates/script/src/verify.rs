@@ -73,7 +73,6 @@ impl BroadcastedState {
                     receipt.contract_address.unwrap(),
                     self.args.ens_name.clone(),
                     self.args.reverse_setter,
-                    "deployandname",
                 )
                 .await?;
             }

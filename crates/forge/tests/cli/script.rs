@@ -3,7 +3,7 @@
 use crate::{
     abi::{
         price_oracle::StablePriceOracle, BaseRegistrarImplementation, DummyOracle, ENSRegistry,
-        ETHRegistrarController, NameWrapper, PublicResolver, ReverseRegistrar,
+        ETHRegistrarController, Enscribe, NameWrapper, PublicResolver, ReverseRegistrar,
     },
     constants::TEMPLATE_CONTRACT,
 };
@@ -3089,6 +3089,17 @@ Warning: Target directory is not empty, but `--force` was specified
     .await
     .unwrap();
 
+    let _enscribe = Enscribe::deploy(
+        &provider,
+        rev_registrar.address().to_owned(),
+        ens_registry.address().to_owned(),
+        name_wrapper.address().to_owned(),
+        "forge.eth".to_owned(),
+        U256::try_from(123).unwrap(),
+    )
+    .await
+    .unwrap();
+
     let _ = ens_registry
         .setSubnodeOwner(B256::ZERO, keccak256("eth"), base_registrar_impl.address().to_owned())
         .send()
@@ -3325,12 +3336,6 @@ Installing openzeppelin-contracts in [..] (url: Some("https://github.com/openzep
         "--private-key",
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
     ]);
-    cmd.env("REVERSE_REGISTRAR_ADDR", rev_registrar.address().to_string());
-    cmd.env("ENS_REGISTRY_ADDR", ens_registry.address().to_string());
-    cmd.env("PUBLIC_RESOLVER_ADDR", public_resolver.address().to_string());
-    cmd.env("NAME_WRAPPER_ADDR", name_wrapper.address().to_string());
-    cmd.env("ENSCRIBE_ADDR", "0xEnscribe");
-    cmd.env("PARENT_NAME", "ens.eth");
     cmd.assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
@@ -3358,13 +3363,14 @@ Chain 31337
 ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 Contract is Ownable contract.
 creating subname ...
-done (txn hash: 0x562509425574db1e0669f56802ab799f8184e9c6f1de76bab474c7595bd29a69)
+done (txn hash: 0x8837e36c20a3d5834c108630769dd5960efdc86fb873ab9ad9abf37bfe1d13f3)
 checking if fwd resolution already set ...
-setting fwd resolution (test.forge.eth -> 0x3Aa5ebB10DC797CAC828524e59A333d0A371443c) ...
-done (txn hash: 0xa9784c67594c205300438a07c383cea3dd57924f6fec4cdf5b2a1c8ed67e77d2)
-setting rev resolution (0x3Aa5ebB10DC797CAC828524e59A333d0A371443c -> test.forge.eth) ...
-done (txn hash: 0x4a7b46717dc075d85ef71fcbbfc5523b72dae7ef46146aa7ae0af03d84088881)
-visit https://app.enscribe.xyz/explore/31337/0x3Aa5ebB10DC797CAC828524e59A333d0A371443c to see the contract details.
+setting fwd resolution (test.forge.eth -> 0xc6e7DF5E7b4f2A278906862b61205850344D4e7d) ...
+done (txn hash: 0x88f5ed94b3547d3ad89c3e357e7185bf271f3339112bf19c90d733e2f5e1800f)
+setting rev resolution (0xc6e7DF5E7b4f2A278906862b61205850344D4e7d -> test.forge.eth) ...
+done (txn hash: 0xd69ce325e96e609f773d043377efda271d9d24fbf7b4e62f9af268fdb2afe217)
+
+✨ Contract named: https://app.enscribe.xyz/explore/31337/0xc6e7DF5E7b4f2A278906862b61205850344D4e7d
 
 [SAVED_TRANSACTIONS]
 

@@ -39,7 +39,6 @@ impl NameArgs {
             self.contract_address,
             self.ens_name,
             false,
-            "nameexisting",
         )
         .await?;
         Ok(())
