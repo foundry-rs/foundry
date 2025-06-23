@@ -1,3 +1,5 @@
+use crate::iter::IterDelimited;
+
 use super::comment::{Comment, CommentStyle};
 use solar_parse::{
     ast::{CommentKind, Span},
@@ -5,6 +7,7 @@ use solar_parse::{
     lexer::token::RawTokenKind as TokenKind,
 };
 use std::fmt;
+use tracing::instrument::WithSubscriber;
 
 pub struct Comments {
     comments: std::vec::IntoIter<Comment>,
@@ -49,7 +52,7 @@ fn first_non_whitespace(s: &str) -> Option<usize> {
 /// Returns a slice of `s` with a whitespace prefix removed based on `col`. If the first `col` chars
 /// of `s` are all whitespace, returns a slice starting after that prefix. Otherwise,
 /// returns a slice that leaves at most one leading whitespace char.
-fn trim_whitespace_prefix(s: &str, col: CharPos) -> &str {
+fn normalize_block_comment(s: &str, col: CharPos) -> &str {
     let len = s.len();
     if let Some(col) = all_whitespace(s, col) {
         return if col < len { &s[col..] } else { "" };
@@ -60,14 +63,33 @@ fn trim_whitespace_prefix(s: &str, col: CharPos) -> &str {
     s
 }
 
-fn split_block_comment_into_lines(text: &str, col: CharPos) -> Vec<String> {
+fn split_block_comment_into_lines(text: &str, is_doc: bool, col: CharPos) -> Vec<String> {
     let mut res: Vec<String> = vec![];
     let mut lines = text.lines();
-    // just push the first line
+    // Just push the first line
     res.extend(lines.next().map(|it| it.to_string()));
-    // for other lines, strip common whitespace prefix
-    for line in lines {
-        res.push(trim_whitespace_prefix(line, col).to_string())
+    // For other lines, strip common whitespace prefix
+    for (pos, line) in lines.into_iter().delimited() {
+        let mut line = normalize_block_comment(line, col).to_string();
+        // For regular block comments, just normalize whitespace
+        if !is_doc {
+            res.push(line);
+        }
+        // Doc block comment lines must have the ` *` decorator
+        else {
+            if !pos.is_last {
+                if line.is_empty() {
+                    line = format!(" *");
+                } else if line.starts_with("*") {
+                    line = format!(" {line}");
+                } else if !line.starts_with(" *") {
+                    line = format!(" * {line}");
+                }
+                res.push(line);
+            } else if line.trim() == "*/" {
+                res.push(" */".to_string())
+            }
+        }
     }
     res
 }
@@ -143,7 +165,7 @@ fn gather_comments(sf: &SourceFile) -> Vec<Comment> {
                 let line_begin_pos = (line_begin_in_file - start_bpos).to_usize();
                 let col = CharPos(text[line_begin_pos..pos].chars().count());
 
-                let lines = split_block_comment_into_lines(token_text, col);
+                let lines = split_block_comment_into_lines(token_text, is_doc, col);
                 comments.push(Comment { is_doc, kind, style, lines, span })
             }
             TokenKind::LineComment { is_doc } => {
