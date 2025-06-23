@@ -90,29 +90,6 @@ impl<'sess> State<'sess, '_> {
         self.print_comments_inner(pos, true)
     }
 
-    /// Print mixed comments without adding line breaks.
-    fn print_mixed_comments(&mut self, pos: BytePos) -> bool {
-        let mut printed = false;
-        while let Some(cmnt) = self.peek_comment() {
-            if cmnt.pos() >= pos {
-                break;
-            }
-            let cmnt = self.next_comment().unwrap();
-            printed = true;
-
-            if matches!(cmnt.style, CommentStyle::Mixed) {
-                if !self.last_token_is_space() && !self.is_bol_or_only_ind() {
-                    self.space();
-                }
-                for line in cmnt.lines {
-                    self.word(line);
-                }
-                self.space();
-            }
-        }
-        printed
-    }
-
     fn print_comments_inner(&mut self, pos: BytePos, skip_ws: bool) -> Option<CommentStyle> {
         let mut has_comment = None;
         while let Some(cmnt) = self.peek_comment() {
@@ -204,6 +181,13 @@ impl<'sess> State<'sess, '_> {
         self.comments.peek()
     }
 
+    fn peek_comment_before<'b>(&'b self, pos: BytePos) -> Option<&'b Comment>
+    where
+        'sess: 'b,
+    {
+        self.comments.peek().filter(|c| c.pos() < pos)
+    }
+
     fn next_comment(&mut self) -> Option<Comment> {
         self.comments.next()
     }
@@ -215,6 +199,29 @@ impl<'sess> State<'sess, '_> {
         }
 
         false
+    }
+
+    /// Print mixed comments without adding line breaks.
+    fn print_mixed_comments(&mut self, pos: BytePos) -> bool {
+        let mut printed = false;
+        while let Some(cmnt) = self.peek_comment() {
+            if cmnt.pos() >= pos {
+                break;
+            }
+            let cmnt = self.next_comment().unwrap();
+            printed = true;
+
+            if matches!(cmnt.style, CommentStyle::Mixed) {
+                if !self.last_token_is_space() && !self.is_bol_or_only_ind() {
+                    self.space();
+                }
+                for line in cmnt.lines {
+                    self.word(line);
+                }
+                self.space();
+            }
+        }
+        printed
     }
 
     fn print_remaining_comments(&mut self) {
@@ -285,7 +292,7 @@ impl<'sess> State<'sess, '_> {
         S: FnMut(&T) -> Option<Span>,
     {
         self.word("[");
-        self.commasep(values, span, print, get_span, true);
+        self.commasep(values, span, print, get_span, false);
         self.word("]");
     }
 
@@ -306,7 +313,6 @@ impl<'sess> State<'sess, '_> {
 
         let first_pos = get_span(&values[0]).map(Span::lo);
         let skip_break = self.print_trailing_comment(bracket_span, first_pos);
-
         self.s.cbox(self.ind);
         if !skip_break {
             self.zerobreak();
@@ -314,7 +320,8 @@ impl<'sess> State<'sess, '_> {
         if compact {
             self.s.cbox(0);
         }
-        let mut deind = true;
+
+        let mut skip_break = false;
         for (i, value) in values.iter().enumerate() {
             self.s.ibox(0);
             let span = get_span(value);
@@ -332,20 +339,20 @@ impl<'sess> State<'sess, '_> {
                     // if a trailing comment is printed at the very end, we have to manually adjust
                     // the offset to avoid having a double break.
                     self.break_offset_if_not_bol(0, -self.ind);
-                    deind = false;
+                    skip_break = true;
                 };
                 self.print_mixed_comments(next_pos.unwrap_or(bracket_span.hi()));
             }
+            self.end();
             if !is_last && !self.is_beginning_of_line() {
                 self.space();
             }
-            self.end();
         }
 
         if compact {
             self.end();
         }
-        if deind {
+        if !skip_break {
             self.zerobreak();
             self.s.offset(-self.ind);
         }
@@ -1149,7 +1156,10 @@ impl<'ast> State<'_, 'ast> {
             ast::ExprKind::Index(expr, kind) => {
                 self.print_expr(expr);
                 self.word("[");
-                self.cbox(0);
+                self.s.cbox(self.ind);
+                self.zerobreak();
+
+                let mut skip_break = false;
                 match kind {
                     ast::IndexKind::Index(expr) => {
                         if let Some(expr) = expr {
@@ -1158,19 +1168,49 @@ impl<'ast> State<'_, 'ast> {
                     }
                     ast::IndexKind::Range(expr0, expr1) => {
                         if let Some(expr0) = expr0 {
-                            if let Some(cmnt) = self.peek_comment() {
-                                if cmnt.span.hi() < expr0.span.lo() {
-                                    self.print_comments(expr0.span.lo());
-                                }
-                            }
+                            self.print_comments(expr0.span.lo());
                             self.print_expr(expr0);
                         }
                         self.word(":");
                         if let Some(expr1) = expr1 {
+                            self.s.ibox(self.ind);
+                            if self.peek_comment_before(expr1.span.lo()).is_some() {
+                                self.space();
+                            } else if expr0.is_some() {
+                                self.zerobreak();
+                            }
+                            self.print_comments(expr1.span.lo());
                             self.print_expr(expr1);
                         }
-                        self.print_comments(span.hi());
+
+                        let mut style = None;
+                        if let Some(cmnt) = self.peek_comment_before(span.hi()) {
+                            if matches!(cmnt.style, CommentStyle::Mixed) {
+                                self.space();
+                            }
+                            style = self.print_comments(span.hi());
+                            skip_break = true;
+                        }
+
+                        // Manually revert indentation if there is `expr1` and/or comments.
+                        if skip_break && expr1.is_some() {
+                            self.break_offset_if_not_bol(0, -2 * self.ind);
+                            self.end();
+                            // if a trailing comment is printed at the very end, we have to manually
+                            // adjust the offset to avoid having a double break.
+                            if !matches!(style.unwrap(), CommentStyle::Trailing) {
+                                self.break_offset_if_not_bol(0, -self.ind);
+                            }
+                        } else if skip_break {
+                            self.break_offset_if_not_bol(0, -self.ind);
+                        } else if expr1.is_some() {
+                            self.end();
+                        }
                     }
+                }
+                if !skip_break {
+                    self.zerobreak();
+                    self.s.offset(-self.ind);
                 }
                 self.end();
                 self.word("]");
