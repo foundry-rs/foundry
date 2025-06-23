@@ -31,18 +31,33 @@ fn all_whitespace(s: &str, col: CharPos) -> Option<usize> {
     Some(idx)
 }
 
+/// Returns `Some(k)` where `k` is the byte offset of the first non-whitespace char preceded by a
+/// whitespace. Returns `k = 0` if `s` starts with a non-whitespace char. If `s` only contains
+/// whitespaces, returns `None`.
+fn first_non_whitespace(s: &str) -> Option<usize> {
+    let mut len = 0;
+    for (i, ch) in s.char_indices() {
+        if ch.is_whitespace() {
+            len = ch.len_utf8()
+        } else {
+            return if i == 0 { Some(0) } else { Some(i - len) };
+        }
+    }
+    None
+}
+
+/// Returns a slice of `s` with a whitespace prefix removed based on `col`. If the first `col` chars
+/// of `s` are all whitespace, returns a slice starting after that prefix. Otherwise,
+/// returns a slice that leaves at most one leading whitespace char.
 fn trim_whitespace_prefix(s: &str, col: CharPos) -> &str {
     let len = s.len();
-    match all_whitespace(s, col) {
-        Some(col) => {
-            if col < len {
-                &s[col..]
-            } else {
-                ""
-            }
-        }
-        None => s,
+    if let Some(col) = all_whitespace(s, col) {
+        return if col < len { &s[col..] } else { "" };
     }
+    if let Some(col) = first_non_whitespace(s) {
+        return &s[col..];
+    }
+    s
 }
 
 fn split_block_comment_into_lines(text: &str, col: CharPos) -> Vec<String> {
