@@ -114,9 +114,11 @@ fn gather_comments(sf: &SourceFile) -> Vec<Comment> {
                 let code_to_the_right =
                     !matches!(text[pos + token.len as usize..].chars().next(), Some('\r' | '\n'));
                 let style = match (code_to_the_left, code_to_the_right) {
-                    (_, true) => CommentStyle::Mixed,
                     (false, false) => CommentStyle::Isolated,
-                    (true, false) => CommentStyle::Trailing,
+                    // Unlike with `Trailing` comments, which are always printed with a hardbreak,
+                    // `Mixed` comments should be followed by a space and defer breaks to the
+                    // printer. Because of that, non-isolated code blocks are labeled as mixed.
+                    _ => CommentStyle::Mixed,
                 };
                 let kind = CommentKind::Block;
 

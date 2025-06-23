@@ -8,13 +8,13 @@ impl Printer {
     }
 
     pub fn hardbreak_if_not_bol(&mut self) {
-        if !self.is_beginning_of_line() {
+        if !self.is_bol_or_only_ind() {
             self.hardbreak();
         }
     }
 
     pub fn space_if_not_bol(&mut self) {
-        if !self.is_beginning_of_line() {
+        if !self.is_bol_or_only_ind() {
             self.space();
         }
     }

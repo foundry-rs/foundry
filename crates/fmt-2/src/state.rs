@@ -90,10 +90,8 @@ impl<'sess> State<'sess, '_> {
         self.print_comments_inner(pos, true)
     }
 
-    /// Print comments inline without adding line breaks.
-    ///
-    /// Only works for trailing and mixed [`CommentStyle`].
-    fn print_inline_comments(&mut self, pos: BytePos) -> bool {
+    /// Print mixed comments without adding line breaks.
+    fn print_mixed_comments(&mut self, pos: BytePos) -> bool {
         let mut printed = false;
         while let Some(cmnt) = self.peek_comment() {
             if cmnt.pos() >= pos {
@@ -102,7 +100,7 @@ impl<'sess> State<'sess, '_> {
             let cmnt = self.next_comment().unwrap();
             printed = true;
 
-            if matches!(cmnt.style, CommentStyle::Mixed | CommentStyle::Trailing) {
+            if matches!(cmnt.style, CommentStyle::Mixed) {
                 if !self.last_token_is_space() && !self.is_bol_or_only_ind() {
                     self.space();
                 }
@@ -307,10 +305,10 @@ impl<'sess> State<'sess, '_> {
         }
 
         let first_pos = get_span(&values[0]).map(Span::lo);
-        self.print_trailing_comment(bracket_span, first_pos);
+        let skip_break = self.print_trailing_comment(bracket_span, first_pos);
 
         self.s.cbox(self.ind);
-        if !self.last_token_is_hardbreak() {
+        if !skip_break {
             self.zerobreak();
         }
         if compact {
@@ -336,7 +334,7 @@ impl<'sess> State<'sess, '_> {
                     self.break_offset_if_not_bol(0, -self.ind);
                     deind = false;
                 };
-                self.print_inline_comments(next_pos.unwrap_or(bracket_span.hi()));
+                self.print_mixed_comments(next_pos.unwrap_or(bracket_span.hi()));
             }
             if !is_last && !self.is_beginning_of_line() {
                 self.space();
@@ -1151,22 +1149,30 @@ impl<'ast> State<'_, 'ast> {
             ast::ExprKind::Index(expr, kind) => {
                 self.print_expr(expr);
                 self.word("[");
+                self.cbox(0);
                 match kind {
                     ast::IndexKind::Index(expr) => {
                         if let Some(expr) = expr {
                             self.print_expr(expr);
                         }
                     }
-                    ast::IndexKind::Range(expr, expr1) => {
-                        if let Some(expr) = expr {
-                            self.print_expr(expr);
+                    ast::IndexKind::Range(expr0, expr1) => {
+                        if let Some(expr0) = expr0 {
+                            if let Some(cmnt) = self.peek_comment() {
+                                if cmnt.span.hi() < expr0.span.lo() {
+                                    self.print_comments(expr0.span.lo());
+                                }
+                            }
+                            self.print_expr(expr0);
                         }
                         self.word(":");
                         if let Some(expr1) = expr1 {
                             self.print_expr(expr1);
                         }
+                        self.print_comments(span.hi());
                     }
                 }
+                self.end();
                 self.word("]");
             }
             ast::ExprKind::Lit(lit, unit) => {
@@ -1417,7 +1423,7 @@ impl<'ast> State<'_, 'ast> {
                     let ast::TryCatchClause { args, block, span: try_span, .. } = first;
                     self.ibox(0);
                     self.word("try ");
-                    self.print_inline_comments(expr.span.lo());
+                    self.print_mixed_comments(expr.span.lo());
                     self.print_expr(expr);
                     self.print_comments_skip_ws(
                         args.first().map(|p| p.span.lo()).unwrap_or_else(|| expr.span.lo()),
@@ -1450,10 +1456,10 @@ impl<'ast> State<'_, 'ast> {
                             self.handle_try_catch_indent(&mut should_break, block.is_empty(), pos);
                         }
                         self.ibox(0);
-                        self.print_inline_comments(catch_span.lo());
+                        self.print_mixed_comments(catch_span.lo());
                         self.word("catch ");
                         if !args.is_empty() {
-                            self.print_inline_comments(args[0].span.lo());
+                            self.print_mixed_comments(args[0].span.lo());
                             if let Some(name) = name {
                                 self.print_ident(name);
                             }
