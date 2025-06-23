@@ -387,6 +387,8 @@ derive_ast_eq! { (0 A, 1 B) }
 derive_ast_eq! { (0 A, 1 B, 2 C) }
 derive_ast_eq! { (0 A, 1 B, 2 C, 3 D) }
 derive_ast_eq! { (0 A, 1 B, 2 C, 3 D, 4 E) }
+derive_ast_eq! { (0 A, 1 B, 2 C, 3 D, 4 E, 5 F) }
+derive_ast_eq! { (0 A, 1 B, 2 C, 3 D, 4 E, 5 F, 6 G) }
 derive_ast_eq! { bool }
 derive_ast_eq! { u8 }
 derive_ast_eq! { u16 }
@@ -413,7 +415,7 @@ derive_ast_eq! { struct VariableDeclaration { loc, ty, storage, name } }
 derive_ast_eq! { struct Using { loc, list, ty, global } }
 derive_ast_eq! { struct UsingFunction { loc, path, oper } }
 derive_ast_eq! { struct TypeDefinition { loc, name, ty } }
-derive_ast_eq! { struct ContractDefinition { loc, ty, name, base, parts } }
+derive_ast_eq! { struct ContractDefinition { loc, ty, name, base, layout, parts } }
 derive_ast_eq! { struct EventParameter { loc, ty, indexed, name } }
 derive_ast_eq! { struct ErrorParameter { loc, ty, name } }
 derive_ast_eq! { struct EventDefinition { loc, name, fields, anonymous } }
@@ -421,6 +423,13 @@ derive_ast_eq! { struct ErrorDefinition { loc, keyword, name, fields } }
 derive_ast_eq! { struct StructDefinition { loc, name, fields } }
 derive_ast_eq! { struct EnumDefinition { loc, name, values } }
 derive_ast_eq! { struct Annotation { loc, id, value } }
+derive_ast_eq! { enum PragmaDirective {
+    _
+    Identifier(loc, id1, id2),
+    StringLiteral(loc, id, lit),
+    Version(loc, id, version),
+    _
+}}
 derive_ast_eq! { enum UsingList {
     Error,
     _
@@ -480,6 +489,7 @@ derive_ast_eq! { enum StorageLocation {
     Memory(loc),
     Storage(loc),
     Calldata(loc),
+    Transient(loc),
     _
 }}
 derive_ast_eq! { enum Type {
@@ -615,7 +625,7 @@ derive_ast_eq! { enum YulSwitchOptions {
 derive_ast_eq! { enum SourceUnitPart {
     _
     ContractDefinition(def),
-    PragmaDirective(loc, ident, string),
+    PragmaDirective(pragma),
     ImportDirective(import),
     EnumDefinition(def),
     StructDefinition(def),
@@ -679,5 +689,20 @@ derive_ast_eq! { enum VariableAttribute {
     Constant(loc),
     Immutable(loc),
     Override(loc, idents),
+    StorageType(st),
+    StorageLocation(st),
     _
 }}
+
+// Who cares
+impl AstEq for StorageType {
+    fn ast_eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl AstEq for VersionComparator {
+    fn ast_eq(&self, _other: &Self) -> bool {
+        true
+    }
+}

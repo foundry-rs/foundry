@@ -1,6 +1,5 @@
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, ContentArrangement, Table};
 use revm_primitives::{
-    eof::{EofBody, EofHeader},
     Eof,
 };
 use std::fmt::{self, Write};

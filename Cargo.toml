@@ -27,7 +27,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.1.0"
+version = "1.2.3"
 edition = "2021"
 # Remember to update clippy.toml as well
 rust-version = "1.83"
@@ -99,7 +99,7 @@ foundry-compilers.opt-level = 3
 serde_json.opt-level = 3
 serde.opt-level = 3
 
-solang-parser.opt-level = 3
+foundry-solang-parser.opt-level = 3
 lalrpop-util.opt-level = 3
 
 solar-ast.opt-level = 3
@@ -188,10 +188,10 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.13.0", default-features = false }
+foundry-block-explorers = { version = "0.13.3", default-features = false }
 foundry-compilers = { version = "0.14.0", default-features = false }
 foundry-fork-db = "0.12"
-solang-parser = "=0.3.3"
+solang-parser = { version = "=0.3.9", package = "foundry-solang-parser" }
 solar-parse = { version = "=0.1.2", default-features = false }
 solar-sema = { version = "=0.1.2", default-features = false }
 

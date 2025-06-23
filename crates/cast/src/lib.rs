@@ -36,7 +36,6 @@ use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
 use futures::{future::Either, FutureExt, StreamExt};
 use rayon::prelude::*;
-use revm::primitives::Eof;
 use std::{
     borrow::Cow,
     fmt::Write,
@@ -137,7 +136,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// let state_override_object = StateOverridesBuilder::default().build();
     ///
     /// let cast = Cast::new(alloy_provider);
-    /// let data = cast.call(&tx, None, None, state_override_object).await?;
+    /// let data = cast.call(&tx, None, None, Some(state_override_object)).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
@@ -147,15 +146,14 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         req: &WithOtherFields<TransactionRequest>,
         func: Option<&Function>,
         block: Option<BlockId>,
-        state_override: StateOverride,
+        state_override: Option<StateOverride>,
     ) -> Result<String> {
-        let res = self
-            .provider
-            .call(req.clone())
-            .block(block.unwrap_or_default())
-            .overrides(state_override)
-            .await?;
+        let mut call = self.provider.call(req.clone()).block(block.unwrap_or_default());
+        if let Some(state_override) = state_override {
+            call = call.overrides(state_override)
+        }
 
+        let res = call.await?;
         let mut decoded = vec![];
 
         if let Some(func) = func {
@@ -2218,24 +2216,6 @@ impl SimpleCast {
         let tx_hex = hex::decode(tx)?;
         let tx = TxEnvelope::decode_2718(&mut tx_hex.as_slice())?;
         Ok(tx)
-    }
-
-    /// Decodes EOF container bytes
-    /// Pretty prints the decoded EOF container contents
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// let eof = "0xef0001010004020001005604002000008000046080806040526004361015e100035f80fd5f3560e01c63773d45e01415e1ffee6040600319360112e10028600435906024358201809211e100066020918152f3634e487b7160e01b5f52601160045260245ffd5f80fd0000000000000000000000000124189fc71496f8660db5189f296055ed757632";
-    /// let decoded = Cast::decode_eof(&eof)?;
-    /// println!("{}", decoded);
-    /// # Ok::<(), eyre::Report>(())
-    pub fn decode_eof(eof: &str) -> Result<String> {
-        let eof_hex = hex::decode(eof)?;
-        let eof = Eof::decode(eof_hex.into())?;
-        Ok(pretty_eof(&eof)?)
     }
 }
 

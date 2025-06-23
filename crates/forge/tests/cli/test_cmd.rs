@@ -3308,9 +3308,9 @@ Traces:
     ├─ [0] VM::label(alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6], "alice")
     │   └─ ← [Return]
     ├─ [0] VM::signDelegation(0x0000000000000000000000000000000000000000, "<pk>")
-    │   └─ ← [Return] (0, 0x3d6ad67cc3dc94101a049f85f96937513a05485ae0f8b27545d25c4f71b12cf9, 0x3c0f2d62834f59d6ef0209e8a935f80a891a236eb18ac0e3700dd8f7ac8ae279, 0, 0x0000000000000000000000000000000000000000)
+    │   └─ ← [Return] (0, 0x38db2a0ada75402af7cd5bdb8248a1a5b4fec65fdafea4f935084f00dc2ff3c5, 0x29ce7b1c82f9ceaec21f12d690ba8fe6ecba65869caf6ab2d85d79890dc42df2, 1, 0x0000000000000000000000000000000000000000)
     ├─ [0] VM::signAndAttachDelegation(0x0000000000000000000000000000000000000000, "<pk>")
-    │   └─ ← [Return] (0, 0x3d6ad67cc3dc94101a049f85f96937513a05485ae0f8b27545d25c4f71b12cf9, 0x3c0f2d62834f59d6ef0209e8a935f80a891a236eb18ac0e3700dd8f7ac8ae279, 0, 0x0000000000000000000000000000000000000000)
+    │   └─ ← [Return] (0, 0x38db2a0ada75402af7cd5bdb8248a1a5b4fec65fdafea4f935084f00dc2ff3c5, 0x29ce7b1c82f9ceaec21f12d690ba8fe6ecba65869caf6ab2d85d79890dc42df2, 1, 0x0000000000000000000000000000000000000000)
     └─ ← [Stop]
 ...
 
@@ -3523,6 +3523,7 @@ contract InterceptInitcodeTest is DSTest {
 });
 
 // <https://github.com/foundry-rs/foundry/issues/10296>
+// <https://github.com/foundry-rs/foundry/issues/10552>
 forgetest_init!(should_preserve_fork_state_setup, |prj, cmd| {
     prj.wipe_contracts();
     prj.add_test(
@@ -3551,6 +3552,13 @@ contract CounterTest is Test {
     mapping(uint256 => SomeStruct) internal data;
 
     function setUp() public {
+        // Temporary workaround for `https://eth.llamarpc.com/` being down
+        setChain("mainnet", ChainData({
+            name: "mainnet",
+            rpcUrl: "https://reth-ethereum.ithaca.xyz/rpc",
+            chainId: 1
+        }));
+
         StdChains.Chain memory chain1 = getChain("mainnet");
         StdChains.Chain memory chain2 = getChain("base");
         Domain memory domain1 = Domain(chain1, vm.createFork(chain1.rpcUrl, 22253716));
@@ -3597,6 +3605,50 @@ Ran 2 tests for test/Counter.t.sol:CounterTest
 Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10544>
+forgetest_init!(should_not_panic_on_cool, |prj, cmd| {
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CounterTest is Test {
+    Counter counter = new Counter();
+
+    function testCoolPanic() public {
+        address alice = makeAddr("alice");
+        vm.deal(alice, 10000 ether);
+        counter.setNumber(1);
+        vm.cool(address(counter));
+        vm.prank(alice);
+        payable(address(counter)).transfer(1 ether);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mc", "CounterTest"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/Counter.t.sol:CounterTest
+[FAIL: EvmError: Revert] testCoolPanic() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/Counter.t.sol:CounterTest
+[FAIL: EvmError: Revert] testCoolPanic() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
 
 "#]]);
 });

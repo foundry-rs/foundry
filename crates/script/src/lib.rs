@@ -26,6 +26,7 @@ use dialoguer::Confirm;
 use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
+use foundry_block_explorers::EtherscanApiVersion;
 use foundry_cli::{
     opts::{BuildOpts, GlobalArgs},
     utils::LoadConfig,
@@ -181,6 +182,10 @@ pub struct ScriptArgs {
     /// The Etherscan (or equivalent) API key
     #[arg(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     pub etherscan_api_key: Option<String>,
+
+    /// The Etherscan API version.
+    #[arg(long, env = "ETHERSCAN_API_VERSION", value_name = "VERSION")]
+    pub etherscan_api_version: Option<EtherscanApiVersion>,
 
     /// Verifies all the contracts found in the receipts of a script, if any.
     #[arg(long)]
@@ -495,6 +500,9 @@ impl Provider for ScriptArgs {
                 "etherscan_api_key".to_string(),
                 figment::value::Value::from(etherscan_api_key.to_string()),
             );
+        }
+        if let Some(api_version) = &self.etherscan_api_version {
+            dict.insert("etherscan_api_version".to_string(), api_version.to_string().into());
         }
         if let Some(timeout) = self.timeout {
             dict.insert("transaction_timeout".to_string(), timeout.into());

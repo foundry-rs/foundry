@@ -1102,11 +1102,27 @@ impl DatabaseExt for Backend {
             // update the shared state and track
             let mut fork = self.inner.take_fork(idx);
 
-            // Make sure all persistent accounts on the newly selected fork starts from the init
-            // state (from setup).
-            for addr in &self.inner.persistent_accounts {
-                if let Some(account) = self.fork_init_journaled_state.state.get(addr) {
-                    fork.journaled_state.state.insert(*addr, account.clone());
+            // Make sure all persistent accounts on the newly selected fork reflect same state as
+            // the active db / previous fork.
+            // This can get out of sync when multiple forks are created on test `setUp`, then a
+            // fork is selected and persistent contract is changed. If first action in test is to
+            // select a different fork, then the persistent contract state won't reflect changes
+            // done in `setUp` for the other fork.
+            // See <https://github.com/foundry-rs/foundry/issues/10296> and <https://github.com/foundry-rs/foundry/issues/10552>.
+            let persistent_accounts = self.inner.persistent_accounts.clone();
+            if let Some(db) = self.active_fork_db_mut() {
+                for addr in persistent_accounts {
+                    let Ok(db_account) = db.load_account(addr) else { continue };
+
+                    let Some(fork_account) = fork.journaled_state.state.get_mut(&addr) else {
+                        continue
+                    };
+
+                    for (key, val) in &db_account.storage {
+                        if let Some(fork_storage) = fork_account.storage.get_mut(key) {
+                            fork_storage.present_value = *val;
+                        }
+                    }
                 }
             }
 

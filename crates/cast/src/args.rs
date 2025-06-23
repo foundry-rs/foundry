@@ -627,7 +627,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             };
         }
         CastSubcommand::HashMessage { message } => {
-            let message = stdin::unwrap_line(message)?;
+            let message = stdin::unwrap(message, false)?;
             sh_println!("{}", eip191_hash_message(message))?
         }
         CastSubcommand::SigEvent { event_string } => {
@@ -714,10 +714,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             } else {
                 sh_println!("{}", serde_json::to_string_pretty(&tx)?)?;
             }
-        }
-        CastSubcommand::DecodeEof { eof } => {
-            let eof = stdin::unwrap_line(eof)?;
-            sh_println!("{}", SimpleCast::decode_eof(&eof)?)?
         }
         CastSubcommand::TxPool { command } => command.run().await?,
     };

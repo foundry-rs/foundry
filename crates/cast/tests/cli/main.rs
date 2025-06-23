@@ -9,7 +9,7 @@ use anvil::{EthereumHardfork, NodeConfig};
 use foundry_test_utils::{
     rpc::{
         next_etherscan_api_key, next_http_archive_rpc_url, next_http_rpc_endpoint,
-        next_mainnet_etherscan_api_key, next_rpc_endpoint, next_ws_rpc_endpoint,
+        next_rpc_endpoint, next_ws_rpc_endpoint,
     },
     str,
     util::OutputExt,
@@ -1328,6 +1328,17 @@ Error: Must specify a recipient address or contract code to deploy
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/9918>
+casttest!(send_7702_conflicts_with_create, |_prj, cmd| {
+    cmd.args([
+        "send", "--private-key", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" ,"--auth", "0xf85c827a6994f39fd6e51aad88f6f4ce6ab8827279cfffb922668001a03e1a66234e71242afcc7bc46c8950c3b2997b102db257774865f1232d2e7bf48a045e252dad189b27b2306792047745eba86bff0dd18aca813dbf3fba8c4e94576", "--create",  "0x60806040523373ffffffffffffffffffffffffffffffffffffffff163273ffffffffffffffffffffffffffffffffffffffff1614610072576040517f08c379a0000000000000000000000000000000000000000000000000000000008152600401610069906100e5565b60405180910390fd5b3373ffffffffffffffffffffffffffffffffffffffff16ff5b5f82825260208201905092915050565b7f74782e6f726967696e203d3d206d73672e73656e6465720000000000000000005f82015250565b5f6100cf60178361008b565b91506100da8261009b565b602082019050919050565b5f6020820190508181035f8301526100fc816100c3565b905091905056fe"
+    ]);
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: EIP-7702 transactions can't be CREATE transactions and require a destination address
+
+"#]]);
+});
+
 casttest!(storage, |_prj, cmd| {
     let rpc = next_http_archive_rpc_url();
     cmd.args(["storage", "vitalik.eth", "1", "--rpc-url", &rpc]).assert_success().stdout_eq(str![
@@ -1388,7 +1399,7 @@ casttest!(storage_layout_simple, |_prj, cmd| {
         "--block",
         "21034138",
         "--etherscan-api-key",
-        next_mainnet_etherscan_api_key().as_str(),
+        next_etherscan_api_key().as_str(),
         "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
     ])
     .assert_success()
@@ -1415,7 +1426,7 @@ casttest!(storage_layout_simple_json, |_prj, cmd| {
         "--block",
         "21034138",
         "--etherscan-api-key",
-        next_mainnet_etherscan_api_key().as_str(),
+        next_etherscan_api_key().as_str(),
         "0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2",
         "--json",
     ])
@@ -1432,7 +1443,7 @@ casttest!(storage_layout_complex, |_prj, cmd| {
         "--block",
         "21034138",
         "--etherscan-api-key",
-        next_mainnet_etherscan_api_key().as_str(),
+        next_etherscan_api_key().as_str(),
         "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
     ])
     .assert_success()
@@ -1480,7 +1491,7 @@ casttest!(storage_layout_complex_proxy, |_prj, cmd| {
         "--block",
         "7857852",
         "--etherscan-api-key",
-        next_mainnet_etherscan_api_key().as_str(),
+        next_etherscan_api_key().as_str(),
         "0xE2588A9CAb7Ea877206E35f615a39f84a64A7A3b",
         "--proxy",
         "0x29fcb43b46531bca003ddc8fcb67ffe91900c762"
@@ -1522,7 +1533,7 @@ casttest!(storage_layout_complex_json, |_prj, cmd| {
         "--block",
         "21034138",
         "--etherscan-api-key",
-        next_mainnet_etherscan_api_key().as_str(),
+        next_etherscan_api_key().as_str(),
         "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
         "--json",
     ])
@@ -1611,7 +1622,7 @@ casttest!(fetch_weth_interface_from_etherscan, |_prj, cmd| {
     cmd.args([
         "interface",
         "--etherscan-api-key",
-        &next_mainnet_etherscan_api_key(),
+        &next_etherscan_api_key(),
         "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
     ])
     .assert_success()
@@ -1890,7 +1901,7 @@ casttest!(fetch_creation_code_from_etherscan, |_prj, cmd| {
     cmd.args([
         "creation-code",
         "--etherscan-api-key",
-        &next_mainnet_etherscan_api_key(),
+        &next_etherscan_api_key(),
         "0x0923cad07f06b2d0e5e49e63b8b35738d4156b95",
         "--rpc-url",
         eth_rpc_url.as_str(),
@@ -1909,7 +1920,7 @@ casttest!(fetch_creation_code_only_args_from_etherscan, |_prj, cmd| {
     cmd.args([
         "creation-code",
         "--etherscan-api-key",
-        &next_mainnet_etherscan_api_key(),
+        &next_etherscan_api_key(),
         "0x6982508145454ce325ddbe47a25d4ec3d2311933",
         "--rpc-url",
         eth_rpc_url.as_str(),
@@ -1929,7 +1940,7 @@ casttest!(fetch_constructor_args_from_etherscan, |_prj, cmd| {
     cmd.args([
         "constructor-args",
         "--etherscan-api-key",
-        &next_mainnet_etherscan_api_key(),
+        &next_etherscan_api_key(),
         "0x6982508145454ce325ddbe47a25d4ec3d2311933",
         "--rpc-url",
         eth_rpc_url.as_str(),
@@ -1950,7 +1961,7 @@ casttest!(test_non_mainnet_traces, |prj, cmd| {
         "--rpc-url",
         next_rpc_endpoint(NamedChain::Optimism).as_str(),
         "--etherscan-api-key",
-        next_etherscan_api_key(NamedChain::Optimism).as_str(),
+        next_etherscan_api_key().as_str(),
     ])
     .assert_success()
     .stdout_eq(str![[r#"
@@ -1973,7 +1984,7 @@ casttest!(fetch_artifact_from_etherscan, |_prj, cmd| {
     cmd.args([
         "artifact",
         "--etherscan-api-key",
-        &next_mainnet_etherscan_api_key(),
+        &next_etherscan_api_key(),
         "0x0923cad07f06b2d0e5e49e63b8b35738d4156b95",
         "--rpc-url",
         eth_rpc_url.as_str(),
@@ -2454,7 +2465,7 @@ contract WETH9 {
 
 casttest!(fetch_src_default, |_prj, cmd| {
     let weth = address!("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-    let etherscan_api_key = next_mainnet_etherscan_api_key();
+    let etherscan_api_key = next_etherscan_api_key();
 
     cmd.args(["source", &weth.to_string(), "--flatten", "--etherscan-api-key", &etherscan_api_key])
         .assert_success()
@@ -2534,6 +2545,16 @@ contract SimpleStorageScript is Script {
         ])
         .assert_failure().stderr_eq(str![[r#"
 Error: Failed to estimate gas: server returned an error response: error code 3: execution reverted: custom error 0x6786ad34: 000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000000000000003e8, data: "0x6786ad34000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000000000000003e8": AddressInsufficientBalance(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, 1000)
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10705>
+casttest!(cast_call_return_array_of_tuples, |_prj, cmd| {
+    cmd.args(["call", "0x198FC70Dfe05E755C81e54bd67Bff3F729344B9b", "facets() returns ((address,bytes4[])[])", "--rpc-url", "https://rpc.viction.xyz"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[(0x9640977264aec6d4e9af381F548eee11b9e27aAe, [0x1f931c1c]), (0x395db83A04cC3d3F6C5eFc73896929Cf10D0F301, [0xcdffacc6, 0x52ef6b2c, 0xadfca15e, 0x7a0ed627, 0x01ffc9a7]), (0xC6F7b47F870024B0E2DF6DFd551E10c4A37A1cEa, [0x23452b9c, 0x7200b829, 0x8da5cb5b, 0xf2fde38b]), (0xc1f27c1f6c87e73e089Ffac23C236Fc4A9E3fccc, [0x1458d7ad, 0xd9caed12]), (0x70e272A93bc8344277a1f4390Ea6153A1D5fe450, [0x536db266, 0xfbb2d381, 0xfcd8e49e, 0x9afc19c7, 0x44e2b18c, 0x2d2506a9, 0x124f1ead, 0xc3a6a96b]), (0x662BCADB7A2CBb22367b2471d8A91E5b13FCe96B, [0x612ad9cb, 0xa4c3366e]), (0x190e03D49Ce76DDabC634a98629EDa6246aB5196, [0xa516f0f3, 0x5c2ed36a]), (0xAF69C0E3BBBf6AdE78f1466f86DfF86d64C8dA2A, [0x4630a0d8]), (0xD1317DA862AC5C145519E60D24372dc186EF7426, [0xd5bcb610, 0x5fd9ae2e, 0x2c57e884, 0x736eac0b, 0x4666fc80, 0x733214a3, 0xaf7060fd]), (0x176f558949e2a7C5217dD9C27Bf7A43c6783ee28, [0x7f99d7af, 0x103c5200, 0xc318eeda, 0xee0aa320, 0xdf1c3a5b, 0x070e81f1, 0xd53482cf, 0xf58ae2ce]), (0x531d69A3fAb6CB56A77B8402E6c217cB9cC902A9, [0xf86368ae, 0x5ad317a4, 0x0340e905, 0x2fc487ae])]
 
 "#]]);
 });

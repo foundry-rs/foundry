@@ -54,7 +54,8 @@ pub fn transaction_request_to_typed(
                 access_list,
                 sidecar,
                 transaction_type,
-                ..
+                authorization_list,
+                chain_id: _,
             },
         other,
     } = tx;
@@ -72,6 +73,23 @@ pub fn transaction_request_to_typed(
             gas_limit: gas.unwrap_or_default(),
             is_system_transaction: other.get_deserialized::<bool>("isSystemTx")?.ok()?,
             input: input.into_input().unwrap_or_default(),
+        }));
+    }
+
+    // EIP7702
+    if transaction_type == Some(4) || authorization_list.is_some() {
+        return Some(TypedTransactionRequest::EIP7702(TxEip7702 {
+            nonce: nonce.unwrap_or_default(),
+            max_fee_per_gas: max_fee_per_gas.unwrap_or_default(),
+            max_priority_fee_per_gas: max_priority_fee_per_gas.unwrap_or_default(),
+            gas_limit: gas.unwrap_or_default(),
+            value: value.unwrap_or(U256::ZERO),
+            input: input.into_input().unwrap_or_default(),
+            // requires to
+            to: to?.into_to()?,
+            chain_id: 0,
+            access_list: access_list.unwrap_or_default(),
+            authorization_list: authorization_list.unwrap(),
         }));
     }
 
@@ -173,6 +191,7 @@ pub enum TypedTransactionRequest {
     Legacy(TxLegacy),
     EIP2930(TxEip2930),
     EIP1559(TxEip1559),
+    EIP7702(TxEip7702),
     EIP4844(TxEip4844Variant),
     Deposit(TxDeposit),
 }
@@ -575,37 +594,6 @@ pub enum TypedTransaction {
     EIP7702(Signed<TxEip7702>),
     /// op-stack deposit transaction
     Deposit(DepositTransaction),
-}
-
-/// This is a function that demotes TypedTransaction to TransactionRequest for greater flexibility
-/// over the type.
-///
-/// This function is purely for convenience and specific use cases, e.g. RLP encoded transactions
-/// decode to TypedTransactions where the API over TypedTransctions is quite strict.
-impl TryFrom<TypedTransaction> for TransactionRequest {
-    type Error = ConversionError;
-
-    fn try_from(value: TypedTransaction) -> Result<Self, Self::Error> {
-        let from =
-            value.recover().map_err(|_| ConversionError::Custom("InvalidSignature".to_string()))?;
-        let essentials = value.essentials();
-        let tx_type = value.r#type();
-        Ok(Self {
-            from: Some(from),
-            to: Some(value.kind()),
-            gas_price: essentials.gas_price,
-            max_fee_per_gas: essentials.max_fee_per_gas,
-            max_priority_fee_per_gas: essentials.max_priority_fee_per_gas,
-            max_fee_per_blob_gas: essentials.max_fee_per_blob_gas,
-            gas: Some(essentials.gas_limit),
-            value: Some(essentials.value),
-            input: essentials.input.into(),
-            nonce: Some(essentials.nonce),
-            chain_id: essentials.chain_id,
-            transaction_type: tx_type,
-            ..Default::default()
-        })
-    }
 }
 
 impl TryFrom<AnyRpcTransaction> for TypedTransaction {

@@ -1149,7 +1149,7 @@ impl NodeConfig {
         env: &mut EnvWithHandlerCfg,
         fees: &FeeManager,
     ) -> Result<(ForkedDatabase, ClientForkConfig)> {
-        // TODO make provider agnostic
+        debug!(target: "node", ?eth_rpc_url, "setting up fork db");
         let provider = Arc::new(
             ProviderBuilder::new(&eth_rpc_url)
                 .timeout(self.fork_request_timeout)
@@ -1327,6 +1327,8 @@ latest block number: {latest_block}"
             blob_excess_gas_and_price: env.block.blob_excess_gas_and_price.clone(),
             force_transactions,
         };
+
+        debug!(target: "node", fork_number=config.block_number, fork_hash=%config.block_hash, "set up fork db");
 
         let mut db = ForkedDatabase::new(backend, block_chain_db);
 
