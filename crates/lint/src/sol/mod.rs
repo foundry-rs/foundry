@@ -1,8 +1,8 @@
 use crate::{
-    comments::Comments,
     inline_config::{InlineConfig, InlineConfigItem},
     linter::{EarlyLintPass, EarlyLintVisitor, Lint, LintContext, Linter},
 };
+use foundry_common::comments::Comments;
 use foundry_compilers::{solc::SolcLanguage, ProjectPathsConfig};
 use foundry_config::lint::Severity;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
