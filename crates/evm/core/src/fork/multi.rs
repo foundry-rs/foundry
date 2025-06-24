@@ -6,7 +6,7 @@
 use super::CreateFork;
 use crate::Env;
 use alloy_consensus::BlockHeader;
-use alloy_primitives::map::HashMap;
+use alloy_primitives::{map::HashMap, U256};
 use alloy_provider::network::BlockResponse;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_config::Config;
@@ -150,7 +150,7 @@ impl MultiFork {
     }
 
     /// Updates block number and timestamp of given fork with new values.
-    pub fn update_block(&self, fork: ForkId, number: u64, timestamp: u64) -> eyre::Result<()> {
+    pub fn update_block(&self, fork: ForkId, number: U256, timestamp: U256) -> eyre::Result<()> {
         trace!(?fork, ?number, ?timestamp, "update fork block");
         self.handler
             .clone()
