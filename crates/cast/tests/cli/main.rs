@@ -2852,3 +2852,18 @@ casttest!(tx_raw_opstack_deposit, |_prj, cmd| {
 
 "#]]);
 });
+
+casttest!(recover_authority, |_prj, cmd| {
+    let auth = r#"{
+        "chainId": "0x1",
+        "address": "0xb684710e6d5914ad6e64493de2a3c424cc43e970",
+        "nonce": "0x3dc1",
+        "yParity": "0x1",
+        "r": "0x2f15ba55009fcd3682cd0f9c9645dd94e616f9a969ba3f1a5a2d871f9fe0f2b4",
+        "s": "0x53c332a83312d0b17dd4c16eeb15b1ff5223398b14e0a55c70762e8f3972b7a5"
+    }"#;
+    cmd.args(["recover-authority", auth]).assert_success().stdout_eq(str![[r#"
+0x17816E9A858b161c3E37016D139cf618056CaCD4
+
+"#]]);
+});
