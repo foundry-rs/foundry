@@ -2226,6 +2226,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "boxcar"
+version = "0.2.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26c4925bc979b677330a8c7fe7a8c94af2dbb4a2d37b4a20a80d884400f46baa"
+
+[[package]]
 name = "bs58"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3922,6 +3928,7 @@ dependencies = [
  "heck",
  "rayon",
  "solar-ast",
+ "solar-data-structures",
  "solar-interface",
  "solar-parse",
  "thiserror 2.0.12",
@@ -4983,10 +4990,6 @@ name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
-dependencies = [
- "ahash",
- "allocator-api2",
-]
 
 [[package]]
 name = "hashbrown"
@@ -5464,6 +5467,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "inturn"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62f17d4bce58d4380de6432e6b1a0ebb561dfbbe21fc123204870b7006189677"
+dependencies = [
+ "boxcar",
+ "bumpalo",
+ "dashmap",
+ "hashbrown 0.14.5",
+ "thread_local",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5708,16 +5724,6 @@ checksum = "b5baa5e9ff84f1aefd264e6869907646538a52147a755d494517a8007fb48733"
 dependencies = [
  "regex-automata 0.4.9",
  "rustversion",
-]
-
-[[package]]
-name = "lasso"
-version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e14eda50a3494b3bf7b9ce51c52434a761e383d7238ce1dd5dcec2fbc13e9fb"
-dependencies = [
- "dashmap",
- "hashbrown 0.14.5",
 ]
 
 [[package]]
@@ -8641,8 +8647,7 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "acb0d9abd88c1325e5c0f9bb153ebfb02ed40bc9639067d0ad120f5d29ee8777"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#06653a27f6bb75538e38af9583f6fd57e9976fcc"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -8660,8 +8665,7 @@ dependencies = [
 [[package]]
 name = "solar-config"
 version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "908d455bb7c04acd783bd157b63791bf010cf6a495a845e48f7aee334aad319f"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#06653a27f6bb75538e38af9583f6fd57e9976fcc"
 dependencies = [
  "strum 0.27.1",
 ]
@@ -8669,8 +8673,7 @@ dependencies = [
 [[package]]
 name = "solar-data-structures"
 version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8b5a697cab81241c4623b4546c69e57182202847a75d7c0047c0dd10b923d8c"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#06653a27f6bb75538e38af9583f6fd57e9976fcc"
 dependencies = [
  "bumpalo",
  "index_vec",
@@ -8684,8 +8687,7 @@ dependencies = [
 [[package]]
 name = "solar-interface"
 version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33e49e5a714ec80d7f9c8942584e5e86add1c5e824aa175d0681e9ac7a10e5cc"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#06653a27f6bb75538e38af9583f6fd57e9976fcc"
 dependencies = [
  "annotate-snippets",
  "anstream",
@@ -8694,9 +8696,9 @@ dependencies = [
  "derive_builder",
  "derive_more 2.0.1",
  "dunce",
- "itertools 0.13.0",
+ "inturn",
+ "itertools 0.10.5",
  "itoa",
- "lasso",
  "match_cfg",
  "normalize-path",
  "rayon",
@@ -8714,8 +8716,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e17f8b99f28f358b41acb6efe4d7b8f326541b3c58a15dd1931d6fe581feefef"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#06653a27f6bb75538e38af9583f6fd57e9976fcc"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8725,13 +8726,12 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6982ef2ecfb1338c774c743ab7166ce8c3dcc92089ab77fad58eeb632b201e9"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#06653a27f6bb75538e38af9583f6fd57e9976fcc"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.9.1",
  "bumpalo",
- "itertools 0.13.0",
+ "itertools 0.10.5",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -8746,8 +8746,7 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe8e0a3a6dfc7f4987bfb93f9b56079150407ef55c459964a1541c669554b74d"
+source = "git+https://github.com/paradigmxyz/solar.git?branch=main#06653a27f6bb75538e38af9583f6fd57e9976fcc"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",

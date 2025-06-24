@@ -33,7 +33,7 @@ declare_forge_lint!(
 impl<'ast> EarlyLintPass<'ast> for MixedCaseVariable {
     fn check_variable_definition(
         &mut self,
-        ctx: &mut LintContext<'_>,
+        ctx: &LintContext<'_>,
         var: &'ast VariableDefinition<'ast>,
     ) {
         if var.mutability.is_none() {

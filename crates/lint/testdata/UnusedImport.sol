@@ -22,7 +22,7 @@ import {
 } from "Types.sol";
 
 import "SomeFile.sol";
-import "AnotherFile.sol"; //~NOTE: unused imports should be removed
+import "AnotherFile.sol";
 
 import "some_file_2.sol" as SomeFile2;
 import "another_file_2.sol" as AnotherFile2; //~NOTE: unused imports should be removed

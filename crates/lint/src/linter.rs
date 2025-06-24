@@ -1,8 +1,8 @@
 use foundry_compilers::Language;
 use foundry_config::lint::Severity;
 use solar_ast::{
-    visit::Visit, Expr, ImportDirective, ItemContract, ItemFunction, ItemStruct, Symbol,
-    UsingDirective, VariableDefinition,
+    visit::Visit, Expr, ImportDirective, ItemContract, ItemFunction, ItemStruct, SourceUnit,
+    Symbol, UsingDirective, VariableDefinition,
 };
 use solar_interface::{
     data_structures::Never,
@@ -93,36 +93,47 @@ pub trait EarlyLintPass<'ast>: Send + Sync {
     fn check_item_function(&mut self, _ctx: &LintContext<'_>, _func: &'ast ItemFunction<'ast>) {}
     fn check_variable_definition(
         &mut self,
-        _ctx: &mut LintContext<'_>,
+        _ctx: &LintContext<'_>,
         _var: &'ast VariableDefinition<'ast>,
     ) {
     }
     fn check_import_directive(
         &mut self,
-        _ctx: &mut LintContext<'_>,
+        _ctx: &LintContext<'_>,
         _import: &'ast ImportDirective<'ast>,
     ) {
     }
     fn check_using_directive(
         &mut self,
-        _ctx: &mut LintContext<'_>,
+        _ctx: &LintContext<'_>,
         _using: &'ast UsingDirective<'ast>,
     ) {
     }
-    fn check_item_contract(
-        &mut self,
-        _ctx: &mut LintContext<'_>,
-        _contract: &'ast ItemContract<'ast>,
-    ) {
+    fn check_item_contract(&mut self, _ctx: &LintContext<'_>, _contract: &'ast ItemContract<'ast>) {
     }
-
     // TODO: Add methods for each required AST node type
+
+    /// Called after the entire source unit has been visited.
+    /// This allows lints to perform analysis that requires seeing the whole AST.
+    fn check_full_source_unit(&mut self, _ctx: &LintContext<'_>, _ast: &'ast SourceUnit<'ast>) {}
 }
 
 /// Visitor struct for `EarlyLintPass`es
 pub struct EarlyLintVisitor<'a, 's, 'ast> {
-    pub ctx: &'a mut LintContext<'s>,
+    pub ctx: &'a LintContext<'s>,
     pub passes: &'a mut [Box<dyn EarlyLintPass<'ast> + 's>],
+}
+
+/// Extends the [`Visit`] trait with an additional hook that runs after the initial traversal.
+impl<'s, 'ast> EarlyLintVisitor<'_, 's, 'ast>
+where
+    's: 'ast,
+{
+    pub fn post_source_unit(&mut self, ast: &'ast SourceUnit<'ast>) {
+        for pass in self.passes.iter_mut() {
+            pass.check_full_source_unit(self.ctx, ast);
+        }
+    }
 }
 
 impl<'s, 'ast> Visit<'ast> for EarlyLintVisitor<'_, 's, 'ast>

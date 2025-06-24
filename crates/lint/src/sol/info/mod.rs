@@ -13,7 +13,7 @@ mod screaming_snake_case;
 use screaming_snake_case::{SCREAMING_SNAKE_CASE_CONSTANT, SCREAMING_SNAKE_CASE_IMMUTABLE};
 
 mod unused_import;
-pub use unused_import::UNUSED_IMPORT;
+use unused_import::UNUSED_IMPORT;
 
 register_lints!(
     (PascalCaseStruct, (PASCAL_CASE_STRUCT)),

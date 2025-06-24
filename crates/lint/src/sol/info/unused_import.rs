@@ -1,4 +1,6 @@
-use solar_ast::{Expr, ExprKind, ImportItems, PathSlice, Symbol, TypeKind, UsingList};
+use solar_ast::{self as ast, visit::Visit, SourceUnit, Span, Symbol};
+use solar_data_structures::map::FxIndexSet;
+use std::ops::ControlFlow;
 
 use super::UnusedImport;
 use crate::{
@@ -15,99 +17,113 @@ declare_forge_lint!(
 );
 
 impl<'ast> EarlyLintPass<'ast> for UnusedImport {
-    /// Collects all the file imports and caches them in `LintContext`.
-    fn check_import_directive(
-        &mut self,
-        ctx: &mut LintContext<'_>,
-        import: &'ast solar_ast::ImportDirective<'ast>,
-    ) {
-        match import.items {
-            ImportItems::Aliases(ref items) => {
-                for item in &**items {
-                    let (name, span) = if let Some(ref i) = &item.1 {
-                        (&i.name, &i.span)
-                    } else {
-                        (&item.0.name, &item.0.span)
-                    };
+    fn check_full_source_unit(&mut self, ctx: &LintContext<'_>, ast: &'ast SourceUnit<'ast>) {
+        let mut checker = UnusedChecker::new();
+        let _ = checker.visit_source_unit(ast);
+        checker.check_unused_imports(ast, ctx);
+        checker.clear();
+    }
+}
 
-                    ctx.add_import((*name, *span));
+/// Visitor that collects all used symbols in a source unit.
+/// This is the first pass of the 2-pass approach.
+struct UnusedChecker {
+    used_symbols: FxIndexSet<Symbol>,
+}
+
+impl UnusedChecker {
+    fn new() -> Self {
+        Self { used_symbols: Default::default() }
+    }
+
+    fn clear(&mut self) {
+        self.used_symbols.clear();
+    }
+
+    /// Mark a symbol as used in a source.
+    fn mark_symbol_used(&mut self, symbol: Symbol) {
+        self.used_symbols.insert(symbol);
+    }
+
+    /// Check for unused imports and emit warnings.
+    fn check_unused_imports(&self, ast: &SourceUnit<'_>, ctx: &LintContext<'_>) {
+        for (span, import) in ast.imports() {
+            match &import.items {
+                ast::ImportItems::Plain(_) | ast::ImportItems::Glob(_) => {
+                    if let Some(alias) = import.source_alias() {
+                        if !self.used_symbols.contains(&alias.name) {
+                            self.unused_import(ctx, span);
+                        }
+                    }
+                }
+                ast::ImportItems::Aliases(symbols) => {
+                    for &(orig, alias) in symbols.iter() {
+                        let name = alias.unwrap_or(orig);
+                        if !self.used_symbols.contains(&name.name) {
+                            self.unused_import(ctx, orig.span.to(name.span));
+                        }
+                    }
                 }
             }
-            ImportItems::Glob(ref ident) => {
-                ctx.add_import((ident.name, ident.span));
-            }
-            ImportItems::Plain(ref maybe) => match maybe {
-                Some(ident) => ctx.add_import((ident.name, ident.span)),
-                None => {
-                    let path = import.path.value.to_string();
-                    let len = path.len() - 4;
-                    ctx.add_import((Symbol::intern(&path[..len]), import.path.span));
-                }
-            },
         }
     }
 
-    /// Marks contract modifiers as used, effectively removing them from the `LintContext` cache.
-    fn check_item_contract(
-        &mut self,
-        ctx: &mut LintContext<'_>,
-        contract: &'ast solar_ast::ItemContract<'ast>,
-    ) {
-        for modifier in &*contract.bases {
-            use_import_type(ctx, &modifier.name);
+    fn unused_import(&self, ctx: &LintContext<'_>, span: Span) {
+        ctx.emit(&UNUSED_IMPORT, span);
+    }
+}
+
+impl<'ast> Visit<'ast> for UnusedChecker {
+    type BreakValue = solar_data_structures::Never;
+
+    fn visit_item(&mut self, item: &'ast ast::Item<'ast>) -> ControlFlow<Self::BreakValue> {
+        if let ast::ItemKind::Import(_) = &item.kind {
+            return ControlFlow::Continue(());
         }
+
+        self.walk_item(item)
     }
 
-    /// Marks variable definitions (both, variable type and initializer name) as used,
-    /// effectively removing them from the `LintContext` cache.
-    fn check_variable_definition(
+    fn visit_using_directive(
         &mut self,
-        ctx: &mut LintContext<'_>,
-        var: &'ast solar_ast::VariableDefinition<'ast>,
-    ) {
-        if let TypeKind::Custom(ty) = &var.ty.kind {
-            use_import_type(ctx, ty);
-        }
-
-        if let Some(expr) = &var.initializer {
-            use_import_expr(ctx, expr);
-        }
-    }
-
-    /// Marks the types in a using directive as used, effectively removing them from the
-    /// `LintContext` cache.
-    fn check_using_directive(
-        &mut self,
-        ctx: &mut LintContext<'_>,
-        using: &'ast solar_ast::UsingDirective<'ast>,
-    ) {
+        using: &'ast ast::UsingDirective<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
         match &using.list {
-            UsingList::Single(ty) => use_import_type(ctx, ty),
-            UsingList::Multiple(types) => {
-                for (ty, _operator) in &**types {
-                    use_import_type(ctx, ty);
+            ast::UsingList::Single(path) => {
+                self.mark_symbol_used(path.first().name);
+            }
+            ast::UsingList::Multiple(items) => {
+                for (path, _) in items.iter() {
+                    self.mark_symbol_used(path.first().name);
                 }
             }
         }
-    }
-}
 
-/// Marks the type as used.
-/// If the type has more than one segment, it marks both, the first, and the last one.
-fn use_import_type(ctx: &mut LintContext<'_>, ty: &&mut PathSlice) {
-    ctx.use_import(ty.last().name);
-    if ty.segments().len() != 1 {
-        ctx.use_import(ty.first().name);
+        self.walk_using_directive(using)
     }
-}
 
-/// Marks the type as used.
-/// If the type has more than one segment, it marks both, the first, and the last one.
-fn use_import_expr<'ast>(ctx: &mut LintContext<'_>, expr: &&mut Expr<'ast>) {
-    match &expr.kind {
-        ExprKind::Ident(ident) => ctx.use_import(ident.name),
-        ExprKind::Member(ref expr, _) => use_import_expr(ctx, expr),
-        ExprKind::Call(ref expr, _) => use_import_expr(ctx, expr),
-        _ => (),
+    fn visit_modifier(
+        &mut self,
+        modifier: &'ast ast::Modifier<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
+        self.mark_symbol_used(modifier.name.first().name);
+
+        self.walk_modifier(modifier)
+    }
+
+    fn visit_expr(&mut self, expr: &'ast ast::Expr<'ast>) -> ControlFlow<Self::BreakValue> {
+        if let ast::ExprKind::Ident(id) = expr.kind {
+            self.mark_symbol_used(id.name);
+        }
+
+        self.walk_expr(expr)
+    }
+
+    fn visit_ty(&mut self, ty: &'ast ast::Type<'ast>) -> ControlFlow<Self::BreakValue> {
+        if let ast::TypeKind::Custom(path) = &ty.kind {
+            self.mark_symbol_used(path.first().name);
+        }
+
+        self.walk_ty(ty)
     }
 }
