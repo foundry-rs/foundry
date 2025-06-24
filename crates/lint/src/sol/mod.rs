@@ -1,7 +1,6 @@
 use crate::linter::{EarlyLintPass, EarlyLintVisitor, Lint, LintContext, Linter};
 use foundry_compilers::{solc::SolcLanguage, ProjectPathsConfig};
 use foundry_config::lint::Severity;
-
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use solar_ast::{visit::Visit, Arena};
 use solar_interface::{
@@ -74,6 +73,10 @@ impl SolidityLinter {
         let arena = Arena::new();
 
         let _ = sess.enter(|| -> Result<(), diagnostics::ErrorGuaranteed> {
+            // Initialize the parser and get the AST
+            let mut parser = solar_parse::Parser::from_file(sess, &arena, file)?;
+            let ast = parser.parse_file().map_err(|e| e.emit())?;
+
             // Declare all available passes and lints
             let mut passes_and_lints = Vec::new();
             passes_and_lints.extend(high::create_lint_passes());
@@ -85,44 +88,36 @@ impl SolidityLinter {
                 passes_and_lints.extend(gas::create_lint_passes());
             }
 
-            // Initialize the parser and get the AST
-            let mut parser = solar_parse::Parser::from_file(sess, &arena, file)?;
-            let ast = parser.parse_file().map_err(|e| e.emit())?;
+            // Filter based on linter config
+            let mut passes: Vec<Box<dyn EarlyLintPass<'_>>> = passes_and_lints
+                .into_iter()
+                .filter_map(|(pass, lint)| {
+                    let matches_severity = match self.severity {
+                        Some(ref target) => target.contains(&lint.severity()),
+                        None => true,
+                    };
+                    let matches_lints_inc = match self.lints_included {
+                        Some(ref target) => target.contains(&lint),
+                        None => true,
+                    };
+                    let matches_lints_exc = match self.lints_excluded {
+                        Some(ref target) => target.contains(&lint),
+                        None => false,
+                    };
+
+                    if matches_severity && matches_lints_inc && !matches_lints_exc {
+                        Some(pass)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
 
             // Initialize and run the visitor
             let ctx = LintContext::new(sess, self.with_description);
-
-            // Run regular passes in a limited scope
-            {
-                // Filter based on linter config
-                let mut passes: Vec<Box<dyn EarlyLintPass<'_>>> = passes_and_lints
-                    .into_iter()
-                    .filter_map(|(pass, lint)| {
-                        let matches_severity = match self.severity {
-                            Some(ref target) => target.contains(&lint.severity()),
-                            None => true,
-                        };
-                        let matches_lints_inc = match self.lints_included {
-                            Some(ref target) => target.contains(&lint),
-                            None => true,
-                        };
-                        let matches_lints_exc = match self.lints_excluded {
-                            Some(ref target) => target.contains(&lint),
-                            None => false,
-                        };
-
-                        if matches_severity && matches_lints_inc && !matches_lints_exc {
-                            Some(pass)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                let mut visitor = EarlyLintVisitor { ctx: &ctx, passes: &mut passes };
-                _ = visitor.visit_source_unit(&ast);
-                visitor.post_source_unit(&ast);
-            }
+            let mut visitor = EarlyLintVisitor { ctx: &ctx, passes: &mut passes };
+            _ = visitor.visit_source_unit(&ast);
+            visitor.post_source_unit(&ast);
 
             Ok(())
         });

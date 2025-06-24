@@ -90,8 +90,8 @@ pub trait EarlyLintPass<'ast>: Send + Sync {
     }
     // TODO: Add methods for each required AST node type
 
-    /// Called after the entire source unit has been visited.
-    /// This allows lints to perform analysis that requires seeing the whole AST.
+    /// Should be called after the source unit has been visited. Enables lints that require
+    /// knowledge of the entire AST to perform their analysis.
     fn check_full_source_unit(&mut self, _ctx: &LintContext<'_>, _ast: &'ast SourceUnit<'ast>) {}
 }
 
@@ -101,7 +101,7 @@ pub struct EarlyLintVisitor<'a, 's, 'ast> {
     pub passes: &'a mut [Box<dyn EarlyLintPass<'ast> + 's>],
 }
 
-/// Extends the [`Visit`] trait with an additional hook that runs after the initial traversal.
+/// Extends the [`Visit`] trait functionality with a hook that can run after the initial traversal.
 impl<'s, 'ast> EarlyLintVisitor<'_, 's, 'ast>
 where
     's: 'ast,

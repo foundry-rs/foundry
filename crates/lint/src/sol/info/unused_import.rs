@@ -26,7 +26,6 @@ impl<'ast> EarlyLintPass<'ast> for UnusedImport {
 }
 
 /// Visitor that collects all used symbols in a source unit.
-/// This is the first pass of the 2-pass approach.
 struct UnusedChecker {
     used_symbols: FxIndexSet<Symbol>,
 }
