@@ -535,7 +535,7 @@ async fn create_fork(mut fork: CreateFork) -> eyre::Result<(ForkId, CreatedFork,
     let db = BlockchainDb::new(meta, cache_path);
     let (backend, handler) = SharedBackend::new(provider, db, Some(number.into()));
     let fork = CreatedFork::new(fork, backend);
-    let fork_id = ForkId::new(&fork.opts.url, number.into());
+    let fork_id = ForkId::new(&fork.opts.url, Some(U256::from(number)));
 
     Ok((fork_id, fork, handler))
 }

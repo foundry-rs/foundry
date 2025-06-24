@@ -97,7 +97,7 @@ pub trait CheatcodesExecutor {
             let frame = FrameInput::Create(Box::new(inputs));
 
             let outcome = match evm.run_execution(frame)? {
-                FrameResult::Call(_) | FrameResult::EOFCreate(_) => unreachable!(),
+                FrameResult::Call(_) => unreachable!(),
                 FrameResult::Create(create) => create,
             };
 
@@ -311,7 +311,7 @@ impl ArbitraryStorage {
     pub fn save(&mut self, ecx: Ecx, address: Address, slot: U256, data: U256) {
         self.values.get_mut(&address).expect("missing arbitrary address entry").insert(slot, data);
         if let Ok(mut account) = ecx.journaled_state.load_account(address) {
-            account.storage.insert(slot, EvmStorageSlot::new(data));
+            account.storage.insert(slot, EvmStorageSlot::new(data, 0));
         }
     }
 
@@ -329,14 +329,14 @@ impl ArbitraryStorage {
                 storage_cache.insert(slot, new_value);
                 // Update source storage with new value.
                 if let Ok(mut source_account) = ecx.journaled_state.load_account(*source) {
-                    source_account.storage.insert(slot, EvmStorageSlot::new(new_value));
+                    source_account.storage.insert(slot, EvmStorageSlot::new(new_value, 0));
                 }
                 new_value
             }
         };
         // Update target storage with new value.
         if let Ok(mut target_account) = ecx.journaled_state.load_account(target) {
-            target_account.storage.insert(slot, EvmStorageSlot::new(value));
+            target_account.storage.insert(slot, EvmStorageSlot::new(value, 0));
         }
         value
     }
