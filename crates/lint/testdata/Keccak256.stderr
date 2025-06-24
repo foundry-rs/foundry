@@ -1,15 +1,47 @@
 note[asm-keccak256]: hash using inline assembly to save gas
   --> ROOT/testdata/Keccak256.sol:LL:CC
    |
-22 |         keccak256(abi.encodePacked(a, b));
+14 |         keccak256(abi.encodePacked(a, b)); // before disabled block
    |         ---------
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
 
+note[mixed-case-variable]: mutable variables should use mixedCase
+  --> ROOT/testdata/Keccak256.sol:LL:CC
+   |
+15 |         uint256 MixedCase_Variable = 1;
+   |                 ------------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+
+note[mixed-case-variable]: mutable variables should use mixedCase
+  --> ROOT/testdata/Keccak256.sol:LL:CC
+   |
+21 |         uint256 Another_MixedCase = 2;
+   |                 -----------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+
 note[asm-keccak256]: hash using inline assembly to save gas
   --> ROOT/testdata/Keccak256.sol:LL:CC
    |
-32 |         bytes32 hash = keccak256(a);
+30 |         keccak256(abi.encodePacked(a, b)); // after disabled block
+   |         ---------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+
+note[mixed-case-variable]: mutable variables should use mixedCase
+  --> ROOT/testdata/Keccak256.sol:LL:CC
+   |
+31 |         uint256 YetAnother_MixedCase = 3;
+   |                 --------------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+
+note[asm-keccak256]: hash using inline assembly to save gas
+  --> ROOT/testdata/Keccak256.sol:LL:CC
+   |
+41 |         bytes32 hash = keccak256(a);
    |                        ---------
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
@@ -17,16 +49,32 @@ note[asm-keccak256]: hash using inline assembly to save gas
 note[asm-keccak256]: hash using inline assembly to save gas
   --> ROOT/testdata/Keccak256.sol:LL:CC
    |
-33 |         return keccak256(abi.encodePacked(a, b));
+42 |         return keccak256(abi.encodePacked(a, b));
    |                ---------
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
 
+note[mixed-case-variable]: mutable variables should use mixedCase
+  --> ROOT/testdata/Keccak256.sol:LL:CC
+   |
+57 |     uint256 Enabled_MixedCase_Variable;
+   |             --------------------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+
 note[asm-keccak256]: hash using inline assembly to save gas
   --> ROOT/testdata/Keccak256.sol:LL:CC
    |
-59 |         return keccak256(abi.encodePacked(a, b));
+70 |         return keccak256(abi.encodePacked(a, b));
    |                ---------
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+
+note[mixed-case-variable]: mutable variables should use mixedCase
+  --> ROOT/testdata/Keccak256.sol:LL:CC
+   |
+75 |         uint256 Enabled_MixedCase_Variable = 1;
+   |                 --------------------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
 

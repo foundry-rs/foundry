@@ -186,7 +186,7 @@ fn parse_inline_config<'ast>(
         }
         let item = item.trim_start().strip_prefix("forge-lint:")?.trim();
         let span = comment.span;
-        match item.parse::<InlineConfigItem>() {
+        match InlineConfigItem::parse(item, lints) {
             Ok(item) => Some((span, item)),
             Err(e) => {
                 sess.dcx.warn(e.to_string()).span(span).emit();
@@ -195,14 +195,7 @@ fn parse_inline_config<'ast>(
         }
     });
 
-    let (inline_config, invalid_lints) = InlineConfig::new(items, lints, ast, src);
-
-    for (ids, span) in &invalid_lints {
-        let msg = format!("unknown lint id: '{}'", ids.join("', '"));
-        sess.dcx.warn(msg).span(*span).emit();
-    }
-
-    inline_config
+    InlineConfig::new(items, ast, src)
 }
 
 #[derive(Error, Debug)]

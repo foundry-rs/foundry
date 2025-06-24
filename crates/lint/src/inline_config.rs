@@ -1,6 +1,6 @@
 use solar_ast::{visit::Visit, Item, SourceUnit};
 use solar_parse::ast::Span;
-use std::{collections::HashMap, fmt, marker::PhantomData, ops::ControlFlow, str::FromStr};
+use std::{collections::HashMap, fmt, marker::PhantomData, ops::ControlFlow};
 
 /// An inline config item
 #[derive(Clone, Debug)]
@@ -17,18 +17,36 @@ pub enum InlineConfigItem {
     DisableEnd(Vec<String>),
 }
 
-impl FromStr for InlineConfigItem {
-    type Err = InvalidInlineConfigItem;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+impl InlineConfigItem {
+    /// Parse an inline config item from a string. Validates lint IDs against available lints.
+    pub fn parse(s: &str, available_lints: &[&str]) -> Result<Self, InvalidInlineConfigItem> {
         let (disable, relevant) = s.split_once('(').unwrap_or((s, ""));
         let lints = if relevant.is_empty() || relevant == "all)" {
             vec!["all".to_string()]
         } else {
             match relevant.split_once(')') {
                 Some((lint, _)) => lint.split(",").map(|s| s.trim().to_string()).collect(),
-                None => return Err(InvalidInlineConfigItem(s.into())),
+                None => return Err(InvalidInlineConfigItem::Syntax(s.into())),
             }
         };
+
+        // Validate lint IDs
+        let mut invalid_ids = Vec::new();
+        'ids: for id in &lints {
+            if id == "all" {
+                continue;
+            }
+            for lint in available_lints {
+                if *lint == id {
+                    continue 'ids;
+                }
+            }
+            invalid_ids.push(id.to_owned());
+        }
+
+        if !invalid_ids.is_empty() {
+            return Err(InvalidInlineConfigItem::LintIds(invalid_ids));
+        }
 
         let res = match disable {
             "disable-next-item" => Self::DisableNextItem(lints),
@@ -36,7 +54,7 @@ impl FromStr for InlineConfigItem {
             "disable-next-line" => Self::DisableNextLine(lints),
             "disable-start" => Self::DisableStart(lints),
             "disable-end" => Self::DisableEnd(lints),
-            s => return Err(InvalidInlineConfigItem(s.into())),
+            s => return Err(InvalidInlineConfigItem::Syntax(s.into())),
         };
 
         Ok(res)
@@ -44,11 +62,19 @@ impl FromStr for InlineConfigItem {
 }
 
 #[derive(Debug)]
-pub struct InvalidInlineConfigItem(String);
+pub enum InvalidInlineConfigItem {
+    Syntax(String),
+    LintIds(Vec<String>),
+}
 
 impl fmt::Display for InvalidInlineConfigItem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid inline config item: {}", self.0)
+        match self {
+            Self::Syntax(s) => write!(f, "invalid inline config item: {s}"),
+            Self::LintIds(ids) => {
+                write!(f, "unknown lint id: '{}'", ids.join("', '"))
+            }
+        }
     }
 }
 
@@ -83,11 +109,9 @@ impl InlineConfig {
     /// Panics if `items` is not sorted in ascending order of [`Span`]s.
     pub fn new<'ast>(
         items: impl IntoIterator<Item = (Span, InlineConfigItem)>,
-        lints: &[&'static str],
         ast: &'ast SourceUnit<'ast>,
         src: &str,
-    ) -> (Self, Vec<(Vec<String>, Span)>) {
-        let mut invalid_ids: Vec<(Vec<String>, Span)> = Vec::new();
+    ) -> Self {
         let mut disabled_ranges: HashMap<String, Vec<DisabledRange>> = HashMap::new();
         let mut disabled_blocks: HashMap<String, (usize, usize)> = HashMap::new();
 
@@ -99,12 +123,7 @@ impl InlineConfig {
             }
 
             match item {
-                InlineConfigItem::DisableNextItem(lint) => {
-                    let lints = match validate_ids(&mut invalid_ids, lints, lint, sp) {
-                        Some(lints) => lints,
-                        None => continue,
-                    };
-
+                InlineConfigItem::DisableNextItem(lints) => {
                     let comment_end = sp.hi().to_usize();
 
                     if let Some(next_item) = NextItemFinder::new(comment_end).find(ast) {
@@ -117,12 +136,7 @@ impl InlineConfig {
                         }
                     };
                 }
-                InlineConfigItem::DisableLine(lint) => {
-                    let lints = match validate_ids(&mut invalid_ids, lints, lint, sp) {
-                        Some(lints) => lints,
-                        None => continue,
-                    };
-
+                InlineConfigItem::DisableLine(lints) => {
                     let mut prev_newline = src[..sp.lo().to_usize()]
                         .char_indices()
                         .rev()
@@ -142,12 +156,7 @@ impl InlineConfig {
                         })
                     }
                 }
-                InlineConfigItem::DisableNextLine(ids) => {
-                    let lints = match validate_ids(&mut invalid_ids, lints, ids, sp) {
-                        Some(lints) => lints,
-                        None => continue,
-                    };
-
+                InlineConfigItem::DisableNextLine(lints) => {
                     let offset = sp.hi().to_usize();
                     let mut char_indices =
                         src[offset..].char_indices().skip_while(|(_, ch)| *ch != '\n').skip(1);
@@ -166,22 +175,15 @@ impl InlineConfig {
                         }
                     }
                 }
-                InlineConfigItem::DisableStart(ids) => {
-                    if let Some(lints) = validate_ids(&mut invalid_ids, lints, ids, sp) {
-                        for lint in lints {
-                            disabled_blocks
-                                .entry(lint)
-                                .and_modify(|(_, depth)| *depth += 1)
-                                .or_insert((sp.hi().to_usize(), 1));
-                        }
+                InlineConfigItem::DisableStart(lints) => {
+                    for lint in lints {
+                        disabled_blocks
+                            .entry(lint)
+                            .and_modify(|(_, depth)| *depth += 1)
+                            .or_insert((sp.hi().to_usize(), 1));
                     }
                 }
-                InlineConfigItem::DisableEnd(ids) => {
-                    let lints = match validate_ids(&mut invalid_ids, lints, ids, sp) {
-                        Some(lint) => lint,
-                        None => continue,
-                    };
-
+                InlineConfigItem::DisableEnd(lints) => {
                     for lint in lints {
                         if let Some((start, depth)) = disabled_blocks.get_mut(&lint) {
                             *depth = depth.saturating_sub(1);
@@ -210,7 +212,7 @@ impl InlineConfig {
             });
         }
 
-        (Self { disabled_ranges }, invalid_ids)
+        Self { disabled_ranges }
     }
 
     /// Check if the lint location is in a disabled range.
@@ -228,70 +230,35 @@ impl InlineConfig {
     }
 }
 
-/// Check if a set of lints contains a given (inline) lint id. If not, the invalid collector is
-/// updated.
-///
-/// Returns a boolan, so that the item can be skipped if the lint id is invalid.
-fn validate_ids(
-    invalid_ids: &mut Vec<(Vec<String>, Span)>,
-    lints: &[&'static str],
-    ids: Vec<String>,
-    span: Span,
-) -> Option<Vec<String>> {
-    let mut not_found = Vec::new();
-    'ids: for id in &ids {
-        for lint in lints {
-            if *lint == id {
-                continue 'ids;
-            }
-        }
-        not_found.push(id.to_owned());
-    }
-
-    if not_found.is_empty() {
-        Some(ids)
-    } else {
-        invalid_ids.push((not_found, span));
-
-        None
-    }
-}
-
 /// An AST visitor that finds the first `Item` that starts after a given offset.
 #[derive(Debug, Default)]
 struct NextItemFinder<'ast> {
     /// The offset to search after.
     offset: usize,
-    /// The span of the found item, if any.
-    found_span: Option<Span>,
     _pd: PhantomData<&'ast ()>,
 }
 
 impl<'ast> NextItemFinder<'ast> {
     fn new(offset: usize) -> Self {
-        Self { offset, found_span: None, _pd: PhantomData }
+        Self { offset, _pd: PhantomData }
     }
 
     /// Finds the next AST item which a span that begins after the `offset`.
     fn find(&mut self, ast: &'ast SourceUnit<'ast>) -> Option<Span> {
-        for item in ast.items.iter() {
-            if let ControlFlow::Break(()) = self.visit_item(item) {
-                break;
-            }
+        match self.visit_source_unit(ast) {
+            ControlFlow::Break(span) => Some(span),
+            ControlFlow::Continue(()) => None,
         }
-
-        self.found_span
     }
 }
 
 impl<'ast> Visit<'ast> for NextItemFinder<'ast> {
-    type BreakValue = ();
+    type BreakValue = Span;
 
     fn visit_item(&mut self, item: &'ast Item<'ast>) -> ControlFlow<Self::BreakValue> {
         // Check if this item starts after the offset.
         if item.span.lo().to_usize() > self.offset {
-            self.found_span = Some(item.span);
-            return ControlFlow::Break(());
+            return ControlFlow::Break(item.span);
         }
 
         // Otherwise, continue traversing inside this item.
