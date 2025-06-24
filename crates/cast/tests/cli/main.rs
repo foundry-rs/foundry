@@ -2838,6 +2838,26 @@ casttest!(cast_call_return_array_of_tuples, |_prj, cmd| {
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/7541>
+casttest!(cast_call_on_contract_with_no_code_prints_warning, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    cmd.args([
+        "call",
+        "0x0000000000000000000000000000000000000000",
+        "--rpc-url",
+        eth_rpc_url.as_str(),
+    ])
+    .assert_success()
+    .stderr_eq(str![[r#"
+Warning: Contract code is empty
+
+"#]])
+    .stdout_eq(str![[r#"
+0x
+
+"#]]);
+});
+
 // <https://github.com/foundry-rs/foundry/issues/10740>
 casttest!(tx_raw_opstack_deposit, |_prj, cmd| {
     cmd.args([

@@ -315,12 +315,13 @@ impl CallArgs {
             return Ok(());
         }
 
-        sh_println!(
-            "{}",
-            Cast::new(provider)
-                .call(&tx, func.as_ref(), block, state_overrides, block_overrides)
-                .await?
-        )?;
+        let response = Cast::new(provider)
+            .call(&tx, func.as_ref(), block, state_overrides, block_overrides)
+            .await?;
+        if response == "0x" {
+            sh_warn!("Contract code is empty")?;
+        }
+        sh_println!("{}", response)?;
 
         Ok(())
     }
