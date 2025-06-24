@@ -1,6 +1,6 @@
 use crate::{utils::apply_chain_and_block_specific_env_changes, AsEnvMut, Env, EvmEnv};
 use alloy_consensus::BlockHeader;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use alloy_provider::{network::BlockResponse, Network, Provider};
 use alloy_rpc_types::BlockNumberOrTag;
 use eyre::WrapErr;
@@ -56,8 +56,8 @@ pub async fn environment<N: Network, P: Provider<N>>(
         evm_env: EvmEnv {
             cfg_env: cfg,
             block_env: BlockEnv {
-                number: block.header().number(),
-                timestamp: block.header().timestamp(),
+                number: U256::from(block.header().number()),
+                timestamp: U256::from(block.header().timestamp()),
                 beneficiary: block.header().beneficiary(),
                 difficulty: block.header().difficulty(),
                 prevrandao: block.header().mix_hash(),

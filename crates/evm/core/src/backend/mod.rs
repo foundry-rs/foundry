@@ -24,7 +24,10 @@ use revm::{
     database::{CacheDB, DatabaseRef},
     inspector::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
-    primitives::{hardfork::SpecId, HashMap as Map, Log, KECCAK_EMPTY},
+    primitives::{
+        eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE, hardfork::SpecId, HashMap as Map, Log,
+        KECCAK_EMPTY,
+    },
     state::{Account, AccountInfo, EvmState, EvmStorageSlot},
     Database, DatabaseCommit, JournalEntry,
 };
@@ -178,7 +181,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
     fn roll_fork(
         &mut self,
         id: Option<LocalForkId>,
-        block_number: u64,
+        block_number: U256,
         env: &mut EnvMut<'_>,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()>;
@@ -1169,7 +1172,7 @@ impl DatabaseExt for Backend {
     fn roll_fork(
         &mut self,
         id: Option<LocalForkId>,
-        block_number: u64,
+        block_number: U256,
         env: &mut EnvMut<'_>,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
@@ -1244,7 +1247,7 @@ impl DatabaseExt for Backend {
             self.get_block_number_and_block_for_transaction(id, transaction)?;
 
         // roll the fork to the transaction's block or latest if it's pending
-        self.roll_fork(Some(id), fork_block, env, journaled_state)?;
+        self.roll_fork(Some(id), U256::from(fork_block), env, journaled_state)?;
 
         update_env_block(env, &block);
 
@@ -1947,9 +1950,10 @@ fn update_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock) {
     env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
     env.block.gas_limit = block.header.gas_limit;
     env.block.number = U256::from(block.header.number);
+
     if let Some(excess_blob_gas) = block.header.excess_blob_gas {
         env.block.blob_excess_gas_and_price =
-            Some(BlobExcessGasAndPrice::new(excess_blob_gas, false));
+            Some(BlobExcessGasAndPrice::new(excess_blob_gas, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE));
     }
 }
 
@@ -2042,7 +2046,7 @@ mod tests {
 
         let config = Config::figment();
         let mut evm_opts = config.extract::<EvmOpts>().unwrap();
-        evm_opts.fork_block_number = Some(block_num);
+        evm_opts.fork_block_number = Some(U256::from(block_num));
 
         let (env, _block) = evm_opts.fork_evm_env(endpoint).await.unwrap();
 

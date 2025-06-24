@@ -35,7 +35,7 @@ pub struct ForkId(pub String);
 
 impl ForkId {
     /// Returns the identifier for a Fork from a URL and block number.
-    pub fn new(url: &str, num: Option<u64>) -> Self {
+    pub fn new(url: &str, num: Option<U256>) -> Self {
         let mut id = url.to_string();
         id.push('@');
         match num {
@@ -131,7 +131,7 @@ impl MultiFork {
     pub fn roll_fork(
         &self,
         fork: ForkId,
-        block: u64,
+        block: U256,
     ) -> eyre::Result<(ForkId, SharedBackend, Env)> {
         trace!(?fork, ?block, "rolling fork");
         let (sender, rx) = oneshot_channel();
@@ -196,11 +196,11 @@ enum Request {
     /// Returns the Fork backend for the `ForkId` if it exists.
     GetFork(ForkId, OneshotSender<Option<SharedBackend>>),
     /// Adjusts the block that's being forked, by creating a new fork at the new block.
-    RollFork(ForkId, u64, CreateSender),
+    RollFork(ForkId, U256, CreateSender),
     /// Returns the environment of the fork.
     GetEnv(ForkId, GetEnvSender),
     /// Updates the block number and timestamp of the fork.
-    UpdateBlock(ForkId, u64, u64),
+    UpdateBlock(ForkId, U256, U256),
     /// Shutdowns the entire `MultiForkHandler`, see `ShutDownMultiFork`
     ShutDown(OneshotSender<()>),
     /// Returns the Fork Url for the `ForkId` if it exists.
@@ -302,7 +302,7 @@ impl MultiForkHandler {
 
     /// Update fork block number and timestamp. Used to preserve values set by `roll` and `warp`
     /// cheatcodes when new fork selected.
-    fn update_block(&mut self, fork_id: ForkId, block_number: u64, block_timestamp: u64) {
+    fn update_block(&mut self, fork_id: ForkId, block_number: U256, block_timestamp: U256) {
         if let Some(fork) = self.forks.get_mut(&fork_id) {
             fork.opts.env.evm_env.block_env.number = block_number;
             fork.opts.env.evm_env.block_env.timestamp = block_timestamp;

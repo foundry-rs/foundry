@@ -25,7 +25,7 @@ pub struct EvmOpts {
     pub fork_url: Option<String>,
 
     /// Pins the block number for the state fork.
-    pub fork_block_number: Option<u64>,
+    pub fork_block_number: Option<U256>,
 
     /// The number of retries.
     pub fork_retries: Option<u32>,
@@ -278,10 +278,10 @@ pub struct Env {
     pub block_coinbase: Address,
 
     /// the block.timestamp value during EVM execution
-    pub block_timestamp: u64,
+    pub block_timestamp: U256,
 
     /// the block.number value during EVM execution"
-    pub block_number: u64,
+    pub block_number: U256,
 
     /// the block.difficulty value during EVM execution
     pub block_difficulty: u64,
