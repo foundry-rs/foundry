@@ -2369,6 +2369,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-contract",
  "alloy-dyn-abi",
+ "alloy-eips",
  "alloy-ens",
  "alloy-hardforks",
  "alloy-json-abi",
