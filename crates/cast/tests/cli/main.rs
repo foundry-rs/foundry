@@ -2867,4 +2867,3 @@ casttest!(recover_authority, |_prj, cmd| {
 
 "#]]);
 });
-
