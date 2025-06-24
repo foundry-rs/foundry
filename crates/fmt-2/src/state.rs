@@ -97,6 +97,7 @@ impl<'sess> State<'sess, '_> {
                 break;
             }
             let cmnt = self.next_comment().unwrap();
+            println!("{cmnt:?}");
             if skip_ws && cmnt.style == CommentStyle::BlankLine {
                 continue;
             }
@@ -1237,13 +1238,37 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::ExprKind::Ternary(cond, then, els) => {
                 self.s.cbox(self.ind);
+                // conditional expression
+                self.s.ibox(0);
+                self.print_comments(cond.span.lo());
                 self.print_expr(cond);
-                self.space();
+                let cmnt = self.peek_comment_before(then.span.lo());
+                if cmnt.is_some() {
+                    self.space();
+                }
+                self.print_comments(then.span.lo());
+                self.end();
+                if !self.is_bol_or_only_ind() {
+                    self.space();
+                }
+                // then expression
+                self.s.ibox(0);
                 self.word("? ");
                 self.print_expr(then);
-                self.space();
+                let cmnt = self.peek_comment_before(els.span.lo());
+                if cmnt.is_some() {
+                    self.space();
+                }
+                self.print_comments(els.span.lo());
+                self.end();
+                if !self.is_bol_or_only_ind() {
+                    self.space();
+                }
+                // then expression
+                self.s.ibox(0);
                 self.word(": ");
                 self.print_expr(els);
+                self.end();
                 self.neverbreak();
                 self.s.offset(-self.ind);
                 self.end();

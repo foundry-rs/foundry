@@ -7,7 +7,6 @@ use solar_parse::{
     lexer::token::RawTokenKind as TokenKind,
 };
 use std::fmt;
-use tracing::instrument::WithSubscriber;
 
 pub struct Comments {
     comments: std::vec::IntoIter<Comment>,
@@ -66,9 +65,7 @@ fn normalize_block_comment(s: &str, col: CharPos) -> &str {
 fn split_block_comment_into_lines(text: &str, is_doc: bool, col: CharPos) -> Vec<String> {
     let mut res: Vec<String> = vec![];
     let mut lines = text.lines();
-    // Just push the first line
     res.extend(lines.next().map(|it| it.to_string()));
-    // For other lines, strip common whitespace prefix
     for (pos, line) in lines.into_iter().delimited() {
         let mut line = normalize_block_comment(line, col).to_string();
         // For regular block comments, just normalize whitespace
