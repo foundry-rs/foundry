@@ -262,8 +262,8 @@ op-alloy-flz = "0.13.1"
 
 ## revm
 revm = { version = "26.0.1", default-features = false }
-revm-inspectors = { version = "0.23.0", features = ["serde"] }
-op-revm = { version = "6.0.0", default-features = false }
+revm-inspectors = { version = "0.25.0", features = ["serde"] }
+op-revm = { version = "7.0.1", default-features = false }
 
 ## alloy-evm
 alloy-evm = "0.12.3"
@@ -405,7 +405,7 @@ zip-extract = "=0.2.1"
 ## revm
 # revm = { git = "https://github.com/bluealloy/revm.git", rev = "b5808253" }
 # op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "b5808253" }
-revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "956bc98" }
+# revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "956bc98" }
 
 ## foundry
 # foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "e4a9b04" }
