@@ -2,7 +2,7 @@ use solar_ast::{self as ast, visit::Visit, SourceUnit, Span, Symbol};
 use solar_data_structures::map::FxIndexSet;
 use std::ops::ControlFlow;
 
-use super::UnusedImport;
+use super::Imports;
 use crate::{
     declare_forge_lint,
     linter::{EarlyLintPass, LintContext},
@@ -16,7 +16,27 @@ declare_forge_lint!(
     "unused imports should be removed"
 );
 
-impl<'ast> EarlyLintPass<'ast> for UnusedImport {
+declare_forge_lint!(
+    UNALIASED_PLAIN_IMPORT,
+    Severity::Info,
+    "unaliased-plain-import",
+    "use named imports '{A, B}' or alias 'import \"..\" as X'"
+);
+
+impl<'ast> EarlyLintPass<'ast> for Imports {
+    fn check_import_directive(
+        &mut self,
+        ctx: &LintContext<'_>,
+        import: &'ast ast::ImportDirective<'ast>,
+    ) {
+        // Non-aliased plain imports like `import "File.sol";`.
+        if let ast::ImportItems::Plain(_) = &import.items {
+            if import.source_alias().is_none() {
+                ctx.emit(&UNALIASED_PLAIN_IMPORT, import.path.span);
+            }
+        }
+    }
+
     fn check_full_source_unit(&mut self, ctx: &LintContext<'_>, ast: &'ast SourceUnit<'ast>) {
         let mut checker = UnusedChecker::new();
         let _ = checker.visit_source_unit(ast);

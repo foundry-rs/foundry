@@ -21,8 +21,8 @@ import {
     YetAnotherType //~NOTE: unused imports should be removed
 } from "Types.sol";
 
-import "SomeFile.sol";
-import "AnotherFile.sol";
+import "SomeFile.sol"; //~NOTE: use named imports '{A, B}' or alias 'import ".." as X'
+import "AnotherFile.sol"; //~NOTE: use named imports '{A, B}' or alias 'import ".." as X'
 
 import "some_file_2.sol" as SomeFile2;
 import "another_file_2.sol" as AnotherFile2; //~NOTE: unused imports should be removed
