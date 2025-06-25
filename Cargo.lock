@@ -4090,6 +4090,7 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "foundry-test-utils",
+ "rayon",
  "serde",
  "serde_json",
  "tempfile",

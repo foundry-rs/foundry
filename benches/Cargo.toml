@@ -29,6 +29,7 @@ serde_json.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
+rayon.workspace = true
 
 [dev-dependencies]
 foundry-test-utils.workspace = true

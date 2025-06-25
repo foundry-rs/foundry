@@ -26,6 +26,20 @@ pub static BENCHMARK_REPOS: &[RepoConfig] = &[
 ];
 
 /// Foundry versions to benchmark
+///
+/// To add more versions for comparison, install them first:
+/// ```bash
+/// foundryup --install stable
+/// foundryup --install nightly
+/// foundryup --install v0.2.0  # Example specific version
+/// ```
+///
+/// Then add the version strings to this array. Supported formats:
+/// - "stable" - Latest stable release
+/// - "nightly" - Latest nightly build
+/// - "v0.2.0" - Specific version tag
+/// - "commit-hash" - Specific commit hash
+/// - "nightly-<rev>" - Nightly build with specific revision
 pub static FOUNDRY_VERSIONS: &[&str] = &["stable", "nightly"];
 
 /// A benchmark project that represents a cloned repository ready for testing
@@ -139,15 +153,15 @@ impl BenchmarkProject {
     }
 }
 
-/// Install a specific foundry version
-pub fn install_foundry_version(version: &str) -> Result<()> {
+/// Switch to a specific foundry version
+pub fn switch_foundry_version(version: &str) -> Result<()> {
     let status = Command::new("foundryup")
-        .args(["--install", version])
+        .args(["--use", version])
         .status()
         .wrap_err("Failed to run foundryup")?;
 
     if !status.success() {
-        eyre::bail!("Failed to install foundry version: {}", version);
+        eyre::bail!("Failed to switch to foundry version: {}", version);
     }
 
     Ok(())
