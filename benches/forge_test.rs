@@ -1,9 +1,9 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use foundry_bench::{switch_foundry_version, BenchmarkProject, BENCHMARK_REPOS, FOUNDRY_VERSIONS};
+use foundry_bench::{switch_foundry_version, BenchmarkProject, BENCHMARK_REPOS, FOUNDRY_VERSIONS, SAMPLE_SIZE};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 fn benchmark_forge_test(c: &mut Criterion) {
     let mut group = c.benchmark_group("forge-test");
-    group.sample_size(10);
+    group.sample_size(SAMPLE_SIZE);
 
     // Setup all projects once - clone repos in parallel
     let projects: Vec<_> = BENCHMARK_REPOS

@@ -1,10 +1,12 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use foundry_bench::{switch_foundry_version, BenchmarkProject, BENCHMARK_REPOS, FOUNDRY_VERSIONS};
+use foundry_bench::{
+    switch_foundry_version, BenchmarkProject, BENCHMARK_REPOS, FOUNDRY_VERSIONS, SAMPLE_SIZE,
+};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 fn benchmark_forge_build_with_cache(c: &mut Criterion) {
     let mut group = c.benchmark_group("forge-build-with-cache");
-    group.sample_size(10);
+    group.sample_size(SAMPLE_SIZE);
 
     // Setup all projects once - clone repos in parallel
     let projects: Vec<_> = BENCHMARK_REPOS
@@ -21,7 +23,7 @@ fn benchmark_forge_build_with_cache(c: &mut Criterion) {
         switch_foundry_version(version).expect("Failed to switch foundry version");
 
         // Prime the cache for all projects in parallel
-        projects.par_iter().for_each(|(repo_config, project)| {
+        projects.par_iter().for_each(|(_repo_config, project)| {
             let _ = project.run_forge_build(false);
         });
 

@@ -17,13 +17,19 @@ pub struct RepoConfig {
 
 /// Available repositories for benchmarking
 pub static BENCHMARK_REPOS: &[RepoConfig] = &[
-    RepoConfig { name: "account", org: "ithacaxyz", repo: "account", rev: "main" },
+    RepoConfig { name: "ithacaxyz-account", org: "ithacaxyz", repo: "account", rev: "main" },
     // Temporarily reduced for testing
     // RepoConfig { name: "solady", org: "Vectorized", repo: "solady", rev: "main" },
     // RepoConfig { name: "v4-core", org: "Uniswap", repo: "v4-core", rev: "main" },
     // RepoConfig { name: "morpho-blue", org: "morpho-org", repo: "morpho-blue", rev: "main" },
     // RepoConfig { name: "spark-psm", org: "marsfoundation", repo: "spark-psm", rev: "master" },
 ];
+
+/// Sample size for benchmark measurements
+///
+/// This controls how many times each benchmark is run for statistical analysis.
+/// Higher values provide more accurate results but take longer to complete.
+pub const SAMPLE_SIZE: usize = 10;
 
 /// Foundry versions to benchmark
 ///
