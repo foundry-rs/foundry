@@ -1,24 +1,54 @@
-note[asm-keccak256]: hash using inline assembly to save gas
+note[asm-keccak256]: inefficient hashing mechanism
  --> ROOT/testdata/Keccak256.sol:LL:CC
   |
 8 |         keccak256(abi.encodePacked(a, b));
   |         ---------
   |
+  = note: consider using inline assembly to reduce gas usage, like shown in this example:
+          
+          - bytes32 hash = keccak256(abi.encodePacked(a, b));
+          + bytes32 hash;
+          + assembly {
+          +     mstore(0x00, a)
+          +     mstore(0x20, b)
+          +     hash := keccak256(0x00, 0x40)
+          + }
+          
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
 
-note[asm-keccak256]: hash using inline assembly to save gas
+note[asm-keccak256]: inefficient hashing mechanism
   --> ROOT/testdata/Keccak256.sol:LL:CC
    |
 12 |         bytes32 hash = keccak256(a);
    |                        ---------
    |
+   = note: consider using inline assembly to reduce gas usage, like shown in this example:
+           
+           - bytes32 hash = keccak256(abi.encodePacked(a, b));
+           + bytes32 hash;
+           + assembly {
+           +     mstore(0x00, a)
+           +     mstore(0x20, b)
+           +     hash := keccak256(0x00, 0x40)
+           + }
+           
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
 
-note[asm-keccak256]: hash using inline assembly to save gas
+note[asm-keccak256]: inefficient hashing mechanism
   --> ROOT/testdata/Keccak256.sol:LL:CC
    |
 13 |         return keccak256(abi.encodePacked(a, b));
    |                ---------
    |
+   = note: consider using inline assembly to reduce gas usage, like shown in this example:
+           
+           - bytes32 hash = keccak256(abi.encodePacked(a, b));
+           + bytes32 hash;
+           + assembly {
+           +     mstore(0x00, a)
+           +     mstore(0x20, b)
+           +     hash := keccak256(0x00, 0x40)
+           + }
+           
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
 

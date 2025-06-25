@@ -5,12 +5,12 @@ contract AsmKeccak256 {
     bytes32 constant OTHER_HASH = keccak256(1234);
 
     constructor(uint256 a, uint256 b) {
-        keccak256(abi.encodePacked(a, b)); //~NOTE: hash using inline assembly to save gas
+        keccak256(abi.encodePacked(a, b)); //~NOTE: inefficient hashing mechanism
     }
 
     function solidityHash(uint256 a, uint256 b) public view returns (bytes32) {
-        bytes32 hash = keccak256(a); //~NOTE: hash using inline assembly to save gas
-        return keccak256(abi.encodePacked(a, b)); //~NOTE: hash using inline assembly to save gas
+        bytes32 hash = keccak256(a); //~NOTE: inefficient hashing mechanism
+        return keccak256(abi.encodePacked(a, b)); //~NOTE: inefficient hashing mechanism
     }
 
     function assemblyHash(uint256 a, uint256 b) public view returns (bytes32){
