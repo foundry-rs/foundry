@@ -57,6 +57,7 @@ itertools.workspace = true
 jiff.workspace = true
 num-format.workspace = true
 path-slash.workspace = true
+regex.workspace = true
 reqwest.workspace = true
 semver.workspace = true
 serde = { workspace = true, features = ["derive"] }
