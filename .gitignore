@@ -5,7 +5,8 @@ snapshots/
 out.json
 .idea
 .vscode
-
+.claude
+CLAUDE.md
 # Benchmark directories
 benches/benchmark_repos/
 benches/benchmark_results/

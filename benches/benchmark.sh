@@ -6,6 +6,41 @@
 
 set -e
 
+# Main execution
+main() {
+    log_info "Starting Foundry Multi-Version Benchmarking Suite..."
+    log_info "Testing Foundry versions: ${FOUNDRY_VERSIONS[*]}"
+    log_info "Testing repositories: ${REPO_NAMES[*]}"
+    
+    # Setup
+    check_dependencies
+    setup_directories
+    
+    # Ensure cleanup on exit
+    trap cleanup EXIT
+    
+    # Install all Foundry versions upfront 
+    install_all_foundry_versions
+    
+    # Clone/update repositories
+    for i in "${!REPO_NAMES[@]}"; do
+        clone_or_update_repo "${REPO_NAMES[$i]}" "${REPO_URLS[$i]}"
+        install_dependencies "${BENCHMARK_DIR}/${REPO_NAMES[$i]}" "${REPO_NAMES[$i]}"
+    done
+    
+    # Run benchmarks in parallel
+    benchmark_all_repositories_parallel
+    
+    # Compile results
+    compile_results
+    
+    log_success "Benchmarking complete!"
+    log_success "Results saved to: $RESULTS_FILE"
+    log_success "Latest results: $LATEST_RESULTS_FILE"
+    log_success "Raw JSON data saved to: $JSON_RESULTS_DIR"
+    log_info "You can view the results with: cat $LATEST_RESULTS_FILE"
+}
+
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -74,6 +109,47 @@ install_foundry_version() {
         log_error "Failed to install Foundry $version"
         return 1
     fi
+}
+
+# Switch to a specific installed Foundry version
+use_foundry_version() {
+    local version=$1
+    log_info "Switching to Foundry version: $version"
+    
+    if foundryup --use "$version"; then
+        # Verify switch
+        local current_version=$(forge --version | head -n1 || echo "unknown")
+        log_success "Now using Foundry: $current_version"
+        return 0
+    else
+        log_error "Failed to switch to Foundry $version"
+        return 1
+    fi
+}
+
+# Install all required Foundry versions upfront
+install_all_foundry_versions() {
+    log_info "Installing all required Foundry versions as preprocessing step..."
+    
+    local failed_versions=()
+    
+    for version in "${FOUNDRY_VERSIONS[@]}"; do
+        if ! install_foundry_version "$version"; then
+            failed_versions+=("$version")
+        fi
+    done
+    
+    if [ ${#failed_versions[@]} -ne 0 ]; then
+        log_error "Failed to install the following Foundry versions: ${failed_versions[*]}"
+        log_error "Please check the version names and try again"
+        exit 1
+    fi
+    
+    log_success "All Foundry versions installed successfully!"
+    
+    # List all installed versions for verification
+    log_info "Available installed versions:"
+    foundryup --list || log_warn "Could not list installed versions"
 }
 
 # Check if required tools are installed
@@ -211,11 +287,11 @@ benchmark_repository_for_version() {
 # Run benchmarks for all repositories in parallel for each Foundry version
 benchmark_all_repositories_parallel() {
     for version in "${FOUNDRY_VERSIONS[@]}"; do
-        log_info "Installing Foundry version: $version"
+        log_info "Switching to Foundry version: $version"
         
-        # Install the specific version once for all repositories
-        install_foundry_version "$version" || {
-            log_warn "Failed to install Foundry $version, skipping all repositories for this version..."
+        # Switch to the pre-installed version
+        use_foundry_version "$version" || {
+            log_warn "Failed to switch to Foundry $version, skipping all repositories for this version..."
             continue
         }
         
@@ -430,38 +506,6 @@ cleanup() {
     log_info "Cleanup completed"
 }
 
-# Main execution
-main() {
-    log_info "Starting Foundry Multi-Version Benchmarking Suite..."
-    log_info "Testing Foundry versions: ${FOUNDRY_VERSIONS[*]}"
-    log_info "Testing repositories: ${REPO_NAMES[*]}"
-    
-    # Setup
-    check_dependencies
-    setup_directories
-    
-    # Ensure cleanup on exit
-    trap cleanup EXIT
-    
-    # Clone/update repositories
-    for i in "${!REPO_NAMES[@]}"; do
-        clone_or_update_repo "${REPO_NAMES[$i]}" "${REPO_URLS[$i]}"
-        install_dependencies "${BENCHMARK_DIR}/${REPO_NAMES[$i]}" "${REPO_NAMES[$i]}"
-    done
-    
-    # Run benchmarks in parallel
-    benchmark_all_repositories_parallel
-    
-    # Compile results
-    compile_results
-    
-    log_success "Benchmarking complete!"
-    log_success "Results saved to: $RESULTS_FILE"
-    log_success "Latest results: $LATEST_RESULTS_FILE"
-    log_success "Raw JSON data saved to: $JSON_RESULTS_DIR"
-    log_info "You can view the results with: cat $LATEST_RESULTS_FILE"
-}
-
 # Parse command line arguments
 parse_args() {
     while [[ $# -gt 0 ]]; do
@@ -506,9 +550,9 @@ parse_args() {
                 echo ""
                 echo "The script will:"
                 echo "  1. Install foundryup if not present"
-                echo "  2. Clone/update target repositories"
-                echo "  3. Install each specified Foundry version"
-                echo "  4. Run benchmarks for each repo with each version in parallel"
+                echo "  2. Install all specified Foundry versions (preprocessing step)"
+                echo "  3. Clone/update target repositories"
+                echo "  4. Switch between versions and run benchmarks in parallel"
                 echo "  5. Generate comparison tables in markdown format"
                 echo "  6. Save results to LATEST.md"
                 exit 0

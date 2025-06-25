@@ -1,7 +1,7 @@
 # Foundry Benchmarking Results
 
 **Generated on:** Wed Jun 25 18:27:00 IST 2025  
-**Foundry Versions Tested:** stable nightly   
+**Foundry Versions Tested:** stable nightly
 
 ## Repositories Tested
 
@@ -18,7 +18,7 @@ This report contains comprehensive benchmarking results comparing different Foun
 The following benchmarks were performed:
 
 1. **forge-test** - Running the test suite (10 samples each)
-2. **forge-build-no-cache** - Clean build without cache (10 samples each)  
+2. **forge-build-no-cache** - Clean build without cache (10 samples each)
 3. **forge-build-with-cache** - Build with warm cache (10 samples each)
 
 ---
@@ -30,41 +30,33 @@ The following benchmarks were performed:
 ## Table of Contents
 
 - [Benchmark Results](#benchmark-results)
-    - [forge-test](#forge-test)
-    - [forge-build-no-cache](#forge-build-no-cache)
-    - [forge-build-with-cache](#forge-build-with-cache)
+  - [forge-test](#forge-test)
+  - [forge-build-no-cache](#forge-build-no-cache)
+  - [forge-build-with-cache](#forge-build-with-cache)
 
 ## Benchmark Results
 
 ### forge-test
 
-|                         | `stable`               | `nightly`                      |
-|:------------------------|:-----------------------|:------------------------------ |
-| **`ithacaxyz-account`** | `3.73 s` (✅ **1.00x**) | `3.30 s` (✅ **1.13x faster**)  |
+|                         | `stable`                | `nightly`                      |
+| :---------------------- | :---------------------- | :----------------------------- |
+| **`ithacaxyz-account`** | `3.73 s` (✅ **1.00x**) | `3.30 s` (✅ **1.13x faster**) |
 
 ### forge-build-no-cache
 
-|                         | `stable`                | `nightly`                       |
-|:------------------------|:------------------------|:------------------------------- |
-| **`ithacaxyz-account`** | `14.32 s` (✅ **1.00x**) | `14.37 s` (✅ **1.00x slower**)  |
+|                         | `stable`                 | `nightly`                       |
+| :---------------------- | :----------------------- | :------------------------------ |
+| **`ithacaxyz-account`** | `14.32 s` (✅ **1.00x**) | `14.37 s` (✅ **1.00x slower**) |
 
 ### forge-build-with-cache
 
-|                         | `stable`                  | `nightly`                         |
-|:------------------------|:--------------------------|:--------------------------------- |
-| **`ithacaxyz-account`** | `162.64 ms` (✅ **1.00x**) | `167.49 ms` (✅ **1.03x slower**)  |
+|                         | `stable`                   | `nightly`                         |
+| :---------------------- | :------------------------- | :-------------------------------- |
+| **`ithacaxyz-account`** | `162.64 ms` (✅ **1.00x**) | `167.49 ms` (✅ **1.03x slower**) |
 
 ---
+
 Made with [criterion-table](https://github.com/nu11ptr/criterion-table)
-
-## Notes
-
-- All benchmarks use Criterion.rs for statistical analysis
-- Each benchmark runs 10 samples by default
-- Results show mean execution time with confidence intervals
-- Repositories are cloned once and reused across all Foundry versions
-- Build and setup operations are parallelized using Rayon
-- The first version tested becomes the baseline for comparisons
 
 ## System Information
 
@@ -75,5 +67,5 @@ Made with [criterion-table](https://github.com/nu11ptr/criterion-table)
 ## Raw Data
 
 Detailed benchmark data and HTML reports are available in:
-- `target/criterion/` - Individual benchmark reports
 
+- `target/criterion/` - Individual benchmark reports
