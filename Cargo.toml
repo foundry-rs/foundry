@@ -410,9 +410,3 @@ zip-extract = "=0.2.1"
 ## foundry
 # foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "e4a9b04" }
 # foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "811a61a" }
-
-# solar
-solar-ast = { git = "https://github.com/0xrusowsky/solar.git", branch = "rusowsky/flatten-with-style" }
-solar-parse = { git = "https://github.com/0xrusowsky/solar.git", branch = "rusowsky/flatten-with-style" }
-solar-interface = { git = "https://github.com/0xrusowsky/solar.git", branch = "rusowsky/flatten-with-style" }
-solar-sema = { git = "https://github.com/0xrusowsky/solar.git", branch = "rusowsky/flatten-with-style" }

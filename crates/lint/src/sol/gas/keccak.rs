@@ -10,12 +10,7 @@ declare_forge_lint!(
     ASM_KECCAK256,
     Severity::Gas,
     "asm-keccak256",
-    "inefficient hashing mechanism",
-    diff: {
-        bad: "bytes32 hash = keccak256(abi.encodePacked(a, b));",
-        good: "bytes32 hash;\nassembly {\n    mstore(0x00, a)\n    mstore(0x20, b)\n    hash := keccak256(0x00, 0x40)\n}",
-        desc: "consider using inline assembly to reduce gas usage, like shown in this example:"
-    }
+    "hash using inline assembly to save gas"
 );
 
 impl<'ast> EarlyLintPass<'ast> for AsmKeccak256 {

@@ -3,7 +3,7 @@ use foundry_config::lint::Severity;
 use solar_ast::{visit::Visit, Expr, ItemFunction, ItemStruct, VariableDefinition};
 use solar_interface::{
     data_structures::Never,
-    diagnostics::{DiagBuilder, DiagId, DiagMsg, MultiSpan, Style},
+    diagnostics::{DiagBuilder, DiagId, MultiSpan},
     Session, Span,
 };
 use std::{ops::ControlFlow, path::PathBuf};
@@ -32,7 +32,6 @@ pub trait Lint {
     fn severity(&self) -> Severity;
     fn description(&self) -> &'static str;
     fn help(&self) -> &'static str;
-    fn example(&self) -> Vec<(DiagMsg, Style)>;
 }
 
 pub struct LintContext<'s> {
@@ -45,7 +44,7 @@ impl<'s> LintContext<'s> {
         Self { sess, desc: with_description }
     }
 
-    /// Helper method to emit diagnostics easily from passes
+    // Helper method to emit diagnostics easily from passes
     pub fn emit<L: Lint>(&self, lint: &'static L, span: Span) {
         let desc = if self.desc { lint.description() } else { "" };
         let diag: DiagBuilder<'_, ()> = self
@@ -54,7 +53,6 @@ impl<'s> LintContext<'s> {
             .diag(lint.severity().into(), desc)
             .code(DiagId::new_str(lint.id()))
             .span(MultiSpan::from_span(span))
-            .highlighted_note(lint.example())
             .help(lint.help());
 
         diag.emit();
