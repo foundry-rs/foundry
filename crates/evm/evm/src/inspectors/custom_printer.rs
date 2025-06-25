@@ -31,7 +31,7 @@ where
     CTX::Journal: JournalExt,
 {
     fn initialize_interp(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
-        self.gas_inspector.initialize_interp(&interp.control.gas);
+        self.gas_inspector.initialize_interp(&interp.gas);
     }
 
     // get opcode by calling `interp.contract.opcode(interp.program_counter())`.
@@ -52,17 +52,17 @@ where
             gas_remaining,
             name,
             opcode,
-            interp.control.gas.refunded(),
-            interp.control.gas.refunded(),
+            interp.gas.refunded(),
+            interp.gas.refunded(),
             interp.stack.data(),
             memory_size,
         );
 
-        self.gas_inspector.step(&interp.control.gas);
+        self.gas_inspector.step(&interp.gas);
     }
 
     fn step_end(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
-        self.gas_inspector.step_end(interp.control.gas_mut());
+        self.gas_inspector.step_end(interp.gas_mut());
     }
 
     fn call_end(&mut self, _context: &mut CTX, _inputs: &CallInputs, outcome: &mut CallOutcome) {

@@ -828,7 +828,7 @@ pub(crate) fn handle_expect_emit(
             interpreter.control.next_action = InterpreterAction::Return {
                 result: InterpreterResult {
                     output: Error::encode("use vm.expectEmitAnonymous to match anonymous events"),
-                    gas: interpreter.control.gas,
+                    gas: interpreter.gas,
                     result: InstructionResult::Revert,
                 },
             };

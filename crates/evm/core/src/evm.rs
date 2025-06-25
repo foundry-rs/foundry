@@ -295,7 +295,7 @@ impl<'db, I: InspectorExt> Handler for FoundryHandler<'db, I> {
             };
 
             // Decode address from output.
-            let address = match result.instruction_result() {
+            let address = match result.control.instruction_result() {
                 return_ok!() => Address::try_from(result.output().as_ref())
                     .map_err(|_| {
                         result.result = InterpreterResult {

@@ -1064,7 +1064,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
         // Record gas for current frame.
         if self.gas_metering.paused {
-            self.gas_metering.paused_frames.push(interpreter.control.gas);
+            self.gas_metering.paused_frames.push(interpreter.gas);
         }
 
         // `expectRevert`: track the max call depth during `expectRevert`
@@ -1834,13 +1834,13 @@ impl Cheatcodes {
         if let Some(paused_gas) = self.gas_metering.paused_frames.last() {
             // Keep gas constant if paused.
             // Make sure we record the memory changes so that memory expansion is not paused.
-            let memory = *interpreter.control.gas.memory();
-            interpreter.control.gas = *paused_gas;
-            interpreter.control.gas.memory_mut().words_num = memory.words_num;
-            interpreter.control.gas.memory_mut().expansion_cost = memory.expansion_cost;
+            let memory = *interpreter.gas.memory();
+            interpreter.gas = *paused_gas;
+            interpreter.gas.memory_mut().words_num = memory.words_num;
+            interpreter.gas.memory_mut().expansion_cost = memory.expansion_cost;
         } else {
             // Record frame paused gas.
-            self.gas_metering.paused_frames.push(interpreter.control.gas);
+            self.gas_metering.paused_frames.push(interpreter.gas);
         }
     }
 
@@ -1853,17 +1853,14 @@ impl Cheatcodes {
                     // Skip the first opcode of the first call frame as it includes the gas cost of
                     // creating the snapshot.
                     if self.gas_metering.last_gas_used != 0 {
-                        let gas_diff = interpreter
-                            .control
-                            .gas
-                            .spent()
-                            .saturating_sub(self.gas_metering.last_gas_used);
+                        let gas_diff =
+                            interpreter.gas.spent().saturating_sub(self.gas_metering.last_gas_used);
                         record.gas_used = record.gas_used.saturating_add(gas_diff);
                     }
 
                     // Update `last_gas_used` to the current spent gas for the next iteration to
                     // compare against.
-                    self.gas_metering.last_gas_used = interpreter.control.gas.spent();
+                    self.gas_metering.last_gas_used = interpreter.gas.spent();
                 }
             });
         }
@@ -1879,7 +1876,7 @@ impl Cheatcodes {
 
     #[cold]
     fn meter_gas_reset(&mut self, interpreter: &mut Interpreter) {
-        interpreter.control.gas = Gas::new(interpreter.control.gas.limit());
+        interpreter.gas = Gas::new(interpreter.gas.limit());
         self.gas_metering.reset = false;
     }
 
@@ -1889,10 +1886,10 @@ impl Cheatcodes {
             // Reset gas if spent is less than refunded.
             // This can happen if gas was paused / resumed or reset.
             // https://github.com/foundry-rs/foundry/issues/4370
-            if interpreter.control.gas.spent() <
-                u64::try_from(interpreter.control.gas.refunded()).unwrap_or_default()
+            if interpreter.gas.spent() <
+                u64::try_from(interpreter.gas.refunded()).unwrap_or_default()
             {
-                interpreter.control.gas = Gas::new(interpreter.control.gas.limit());
+                interpreter.gas = Gas::new(interpreter.gas.limit());
             }
         }
     }
@@ -2316,7 +2313,7 @@ fn disallowed_mem_write(
     interpreter.control.next_action = InterpreterAction::Return {
         result: InterpreterResult {
             output: Error::encode(revert_string),
-            gas: interpreter.control.gas,
+            gas: interpreter.gas,
             result: InstructionResult::Revert,
         },
     };
