@@ -129,7 +129,7 @@ impl EvmOpts {
             self.memory_limit,
             self.env.gas_price.map(|v| v as u128),
             self.env.chain_id,
-            self.fork_block_number,
+            self.fork_block_number.map(|v| v.to()),
             self.sender,
             self.disable_block_gas_limit,
         )

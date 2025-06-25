@@ -13,7 +13,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
-        result::{EVMError, HaltReason, ResultAndState},
+        result::{EVMError, ExecResultAndState, ExecutionResult, HaltReason, ResultAndState},
         BlockEnv, CfgEnv, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr, LocalContext, TxEnv,
     },
     handler::{
@@ -205,7 +205,7 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
     fn transact_raw(
         &mut self,
         tx: Self::Tx,
-    ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
+    ) -> Result<ExecutionResult<Self::HaltReason>, Self::Error> {
         self.inner.ctx.tx = tx;
 
         let mut handler = FoundryHandler::<_>::default();
@@ -217,7 +217,7 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
         _caller: Address,
         _contract: Address,
         _data: Bytes,
-    ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
+    ) -> Result<ExecResultAndState<ExecutionResult>, Self::Error> {
         unimplemented!()
     }
 
@@ -333,7 +333,7 @@ impl<I: InspectorExt> InspectorHandler for FoundryHandler<'_, I> {
 
         let CreateScheme::Create2 { salt } = inputs.scheme else { return Ok(frame_or_result) };
 
-        if !evm.inspector.should_use_create2_factory(&mut evm.ctx, inputs) {
+        if !evm.inspector.should_use_create2_factory(&mut evm.ctx, &inputs) {
             return Ok(frame_or_result)
         }
 
@@ -343,7 +343,7 @@ impl<I: InspectorExt> InspectorHandler for FoundryHandler<'_, I> {
         let create2_deployer = evm.inspector.create2_deployer();
 
         // Generate call inputs for CREATE2 factory.
-        let call_inputs = get_create2_factory_call_inputs(salt, inputs, create2_deployer);
+        let call_inputs = get_create2_factory_call_inputs(salt, &inputs, create2_deployer);
 
         // Push data about current override to the stack.
         self.create2_overrides.push((evm.journal().depth(), call_inputs.clone()));
