@@ -17,8 +17,8 @@ use revm::{
         BlockEnv, CfgEnv, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr, LocalContext, TxEnv,
     },
     handler::{
-        instructions::EthInstructions, EthFrame, EthPrecompiles, FrameInitOrResult, FrameResult,
-        Handler, ItemOrResult, MainnetHandler,
+        instructions::EthInstructions, EthFrame, EthPrecompiles, EvmTr, FrameInitOrResult,
+        FrameResult, FrameTr, Handler, ItemOrResult, MainnetHandler,
     },
     inspector::InspectorHandler,
     interpreter::{
@@ -278,42 +278,66 @@ impl<'db, I: InspectorExt> Handler for FoundryHandler<'db, I> {
     type Error = EVMError<DatabaseError>;
     type HaltReason = HaltReason;
 
-    fn frame_return_result(
+    fn run_exec_loop(
         &mut self,
-        frame: &mut Self::Frame,
         evm: &mut Self::Evm,
-        result: <Self::Frame as revm::handler::Frame>::FrameResult,
-    ) -> Result<(), Self::Error> {
-        let result = if self
-            .create2_overrides
-            .last()
-            .is_some_and(|(depth, _)| *depth == evm.journal().depth)
-        {
-            let (_, call_inputs) = self.create2_overrides.pop().unwrap();
-            let FrameResult::Call(mut result) = result else {
-                unreachable!("create2 override should be a call frame");
+        first_frame_input: <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameInit,
+    ) -> Result<FrameResult, Self::Error> {
+        let res = evm.frame_init(first_frame_input)?;
+
+        if let ItemOrResult::Result(frame_result) = res {
+            return Ok(frame_result);
+        }
+
+        loop {
+            let call_or_result = evm.frame_run()?;
+
+            let result = match call_or_result {
+                ItemOrResult::Item(init) => {
+                    match evm.frame_init(init)? {
+                        ItemOrResult::Item(_) => {
+                            continue;
+                        }
+                        // Do not pop the frame since no new frame was created
+                        ItemOrResult::Result(result) => result,
+                    }
+                }
+                ItemOrResult::Result(result) => result,
             };
 
-            // Decode address from output.
-            let address = match result.control.instruction_result() {
-                return_ok!() => Address::try_from(result.output().as_ref())
-                    .map_err(|_| {
-                        result.result = InterpreterResult {
-                            result: InstructionResult::Revert,
-                            output: "invalid CREATE2 factory output".into(),
-                            gas: Gas::new(call_inputs.gas_limit),
-                        };
-                    })
-                    .ok(),
-                _ => None,
+            let result = if self
+                .create2_overrides
+                .last()
+                .is_some_and(|(depth, _)| *depth == evm.journal().depth)
+            {
+                let (_, call_inputs) = self.create2_overrides.pop().unwrap();
+                let FrameResult::Call(mut call) = result else {
+                    unreachable!("create2 override should be a call frame");
+                };
+
+                // Decode address from output.
+                let address = match call.instruction_result() {
+                    return_ok!() => Address::try_from(call.output().as_ref())
+                        .map_err(|_| {
+                            call.result = InterpreterResult {
+                                result: InstructionResult::Revert,
+                                output: "invalid CREATE2 factory output".into(),
+                                gas: Gas::new(call_inputs.gas_limit),
+                            };
+                        })
+                        .ok(),
+                    _ => None,
+                };
+
+                FrameResult::Create(CreateOutcome { result: call.result, address })
+            } else {
+                result
             };
 
-            FrameResult::Create(CreateOutcome { result: result.result, address })
-        } else {
-            result
-        };
-
-        self.inner.frame_return_result(frame, evm, result)
+            if let Some(result) = evm.frame_return_result(result)? {
+                return Ok(result);
+            }
+        }
     }
 }
 
