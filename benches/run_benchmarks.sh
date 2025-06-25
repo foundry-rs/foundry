@@ -48,6 +48,41 @@ check_dependencies() {
     fi
 }
 
+# Check and install all required Foundry versions
+check_and_install_foundry() {
+    log_info "Checking and installing required Foundry versions..."
+    
+    # Read the versions from the Rust source
+    local versions=$(grep -A 10 'pub static FOUNDRY_VERSIONS' src/lib.rs | grep -o '"[^"]*"' | tr -d '"')
+    
+    # Check if foundryup is available
+    if ! command -v foundryup &> /dev/null; then
+        log_error "foundryup not found. Please install Foundry first:"
+        echo "curl -L https://foundry.paradigm.xyz | bash"
+        exit 1
+    fi
+    
+    # Install each version if not already available
+    for version in $versions; do
+        log_info "Checking Foundry version: $version"
+        
+        # Try to switch to the version to check if it's installed
+        if foundryup --use "$version" 2>/dev/null; then
+            log_info "✓ Version $version is already installed"
+        else
+            log_info "Installing Foundry version: $version"
+            if foundryup --install "$version"; then
+                log_success "✓ Successfully installed version $version"
+            else
+                log_error "Failed to install Foundry version: $version"
+                exit 1
+            fi
+        fi
+    done
+    
+    log_success "All required Foundry versions are available"
+}
+
 # Get system information
 get_system_info() {
     local os_name=$(uname -s)
@@ -118,6 +153,11 @@ run_benchmarks() {
     
     # Combine all results and generate markdown
     log_info "Generating markdown report with criterion-table..."
+    
+    if ! cat "$forge_test_json" "$forge_build_no_cache_json" "$forge_build_with_cache_json" | criterion-table > "$temp_dir/tables.md"; then
+        log_error "criterion-table failed to process benchmark data"
+        exit 1
+    fi
         
     # Generate the final report
     generate_report "$temp_dir/tables.md"
@@ -179,8 +219,6 @@ The following benchmarks were performed:
 
 ---
 
-## Performance Comparison Tables
-
 EOF
 
     # Append the criterion-table generated tables
@@ -218,6 +256,9 @@ main() {
     # Check dependencies
     check_dependencies
     
+    # Check and install required Foundry versions
+    check_and_install_foundry
+    
     # Run benchmarks and generate report
     run_benchmarks
     
@@ -225,7 +266,6 @@ main() {
     echo ""
     echo "View the results:"
     echo "  - Text report: cat LATEST.md"
-    echo "  - HTML report: open target/criterion/report/index.html"
 }
 
 # Help function

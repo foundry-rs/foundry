@@ -7,26 +7,21 @@ This directory contains performance benchmarks for Foundry commands across multi
 Before running the benchmarks, ensure you have the following installed:
 
 1. **Rust and Cargo** - Required for building and running the benchmarks
+
    ```bash
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
 
 2. **Foundryup** - The Foundry toolchain installer
+
    ```bash
    curl -L https://foundry.paradigm.xyz | bash
    foundryup
    ```
 
-3. **Required Foundry Versions** - Install all versions defined in `src/lib.rs` (see `FOUNDRY_VERSIONS`)
-   ```bash
-   foundryup --install stable
-   foundryup --install nightly
-   # Install any additional versions you add to FOUNDRY_VERSIONS in src/lib.rs
-   ```
+3. **Git** - For cloning benchmark repositories
 
-4. **Git** - For cloning benchmark repositories
-
-5. **npm** - Some repositories require npm dependencies
+4. **npm** - Some repositories require npm dependencies
    ```bash
    # Install Node.js and npm from https://nodejs.org/
    ```
@@ -34,11 +29,13 @@ Before running the benchmarks, ensure you have the following installed:
 ## Running Benchmarks
 
 ### Run all benchmarks
+
 ```bash
 cargo bench
 ```
 
 ### Run specific benchmark
+
 ```bash
 cargo bench forge_test
 cargo bench forge_build_no_cache
@@ -46,7 +43,9 @@ cargo bench forge_build_with_cache
 ```
 
 ### Generate HTML reports
+
 Criterion automatically generates HTML reports in `target/criterion/`. Open the reports in a browser:
+
 ```bash
 open target/criterion/report/index.html
 ```
@@ -60,7 +59,9 @@ open target/criterion/report/index.html
 ## Configuration
 
 ### Repositories
+
 Edit `src/lib.rs` to modify the list of repositories to benchmark:
+
 ```rust
 pub static BENCHMARK_REPOS: &[RepoConfig] = &[
     RepoConfig { name: "account", org: "ithacaxyz", repo: "account", rev: "main" },
@@ -69,7 +70,9 @@ pub static BENCHMARK_REPOS: &[RepoConfig] = &[
 ```
 
 ### Foundry Versions
+
 Edit `src/lib.rs` to modify the list of Foundry versions:
+
 ```rust
 pub static FOUNDRY_VERSIONS: &[&str] = &["stable", "nightly"];
 ```
@@ -77,6 +80,7 @@ pub static FOUNDRY_VERSIONS: &[&str] = &["stable", "nightly"];
 ## Results
 
 Benchmark results are displayed in the terminal and saved as HTML reports. The reports show:
+
 - Execution time statistics (mean, median, standard deviation)
 - Comparison between different Foundry versions
 - Performance trends across repositories

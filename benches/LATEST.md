@@ -1,9 +1,15 @@
 # Foundry Benchmarking Results
 
-**Generated on:** Wed Jun 25 17:43:45 IST 2025  
-**Tool:** Criterion.rs with criterion-table  
+**Generated on:** Wed Jun 25 18:27:00 IST 2025  
 **Foundry Versions Tested:** stable nightly   
-**Repositories Tested:** account solady v4-core morpho-blue spark-psm   
+
+## Repositories Tested
+
+1. [ithacaxyz-account](https://github.com/ithacaxyz/main)
+2. [solady](https://github.com/Vectorized/main)
+3. [v4-core](https://github.com/Uniswap/main)
+4. [morpho-blue](https://github.com/morpho-org/main)
+5. [spark-psm](https://github.com/marsfoundation/master)
 
 ## Summary
 
@@ -24,65 +30,32 @@ The following benchmarks were performed:
 ## Table of Contents
 
 - [Benchmark Results](#benchmark-results)
+    - [forge-test](#forge-test)
+    - [forge-build-no-cache](#forge-build-no-cache)
     - [forge-build-with-cache](#forge-build-with-cache)
 
 ## Benchmark Results
 
+### forge-test
+
+|                         | `stable`               | `nightly`                      |
+|:------------------------|:-----------------------|:------------------------------ |
+| **`ithacaxyz-account`** | `3.73 s` (✅ **1.00x**) | `3.30 s` (✅ **1.13x faster**)  |
+
+### forge-build-no-cache
+
+|                         | `stable`                | `nightly`                       |
+|:------------------------|:------------------------|:------------------------------- |
+| **`ithacaxyz-account`** | `14.32 s` (✅ **1.00x**) | `14.37 s` (✅ **1.00x slower**)  |
+
 ### forge-build-with-cache
 
-|               | `stable`                  | `nightly`                         |
-|:--------------|:--------------------------|:--------------------------------- |
-| **`account`** | `164.00 ms` (✅ **1.00x**) | `166.34 ms` (✅ **1.01x slower**)  |
+|                         | `stable`                  | `nightly`                         |
+|:------------------------|:--------------------------|:--------------------------------- |
+| **`ithacaxyz-account`** | `162.64 ms` (✅ **1.00x**) | `167.49 ms` (✅ **1.03x slower**)  |
 
 ---
 Made with [criterion-table](https://github.com/nu11ptr/criterion-table)
-
-[0;34m[INFO][0m Getting Foundry version information...
-## Foundry Version Details
-
-### stable
-
-```
-foundryup: use - forge Version: 1.2.3-stable
-Commit SHA: a813a2cee7dd4926e7c56fd8a785b54f32e0d10f
-Build Timestamp: 2025-06-08T15:42:50.507050000Z (1749397370)
-Build Profile: maxperf
-foundryup: use - cast Version: 1.2.3-stable
-Commit SHA: a813a2cee7dd4926e7c56fd8a785b54f32e0d10f
-Build Timestamp: 2025-06-08T15:42:50.507050000Z (1749397370)
-Build Profile: maxperf
-foundryup: use - anvil Version: 1.2.3-stable
-Commit SHA: a813a2cee7dd4926e7c56fd8a785b54f32e0d10f
-Build Timestamp: 2025-06-08T15:42:50.507050000Z (1749397370)
-Build Profile: maxperf
-foundryup: use - chisel Version: 1.2.3-stable
-Commit SHA: a813a2cee7dd4926e7c56fd8a785b54f32e0d10f
-Build Timestamp: 2025-06-08T15:42:50.507050000Z (1749397370)
-Build Profile: maxperf
-forge Version: 1.2.3-stable
-```
-
-### nightly
-
-```
-foundryup: use - forge Version: 1.2.3-nightly
-Commit SHA: b515c90b9be9645b844943fc6d54f2304b83f75f
-Build Timestamp: 2025-06-18T06:02:35.553006000Z (1750226555)
-Build Profile: maxperf
-foundryup: use - cast Version: 1.2.3-nightly
-Commit SHA: b515c90b9be9645b844943fc6d54f2304b83f75f
-Build Timestamp: 2025-06-18T06:02:35.553006000Z (1750226555)
-Build Profile: maxperf
-foundryup: use - anvil Version: 1.2.3-nightly
-Commit SHA: b515c90b9be9645b844943fc6d54f2304b83f75f
-Build Timestamp: 2025-06-18T06:02:35.553006000Z (1750226555)
-Build Profile: maxperf
-foundryup: use - chisel Version: 1.2.3-nightly
-Commit SHA: b515c90b9be9645b844943fc6d54f2304b83f75f
-Build Timestamp: 2025-06-18T06:02:35.553006000Z (1750226555)
-Build Profile: maxperf
-forge Version: 1.2.3-nightly
-```
 
 ## Notes
 
@@ -97,11 +70,10 @@ forge Version: 1.2.3-nightly
 
 - **OS:** Darwin
 - **Architecture:** arm64
-- **Date:** Wed Jun 25 17:43:46 IST 2025
+- **Date:** Wed Jun 25 18:27:01 IST 2025
 
 ## Raw Data
 
 Detailed benchmark data and HTML reports are available in:
 - `target/criterion/` - Individual benchmark reports
-- `target/criterion/report/index.html` - Combined HTML report
 
