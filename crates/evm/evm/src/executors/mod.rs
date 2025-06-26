@@ -15,6 +15,7 @@ use crate::{
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{
+    keccak256,
     map::{AddressHashMap, HashMap},
     Address, Bytes, Log, TxKind, U256,
 };
@@ -261,6 +262,7 @@ impl Executor {
     /// Set the code of an account.
     pub fn set_code(&mut self, address: Address, code: Bytecode) -> BackendResult<()> {
         let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
+        account.code_hash = keccak256(code.original_byte_slice());
         account.code = Some(code);
         self.backend_mut().insert_account_info(address, account);
         Ok(())

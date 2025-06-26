@@ -262,8 +262,7 @@ impl CallArgs {
             // Apply the block overrides.
             if let Some(block_overrides) = block_overrides {
                 if let Some(number) = block_overrides.number {
-                    env.evm_env.block_env.number =
-                        u64::try_from(number).wrap_err("block number out of range")?;
+                    env.evm_env.block_env.number = number.to();
                 }
                 if let Some(time) = block_overrides.time {
                     env.evm_env.block_env.timestamp = time;
