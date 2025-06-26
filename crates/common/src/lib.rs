@@ -21,7 +21,6 @@ pub mod calc;
 pub mod compile;
 pub mod constants;
 pub mod contracts;
-pub mod ens;
 pub mod errors;
 pub mod evm;
 pub mod fs;

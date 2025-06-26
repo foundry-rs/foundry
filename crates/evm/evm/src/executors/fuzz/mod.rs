@@ -181,7 +181,7 @@ impl FuzzedExecutor {
             traces: last_run_traces,
             breakpoints: last_run_breakpoints,
             gas_report_traces: traces.into_iter().map(|a| a.arena).collect(),
-            coverage: fuzz_result.coverage,
+            line_coverage: fuzz_result.coverage,
             deprecated_cheatcodes: fuzz_result.deprecated_cheatcodes,
         };
 
@@ -207,7 +207,7 @@ impl FuzzedExecutor {
                 } else {
                     result.reason = (!reason.is_empty()).then_some(reason);
                     let args = if let Some(data) = calldata.get(4..) {
-                        func.abi_decode_input(data, false).unwrap_or_default()
+                        func.abi_decode_input(data).unwrap_or_default()
                     } else {
                         vec![]
                     };
@@ -258,7 +258,7 @@ impl FuzzedExecutor {
             Ok(FuzzOutcome::Case(CaseOutcome {
                 case: FuzzCase { calldata, gas: call.gas_used, stipend: call.stipend },
                 traces: call.traces,
-                coverage: call.coverage,
+                coverage: call.line_coverage,
                 breakpoints,
                 logs: call.logs,
                 deprecated_cheatcodes,

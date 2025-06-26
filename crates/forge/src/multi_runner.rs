@@ -21,12 +21,12 @@ use foundry_evm::{
     fork::CreateFork,
     inspectors::CheatsConfig,
     opts::EvmOpts,
-    revm,
     traces::{InternalTraceMode, TraceMode},
+    Env,
 };
 use foundry_linking::{LinkOutput, Linker};
 use rayon::prelude::*;
-use revm::primitives::SpecId;
+use revm::primitives::hardfork::SpecId;
 use std::{
     borrow::Borrow,
     collections::BTreeMap,
@@ -249,10 +249,11 @@ impl MultiContractRunner {
 
         debug!("start executing all tests in contract");
 
+        let executor = self.tcfg.executor(self.known_contracts.clone(), artifact_id, db.clone());
         let runner = ContractRunner::new(
             &identifier,
             contract,
-            self.tcfg.executor(self.known_contracts.clone(), artifact_id, db.clone()),
+            executor,
             progress,
             tokio_handle,
             span,
@@ -279,14 +280,14 @@ pub struct TestRunnerConfig {
     /// EVM configuration.
     pub evm_opts: EvmOpts,
     /// EVM environment.
-    pub env: revm::primitives::Env,
+    pub env: Env,
     /// EVM version.
     pub spec_id: SpecId,
     /// The address which will be used to deploy the initial contracts and send all transactions.
     pub sender: Address,
 
-    /// Whether to collect coverage info
-    pub coverage: bool,
+    /// Whether to collect line coverage info
+    pub line_coverage: bool,
     /// Whether to collect debug info
     pub debug: bool,
     /// Whether to enable steps tracking in the tracer.
@@ -329,7 +330,7 @@ impl TestRunnerConfig {
                 Arc::new(cheatcodes.config.clone_with(&self.config, self.evm_opts.clone()));
         }
         inspector.tracing(self.trace_mode());
-        inspector.collect_coverage(self.coverage);
+        inspector.collect_line_coverage(self.line_coverage);
         inspector.enable_isolation(self.isolation);
         inspector.odyssey(self.odyssey);
         // inspector.set_create2_deployer(self.evm_opts.create2_deployer);
@@ -358,7 +359,7 @@ impl TestRunnerConfig {
                 stack
                     .cheatcodes(cheats_config)
                     .trace_mode(self.trace_mode())
-                    .coverage(self.coverage)
+                    .line_coverage(self.line_coverage)
                     .enable_isolation(self.isolation)
                     .odyssey(self.odyssey)
                     .create2_deployer(self.evm_opts.create2_deployer)
@@ -393,8 +394,8 @@ pub struct MultiContractRunnerBuilder {
     pub fork: Option<CreateFork>,
     /// Project config.
     pub config: Arc<Config>,
-    /// Whether or not to collect coverage info
-    pub coverage: bool,
+    /// Whether or not to collect line coverage info
+    pub line_coverage: bool,
     /// Whether or not to collect debug info
     pub debug: bool,
     /// Whether to enable steps tracking in the tracer.
@@ -413,7 +414,7 @@ impl MultiContractRunnerBuilder {
             initial_balance: Default::default(),
             evm_spec: Default::default(),
             fork: Default::default(),
-            coverage: Default::default(),
+            line_coverage: Default::default(),
             debug: Default::default(),
             isolation: Default::default(),
             decode_internal: Default::default(),
@@ -442,7 +443,7 @@ impl MultiContractRunnerBuilder {
     }
 
     pub fn set_coverage(mut self, enable: bool) -> Self {
-        self.coverage = enable;
+        self.line_coverage = enable;
         self
     }
 
@@ -472,7 +473,7 @@ impl MultiContractRunnerBuilder {
         self,
         root: &Path,
         output: &ProjectCompileOutput,
-        env: revm::primitives::Env,
+        env: Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner> {
         let contracts = output
@@ -535,7 +536,7 @@ impl MultiContractRunnerBuilder {
                 spec_id: self.evm_spec.unwrap_or_else(|| self.config.evm_spec_id()),
                 sender: self.sender.unwrap_or(self.config.sender),
 
-                coverage: self.coverage,
+                line_coverage: self.line_coverage,
                 debug: self.debug,
                 decode_internal: self.decode_internal,
                 inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),

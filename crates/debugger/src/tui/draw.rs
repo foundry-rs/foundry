@@ -199,7 +199,6 @@ impl TUIContext<'_> {
             CallKind::CallCode => "Contract callcode",
             CallKind::DelegateCall => "Contract delegatecall",
             CallKind::AuthCall => "Contract authcall",
-            CallKind::EOFCreate => "EOF contract creation",
         };
         let title = format!(
             "{} {} ",
@@ -376,11 +375,10 @@ impl TUIContext<'_> {
             .collect::<Vec<_>>();
 
         let title = format!(
-            "Address: {} | PC: {} | Gas used in call: {} | Code section: {}",
+            "Address: {} | PC: {} | Gas used in call: {}",
             self.address(),
             self.current_step().pc,
             self.current_step().gas_used,
-            self.current_step().code_section_idx,
         );
         let block = Block::default().title(title).borders(Borders::ALL);
         let list = List::new(items)
@@ -399,7 +397,7 @@ impl TUIContext<'_> {
 
         let min_len = decimal_digits(stack_len).max(2);
 
-        let params = OpcodeParam::of(step.op.get(), step.immediate_bytes.as_ref());
+        let params = OpcodeParam::of(step.op.get());
 
         let text: Vec<Line<'_>> = stack
             .map(|stack| {
@@ -409,10 +407,7 @@ impl TUIContext<'_> {
                     .enumerate()
                     .skip(self.draw_memory.current_stack_startline)
                     .map(|(i, stack_item)| {
-                        let param = params
-                            .as_ref()
-                            .and_then(|params| params.iter().find(|param| param.index == i));
-
+                        let param = params.iter().find(|param| param.index == i);
                         let mut spans = Vec::with_capacity(1 + 32 * 2 + 3);
 
                         // Stack index.

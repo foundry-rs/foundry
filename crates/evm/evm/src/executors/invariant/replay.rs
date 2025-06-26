@@ -4,7 +4,7 @@ use super::{
 };
 use crate::executors::Executor;
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_primitives::{map::HashMap, Log};
+use alloy_primitives::{map::HashMap, Log, U256};
 use eyre::Result;
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
 use foundry_evm_coverage::HitMaps;
@@ -16,7 +16,6 @@ use foundry_evm_traces::{load_contracts, TraceKind, TraceMode, Traces};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::test_runner::TestError;
-use revm::primitives::U256;
 use std::sync::Arc;
 
 /// Replays a call sequence for collecting logs and traces.
@@ -29,7 +28,7 @@ pub fn replay_run(
     mut ided_contracts: ContractsByAddress,
     logs: &mut Vec<Log>,
     traces: &mut Traces,
-    coverage: &mut Option<HitMaps>,
+    line_coverage: &mut Option<HitMaps>,
     deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     inputs: &[BasicTxDetails],
     show_solidity: bool,
@@ -52,7 +51,7 @@ pub fn replay_run(
 
         logs.extend(call_result.logs);
         traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
-        HitMaps::merge_opt(coverage, call_result.coverage);
+        HitMaps::merge_opt(line_coverage, call_result.line_coverage);
 
         // Identify newly generated contracts, if they exist.
         ided_contracts
@@ -109,7 +108,7 @@ pub fn replay_error(
     ided_contracts: ContractsByAddress,
     logs: &mut Vec<Log>,
     traces: &mut Traces,
-    coverage: &mut Option<HitMaps>,
+    line_coverage: &mut Option<HitMaps>,
     deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     progress: Option<&ProgressBar>,
     show_solidity: bool,
@@ -137,7 +136,7 @@ pub fn replay_error(
                 ided_contracts,
                 logs,
                 traces,
-                coverage,
+                line_coverage,
                 deprecated_cheatcodes,
                 &calls,
                 show_solidity,

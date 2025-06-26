@@ -1,5 +1,5 @@
 use eyre::{Context, Result};
-use foundry_common::compact_to_contract;
+use foundry_common::{compact_to_contract, strip_bytecode_placeholders};
 use foundry_compilers::{
     artifacts::{
         sourcemap::{SourceElement, SourceMap},
@@ -8,7 +8,7 @@ use foundry_compilers::{
     multi::MultiCompilerLanguage,
     Artifact, Compiler, ProjectCompileOutput,
 };
-use foundry_evm_core::utils::PcIcMap;
+use foundry_evm_core::ic::PcIcMap;
 use foundry_linking::Linker;
 use rayon::prelude::*;
 use solar_parse::{interface::Session, Parser};
@@ -94,9 +94,9 @@ impl ArtifactData {
                 })
             };
 
-            // Only parse bytecode if it's not empty.
-            let pc_ic_map = if let Some(bytes) = b.bytes() {
-                (!bytes.is_empty()).then(|| PcIcMap::new(bytes))
+            // Only parse bytecode if it's not empty, stripping placeholders if necessary.
+            let pc_ic_map = if let Some(bytes) = strip_bytecode_placeholders(&b.object) {
+                (!bytes.is_empty()).then(|| PcIcMap::new(bytes.as_ref()))
             } else {
                 None
             };

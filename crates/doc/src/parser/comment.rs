@@ -182,13 +182,13 @@ impl<'a> CommentsRef<'a> {
     /// Filter a collection of comments and return only those that match provided tags.
     pub fn include_tags(&self, tags: &[CommentTag]) -> Self {
         // Cloning only references here
-        CommentsRef(self.iter().cloned().filter(|c| tags.contains(&c.tag)).collect())
+        CommentsRef(self.iter().copied().filter(|c| tags.contains(&c.tag)).collect())
     }
 
     /// Filter a collection of comments and return only those that do not match provided tags.
     pub fn exclude_tags(&self, tags: &[CommentTag]) -> Self {
         // Cloning only references here
-        CommentsRef(self.iter().cloned().filter(|c| !tags.contains(&c.tag)).collect())
+        CommentsRef(self.iter().copied().filter(|c| !tags.contains(&c.tag)).collect())
     }
 
     /// Check if the collection contains a target comment.
@@ -212,7 +212,7 @@ impl<'a> CommentsRef<'a> {
 
     /// Filter a collection of comments and only return the custom tags.
     pub fn get_custom_tags(&self) -> Self {
-        CommentsRef(self.iter().cloned().filter(|c| c.is_custom()).collect())
+        CommentsRef(self.iter().copied().filter(|c| c.is_custom()).collect())
     }
 }
 
