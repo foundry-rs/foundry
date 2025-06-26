@@ -14,7 +14,8 @@ use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
         result::{EVMError, ExecResultAndState, ExecutionResult, HaltReason, ResultAndState},
-        BlockEnv, CfgEnv, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr, LocalContext, TxEnv,
+        BlockEnv, CfgEnv, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr, LocalContext,
+        LocalContextTr, TxEnv,
     },
     handler::{
         instructions::EthInstructions, EthFrame, EthPrecompiles, EvmTr, FrameInitOrResult,
@@ -24,7 +25,7 @@ use revm::{
     interpreter::{
         interpreter::EthInterpreter, interpreter_action::FrameInit, return_ok, CallInput,
         CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome, FrameInput,
-        Gas, InstructionResult, InterpreterResult,
+        Gas, InstructionResult, InterpreterResult, SharedMemory,
     },
     precompile::{
         secp256r1::{P256VERIFY, P256VERIFY_BASE_GAS_FEE},
@@ -142,7 +143,6 @@ pub struct FoundryEvm<'db, I: InspectorExt> {
         EthFrame<EthInterpreter>,
     >,
 }
-
 impl<I: InspectorExt> FoundryEvm<'_, I> {
     pub fn run_execution(
         &mut self,
@@ -150,12 +150,16 @@ impl<I: InspectorExt> FoundryEvm<'_, I> {
     ) -> Result<FrameResult, EVMError<DatabaseError>> {
         let mut handler = FoundryHandler::<_>::default();
 
-        // Create first frame action
-        let frame = handler.inspect_first_frame_init(&mut self.inner, frame)?;
-        let frame_result = match frame {
-            ItemOrResult::Item(frame) => handler.inspect_run_exec_loop(&mut self.inner, frame)?,
-            ItemOrResult::Result(result) => result,
-        };
+        // Create first frame
+        let memory =
+            SharedMemory::new_with_buffer(self.inner.ctx().local().shared_memory_buffer().clone());
+        let first_frame_input = FrameInit { depth: 0, memory, frame_input: frame };
+
+        // Run execution loop
+        let mut frame_result = handler.inspect_run_exec_loop(&mut self.inner, first_frame_input)?;
+
+        // Handle last frame result
+        handler.last_frame_result(&mut self.inner, &mut frame_result)?;
 
         Ok(frame_result)
     }
@@ -205,7 +209,7 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
     fn transact_raw(
         &mut self,
         tx: Self::Tx,
-    ) -> Result<ExecutionResult<Self::HaltReason>, Self::Error> {
+    ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
         self.inner.ctx.tx = tx;
 
         let mut handler = FoundryHandler::<_>::default();

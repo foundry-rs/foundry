@@ -96,7 +96,7 @@ pub trait CheatcodesExecutor {
 
             let frame = FrameInput::Create(Box::new(inputs));
 
-            let outcome = match evm.run_execution(frame)? {
+            let outcome = match evm.run_execution()? {
                 FrameResult::Call(_) => unreachable!(),
                 FrameResult::Create(create) => create,
             };
