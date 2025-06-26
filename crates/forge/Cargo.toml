@@ -56,6 +56,7 @@ alloy-rpc-types.workspace = true
 alloy-serde.workspace = true
 alloy-signer.workspace = true
 alloy-transport.workspace = true
+alloy-signer-local.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete = "4"
@@ -83,6 +84,9 @@ watchexec-events = "5.0"
 watchexec-signals = "4.0"
 clearscreen = "4.0"
 evm-disassembler.workspace = true
+
+hex = "0.4.3"
+codec = { package = "parity-scale-codec", version = "3.7.5", default-features = false, features = ["derive"] }
 
 # doc server
 axum = { workspace = true, features = ["ws"] }
