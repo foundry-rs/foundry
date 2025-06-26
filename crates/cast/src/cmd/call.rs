@@ -11,7 +11,7 @@ use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, BlockOverrides,
 };
 use clap::Parser;
-use eyre::{Context, Result};
+use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, handle_traces, parse_ether_value, TraceResult},
