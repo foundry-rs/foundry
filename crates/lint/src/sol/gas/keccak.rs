@@ -1,6 +1,5 @@
 use super::AsmKeccak256;
 use crate::{
-    declare_forge_lint,
     linter::EarlyLintPass,
     sol::{Severity, SolLint},
 };

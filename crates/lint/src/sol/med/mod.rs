@@ -1,7 +1,4 @@
-use crate::{
-    register_lints,
-    sol::{EarlyLintPass, SolLint},
-};
+use crate::sol::{EarlyLintPass, SolLint};
 
 mod div_mul;
 use div_mul::DIVIDE_BEFORE_MULTIPLY;

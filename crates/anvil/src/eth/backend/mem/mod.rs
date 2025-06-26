@@ -24,7 +24,6 @@ use crate::{
         macros::node_info,
         pool::transactions::PoolTransaction,
         sign::build_typed_transaction,
-        util::get_precompiles_for,
     },
     inject_precompiles,
     mem::{
@@ -40,14 +39,7 @@ use alloy_consensus::{
     Account, BlockHeader, EnvKzgSettings, Header, Receipt, ReceiptWithBloom, Signed,
     Transaction as TransactionTrait, TxEnvelope,
 };
-use alloy_eips::{
-    eip1559::BaseFeeParams,
-    eip2718::{
-        EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
-        LEGACY_TX_TYPE_ID,
-    },
-    eip7840::BlobParams,
-};
+use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap, Database, Evm};
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
@@ -514,10 +506,6 @@ impl Backend {
     /// Whether we're forked off some remote client
     pub fn is_fork(&self) -> bool {
         self.fork.read().is_some()
-    }
-
-    pub fn precompiles(&self) -> Vec<Address> {
-        get_precompiles_for(self.env.read().evm_env.cfg_env.spec)
     }
 
     /// Resets the fork to a fresh state
@@ -994,8 +982,8 @@ impl Backend {
             // Defaults to block number for compatibility with existing state files.
             let fork_num_and_hash = self.get_fork().map(|f| (f.block_number(), f.block_hash()));
 
+            let best_number = state.best_block_number.unwrap_or(block.number);
             if let Some((number, hash)) = fork_num_and_hash {
-                let best_number = state.best_block_number.unwrap_or(block.number);
                 trace!(target: "backend", state_block_number=?best_number, fork_block_number=?number);
                 // If the state.block_number is greater than the fork block number, set best number
                 // to the state block number.
@@ -1018,7 +1006,6 @@ impl Backend {
                     self.blockchain.storage.write().best_hash = hash;
                 }
             } else {
-                let best_number = state.best_block_number.unwrap_or(block.number);
                 self.blockchain.storage.write().best_number = best_number;
 
                 // Set the current best block hash;
@@ -1449,6 +1436,8 @@ impl Backend {
         fee_details: FeeDetails,
         block_env: BlockEnv,
     ) -> Env {
+        let tx_type = request.minimal_tx_type() as u8;
+
         let WithOtherFields::<TransactionRequest> {
             inner:
                 TransactionRequest {
@@ -1464,26 +1453,10 @@ impl Backend {
                     sidecar: _,
                     chain_id,
                     transaction_type,
-                    max_fee_per_gas,
-                    max_priority_fee_per_gas,
                     .. // Rest of the gas fees related fields are taken from `fee_details`
                 },
             other,
         } = request;
-
-        let tx_type = transaction_type.unwrap_or_else(|| {
-            if authorization_list.is_some() {
-                EIP7702_TX_TYPE_ID
-            } else if blob_versioned_hashes.is_some() {
-                EIP4844_TX_TYPE_ID
-            } else if max_fee_per_gas.is_some() || max_priority_fee_per_gas.is_some() {
-                EIP1559_TX_TYPE_ID
-            } else if access_list.is_some() {
-                EIP2930_TX_TYPE_ID
-            } else {
-                LEGACY_TX_TYPE_ID
-            }
-        });
 
         let FeeDetails {
             gas_price,
@@ -1613,7 +1586,6 @@ impl Backend {
                 let mut log_index = 0;
                 let mut gas_used = 0;
                 let mut transactions = Vec::with_capacity(calls.len());
-                let mut receipts = Vec::new();
                 let mut logs= Vec::new();
 
                 // apply state overrides before executing the transactions
@@ -1724,13 +1696,6 @@ impl Backend {
                             })
                             .collect(),
                     };
-
-                    let receipt = Receipt {
-                        status: result.is_success().into(),
-                        cumulative_gas_used: result.gas_used(),
-                        logs: sim_res.logs.clone()
-                    };
-                    receipts.push(receipt.with_bloom());
                     logs.extend(sim_res.logs.clone().iter().map(|log| log.inner.clone()));
                     log_index += sim_res.logs.len();
                     call_res.push(sim_res);
@@ -2299,7 +2264,7 @@ impl Backend {
                         .number
                 }
                 BlockId::Number(num) => match num {
-                    BlockNumber::Latest | BlockNumber::Pending => self.best_number(),
+                    BlockNumber::Latest | BlockNumber::Pending => current,
                     BlockNumber::Earliest => U64::ZERO.to::<u64>(),
                     BlockNumber::Number(num) => num,
                     BlockNumber::Safe => current.saturating_sub(self.slots_in_an_epoch),
@@ -2942,7 +2907,7 @@ impl Backend {
                     .zip(storage_proofs)
                     .map(|(key, proof)| {
                         let storage_key: U256 = key.into();
-                        let value = account.storage.get(&storage_key).cloned().unwrap_or_default();
+                        let value = account.storage.get(&storage_key).copied().unwrap_or_default();
                         StorageProof { key: JsonStorageKey::Hash(key), value, proof }
                     })
                     .collect(),

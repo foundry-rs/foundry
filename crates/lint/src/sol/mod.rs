@@ -13,6 +13,7 @@ use std::{
 };
 use thiserror::Error;
 
+#[macro_use]
 pub mod macros;
 
 pub mod gas;

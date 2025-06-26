@@ -49,7 +49,7 @@ pub struct DevSigner {
 impl DevSigner {
     pub fn new(accounts: Vec<PrivateKeySigner>) -> Self {
         let addresses = accounts.iter().map(|wallet| wallet.address()).collect::<Vec<_>>();
-        let accounts = addresses.iter().cloned().zip(accounts).collect();
+        let accounts = addresses.iter().copied().zip(accounts).collect();
         Self { addresses, accounts }
     }
 }

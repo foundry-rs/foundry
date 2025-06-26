@@ -1,5 +1,5 @@
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::Address;
+use alloy_primitives::{map::HashMap, Address, Bytes};
 use eyre::{Result, WrapErr};
 use foundry_common::{
     compile::ProjectCompiler, fs, selectors::SelectorKind, shell, ContractsByArtifact,
@@ -163,6 +163,7 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
 pub fn has_different_gas_calc(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
         return chain.is_arbitrum() ||
+            chain.is_elastic() ||
             matches!(
                 chain,
                 NamedChain::Acala |
@@ -179,10 +180,7 @@ pub fn has_different_gas_calc(chain_id: u64) -> bool {
                     NamedChain::Moonbeam |
                     NamedChain::MoonbeamDev |
                     NamedChain::Moonriver |
-                    NamedChain::Metis |
-                    NamedChain::Abstract |
-                    NamedChain::ZkSync |
-                    NamedChain::ZkSyncTestnet
+                    NamedChain::Metis
             );
     }
     false
@@ -332,10 +330,12 @@ impl TryFrom<Result<RawCallResult>> for TraceResult {
 }
 
 /// labels the traces, conditionally prints them or opens the debugger
+#[expect(clippy::too_many_arguments)]
 pub async fn handle_traces(
     mut result: TraceResult,
     config: &Config,
     chain: Option<Chain>,
+    contracts_bytecode: &HashMap<Address, Bytes>,
     labels: Vec<String>,
     with_local_artifacts: bool,
     debug: bool,
@@ -374,7 +374,7 @@ pub async fn handle_traces(
     let mut identifier = TraceIdentifiers::new().with_etherscan(config, chain)?;
     if let Some(contracts) = &known_contracts {
         builder = builder.with_known_contracts(contracts);
-        identifier = identifier.with_local(contracts);
+        identifier = identifier.with_local_and_bytecodes(contracts, contracts_bytecode);
     }
 
     let mut decoder = builder.build();
