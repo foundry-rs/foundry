@@ -325,10 +325,11 @@ impl CallArgs {
             .await?;
 
         if response == "0x" {
-            let contract_address = tx.to.unwrap().into_to().unwrap();
-            let code = provider.get_code_at(contract_address).await?;
-            if code.is_empty() {
-                sh_warn!("Contract code is empty")?;
+            if let Some(contract_address) = tx.to.and_then(|tx_kind| tx_kind.into_to()) {
+                let code = provider.get_code_at(contract_address).await?;
+                if code.is_empty() {
+                    sh_warn!("Contract code is empty")?;
+                }
             }
         }
         sh_println!("{}", response)?;
