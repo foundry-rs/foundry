@@ -4,7 +4,7 @@ use foundry_config::lint::Severity;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use solar_ast::{visit::Visit, Arena};
 use solar_interface::{
-    diagnostics::{self, DiagCtxt, DiagMsg, JsonEmitter, Style},
+    diagnostics::{self, DiagCtxt, JsonEmitter},
     Session, SourceMap,
 };
 use std::{
@@ -94,11 +94,11 @@ impl SolidityLinter {
                         None => true,
                     };
                     let matches_lints_inc = match self.lints_included {
-                        Some(ref target) => target.contains(&lint),
+                        Some(ref target) => target.iter().any(|t| t.id() == lint.id()),
                         None => true,
                     };
                     let matches_lints_exc = match self.lints_excluded {
-                        Some(ref target) => target.contains(&lint),
+                        Some(ref target) => target.iter().any(|t| t.id() == lint.id()),
                         None => false,
                     };
 
@@ -163,56 +163,11 @@ pub enum SolLintError {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum LintExample {
-    /// General example text
-    General(&'static str),
-    /// Structured diff example with bad and good code
-    Diff {
-        bad: &'static str,
-        good: &'static str,
-        /// Optional description message
-        desc: Option<&'static str>,
-    },
-}
-
-impl LintExample {
-    pub fn to_note(&self, extra_break: bool) -> Vec<(DiagMsg, Style)> {
-        match self {
-            Self::General(text) => {
-                vec![(DiagMsg::from(text.trim()), Style::NoStyle)]
-            }
-            Self::Diff { bad, good, desc } => {
-                let mut output = Vec::new();
-
-                if let Some(desc) = desc {
-                    output.push((DiagMsg::from(*desc), Style::NoStyle));
-                    output.push((DiagMsg::from("\n\n"), Style::NoStyle));
-                }
-
-                for line in bad.lines() {
-                    output.push((DiagMsg::from(format!("- {}\n", line)), Style::Removal));
-                }
-
-                for line in good.lines() {
-                    output.push((DiagMsg::from(format!("+ {}\n", line)), Style::Addition));
-                }
-
-                if extra_break {
-                    output.push((DiagMsg::from("\n"), Style::NoStyle));
-                }
-                output
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct SolLint {
     id: &'static str,
     description: &'static str,
     help: &'static str,
     severity: Severity,
-    example: Option<LintExample>,
 }
 
 impl Lint for SolLint {
@@ -227,9 +182,6 @@ impl Lint for SolLint {
     }
     fn help(&self) -> &'static str {
         self.help
-    }
-    fn example(&self) -> Vec<(DiagMsg, Style)> {
-        self.example.map(|ex| ex.to_note(!self.help.is_empty())).unwrap_or_default()
     }
 }
 

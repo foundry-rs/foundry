@@ -32,7 +32,6 @@ pub trait Lint {
     fn severity(&self) -> Severity;
     fn description(&self) -> &'static str;
     fn help(&self) -> &'static str;
-    fn example(&self) -> Vec<(DiagMsg, Style)>;
 }
 
 pub struct LintContext<'s> {
@@ -45,7 +44,7 @@ impl<'s> LintContext<'s> {
         Self { sess, desc: with_description }
     }
 
-    /// Helper method to emit diagnostics easily from passes
+    /// Helper method to emit diagnostics easily from passes.
     pub fn emit<L: Lint>(&self, lint: &'static L, span: Span) {
         let desc = if self.desc { lint.description() } else { "" };
         let diag: DiagBuilder<'_, ()> = self
@@ -54,10 +53,75 @@ impl<'s> LintContext<'s> {
             .diag(lint.severity().into(), desc)
             .code(DiagId::new_str(lint.id()))
             .span(MultiSpan::from_span(span))
-            .highlighted_note(lint.example())
             .help(lint.help());
 
         diag.emit();
+    }
+
+    /// Emit a diagnostic with a code fix proposal.
+    pub fn emit_with_fix<L: Lint>(&self, lint: &'static L, span: Span, snippet: Snippet) {
+        let desc = if self.desc { lint.description() } else { "" };
+
+        let diag: DiagBuilder<'_, ()> = self
+            .sess
+            .dcx
+            .diag(lint.severity().into(), desc)
+            .code(DiagId::new_str(lint.id()))
+            .span(MultiSpan::from_span(span))
+            .highlighted_note(snippet.to_note())
+            .help(lint.help());
+
+        diag.emit();
+    }
+
+    pub fn span_to_snippet(&self, span: Span) -> Option<String> {
+        self.sess.source_map().span_to_snippet(span).ok()
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum Snippet {
+    /// Represents a code block. Can have an optional description.
+    Block { desc: Option<&'static str>, code: String },
+    /// Represents a code diff.
+    /// Includes an optional description, the code to remove, and a replacement proposal.
+    Diff { desc: Option<&'static str>, rmv: String, add: String },
+}
+
+impl Snippet {
+    pub fn to_note(self) -> Vec<(DiagMsg, Style)> {
+        let mut output = Vec::new();
+        match self.desc() {
+            Some(desc) => {
+                output.push((DiagMsg::from(desc), Style::NoStyle));
+                output.push((DiagMsg::from("\n\n"), Style::NoStyle));
+            }
+            None => output.push((DiagMsg::from(" \n"), Style::NoStyle)),
+        }
+        match self {
+            Self::Diff { rmv, add, .. } => {
+                for line in rmv.lines() {
+                    output.push((DiagMsg::from(format!("- {line}\n")), Style::Removal));
+                }
+                for line in add.lines() {
+                    output.push((DiagMsg::from(format!("+ {line}\n")), Style::Addition));
+                }
+            }
+            Self::Block { code, .. } => {
+                for line in code.lines() {
+                    output.push((DiagMsg::from(format!("- {line}\n")), Style::Removal));
+                }
+            }
+        }
+        output.push((DiagMsg::from("\n"), Style::NoStyle));
+        output
+    }
+
+    fn desc(&self) -> Option<&'static str> {
+        match self {
+            Self::Diff { desc, .. } => *desc,
+            Self::Block { desc, .. } => *desc,
+        }
     }
 }
 
