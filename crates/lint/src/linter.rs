@@ -109,7 +109,7 @@ impl Snippet {
             }
             Self::Block { code, .. } => {
                 for line in code.lines() {
-                    output.push((DiagMsg::from(format!("- {line}\n")), Style::Removal));
+                    output.push((DiagMsg::from(format!("- {line}\n")), Style::NoStyle));
                 }
             }
         }
