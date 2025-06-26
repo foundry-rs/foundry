@@ -9,7 +9,7 @@ use revm::{
     inspector::{inspectors::GasInspector, JournalExt},
     interpreter::{
         interpreter::EthInterpreter,
-        interpreter_types::{Jumps, LoopControl, MemoryTr},
+        interpreter_types::{Jumps, MemoryTr},
         CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter,
     },
     primitives::{Address, U256},
@@ -61,8 +61,8 @@ where
         self.gas_inspector.step(&interp.gas);
     }
 
-    fn step_end(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
-        self.gas_inspector.step_end(interp.gas_mut());
+    fn step_end(&mut self, interpreter: &mut Interpreter, _context: &mut CTX) {
+        self.gas_inspector.step_end(&mut interpreter.gas);
     }
 
     fn call_end(&mut self, _context: &mut CTX, _inputs: &CallInputs, outcome: &mut CallOutcome) {

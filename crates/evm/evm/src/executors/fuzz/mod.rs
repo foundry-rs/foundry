@@ -150,7 +150,7 @@ impl FuzzedExecutor {
                     // since that input represents the last run case, which may not correspond with
                     // our failure - when a fuzz case fails, proptest will try to run at least one
                     // more case to find a minimal failure case.
-                    let reason = rd.maybe_decode(&outcome.1.result, Some(status));
+                    let reason = rd.maybe_decode(&outcome.1.result, status);
                     execution_data.borrow_mut().logs.extend(outcome.1.logs.clone());
                     execution_data.borrow_mut().counterexample = outcome;
                     // HACK: we have to use an empty string here to denote `None`.
