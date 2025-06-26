@@ -56,7 +56,7 @@ contract GetChainTest is DSTest {
         Vm.Chain memory mainnet = vm.getChain(1);
         assertEq(mainnet.name, "mainnet");
         assertEq(mainnet.chainId, 1);
-        assertEq(mainnet.chainAlias, "1");
+        assertEq(mainnet.chainAlias, "mainnet");
     }
 
     function testGetSepoliaById() public {
@@ -64,7 +64,7 @@ contract GetChainTest is DSTest {
         Vm.Chain memory sepolia = vm.getChain(11155111);
         assertEq(sepolia.name, "sepolia");
         assertEq(sepolia.chainId, 11155111);
-        assertEq(sepolia.chainAlias, "11155111");
+        assertEq(sepolia.chainAlias, "sepolia");
     }
 
     function testGetOptimismById() public {
@@ -72,7 +72,16 @@ contract GetChainTest is DSTest {
         Vm.Chain memory optimism = vm.getChain(10);
         assertEq(optimism.name, "optimism");
         assertEq(optimism.chainId, 10);
-        assertEq(optimism.chainAlias, "10");
+        assertEq(optimism.chainAlias, "optimism");
+    }
+
+    function testGetBerachainById() public {
+        // Test Berachain using chain ID
+        Vm.Chain memory bera = vm.getChain(80094);
+        assertEq(bera.name, "berachain");
+        assertEq(bera.chainId, 80094);
+        // No rpc url configured, chain alias is the chain id.
+        assertEq(bera.chainAlias, "80094");
     }
 
     function testGetArbitrumById() public {
@@ -80,7 +89,7 @@ contract GetChainTest is DSTest {
         Vm.Chain memory arbitrum = vm.getChain(42161);
         assertEq(arbitrum.name, "arbitrum");
         assertEq(arbitrum.chainId, 42161);
-        assertEq(arbitrum.chainAlias, "42161");
+        assertEq(arbitrum.chainAlias, "arbitrum");
     }
 
     function testInvalidChainId() public {

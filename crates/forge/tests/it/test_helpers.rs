@@ -145,6 +145,10 @@ impl ForgeTestProfile {
             shrink_run_limit: 5000,
             max_assume_rejects: 65536,
             gas_report_samples: 256,
+            corpus_dir: None,
+            corpus_gzip: true,
+            corpus_min_mutations: 5,
+            corpus_min_size: 0,
             failure_persist_dir: Some(
                 tempfile::Builder::new()
                     .prefix(&format!("foundry-{self}"))
@@ -152,7 +156,7 @@ impl ForgeTestProfile {
                     .unwrap()
                     .keep(),
             ),
-            show_metrics: false,
+            show_metrics: true,
             timeout: None,
             show_solidity: false,
         };
@@ -274,7 +278,7 @@ pub fn get_vyper() -> Vyper {
                  install it manually and add it to $PATH"
             ),
         };
-        let url = format!("https://github.com/vyperlang/vyper/releases/download/v0.4.0/vyper.0.4.0+commit.e9db8d9f.{suffix}");
+        let url = format!("https://github.com/vyperlang/vyper/releases/download/v0.4.3/vyper.0.4.3+commit.bff19ea2.{suffix}");
 
         let res = reqwest::Client::builder().build().unwrap().get(url).send().await.unwrap();
 

@@ -10,7 +10,7 @@ use std::ptr::NonNull;
 
 /// Inspector implementation for collecting coverage information.
 #[derive(Clone, Debug)]
-pub struct CoverageCollector {
+pub struct LineCoverageCollector {
     // NOTE: `current_map` is always a valid reference into `maps`.
     // It is accessed only through `get_or_insert_map` which guarantees that it's valid.
     // Both of these fields are unsafe to access directly outside of `*insert_map`.
@@ -21,10 +21,10 @@ pub struct CoverageCollector {
 }
 
 // SAFETY: See comments on `current_map`.
-unsafe impl Send for CoverageCollector {}
-unsafe impl Sync for CoverageCollector {}
+unsafe impl Send for LineCoverageCollector {}
+unsafe impl Sync for LineCoverageCollector {}
 
-impl Default for CoverageCollector {
+impl Default for LineCoverageCollector {
     fn default() -> Self {
         Self {
             current_map: NonNull::dangling(),
@@ -34,7 +34,7 @@ impl Default for CoverageCollector {
     }
 }
 
-impl<CTX> Inspector<CTX> for CoverageCollector
+impl<CTX> Inspector<CTX> for LineCoverageCollector
 where
     CTX: ContextTr<Journal: JournalExt>,
 {
@@ -50,7 +50,7 @@ where
     }
 }
 
-impl CoverageCollector {
+impl LineCoverageCollector {
     /// Finish collecting coverage information and return the [`HitMaps`].
     pub fn finish(self) -> HitMaps {
         self.maps

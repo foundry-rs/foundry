@@ -54,7 +54,6 @@ memchr = "2.7"
 p256 = "0.13"
 ecdsa = "0.16"
 rand.workspace = true
-rand_chacha.workspace = true
 revm.workspace = true
 revm-inspectors.workspace = true
 semver.workspace = true

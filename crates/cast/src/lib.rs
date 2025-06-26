@@ -19,7 +19,7 @@ use alloy_provider::{
 };
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{
-    state::StateOverride, BlockId, BlockNumberOrTag, Filter, TransactionRequest,
+    state::StateOverride, BlockId, BlockNumberOrTag, BlockOverrides, Filter, TransactionRequest,
 };
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
@@ -37,6 +37,7 @@ use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
 use foundry_evm_core::ic::decode_instructions;
 use futures::{future::Either, FutureExt, StreamExt};
+use op_alloy_consensus::OpTxEnvelope;
 use rayon::prelude::*;
 use std::{
     borrow::Cow,
@@ -109,7 +110,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::{Address, U256, Bytes};
-    /// use alloy_rpc_types::{TransactionRequest, state::{StateOverride, AccountOverride}};
+    /// use alloy_rpc_types::{TransactionRequest, BlockOverrides, state::{StateOverride, AccountOverride}};
     /// use alloy_serde::WithOtherFields;
     /// use cast::Cast;
     /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
@@ -135,9 +136,10 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// account_override.balance = Some(U256::from(1000));
     /// state_override.insert(to, account_override);
     /// let state_override_object = StateOverridesBuilder::default().build();
+    /// let block_override_object = BlockOverrides::default();
     ///
     /// let cast = Cast::new(alloy_provider);
-    /// let data = cast.call(&tx, None, None, Some(state_override_object)).await?;
+    /// let data = cast.call(&tx, None, None, Some(state_override_object), Some(block_override_object)).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
@@ -148,8 +150,13 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         func: Option<&Function>,
         block: Option<BlockId>,
         state_override: Option<StateOverride>,
+        block_override: Option<BlockOverrides>,
     ) -> Result<String> {
-        let mut call = self.provider.call(req.clone()).block(block.unwrap_or_default());
+        let mut call = self
+            .provider
+            .call(req.clone())
+            .block(block.unwrap_or_default())
+            .with_block_overrides_opt(block_override);
         if let Some(state_override) = state_override {
             call = call.overrides(state_override)
         }
@@ -789,7 +796,10 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         };
 
         Ok(if raw {
-            format!("0x{}", hex::encode(tx.inner.inner.encoded_2718()))
+            // also consider opstack deposit transactions
+            let either_tx = tx.try_into_either::<OpTxEnvelope>()?;
+            let encoded = either_tx.encoded_2718();
+            format!("0x{}", hex::encode(encoded))
         } else if let Some(field) = field {
             get_pretty_tx_attr(&tx.inner, field.as_str())
                 .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.to_string()))?
