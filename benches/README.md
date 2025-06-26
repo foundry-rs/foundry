@@ -22,32 +22,44 @@ Before running the benchmarks, ensure you have the following installed:
 3. **Git** - For cloning benchmark repositories
 
 4. **npm** - Some repositories require npm dependencies
+
    ```bash
    # Install Node.js and npm from https://nodejs.org/
    ```
 
+5. **Benchmark tools** - Required for generating reports
+   ```bash
+   cargo install cargo-criterion
+   cargo install criterion-table
+   ```
+
 ## Running Benchmarks
 
-### Run all benchmarks
+### Run the complete benchmark suite
 
 ```bash
-cargo bench
+cargo run
+```
+
+This will:
+
+1. Check and install required Foundry versions
+2. Run all benchmark suites (forge_test, forge_build_no_cache, forge_build_with_cache)
+3. Generate comparison tables using criterion-table
+4. Create the final LATEST.md report
+
+### Run individual benchmark suites
+
+```bash
+./run_benchmarks.sh
 ```
 
 ### Run specific benchmark
 
 ```bash
-cargo bench forge_test
-cargo bench forge_build_no_cache
-cargo bench forge_build_with_cache
-```
-
-### Generate HTML reports
-
-Criterion automatically generates HTML reports in `target/criterion/`. Open the reports in a browser:
-
-```bash
-open target/criterion/report/index.html
+cargo criterion --bench forge_test
+cargo criterion --bench forge_build_no_cache
+cargo criterion --bench forge_build_with_cache
 ```
 
 ## Benchmark Structure
