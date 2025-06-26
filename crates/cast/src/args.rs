@@ -5,6 +5,7 @@ use crate::{
 };
 use alloy_consensus::transaction::{Recovered, SignerRecoverable};
 use alloy_dyn_abi::{DynSolValue, ErrorExt, EventExt};
+use alloy_eips::eip7702::SignedAuthorization;
 use alloy_ens::{namehash, ProviderEnsExt};
 use alloy_primitives::{eip191_hash_message, hex, keccak256, Address, B256};
 use alloy_provider::Provider;
@@ -722,6 +723,10 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             } else {
                 sh_println!("{}", serde_json::to_string_pretty(&tx)?)?;
             }
+        }
+        CastSubcommand::RecoverAuthority { auth } => {
+            let auth: SignedAuthorization = serde_json::from_str(&auth).unwrap();
+            sh_println!("{}", auth.recover_authority()?)?;
         }
         CastSubcommand::TxPool { command } => command.run().await?,
         CastSubcommand::DAEstimate(cmd) => {
