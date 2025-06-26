@@ -190,6 +190,7 @@ impl RunArgs {
             trace_mode,
             odyssey,
             create2_deployer,
+            None,
         )?;
         let mut env = Env::new_with_spec_id(
             env.evm_env.cfg_env.clone(),

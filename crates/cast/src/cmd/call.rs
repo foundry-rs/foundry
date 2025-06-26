@@ -259,6 +259,16 @@ impl CallArgs {
             env.evm_env.cfg_env.disable_block_gas_limit = true;
             env.evm_env.block_env.gas_limit = u64::MAX;
 
+            // Apply the block overrides.
+            if let Some(block_overrides) = block_overrides {
+                if let Some(number) = block_overrides.number {
+                    env.evm_env.block_env.number = number.to();
+                }
+                if let Some(time) = block_overrides.time {
+                    env.evm_env.block_env.timestamp = time;
+                }
+            }
+
             let trace_mode = TraceMode::Call
                 .with_debug(debug)
                 .with_decode_internal(if decode_internal {
@@ -274,6 +284,7 @@ impl CallArgs {
                 trace_mode,
                 odyssey,
                 create2_deployer,
+                state_overrides,
             )?;
 
             let value = tx.value.unwrap_or_default();
