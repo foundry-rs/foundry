@@ -213,7 +213,9 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
         self.inner.ctx.tx = tx;
 
         let mut handler = FoundryHandler::<_>::default();
-        handler.inspect_run(&mut self.inner)
+        let result = handler.inspect_run(&mut self.inner)?;
+
+        Ok(ResultAndState::new(result, self.inner.ctx.journaled_state.inner.state.clone()))
     }
 
     fn transact_system_call(
