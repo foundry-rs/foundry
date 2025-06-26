@@ -24,7 +24,6 @@ use crate::{
         macros::node_info,
         pool::transactions::PoolTransaction,
         sign::build_typed_transaction,
-        util::get_precompiles_for,
     },
     inject_precompiles,
     mem::{
@@ -40,14 +39,7 @@ use alloy_consensus::{
     Account, BlockHeader, EnvKzgSettings, Header, Receipt, ReceiptWithBloom, Signed,
     Transaction as TransactionTrait, TxEnvelope,
 };
-use alloy_eips::{
-    eip1559::BaseFeeParams,
-    eip2718::{
-        EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
-        LEGACY_TX_TYPE_ID,
-    },
-    eip7840::BlobParams,
-};
+use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap, Database, Evm};
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
@@ -514,10 +506,6 @@ impl Backend {
     /// Whether we're forked off some remote client
     pub fn is_fork(&self) -> bool {
         self.fork.read().is_some()
-    }
-
-    pub fn precompiles(&self) -> Vec<Address> {
-        get_precompiles_for(self.env.read().evm_env.cfg_env.spec)
     }
 
     /// Resets the fork to a fresh state
@@ -1448,6 +1436,8 @@ impl Backend {
         fee_details: FeeDetails,
         block_env: BlockEnv,
     ) -> Env {
+        let tx_type = request.minimal_tx_type() as u8;
+
         let WithOtherFields::<TransactionRequest> {
             inner:
                 TransactionRequest {
@@ -1463,26 +1453,10 @@ impl Backend {
                     sidecar: _,
                     chain_id,
                     transaction_type,
-                    max_fee_per_gas,
-                    max_priority_fee_per_gas,
                     .. // Rest of the gas fees related fields are taken from `fee_details`
                 },
             other,
         } = request;
-
-        let tx_type = transaction_type.unwrap_or_else(|| {
-            if authorization_list.is_some() {
-                EIP7702_TX_TYPE_ID
-            } else if blob_versioned_hashes.is_some() {
-                EIP4844_TX_TYPE_ID
-            } else if max_fee_per_gas.is_some() || max_priority_fee_per_gas.is_some() {
-                EIP1559_TX_TYPE_ID
-            } else if access_list.is_some() {
-                EIP2930_TX_TYPE_ID
-            } else {
-                LEGACY_TX_TYPE_ID
-            }
-        });
 
         let FeeDetails {
             gas_price,

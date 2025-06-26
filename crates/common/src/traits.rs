@@ -69,6 +69,15 @@ pub trait TestFunctionExt {
         self.test_function_kind().is_fixture()
     }
 
+    /// Returns `true` if this function is test reserved function.
+    fn is_reserved(&self) -> bool {
+        self.is_any_test() ||
+            self.is_setup() ||
+            self.is_before_test_setup() ||
+            self.is_after_invariant() ||
+            self.is_fixture()
+    }
+
     #[doc(hidden)]
     fn tfe_as_str(&self) -> &str;
     #[doc(hidden)]

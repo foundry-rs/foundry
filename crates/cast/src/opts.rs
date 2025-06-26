@@ -1070,6 +1070,10 @@ pub enum CastSubcommand {
     #[command(visible_aliases = &["dt", "decode-tx"])]
     DecodeTransaction { tx: Option<String> },
 
+    /// Recovery an EIP-7702 authority from a Authorization JSON string.
+    #[command(visible_aliases = &["decode-auth"])]
+    RecoverAuthority { auth: String },
+
     /// Extracts function selectors and arguments from bytecode
     #[command(visible_alias = "sel")]
     Selectors {
