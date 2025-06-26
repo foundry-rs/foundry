@@ -18,8 +18,8 @@ use revm::{
         LocalContextTr, TxEnv,
     },
     handler::{
-        instructions::EthInstructions, EthFrame, EthPrecompiles, EvmTr, FrameInitOrResult,
-        FrameResult, FrameTr, Handler, ItemOrResult, MainnetHandler,
+        instructions::EthInstructions, EthFrame, EthPrecompiles, EvmTr, FrameResult, FrameTr,
+        Handler, ItemOrResult, MainnetHandler,
     },
     inspector::{InspectorEvmTr, InspectorHandler},
     interpreter::{
@@ -32,7 +32,7 @@ use revm::{
         PrecompileSpecId, Precompiles,
     },
     primitives::hardfork::SpecId,
-    Context, ExecuteEvm, Journal,
+    Context, Journal,
 };
 
 pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(

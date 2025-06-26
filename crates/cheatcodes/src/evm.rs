@@ -22,7 +22,11 @@ use rand::Rng;
 use revm::{
     bytecode::Bytecode,
     context::{Block, JournalTr},
-    primitives::{hardfork::SpecId, KECCAK_EMPTY},
+    primitives::{
+        eip4844::{BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
+        hardfork::SpecId,
+        KECCAK_EMPTY,
+    },
     state::Account,
 };
 use std::{
@@ -501,8 +505,16 @@ impl Cheatcode for blobBaseFeeCall {
             "`blobBaseFee` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
-        let is_prague = ccx.ecx.cfg.spec >= SpecId::PRAGUE;
-        ccx.ecx.block.set_blob_excess_gas_and_price((*newBlobBaseFee).to(), is_prague);
+
+        let base_fee_fraction_update = if ccx.ecx.cfg.spec >= SpecId::PRAGUE {
+            BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
+        } else {
+            BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN
+        };
+
+        ccx.ecx
+            .block
+            .set_blob_excess_gas_and_price((*newBlobBaseFee).to(), base_fee_fraction_update);
         Ok(Default::default())
     }
 }

@@ -788,7 +788,7 @@ impl Cheatcodes {
         if let Some(prank) = &self.get_prank(curr_depth) {
             // Apply delegate call, `call.caller`` will not equal `prank.prank_caller`
             if prank.delegate_call && curr_depth == prank.depth {
-                if let CallScheme::DelegateCall | CallScheme::ExtDelegateCall = call.scheme {
+                if let CallScheme::DelegateCall = call.scheme {
                     call.target_address = prank.new_caller;
                     call.caller = prank.new_caller;
                     if let Some(new_origin) = prank.new_origin {
@@ -949,9 +949,6 @@ impl Cheatcodes {
                 CallScheme::CallCode => crate::Vm::AccountAccessKind::CallCode,
                 CallScheme::DelegateCall => crate::Vm::AccountAccessKind::DelegateCall,
                 CallScheme::StaticCall => crate::Vm::AccountAccessKind::StaticCall,
-                CallScheme::ExtCall => crate::Vm::AccountAccessKind::Call,
-                CallScheme::ExtStaticCall => crate::Vm::AccountAccessKind::StaticCall,
-                CallScheme::ExtDelegateCall => crate::Vm::AccountAccessKind::DelegateCall,
             };
             // Record this call by pushing it to a new pending vector; all subsequent calls at
             // that depth will be pushed to the same vector. When the call ends, the

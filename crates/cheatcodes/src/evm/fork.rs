@@ -267,7 +267,7 @@ impl Cheatcode for eth_getLogsCall {
 }
 
 /// Creates and then also selects the new fork
-fn create_select_fork(ccx: &mut CheatsCtxt, url_or_alias: &str, block: Option<u64>) -> Result {
+fn create_select_fork(ccx: &mut CheatsCtxt, url_or_alias: &str, block: Option<U256>) -> Result {
     check_broadcast(ccx.state)?;
 
     let fork = create_fork_request(ccx, url_or_alias, block)?;
@@ -277,7 +277,7 @@ fn create_select_fork(ccx: &mut CheatsCtxt, url_or_alias: &str, block: Option<u6
 }
 
 /// Creates a new fork
-fn create_fork(ccx: &mut CheatsCtxt, url_or_alias: &str, block: Option<u64>) -> Result {
+fn create_fork(ccx: &mut CheatsCtxt, url_or_alias: &str, block: Option<U256>) -> Result {
     let fork = create_fork_request(ccx, url_or_alias, block)?;
     let id = ccx.ecx.journaled_state.database.create_fork(fork)?;
     Ok(id.abi_encode())
@@ -312,7 +312,7 @@ fn create_fork_at_transaction(
 fn create_fork_request(
     ccx: &mut CheatsCtxt,
     url_or_alias: &str,
-    block: Option<u64>,
+    block: Option<U256>,
 ) -> Result<CreateFork> {
     persist_caller(ccx);
 
