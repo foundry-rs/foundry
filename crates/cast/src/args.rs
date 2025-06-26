@@ -618,10 +618,20 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
 
         // Misc
-        CastSubcommand::Keccak { data } => {
-            let bytes = match data {
-                Some(data) => data.into_bytes(),
-                None => stdin::read_bytes(false)?,
+        CastSubcommand::Keccak { data, file } => {
+            let bytes = match (data, file) {
+                (Some(_), Some(_)) => {
+                    eyre::bail!("Cannot specify both data and --file options at the same time");
+                }
+                (Some(data), None) => data.into_bytes(),
+                (None, Some(file)) => {
+                    let mut bytes = fs::read(file)?;
+                    if bytes.last() == Some(&b'\n') {
+                        bytes.pop();
+                    }
+                    bytes
+                }
+                (None, None) => stdin::read_bytes(false)?,
             };
             match String::from_utf8(bytes) {
                 Ok(s) => {

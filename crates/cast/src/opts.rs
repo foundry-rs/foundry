@@ -832,6 +832,10 @@ pub enum CastSubcommand {
     Keccak {
         /// The data to hash.
         data: Option<String>,
+
+        /// Input file to read data from.
+        #[arg(long, value_hint = ValueHint::FilePath)]
+        file: Option<PathBuf>,
     },
 
     /// Hash a message according to EIP-191.
