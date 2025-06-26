@@ -3918,6 +3918,7 @@ dependencies = [
 name = "forge-lint"
 version = "1.2.3"
 dependencies = [
+ "foundry-common",
  "foundry-compilers",
  "foundry-config",
  "heck",
