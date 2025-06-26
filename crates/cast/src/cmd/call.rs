@@ -5,6 +5,7 @@ use crate::{
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
+use alloy_provider::Provider;
 use alloy_rpc_types::{
     state::{StateOverride, StateOverridesBuilder},
     BlockId, BlockNumberOrTag, BlockOverrides,
@@ -319,12 +320,19 @@ impl CallArgs {
             return Ok(());
         }
 
-        sh_println!(
-            "{}",
-            Cast::new(provider)
-                .call(&tx, func.as_ref(), block, state_overrides, block_overrides)
-                .await?
-        )?;
+        let response = Cast::new(&provider)
+            .call(&tx, func.as_ref(), block, state_overrides, block_overrides)
+            .await?;
+
+        if response == "0x" {
+            if let Some(contract_address) = tx.to.and_then(|tx_kind| tx_kind.into_to()) {
+                let code = provider.get_code_at(contract_address).await?;
+                if code.is_empty() {
+                    sh_warn!("Contract code is empty")?;
+                }
+            }
+        }
+        sh_println!("{}", response)?;
 
         Ok(())
     }
