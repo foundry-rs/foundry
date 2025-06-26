@@ -147,6 +147,9 @@ pub enum EthRequest {
     #[serde(rename = "eth_sendRawTransaction", with = "sequence")]
     EthSendRawTransaction(Bytes),
 
+    #[serde(rename = "eth_sendRawTransactionSync", with = "sequence")]
+    EthSendRawTransactionSync(Bytes),
+
     #[serde(rename = "eth_call")]
     EthCall(
         WithOtherFields<TransactionRequest>,

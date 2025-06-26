@@ -1,7 +1,7 @@
 //! Aggregated error type for this module
 
 use crate::eth::pool::transactions::PoolTransaction;
-use alloy_primitives::{Bytes, SignatureError};
+use alloy_primitives::{Bytes, SignatureError, B256};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Error as SignerError;
 use alloy_transport::TransportError;
@@ -17,6 +17,7 @@ use revm::{
     interpreter::InstructionResult,
 };
 use serde::Serialize;
+use tokio::time::Duration;
 
 pub(crate) type Result<T> = std::result::Result<T, BlockchainError>;
 
@@ -96,6 +97,15 @@ pub enum BlockchainError {
     ExcessBlobGasNotSet,
     #[error("{0}")]
     Message(String),
+    #[error(
+        "Transaction {hash} was added to the mempool but wasn't confirmed within {duration:?}"
+    )]
+    TransactionConfirmationTimeout {
+        /// Hash of the transaction that timed out
+        hash: B256,
+        /// Duration that was waited before timing out
+        duration: Duration,
+    },
 }
 
 impl From<eyre::Report> for BlockchainError {
@@ -392,6 +402,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 }
                 BlockchainError::ChainIdNotAvailable => {
                     RpcError::invalid_params("Chain Id not available")
+                }
+                BlockchainError::TransactionConfirmationTimeout { .. } => {
+                    RpcError::internal_error_with("Transaction confirmation timeout")
                 }
                 BlockchainError::InvalidTransaction(err) => match err {
                     InvalidTransactionError::Revert(data) => {

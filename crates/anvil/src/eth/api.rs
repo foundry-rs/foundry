@@ -256,6 +256,9 @@ impl EthApi {
             EthRequest::EthSendRawTransaction(tx) => {
                 self.send_raw_transaction(tx).await.to_rpc_result()
             }
+            EthRequest::EthSendRawTransactionSync(tx) => {
+                self.send_raw_transaction_sync(tx).await.to_rpc_result()
+            }
             EthRequest::EthCall(call, block, state_override, block_overrides) => self
                 .call(call, block, EvmOverrides::new(state_override, block_overrides))
                 .await
@@ -1065,6 +1068,44 @@ impl EthApi {
         debug_assert!(requires != provides);
 
         self.add_pending_transaction(pending_transaction, requires, provides)
+    }
+
+    /// Sends signed transaction, returning its receipt.
+    ///
+    /// Handler for ETH RPC call: `eth_sendRawTransactionSync`
+    pub async fn send_raw_transaction_sync(&self, tx: Bytes) -> Result<ReceiptResponse> {
+        node_info!("eth_sendRawTransactionSync");
+
+        let this = self.clone();
+        let hash = this.send_raw_transaction(tx).await?;
+
+        let mut stream = this.new_block_notifications();
+        const TIMEOUT_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(30);
+
+        let receipt = tokio::time::timeout(TIMEOUT_DURATION, async {
+            while let Some(notification) = stream.next().await {
+                if let Some(block) = this.block_by_hash(notification.hash).await? {
+                    if block.into_transactions_iter().any(|tx| tx.tx_hash() == hash) {
+                        if let Some(receipt) = this.transaction_receipt(hash).await? {
+                            return Ok(receipt);
+                        }
+                    }
+                }
+            }
+            Err(BlockchainError::TransactionConfirmationTimeout {
+                hash,
+                duration: TIMEOUT_DURATION,
+            })
+        })
+        .await
+        .unwrap_or_else(|_elapsed| {
+            Err(BlockchainError::TransactionConfirmationTimeout {
+                hash,
+                duration: TIMEOUT_DURATION,
+            })
+        })?;
+
+        Ok(ReceiptResponse::from(receipt))
     }
 
     /// Sends signed transaction, returning its hash.

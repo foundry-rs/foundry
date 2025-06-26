@@ -1,13 +1,15 @@
 use crate::utils::http_provider;
 use alloy_consensus::{transaction::TxEip7702, SignableTransaction};
+use alloy_eips::Encodable2718;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TxSignerSync};
-use alloy_primitives::{bytes, U256};
+use alloy_primitives::{b256, bytes, Bytes, U256};
 use alloy_provider::{PendingTransactionConfig, Provider};
 use alloy_rpc_types::{Authorization, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_signer::SignerSync;
 use anvil::{spawn, NodeConfig};
+use op_alloy_rpc_types::OpTransactionFields;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_send_eip7702_tx() {
@@ -152,4 +154,42 @@ async fn can_send_eip7702_request() {
     assert_eq!(log.address(), from);
     assert_eq!(log.topics().len(), 0);
     assert_eq!(log.data().data, log_data);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_send_tx_sync() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(node_config).await;
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let signer: alloy_network::EthereumWallet = accounts[0].clone().into();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let send_value = U256::from(1234);
+    let tx = TransactionRequest::default()
+        .with_chain_id(31337)
+        .with_nonce(0)
+        .with_from(from)
+        .with_to(to)
+        .with_value(send_value)
+        .with_gas_limit(21_000)
+        .with_max_fee_per_gas(20_000_000_000)
+        .with_max_priority_fee_per_gas(1_000_000_000);
+
+    let op_fields = OpTransactionFields {
+        source_hash: Some(b256!(
+            "0x0000000000000000000000000000000000000000000000000000000000000000"
+        )),
+        mint: Some(0),
+        is_system_tx: Some(true),
+        deposit_receipt_version: None,
+    };
+    let other = serde_json::to_value(op_fields).unwrap().try_into().unwrap();
+    let tx = WithOtherFields { inner: tx, other };
+    let tx_envelope = tx.build(&signer).await.unwrap();
+    let mut tx_buffer = Vec::with_capacity(tx_envelope.encode_2718_len());
+    tx_envelope.encode_2718(&mut tx_buffer);
+    let tx_encoded = Bytes::from(tx_buffer);
+    let receipt = api.send_raw_transaction_sync(tx_encoded).await.unwrap();
+    assert!(receipt.block_number.is_some());
 }
