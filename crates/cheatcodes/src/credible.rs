@@ -96,6 +96,7 @@ impl Cheatcode for assertionExCall {
             value: decoded_tx.value,
             data: decoded_tx.data,
             chain_id: Some(chain_id),
+            gas_price: ccx.ecx.env.block.basefee,
             ..Default::default()
         };
 
