@@ -7,7 +7,7 @@ use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types::{
     state::{StateOverride, StateOverridesBuilder},
-    BlockId, BlockNumberOrTag,
+    BlockId, BlockNumberOrTag, BlockOverrides,
 };
 use clap::Parser;
 use eyre::Result;
@@ -33,6 +33,8 @@ use foundry_evm::{
 use regex::Regex;
 use revm::context::TransactionType;
 use std::{str::FromStr, sync::LazyLock};
+
+use super::run::fetch_contracts_bytecode_from_trace;
 
 // matches override pattern <address>:<slot>:<value>
 // e.g. 0x123:0x1:0x1234
@@ -148,6 +150,14 @@ pub struct CallArgs {
     /// Format: address:slot:value
     #[arg(long = "override-state-diff", value_name = "ADDRESS:SLOT:VALUE")]
     pub state_diff_overrides: Option<Vec<String>>,
+
+    /// Override the block timestamp.
+    #[arg(long = "block.time", value_name = "TIME")]
+    pub block_time: Option<u64>,
+
+    /// Override the block number.
+    #[arg(long = "block.number", value_name = "NUMBER")]
+    pub block_number: Option<u64>,
 }
 
 #[derive(Debug, Parser)]
@@ -180,6 +190,7 @@ impl CallArgs {
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::from_provider(figment)?.sanitized();
         let state_overrides = self.get_state_overrides()?;
+        let block_overrides = self.get_block_overrides()?;
 
         let Self {
             to,
@@ -292,10 +303,12 @@ impl CallArgs {
                 ),
             };
 
+            let contracts_bytecode = fetch_contracts_bytecode_from_trace(&provider, &trace).await?;
             handle_traces(
                 trace,
                 &config,
                 chain,
+                &contracts_bytecode,
                 labels,
                 with_local_artifacts,
                 debug,
@@ -308,7 +321,9 @@ impl CallArgs {
 
         sh_println!(
             "{}",
-            Cast::new(provider).call(&tx, func.as_ref(), block, state_overrides).await?
+            Cast::new(provider)
+                .call(&tx, func.as_ref(), block, state_overrides, block_overrides)
+                .await?
         )?;
 
         Ok(())
@@ -367,6 +382,22 @@ impl CallArgs {
         }
 
         Ok(Some(state_overrides_builder.build()))
+    }
+
+    /// Parse block overrides from command line arguments.
+    pub fn get_block_overrides(&self) -> eyre::Result<Option<BlockOverrides>> {
+        let mut overrides = BlockOverrides::default();
+        if let Some(number) = self.block_number {
+            overrides = overrides.with_number(U256::from(number));
+        }
+        if let Some(time) = self.block_time {
+            overrides = overrides.with_time(time);
+        }
+        if overrides.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(overrides))
+        }
     }
 }
 

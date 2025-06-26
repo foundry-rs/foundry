@@ -54,42 +54,42 @@ impl Eip712Args {
         let mut sess = Session::builder().with_stderr_emitter().build();
         sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
 
-        let result = sess.enter(|| -> Result<()> {
+        sess.enter_parallel(|| -> Result<()> {
             // Set up the parsing context with the project paths and sources.
             let parsing_context =
                 solar_pcx_from_build_opts(&sess, self.build, Some(vec![self.target_path]))?;
 
             // Parse and resolve
             let hir_arena = ThreadLocal::new();
-            if let Ok(Some(gcx)) = parsing_context.parse_and_lower(&hir_arena) {
-                let resolver = Resolver::new(gcx);
+            let Ok(Some(gcx)) = parsing_context.parse_and_lower(&hir_arena) else {
+                return Err(eyre::eyre!("failed parsing"));
+            };
+            let resolver = Resolver::new(gcx);
 
-                let outputs = resolver
-                    .struct_ids()
-                    .iter()
-                    .filter_map(|id| {
-                        let resolved = resolver.resolve_struct_eip712(*id)?;
-                        Some(Eip712Output {
-                            path: resolver.get_struct_path(*id),
-                            hash: keccak256(resolved.as_bytes()),
-                            typ: resolved,
-                        })
+            let outputs = resolver
+                .struct_ids()
+                .filter_map(|id| {
+                    let resolved = resolver.resolve_struct_eip712(id)?;
+                    Some(Eip712Output {
+                        path: resolver.get_struct_path(id),
+                        hash: keccak256(resolved.as_bytes()),
+                        typ: resolved,
                     })
-                    .collect::<Vec<_>>();
+                })
+                .collect::<Vec<_>>();
 
-                if self.json {
-                    sh_println!("{json}", json = serde_json::to_string_pretty(&outputs)?)?;
-                } else {
-                    for output in &outputs {
-                        sh_println!("{output}")?;
-                    }
+            if self.json {
+                sh_println!("{json}", json = serde_json::to_string_pretty(&outputs)?)?;
+            } else {
+                for output in &outputs {
+                    sh_println!("{output}")?;
                 }
             }
 
             Ok(())
-        });
+        })?;
 
-        eyre::ensure!(result.is_ok() && sess.dcx.has_errors().is_ok(), "failed parsing");
+        eyre::ensure!(sess.dcx.has_errors().is_ok(), "errors occurred");
 
         Ok(())
     }
@@ -99,25 +99,29 @@ impl Eip712Args {
 ///
 /// Requires a reference to the source HIR.
 pub struct Resolver<'hir> {
-    hir: &'hir Hir<'hir>,
     gcx: GcxWrapper<'hir>,
 }
 
 impl<'hir> Resolver<'hir> {
     /// Constructs a new [`Resolver`] for the supplied [`Hir`] instance.
     pub fn new(gcx: GcxWrapper<'hir>) -> Self {
-        Self { hir: &gcx.get().hir, gcx }
+        Self { gcx }
+    }
+
+    #[inline]
+    fn hir(&self) -> &'hir Hir<'hir> {
+        &self.gcx.get().hir
     }
 
     /// Returns the [`StructId`]s of every user-defined struct in source order.
-    pub fn struct_ids(&self) -> Vec<StructId> {
-        self.hir.strukt_ids().collect()
+    pub fn struct_ids(&self) -> impl Iterator<Item = StructId> {
+        self.hir().strukt_ids()
     }
 
     /// Returns the path for a struct, with the format: `file.sol > MyContract > MyStruct`
     pub fn get_struct_path(&self, id: StructId) -> String {
-        let strukt = self.hir.strukt(id).name.as_str();
-        match self.hir.strukt(id).contract {
+        let strukt = self.hir().strukt(id).name.as_str();
+        match self.hir().strukt(id).contract {
             Some(cid) => {
                 let full_name = self.gcx.get().contract_fully_qualified_name(cid).to_string();
                 let relevant = Path::new(&full_name)
@@ -141,7 +145,7 @@ impl<'hir> Resolver<'hir> {
     /// not supported by EIP-712 (mappings, function types, errors, etc).
     pub fn resolve_struct_eip712(&self, id: StructId) -> Option<String> {
         let mut subtypes = BTreeMap::new();
-        subtypes.insert(self.hir.strukt(id).name.as_str().into(), id);
+        subtypes.insert(self.hir().strukt(id).name.as_str().into(), id);
         self.resolve_eip712_inner(id, &mut subtypes, true, None)
     }
 
@@ -152,11 +156,11 @@ impl<'hir> Resolver<'hir> {
         append_subtypes: bool,
         rename: Option<&str>,
     ) -> Option<String> {
-        let def = self.hir.strukt(id);
+        let def = self.hir().strukt(id);
         let mut result = format!("{}(", rename.unwrap_or(def.name.as_str()));
 
         for (idx, field_id) in def.fields.iter().enumerate() {
-            let field = self.hir.variable(*field_id);
+            let field = self.hir().variable(*field_id);
             let ty = self.resolve_type(self.gcx.get().type_of_hir_ty(&field.ty), subtypes)?;
 
             write!(result, "{ty} {name}", name = field.name?.as_str()).ok()?;
@@ -204,7 +208,7 @@ impl<'hir> Resolver<'hir> {
             }
             TyKind::Udvt(ty, _) => self.resolve_type(ty, subtypes),
             TyKind::Struct(id) => {
-                let def = self.hir.strukt(id);
+                let def = self.hir().strukt(id);
                 let name = match subtypes.iter().find(|(_, cached_id)| id == **cached_id) {
                     Some((name, _)) => name.to_string(),
                     None => {
@@ -219,9 +223,8 @@ impl<'hir> Resolver<'hir> {
                         subtypes.insert(name.clone(), id);
 
                         // Recursively resolve fields to populate subtypes
-                        for field_id in def.fields {
-                            let field_ty =
-                                self.gcx.get().type_of_hir_ty(&self.hir.variable(*field_id).ty);
+                        for &field_id in def.fields {
+                            let field_ty = self.gcx.get().type_of_item(field_id.into());
                             self.resolve_type(field_ty, subtypes)?;
                         }
                         name

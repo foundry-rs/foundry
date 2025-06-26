@@ -2905,7 +2905,9 @@ impl EthApi {
         let to = request.to.as_ref().and_then(TxKind::to);
 
         // check certain fields to see if the request could be a simple transfer
-        let maybe_transfer = request.input.input().is_none() &&
+        let maybe_transfer = (request.input.input().is_none() ||
+            request.input.input().is_some_and(|data| data.is_empty())) &&
+            request.authorization_list.is_none() &&
             request.access_list.is_none() &&
             request.blob_versioned_hashes.is_none();
 
@@ -3412,6 +3414,8 @@ enum GasEstimationCallResult {
 }
 
 /// Converts the result of a call to revm EVM into a [`GasEstimationCallResult`].
+///
+/// Expected to stay up to date with: <https://github.com/bluealloy/revm/blob/main/crates/interpreter/src/instruction_result.rs>
 impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEstimationCallResult {
     type Error = BlockchainError;
 
@@ -3425,8 +3429,15 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
             Ok((exit, output, gas, _)) => match exit {
                 return_ok!() | InstructionResult::CallOrCreate => Ok(Self::Success(gas)),
 
+                // Revert opcodes:
                 InstructionResult::Revert => Ok(Self::Revert(output.map(|o| o.into_data()))),
+                InstructionResult::CallTooDeep |
+                InstructionResult::OutOfFunds |
+                InstructionResult::CreateInitCodeStartingEF00 |
+                InstructionResult::InvalidEOFInitCode |
+                InstructionResult::InvalidExtDelegateCallTarget => Ok(Self::EvmError(exit)),
 
+                // Out of gas errors:
                 InstructionResult::OutOfGas |
                 InstructionResult::MemoryOOG |
                 InstructionResult::MemoryLimitOOG |
@@ -3434,11 +3445,10 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 InstructionResult::InvalidOperandOOG |
                 InstructionResult::ReentrancySentryOOG => Ok(Self::OutOfGas),
 
+                // Other errors:
                 InstructionResult::OpcodeNotFound |
                 InstructionResult::CallNotAllowedInsideStatic |
                 InstructionResult::StateChangeDuringStaticCall |
-                InstructionResult::InvalidExtDelegateCallTarget |
-                InstructionResult::InvalidEXTCALLTarget |
                 InstructionResult::InvalidFEOpcode |
                 InstructionResult::InvalidJump |
                 InstructionResult::NotActivated |
@@ -3453,17 +3463,12 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 InstructionResult::CreateContractStartingWithEF |
                 InstructionResult::CreateInitCodeSizeLimit |
                 InstructionResult::FatalExternalError |
-                InstructionResult::OutOfFunds |
-                InstructionResult::CallTooDeep => Ok(Self::EvmError(exit)),
-
-                // Handle Revm EOF InstructionResults: not supported
                 InstructionResult::ReturnContractInNotInitEOF |
                 InstructionResult::EOFOpcodeDisabledInLegacy |
                 InstructionResult::SubRoutineStackOverflow |
-                InstructionResult::CreateInitCodeStartingEF00 |
-                InstructionResult::InvalidEOFInitCode |
                 InstructionResult::EofAuxDataOverflow |
-                InstructionResult::EofAuxDataTooSmall => Ok(Self::EvmError(exit)),
+                InstructionResult::EofAuxDataTooSmall |
+                InstructionResult::InvalidEXTCALLTarget => Ok(Self::EvmError(exit)),
             },
         }
     }
