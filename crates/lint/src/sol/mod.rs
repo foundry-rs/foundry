@@ -94,11 +94,11 @@ impl SolidityLinter {
                         None => true,
                     };
                     let matches_lints_inc = match self.lints_included {
-                        Some(ref target) => target.contains(&lint),
+                        Some(ref target) => target.iter().any(|t| t.id() == lint.id()),
                         None => true,
                     };
                     let matches_lints_exc = match self.lints_excluded {
-                        Some(ref target) => target.contains(&lint),
+                        Some(ref target) => target.iter().any(|t| t.id() == lint.id()),
                         None => false,
                     };
 
