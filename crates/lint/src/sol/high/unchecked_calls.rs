@@ -1,6 +1,5 @@
 use super::{UncheckedCall, UncheckedTransferERC20};
 use crate::{
-    declare_forge_lint,
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
@@ -24,6 +23,7 @@ declare_forge_lint!(
 
 // -- ERC20 UNCKECKED TRANSFERS -------------------------------------------------------------------
 
+/// WARN: can issue false positives. It does not check that the contract being called is an ERC20.
 impl<'ast> EarlyLintPass<'ast> for UncheckedTransferERC20 {
     fn check_item_function(&mut self, ctx: &LintContext<'_>, func: &'ast ItemFunction<'ast>) {
         if let Some(body) = &func.body {
