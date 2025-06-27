@@ -38,8 +38,8 @@ interface FunctionInterfaces {
             // y2 prefix
             uint256 y2, // y2 postfix
             // y3 prefix
-            uint256 y3
-        ); // y3 postfix
+            uint256 y3 // y3 postfix
+        );
         // function postfix
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -323,10 +323,10 @@ interface FunctionInterfaces {
 }
 
 contract FunctionDefinitions {
-    function() external {}
+    function f() external {}
     fallback() external {}
 
-    function() external payable {}
+    function f() external payable {}
     fallback() external payable {}
     receive() external payable {}
 

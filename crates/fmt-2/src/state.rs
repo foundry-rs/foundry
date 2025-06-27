@@ -637,14 +637,14 @@ impl<'ast> State<'_, 'ast> {
         } = *header;
         self.cbox(0);
 
-        self.ibox(0);
+        // self.ibox(0);
+        let fn_indent = self.s.current_indent();
         self.word(kind.to_str());
         if let Some(name) = name {
             self.nbsp();
             self.print_ident(&name);
         }
-        self.print_parameter_list(parameters, parameters_span, ListFormat::Consistent);
-        self.end();
+        self.print_parameter_list(parameters, parameters_span, ListFormat::Inline);
 
         // Cache attribute comments first, as they can be wrongly ordered.
         let (mut attrib_comments, mut pending) = (Vec::new(), None);
@@ -717,6 +717,7 @@ impl<'ast> State<'_, 'ast> {
         }
 
         self.s.cbox(self.ind);
+        self.s.cbox(0);
         if let Some(v) = visibility {
             self.print_attribute(visibility_span.unwrap(), &mut map, &mut |s| s.word(v.to_str()));
         }
@@ -755,6 +756,7 @@ impl<'ast> State<'_, 'ast> {
             self.word("returns ");
             self.print_parameter_list(returns, returns_span, ListFormat::Consistent);
         }
+        self.end();
 
         if let Some(body) = body {
             self.space();
@@ -1736,7 +1738,9 @@ impl<'ast> State<'_, 'ast> {
                 self.word("{}");
             }
         } else {
-            self.word("{");
+            if !attempt_omit_braces {
+                self.word("{");
+            }
             self.s.cbox(self.ind);
             self.hardbreak_if_nonempty();
             for stmt in block {
@@ -1746,7 +1750,9 @@ impl<'ast> State<'_, 'ast> {
             self.print_comments_skip_ws(block.last().map_or(span.hi(), |b| get_block_span(b).hi()));
             self.s.offset(-self.ind);
             self.end();
-            self.word("}");
+            if !attempt_omit_braces {
+                self.word("}");
+            }
         }
     }
 
@@ -1947,17 +1953,19 @@ impl<'ast> State<'_, 'ast> {
                 for cmnt in pre_comments {
                     self.print_comment(cmnt);
                 }
-                if !self.is_bol_or_only_ind() {
+                if !self.is_bol_or_only_ind() && !self.last_token_is_space() {
                     self.space();
                 }
+                self.ibox(0);
                 print_fn(self);
+                self.end();
                 for cmnt in post_comments {
                     self.print_comment(cmnt);
                 }
             }
             // Fallback for attributes with no comments
             None => {
-                if !self.is_beginning_of_line() {
+                if !self.is_bol_or_only_ind() && !self.last_token_is_space() {
                     self.space();
                 }
                 print_fn(self);

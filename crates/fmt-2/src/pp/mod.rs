@@ -129,6 +129,10 @@ impl Printer {
         }
     }
 
+    pub(crate) fn current_indent(&self) -> usize {
+        self.indent
+    }
+
     pub(crate) fn last_token(&self) -> Option<&Token> {
         self.last_token_still_buffered().or(self.last_printed.as_ref())
     }
