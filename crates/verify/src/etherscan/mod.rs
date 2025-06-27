@@ -26,6 +26,8 @@ use foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER;
 use regex::Regex;
 use semver::{BuildMetadata, Version};
 use std::{fmt::Debug, sync::LazyLock};
+use crate::verify::detect_language;
+use crate::verify::ContractLanguage;
 
 mod flatten;
 
@@ -319,14 +321,19 @@ impl EtherscanVerificationProvider {
         let (source, contract_name, code_format) =
             self.source_provider(args).source(args, context)?;
 
-        let mut compiler_version = context.compiler_version.clone();
+        let lang = detect_language(args, context);
+
         compiler_version.build = match RE_BUILD_COMMIT.captures(compiler_version.build.as_str()) {
             Some(cap) => BuildMetadata::new(cap.name("commit").unwrap().as_str())?,
             _ => BuildMetadata::EMPTY,
         };
 
-        let compiler_version =
-            format!("v{}", ensure_solc_build_metadata(context.compiler_version.clone()).await?);
+        let compiler_version = if matches!(lang, ContractLanguage::Vyper) {
+            format!("vyper:{}", compiler_version.to_string().split('+').next().unwrap_or("0.0.0"))
+        } else {
+            format!("v{}", ensure_solc_build_metadata(context.compiler_version.clone()).await?)
+        };
+        println!("Compiler version: {}", compiler_version);
         let constructor_args = self.constructor_args(args, context).await?;
         let mut verify_args =
             VerifyContract::new(args.address, contract_name, source, compiler_version)
@@ -350,6 +357,18 @@ impl EtherscanVerificationProvider {
                     .runs(context.config.optimizer_runs.unwrap_or(200).try_into()?)
             } else {
                 verify_args.not_optimized()
+            };
+        }
+
+        if code_format == CodeFormat::VyperJson {
+            verify_args = if let Some(optimizations) = args.num_of_optimizations {
+                verify_args.optimized().runs(1)
+            } else if context.config.optimizer == Some(true) {
+                verify_args
+                    .optimized()
+                    .runs(1)
+            } else {
+                verify_args.not_optimized().runs(0)
             };
         }
 

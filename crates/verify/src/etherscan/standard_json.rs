@@ -3,6 +3,7 @@ use crate::provider::VerificationContext;
 use eyre::{Context, Result};
 use foundry_block_explorers::verify::CodeFormat;
 use foundry_compilers::{artifacts::StandardJsonCompilerInput, solc::SolcLanguage};
+use crate::verify::{detect_language, ContractLanguage};
 
 #[derive(Debug)]
 pub struct EtherscanStandardJsonSource;
@@ -17,6 +18,13 @@ impl EtherscanSourceProvider for EtherscanStandardJsonSource {
             .standard_json_input(&context.target_path)
             .wrap_err("Failed to get standard json input")?
             .normalize_evm_version(&context.compiler_version);
+
+        let lang = detect_language(_args, context);
+
+        let code_format = match lang {
+            ContractLanguage::Solidity => CodeFormat::StandardJsonInput,
+            ContractLanguage::Vyper => CodeFormat::VyperJson,
+        };
 
         let mut settings = context.compiler_settings.solc.settings.clone();
         settings.libraries.libs = input
@@ -50,6 +58,6 @@ impl EtherscanSourceProvider for EtherscanStandardJsonSource {
                 .display(),
             context.target_name.clone()
         );
-        Ok((source, name, CodeFormat::StandardJsonInput))
+        Ok((source, name, code_format))
     }
 }
