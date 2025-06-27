@@ -1,4 +1,7 @@
-use std::ops::{Deref, DerefMut};
+use std::{
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
+};
 
 use crate::{
     backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, Env, InspectorExt,
@@ -19,7 +22,7 @@ use revm::{
     },
     handler::{
         instructions::EthInstructions, EthFrame, EthPrecompiles, EvmTr, FrameResult, FrameTr,
-        Handler, ItemOrResult, MainnetHandler,
+        Handler, ItemOrResult,
     },
     inspector::{InspectorEvmTr, InspectorHandler},
     interpreter::{
@@ -148,7 +151,7 @@ impl<I: InspectorExt> FoundryEvm<'_, I> {
         &mut self,
         frame: FrameInput,
     ) -> Result<FrameResult, EVMError<DatabaseError>> {
-        let mut handler = FoundryHandler::<_>::default();
+        let mut handler = FoundryHandler::<I>::default();
 
         // Create first frame
         let memory =
@@ -212,7 +215,7 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
         self.inner.ctx.tx = tx;
 
-        let mut handler = FoundryHandler::<_>::default();
+        let mut handler = FoundryHandler::<I>::default();
         let result = handler.inspect_run(&mut self.inner)?;
 
         Ok(ResultAndState::new(result, self.inner.ctx.journaled_state.inner.state.clone()))
@@ -252,24 +255,13 @@ impl<I: InspectorExt> DerefMut for FoundryEvm<'_, I> {
 }
 
 pub struct FoundryHandler<'db, I: InspectorExt> {
-    #[allow(clippy::type_complexity)]
-    inner: MainnetHandler<
-        RevmEvm<
-            EthEvmContext<&'db mut dyn DatabaseExt>,
-            I,
-            EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt>>,
-            PrecompilesMap,
-            EthFrame<EthInterpreter>,
-        >,
-        EVMError<DatabaseError>,
-        EthFrame<EthInterpreter>,
-    >,
     create2_overrides: Vec<(usize, CallInputs)>,
+    _phantom: PhantomData<(&'db mut dyn DatabaseExt, I)>,
 }
 
 impl<I: InspectorExt> Default for FoundryHandler<'_, I> {
     fn default() -> Self {
-        Self { inner: MainnetHandler::default(), create2_overrides: Vec::new() }
+        Self { create2_overrides: Vec::new(), _phantom: PhantomData }
     }
 }
 
