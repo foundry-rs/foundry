@@ -1,7 +1,4 @@
-use crate::{
-    register_lints,
-    sol::{EarlyLintPass, SolLint},
-};
+use crate::sol::{EarlyLintPass, SolLint};
 
 mod incorrect_shift;
 mod unchecked_calls;

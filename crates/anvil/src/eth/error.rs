@@ -404,7 +404,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                             msg = format!("{msg}: {reason}");
                         }
                         RpcError {
-                            // geth returns this error code on reverts, See <https://github.com/ethereum/wiki/wiki/JSON-RPC-Error-Codes-Improvement-Proposal>
+                            // geth returns this error code on reverts, See <https://eips.ethereum.org/EIPS/eip-1474#specification>
                             code: ErrorCode::ExecutionError,
                             message: msg.into(),
                             data: serde_json::to_value(data).ok(),

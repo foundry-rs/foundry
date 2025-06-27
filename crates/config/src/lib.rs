@@ -1059,6 +1059,7 @@ impl Config {
             }
         };
         remove_test_dir(&self.fuzz.failure_persist_dir);
+        remove_test_dir(&self.invariant.corpus_dir);
         remove_test_dir(&self.invariant.failure_persist_dir);
 
         Ok(())
@@ -4537,6 +4538,7 @@ mod tests {
                     runs: 512,
                     depth: 10,
                     failure_persist_dir: Some(PathBuf::from("cache/invariant")),
+                    corpus_dir: None,
                     ..Default::default()
                 }
             );
