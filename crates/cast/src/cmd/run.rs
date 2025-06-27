@@ -1,5 +1,6 @@
 use alloy_consensus::Transaction;
 use alloy_network::{AnyNetwork, TransactionResponse};
+use alloy_primitives::U256;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockTransactions;
 use clap::Parser;
@@ -150,10 +151,10 @@ impl RunArgs {
         let mut evm_version = self.evm_version;
 
         env.evm_env.cfg_env.disable_block_gas_limit = self.disable_block_gas_limit;
-        env.evm_env.block_env.number = tx_block_number;
+        env.evm_env.block_env.number = U256::from(tx_block_number);
 
         if let Some(block) = &block {
-            env.evm_env.block_env.timestamp = block.header.timestamp;
+            env.evm_env.block_env.timestamp = U256::from(block.header.timestamp);
             env.evm_env.block_env.beneficiary = block.header.beneficiary;
             env.evm_env.block_env.difficulty = block.header.difficulty;
             env.evm_env.block_env.prevrandao = Some(block.header.mix_hash.unwrap_or_default());

@@ -106,7 +106,7 @@ use revm::{
     },
     database::{CacheDB, DatabaseRef, WrapDatabaseRef},
     interpreter::InstructionResult,
-    precompile::secp256r1::P256VERIFY,
+    precompile::secp256r1::{P256VERIFY, P256VERIFY_BASE_GAS_FEE},
     primitives::{hardfork::SpecId, KECCAK_EMPTY},
     state::AccountInfo,
     DatabaseCommit, Inspector,
@@ -982,7 +982,7 @@ impl Backend {
             // Defaults to block number for compatibility with existing state files.
             let fork_num_and_hash = self.get_fork().map(|f| (f.block_number(), f.block_hash()));
 
-            let best_number = state.best_block_number.unwrap_or(block.number);
+            let best_number = state.best_block_number.unwrap_or(block.number.saturating_to());
             if let Some((number, hash)) = fork_num_and_hash {
                 trace!(target: "backend", state_block_number=?best_number, fork_block_number=?number);
                 // If the state.block_number is greater than the fork block number, set best number
@@ -1103,7 +1103,7 @@ impl Backend {
         let mut evm = new_evm_with_inspector_ref(db, env, inspector);
 
         if self.odyssey {
-            inject_precompiles(&mut evm, vec![P256VERIFY]);
+            inject_precompiles(&mut evm, vec![(P256VERIFY, P256VERIFY_BASE_GAS_FEE)]);
         }
 
         if let Some(factory) = &self.precompile_factory {
@@ -1757,8 +1757,8 @@ impl Backend {
                 };
 
                 // update block env
-                block_env.number += 1;
-                block_env.timestamp += 12;
+                block_env.number += U256::from(1);
+                block_env.timestamp += U256::from(12);
                 block_env.basefee = simulated_block
                     .inner
                     .header

@@ -35,7 +35,7 @@ pub struct ForkId(pub String);
 
 impl ForkId {
     /// Returns the identifier for a Fork from a URL and block number.
-    pub fn new(url: &str, num: Option<U256>) -> Self {
+    pub fn new(url: &str, num: Option<u64>) -> Self {
         let mut id = url.to_string();
         id.push('@');
         match num {
@@ -131,7 +131,7 @@ impl MultiFork {
     pub fn roll_fork(
         &self,
         fork: ForkId,
-        block: U256,
+        block: u64,
     ) -> eyre::Result<(ForkId, SharedBackend, Env)> {
         trace!(?fork, ?block, "rolling fork");
         let (sender, rx) = oneshot_channel();
@@ -196,7 +196,7 @@ enum Request {
     /// Returns the Fork backend for the `ForkId` if it exists.
     GetFork(ForkId, OneshotSender<Option<SharedBackend>>),
     /// Adjusts the block that's being forked, by creating a new fork at the new block.
-    RollFork(ForkId, U256, CreateSender),
+    RollFork(ForkId, u64, CreateSender),
     /// Returns the environment of the fork.
     GetEnv(ForkId, GetEnvSender),
     /// Updates the block number and timestamp of the fork.
@@ -535,7 +535,7 @@ async fn create_fork(mut fork: CreateFork) -> eyre::Result<(ForkId, CreatedFork,
     let db = BlockchainDb::new(meta, cache_path);
     let (backend, handler) = SharedBackend::new(provider, db, Some(number.into()));
     let fork = CreatedFork::new(fork, backend);
-    let fork_id = ForkId::new(&fork.opts.url, Some(U256::from(number)));
+    let fork_id = ForkId::new(&fork.opts.url, Some(number));
 
     Ok((fork_id, fork, handler))
 }

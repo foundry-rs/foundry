@@ -25,7 +25,7 @@ pub struct EvmOpts {
     pub fork_url: Option<String>,
 
     /// Pins the block number for the state fork.
-    pub fork_block_number: Option<U256>,
+    pub fork_block_number: Option<u64>,
 
     /// The number of retries.
     pub fork_retries: Option<u32>,
@@ -129,7 +129,7 @@ impl EvmOpts {
             self.memory_limit,
             self.env.gas_price.map(|v| v as u128),
             self.env.chain_id,
-            self.fork_block_number.map(|v| v.to()),
+            self.fork_block_number,
             self.sender,
             self.disable_block_gas_limit,
         )

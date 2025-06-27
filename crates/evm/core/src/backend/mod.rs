@@ -181,7 +181,7 @@ pub trait DatabaseExt: Database<Error = DatabaseError> + DatabaseCommit {
     fn roll_fork(
         &mut self,
         id: Option<LocalForkId>,
-        block_number: U256,
+        block_number: u64,
         env: &mut EnvMut<'_>,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()>;
@@ -1172,7 +1172,7 @@ impl DatabaseExt for Backend {
     fn roll_fork(
         &mut self,
         id: Option<LocalForkId>,
-        block_number: U256,
+        block_number: u64,
         env: &mut EnvMut<'_>,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<()> {
@@ -1247,7 +1247,7 @@ impl DatabaseExt for Backend {
             self.get_block_number_and_block_for_transaction(id, transaction)?;
 
         // roll the fork to the transaction's block or latest if it's pending
-        self.roll_fork(Some(id), U256::from(fork_block), env, journaled_state)?;
+        self.roll_fork(Some(id), fork_block, env, journaled_state)?;
 
         update_env_block(env, &block);
 
@@ -2046,7 +2046,7 @@ mod tests {
 
         let config = Config::figment();
         let mut evm_opts = config.extract::<EvmOpts>().unwrap();
-        evm_opts.fork_block_number = Some(U256::from(block_num));
+        evm_opts.fork_block_number = Some(block_num);
 
         let (env, _block) = evm_opts.fork_evm_env(endpoint).await.unwrap();
 
