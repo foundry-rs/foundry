@@ -1,84 +1,69 @@
-# Forge Benchmarking Results
+# Foundry Benchmarking Results
 
-**Generated on:** Wed 18 Jun 2025 17:46:19 BST
-**Hyperfine Version:** hyperfine 1.19.0
+**Generated on:** Fri 27 Jun 2025 15:51:19 IST  
 **Foundry Versions Tested:** stable nightly
-**Repositories Tested:** ithacaxyz-account solady
+
+## Repositories Tested
+
+1. [ithacaxyz-account](https://github.com/ithacaxyz/main)
+2. [solady](https://github.com/Vectorized/main)
+3. [v4-core](https://github.com/Uniswap/main)
+4. [morpho-blue](https://github.com/morpho-org/main)
+5. [spark-psm](https://github.com/marsfoundation/master)
 
 ## Summary
 
-This report contains comprehensive benchmarking results comparing different Foundry versions across multiple projects.
+This report contains comprehensive benchmarking results comparing different Foundry versions across multiple projects using Criterion.rs for precise performance measurements.
+
 The following benchmarks were performed:
 
-1. **forge test - Running the test suite (5 runs, 1 warmup)**
-2. **forge build (no cache) - Clean build without cache (5 runs, cache cleaned after each run)**
-3. **forge build (with cache) - Build with warm cache (5 runs, 1 warmup)**
+1. **forge-test** - Running the test suite (10 samples each)
+2. **forge-build-no-cache** - Clean build without cache (10 samples each)
+3. **forge-build-with-cache** - Build with warm cache (10 samples each)
 
 ---
 
-## Performance Comparison Tables
+# Benchmarks
 
-### forge test
+## Table of Contents
 
-Mean execution time in seconds (lower is better):
+- [Benchmark Results](#benchmark-results)
+  - [forge-test](#forge-test)
+  - [forge-build-no-cache](#forge-build-no-cache)
+  - [forge-build-with-cache](#forge-build-with-cache)
 
-| Project | stable (s) | nightly (s) |
-|------|--------:|--------:|
-| **ithacaxyz-account** | 5.791 | 3.875 |
-| **solady** | 3.578 | 2.966 |
+## Benchmark Results
 
+### forge-test
 
-### forge build no cache
+|                         | `stable`                | `nightly`                      |
+| :---------------------- | :---------------------- | :----------------------------- |
+| **`ithacaxyz-account`** | `3.75 s` (✅ **1.00x**) | `3.27 s` (✅ **1.15x faster**) |
 
-Mean execution time in seconds (lower is better):
+### forge-build-no-cache
 
-| Project | stable (s) | nightly (s) |
-|------|--------:|--------:|
-| **ithacaxyz-account** | 19.079 | 16.177 |
-| **solady** | 27.408 | 22.745 |
+|                         | `stable`                 | `nightly`                       |
+| :---------------------- | :----------------------- | :------------------------------ |
+| **`ithacaxyz-account`** | `14.23 s` (✅ **1.00x**) | `14.25 s` (✅ **1.00x slower**) |
 
+### forge-build-with-cache
 
-### forge build with cache
+|                         | `stable`                   | `nightly`                         |
+| :---------------------- | :------------------------- | :-------------------------------- |
+| **`ithacaxyz-account`** | `163.53 ms` (✅ **1.00x**) | `168.00 ms` (✅ **1.03x slower**) |
 
-Mean execution time in seconds (lower is better):
+---
 
-| Project | stable (s) | nightly (s) |
-|------|--------:|--------:|
-| **ithacaxyz-account** | 0.181 | 0.158 |
-| **solady** | 0.091 | 0.103 |
-
-
-## Foundry Version Details
-
-### stable
-
-```
-forge Version: 1.2.3-stable
-```
-
-### nightly
-
-```
-forge Version: 1.2.3-nightly
-```
-
-
-## Notes
-
-- All benchmarks were run with hyperfine in parallel mode
-- **forge test - Running the test suite (5 runs, 1 warmup)**
-- **forge build (no cache) - Clean build without cache (5 runs, cache cleaned after each run)**
-- **forge build (with cache) - Build with warm cache (5 runs, 1 warmup)**
-- Results show mean execution time in seconds
-- N/A indicates benchmark failed or data unavailable
+Made with [criterion-table](https://github.com/nu11ptr/criterion-table)
 
 ## System Information
 
 - **OS:** Darwin
 - **Architecture:** arm64
-- **Date:** Wed 18 Jun 2025 17:46:19 BST
+- **Date:** Fri 27 Jun 2025 15:51:19 IST
 
 ## Raw Data
 
-Raw JSON benchmark data is available in: `/Users/yash/dev/paradigm/foundry-rs/foundry/benches/benchmark_results/json_20250618_174101`
+Detailed benchmark data and HTML reports are available in:
 
+- `target/criterion/` - Individual benchmark reports

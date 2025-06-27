@@ -1,0 +1,35 @@
+[package]
+name = "foundry-bench"
+version = "0.1.0"
+edition = "2021"
+
+[[bench]]
+name = "forge_test"
+path = "forge_test.rs"
+harness = false
+
+[[bench]]
+name = "forge_build_no_cache"
+path = "forge_build_no_cache.rs"
+harness = false
+
+[[bench]]
+name = "forge_build_with_cache"
+path = "forge_build_with_cache.rs"
+harness = false
+
+[dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+foundry-test-utils.workspace = true
+foundry-config.workspace = true
+foundry-compilers = { workspace = true, features = ["project-util"] }
+eyre.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["full"] }
+chrono = { version = "0.4", features = ["serde"] }
+rayon.workspace = true
+
+[dev-dependencies]
+foundry-test-utils.workspace = true
