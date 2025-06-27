@@ -1,6 +1,5 @@
 use super::ScreamingSnakeCase;
 use crate::{
-    declare_forge_lint,
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };

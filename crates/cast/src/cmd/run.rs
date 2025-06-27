@@ -1,7 +1,10 @@
 use alloy_consensus::Transaction;
 use alloy_network::{AnyNetwork, TransactionResponse};
-use alloy_primitives::U256;
-use alloy_provider::Provider;
+use alloy_primitives::{
+    map::{HashMap, HashSet},
+    Address, Bytes, U256,
+};
+use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::BlockTransactions;
 use clap::Parser;
 use eyre::{Result, WrapErr};
@@ -22,7 +25,7 @@ use foundry_config::{
 use foundry_evm::{
     executors::{EvmError, TracingExecutor},
     opts::EvmOpts,
-    traces::{InternalTraceMode, TraceMode},
+    traces::{InternalTraceMode, TraceMode, Traces},
     utils::configure_tx_env,
     Env,
 };
@@ -187,6 +190,7 @@ impl RunArgs {
             trace_mode,
             odyssey,
             create2_deployer,
+            None,
         )?;
         let mut env = Env::new_with_spec_id(
             env.evm_env.cfg_env.clone(),
@@ -273,10 +277,12 @@ impl RunArgs {
             }
         };
 
+        let contracts_bytecode = fetch_contracts_bytecode_from_trace(&provider, &result).await?;
         handle_traces(
             result,
             &config,
             chain,
+            &contracts_bytecode,
             self.label,
             self.with_local_artifacts,
             self.debug,
@@ -286,6 +292,47 @@ impl RunArgs {
 
         Ok(())
     }
+}
+
+pub async fn fetch_contracts_bytecode_from_trace(
+    provider: &RootProvider<AnyNetwork>,
+    result: &TraceResult,
+) -> Result<HashMap<Address, Bytes>> {
+    let mut contracts_bytecode = HashMap::default();
+    if let Some(ref traces) = result.traces {
+        let addresses = gather_trace_addresses(traces);
+        let results = futures::future::join_all(addresses.into_iter().map(async |a| {
+            (
+                a,
+                provider.get_code_at(a).await.unwrap_or_else(|e| {
+                    sh_warn!("Failed to fetch code for {a:?}: {e:?}").ok();
+                    Bytes::new()
+                }),
+            )
+        }))
+        .await;
+        for (address, code) in results {
+            if !code.is_empty() {
+                contracts_bytecode.insert(address, code);
+            }
+        }
+    }
+    Ok(contracts_bytecode)
+}
+
+fn gather_trace_addresses(traces: &Traces) -> HashSet<Address> {
+    let mut addresses = HashSet::default();
+    for (_, trace) in traces {
+        for node in trace.arena.nodes() {
+            if !node.trace.address.is_zero() {
+                addresses.insert(node.trace.address);
+            }
+            if !node.trace.caller.is_zero() {
+                addresses.insert(node.trace.caller);
+            }
+        }
+    }
+    addresses
 }
 
 impl figment::Provider for RunArgs {
