@@ -48,7 +48,7 @@ use rand_08::thread_rng;
 use revm::{
     context::{BlockEnv, CfgEnv, TxEnv},
     context_interface::block::BlobExcessGasAndPrice,
-    primitives::hardfork::SpecId,
+    primitives::{eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE, hardfork::SpecId},
 };
 use serde_json::{json, Value};
 use std::{
@@ -515,10 +515,10 @@ impl NodeConfig {
             *blob_excess_gas_and_price
         } else if let Some(excess_blob_gas) = self.genesis.as_ref().and_then(|g| g.excess_blob_gas)
         {
-            BlobExcessGasAndPrice::new(excess_blob_gas, false)
+            BlobExcessGasAndPrice::new(excess_blob_gas, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE)
         } else {
             // If no excess blob gas is configured, default to 0
-            BlobExcessGasAndPrice::new(0, false)
+            BlobExcessGasAndPrice::new(0, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE)
         }
     }
 
@@ -1266,13 +1266,15 @@ latest block number: {latest_block}"
             if let (Some(blob_excess_gas), Some(blob_gas_used)) =
                 (block.header.excess_blob_gas, block.header.blob_gas_used)
             {
-                env.evm_env.block_env.blob_excess_gas_and_price =
-                    Some(BlobExcessGasAndPrice::new(blob_excess_gas, false));
+                env.evm_env.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
+                    blob_excess_gas,
+                    BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+                ));
                 let next_block_blob_excess_gas =
                     fees.get_next_block_blob_excess_gas(blob_excess_gas, blob_gas_used);
                 fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
                     next_block_blob_excess_gas,
-                    false,
+                    BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
                 ));
             }
         }

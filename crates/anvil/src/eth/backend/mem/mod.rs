@@ -107,7 +107,7 @@ use revm::{
     database::{CacheDB, DatabaseRef, WrapDatabaseRef},
     interpreter::InstructionResult,
     precompile::secp256r1::{P256VERIFY, P256VERIFY_BASE_GAS_FEE},
-    primitives::{hardfork::SpecId, KECCAK_EMPTY},
+    primitives::{eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE, hardfork::SpecId, KECCAK_EMPTY},
     state::AccountInfo,
     DatabaseCommit, Inspector,
 };
@@ -1036,7 +1036,7 @@ impl Backend {
             self.fees.set_base_fee(next_block_base_fee);
             self.fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
                 next_block_excess_blob_gas,
-                false,
+                BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
             ));
         }
 
@@ -1386,7 +1386,7 @@ impl Backend {
         self.fees.set_base_fee(next_block_base_fee);
         self.fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
             next_block_excess_blob_gas,
-            false,
+            BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
         ));
 
         // notify all listeners
