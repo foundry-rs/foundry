@@ -188,23 +188,31 @@ impl SendTxArgs {
                 if let foundry_wallets::WalletSigner::Browser(ref browser_signer) = signer {
                     // Build the transaction
                     let (tx_request, _) = builder.build(from).await?;
-                    
+
                     // Extract the inner TransactionRequest from WithOtherFields
-                    // The browser wallet expects TransactionRequest, not WithOtherFields<TransactionRequest>
+                    // The browser wallet expects TransactionRequest, not
+                    // WithOtherFields<TransactionRequest>
                     let inner_tx_request = tx_request.inner;
-                    
+
                     // Send via browser wallet using the new API with AlloyTxRequest
-                    let tx_hash = browser_signer.send_transaction_via_browser(inner_tx_request).await?;
-                    
+                    let tx_hash =
+                        browser_signer.send_transaction_via_browser(inner_tx_request).await?;
+
                     if cast_async {
                         sh_println!("{tx_hash:#x}")?;
                     } else {
                         let receipt = Cast::new(&provider)
-                            .receipt(format!("{tx_hash:#x}"), None, confirmations, Some(timeout), false)
+                            .receipt(
+                                format!("{tx_hash:#x}"),
+                                None,
+                                confirmations,
+                                Some(timeout),
+                                false,
+                            )
                             .await?;
                         sh_println!("{receipt}")?;
                     }
-                    
+
                     return Ok(());
                 }
             }

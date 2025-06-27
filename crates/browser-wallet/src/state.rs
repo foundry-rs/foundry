@@ -1,8 +1,10 @@
 use crate::{BrowserTransaction, SignRequest, SignResponse, TransactionResponse};
 use parking_lot::Mutex;
-use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
-use std::time::Instant;
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+    time::Instant,
+};
 
 /// Generic request/response queue for browser wallet operations
 #[derive(Debug)]
@@ -21,10 +23,7 @@ impl<Req, Res> Default for RequestQueue<Req, Res> {
 
 impl<Req, Res> RequestQueue<Req, Res> {
     pub fn new() -> Self {
-        Self {
-            requests: VecDeque::new(),
-            responses: HashMap::new(),
-        }
+        Self { requests: VecDeque::new(), responses: HashMap::new() }
     }
 
     pub fn add_request(&mut self, request: Req) {
@@ -35,9 +34,9 @@ impl<Req, Res> RequestQueue<Req, Res> {
         self.requests.front()
     }
 
-    pub fn remove_request(&mut self, id: &str) -> Option<Req> 
-    where 
-        Req: HasId 
+    pub fn remove_request(&mut self, id: &str) -> Option<Req>
+    where
+        Req: HasId,
     {
         if let Some(pos) = self.requests.iter().position(|r| r.id() == id) {
             self.requests.remove(pos)
@@ -200,5 +199,4 @@ impl BrowserWalletState {
     pub fn get_connected_chain_id(&self) -> Option<u64> {
         self.connection.lock().chain_id
     }
-
 }

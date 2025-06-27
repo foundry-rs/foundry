@@ -119,9 +119,8 @@ impl WalletSigner {
     pub async fn from_browser(port: u16) -> Result<Self> {
         #[cfg(feature = "browser")]
         {
-            let browser_signer = BrowserSigner::new(port)
-                .await
-                .map_err(|e| WalletSignerError::Browser(e.into()))?;
+            let browser_signer =
+                BrowserSigner::new(port).await.map_err(|e| WalletSignerError::Browser(e.into()))?;
             Ok(Self::Browser(browser_signer))
         }
 

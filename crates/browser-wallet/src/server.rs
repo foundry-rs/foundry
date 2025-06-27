@@ -1,7 +1,6 @@
 use crate::{
-    state::BrowserWalletState,
-    BrowserTransaction, BrowserWalletError, SignRequest, SignResponse, TransactionResponse,
-    TypedDataRequest, WalletConnection,
+    state::BrowserWalletState, BrowserTransaction, BrowserWalletError, SignRequest, SignResponse,
+    TransactionResponse, TypedDataRequest, WalletConnection,
 };
 use alloy_dyn_abi::TypedData;
 use alloy_primitives::{Address, Bytes, B256};
@@ -103,7 +102,7 @@ impl BrowserWalletServer {
         if self.state.get_connected_address().is_none() {
             return Err(BrowserWalletError::NotConnected);
         }
-        
+
         let tx_id = request.id.clone();
 
         // Add to request queue
@@ -112,10 +111,7 @@ impl BrowserWalletServer {
         // Wait for response (with timeout)
         let timeout = if std::env::var("BROWSER_WALLET_TIMEOUT").is_ok() {
             std::time::Duration::from_secs(
-                std::env::var("BROWSER_WALLET_TIMEOUT")
-                    .unwrap_or_default()
-                    .parse()
-                    .unwrap_or(300)
+                std::env::var("BROWSER_WALLET_TIMEOUT").unwrap_or_default().parse().unwrap_or(300),
             )
         } else {
             std::time::Duration::from_secs(300) // 5 minutes default
@@ -128,9 +124,9 @@ impl BrowserWalletServer {
                 if let Some(hash) = response.hash {
                     return Ok(hash);
                 } else if let Some(error) = response.error {
-                    return Err(BrowserWalletError::Rejected { 
-                        operation: "Transaction", 
-                        reason: error 
+                    return Err(BrowserWalletError::Rejected {
+                        operation: "Transaction",
+                        reason: error,
                     });
                 } else {
                     return Err(BrowserWalletError::ServerError(
@@ -157,7 +153,7 @@ impl BrowserWalletServer {
         if self.state.get_connected_address().is_none() {
             return Err(BrowserWalletError::NotConnected);
         }
-        
+
         let request_id = request.id.clone();
 
         // Add to request queue
@@ -166,10 +162,7 @@ impl BrowserWalletServer {
         // Wait for response (with timeout)
         let timeout = if std::env::var("BROWSER_WALLET_TIMEOUT").is_ok() {
             std::time::Duration::from_secs(
-                std::env::var("BROWSER_WALLET_TIMEOUT")
-                    .unwrap_or_default()
-                    .parse()
-                    .unwrap_or(300)
+                std::env::var("BROWSER_WALLET_TIMEOUT").unwrap_or_default().parse().unwrap_or(300),
             )
         } else {
             std::time::Duration::from_secs(300) // 5 minutes default
@@ -184,7 +177,7 @@ impl BrowserWalletServer {
                 } else if let Some(error) = response.error {
                     return Err(BrowserWalletError::Rejected {
                         operation: "Signing",
-                        reason: error
+                        reason: error,
                     });
                 } else {
                     return Err(BrowserWalletError::ServerError(
@@ -289,7 +282,7 @@ impl BrowserWalletServer {
         if std::env::var("BROWSER_WALLET_TEST_MODE").is_ok() {
             return Ok(());
         }
-        
+
         let url = format!("http://localhost:{}", self.port);
 
         webbrowser::open(&url)
@@ -443,7 +436,9 @@ async fn report_signing_result(
     Json(serde_json::json!({"status": "ok"}))
 }
 
-async fn get_network_details(State(state): State<Arc<BrowserWalletState>>) -> Json<serde_json::Value> {
+async fn get_network_details(
+    State(state): State<Arc<BrowserWalletState>>,
+) -> Json<serde_json::Value> {
     // Return static Anvil network details for now
     Json(serde_json::json!({
         "chain_id": state.get_connected_chain_id().unwrap_or(31337),
@@ -458,7 +453,7 @@ async fn update_account_status(
 ) -> Json<serde_json::Value> {
     if let Some(address) = body.get("address").and_then(|a| a.as_str()) {
         state.set_connected_address(Some(address.to_string()));
-        
+
         // Update chain ID if provided
         if let Some(chain_id) = body.get("chain_id").and_then(|c| c.as_u64()) {
             state.set_connected_chain_id(Some(chain_id));
@@ -467,6 +462,6 @@ async fn update_account_status(
         // Handle null address (disconnection)
         state.set_connected_address(None);
     }
-    
+
     Json(serde_json::json!({"status": "ok"}))
 }
