@@ -203,7 +203,7 @@ async fn test_concurrent_transaction_safety() -> Result<(), Box<dyn std::error::
     
     // Submit multiple transactions concurrently
     for i in 0..10 {
-        let tx_id = format!("concurrent-tx-{}", i);
+        let tx_id = format!("concurrent-tx-{i}");
         let from = address!("70997970C51812dc3A010C7d01b50e0d17dc79C8");
         let to = address!("3C44CdDdB6a900fa2b585dd299e03d12FA4293BC");
         let value = U256::from(1000 * i);
@@ -234,7 +234,7 @@ async fn test_concurrent_transaction_safety() -> Result<(), Box<dyn std::error::
         for _ in 0..10 {
             // Poll for pending transaction
             let response = client
-                .get(&format!("{}/api/transaction/pending", base_url))
+                .get(format!("{base_url}/api/transaction/pending"))
                 .send()
                 .await;
                 
@@ -251,7 +251,7 @@ async fn test_concurrent_transaction_safety() -> Result<(), Box<dyn std::error::
                                 });
                                 
                                 let _ = client
-                                    .post(&format!("{}/api/transaction/response", base_url))
+                                    .post(format!("{base_url}/api/transaction/response"))
                                     .json(&js_response)
                                     .send()
                                     .await;

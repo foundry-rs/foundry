@@ -13,6 +13,12 @@ pub struct RequestQueue<Req, Res> {
     responses: HashMap<String, Res>,
 }
 
+impl<Req, Res> Default for RequestQueue<Req, Res> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<Req, Res> RequestQueue<Req, Res> {
     pub fn new() -> Self {
         Self {
@@ -84,6 +90,12 @@ pub struct BrowserWalletState {
     pub connection: Arc<Mutex<ConnectionInfo>>,
     /// Last heartbeat timestamp
     pub last_heartbeat: Arc<Mutex<Instant>>,
+}
+
+impl Default for BrowserWalletState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl BrowserWalletState {

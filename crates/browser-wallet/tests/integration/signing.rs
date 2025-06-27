@@ -159,8 +159,8 @@ async fn test_concurrent_signing_requests() -> Result<(), Box<dyn std::error::Er
     // Submit multiple signing requests
     let mut handles = vec![];
     for i in 0..5 {
-        let id = format!("concurrent-sign-{}", i);
-        let message = format!("Message {}", i);
+        let id = format!("concurrent-sign-{i}");
+        let message = format!("Message {i}");
         let request = SignRequest {
             id: id.clone(),
             address: address!("70997970C51812dc3A010C7d01b50e0d17dc79C8"),
@@ -186,7 +186,7 @@ async fn test_concurrent_signing_requests() -> Result<(), Box<dyn std::error::Er
         // Approve
         wallet.report_signing_result(SignResponse {
             id: id.clone(),
-            signature: Some(Bytes::from(format!("sig-{}", id).into_bytes())),
+            signature: Some(Bytes::from(format!("sig-{id}").into_bytes())),
             error: None,
         }).await?;
         

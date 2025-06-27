@@ -103,11 +103,9 @@ async fn test_multiple_connections() -> Result<(), Box<dyn std::error::Error>> {
 #[tokio::test]
 async fn test_concurrent_connections() -> Result<(), Box<dyn std::error::Error>> {
     let wallet = TestWallet::spawn().await?;
-    let addresses = vec![
-        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+    let addresses = ["0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
         "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
-        "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
-    ];
+        "0x90F79bf6EB2c4f870365E785982E1f101E93b906"];
     
     // Attempt concurrent connections
     let mut handles = vec![];
@@ -119,7 +117,7 @@ async fn test_concurrent_connections() -> Result<(), Box<dyn std::error::Error>>
         
         let handle = tokio::spawn(async move {
             client
-                .post(&format!("{}/api/account", wallet_url))
+                .post(format!("{wallet_url}/api/account"))
                 .json(&serde_json::json!({
                     "address": address,
                     "chain_id": chain_id
@@ -150,7 +148,7 @@ async fn test_invalid_address_format() -> Result<(), Box<dyn std::error::Error>>
     
     // Try to connect with invalid address
     let response = wallet.client
-        .post(&format!("{}/api/account", wallet.base_url))
+        .post(format!("{}/api/account", wallet.base_url))
         .json(&serde_json::json!({
             "address": "invalid_address",
             "chain_id": 31337

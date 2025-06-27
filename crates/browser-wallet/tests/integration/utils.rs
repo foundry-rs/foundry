@@ -27,14 +27,14 @@ impl TestWallet {
         server.start().await?;
 
         let port = server.port();
-        let base_url = format!("http://localhost:{}", port);
+        let base_url = format!("http://localhost:{port}");
 
         // Wait for server to be ready
         let client = Client::builder().timeout(Duration::from_secs(10)).build()?;
 
         // Health check with retries
         for _ in 0..10 {
-            if client.get(&format!("{}/api/heartbeat", base_url)).send().await.is_ok() {
+            if client.get(format!("{base_url}/api/heartbeat")).send().await.is_ok() {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -51,7 +51,7 @@ impl TestWallet {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let response = self
             .client
-            .post(&format!("{}/api/account", self.base_url))
+            .post(format!("{}/api/account", self.base_url))
             .json(&json!({
                 "address": address,
                 "chain_id": chain_id
@@ -67,7 +67,7 @@ impl TestWallet {
     pub async fn disconnect(&self) -> Result<(), Box<dyn std::error::Error>> {
         let response = self
             .client
-            .post(&format!("{}/api/account", self.base_url))
+            .post(format!("{}/api/account", self.base_url))
             .json(&json!({
                 "address": serde_json::Value::Null,
                 "chain_id": serde_json::Value::Null
@@ -84,7 +84,7 @@ impl TestWallet {
         &self,
     ) -> Result<Option<BrowserTransaction>, Box<dyn std::error::Error>> {
         let response =
-            self.client.get(&format!("{}/api/transaction/pending", self.base_url)).send().await?;
+            self.client.get(format!("{}/api/transaction/pending", self.base_url)).send().await?;
 
         if response.status().is_success() {
             let text = response.text().await?;
@@ -120,7 +120,7 @@ impl TestWallet {
 
         let response = self
             .client
-            .post(&format!("{}/api/transaction/response", self.base_url))
+            .post(format!("{}/api/transaction/response", self.base_url))
             .json(&js_response)
             .send()
             .await?;
@@ -134,7 +134,7 @@ impl TestWallet {
         &self,
     ) -> Result<Option<SignRequest>, Box<dyn std::error::Error>> {
         let response =
-            self.client.get(&format!("{}/api/sign/pending", self.base_url)).send().await?;
+            self.client.get(format!("{}/api/sign/pending", self.base_url)).send().await?;
 
         if response.status().is_success() {
             let text = response.text().await?;
@@ -170,7 +170,7 @@ impl TestWallet {
 
         let response = self
             .client
-            .post(&format!("{}/api/sign/response", self.base_url))
+            .post(format!("{}/api/sign/response", self.base_url))
             .json(&js_response)
             .send()
             .await?;
@@ -181,7 +181,7 @@ impl TestWallet {
 
     /// Check server health
     pub async fn health_check(&self) -> Result<bool, Box<dyn std::error::Error>> {
-        let response = self.client.get(&format!("{}/api/heartbeat", self.base_url)).send().await?;
+        let response = self.client.get(format!("{}/api/heartbeat", self.base_url)).send().await?;
 
         Ok(response.status().is_success())
     }
@@ -190,7 +190,7 @@ impl TestWallet {
     pub async fn get_network_details(
         &self,
     ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-        let response = self.client.get(&format!("{}/api/network", self.base_url)).send().await?;
+        let response = self.client.get(format!("{}/api/network", self.base_url)).send().await?;
 
         Ok(response.json().await?)
     }
