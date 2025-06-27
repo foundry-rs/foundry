@@ -126,6 +126,7 @@ fn format_inner(
     if first_result.is_err() {
         return first_result;
     }
+    return first_result;
     let Some(first_formatted) = first_result.ok_ref() else { return first_result };
 
     // Second pass formatting

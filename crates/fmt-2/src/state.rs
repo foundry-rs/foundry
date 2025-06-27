@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     iter::{IterDelimited, IteratorPosition},
-    pp::BreakToken,
+    pp::{BreakToken, Printer},
     FormatterConfig, InlineConfig,
 };
 use foundry_config::fmt as config;
@@ -15,7 +15,7 @@ use solar_parse::{
     interface::{BytePos, SourceMap},
     Cursor,
 };
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::HashMap};
 
 /// Formatting style for comma-separated lists
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,27 +91,26 @@ impl<'sess> State<'sess, '_> {
     }
 
     fn print_comments_inner(&mut self, pos: BytePos, skip_ws: bool) -> Option<CommentStyle> {
-        let mut has_comment = None;
+        let mut last_style = None;
         while let Some(cmnt) = self.peek_comment() {
             if cmnt.pos() >= pos {
                 break;
             }
             let cmnt = self.next_comment().unwrap();
-            println!("{cmnt:?}");
             if skip_ws && cmnt.style == CommentStyle::BlankLine {
                 continue;
             }
-            has_comment = Some(cmnt.style);
+            last_style = Some(cmnt.style);
             self.print_comment(cmnt);
         }
-        has_comment
+        last_style
     }
 
     fn print_comment(&mut self, mut cmnt: Comment) {
         match cmnt.style {
             CommentStyle::Mixed => {
                 // TODO(dani): ?
-                if !self.is_beginning_of_line() {
+                if !self.is_bol_or_only_ind() {
                     self.zerobreak();
                     // self.space();
                 }
@@ -193,36 +192,13 @@ impl<'sess> State<'sess, '_> {
         self.comments.next()
     }
 
-    fn print_trailing_comment(&mut self, span: Span, next_pos: Option<BytePos>) -> bool {
-        if let Some(cmnt) = self.comments.trailing_comment(self.sm, span, next_pos) {
+    fn print_trailing_comment(&mut self, span_pos: BytePos, next_pos: Option<BytePos>) -> bool {
+        if let Some(cmnt) = self.comments.trailing_comment(self.sm, span_pos, next_pos) {
             self.print_comment(cmnt);
             return true;
         }
 
         false
-    }
-
-    /// Print mixed comments without adding line breaks.
-    fn print_mixed_comments(&mut self, pos: BytePos) -> bool {
-        let mut printed = false;
-        while let Some(cmnt) = self.peek_comment() {
-            if cmnt.pos() >= pos {
-                break;
-            }
-            let cmnt = self.next_comment().unwrap();
-            printed = true;
-
-            if matches!(cmnt.style, CommentStyle::Mixed) {
-                if !self.last_token_is_space() && !self.is_bol_or_only_ind() {
-                    self.space();
-                }
-                for line in cmnt.lines {
-                    self.word(line);
-                }
-                self.space();
-            }
-        }
-        printed
     }
 
     fn print_remaining_comments(&mut self) {
@@ -312,9 +288,9 @@ impl<'sess> State<'sess, '_> {
             return;
         }
 
-        let first_pos = get_span(&values[0]).map(Span::lo);
-        let skip_break = self.print_trailing_comment(bracket_span, first_pos);
         self.s.cbox(self.ind);
+        let first_pos = get_span(&values[0]).map(Span::lo);
+        let skip_break = self.print_trailing_comment(bracket_span.lo(), first_pos);
         if !skip_break {
             self.zerobreak();
         }
@@ -324,28 +300,28 @@ impl<'sess> State<'sess, '_> {
 
         let mut skip_break = false;
         for (i, value) in values.iter().enumerate() {
+            let is_last = i == values.len() - 1;
             self.s.ibox(0);
             let span = get_span(value);
             if let Some(span) = span {
-                self.print_comments(span.lo());
+                self.print_comments_skip_ws(span.lo());
             }
             print(self, value);
-            let is_last = i == values.len() - 1;
             if !is_last {
                 self.word(",");
             }
-            if let Some(span) = span {
-                let next_pos = if is_last { None } else { get_span(&values[i + 1]).map(Span::lo) };
-                if self.print_trailing_comment(span, next_pos) && is_last {
+            let next_pos = if is_last { None } else { get_span(&values[i + 1]).map(Span::lo) };
+            self.print_comments_skip_ws(next_pos.unwrap_or_else(|| bracket_span.hi()));
+            if self.is_bol_or_only_ind() {
+                if is_last {
                     // if a trailing comment is printed at the very end, we have to manually adjust
                     // the offset to avoid having a double break.
                     self.break_offset_if_not_bol(0, -self.ind);
                     skip_break = true;
-                };
-                self.print_mixed_comments(next_pos.unwrap_or(bracket_span.hi()));
-            }
+                }
+            };
             self.end();
-            if !is_last && !self.is_beginning_of_line() {
+            if !is_last && !self.is_bol_or_only_ind() {
                 self.space();
             }
         }
@@ -439,7 +415,7 @@ impl<'ast> State<'_, 'ast> {
             ast::ItemKind::Event(event) => self.print_event(event),
         }
         self.print_comments(span.hi());
-        self.print_trailing_comment(span, None);
+        self.print_trailing_comment(span.hi(), None);
         self.hardbreak_if_not_bol();
     }
 
@@ -603,7 +579,7 @@ impl<'ast> State<'_, 'ast> {
         self.hardbreak_if_nonempty();
         for var in fields.iter() {
             self.print_var_def(var);
-            self.print_trailing_comment(var.span, None);
+            self.print_trailing_comment(var.span.hi(), None);
             self.hardbreak_if_not_bol();
         }
         self.print_comments_skip_ws(span.hi());
@@ -624,7 +600,7 @@ impl<'ast> State<'_, 'ast> {
             if !pos.is_last {
                 self.word(",");
             }
-            self.print_trailing_comment(ident.span, None);
+            self.print_trailing_comment(ident.span.hi(), None);
             self.hardbreak_if_not_bol();
         }
         self.print_comments_skip_ws(span.hi());
@@ -647,12 +623,16 @@ impl<'ast> State<'_, 'ast> {
         let ast::FunctionHeader {
             name,
             ref parameters,
+            parameters_span,
+            visibility_span,
             visibility,
+            state_mutability_span,
             state_mutability,
             ref modifiers,
             virtual_,
             ref override_,
             ref returns,
+            returns_span,
             ..
         } = *header;
         self.cbox(0);
@@ -663,35 +643,117 @@ impl<'ast> State<'_, 'ast> {
             self.nbsp();
             self.print_ident(&name);
         }
-        self.print_parameter_list(parameters, header.span, ListFormat::Consistent);
+        self.print_parameter_list(parameters, parameters_span, ListFormat::Consistent);
         self.end();
 
-        // Attributes.
+        // Cache attribute comments first, as they can be wrongly ordered.
+        let (mut attrib_comments, mut pending) = (Vec::new(), None);
+        for cmnt in self.comments.iter() {
+            if cmnt.pos() >= returns_span.lo() {
+                break;
+            }
+
+            match pending {
+                Some(ref p) => pending = Some(p + 1),
+                None => pending = Some(0),
+            }
+        }
+        while let Some(p) = pending {
+            if p == 0 {
+                pending = None;
+            } else {
+                pending = Some(p - 1);
+            }
+            let cmnt = self.next_comment().unwrap();
+            if cmnt.style == CommentStyle::BlankLine {
+                continue;
+            }
+            attrib_comments.push(cmnt);
+        }
+
+        let mut attributes: Vec<AttributeInfo<'ast>> = Vec::new();
+        if let Some(v) = visibility {
+            attributes.push(AttributeInfo {
+                kind: AttributeKind::Visibility(v),
+                span: visibility_span.unwrap(),
+            });
+        }
+        attributes.push(AttributeInfo {
+            kind: AttributeKind::StateMutability(state_mutability),
+            span: state_mutability_span,
+        });
+        if let Some(v) = virtual_ {
+            attributes.push(AttributeInfo { kind: AttributeKind::Virtual, span: v });
+        }
+        if let Some(o) = override_ {
+            attributes.push(AttributeInfo { kind: AttributeKind::Override(o), span: o.span });
+        }
+        for m in modifiers.iter() {
+            attributes.push(AttributeInfo { kind: AttributeKind::Modifier(m), span: m.span() });
+        }
+        attributes.sort_by_key(|attr| attr.span.lo());
+
+        // Claim comments for each source-ordered attribute
+        let mut map: HashMap<BytePos, (Vec<Comment>, Vec<Comment>)> = HashMap::new();
+        for a in 0..attributes.len() {
+            let is_last = a == attributes.len() - 1;
+            let mut before = Vec::new();
+            let mut after = Vec::new();
+
+            let before_limit = attributes[a].span.lo();
+            let after_limit =
+                if !is_last { attributes[a + 1].span.lo() } else { returns_span.lo() };
+            let mut c = 0;
+            while c < attrib_comments.len() {
+                if attrib_comments[c].pos() <= before_limit {
+                    before.push(attrib_comments.remove(c));
+                } else if (after.is_empty() || is_last) && attrib_comments[c].pos() <= after_limit {
+                    after.push(attrib_comments.remove(c));
+                } else {
+                    c += 1;
+                }
+            }
+            map.insert(before_limit, (before, after));
+        }
+
         self.s.cbox(self.ind);
-        if let Some(visibility) = visibility {
-            self.space();
-            self.word(visibility.to_str());
+        if let Some(v) = visibility {
+            self.print_attribute(visibility_span.unwrap(), &mut map, &mut |s| s.word(v.to_str()));
         }
         if state_mutability != ast::StateMutability::NonPayable {
-            self.space();
-            self.word(state_mutability.to_str());
+            if !self.is_bol_or_only_ind() && !self.last_token_is_space() {
+                self.space();
+            }
+            self.print_attribute(state_mutability_span, &mut map, &mut |s| {
+                s.word(state_mutability.to_str())
+            });
         }
-        if virtual_ {
-            self.space();
-            self.word("virtual");
+        if let Some(virtual_) = virtual_ {
+            if !self.is_bol_or_only_ind() && !self.last_token_is_space() {
+                self.space();
+            }
+            self.print_attribute(virtual_, &mut map, &mut |s| s.word("virtual"));
         }
         if let Some(override_) = override_ {
-            self.space();
-            self.print_override(override_);
+            if !self.is_bol_or_only_ind() && !self.last_token_is_space() {
+                self.space();
+            }
+            self.print_attribute(override_.span, &mut map, &mut |s| s.print_override(override_));
         }
-        for modifier in modifiers.iter() {
-            self.space();
-            self.print_modifier_call(modifier, self.is_modifier_a_base_contract(kind, modifier));
+        for m in attributes.iter().filter(|a| matches!(a.kind, AttributeKind::Modifier(_))) {
+            if let AttributeKind::Modifier(modifier) = m.kind {
+                let is_base = self.is_modifier_a_base_contract(kind, modifier);
+                self.print_attribute(m.span, &mut map, &mut |s| {
+                    s.print_modifier_call(modifier, is_base)
+                });
+            }
         }
         if !returns.is_empty() {
-            self.space();
+            if !self.is_bol_or_only_ind() && !self.last_token_is_space() {
+                self.space();
+            }
             self.word("returns ");
-            self.print_parameter_list(returns, header.span, ListFormat::Consistent);
+            self.print_parameter_list(returns, returns_span, ListFormat::Consistent);
         }
 
         if let Some(body) = body {
@@ -861,7 +923,7 @@ impl<'ast> State<'_, 'ast> {
                     }
                     if !pos.is_last {
                         self.space_if_not_bol();
-                        self.print_trailing_comment(span, None);
+                        self.print_trailing_comment(span.hi(), None);
                     } else {
                         self.neverbreak();
                     }
@@ -1488,7 +1550,7 @@ impl<'ast> State<'_, 'ast> {
                     let ast::TryCatchClause { args, block, span: try_span, .. } = first;
                     self.ibox(0);
                     self.word("try ");
-                    self.print_mixed_comments(expr.span.lo());
+                    self.print_comments(expr.span.lo());
                     self.print_expr(expr);
                     self.print_comments_skip_ws(
                         args.first().map(|p| p.span.lo()).unwrap_or_else(|| expr.span.lo()),
@@ -1504,7 +1566,9 @@ impl<'ast> State<'_, 'ast> {
                     self.print_block(block, *try_span);
 
                     let mut skip_ind = false;
-                    if self.print_trailing_comment(*try_span, other.first().map(|c| c.span.lo())) {
+                    if self
+                        .print_trailing_comment(try_span.hi(), other.first().map(|c| c.span.lo()))
+                    {
                         // if a trailing comment is printed at the very end, we have to manually
                         // adjust the offset to avoid having a double break.
                         self.break_offset_if_not_bol(0, self.ind);
@@ -1521,10 +1585,10 @@ impl<'ast> State<'_, 'ast> {
                             self.handle_try_catch_indent(&mut should_break, block.is_empty(), pos);
                         }
                         self.ibox(0);
-                        self.print_mixed_comments(catch_span.lo());
+                        self.print_comments(catch_span.lo());
                         self.word("catch ");
                         if !args.is_empty() {
-                            self.print_mixed_comments(args[0].span.lo());
+                            self.print_comments(args[0].span.lo());
                             if let Some(name) = name {
                                 self.print_ident(name);
                             }
@@ -1554,7 +1618,7 @@ impl<'ast> State<'_, 'ast> {
             self.word(";");
         }
         self.print_comments(stmt.span.hi());
-        self.print_trailing_comment(stmt.span, None);
+        self.print_trailing_comment(stmt.span.hi(), None);
     }
 
     fn print_if_no_else(&mut self, cond: &'ast ast::Expr<'ast>, then: &'ast ast::Stmt<'ast>) {
@@ -1753,7 +1817,7 @@ impl<'ast> State<'_, 'ast> {
                 self.word("switch ");
                 self.print_yul_expr(selector);
 
-                self.print_trailing_comment(selector.span, None);
+                self.print_trailing_comment(selector.span.hi(), None);
 
                 for yul::StmtSwitchCase { constant, body } in branches.iter() {
                     self.hardbreak_if_not_bol();
@@ -1762,7 +1826,7 @@ impl<'ast> State<'_, 'ast> {
                     self.nbsp();
                     self.print_yul_block(body, span, true);
 
-                    self.print_trailing_comment(selector.span, None);
+                    self.print_trailing_comment(selector.span.hi(), None);
                 }
 
                 if let Some(default_case) = default_case {
@@ -1811,7 +1875,7 @@ impl<'ast> State<'_, 'ast> {
             }
         }
         self.print_comments(span.hi());
-        self.print_trailing_comment(span, None);
+        self.print_trailing_comment(span.hi(), None);
         self.hardbreak_if_not_bol();
     }
 
@@ -1871,6 +1935,35 @@ impl<'ast> State<'_, 'ast> {
             *should_break = true;
         }
     }
+
+    fn print_attribute(
+        &mut self,
+        span: Span,
+        map: &mut HashMap<BytePos, (Vec<Comment>, Vec<Comment>)>,
+        print_fn: &mut dyn FnMut(&mut Self),
+    ) {
+        match map.remove(&span.lo()) {
+            Some((pre_comments, post_comments)) => {
+                for cmnt in pre_comments {
+                    self.print_comment(cmnt);
+                }
+                if !self.is_bol_or_only_ind() {
+                    self.space();
+                }
+                print_fn(self);
+                for cmnt in post_comments {
+                    self.print_comment(cmnt);
+                }
+            }
+            // Fallback for attributes with no comments
+            None => {
+                if !self.is_beginning_of_line() {
+                    self.space();
+                }
+                print_fn(self);
+            }
+        }
+    }
 }
 
 fn stmt_needs_semi<'ast>(stmt: &'ast ast::StmtKind<'ast>) -> bool {
@@ -1894,4 +1987,19 @@ fn stmt_needs_semi<'ast>(stmt: &'ast ast::StmtKind<'ast>) -> bool {
         ast::StmtKind::Revert { .. } |
         ast::StmtKind::Placeholder { .. } => true,
     }
+}
+
+#[derive(Debug, Clone)]
+enum AttributeKind<'a> {
+    Visibility(ast::Visibility),
+    StateMutability(ast::StateMutability),
+    Virtual,
+    Override(&'a ast::Override<'a>),
+    Modifier(&'a ast::Modifier<'a>),
+}
+
+#[derive(Debug, Clone)]
+struct AttributeInfo<'a> {
+    kind: AttributeKind<'a>,
+    span: Span,
 }

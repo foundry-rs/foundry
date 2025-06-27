@@ -64,10 +64,13 @@ impl Printer {
 
     pub fn last_token_is_space(&self) -> bool {
         if let Some(token) = self.last_token() {
-            return token.is_space();
+            if token.is_space() {
+                return true;
+            }
         }
 
-        false
+        let res = self.out.ends_with(" ");
+        res
     }
 
     pub fn is_beginning_of_line(&self) -> bool {
@@ -77,10 +80,13 @@ impl Printer {
         }
     }
 
+    /// Identifies whether the current position is:
+    ///   1. the beginning of a line (empty)
+    ///   2. a line with only indendation (just whitespaces)
     pub fn is_bol_or_only_ind(&self) -> bool {
         for i in self.buf.index_range().rev() {
             let token = &self.buf[i].token;
-            if token.is_hardbreak() || matches!(token, Token::Begin(_)) {
+            if token.is_hardbreak() {
                 return true;
             }
             if Self::token_has_non_whitespace_content(token) {
