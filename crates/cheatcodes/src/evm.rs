@@ -459,8 +459,7 @@ impl Cheatcode for getBlobhashesCall {
 impl Cheatcode for rollCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newHeight } = self;
-        ensure!(*newHeight <= U256::from(u64::MAX), "block height must be less than 2^64 - 1");
-        ccx.ecx.block.number = newHeight.saturating_to();
+        ccx.ecx.block.number = *newHeight;
         Ok(Default::default())
     }
 }
@@ -484,8 +483,7 @@ impl Cheatcode for txGasPriceCall {
 impl Cheatcode for warpCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newTimestamp } = self;
-        ensure!(*newTimestamp <= U256::from(u64::MAX), "timestamp must be less than 2^64 - 1");
-        ccx.ecx.block.timestamp = newTimestamp.saturating_to();
+        ccx.ecx.block.timestamp = *newTimestamp;
         Ok(Default::default())
     }
 }
