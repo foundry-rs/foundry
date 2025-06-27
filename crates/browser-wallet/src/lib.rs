@@ -97,7 +97,7 @@ pub struct TypedDataRequest {
 }
 
 /// Standard EIP-1193 provider interface
-/// Reference: https://eips.ethereum.org/EIPS/eip-1193
+/// Reference: <https://eips.ethereum.org/EIPS/eip-1193>
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "method", content = "params")]
 pub enum EthereumRequest {
