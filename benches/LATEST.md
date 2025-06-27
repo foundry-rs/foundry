@@ -1,6 +1,6 @@
 # Foundry Benchmarking Results
 
-**Generated on:** Fri 27 Jun 2025 15:16:52 IST  
+**Generated on:** Fri 27 Jun 2025 15:51:19 IST  
 **Foundry Versions Tested:** stable nightly  
 
 ## Repositories Tested
@@ -28,15 +28,29 @@ The following benchmarks were performed:
 ## Table of Contents
 
 - [Benchmark Results](#benchmark-results)
+    - [forge-test](#forge-test)
+    - [forge-build-no-cache](#forge-build-no-cache)
     - [forge-build-with-cache](#forge-build-with-cache)
 
 ## Benchmark Results
+
+### forge-test
+
+|                         | `stable`               | `nightly`                      |
+|:------------------------|:-----------------------|:------------------------------ |
+| **`ithacaxyz-account`** | `3.75 s` (✅ **1.00x**) | `3.27 s` (✅ **1.15x faster**)  |
+
+### forge-build-no-cache
+
+|                         | `stable`                | `nightly`                       |
+|:------------------------|:------------------------|:------------------------------- |
+| **`ithacaxyz-account`** | `14.23 s` (✅ **1.00x**) | `14.25 s` (✅ **1.00x slower**)  |
 
 ### forge-build-with-cache
 
 |                         | `stable`                  | `nightly`                         |
 |:------------------------|:--------------------------|:--------------------------------- |
-| **`ithacaxyz-account`** | `166.32 ms` (✅ **1.00x**) | `171.37 ms` (✅ **1.03x slower**)  |
+| **`ithacaxyz-account`** | `163.53 ms` (✅ **1.00x**) | `168.00 ms` (✅ **1.03x slower**)  |
 
 ---
 Made with [criterion-table](https://github.com/nu11ptr/criterion-table)
@@ -54,7 +68,7 @@ Made with [criterion-table](https://github.com/nu11ptr/criterion-table)
 
 - **OS:** Darwin
 - **Architecture:** arm64
-- **Date:** Fri 27 Jun 2025 15:16:52 IST
+- **Date:** Fri 27 Jun 2025 15:51:19 IST
 
 ## Raw Data
 
