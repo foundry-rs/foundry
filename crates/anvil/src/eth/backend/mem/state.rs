@@ -154,7 +154,7 @@ pub fn apply_block_overrides<DB>(
         env.difficulty = difficulty;
     }
     if let Some(time) = time {
-        env.timestamp = time;
+        env.timestamp = U256::from(time);
     }
     if let Some(gas_limit) = gas_limit {
         env.gas_limit = gas_limit;

@@ -567,8 +567,8 @@ impl Backend {
 
                     env.evm_env.cfg_env.chain_id = fork.chain_id();
                     env.evm_env.block_env = BlockEnv {
-                        number: fork_block_number,
-                        timestamp: fork_block.header.timestamp,
+                        number: U256::from(fork_block_number),
+                        timestamp: U256::from(fork_block.header.timestamp),
                         gas_limit,
                         difficulty: fork_block.header.difficulty,
                         prevrandao: Some(fork_block.header.mix_hash.unwrap_or_default()),
@@ -674,7 +674,7 @@ impl Backend {
     /// Sets the block number
     pub fn set_block_number(&self, number: u64) {
         let mut env = self.env.write();
-        env.evm_env.block_env.number = number;
+        env.evm_env.block_env.number = U256::from(number);
     }
 
     /// Returns the client coinbase address.
@@ -909,8 +909,8 @@ impl Backend {
 
             let mut env = self.env.write();
             env.evm_env.block_env = BlockEnv {
-                number: num,
-                timestamp: block.header.timestamp,
+                number: U256::from(num),
+                timestamp: U256::from(block.header.timestamp),
                 difficulty: block.header.difficulty,
                 // ensures prevrandao is set
                 prevrandao: Some(block.header.mix_hash.unwrap_or_default()),
@@ -1077,9 +1077,9 @@ impl Backend {
     fn next_env(&self) -> Env {
         let mut env = self.env.read().clone();
         // increase block number for this block
-        env.evm_env.block_env.number = env.evm_env.block_env.number.saturating_add(1);
+        env.evm_env.block_env.number = env.evm_env.block_env.number.saturating_add(U256::from(1));
         env.evm_env.block_env.basefee = self.base_fee();
-        env.evm_env.block_env.timestamp = self.time.current_call_timestamp();
+        env.evm_env.block_env.timestamp = U256::from(self.time.current_call_timestamp());
         env
     }
 
@@ -1239,9 +1239,10 @@ impl Backend {
             // increase block number for this block
             if is_arbitrum(env.evm_env.cfg_env.chain_id) {
                 // Temporary set `env.block.number` to `block_number` for Arbitrum chains.
-                env.evm_env.block_env.number = block_number;
+                env.evm_env.block_env.number = U256::from(block_number);
             } else {
-                env.evm_env.block_env.number = env.evm_env.block_env.number.saturating_add(1);
+                env.evm_env.block_env.number =
+                    env.evm_env.block_env.number.saturating_add(U256::from(1));
             }
 
             env.evm_env.block_env.basefee = current_base_fee;
@@ -1264,7 +1265,7 @@ impl Backend {
                 // finally set the next block timestamp, this is done just before execution, because
                 // there can be concurrent requests that can delay acquiring the db lock and we want
                 // to ensure the timestamp is as close as possible to the actual execution.
-                env.evm_env.block_env.timestamp = self.time.next_timestamp();
+                env.evm_env.block_env.timestamp = U256::from(self.time.next_timestamp());
 
                 let executor = TransactionExecutor {
                     db: &mut **db,
@@ -1685,8 +1686,8 @@ impl Backend {
                             .enumerate()
                             .map(|(idx, log)| Log {
                                 inner: log,
-                                block_number: Some(block_env.number),
-                                block_timestamp: Some(block_env.timestamp),
+                                block_number: Some(block_env.number.saturating_to()),
+                                block_timestamp: Some(block_env.timestamp.saturating_to()),
                                 transaction_index: Some(req_idx as u64),
                                 log_index: Some((idx + log_index) as u64),
                                 removed: false,
@@ -1713,10 +1714,10 @@ impl Backend {
                     beneficiary: block_env.beneficiary,
                     state_root: Default::default(),
                     difficulty: Default::default(),
-                    number: block_env.number,
+                    number: block_env.number.saturating_to(),
                     gas_limit: block_env.gas_limit,
                     gas_used,
-                    timestamp: block_env.timestamp,
+                    timestamp: block_env.timestamp.saturating_to(),
                     extra_data: Default::default(),
                     mix_hash: Default::default(),
                     nonce: Default::default(),
@@ -2305,9 +2306,9 @@ impl Backend {
                     .with_pending_block(pool_transactions, |state, block| {
                         let block = block.block;
                         let block = BlockEnv {
-                            number: block.header.number,
+                            number: U256::from(block.header.number),
                             beneficiary: block.header.beneficiary,
-                            timestamp: block.header.timestamp,
+                            timestamp: U256::from(block.header.timestamp),
                             difficulty: block.header.difficulty,
                             prevrandao: Some(block.header.mix_hash),
                             basefee: block.header.base_fee_per_gas.unwrap_or_default(),
@@ -2324,7 +2325,7 @@ impl Backend {
         };
         let block_number = self.convert_block_number(block_number);
 
-        if block_number < self.env.read().evm_env.block_env.number {
+        if block_number < self.env.read().evm_env.block_env.number.saturating_to() {
             if let Some((block_hash, block)) = self
                 .block_by_number(BlockNumber::Number(block_number))
                 .await?
@@ -2332,9 +2333,9 @@ impl Backend {
             {
                 if let Some(state) = self.states.write().get(&block_hash) {
                     let block = BlockEnv {
-                        number: block_number,
+                        number: U256::from(block_number),
                         beneficiary: block.header.beneficiary,
-                        timestamp: block.header.timestamp,
+                        timestamp: U256::from(block.header.timestamp),
                         difficulty: block.header.difficulty,
                         prevrandao: block.header.mix_hash,
                         basefee: block.header.base_fee_per_gas.unwrap_or_default(),
@@ -2347,7 +2348,7 @@ impl Backend {
 
             warn!(target: "backend", "Not historic state found for block={}", block_number);
             return Err(BlockchainError::BlockOutOfRange(
-                self.env.read().evm_env.block_env.number,
+                self.env.read().evm_env.block_env.number.saturating_to(),
                 block_number,
             ));
         }
@@ -3002,13 +3003,13 @@ impl Backend {
 
             // Set environment back to common block
             let mut env = self.env.write();
-            env.evm_env.block_env.number = common_block.header.number;
-            env.evm_env.block_env.timestamp = common_block.header.timestamp;
+            env.evm_env.block_env.number = U256::from(common_block.header.number);
+            env.evm_env.block_env.timestamp = U256::from(common_block.header.timestamp);
             env.evm_env.block_env.gas_limit = common_block.header.gas_limit;
             env.evm_env.block_env.difficulty = common_block.header.difficulty;
             env.evm_env.block_env.prevrandao = Some(common_block.header.mix_hash);
 
-            self.time.reset(env.evm_env.block_env.timestamp);
+            self.time.reset(env.evm_env.block_env.timestamp.saturating_to());
         }
         Ok(())
     }

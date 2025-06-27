@@ -1077,12 +1077,12 @@ impl NodeConfig {
             if self.chain_id.is_none() {
                 env.evm_env.cfg_env.chain_id = genesis.config.chain_id;
             }
-            env.evm_env.block_env.timestamp = genesis.timestamp;
+            env.evm_env.block_env.timestamp = U256::from(genesis.timestamp);
             if let Some(base_fee) = genesis.base_fee_per_gas {
                 env.evm_env.block_env.basefee = base_fee.try_into()?;
             }
             if let Some(number) = genesis.number {
-                env.evm_env.block_env.number = number;
+                env.evm_env.block_env.number = U256::from(number);
             }
             env.evm_env.block_env.beneficiary = genesis.coinbase;
         }
@@ -1235,8 +1235,8 @@ latest block number: {latest_block}"
         self.gas_limit = Some(gas_limit);
 
         env.evm_env.block_env = BlockEnv {
-            number: fork_block_number,
-            timestamp: block.header.timestamp,
+            number: U256::from(fork_block_number),
+            timestamp: U256::from(block.header.timestamp),
             difficulty: block.header.difficulty,
             // ensures prevrandao is set
             prevrandao: Some(block.header.mix_hash.unwrap_or_default()),
