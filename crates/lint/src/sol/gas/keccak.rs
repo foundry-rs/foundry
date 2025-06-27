@@ -1,6 +1,6 @@
 use super::AsmKeccak256;
 use crate::{
-    linter::EarlyLintPass,
+    linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
 use solar_ast::{CallArgsKind, Expr, ExprKind};
@@ -14,7 +14,7 @@ declare_forge_lint!(
 );
 
 impl<'ast> EarlyLintPass<'ast> for AsmKeccak256 {
-    fn check_expr(&mut self, ctx: &crate::linter::LintContext<'_>, expr: &'ast Expr<'ast>) {
+    fn check_expr(&mut self, ctx: &LintContext<'_>, expr: &'ast Expr<'ast>) {
         if let ExprKind::Call(expr, args) = &expr.kind {
             if let ExprKind::Ident(ident) = &expr.kind {
                 if ident.name == kw::Keccak256 {
