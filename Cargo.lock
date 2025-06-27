@@ -2375,6 +2375,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-contract",
  "alloy-dyn-abi",
+ "alloy-eips",
  "alloy-ens",
  "alloy-hardforks",
  "alloy-json-abi",
@@ -3923,6 +3924,7 @@ dependencies = [
 name = "forge-lint"
 version = "1.2.3"
 dependencies = [
+ "foundry-common",
  "foundry-compilers",
  "foundry-config",
  "heck",
@@ -4220,6 +4222,7 @@ dependencies = [
  "jiff",
  "num-format",
  "path-slash",
+ "regex",
  "reqwest",
  "semver 1.0.26",
  "serde",
@@ -4428,6 +4431,7 @@ dependencies = [
  "alloy-evm",
  "alloy-json-abi",
  "alloy-primitives",
+ "alloy-rpc-types",
  "alloy-sol-types",
  "eyre",
  "foundry-cheatcodes",
@@ -8710,7 +8714,7 @@ dependencies = [
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 2.0.12",
+ "thiserror 1.0.69",
  "tracing",
  "unicode-width 0.2.0",
 ]
@@ -8733,7 +8737,7 @@ dependencies = [
  "alloy-primitives",
  "bitflags 2.9.1",
  "bumpalo",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "memchr",
  "num-bigint",
  "num-rational",
