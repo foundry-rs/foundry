@@ -1115,9 +1115,8 @@ impl EthApi {
         node_info!("eth_sendRawTransactionSync");
 
         let this = self.clone();
-        let hash = this.send_raw_transaction(tx).await?;
-
         let mut stream = this.new_block_notifications();
+        let hash = this.send_raw_transaction(tx).await?;
         const TIMEOUT_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(30);
 
         let receipt = tokio::time::timeout(TIMEOUT_DURATION, async {
