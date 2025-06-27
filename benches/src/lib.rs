@@ -2,6 +2,7 @@ use eyre::{Result, WrapErr};
 use foundry_compilers::project_util::TempProject;
 use foundry_test_utils::util::clone_remote;
 use std::{
+    env,
     path::{Path, PathBuf},
     process::{Command, Output},
 };
@@ -93,40 +94,32 @@ impl BenchmarkProject {
             }
         }
 
-        // Install dependencies
-        Self::install_dependencies(&root_path)?;
+        // Git submodules are already cloned via --recursive flag
+        // But npm dependencies still need to be installed
+        Self::install_npm_dependencies(&root_path)?;
 
+        println!("  ✅ Project {} setup complete at {}", config.name, root);
         Ok(BenchmarkProject { name: config.name.to_string(), root_path, temp_project })
     }
 
-    /// Install forge dependencies for the project
-    fn install_dependencies(root: &Path) -> Result<()> {
-        // Install forge dependencies if foundry.toml exists
-        if root.join("foundry.toml").exists() {
-            let status = Command::new("forge")
-                .current_dir(root)
-                .args(["install"])
-                .status()
-                .wrap_err("Failed to run forge install")?;
-
-            if !status.success() {
-                println!("Warning: forge install failed for {}", root.display());
-            }
-        }
-
-        // Install npm dependencies if package.json exists
+    /// Install npm dependencies if package.json exists
+    fn install_npm_dependencies(root: &Path) -> Result<()> {
         if root.join("package.json").exists() {
+            println!("  📦 Running npm install...");
             let status = Command::new("npm")
                 .current_dir(root)
                 .args(["install"])
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
                 .status()
                 .wrap_err("Failed to run npm install")?;
 
             if !status.success() {
-                println!("Warning: npm install failed for {}", root.display());
+                println!("  ⚠️  Warning: npm install failed with exit code: {:?}", status.code());
+            } else {
+                println!("  ✅ npm install completed successfully");
             }
         }
-
         Ok(())
     }
 
@@ -161,15 +154,23 @@ impl BenchmarkProject {
 
 /// Switch to a specific foundry version
 pub fn switch_foundry_version(version: &str) -> Result<()> {
-    let status = Command::new("foundryup")
+    let output = Command::new("foundryup")
         .args(["--use", version])
-        .status()
+        .output()
         .wrap_err("Failed to run foundryup")?;
 
-    if !status.success() {
+    // Check if the error is about forge --version failing
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("command failed") && stderr.contains("forge --version") {
+        eyre::bail!("Foundry binaries maybe corrupted. Please reinstall, please run `foundryup` and install the required versions.");
+    }
+
+    if !output.status.success() {
+        eprintln!("foundryup stderr: {}", stderr);
         eyre::bail!("Failed to switch to foundry version: {}", version);
     }
 
+    println!("  Successfully switched to version: {}", version);
     Ok(())
 }
 
@@ -188,4 +189,23 @@ pub fn get_forge_version() -> Result<String> {
         String::from_utf8(output.stdout).wrap_err("Invalid UTF-8 in forge version output")?;
 
     Ok(version.lines().next().unwrap_or("unknown").to_string())
+}
+
+/// Get Foundry versions to benchmark from environment variable or default
+/// 
+/// Reads from FOUNDRY_BENCH_VERSIONS environment variable if set,
+/// otherwise returns the default versions from FOUNDRY_VERSIONS constant.
+/// 
+/// The environment variable should be a comma-separated list of versions,
+/// e.g., "stable,nightly,v1.2.0"
+pub fn get_benchmark_versions() -> Vec<String> {
+    if let Ok(versions_env) = env::var("FOUNDRY_BENCH_VERSIONS") {
+        versions_env
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    } else {
+        FOUNDRY_VERSIONS.iter().map(|&s| s.to_string()).collect()
+    }
 }

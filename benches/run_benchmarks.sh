@@ -48,12 +48,23 @@ check_dependencies() {
     fi
 }
 
-# Check and install all required Foundry versions
-check_and_install_foundry() {
-    log_info "Checking and installing required Foundry versions..."
+# Install Foundry versions if requested
+install_foundry_versions() {
+    if [[ "$FORCE_INSTALL" != "true" ]]; then
+        return
+    fi
     
-    # Read the versions from the Rust source
-    local versions=$(grep -A 10 'pub static FOUNDRY_VERSIONS' src/lib.rs | grep -o '"[^"]*"' | tr -d '"')
+    local versions
+    
+    # Use custom versions if provided, otherwise read from lib.rs
+    if [[ -n "$CUSTOM_VERSIONS" ]]; then
+        versions=$(echo "$CUSTOM_VERSIONS" | tr ',' ' ')
+        log_info "Installing custom Foundry versions: $versions"
+    else
+        # Read the versions from the Rust source
+        versions=$(grep -A 10 'pub static FOUNDRY_VERSIONS' src/lib.rs | grep -o '"[^"]*"' | tr -d '"')
+        log_info "Installing default Foundry versions from lib.rs: $versions"
+    fi
     
     # Check if foundryup is available
     if ! command -v foundryup &> /dev/null; then
@@ -62,25 +73,18 @@ check_and_install_foundry() {
         exit 1
     fi
     
-    # Install each version if not already available
+    # Install each version
     for version in $versions; do
-        log_info "Checking Foundry version: $version"
-        
-        # Try to switch to the version to check if it's installed
-        if foundryup --use "$version" 2>/dev/null; then
-            log_info "✓ Version $version is already installed"
+        log_info "Installing Foundry version: $version"
+        if foundryup --install "$version"; then
+            log_success "✓ Successfully installed version $version"
         else
-            log_info "Installing Foundry version: $version"
-            if foundryup --install "$version"; then
-                log_success "✓ Successfully installed version $version"
-            else
-                log_error "Failed to install Foundry version: $version"
-                exit 1
-            fi
+            log_error "Failed to install Foundry version: $version"
+            exit 1
         fi
     done
     
-    log_success "All required Foundry versions are available"
+    log_success "All Foundry versions installed successfully"
 }
 
 # Get system information
@@ -98,6 +102,12 @@ get_system_info() {
 # Run benchmarks and generate report
 run_benchmarks() {
     log_info "Running Foundry benchmarks..."
+    
+    # Set environment variable for custom versions if provided
+    if [[ -n "$CUSTOM_VERSIONS" ]]; then
+        export FOUNDRY_BENCH_VERSIONS="$CUSTOM_VERSIONS"
+        log_info "Set FOUNDRY_BENCH_VERSIONS=$CUSTOM_VERSIONS"
+    fi
     
     # Create temp files for each benchmark
     local temp_dir=$(mktemp -d)
@@ -179,7 +189,12 @@ generate_report() {
     local timestamp=$(date)
     
     # Get repository information and create numbered list with links
-    local versions=$(grep -A 10 'pub static FOUNDRY_VERSIONS' src/lib.rs | grep -o '"[^"]*"' | tr -d '"' | tr '\n' ' ')
+    local versions
+    if [[ -n "$CUSTOM_VERSIONS" ]]; then
+        versions=$(echo "$CUSTOM_VERSIONS" | tr ',' ' ')
+    else
+        versions=$(grep -A 10 'pub static FOUNDRY_VERSIONS' src/lib.rs | grep -o '"[^"]*"' | tr -d '"' | tr '\n' ' ')
+    fi
     
     # Extract repository info for numbered list
     local repo_list=""
@@ -256,8 +271,8 @@ main() {
     # Check dependencies
     check_dependencies
     
-    # Check and install required Foundry versions
-    check_and_install_foundry
+    # Install Foundry versions if --force-install is used
+    install_foundry_versions
     
     # Run benchmarks and generate report
     run_benchmarks
@@ -280,18 +295,25 @@ USAGE:
     $0 [OPTIONS]
 
 OPTIONS:
-    -h, --help     Show this help message
-    -v, --version  Show version information
-    --verbose      Show benchmark output (by default output is suppressed)
+    -h, --help               Show this help message
+    -v, --version            Show version information
+    --verbose                Show benchmark output (by default output is suppressed)
+    --versions <versions>    Comma-separated list of Foundry versions to test
+                            (e.g. stable,nightly,v1.2.0)
+                            If not specified, uses versions from src/lib.rs
+    --force-install          Force installation of Foundry versions
+                            By default, assumes versions are already installed
 
 REQUIREMENTS:
     - criterion-table: cargo install criterion-table
     - cargo-criterion: cargo install cargo-criterion
-    - All Foundry versions defined in src/lib.rs must be installed
+    - Foundry versions must be installed (or use --force-install)
 
 EXAMPLES:
-    $0                  # Run all benchmarks and generate LATEST.md
-    $0 --verbose        # Run benchmarks with full output visible
+    $0                                          # Run with default versions
+    $0 --verbose                                # Show full output
+    $0 --versions stable,nightly                # Test specific versions
+    $0 --versions stable,nightly --force-install # Install and test versions
     
 The script will:
 1. Run forge_test, forge_build_no_cache, and forge_build_with_cache benchmarks
@@ -302,8 +324,12 @@ The script will:
 EOF
 }
 
-# Parse command line arguments
+# Default values
 VERBOSE=false
+FORCE_INSTALL=false
+CUSTOM_VERSIONS=""
+
+# Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
         -h|--help)
@@ -317,6 +343,18 @@ while [[ $# -gt 0 ]]; do
         --verbose)
             VERBOSE=true
             shift
+            ;;
+        --force-install)
+            FORCE_INSTALL=true
+            shift
+            ;;
+        --versions)
+            if [[ -z "$2" ]] || [[ "$2" == --* ]]; then
+                log_error "--versions requires a comma-separated list of versions"
+                exit 1
+            fi
+            CUSTOM_VERSIONS="$2"
+            shift 2
             ;;
         *)
             log_error "Unknown option: $1"
