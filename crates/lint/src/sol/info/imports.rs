@@ -4,7 +4,6 @@ use std::ops::ControlFlow;
 
 use super::Imports;
 use crate::{
-    declare_forge_lint,
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
