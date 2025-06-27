@@ -239,16 +239,8 @@ EOF
     # Append the criterion-table generated tables
     cat "$tables_file" >> "$report_file"
     
-    # Add notes and system info
+    # Add system info
     cat >> "$report_file" << EOF
-## Notes
-
-- All benchmarks use Criterion.rs for statistical analysis
-- Each benchmark runs 10 samples by default
-- Results show mean execution time with confidence intervals
-- Repositories are cloned once and reused across all Foundry versions
-- Build and setup operations are parallelized using Rayon
-- The first version tested becomes the baseline for comparisons
 
 ## System Information
 
