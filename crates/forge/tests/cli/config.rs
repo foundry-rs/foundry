@@ -1167,6 +1167,7 @@ exclude = []
   "model_checker": null,
   "verbosity": 0,
   "eth_rpc_url": null,
+  "eth_rpc_accept_invalid_certs": false,
   "eth_rpc_jwt": null,
   "eth_rpc_timeout": null,
   "eth_rpc_headers": null,
