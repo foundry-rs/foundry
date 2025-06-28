@@ -85,7 +85,6 @@ pub enum SendTxSubcommands {
 }
 
 impl SendTxArgs {
-    #[expect(dependency_on_unit_never_type_fallback)]
     pub async fn run(self) -> eyre::Result<()> {
         let Self {
             eth,
@@ -154,7 +153,7 @@ impl SendTxArgs {
                 if config_chain_id != current_chain_id {
                     sh_warn!("Switching to chain {}", config_chain)?;
                     provider
-                        .raw_request(
+                        .raw_request::<_, ()>(
                             "wallet_switchEthereumChain".into(),
                             [serde_json::json!({
                                 "chainId": format!("0x{:x}", config_chain_id),
