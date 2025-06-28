@@ -994,6 +994,7 @@ offline = false
 optimizer = false
 optimizer_runs = 200
 verbosity = 0
+eth_rpc_accept_invalid_certs = false
 ignored_error_codes = [
     "license",
     "code-size",
