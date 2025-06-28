@@ -572,7 +572,7 @@ pub(super) fn json_value_to_token(value: &Value) -> Result<DynSolValue> {
                 if val.len() == 39 {
                     return Err(format!("Cannot parse \"{val}\" as an address. If you want to specify address, prepend zero to the value.").into())
                 }
-                if val.len() % 2 != 0 {
+                if !val.len().is_multiple_of(2) {
                     s = format!("0{val}");
                     val = &s[..];
                 }
