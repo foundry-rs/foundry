@@ -1,6 +1,5 @@
 //! Commonly used constants.
 
-use alloy_consensus::Typed2718;
 use alloy_primitives::{address, Address};
 use std::time::Duration;
 
