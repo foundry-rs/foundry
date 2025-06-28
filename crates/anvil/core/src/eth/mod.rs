@@ -144,6 +144,9 @@ pub enum EthRequest {
     #[serde(rename = "eth_sendTransaction", with = "sequence")]
     EthSendTransaction(Box<WithOtherFields<TransactionRequest>>),
 
+    #[serde(rename = "eth_sendTransactionSync", with = "sequence")]
+    EthSendTransactionSync(Box<WithOtherFields<TransactionRequest>>),
+
     #[serde(rename = "eth_sendRawTransaction", with = "sequence")]
     EthSendRawTransaction(Bytes),
 

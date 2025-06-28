@@ -407,7 +407,7 @@ async fn can_mine_while_mining() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_send_tx_sync() {
+async fn can_send_raw_tx_sync() {
     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
     let (api, handle) = spawn(node_config).await;
     let provider = http_provider(&handle.http_endpoint());
@@ -434,4 +434,28 @@ async fn can_send_tx_sync() {
     let receipt = api.send_raw_transaction_sync(encoded.into()).await.unwrap();
     assert_eq!(receipt.from, wallets[1].address());
     assert_eq!(receipt.to, tx.to());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_send_tx_sync() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(node_config).await;
+    let provider = http_provider(&handle.http_endpoint());
+
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let logger_bytecode = bytes!("66365f5f37365fa05f5260076019f3");
+
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
+
+    let from = wallets[0].address();
+    let tx = TransactionRequest::default()
+        .with_from(from)
+        .into_create()
+        .with_nonce(0)
+        .with_max_fee_per_gas(eip1559_est.max_fee_per_gas)
+        .with_max_priority_fee_per_gas(eip1559_est.max_priority_fee_per_gas)
+        .with_input(logger_bytecode);
+
+    let receipt = api.send_transaction_sync(WithOtherFields::new(tx)).await.unwrap();
+    assert_eq!(receipt.from, wallets[0].address());
 }
