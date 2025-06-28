@@ -264,7 +264,7 @@ impl OpenChainClient {
         };
         let (_, data) = calldata.split_at(8);
 
-        if data.len() % 64 != 0 {
+        if !data.len().is_multiple_of(64) {
             eyre::bail!("\nInvalid calldata size")
         }
 
