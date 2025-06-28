@@ -26,7 +26,7 @@ use foundry_evm::{
     executors::{EvmError, TracingExecutor},
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode, Traces},
-    utils::configure_tx_env_assume_impersonation,
+    utils::configure_tx_env,
     Env,
 };
 use foundry_evm_core::env::AsEnvMut;
@@ -102,11 +102,6 @@ pub struct RunArgs {
     /// Disable block gas limit check.
     #[arg(long)]
     pub disable_block_gas_limit: bool,
-
-    /// Pass through 'from' address returned by rpc transaction response instead of recovering
-    /// address from signature.
-    #[arg(long)]
-    pub bypass_sender_recovery: bool,
 }
 
 impl RunArgs {
@@ -232,11 +227,7 @@ impl RunArgs {
                         break;
                     }
 
-                    configure_tx_env_assume_impersonation(
-                        &mut env.as_env_mut(),
-                        &tx.inner,
-                        self.bypass_sender_recovery,
-                    );
+                    configure_tx_env(&mut env.as_env_mut(), &tx.inner);
 
                     if let Some(to) = Transaction::to(tx) {
                         trace!(tx=?tx.tx_hash(),?to, "executing previous call transaction");
@@ -275,11 +266,7 @@ impl RunArgs {
         let result = {
             executor.set_trace_printer(self.trace_printer);
 
-            configure_tx_env_assume_impersonation(
-                &mut env.as_env_mut(),
-                &tx.inner,
-                self.bypass_sender_recovery,
-            );
+            configure_tx_env(&mut env.as_env_mut(), &tx.inner);
 
             if let Some(to) = Transaction::to(&tx) {
                 trace!(tx=?tx.tx_hash(), to=?to, "executing call transaction");

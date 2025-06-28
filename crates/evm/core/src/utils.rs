@@ -5,7 +5,6 @@ use alloy_network::{AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{Address, Selector, TxKind, B256, U256};
 use alloy_provider::{network::BlockResponse, Network};
 use alloy_rpc_types::{Transaction, TransactionRequest};
-use foundry_common::is_impersonated_tx;
 use foundry_config::NamedChain;
 pub use revm::state::EvmState as StateChangeset;
 
@@ -86,29 +85,9 @@ pub fn get_function<'a>(
 /// Configures the env for the given RPC transaction.
 /// Accounts for an impersonated transaction by resetting the `env.tx.caller` field to `tx.from`.
 pub fn configure_tx_env(env: &mut EnvMut<'_>, tx: &Transaction<AnyTxEnvelope>) {
-    let impersonated_from = is_impersonated_tx(&tx.inner).then_some(tx.from());
-    configure_tx_env_inner(env, &tx.clone(), impersonated_from);
-}
-
-/// Configures the env for the given RPC transaction, using the from field of the transaction
-/// directly if the assume_impersonation flag is set to true.
-pub fn configure_tx_env_assume_impersonation(
-    env: &mut EnvMut<'_>,
-    tx: &Transaction<AnyTxEnvelope>,
-    assume_impersonation: bool,
-) {
-    let impersonated_from =
-        (assume_impersonation || is_impersonated_tx(&tx.inner)).then_some(tx.from());
-    configure_tx_env_inner(env, &tx.clone(), impersonated_from);
-}
-
-fn configure_tx_env_inner(
-    env: &mut EnvMut<'_>,
-    tx: &Transaction<AnyTxEnvelope>,
-    impersonated_from: Option<Address>,
-) {
+    let from = tx.from();
     if let AnyTxEnvelope::Ethereum(tx) = &tx.inner.inner() {
-        configure_tx_req_env(env, &tx.clone().into(), impersonated_from).expect("cannot fail");
+        configure_tx_req_env(env, &tx.clone().into(), Some(from)).expect("cannot fail");
     }
 }
 
