@@ -1073,45 +1073,44 @@ impl EthApi {
         self.add_pending_transaction(pending_transaction, requires, provides)
     }
 
-    /// Waits for a transaction to be included in a block and returns its receipt.
-    /// Returns an error if the timeout is reached.
-    async fn check_inclusion(&self, hash: TxHash) -> Result<ReceiptResponse> {
+    /// Waits for a transaction to be included in a block and returns its receipt (no timeout).
+    async fn await_inclusion(&self, hash: TxHash) -> Result<ReceiptResponse> {
         let mut stream = self.new_block_notifications();
-        const TIMEOUT_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(30);
         const RETRY_INTERVAL: tokio::time::Duration = tokio::time::Duration::from_millis(300);
         const MAX_RETRIES: usize = 10;
 
-        let receipt = tokio::time::timeout(TIMEOUT_DURATION, async {
-            while let Some(notification) = stream.next().await {
-                if let Some(block) = self.backend.get_block_by_hash(notification.hash) {
-                    if block.transactions.iter().any(|tx| tx.hash() == hash) {
-                        // Retry fetching receipt
-                        for _ in 0..MAX_RETRIES {
-                            if let Some(receipt) = self.transaction_receipt(hash).await? {
-                                return Ok(receipt);
-                            }
-                            tokio::time::sleep(RETRY_INTERVAL).await;
+        while let Some(notification) = stream.next().await {
+            if let Some(block) = self.backend.get_block_by_hash(notification.hash) {
+                if block.transactions.iter().any(|tx| tx.hash() == hash) {
+                    // Retry fetching receipt
+                    for _ in 0..MAX_RETRIES {
+                        if let Some(receipt) = self.transaction_receipt(hash).await? {
+                            return Ok(ReceiptResponse::from(receipt));
                         }
-                        // Still no receipt after retries
-                        break;
+                        tokio::time::sleep(RETRY_INTERVAL).await;
                     }
+                    // Still no receipt after retries
+                    break;
                 }
             }
-
-            Err(BlockchainError::TransactionConfirmationTimeout {
-                hash,
-                duration: TIMEOUT_DURATION,
-            })
+        }
+        Err(BlockchainError::TransactionConfirmationTimeout {
+            hash,
+            duration: tokio::time::Duration::from_secs(30),
         })
-        .await
-        .unwrap_or_else(|_elapsed| {
-            Err(BlockchainError::TransactionConfirmationTimeout {
-                hash,
-                duration: TIMEOUT_DURATION,
-            })
-        })?;
+    }
 
-        Ok(ReceiptResponse::from(receipt))
+    /// Waits for a transaction to be included in a block and returns its receipt, with timeout.
+    async fn check_inclusion(&self, hash: TxHash) -> Result<ReceiptResponse> {
+        const TIMEOUT_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(30);
+        tokio::time::timeout(TIMEOUT_DURATION, self.await_inclusion(hash)).await.unwrap_or_else(
+            |_elapsed| {
+                Err(BlockchainError::TransactionConfirmationTimeout {
+                    hash,
+                    duration: TIMEOUT_DURATION,
+                })
+            },
+        )
     }
 
     /// Sends a transaction and waits for receipt
