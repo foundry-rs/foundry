@@ -1,29 +1,25 @@
 {
   "$schema": "https://raw.githubusercontent.com/dprint/dprint/refs/heads/main/website/src/assets/schemas/v0.json",
-  "incremental": true,
   "indentWidth": 2,
   "useTabs": false,
-  "includes": [
-    "*.md",
-    "*.{toml}",
-    "Dockerfile",
-    "*.{yml,yaml}",
-    "*.{json,jsonc}",
-    "*.{js,cjs,mjs,d.ts,d.cts,d.mts,ts,tsx,jsx}"
-  ],
   "excludes": [
+    "!npm/**/*.{json,md,toml}",
+    "!npm/**/*.{js,cjs,mjs,d.ts,d.cts,d.mts,ts,tsx,jsx}",
+    "**/_",
+    "dprint.json",
+    "**/abi",
     "**/build",
-    "**/abi/**",
     "**/target",
     "**/test/**",
     "**/*.min.*",
     "**/dist/**",
     "testdata/**",
     "**/tests/**",
+    "node_modules",
     "changelog.json",
     "**/test-data/**",
-    "**/node_modules",
     "**/cheatcodes/**",
+    "**/node_modules/**",
     ".github/scripts/**",
     ".github/ISSUE_TEMPLATE/**"
   ],
@@ -40,13 +36,15 @@
     "textWrap": "maintain"
   },
   "toml": {
-    "columnWidth": 100
+    "lineWidth": 100
   },
   "json": {
-    "useTabs": false,
+    "lineWidth": 1,
     "indentWidth": 2,
+    "useTabs": false,
     "trailingCommas": "never",
-    "array.preferSingleLine": true
+    "preferSingleLine": false,
+    "array.preferSingleLine": false
   },
   "typescript": {
     "useTabs": false,

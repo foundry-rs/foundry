@@ -16,6 +16,7 @@ env:
   IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
   PROFILE: maxperf
   STABLE_VERSION: "v1.1.0"
+  ACTIONS_RUNNER_DEBUG: true
 
 jobs:
   prepare:
@@ -149,6 +150,7 @@ jobs:
           cargo install cross
 
       - name: Build binaries
+        id: binaries
         env:
           TAG_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
           SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
@@ -184,6 +186,8 @@ jobs:
             $bin --version || true
             echo "${name}_bin_path=${bin}" >> $GITHUB_ENV
           done
+
+          echo "FORGE_BIN_PATH='${OUT_DIR}/forge${ext}'" >> "$GITHUB_OUTPUT"
 
       - name: Archive binaries
         id: artifacts
@@ -263,6 +267,83 @@ jobs:
           files: |
             ${{ steps.artifacts.outputs.file_name }}
             ${{ steps.man.outputs.foundry_man }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@main
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          BUN_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        with:
+          scope: '@foundry-rs'
+          bun-version: 'latest'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        working-directory: ./npm
+        run: bun install --frozen-lockfile
+
+      - name: Build ./npm scripts
+        working-directory: ./npm
+        run: bun x tsdown --config tsdown.config.ts
+
+      - name: Prepublish npm package
+        working-directory: ./npm
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          FORGE_BIN_PATH: ${{ steps.binaries.outputs.FORGE_BIN_PATH }}
+        run: |-
+          bun run ./scripts/prepublish.ts \
+            --arch=${{ env.ARCH }} \
+            --forge-bin-path=${{ env.FORGE_BIN_PATH }}
+      
+      - name: Publish npm package
+        shell: bash
+        working-directory: ./npm
+        env:
+          ARCH: ${{ matrix.arch }}
+          PLATFORM: ${{ matrix.platform }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          BUN_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |-
+          bun run ./scripts/publis.ts ./@foundry-rs/forge-${{ env.PLATFORM }}-${{ env.ARCH }}
+
+        # bump version, bump version of each item in `optionalDependencies`
+      - name: Finally, publish @foundry-rs/forge
+        shell: bash
+        working-directory: ./npm
+        env:
+          ARCH: ${{ matrix.arch }}
+          PLATFORM: ${{ matrix.platform }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          BUN_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+          BUMP_VERSION: "TODO: Find this"
+        run: |-
+          cd @foundr-rs/forge
+          
+          export NPM_TOKEN=${{ secrets.NPM_TOKEN }}
+          export BUN_AUTH_TOKEN=${{ secrets.NPM_TOKEN }}
+          export NPM_CONFIG_TOKEN=${{ secrets.NPM_TOKEN }}
+
+          npm version ${{ env.BUMP_VERSION }} \
+              --message 'new forge release' \
+              --git-tag-version=false \
+              --workspace-update=false \
+              --sign-git-tag=false \
+              --git-tag-version=false \
+              --commit-hook=false \
+              --allow-same-version
+          
+          bun pm pack
+
+          bun publish \
+              --access='public' \
+              --production \
+              --verbose \
+              --registry='https://registry.npmjs.org' \
+              ./foundry-rs-forge-${{ env.BUMP_VERSION }}.tgz
 
   cleanup:
     name: Release cleanup
