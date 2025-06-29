@@ -419,21 +419,22 @@ impl VerifyArgs {
             )
         }
     }
+
+    pub fn detect_language(&self, ctx: &VerificationContext) -> ContractLanguage {
+        if let Some(lang) = self.language {
+            return lang;
+        }
+        match ctx
+            .target_path
+            .extension()
+            .and_then(|e| e.to_str())
+        {
+            Some("vy") => ContractLanguage::Vyper,
+            _          => ContractLanguage::Solidity,
+        }
+    }
 }
 
-pub fn detect_language(args: &VerifyArgs, ctx: &VerificationContext) -> ContractLanguage {
-    if let Some(lang) = args.language {
-        return lang;
-    }
-    match ctx
-        .target_path
-        .extension()
-        .and_then(|e| e.to_str())
-    {
-        Some("vy") => ContractLanguage::Vyper,
-        _          => ContractLanguage::Solidity,
-    }
-}
 
 /// Check verification status arguments
 #[derive(Clone, Debug, Parser)]

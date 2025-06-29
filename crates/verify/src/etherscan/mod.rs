@@ -26,7 +26,6 @@ use foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER;
 use regex::Regex;
 use semver::{BuildMetadata, Version};
 use std::{fmt::Debug, sync::LazyLock};
-use crate::verify::detect_language;
 use crate::verify::ContractLanguage;
 
 mod flatten;
@@ -321,7 +320,7 @@ impl EtherscanVerificationProvider {
         let (source, contract_name, code_format) =
             self.source_provider(args).source(args, context)?;
 
-        let lang = detect_language(args, context);
+        let lang = args.detect_language( context);
 
         let mut compiler_version = context.compiler_version.clone();
         compiler_version.build = match RE_BUILD_COMMIT.captures(compiler_version.build.as_str()) {
@@ -337,7 +336,6 @@ impl EtherscanVerificationProvider {
 
 
 
-        println!("Compiler version: {}", compiler_version);
         let constructor_args = self.constructor_args(args, context).await?;
         let mut verify_args =
             VerifyContract::new(args.address, contract_name, source, compiler_version)
@@ -365,7 +363,7 @@ impl EtherscanVerificationProvider {
         }
 
         if code_format == CodeFormat::VyperJson {
-            verify_args = if let Some(optimizations) = args.num_of_optimizations {
+            verify_args = if let Some(_optimizations) = args.num_of_optimizations {
                 verify_args.optimized().runs(1)
             } else if context.config.optimizer == Some(true) {
                 verify_args
