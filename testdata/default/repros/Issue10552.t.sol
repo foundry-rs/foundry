@@ -22,7 +22,7 @@ contract Counter {
 }
 
 contract Issue10552Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
     Counter public counter;
     uint256 mainnetId;
@@ -31,12 +31,12 @@ contract Issue10552Test is DSTest {
     function setUp() public {
         counter = new Counter();
         counter.setNumber(10);
-        vm.makePersistent(address(counter));
+        VM.makePersistent(address(counter));
 
-        mainnetId = vm.createFork("mainnet");
-        opId = vm.createFork("optimism");
+        mainnetId = VM.createFork("mainnet");
+        opId = VM.createFork("optimism");
 
-        vm.selectFork(mainnetId);
+        VM.selectFork(mainnetId);
         counter.setNumber(100);
         counter.increment();
         assertEq(counter.number(), 101);
@@ -46,7 +46,7 @@ contract Issue10552Test is DSTest {
     }
 
     function test_change_fork_states() public {
-        vm.selectFork(opId);
+        VM.selectFork(opId);
         counter.increment();
         // should account state changes from mainnet fork
         // without fix for <https://github.com/foundry-rs/foundry/issues/10552> this test was failing with 11 (initial setNumber(10) + one increment) != 103
@@ -54,7 +54,7 @@ contract Issue10552Test is DSTest {
         counter.setAnotherNumber(11);
         assertEq(counter.anotherNumber(), 11);
 
-        vm.selectFork(mainnetId);
+        VM.selectFork(mainnetId);
         counter.increment();
         assertEq(counter.number(), 104);
         assertEq(counter.anotherNumber(), 11);

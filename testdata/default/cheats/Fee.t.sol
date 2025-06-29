@@ -5,15 +5,15 @@ import "ds-test/test.sol";
 import "cheats/Vm.sol";
 
 contract FeeTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
     function testFee() public {
-        vm.fee(10);
+        VM.fee(10);
         assertEq(block.basefee, 10, "fee failed");
     }
 
     function testFeeFuzzed(uint64 fee) public {
-        vm.fee(fee);
+        VM.fee(fee);
         assertEq(block.basefee, fee, "fee failed");
     }
 }
