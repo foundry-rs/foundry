@@ -287,6 +287,8 @@ pub enum InvalidTransactionError {
     /// Thrown when an access list is used before the berlin hard fork.
     #[error("EIP-7702 authorization lists are not supported before the Prague hardfork")]
     AuthorizationListNotSupported,
+    #[error("Transaction gas limit is greater than the block gas limit, gas_limit: {0}, cap: {1}")]
+    TxGasLimitGreaterThanCap(u64, u64),
     /// Forwards error from the revm
     #[error(transparent)]
     Revm(revm::context_interface::result::InvalidTransaction),
@@ -330,15 +332,19 @@ impl From<InvalidTransaction> for InvalidTransactionError {
             InvalidTransaction::AuthorizationListNotSupported => {
                 Self::AuthorizationListNotSupported
             }
+            InvalidTransaction::TxGasLimitGreaterThanCap { gas_limit, cap } => {
+                Self::TxGasLimitGreaterThanCap(gas_limit, cap)
+            }
+
             InvalidTransaction::AuthorizationListInvalidFields |
             InvalidTransaction::Eip1559NotSupported |
             InvalidTransaction::Eip2930NotSupported |
             InvalidTransaction::Eip4844NotSupported |
             InvalidTransaction::Eip7702NotSupported |
-            InvalidTransaction::EofCreateShouldHaveToAddress |
             InvalidTransaction::EmptyAuthorizationList |
             InvalidTransaction::Eip7873NotSupported |
-            InvalidTransaction::Eip7873MissingTarget => Self::Revm(err),
+            InvalidTransaction::Eip7873MissingTarget |
+            InvalidTransaction::MissingChainId => Self::Revm(err),
         }
     }
 }

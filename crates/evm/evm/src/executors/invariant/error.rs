@@ -80,7 +80,7 @@ impl FailedInvariantCaseData {
         let revert_reason = RevertDecoder::new()
             .with_abis(targeted_contracts.targets.lock().values().map(|c| &c.abi))
             .with_abi(invariant_contract.abi)
-            .decode(call_result.result.as_ref(), Some(call_result.exit_reason));
+            .decode(call_result.result.as_ref(), call_result.exit_reason);
 
         let func = invariant_contract.invariant_function;
         debug_assert!(func.inputs.is_empty());

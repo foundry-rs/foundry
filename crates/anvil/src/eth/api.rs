@@ -2137,7 +2137,7 @@ impl EthApi {
 
         Ok(NodeInfo {
             current_block_number: self.backend.best_number(),
-            current_block_timestamp: env.evm_env.block_env.timestamp,
+            current_block_timestamp: env.evm_env.block_env.timestamp.saturating_to(),
             current_block_hash: self.backend.best_hash(),
             hard_fork: hard_fork.to_string(),
             transaction_order: match *tx_order {
@@ -3427,7 +3427,7 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
             }
             Err(err) => Err(err),
             Ok((exit, output, gas, _)) => match exit {
-                return_ok!() | InstructionResult::CallOrCreate => Ok(Self::Success(gas)),
+                return_ok!() => Ok(Self::Success(gas)),
 
                 // Revert opcodes:
                 InstructionResult::Revert => Ok(Self::Revert(output.map(|o| o.into_data()))),
@@ -3462,13 +3462,7 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 InstructionResult::CreateContractSizeLimit |
                 InstructionResult::CreateContractStartingWithEF |
                 InstructionResult::CreateInitCodeSizeLimit |
-                InstructionResult::FatalExternalError |
-                InstructionResult::ReturnContractInNotInitEOF |
-                InstructionResult::EOFOpcodeDisabledInLegacy |
-                InstructionResult::SubRoutineStackOverflow |
-                InstructionResult::EofAuxDataOverflow |
-                InstructionResult::EofAuxDataTooSmall |
-                InstructionResult::InvalidEXTCALLTarget => Ok(Self::EvmError(exit)),
+                InstructionResult::FatalExternalError => Ok(Self::EvmError(exit)),
             },
         }
     }

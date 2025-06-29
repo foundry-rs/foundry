@@ -24,7 +24,10 @@ use revm::{
     database::{CacheDB, DatabaseRef},
     inspector::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
-    primitives::{hardfork::SpecId, HashMap as Map, Log, KECCAK_EMPTY},
+    primitives::{
+        eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE, hardfork::SpecId, HashMap as Map, Log,
+        KECCAK_EMPTY,
+    },
     state::{Account, AccountInfo, EvmState, EvmStorageSlot},
     Database, DatabaseCommit, JournalEntry,
 };
@@ -880,7 +883,8 @@ impl Backend {
         let fork_id = self.ensure_fork_id(id)?.clone();
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
-        let full_block = fork.db.db.get_full_block(env.evm_env.block_env.number)?;
+        let full_block =
+            fork.db.db.get_full_block(env.evm_env.block_env.number.saturating_to::<u64>())?;
 
         for tx in full_block.inner.transactions.txns() {
             // System transactions such as on L2s don't contain any pricing info so we skip them
@@ -1443,6 +1447,7 @@ impl DatabaseExt for Backend {
                                 .map(|s| s.present_value)
                                 .unwrap_or_default(),
                             U256::from_be_bytes(value.0),
+                            0, // NOTE: what should this be?
                         ),
                     )
                 })
@@ -1938,16 +1943,17 @@ fn is_contract_in_state(journaled_state: &JournaledState, acc: Address) -> bool 
 
 /// Updates the env's block with the block's data
 fn update_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock) {
-    env.block.timestamp = block.header.timestamp;
+    env.block.timestamp = U256::from(block.header.timestamp);
     env.block.beneficiary = block.header.beneficiary;
     env.block.difficulty = block.header.difficulty;
     env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
     env.block.basefee = block.header.base_fee_per_gas.unwrap_or_default();
     env.block.gas_limit = block.header.gas_limit;
-    env.block.number = block.header.number;
+    env.block.number = U256::from(block.header.number);
+
     if let Some(excess_blob_gas) = block.header.excess_blob_gas {
         env.block.blob_excess_gas_and_price =
-            Some(BlobExcessGasAndPrice::new(excess_blob_gas, false));
+            Some(BlobExcessGasAndPrice::new(excess_blob_gas, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE));
     }
 }
 

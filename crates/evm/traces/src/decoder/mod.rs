@@ -379,8 +379,7 @@ impl CallTraceDecoder {
                     (!cdata.is_empty() || !self.receive_contracts.contains(&trace.address))
                 {
                     let return_data = if !trace.success {
-                        let revert_msg =
-                            self.revert_decoder.decode(&trace.output, Some(trace.status));
+                        let revert_msg = self.revert_decoder.decode(&trace.output, trace.status);
 
                         if trace.output.is_empty() || revert_msg.contains("EvmError: Revert") {
                             Some(format!(
@@ -654,7 +653,7 @@ impl CallTraceDecoder {
 
     /// The default decoded return data for a trace.
     fn default_return_data(&self, trace: &CallTrace) -> Option<String> {
-        (!trace.success).then(|| self.revert_decoder.decode(&trace.output, Some(trace.status)))
+        (!trace.success).then(|| self.revert_decoder.decode(&trace.output, trace.status))
     }
 
     /// Decodes an event.

@@ -33,7 +33,10 @@ use revm::{
     database::WrapDatabaseRef,
     handler::{instructions::EthInstructions, EthPrecompiles},
     interpreter::InstructionResult,
-    precompile::{secp256r1::P256VERIFY, PrecompileSpecId, Precompiles},
+    precompile::{
+        secp256r1::{P256VERIFY, P256VERIFY_BASE_GAS_FEE},
+        PrecompileSpecId, Precompiles,
+    },
     primitives::hardfork::SpecId,
     Database, DatabaseRef, Inspector, Journal,
 };
@@ -228,10 +231,10 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             receipts_root,
             logs_bloom: bloom,
             difficulty,
-            number: block_number,
+            number: block_number.saturating_to(),
             gas_limit,
             gas_used: cumulative_gas_used,
-            timestamp,
+            timestamp: timestamp.saturating_to(),
             extra_data: Default::default(),
             mix_hash: Default::default(),
             nonce: Default::default(),
@@ -328,7 +331,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
 
             if self.odyssey {
-                inject_precompiles(&mut evm, vec![P256VERIFY]);
+                inject_precompiles(&mut evm, vec![(P256VERIFY, P256VERIFY_BASE_GAS_FEE)]);
             }
 
             if let Some(factory) = &self.precompile_factory {
