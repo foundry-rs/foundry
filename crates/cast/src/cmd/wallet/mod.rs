@@ -3,10 +3,7 @@ use alloy_dyn_abi::TypedData;
 use alloy_primitives::{hex, Address, Signature, B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::Authorization;
-use alloy_signer::{
-    k256::{elliptic_curve::sec1::ToEncodedPoint, SecretKey},
-    Signer,
-};
+use alloy_signer::Signer;
 use alloy_signer_local::{
     coins_bip39::{English, Entropy, Mnemonic},
     MnemonicBuilder, PrivateKeySigner,
@@ -457,23 +454,12 @@ impl WalletSubcommands {
                     .signer()
                     .await?;
 
-                let private_key_bytes = match wallet {
-                    WalletSigner::Local(wallet) => wallet.credential().to_bytes(),
+                let public_key = match wallet {
+                    WalletSigner::Local(wallet) => wallet.public_key(),
                     _ => eyre::bail!("Only local wallets are supported by this command"),
                 };
 
-                let secret_key = SecretKey::from_slice(&private_key_bytes)
-                    .map_err(|e| eyre::eyre!("Invalid private key: {}", e))?;
-
-                // Get the public key from the private key
-                let public_key = secret_key.public_key();
-
-                // Serialize it as uncompressed (65 bytes: 0x04 || X (32 bytes) || Y (32 bytes))
-                let pubkey_bytes = public_key.to_encoded_point(false);
-                // Strip the 1-byte prefix (0x04) to get 64 bytes for Ethereum use
-                let ethereum_pubkey = &pubkey_bytes.as_bytes()[1..];
-
-                sh_println!("0x{}", hex::encode(ethereum_pubkey))?;
+                sh_println!("0x{}", hex::encode(public_key))?;
             }
             Self::Sign { message, data, from_file, no_hash, wallet } => {
                 let wallet = wallet.signer().await?;
