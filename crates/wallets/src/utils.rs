@@ -86,6 +86,56 @@ Make sure it's connected and unlocked, with no other conflicting desktop wallet 
     })
 }
 
+/// Creates [WalletSigner] instance from given Trezor parameters with an optional session_id.
+/// If session_id is provided, it will be reused for the new TrezorSigner instance.
+pub async fn create_trezor_signer_with_session(
+    hd_path: Option<&str>,
+    mnemonic_index: u32,
+    session_id: Option<u64>,
+) -> Result<WalletSigner> {
+    let derivation = if let Some(hd_path) = hd_path {
+        TrezorHDPath::Other(hd_path.to_owned())
+    } else {
+        TrezorHDPath::TrezorLive(mnemonic_index as usize)
+    };
+
+    WalletSigner::from_trezor_path_with_session(derivation, session_id).await.wrap_err_with(|| {
+        "\
+Could not connect to Trezor device.
+Make sure it's connected and unlocked, with no other conflicting desktop wallet apps open."
+    })
+}
+
+/// Creates a [WalletSigner] instance from given Trezor parameters and attempts to return
+/// the session_id for reuse. Note: This is a best-effort approach as extracting session_id
+/// from TrezorSigner is not directly supported by the alloy-signer-trezor crate.
+pub async fn create_trezor_signer_and_get_session(
+    hd_path: Option<&str>,
+    mnemonic_index: u32,
+) -> Result<(WalletSigner, Option<u64>)> {
+    let derivation = if let Some(hd_path) = hd_path {
+        TrezorHDPath::Other(hd_path.to_owned())
+    } else {
+        TrezorHDPath::TrezorLive(mnemonic_index as usize)
+    };
+
+    // Create the TrezorSigner with None session_id (which will create a new session)
+    let signer = WalletSigner::from_trezor_path_with_session(derivation, None)
+        .await
+        .wrap_err_with(|| {
+            "\
+Could not connect to Trezor device.
+Make sure it's connected and unlocked, with no other conflicting desktop wallet apps open."
+        })?;
+
+    // Unfortunately, we cannot extract the session_id from the created TrezorSigner
+    // as it's not exposed by the alloy-signer-trezor crate. This would require
+    // modifications to that crate to expose the session_id.
+    // For now, we return None as the session_id, but the infrastructure is in place
+    // for when this becomes available.
+    Ok((signer, None))
+}
+
 pub fn maybe_get_keystore_path(
     maybe_path: Option<&str>,
     maybe_name: Option<&str>,
