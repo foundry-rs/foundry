@@ -7,7 +7,7 @@ use crate::{
 use alloy_chains::NamedChain;
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{address, b256, bytes, uint, Address, Bytes, TxHash, TxKind, U256, U64};
-use alloy_provider::Provider;
+use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{
     anvil::Forking,
     request::{TransactionInput, TransactionRequest},
@@ -1606,4 +1606,36 @@ async fn test_fork_get_account() {
     let alice_acc_prev_block = provider.get_account(alice).number(init_block).await.unwrap();
 
     assert_eq!(alice_acc_init, alice_acc_prev_block);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_reset_anvil_acc_7702() {
+    let fork_block_number = 22673283u64;
+    let fork_url = rpc::next_http_archive_rpc_url();
+    let (_api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(fork_url.clone()))
+            .with_fork_block_number(Some(fork_block_number)),
+    )
+    .await;
+
+    let provider = handle.http_provider();
+
+    let accounts = handle.dev_accounts().collect::<Vec<_>>();
+    let account = accounts[0];
+
+    // Verify the default account has been delegated
+    let fork_provider = ProviderBuilder::new().connect_http(fork_url.parse().unwrap());
+    let fork_code = fork_provider.get_code_at(account).await.unwrap();
+    assert!(fork_code.starts_with(&[0xef, 0x01, 0x00]));
+
+    // Check that anvil backend resets it.
+    let code = provider
+        .get_code_at(account)
+        .block_id(BlockId::number(fork_block_number - 1))
+        .await
+        .unwrap();
+
+    // Code reset by the anvil backend.
+    assert!(code.is_empty());
 }

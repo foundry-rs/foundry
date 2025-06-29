@@ -1,9 +1,15 @@
 //! Support for forking off another client
 
-use crate::eth::{backend::db::Db, error::BlockchainError, pool::transactions::PoolTransaction};
+use crate::eth::{
+    backend::{db::Db, mem::is_default_anvil_acc},
+    error::BlockchainError,
+    pool::transactions::PoolTransaction,
+};
 use alloy_consensus::Account;
 use alloy_eips::eip2930::AccessListResult;
-use alloy_network::{AnyRpcBlock, AnyRpcTransaction, BlockResponse, TransactionResponse};
+use alloy_network::{
+    AnyRpcBlock, AnyRpcTransaction, BlockResponse, TransactionBuilder, TransactionResponse,
+};
 use alloy_primitives::{
     map::{FbHashMap, HashMap},
     Address, Bytes, StorageValue, B256, U256,
@@ -15,6 +21,7 @@ use alloy_provider::{
 use alloy_rpc_types::{
     request::TransactionRequest,
     simulate::{SimulatePayload, SimulatedBlock},
+    state::AccountOverride,
     trace::{
         geth::{GethDebugTracingOptions, GethTrace},
         parity::LocalizedTransactionTrace as Trace,
@@ -193,6 +200,22 @@ impl ClientFork {
         block: Option<BlockNumber>,
     ) -> Result<Bytes, TransportError> {
         let block = block.unwrap_or(BlockNumber::Latest);
+
+        if let Some(to) = request.to() {
+            if is_default_anvil_acc(to) {
+                // Applies StateOverride for default anvil account to wipe the delegation set on the
+                // forked chain.
+                let acc_override =
+                    AccountOverride { code: Some(Bytes::new()), state: None, ..Default::default() };
+                return Ok(self
+                    .provider()
+                    .call(request.clone())
+                    .block(block.into())
+                    .account_override(to, acc_override)
+                    .await?)
+            }
+        }
+
         let res = self.provider().call(request.clone()).block(block.into()).await?;
 
         Ok(res)
