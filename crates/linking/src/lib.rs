@@ -271,13 +271,6 @@ impl<'a> Linker<'a> {
     ) -> Result<ArtifactContracts, LinkerError> {
         self.contracts.keys().map(|id| Ok((id.clone(), self.link(id, libraries)?))).collect()
     }
-
-    pub fn get_linked_artifacts_cow(
-        &self,
-        libraries: &Libraries,
-    ) -> Result<ArtifactContracts<CompactContractBytecodeCow<'a>>, LinkerError> {
-        self.contracts.keys().map(|id| Ok((id.clone(), self.link(id, libraries)?))).collect()
-    }
 }
 
 #[cfg(test)]

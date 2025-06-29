@@ -6,10 +6,7 @@ use foundry_common::{
     TestFunctionExt,
 };
 use foundry_compilers::{
-    artifacts::{CompactBytecode, Settings},
-    cache::{CacheEntry, CompilerCache},
-    utils::read_json_file,
-    Artifact, ArtifactId, ProjectCompileOutput,
+    artifacts::CompactBytecode, utils::read_json_file, Artifact, ArtifactId, ProjectCompileOutput,
 };
 use foundry_config::{error::ExtractConfigError, figment::Figment, Chain, Config, NamedChain};
 use foundry_debugger::Debugger;
@@ -73,47 +70,6 @@ pub fn remove_contract(
     Ok((abi, bin, id))
 }
 
-/// Helper function for finding a contract by ContractName
-// TODO: Is there a better / more ergonomic way to get the artifacts given a project and a
-// contract name?
-pub fn get_cached_entry_by_name(
-    cache: &CompilerCache<Settings>,
-    name: &str,
-) -> Result<(PathBuf, CacheEntry)> {
-    let mut cached_entry = None;
-    let mut alternatives = Vec::new();
-
-    for (abs_path, entry) in &cache.files {
-        for artifact_name in entry.artifacts.keys() {
-            if artifact_name == name {
-                if cached_entry.is_some() {
-                    eyre::bail!(
-                        "contract with duplicate name `{}`. please pass the path instead",
-                        name
-                    )
-                }
-                cached_entry = Some((abs_path.to_owned(), entry.to_owned()));
-            } else {
-                alternatives.push(artifact_name);
-            }
-        }
-    }
-
-    if let Some(entry) = cached_entry {
-        return Ok(entry);
-    }
-
-    let mut err = format!("could not find artifact: `{name}`");
-    if let Some(suggestion) = super::did_you_mean(name, &alternatives).pop() {
-        err = format!(
-            r#"{err}
-
-        Did you mean `{suggestion}`?"#
-        );
-    }
-    eyre::bail!(err)
-}
-
 /// Returns error if constructor has arguments.
 pub fn ensure_clean_constructor(abi: &JsonAbi) -> Result<()> {
     if let Some(constructor) = &abi.constructor {
@@ -139,10 +95,6 @@ pub fn needs_setup(abi: &JsonAbi) -> bool {
     setup_fns.len() == 1 && setup_fns[0].name == "setUp"
 }
 
-pub fn eta_key(state: &indicatif::ProgressState, f: &mut dyn Write) {
-    write!(f, "{:.1}s", state.eta().as_secs_f64()).unwrap()
-}
-
 pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
     let pb = indicatif::ProgressBar::new(len);
     let mut template =
@@ -153,10 +105,14 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
     pb.set_style(
         indicatif::ProgressStyle::with_template(&template)
             .unwrap()
-            .with_key("eta", crate::utils::eta_key)
+            .with_key("eta", eta_key)
             .progress_chars("#>-"),
     );
     pb
+}
+
+fn eta_key(state: &indicatif::ProgressState, f: &mut dyn Write) {
+    write!(f, "{:.1}s", state.eta().as_secs_f64()).unwrap()
 }
 
 /// True if the network calculates gas costs differently.

@@ -1,7 +1,7 @@
 //! terminal utils
 use foundry_compilers::{
     artifacts::remappings::Remapping,
-    report::{self, BasicStdoutReporter, Reporter},
+    report::{self, Reporter},
 };
 use foundry_config::find_project_root;
 use itertools::Itertools;
@@ -208,19 +208,6 @@ impl Reporter for SpinnerReporter {
     fn on_unresolved_imports(&self, imports: &[(&Path, &Path)], remappings: &[Remapping]) {
         self.send_msg(report::format_unresolved_imports(imports, remappings));
     }
-}
-
-/// If the output medium is terminal, this calls `f` within the [`SpinnerReporter`] that displays a
-/// spinning cursor to display solc progress.
-///
-/// If no terminal is available this falls back to common `println!` in [`BasicStdoutReporter`].
-pub fn with_spinner_reporter<T>(f: impl FnOnce() -> T) -> T {
-    let reporter = if TERM_SETTINGS.indicate_progress {
-        report::Report::new(SpinnerReporter::spawn())
-    } else {
-        report::Report::new(BasicStdoutReporter::default())
-    };
-    report::with_scoped(&reporter, f)
 }
 
 #[cfg(test)]
