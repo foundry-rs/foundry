@@ -1259,7 +1259,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         // Determine writable statements by excluding statements from disabled start / end lines.
         // We check the position of last statement from first line (if disabled) and position of
         // first statement from last line (if disabled) and slice accordingly.
-        let writable_statments = match (
+        let writable_statements = match (
             statements.iter().rposition(|stmt| {
                 is_start_disabled &&
                     self.find_next_line(stmt.loc().end()).unwrap_or_default() ==
@@ -1300,7 +1300,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         // Write statements that are not on any disabled first / last block line.
         let mut statements_loc = loc;
-        if let Some(writable_statements) = writable_statments {
+        if let Some(writable_statements) = writable_statements {
             if let Some(first_statement) = writable_statements.first() {
                 statements_loc = statements_loc.with_start(first_statement.loc().start());
                 self.write_whitespace_separator(true)?;
