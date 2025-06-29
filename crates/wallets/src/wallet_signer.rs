@@ -23,6 +23,9 @@ use {
     },
 };
 
+#[cfg(feature = "browser")]
+use foundry_browser_wallet::BrowserSigner;
+
 pub type Result<T> = std::result::Result<T, WalletSignerError>;
 
 /// Wrapper enum around different signers.
@@ -40,6 +43,9 @@ pub enum WalletSigner {
     /// Wrapper around Google Cloud KMS signer.
     #[cfg(feature = "gcp-kms")]
     Gcp(GcpSigner),
+    /// Wrapper around browser wallet signer (MetaMask, WalletConnect, etc.)
+    #[cfg(feature = "browser")]
+    Browser(BrowserSigner),
 }
 
 impl WalletSigner {
@@ -110,6 +116,21 @@ impl WalletSigner {
         Ok(Self::Local(PrivateKeySigner::from_bytes(private_key)?))
     }
 
+    pub async fn from_browser(port: u16) -> Result<Self> {
+        #[cfg(feature = "browser")]
+        {
+            let browser_signer =
+                BrowserSigner::new(port).await.map_err(|e| WalletSignerError::Browser(e.into()))?;
+            Ok(Self::Browser(browser_signer))
+        }
+
+        #[cfg(not(feature = "browser"))]
+        {
+            let _ = port;
+            Err(WalletSignerError::browser_unsupported())
+        }
+    }
+
     /// Returns a list of addresses available to use with current signer
     ///
     /// - for Ledger and Trezor signers the number of addresses to retrieve is specified as argument
@@ -155,6 +176,10 @@ impl WalletSigner {
             Self::Gcp(gcp) => {
                 senders.push(alloy_signer::Signer::address(gcp));
             }
+            #[cfg(feature = "browser")]
+            Self::Browser(browser) => {
+                senders.push(alloy_signer::Signer::address(browser));
+            }
         }
         Ok(senders)
     }
@@ -191,6 +216,8 @@ macro_rules! delegate {
             Self::Aws($inner) => $e,
             #[cfg(feature = "gcp-kms")]
             Self::Gcp($inner) => $e,
+            #[cfg(feature = "browser")]
+            Self::Browser($inner) => $e,
         }
     };
 }

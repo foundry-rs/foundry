@@ -47,9 +47,14 @@ thiserror.workspace = true
 tracing.workspace = true
 eth-keystore = "0.5.0"
 
+# browser wallet dependency
+foundry-browser-wallet = { workspace = true, optional = true }
+
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros"] }
+tokio = { workspace = true, features = ["macros", "time"] }
+reqwest = { workspace = true, features = ["json"] }
 
 [features]
 aws-kms = ["dep:alloy-signer-aws", "dep:aws-config", "dep:aws-sdk-kms"]
 gcp-kms = ["dep:alloy-signer-gcp", "dep:gcloud-sdk"]
+browser = ["dep:foundry-browser-wallet"]

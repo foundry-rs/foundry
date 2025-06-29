@@ -92,11 +92,12 @@ foundry-test-utils.workspace = true
 alloy-hardforks.workspace = true
 
 [features]
-default = ["jemalloc"]
+default = ["jemalloc", "browser"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
 mimalloc = ["foundry-cli/mimalloc"]
 tracy-allocator = ["foundry-cli/tracy-allocator"]
 aws-kms = ["foundry-wallets/aws-kms"]
 gcp-kms = ["foundry-wallets/gcp-kms"]
+browser = ["foundry-wallets/browser"]
 isolate-by-default = ["foundry-config/isolate-by-default"]

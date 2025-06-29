@@ -24,6 +24,8 @@ members = [
     "crates/macros/",
     "crates/test-utils/",
     "crates/lint/",
+    "crates/wallets/",
+    "crates/browser-wallet/",
 ]
 resolver = "2"
 
@@ -200,6 +202,7 @@ foundry-evm-traces = { path = "crates/evm/traces" }
 foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
 foundry-wallets = { path = "crates/wallets" }
+foundry-browser-wallet = { path = "crates/browser-wallet" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
