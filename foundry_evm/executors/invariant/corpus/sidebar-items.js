@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["JSON_EXTENSION","METADATA_SUFFIX"],"enum":["MutationType"],"struct":["Corpus","TxCorpusManager"]};

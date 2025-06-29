@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["all_whitespace","gather_comments","line_begin_pos","split_block_comment_into_lines","trim_whitespace_prefix"],"mod":["comment"],"struct":["Comments"]};

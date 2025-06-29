@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["is_erc20_transfer_call","is_low_level_call","is_unchecked_tuple_assignment"],"static":["ERC20_UNCHECKED_TRANSFER","UNCHECKED_CALL"],"struct":["UncheckedCallChecker","UncheckedTransferERC20Checker"]};

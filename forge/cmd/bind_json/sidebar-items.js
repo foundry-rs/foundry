@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["JSON_BINDINGS_PLACEHOLDER"],"struct":["BindJsonArgs","PreprocessorVisitor","StructToWrite"]};
