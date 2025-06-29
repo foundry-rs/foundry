@@ -323,16 +323,18 @@ impl EtherscanVerificationProvider {
 
         let lang = detect_language(args, context);
 
-        compiler_version.build = match RE_BUILD_COMMIT.captures(compiler_version.build.as_str()) {
-            Some(cap) => BuildMetadata::new(cap.name("commit").unwrap().as_str())?,
-            _ => BuildMetadata::EMPTY,
-        };
-
+        let mut compiler_version = context.compiler_version.clone();
         let compiler_version = if matches!(lang, ContractLanguage::Vyper) {
             format!("vyper:{}", compiler_version.to_string().split('+').next().unwrap_or("0.0.0"))
         } else {
             format!("v{}", ensure_solc_build_metadata(context.compiler_version.clone()).await?)
         };
+
+        compiler_version.build = match RE_BUILD_COMMIT.captures(compiler_version.build.as_str()) {
+            Some(cap) => BuildMetadata::new(cap.name("commit").unwrap().as_str())?,
+            _ => BuildMetadata::EMPTY,
+        };
+
         println!("Compiler version: {}", compiler_version);
         let constructor_args = self.constructor_args(args, context).await?;
         let mut verify_args =
