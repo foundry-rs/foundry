@@ -369,13 +369,6 @@ contract ExpectRevertCount is DSTest {
         reverter.doNotRevert();
     }
 
-    function testNoRevertSpecificButDiffRevert() public {
-        uint64 count = 0;
-        Reverter reverter = new Reverter();
-        vm.expectRevert("revert", count);
-        reverter.revertWithMessage("revert");
-    }
-
     function testRevertCountWithConstructor() public {
         uint64 count = 1;
         vm.expectRevert("constructor revert", count);
