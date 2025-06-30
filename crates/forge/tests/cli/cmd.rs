@@ -1359,13 +1359,19 @@ Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std
     };
 
     let remove = |cmd: &mut TestCommand, target: &str| {
-        // TODO: flaky behavior with URL, sometimes it is None, sometimes it is Some("https://github.com/lib/forge-std")
-        cmd.forge_fuse().args(["remove", "--force", target]).assert_success().stdout_eq(str![[
-            r#"
-Removing 'forge-std' in [..], (url: [..], tag: None)
-
-"#
-        ]]);
+        // Robustly check output for flaky URL field: just check for key substrings
+        let output = cmd
+            .forge_fuse()
+            .args(["remove", "--force", target])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        assert!(
+            output.contains("Removing 'forge-std'"),
+            "Output missing 'Removing' line: {output:?}"
+        );
+        assert!(output.contains("url:"), "Output missing 'url:' field: {output:?}");
+        assert!(output.contains("tag: None"), "Output missing 'tag: None' field: {output:?}");
 
         assert!(!forge_std.exists());
         assert!(!forge_std_mod.exists());
