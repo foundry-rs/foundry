@@ -187,7 +187,10 @@ mod tests {
         let loaded_account = load_db.basic_ref(test_addr).unwrap().unwrap();
 
         assert_eq!(loaded_account.balance, U256::from(123456));
-        assert_eq!(load_db.code_by_hash_ref(loaded_account.code_hash).unwrap(), contract_code);
+        assert_eq!(
+            load_db.code_by_hash_ref(loaded_account.code_hash).unwrap().bytecode(),
+            contract_code.bytecode()
+        );
         assert_eq!(loaded_account.nonce, 1234);
         assert_eq!(load_db.storage_ref(test_addr, U256::from(1234567)).unwrap(), U256::from(1));
     }
