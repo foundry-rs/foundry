@@ -1,6 +1,7 @@
 use eyre::{Result, WrapErr};
 use foundry_compilers::project_util::TempProject;
 use foundry_test_utils::util::clone_remote;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
     env,
     path::{Path, PathBuf},
@@ -19,7 +20,6 @@ pub struct RepoConfig {
 /// Available repositories for benchmarking
 pub static BENCHMARK_REPOS: &[RepoConfig] = &[
     RepoConfig { name: "ithacaxyz-account", org: "ithacaxyz", repo: "account", rev: "main" },
-    // Temporarily reduced for testing
     // RepoConfig { name: "solady", org: "Vectorized", repo: "solady", rev: "main" },
     // RepoConfig { name: "v4-core", org: "Uniswap", repo: "v4-core", rev: "main" },
     // RepoConfig { name: "morpho-blue", org: "morpho-org", repo: "morpho-blue", rev: "main" },
@@ -192,20 +192,27 @@ pub fn get_forge_version() -> Result<String> {
 }
 
 /// Get Foundry versions to benchmark from environment variable or default
-/// 
+///
 /// Reads from FOUNDRY_BENCH_VERSIONS environment variable if set,
 /// otherwise returns the default versions from FOUNDRY_VERSIONS constant.
-/// 
+///
 /// The environment variable should be a comma-separated list of versions,
 /// e.g., "stable,nightly,v1.2.0"
 pub fn get_benchmark_versions() -> Vec<String> {
     if let Ok(versions_env) = env::var("FOUNDRY_BENCH_VERSIONS") {
-        versions_env
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect()
+        versions_env.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
     } else {
         FOUNDRY_VERSIONS.iter().map(|&s| s.to_string()).collect()
     }
+}
+
+/// Setup Repositories for benchmarking
+pub fn setup_benchmark_repos() -> Vec<(RepoConfig, BenchmarkProject)> {
+    BENCHMARK_REPOS
+        .par_iter()
+        .map(|repo_config| {
+            let project = BenchmarkProject::setup(repo_config).expect("Failed to setup project");
+            (repo_config.clone(), project)
+        })
+        .collect()
 }

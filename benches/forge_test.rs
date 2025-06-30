@@ -1,48 +1,33 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use foundry_bench::{
-    get_benchmark_versions, switch_foundry_version, BenchmarkProject, BENCHMARK_REPOS, SAMPLE_SIZE,
-};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use foundry_bench::{setup_benchmark_repos, SAMPLE_SIZE};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use std::env;
 
 fn benchmark_forge_test(c: &mut Criterion) {
     let mut group = c.benchmark_group("forge-test");
     group.sample_size(SAMPLE_SIZE);
 
-    // Setup all projects once - clone repos in parallel
-    let projects: Vec<_> = BENCHMARK_REPOS
-        .par_iter()
-        .map(|repo_config| {
-            // Setup: prepare project (clone repo)
-            let project = BenchmarkProject::setup(repo_config).expect("Failed to setup project");
-            (repo_config, project)
-        })
-        .collect();
+    // Get the current version being tested
+    let version =
+        env::var("FOUNDRY_BENCH_CURRENT_VERSION").unwrap_or_else(|_| "unknown".to_string());
 
-    // Get versions from environment variable or default
-    let versions = get_benchmark_versions();
-    
-    for version in versions {
-        // Switch foundry version once per version
-        switch_foundry_version(&version).expect("Failed to switch foundry version");
+    println!("Running forge-test for version: {}", version);
 
-        // Build all projects in parallel for this foundry version
-        projects.par_iter().for_each(|(_repo_config, project)| {
-            project.run_forge_build(false).expect("forge build failed");
-        });
+    let projects = setup_benchmark_repos();
 
-        // Run benchmarks for each project
-        for (repo_config, project) in &projects {
-            // Format: table_name/column_name/row_name
-            // This creates: forge-test/{version}/{repo_name}
-            let bench_id = BenchmarkId::new(&version, repo_config.name);
+    projects.par_iter().for_each(|(_repo_config, project)| {
+        project.run_forge_build(false).expect("forge build failed");
+    });
 
-            group.bench_function(bench_id, |b| {
-                b.iter(|| {
-                    let output = project.run_forge_test().expect("forge test failed");
-                    black_box(output);
-                });
+    for (repo_config, project) in &projects {
+        // This creates: forge-test/{version}/{repo_name}
+        let bench_id = BenchmarkId::new(&version, repo_config.name);
+
+        group.bench_function(bench_id, |b| {
+            b.iter(|| {
+                let _output = project.run_forge_test().expect("forge test failed");
             });
-        }
+        });
     }
 
     group.finish();

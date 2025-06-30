@@ -1,69 +1,40 @@
-# Foundry Benchmarking Results
+# Foundry Benchmark Results
 
-**Generated on:** Fri 27 Jun 2025 15:51:19 IST  
-**Foundry Versions Tested:** stable nightly
-
-## Repositories Tested
-
-1. [ithacaxyz-account](https://github.com/ithacaxyz/main)
-2. [solady](https://github.com/Vectorized/main)
-3. [v4-core](https://github.com/Uniswap/main)
-4. [morpho-blue](https://github.com/morpho-org/main)
-5. [spark-psm](https://github.com/marsfoundation/master)
+**Date**: 2025-06-30 15:06:48
 
 ## Summary
 
-This report contains comprehensive benchmarking results comparing different Foundry versions across multiple projects using Criterion.rs for precise performance measurements.
+Benchmarked 2 Foundry versions across 1 repositories.
 
-The following benchmarks were performed:
+### Repositories Tested
 
-1. **forge-test** - Running the test suite (10 samples each)
-2. **forge-build-no-cache** - Clean build without cache (10 samples each)
-3. **forge-build-with-cache** - Build with warm cache (10 samples each)
+1. [ithacaxyz/account](https://github.com/ithacaxyz/account)
 
----
+### Foundry Versions
 
-# Benchmarks
+- stable
+- nightly
 
-## Table of Contents
+## Forge Build Performance (No Cache)
 
-- [Benchmark Results](#benchmark-results)
-  - [forge-test](#forge-test)
-  - [forge-build-no-cache](#forge-build-no-cache)
-  - [forge-build-with-cache](#forge-build-with-cache)
+| Repository        | stable  | nightly |
+| ----------------- | ------- | ------- |
+| ithacaxyz-account | 10.96 s | 10.72 s |
 
-## Benchmark Results
+## Forge Test Performance
 
-### forge-test
+| Repository        | stable | nightly |
+| ----------------- | ------ | ------- |
+| ithacaxyz-account | 4.44 s | 3.94 s  |
 
-|                         | `stable`                | `nightly`                      |
-| :---------------------- | :---------------------- | :----------------------------- |
-| **`ithacaxyz-account`** | `3.75 s` (✅ **1.00x**) | `3.27 s` (✅ **1.15x faster**) |
+## Forge Build Performance (With Cache)
 
-### forge-build-no-cache
-
-|                         | `stable`                 | `nightly`                       |
-| :---------------------- | :----------------------- | :------------------------------ |
-| **`ithacaxyz-account`** | `14.23 s` (✅ **1.00x**) | `14.25 s` (✅ **1.00x slower**) |
-
-### forge-build-with-cache
-
-|                         | `stable`                   | `nightly`                         |
-| :---------------------- | :------------------------- | :-------------------------------- |
-| **`ithacaxyz-account`** | `163.53 ms` (✅ **1.00x**) | `168.00 ms` (✅ **1.03x slower**) |
-
----
-
-Made with [criterion-table](https://github.com/nu11ptr/criterion-table)
+| Repository        | stable    | nightly   |
+| ----------------- | --------- | --------- |
+| ithacaxyz-account | 163.50 ms | 164.71 ms |
 
 ## System Information
 
-- **OS:** Darwin
-- **Architecture:** arm64
-- **Date:** Fri 27 Jun 2025 15:51:19 IST
-
-## Raw Data
-
-Detailed benchmark data and HTML reports are available in:
-
-- `target/criterion/` - Individual benchmark reports
+- **OS**: macos
+- **CPU**: 8
+- **Rustc**: rustc 1.89.0-nightly (d97326eab 2025-05-15)
