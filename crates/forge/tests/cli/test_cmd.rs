@@ -2725,7 +2725,7 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
         contract GetBroadcastTest is DSTest {
             Vm constant vm = Vm(HEVM_ADDRESS);
 
-            function test_getLatestBroacast() external {
+            function test_getLatestBroadcast() external {
                 // Gets the latest create
                 Vm.BroadcastTxSummary memory broadcast = vm.getBroadcast(
                     "Counter",
