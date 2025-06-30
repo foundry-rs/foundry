@@ -20,7 +20,7 @@ pub struct RepoConfig {
 /// Available repositories for benchmarking
 pub static BENCHMARK_REPOS: &[RepoConfig] = &[
     RepoConfig { name: "ithacaxyz-account", org: "ithacaxyz", repo: "account", rev: "main" },
-    // RepoConfig { name: "solady", org: "Vectorized", repo: "solady", rev: "main" },
+    RepoConfig { name: "solady", org: "Vectorized", repo: "solady", rev: "main" },
     // RepoConfig { name: "v4-core", org: "Uniswap", repo: "v4-core", rev: "main" },
     // RepoConfig { name: "morpho-blue", org: "morpho-org", repo: "morpho-blue", rev: "main" },
     // RepoConfig { name: "spark-psm", org: "marsfoundation", repo: "spark-psm", rev: "master" },
@@ -162,7 +162,9 @@ pub fn switch_foundry_version(version: &str) -> Result<()> {
     // Check if the error is about forge --version failing
     let stderr = String::from_utf8_lossy(&output.stderr);
     if stderr.contains("command failed") && stderr.contains("forge --version") {
-        eyre::bail!("Foundry binaries maybe corrupted. Please reinstall, please run `foundryup` and install the required versions.");
+        eyre::bail!(
+            "Foundry binaries maybe corrupted. Please reinstall, please run `foundryup` and install the required versions."
+        );
     }
 
     if !output.status.success() {

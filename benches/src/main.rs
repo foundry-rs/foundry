@@ -1,6 +1,7 @@
 use clap::Parser;
 use color_eyre::eyre::{Result, WrapErr};
-use foundry_bench::{get_forge_version, switch_foundry_version, BENCHMARK_REPOS, FOUNDRY_VERSIONS};
+use foundry_bench::{BENCHMARK_REPOS, FOUNDRY_VERSIONS, get_forge_version, switch_foundry_version};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -8,6 +9,7 @@ use std::{
     io::Write,
     path::PathBuf,
     process::{Command, Stdio},
+    sync::Mutex,
 };
 
 /// Foundry Benchmark Runner
@@ -138,7 +140,7 @@ impl BenchmarkResults {
                 }
             }
         }
-        
+
         output.push_str(&format!(
             "Benchmarked {} Foundry versions across {} repositories.\n\n",
             versions.len(),
@@ -266,9 +268,8 @@ fn get_rustc_version() -> Result<String> {
 }
 
 use once_cell::sync::Lazy;
-/// Mutex to prevent concurrent foundryup calls
-use std::sync::Mutex;
 
+/// Mutex to prevent concurrent foundryup calls
 static FOUNDRY_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 fn switch_version_safe(version: &str) -> Result<()> {
@@ -277,8 +278,6 @@ fn switch_version_safe(version: &str) -> Result<()> {
 }
 
 fn run_benchmark(name: &str, version: &str, verbose: bool) -> Result<Vec<CriterionResult>> {
-    println!("    Running {} benchmark...", name);
-
     // Setup paths
     let criterion_dir = PathBuf::from("../target/criterion");
     let dir_name = name.replace('_', "-");
@@ -319,14 +318,14 @@ fn run_benchmark(name: &str, version: &str, verbose: bool) -> Result<Vec<Criteri
             println!("        Found entry: {}", path.display());
             if path.is_dir() {
                 let repo_name = path.file_name().unwrap().to_string_lossy().to_string();
-                
+
                 // Only process repos that are in BENCHMARK_REPOS
                 let is_valid_repo = BENCHMARK_REPOS.iter().any(|r| r.name == repo_name);
                 if !is_valid_repo {
                     println!("        Skipping unknown repo: {}", repo_name);
                     continue;
                 }
-                
+
                 println!("        Processing repo: {}", repo_name);
                 let benchmark_json = path.join("new/benchmark.json");
                 if benchmark_json.exists() {
@@ -353,14 +352,14 @@ fn run_benchmark(name: &str, version: &str, verbose: bool) -> Result<Vec<Criteri
                                             .unwrap_or(0.0),
                                         confidence_interval: ConfidenceInterval {
                                             confidence_level: 0.95,
-                                            lower_bound: mean_obj["confidence_interval"]
-                                                ["lower_bound"]
-                                                .as_f64()
-                                                .unwrap_or(0.0),
-                                            upper_bound: mean_obj["confidence_interval"]
-                                                ["upper_bound"]
-                                                .as_f64()
-                                                .unwrap_or(0.0),
+                                            lower_bound:
+                                                mean_obj["confidence_interval"]["lower_bound"]
+                                                    .as_f64()
+                                                    .unwrap_or(0.0),
+                                            upper_bound:
+                                                mean_obj["confidence_interval"]["upper_bound"]
+                                                    .as_f64()
+                                                    .unwrap_or(0.0),
                                         },
                                     };
 
@@ -490,12 +489,22 @@ fn main() -> Result<()> {
         let current = get_forge_version()?;
         println!("   Current version: {}", current.trim());
 
-        // Run each benchmark
-        for benchmark in &benchmarks {
-            let bench_results = run_benchmark(benchmark, version, cli.verbose)?;
+        // Run each benchmark in parallel
+        let bench_results: Vec<(String, Vec<CriterionResult>)> = benchmarks
+            .par_iter()
+            .map(|benchmark| {
+                println!("    Running {} benchmark...", benchmark);
+                let results = run_benchmark(benchmark, version, cli.verbose).unwrap_or_else(|e| {
+                    eprintln!("    Error running benchmark {}: {}", benchmark, e);
+                    Vec::new()
+                });
+                (benchmark.clone(), results)
+            })
+            .collect();
 
-            // Parse and store results
-            println!("      Processing {} results", bench_results.len());
+        // Process results sequentially to maintain order in output
+        for (benchmark, bench_results) in bench_results {
+            println!("      Processing {} results for {}", bench_results.len(), benchmark);
             for result in bench_results {
                 if let Some(id) = &result.id {
                     println!("      Found result: {}", id);

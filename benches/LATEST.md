@@ -1,37 +1,41 @@
 # Foundry Benchmark Results
 
-**Date**: 2025-06-30 15:06:48
+**Date**: 2025-06-30 17:23:42
 
 ## Summary
 
-Benchmarked 2 Foundry versions across 1 repositories.
+Benchmarked 2 Foundry versions across 2 repositories.
 
 ### Repositories Tested
 
 1. [ithacaxyz/account](https://github.com/ithacaxyz/account)
+2. [Vectorized/solady](https://github.com/Vectorized/solady)
 
 ### Foundry Versions
 
 - stable
 - nightly
 
-## Forge Build Performance (No Cache)
+## Forge Build Performance (With Cache)
 
-| Repository        | stable  | nightly |
-| ----------------- | ------- | ------- |
-| ithacaxyz-account | 10.96 s | 10.72 s |
+| Repository        | stable    | nightly   |
+| ----------------- | --------- | --------- |
+| ithacaxyz-account | 227.20 ms | 263.73 ms |
+| solady            | 148.77 ms | 192.25 ms |
 
 ## Forge Test Performance
 
 | Repository        | stable | nightly |
 | ----------------- | ------ | ------- |
-| ithacaxyz-account | 4.44 s | 3.94 s  |
+| ithacaxyz-account | 4.88 s | 4.37 s  |
+| solady            | 3.45 s | 3.43 s  |
 
-## Forge Build Performance (With Cache)
+## Forge Build Performance (No Cache)
 
-| Repository        | stable    | nightly   |
-| ----------------- | --------- | --------- |
-| ithacaxyz-account | 163.50 ms | 164.71 ms |
+| Repository        | stable  | nightly |
+| ----------------- | ------- | ------- |
+| ithacaxyz-account | 16.35 s | 13.85 s |
+| solady            | 15.27 s | 15.12 s |
 
 ## System Information
 
