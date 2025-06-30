@@ -15,6 +15,7 @@ workspace = true
 
 [dependencies]
 # lib
+foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
 

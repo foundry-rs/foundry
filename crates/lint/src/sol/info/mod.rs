@@ -1,7 +1,4 @@
-use crate::{
-    register_lints,
-    sol::{EarlyLintPass, SolLint},
-};
+use crate::sol::{EarlyLintPass, SolLint};
 
 mod mixed_case;
 use mixed_case::{MIXED_CASE_FUNCTION, MIXED_CASE_VARIABLE};

@@ -144,8 +144,14 @@ pub enum EthRequest {
     #[serde(rename = "eth_sendTransaction", with = "sequence")]
     EthSendTransaction(Box<WithOtherFields<TransactionRequest>>),
 
+    #[serde(rename = "eth_sendTransactionSync", with = "sequence")]
+    EthSendTransactionSync(Box<WithOtherFields<TransactionRequest>>),
+
     #[serde(rename = "eth_sendRawTransaction", with = "sequence")]
     EthSendRawTransaction(Bytes),
+
+    #[serde(rename = "eth_sendRawTransactionSync", with = "sequence")]
+    EthSendRawTransactionSync(Bytes),
 
     #[serde(rename = "eth_call")]
     EthCall(
@@ -380,10 +386,18 @@ pub enum EthRequest {
     #[serde(
         rename = "anvil_dealERC20",
         alias = "hardhat_dealERC20",
-        alias = "anvil_setERC20Balance",
-        alias = "tenderly_setErc20Balance"
+        alias = "anvil_setERC20Balance"
     )]
     DealERC20(Address, Address, #[serde(deserialize_with = "deserialize_number")] U256),
+
+    /// Sets the ERC20 allowance for a spender
+    #[serde(rename = "anvil_setERC20Allowance")]
+    SetERC20Allowance(
+        Address,
+        Address,
+        Address,
+        #[serde(deserialize_with = "deserialize_number")] U256,
+    ),
 
     /// Sets the code of a contract
     #[serde(rename = "anvil_setCode", alias = "hardhat_setCode")]

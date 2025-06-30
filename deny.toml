@@ -71,7 +71,7 @@ exceptions = [
     { allow = ["CC0-1.0"], name = "dunce" },
     { allow = ["CC0-1.0"], name = "aurora-engine-modexp" },
 ]
-#copyleft = "deny"
+# copyleft = "deny"
 
 # See note in unicode-ident's readme!
 [[licenses.clarify]]

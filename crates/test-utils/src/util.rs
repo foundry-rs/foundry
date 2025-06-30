@@ -141,6 +141,20 @@ impl ExtTester {
     pub fn setup_forge_prj(&self) -> (TestProject, TestCommand) {
         let (prj, test_cmd) = setup_forge(self.name, self.style.clone());
 
+        // Export vyper and forge in test command - workaround for snekmate venom tests.
+        if let Some(vyper) = &prj.inner.project().compiler.vyper {
+            let vyper_dir = vyper.path.parent().expect("vyper path should have a parent");
+            let forge_bin = prj.exe_root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
+            let forge_dir = forge_bin.parent().expect("forge path should have a parent");
+
+            let existing_path = std::env::var_os("PATH").unwrap_or_default();
+            let mut new_paths = vec![vyper_dir.to_path_buf(), forge_dir.to_path_buf()];
+            new_paths.extend(std::env::split_paths(&existing_path));
+
+            let joined_path = std::env::join_paths(new_paths).expect("failed to join PATH");
+            test_cmd.env("PATH", joined_path);
+        }
+
         // Wipe the default structure.
         prj.wipe();
 
@@ -1033,7 +1047,9 @@ fn test_redactions() -> snapbox::Redactions {
             ("[FILE]", r"Location(.|\n)*\.rs(.|\n)*Backtrace"),
             ("[COMPILING_FILES]", r"Compiling \d+ files?"),
             ("[TX_HASH]", r"Transaction hash: 0x[0-9A-Fa-f]{64}"),
-            ("[ADDRESS]", r"Address: 0x[0-9A-Fa-f]{40}"),
+            ("[ADDRESS]", r"Address: +0x[0-9A-Fa-f]{40}"),
+            ("[PUBLIC_KEY]", r"Public key: +0x[0-9A-Fa-f]{128}"),
+            ("[PRIVATE_KEY]", r"Private key: +0x[0-9A-Fa-f]{64}"),
             ("[UPDATING_DEPENDENCIES]", r"Updating dependencies in .*"),
             ("[SAVED_TRANSACTIONS]", r"Transactions saved to: .*\.json"),
             ("[SAVED_SENSITIVE_VALUES]", r"Sensitive values saved to: .*\.json"),
