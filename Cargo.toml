@@ -253,7 +253,7 @@ alloy-sol-types = "1.2.1"
 
 alloy-chains = "0.2"
 alloy-rlp = "0.3"
-alloy-trie = "0.8.1"
+alloy-trie = "0.9"
 
 ## op-alloy
 op-alloy-consensus = "0.17.2"

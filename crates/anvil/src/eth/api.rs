@@ -189,6 +189,9 @@ impl EthApi {
             EthRequest::EthSendTransaction(request) => {
                 self.send_transaction(*request).await.to_rpc_result()
             }
+            EthRequest::EthSendTransactionSync(request) => {
+                self.send_transaction_sync(*request).await.to_rpc_result()
+            }
             EthRequest::EthChainId(_) => self.eth_chain_id().to_rpc_result(),
             EthRequest::EthNetworkId(_) => self.network_id().to_rpc_result(),
             EthRequest::NetListening(_) => self.net_listening().to_rpc_result(),
@@ -255,6 +258,9 @@ impl EthApi {
             }
             EthRequest::EthSendRawTransaction(tx) => {
                 self.send_raw_transaction(tx).await.to_rpc_result()
+            }
+            EthRequest::EthSendRawTransactionSync(tx) => {
+                self.send_raw_transaction_sync(tx).await.to_rpc_result()
             }
             EthRequest::EthCall(call, block, state_override, block_overrides) => self
                 .call(call, block, EvmOverrides::new(state_override, block_overrides))
@@ -1067,6 +1073,50 @@ impl EthApi {
         self.add_pending_transaction(pending_transaction, requires, provides)
     }
 
+    /// Waits for a transaction to be included in a block and returns its receipt (no timeout).
+    async fn await_transaction_inclusion(&self, hash: TxHash) -> Result<ReceiptResponse> {
+        let mut stream = self.new_block_notifications();
+        while let Some(notification) = stream.next().await {
+            if let Some(block) = self.backend.get_block_by_hash(notification.hash) {
+                if block.transactions.iter().any(|tx| tx.hash() == hash) {
+                    if let Some(receipt) = self.backend.transaction_receipt(hash).await? {
+                        return Ok(receipt);
+                    }
+                }
+            }
+        }
+
+        Err(BlockchainError::Message("Failed to await transaction inclusion".to_string()))
+    }
+
+    /// Waits for a transaction to be included in a block and returns its receipt, with timeout.
+    async fn check_transaction_inclusion(&self, hash: TxHash) -> Result<ReceiptResponse> {
+        const TIMEOUT_DURATION: Duration = Duration::from_secs(30);
+        tokio::time::timeout(TIMEOUT_DURATION, self.await_transaction_inclusion(hash))
+            .await
+            .unwrap_or_else(|_elapsed| {
+                Err(BlockchainError::TransactionConfirmationTimeout {
+                    hash,
+                    duration: TIMEOUT_DURATION,
+                })
+            })
+    }
+
+    /// Sends a transaction and waits for receipt
+    ///
+    /// Handler for ETH RPC call: `eth_sendTransactionSync`
+    pub async fn send_transaction_sync(
+        &self,
+        request: WithOtherFields<TransactionRequest>,
+    ) -> Result<ReceiptResponse> {
+        node_info!("eth_sendTransactionSync");
+        let hash = self.send_transaction(request).await?;
+
+        let receipt = self.check_transaction_inclusion(hash).await?;
+
+        Ok(ReceiptResponse::from(receipt))
+    }
+
     /// Sends signed transaction, returning its hash.
     ///
     /// Handler for ETH RPC call: `eth_sendRawTransaction`
@@ -1103,6 +1153,18 @@ impl EthApi {
         let tx = self.pool.add_transaction(pool_transaction)?;
         trace!(target: "node", "Added transaction: [{:?}] sender={:?}", tx.hash(), from);
         Ok(*tx.hash())
+    }
+
+    /// Sends signed transaction, returning its receipt.
+    ///
+    /// Handler for ETH RPC call: `eth_sendRawTransactionSync`
+    pub async fn send_raw_transaction_sync(&self, tx: Bytes) -> Result<ReceiptResponse> {
+        node_info!("eth_sendRawTransactionSync");
+
+        let hash = self.send_raw_transaction(tx).await?;
+        let receipt = self.check_transaction_inclusion(hash).await?;
+
+        Ok(ReceiptResponse::from(receipt))
     }
 
     /// Call contract, returning the output data.
