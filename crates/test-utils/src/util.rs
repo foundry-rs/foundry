@@ -139,7 +139,7 @@ impl ExtTester {
     }
 
     pub fn setup_forge_prj(&self) -> (TestProject, TestCommand) {
-        let (prj, test_cmd) = setup_forge(self.name, self.style.clone());
+        let (prj, mut test_cmd) = setup_forge(self.name, self.style.clone());
 
         // Export vyper and forge in test command - workaround for snekmate venom tests.
         if let Some(vyper) = &prj.inner.project().compiler.vyper {
