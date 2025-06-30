@@ -8,6 +8,7 @@ use foundry_common::{
 };
 use foundry_config::{Chain, Config};
 use itertools::Itertools;
+use regex::Regex;
 use serde::de::DeserializeOwned;
 use std::{
     ffi::OsStr,
@@ -15,6 +16,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
     str::FromStr,
+    sync::LazyLock,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tracing_subscriber::prelude::*;
@@ -44,11 +46,17 @@ pub const STATIC_FUZZ_SEED: [u8; 32] = [
 ];
 
 /// Regex used to parse `.gitmodules` file and capture the submodule path and branch.
-const SUBMODULE_BRANCH_REGEX: &str = r#"\[submodule "([^"]+)"\](?:[^\[]*?branch = ([^\s]+))"#;
+pub static SUBMODULE_BRANCH_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"\[submodule "([^"]+)"\](?:[^\[]*?branch = ([^\s]+))"#).unwrap()
+});
 /// Regex used to parse `git submodule status` output.
-const SUBMODULE_STATUS_REGEX: &str = r"^[\s+-]?([a-f0-9]+)\s+([^\s]+)(?:\s+\([^)]+\))?$";
+pub static SUBMODULE_STATUS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[\s+-]?([a-f0-9]+)\s+([^\s]+)(?:\s+\([^)]+\))?$").unwrap()
+});
 /// Capture the HEAD / default branch of the git repository from `git remote show origin`.
-const DEFAULT_BRANCH_REGEX: &str = r"HEAD branch: (.*)";
+pub static DEFAULT_BRANCH_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"HEAD branch: (.*)").unwrap()
+});
 
 /// Useful extensions to [`std::path::Path`].
 pub trait FoundryPathExt {
@@ -566,9 +574,8 @@ ignore them in the `.gitignore` file."
     ) -> Result<HashMap<PathBuf, String>> {
         // Read the .gitmodules file
         let gitmodules = foundry_common::fs::read_to_string(at.join(".gitmodules"))?;
-        let re = regex::Regex::new(SUBMODULE_BRANCH_REGEX)?;
 
-        let paths = re
+        let paths = SUBMODULE_BRANCH_REGEX
             .captures_iter(&gitmodules)
             .map(|cap| {
                 let path_str = cap.get(1).unwrap().as_str();
@@ -690,11 +697,10 @@ ignore them in the `.gitignore` file."
     /// Gets the default branch of the git repository.
     pub fn default_branch(&self, at: &Path) -> Result<String> {
         self.cmd_at(at).args(["remote", "show", "origin"]).get_stdout_lossy().map(|stdout| {
-            let re = regex::Regex::new(DEFAULT_BRANCH_REGEX)?;
             let caps =
-                re.captures(&stdout).ok_or_else(|| eyre::eyre!("Could not find HEAD branch"))?;
-            Ok(caps.get(1).unwrap().as_str().to_string())
-        })?
+                DEFAULT_BRANCH_REGEX.captures(&stdout).ok_or_else(|| eyre::eyre!("Could not find HEAD branch"))?;
+            caps.get(1).unwrap().as_str().to_string()
+        })
     }
 
     pub fn submodules(&self) -> Result<Submodules> {
@@ -760,9 +766,7 @@ impl FromStr for Submodule {
     type Err = eyre::Report;
 
     fn from_str(s: &str) -> Result<Self> {
-        let re = regex::Regex::new(SUBMODULE_STATUS_REGEX)?;
-
-        let caps = re.captures(s).ok_or_else(|| eyre::eyre!("Invalid submodule status format"))?;
+        let caps = SUBMODULE_STATUS_REGEX.captures(s).ok_or_else(|| eyre::eyre!("Invalid submodule status format"))?;
 
         Ok(Self {
             rev: caps.get(1).unwrap().as_str().to_string(),
@@ -879,8 +883,6 @@ mod tests {
 
     #[test]
     fn test_read_gitmodules_regex() {
-        // Regex to read and return the paths of all submodules that have a branch
-        let re = regex::Regex::new(SUBMODULE_BRANCH_REGEX).unwrap();
 
         let gitmodules = r#"
         [submodule "lib/solady"]
@@ -896,7 +898,7 @@ mod tests {
         url = ""
 "#;
 
-        let paths = re
+        let paths = SUBMODULE_BRANCH_REGEX
             .captures_iter(gitmodules)
             .map(|cap| {
                 (
@@ -923,7 +925,7 @@ mod tests {
         path = lib/forge-std
         url = ""
 "#;
-        let paths = re
+        let paths = SUBMODULE_BRANCH_REGEX
             .captures_iter(no_branch_gitmodules)
             .map(|cap| {
                 (
@@ -948,7 +950,7 @@ mod tests {
         url = ""
         "#;
 
-        let paths = re
+        let paths = SUBMODULE_BRANCH_REGEX
             .captures_iter(branch_in_between)
             .map(|cap| {
                 (
