@@ -1,21 +1,12 @@
+use crate::EnvMut;
 use alloy_consensus::BlockHeader;
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_network::{
-    eip2718::{
-        EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
-        LEGACY_TX_TYPE_ID,
-    },
-    AnyTxEnvelope, TransactionResponse,
-};
+use alloy_network::{AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{Address, Selector, TxKind, B256, U256};
 use alloy_provider::{network::BlockResponse, Network};
 use alloy_rpc_types::{Transaction, TransactionRequest};
-use foundry_common::is_impersonated_tx;
 use foundry_config::NamedChain;
-use revm::primitives::hardfork::SpecId;
 pub use revm::state::EvmState as StateChangeset;
-
-use crate::EnvMut;
 
 /// Depending on the configured chain id and block number this should apply any specific changes
 ///
@@ -94,9 +85,9 @@ pub fn get_function<'a>(
 /// Configures the env for the given RPC transaction.
 /// Accounts for an impersonated transaction by resetting the `env.tx.caller` field to `tx.from`.
 pub fn configure_tx_env(env: &mut EnvMut<'_>, tx: &Transaction<AnyTxEnvelope>) {
-    let impersonated_from = is_impersonated_tx(&tx.inner).then_some(tx.from());
+    let from = tx.from();
     if let AnyTxEnvelope::Ethereum(tx) = &tx.inner.inner() {
-        configure_tx_req_env(env, &tx.clone().into(), impersonated_from).expect("cannot fail");
+        configure_tx_req_env(env, &tx.clone().into(), Some(from)).expect("cannot fail");
     }
 }
 
@@ -108,6 +99,10 @@ pub fn configure_tx_req_env(
     tx: &TransactionRequest,
     impersonated_from: Option<Address>,
 ) -> eyre::Result<()> {
+    // If no transaction type is provided, we need to infer it from the other fields.
+    let tx_type = tx.transaction_type.unwrap_or_else(|| tx.minimal_tx_type() as u8);
+    env.tx.tx_type = tx_type;
+
     let TransactionRequest {
         nonce,
         from,
@@ -122,26 +117,10 @@ pub fn configure_tx_req_env(
         chain_id,
         ref blob_versioned_hashes,
         ref access_list,
-        transaction_type,
         ref authorization_list,
+        transaction_type: _,
         sidecar: _,
     } = *tx;
-
-    // If no transaction type is provided, we need to infer it from the other fields.
-    let tx_type = transaction_type.unwrap_or_else(|| {
-        if authorization_list.is_some() {
-            EIP7702_TX_TYPE_ID
-        } else if blob_versioned_hashes.is_some() {
-            EIP4844_TX_TYPE_ID
-        } else if max_fee_per_gas.is_some() || max_priority_fee_per_gas.is_some() {
-            EIP1559_TX_TYPE_ID
-        } else if access_list.is_some() {
-            EIP2930_TX_TYPE_ID
-        } else {
-            LEGACY_TX_TYPE_ID
-        }
-    });
-    env.tx.tx_type = tx_type;
 
     // If no `to` field then set create kind: https://eips.ethereum.org/EIPS/eip-2470#deployment-transaction
     env.tx.kind = to.unwrap_or(TxKind::Create);
@@ -170,10 +149,4 @@ pub fn configure_tx_req_env(
     env.tx.set_signed_authorization(authorization_list.clone().unwrap_or_default());
 
     Ok(())
-}
-
-/// Get the gas used, accounting for refunds
-pub fn gas_used(spec: SpecId, spent: u64, refunded: u64) -> u64 {
-    let refund_quotient = if SpecId::is_enabled_in(spec, SpecId::LONDON) { 5 } else { 2 };
-    spent - (refunded).min(spent / refund_quotient)
 }

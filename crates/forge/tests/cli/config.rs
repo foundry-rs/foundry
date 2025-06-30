@@ -116,6 +116,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         disable_block_gas_limit: false,
         memory_limit: 1 << 27,
         eth_rpc_url: Some("localhost".to_string()),
+        eth_rpc_accept_invalid_certs: false,
         eth_rpc_jwt: None,
         eth_rpc_timeout: None,
         eth_rpc_headers: None,
@@ -993,6 +994,7 @@ offline = false
 optimizer = false
 optimizer_runs = 200
 verbosity = 0
+eth_rpc_accept_invalid_certs = false
 ignored_error_codes = [
     "license",
     "code-size",
@@ -1166,6 +1168,7 @@ exclude = []
   "model_checker": null,
   "verbosity": 0,
   "eth_rpc_url": null,
+  "eth_rpc_accept_invalid_certs": false,
   "eth_rpc_jwt": null,
   "eth_rpc_timeout": null,
   "eth_rpc_headers": null,
