@@ -463,12 +463,12 @@ fn address_slot_value_override(address_override: &str) -> Result<(Address, U256,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{hex, fixed_bytes};
-    
-     #[test]
+    use alloy_primitives::{fixed_bytes, hex};
+
+    #[test]
     fn test_get_state_overrides() -> Result<(), Box<dyn std::error::Error>> {
         let call_args = CallArgs::parse_from([
-            "foundry-cli", 
+            "foundry-cli",
             "--override-balance",
             "0x0000000000000000000000000000000000000001:2",
             "--override-nonce",
@@ -478,7 +478,7 @@ mod tests {
             "--override-state",
             "0x0000000000000000000000000000000000000001:5:6",
             "--override-state-diff",
-            "0x0000000000000000000000000000000000000001:7:8"
+            "0x0000000000000000000000000000000000000001:7:8",
         ]);
         if let Some(overrides) = call_args.get_state_overrides()? {
             let address = Address(fixed_bytes!("0x0000000000000000000000000000000000000001"));
@@ -493,12 +493,16 @@ mod tests {
                     assert_eq!(*code, Bytes::from([0x04]));
                 }
                 if let Some(state) = &account_override.state {
-                    if let Some(value) = state.get(&fixed_bytes!("0x0000000000000000000000000000000000000000000000000000000000000005")) {
+                    if let Some(value) = state.get(&fixed_bytes!(
+                        "0x0000000000000000000000000000000000000000000000000000000000000005"
+                    )) {
                         assert_eq!(*value, fixed_bytes!("0x0000000000000000000000000000000000000000000000000000000000000006"));
                     }
                 }
                 if let Some(state_diff) = &account_override.state_diff {
-                    if let Some(value) = state_diff.get(&fixed_bytes!("0x0000000000000000000000000000000000000000000000000000000000000007")) {
+                    if let Some(value) = state_diff.get(&fixed_bytes!(
+                        "0x0000000000000000000000000000000000000000000000000000000000000007"
+                    )) {
                         assert_eq!(*value, fixed_bytes!("0x0000000000000000000000000000000000000000000000000000000000000008"));
                     }
                 }
@@ -548,9 +552,12 @@ mod tests {
     fn test_address_value_override_error() {
         let text = "invalid_value";
         match address_value_override(text) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(error) => {
-                assert_eq!(error.to_string(), "Invalid override invalid_value. Expected <address>:<value>");
+                assert_eq!(
+                    error.to_string(),
+                    "Invalid override invalid_value. Expected <address>:<value>"
+                );
             }
         }
     }
@@ -569,9 +576,12 @@ mod tests {
     fn test_address_slot_value_override_error() {
         let text = "invalid_value";
         match address_slot_value_override(text) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(error) => {
-                assert_eq!(error.to_string(), "Invalid override invalid_value. Expected <address>:<slot>:<value>");
+                assert_eq!(
+                    error.to_string(),
+                    "Invalid override invalid_value. Expected <address>:<slot>:<value>"
+                );
             }
         }
     }
