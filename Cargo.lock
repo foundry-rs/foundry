@@ -235,7 +235,7 @@ dependencies = [
  "alloy-sol-types",
  "auto_impl",
  "derive_more 2.0.1",
- "op-alloy-consensus 0.18.6",
+ "op-alloy-consensus 0.18.9",
  "op-revm",
  "revm",
  "thiserror 2.0.12",
@@ -345,7 +345,7 @@ dependencies = [
  "alloy-op-hardforks",
  "alloy-primitives",
  "auto_impl",
- "op-alloy-consensus 0.18.6",
+ "op-alloy-consensus 0.18.9",
  "op-revm",
  "revm",
 ]
@@ -6527,9 +6527,9 @@ dependencies = [
 
 [[package]]
 name = "op-alloy-consensus"
-version = "0.18.6"
+version = "0.18.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5448a4ef9ef1ee241a67fe533ae3563716bbcd719acbd0544ad1ac9f03cfde6"
+checksum = "a8719d9b783b29cfa1cf8d591b894805786b9ab4940adc700a57fd0d5b721cf5"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
