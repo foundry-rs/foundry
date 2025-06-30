@@ -46,17 +46,11 @@ pub const STATIC_FUZZ_SEED: [u8; 32] = [
 ];
 
 /// Regex used to parse `.gitmodules` file and capture the submodule path and branch.
-pub static SUBMODULE_BRANCH_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"\[submodule "([^"]+)"\](?:[^\[]*?branch = ([^\s]+))"#).unwrap()
-});
+pub static SUBMODULE_BRANCH_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"\[submodule "([^"]+)"\](?:[^\[]*?branch = ([^\s]+))"#).unwrap());
 /// Regex used to parse `git submodule status` output.
-pub static SUBMODULE_STATUS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[\s+-]?([a-f0-9]+)\s+([^\s]+)(?:\s+\([^)]+\))?$").unwrap()
-});
-/// Capture the HEAD / default branch of the git repository from `git remote show origin`.
-pub static DEFAULT_BRANCH_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"HEAD branch: (.*)").unwrap()
-});
+pub static SUBMODULE_STATUS_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[\s+-]?([a-f0-9]+)\s+([^\s]+)(?:\s+\([^)]+\))?$").unwrap());
 
 /// Useful extensions to [`std::path::Path`].
 pub trait FoundryPathExt {
@@ -694,15 +688,6 @@ ignore them in the `.gitignore` file."
         self.cmd().stderr(self.stderr()).args(["submodule", "init"]).exec().map(drop)
     }
 
-    /// Gets the default branch of the git repository.
-    pub fn default_branch(&self, at: &Path) -> Result<String> {
-        self.cmd_at(at).args(["remote", "show", "origin"]).get_stdout_lossy().map(|stdout| {
-            let caps =
-                DEFAULT_BRANCH_REGEX.captures(&stdout).ok_or_else(|| eyre::eyre!("Could not find HEAD branch"))?;
-            caps.get(1).unwrap().as_str().to_string()
-        })
-    }
-
     pub fn submodules(&self) -> Result<Submodules> {
         self.cmd().args(["submodule", "status"]).get_stdout_lossy().map(|stdout| stdout.parse())?
     }
@@ -766,7 +751,9 @@ impl FromStr for Submodule {
     type Err = eyre::Report;
 
     fn from_str(s: &str) -> Result<Self> {
-        let caps = SUBMODULE_STATUS_REGEX.captures(s).ok_or_else(|| eyre::eyre!("Invalid submodule status format"))?;
+        let caps = SUBMODULE_STATUS_REGEX
+            .captures(s)
+            .ok_or_else(|| eyre::eyre!("Invalid submodule status format"))?;
 
         Ok(Self {
             rev: caps.get(1).unwrap().as_str().to_string(),
@@ -883,7 +870,6 @@ mod tests {
 
     #[test]
     fn test_read_gitmodules_regex() {
-
         let gitmodules = r#"
         [submodule "lib/solady"]
         path = lib/solady
