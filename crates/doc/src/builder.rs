@@ -350,18 +350,18 @@ impl DocBuilder {
             .insert(String::from("title"), self.config.title.clone().into());
         if let Some(ref repo) = self.config.repository {
             // Create the full repository URL
-            let git_repo_url = match &self.config.directory {
-                Some(dir) => {
-                    // If directory is specified, append it to the repository URL
+            let git_repo_url = match &self.config.path {
+                Some(path) => {
+                    // If path is specified, append it to the repository URL
                     let repo_clean = repo.trim_end_matches('/');
-                    format!("{}/tree/main/{}", repo_clean, dir.trim_start_matches('/'))
+                    format!("{}/{}", repo_clean, dir.trim_start_matches('/'))
                 }
                 None => {
-                    // No directory specified, use repository URL as-is
+                    // No path specified, use repository URL as-is
                     repo.clone()
                 }
             };
-            
+
             book["output"].as_table_mut().unwrap()["html"]
                 .as_table_mut()
                 .unwrap()

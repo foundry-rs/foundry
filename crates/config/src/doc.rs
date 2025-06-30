@@ -21,10 +21,9 @@ pub struct DocConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub directory: Option<String>,
+    pub path: Option<String>,
     /// Globs to ignore
     pub ignore: Vec<String>,
-
 }
 
 impl Default for DocConfig {
@@ -35,7 +34,7 @@ impl Default for DocConfig {
             homepage: Some(PathBuf::from("README.md")),
             title: String::default(),
             repository: None,
-            directory: None,
+            path: None,
             ignore: Vec::default(),
         }
     }
