@@ -216,6 +216,16 @@ impl BenchmarkProject {
     pub fn root(&self) -> &Path {
         &self.root_path
     }
+
+    /// Run forge test with fuzz tests only (tests with parameters)
+    pub fn run_fuzz_tests(&self) -> Result<Output> {
+        // Use shell to properly handle the regex pattern
+        Command::new("sh")
+            .current_dir(&self.root_path)
+            .args(["-c", r#"forge test --match-test "test[^(]*\([^)]+\)""#])
+            .output()
+            .wrap_err("Failed to run forge fuzz tests")
+    }
 }
 
 /// Switch to a specific foundry version

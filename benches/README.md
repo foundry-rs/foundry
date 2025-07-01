@@ -59,6 +59,9 @@ cargo run --release --bin foundry-bench -- --repos ithacaxyz/account:main,Vector
 # Run only specific benchmarks
 cargo run --release --bin foundry-bench -- --benchmarks forge_build_with_cache,forge_test
 
+# Run only fuzz tests
+cargo run --release --bin foundry-bench -- --benchmarks forge_fuzz_test
+
 # Combine options
 cargo run --release --bin foundry-bench -- \
   --versions stable,nightly \
@@ -92,6 +95,7 @@ cargo run --release --bin foundry-bench -- --output-dir ./results --output-file 
 cargo bench --bench forge_test
 cargo bench --bench forge_build_no_cache
 cargo bench --bench forge_build_with_cache
+cargo bench --bench forge_fuzz_test
 ```
 
 ## Benchmark Structure
@@ -99,6 +103,7 @@ cargo bench --bench forge_build_with_cache
 - `forge_test` - Benchmarks `forge test` command across repos
 - `forge_build_no_cache` - Benchmarks `forge build` with clean cache
 - `forge_build_with_cache` - Benchmarks `forge build` with existing cache
+- `forge_fuzz_test` - Benchmarks `forge test` with only fuzz tests (tests with parameters)
 
 ## Configuration
 

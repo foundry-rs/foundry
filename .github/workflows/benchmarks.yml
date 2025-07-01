@@ -17,7 +17,7 @@ on:
         required: false
         type: string
       benchmarks:
-        description: "Comma-separated list of benchmarks to run (forge_test,forge_build_no_cache,forge_build_with_cache)"
+        description: "Comma-separated list of benchmarks to run (forge_test,forge_build_no_cache,forge_build_with_cache,forge_fuzz_test)"
         required: false
         type: string
 

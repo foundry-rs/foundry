@@ -22,6 +22,11 @@ name = "forge_build_with_cache"
 path = "forge_build_with_cache.rs"
 harness = false
 
+[[bench]]
+name = "forge_fuzz_test"
+path = "forge_fuzz_test.rs"
+harness = false
+
 [dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 foundry-test-utils.workspace = true
