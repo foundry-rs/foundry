@@ -9,9 +9,9 @@ use crate::{
     FormatterConfig, InlineConfig,
 };
 use foundry_config::fmt as config;
-use itertools::{peek_nth, Either, Itertools};
+use itertools::{Either, Itertools};
 use solar_parse::{
-    ast::{self, token, yul, Span, Type, TypeKind},
+    ast::{self, token, yul, Span},
     interface::{BytePos, SourceMap},
     Cursor,
 };
@@ -647,7 +647,6 @@ impl<'ast> State<'_, 'ast> {
             ref parameters,
             visibility,
             state_mutability,
-            ref modifiers,
             virtual_,
             ref override_,
             ref returns,
@@ -671,83 +670,20 @@ impl<'ast> State<'_, 'ast> {
         self.print_parameter_list(parameters, parameters.span, ListFormat::Inline);
         self.end();
 
-        // Cache attribute comments first, as they can be wrongly ordered.
-        let (mut attrib_comments, mut pending) = (Vec::new(), None);
-        for cmnt in self.comments.iter() {
-            if cmnt.pos() >= returns.span.lo() {
-                break;
-            }
-
-            match pending {
-                Some(ref p) => pending = Some(p + 1),
-                None => pending = Some(0),
-            }
-        }
-        while let Some(p) = pending {
-            if p == 0 {
-                pending = None;
-            } else {
-                pending = Some(p - 1);
-            }
-            let cmnt = self.next_comment().unwrap();
-            if cmnt.style == CommentStyle::BlankLine {
-                continue;
-            }
-            attrib_comments.push(cmnt);
-        }
-
-        let mut attributes: Vec<AttributeInfo<'ast>> = Vec::new();
-        if let Some(v) = visibility {
-            attributes.push(AttributeInfo { kind: AttributeKind::Visibility(*v), span: v.span });
-        }
-        attributes.push(AttributeInfo {
-            kind: AttributeKind::StateMutability(*state_mutability),
-            span: state_mutability.span,
-        });
-        if let Some(v) = virtual_ {
-            attributes.push(AttributeInfo { kind: AttributeKind::Virtual, span: v });
-        }
-        if let Some(o) = override_ {
-            attributes.push(AttributeInfo { kind: AttributeKind::Override(o), span: o.span });
-        }
-        for m in modifiers.iter() {
-            attributes.push(AttributeInfo { kind: AttributeKind::Modifier(m), span: m.span() });
-        }
-        attributes.sort_by_key(|attr| attr.span.lo());
-
-        // Claim comments for each source-ordered attribute
-        let mut map: HashMap<BytePos, (Vec<Comment>, Vec<Comment>)> = HashMap::new();
-        for a in 0..attributes.len() {
-            let is_last = a == attributes.len() - 1;
-            let mut before = Vec::new();
-            let mut after = Vec::new();
-
-            let before_limit = attributes[a].span.lo();
-            let after_limit =
-                if !is_last { attributes[a + 1].span.lo() } else { returns.span.lo() };
-            let mut c = 0;
-            while c < attrib_comments.len() {
-                if attrib_comments[c].pos() <= before_limit {
-                    before.push(attrib_comments.remove(c));
-                } else if (after.is_empty() || is_last) && attrib_comments[c].pos() <= after_limit {
-                    after.push(attrib_comments.remove(c));
-                } else {
-                    c += 1;
-                }
-            }
-            map.insert(before_limit, (before, after));
-        }
+        // Map attributes to their corresponding comments
+        let (attributes, mut map) =
+            AttributeCommentMapper::new(header.returns.span.lo()).build(self, header);
 
         self.s.cbox(0);
         self.s.cbox(0);
         if let Some(v) = visibility {
-            self.print_attribute(v.span, &mut map, &mut |s| s.word(v.to_str()));
+            self.print_fn_attribute(v.span, &mut map, &mut |s| s.word(v.to_str()));
         }
         if *state_mutability != ast::StateMutability::NonPayable {
             if !self.is_bol_or_only_ind() && !self.last_token_is_space() {
                 self.space();
             }
-            self.print_attribute(state_mutability.span, &mut map, &mut |s| {
+            self.print_fn_attribute(state_mutability.span, &mut map, &mut |s| {
                 s.word(state_mutability.to_str())
             });
         }
@@ -755,18 +691,18 @@ impl<'ast> State<'_, 'ast> {
             if !self.is_bol_or_only_ind() && !self.last_token_is_space() {
                 self.space();
             }
-            self.print_attribute(virtual_, &mut map, &mut |s| s.word("virtual"));
+            self.print_fn_attribute(virtual_, &mut map, &mut |s| s.word("virtual"));
         }
         if let Some(override_) = override_ {
             if !self.is_bol_or_only_ind() && !self.last_token_is_space() {
                 self.space();
             }
-            self.print_attribute(override_.span, &mut map, &mut |s| s.print_override(override_));
+            self.print_fn_attribute(override_.span, &mut map, &mut |s| s.print_override(override_));
         }
         for m in attributes.iter().filter(|a| matches!(a.kind, AttributeKind::Modifier(_))) {
             if let AttributeKind::Modifier(modifier) = m.kind {
                 let is_base = self.is_modifier_a_base_contract(kind, modifier);
-                self.print_attribute(m.span, &mut map, &mut |s| {
+                self.print_fn_attribute(m.span, &mut map, &mut |s| {
                     s.print_modifier_call(modifier, is_base)
                 });
             }
@@ -871,10 +807,6 @@ impl<'ast> State<'_, 'ast> {
             return;
         }
 
-        if matches!(ty.kind, TypeKind::Function(_)) {
-            self.zerobreak();
-            self.cbox(0);
-        }
         self.print_ty(ty);
         if let Some(visibility) = visibility {
             self.nbsp();
@@ -904,9 +836,6 @@ impl<'ast> State<'_, 'ast> {
             self.word(" = ");
             self.neverbreak();
             self.print_expr(initializer);
-        }
-        if matches!(ty.kind, TypeKind::Function(_)) {
-            self.end();
         }
     }
 
@@ -1166,14 +1095,30 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
             ast::TypeKind::Function(ast::TypeFunction {
-                parameters: _,
-                visibility: _,
-                state_mutability: _,
-                returns: _,
+                parameters,
+                visibility,
+                state_mutability,
+                returns,
             }) => {
-                // LEGACY: not implemented.
-                // TODO(rusowsky): print manually
-                self.print_span(ty.span);
+                self.cbox(0);
+                self.word("function");
+                self.print_parameter_list(parameters, parameters.span, ListFormat::Inline);
+                self.space();
+
+                if let Some(v) = visibility {
+                    self.word(v.to_str());
+                    self.nbsp();
+                }
+                if !matches!(**state_mutability, ast::StateMutability::NonPayable) {
+                    self.word(state_mutability.to_str());
+                    self.nbsp();
+                }
+                if !returns.is_empty() {
+                    self.word("returns");
+                    self.nbsp();
+                    self.print_parameter_list(returns, returns.span, ListFormat::Consistent);
+                }
+                self.end();
             }
             ast::TypeKind::Mapping(ast::TypeMapping { key, key_name, value, value_name }) => {
                 self.word("mapping(");
@@ -2033,7 +1978,7 @@ impl<'ast> State<'_, 'ast> {
         }
     }
 
-    fn print_attribute(
+    fn print_fn_attribute(
         &mut self,
         span: Span,
         map: &mut HashMap<BytePos, (Vec<Comment>, Vec<Comment>)>,
@@ -2101,4 +2046,101 @@ enum AttributeKind<'a> {
 struct AttributeInfo<'a> {
     kind: AttributeKind<'a>,
     span: Span,
+}
+
+/// Helper struct to map attributes to their associated comments in function headers.
+struct AttributeCommentMapper<'ast> {
+    limit_pos: BytePos,
+    comments: Vec<Comment>,
+    attributes: Vec<AttributeInfo<'ast>>,
+}
+
+impl<'ast> AttributeCommentMapper<'ast> {
+    fn new(limit_pos: BytePos) -> Self {
+        Self { limit_pos, comments: Vec::new(), attributes: Vec::new() }
+    }
+
+    fn build(
+        mut self,
+        state: &mut State<'_, 'ast>,
+        header: &'ast ast::FunctionHeader<'ast>,
+    ) -> (Vec<AttributeInfo<'ast>>, HashMap<BytePos, (Vec<Comment>, Vec<Comment>)>) {
+        self.collect_attributes(header);
+        self.cache_comments(state);
+        self.map()
+    }
+
+    fn map(mut self) -> (Vec<AttributeInfo<'ast>>, HashMap<BytePos, (Vec<Comment>, Vec<Comment>)>) {
+        let mut map = HashMap::new();
+        for a in 0..self.attributes.len() {
+            let is_last = a == self.attributes.len() - 1;
+            let mut before = Vec::new();
+            let mut after = Vec::new();
+
+            let before_limit = self.attributes[a].span.lo();
+            let after_limit =
+                if !is_last { self.attributes[a + 1].span.lo() } else { self.limit_pos };
+
+            let mut c = 0;
+            while c < self.comments.len() {
+                if self.comments[c].pos() <= before_limit {
+                    before.push(self.comments.remove(c));
+                } else if (after.is_empty() || is_last) && self.comments[c].pos() <= after_limit {
+                    after.push(self.comments.remove(c));
+                } else {
+                    c += 1;
+                }
+            }
+            map.insert(before_limit, (before, after));
+        }
+
+        (self.attributes, map)
+    }
+
+    fn collect_attributes(&mut self, header: &'ast ast::FunctionHeader<'ast>) {
+        if let Some(v) = header.visibility {
+            self.attributes
+                .push(AttributeInfo { kind: AttributeKind::Visibility(*v), span: v.span });
+        }
+        self.attributes.push(AttributeInfo {
+            kind: AttributeKind::StateMutability(*header.state_mutability),
+            span: header.state_mutability.span,
+        });
+        if let Some(v) = header.virtual_ {
+            self.attributes.push(AttributeInfo { kind: AttributeKind::Virtual, span: v });
+        }
+        if let Some(ref o) = header.override_ {
+            self.attributes.push(AttributeInfo { kind: AttributeKind::Override(o), span: o.span });
+        }
+        for m in header.modifiers.iter() {
+            self.attributes
+                .push(AttributeInfo { kind: AttributeKind::Modifier(m), span: m.span() });
+        }
+        self.attributes.sort_by_key(|attr| attr.span.lo());
+    }
+
+    fn cache_comments(&mut self, state: &mut State<'_, 'ast>) {
+        let mut pending = None;
+        for cmnt in state.comments.iter() {
+            if cmnt.pos() >= self.limit_pos {
+                break;
+            }
+            match pending {
+                Some(ref p) => pending = Some(p + 1),
+                None => pending = Some(0),
+            }
+        }
+        while let Some(p) = pending {
+            if p == 0 {
+                pending = None;
+            } else {
+                pending = Some(p - 1);
+            }
+            let cmnt = state.next_comment().unwrap();
+            if cmnt.style == CommentStyle::BlankLine {
+                continue;
+            }
+            self.comments.push(cmnt);
+        }
+    }
 }

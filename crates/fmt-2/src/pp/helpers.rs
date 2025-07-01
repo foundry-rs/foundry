@@ -18,7 +18,6 @@ impl Printer {
                 }
             }
             self.hardbreak();
-            return;
         }
     }
 
