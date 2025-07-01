@@ -152,14 +152,14 @@ macro_rules! fmt_tests {
 fmt_tests! {
     #[ignore = "annotations are not valid Solidity"]
     Annotation,
-    ArrayExpressions,
+    ArrayExpressions, // TODO
     BlockComments,
     BlockCommentsFunction,
     ConditionalOperatorExpression,
     ConstructorDefinition,
     ConstructorModifierStyle,
-    ContractDefinition,
-    DocComments,
+    ContractDefinition, // TODO
+    DocComments, // TODO: wrap comments
     DoWhileStatement,
     EmitStatement,
     EnumDefinition,
@@ -167,10 +167,10 @@ fmt_tests! {
     ErrorDefinition,
     EventDefinition,
     ForStatement,
-    FunctionCall,
+    FunctionCall, // TODO: fix PP so that comments aren't accounted for when breaking lines
     FunctionCallArgsStatement,
-    FunctionDefinition,
-    FunctionDefinitionWithFunctionReturns,
+    FunctionDefinition, // TODO: fix fn block braces
+    FunctionDefinitionWithFunctionReturns, // TODO: impl return fn
     FunctionType,
     HexUnderscore,
     IfStatement,

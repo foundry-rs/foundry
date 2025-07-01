@@ -62,30 +62,54 @@ fn normalize_block_comment(s: &str, col: CharPos) -> &str {
     s
 }
 
+/// Formats a doc block comment line so that they have the ` *` decorator.
+fn format_doc_block_comment(line: &str) -> String {
+    if line.is_empty() {
+        return (" *").to_string();
+    }
+
+    if let Some((_, second)) = line.split_once("*") {
+        if second.is_empty() {
+            (" *").to_string()
+        } else {
+            format!(" *{second}")
+        }
+    } else {
+        format!(" * {}", line)
+    }
+}
+
 fn split_block_comment_into_lines(text: &str, is_doc: bool, col: CharPos) -> Vec<String> {
     let mut res: Vec<String> = vec![];
     let mut lines = text.lines();
-    res.extend(lines.next().map(|it| it.to_string()));
+    if let Some(line) = lines.next() {
+        let line = line.trim_end();
+        if let Some((_, second)) = line.split_once("/**") {
+            res.push("/**".to_string());
+            if !second.trim().is_empty() {
+                res.push(format!(" * {}", second.trim()));
+            }
+        } else {
+            res.push(line.to_string());
+        }
+    }
+
     for (pos, line) in lines.into_iter().delimited() {
-        let mut line = normalize_block_comment(line, col).to_string();
-        // For regular block comments, just normalize whitespace
+        let line = normalize_block_comment(line, col).trim_end().to_string();
         if !is_doc {
             res.push(line);
+            continue;
         }
-        // Doc block comment lines must have the ` *` decorator
-        else {
-            if !pos.is_last {
-                if line.is_empty() {
-                    line = format!(" *");
-                } else if line.starts_with("*") {
-                    line = format!(" {line}");
-                } else if !line.starts_with(" *") {
-                    line = format!(" * {line}");
+
+        if !pos.is_last {
+            res.push(format_doc_block_comment(&line));
+        } else {
+            if let Some((first, _)) = line.split_once("*/") {
+                if !first.trim().is_empty() {
+                    res.push(format_doc_block_comment(first))
                 }
-                res.push(line);
-            } else if line.trim() == "*/" {
-                res.push(" */".to_string())
             }
+            res.push(" */".to_string())
         }
     }
     res

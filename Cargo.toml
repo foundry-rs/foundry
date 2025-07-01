@@ -417,5 +417,5 @@ figment = { git = "https://github.com/DaniPopes/Figment", branch = "less-mono" }
 # revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "a625c04" }
 
 ## foundry
-# foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "e4a9b04" }
+foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", branch = "rusowsky/bump-solar" }
 # foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "811a61a" }
