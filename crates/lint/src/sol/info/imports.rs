@@ -65,7 +65,9 @@ impl UnusedChecker {
 
     /// Check for unused imports and emit warnings.
     fn check_unused_imports(&self, ast: &SourceUnit<'_>, ctx: &LintContext<'_>) {
-        for (span, import) in ast.imports() {
+        for item in ast.items.iter() {
+            let span = item.span;
+            let ast::ItemKind::Import(import) = &item.kind else { continue };
             match &import.items {
                 ast::ImportItems::Plain(_) | ast::ImportItems::Glob(_) => {
                     if let Some(alias) = import.source_alias() {

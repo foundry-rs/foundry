@@ -412,9 +412,9 @@ zip-extract = "=0.2.1"
 # foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "e4a9b04" }
 # foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "811a61a" }
 
-# solar
-solar-ast = { git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
-solar-parse = { git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
-solar-interface = { git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
-solar-sema = { git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
-solar-data-structures = { git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
+## solar
+# solar-ast = { git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
+# solar-parse = { git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
+# solar-interface = { git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
+# solar-sema = { git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
+# solar-data-structures = { git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
