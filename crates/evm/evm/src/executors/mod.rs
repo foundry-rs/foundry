@@ -917,7 +917,6 @@ impl RawCallResult {
                 Err(self.into_evm_error(rd))
             }
         } else {
-            // If exit_reason is None, treat as error (or handle as needed)
             Err(self.into_evm_error(rd))
         }
     }
