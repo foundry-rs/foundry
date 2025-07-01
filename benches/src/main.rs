@@ -105,10 +105,11 @@ fn run_benchmark(
 
     // Collect benchmark results from criterion output
     let results = collect_benchmark_results(&group_dir, &dir_name, version, repos)?;
-    sh_println!("Total results collected: {}", results.len());
+    let _ = sh_println!("Total results collected: {}", results.len());
     Ok(results)
 }
 
+#[allow(unused_must_use)]
 fn main() -> Result<()> {
     let cli = Cli::parse();
 

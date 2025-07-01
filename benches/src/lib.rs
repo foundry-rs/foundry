@@ -61,7 +61,7 @@ impl TryFrom<&str> for RepoConfig {
             }
         };
 
-        sh_println!("Parsed repo spec '{spec}' -> {config:?}");
+        let _ = sh_println!("Parsed repo spec '{spec}' -> {config:?}");
         Ok(config)
     }
 }

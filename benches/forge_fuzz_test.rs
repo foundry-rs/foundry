@@ -12,7 +12,7 @@ pub fn forge_fuzz_test_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("forge-fuzz-test");
     group.sample_size(foundry_bench::SAMPLE_SIZE);
 
-    sh_println!("Running forge-fuzz-test for version: {}", version);
+    let _ = sh_println!("Running forge-fuzz-test for version: {}", version);
 
     let projects = setup_benchmark_repos();
 
