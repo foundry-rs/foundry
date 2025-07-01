@@ -27,39 +27,71 @@ Before running the benchmarks, ensure you have the following installed:
    # Install Node.js and npm from https://nodejs.org/
    ```
 
-5. **Benchmark tools** - Required for generating reports
-   ```bash
-   cargo install cargo-criterion
-   cargo install criterion-table
-   ```
-
 ## Running Benchmarks
 
-### Run the complete benchmark suite
+### Using the Benchmark Binary
+
+Build the benchmark runner:
 
 ```bash
-cargo run
+cargo build --release --bin foundry-bench
 ```
 
-This will:
-
-1. Check and install required Foundry versions
-2. Run all benchmark suites (forge_test, forge_build_no_cache, forge_build_with_cache)
-3. Generate comparison tables using criterion-table
-4. Create the final LATEST.md report
-
-### Run individual benchmark suites
+#### Run with default settings
 
 ```bash
-./run_benchmarks.sh
+# Run all benchmarks on default repos with stable and nightly versions
+cargo run --release --bin foundry-bench -- --versions stable,nightly
 ```
 
-### Run specific benchmark
+#### Run with custom configurations
 
 ```bash
-cargo criterion --bench forge_test
-cargo criterion --bench forge_build_no_cache
-cargo criterion --bench forge_build_with_cache
+# Bench specific versions
+cargo run --release --bin foundry-bench -- --versions stable,nightly,v1.0.0
+
+# Run on specific repositories. Default rev for the repo is "main"
+cargo run --release --bin foundry-bench -- --repos ithacaxyz/account,Vectorized/solady
+
+# Test specific repository with custom revision
+cargo run --release --bin foundry-bench -- --repos ithacaxyz/account:main,Vectorized/solady:v0.0.123
+
+# Run only specific benchmarks
+cargo run --release --bin foundry-bench -- --benchmarks forge_build_with_cache,forge_test
+
+# Combine options
+cargo run --release --bin foundry-bench -- \
+  --versions stable,nightly \
+  --repos ithacaxyz/account \
+  --benchmarks forge_build_with_cache
+
+# Force install Foundry versions
+cargo run --release --bin foundry-bench -- --force-install
+
+# Verbose output to see criterion logs
+cargo run --release --bin foundry-bench --  --verbose
+
+# Output to specific directory
+cargo run --release --bin foundry-bench -- --output-dir ./results --output-file LATEST_RESULTS.md
+```
+
+#### Command-line Options
+
+- `--versions <VERSIONS>` - Comma-separated list of Foundry versions (default: stable,nightly)
+- `--repos <REPOS>` - Comma-separated list of repos in org/repo[:rev] format
+- `--benchmarks <BENCHMARKS>` - Comma-separated list of benchmarks to run
+- `--force-install` - Force installation of Foundry versions
+- `--verbose` - Show detailed benchmark output
+- `--output-dir <DIR>` - Directory for output files (default: current directory)
+- `--output-file <FILE_NAME.md>` - Name of the output file (default: LATEST.md)
+
+### Run individual Criterion benchmarks
+
+```bash
+# Run specific benchmark with Criterion
+cargo bench --bench forge_test
+cargo bench --bench forge_build_no_cache
+cargo bench --bench forge_build_with_cache
 ```
 
 ## Benchmark Structure
@@ -91,11 +123,33 @@ pub static FOUNDRY_VERSIONS: &[&str] = &["stable", "nightly"];
 
 ## Results
 
-Benchmark results are displayed in the terminal and saved as HTML reports. The reports show:
+Benchmark results are saved to `LATEST.md` (or custom output directory). The report includes:
 
-- Execution time statistics (mean, median, standard deviation)
-- Comparison between different Foundry versions
-- Performance trends across repositories
+- Summary of versions and repositories tested
+- Performance comparison tables for each benchmark type
+- Execution time statistics for each repository/version combination
+- System information (OS, CPU, Rust version)
+
+Results are also stored in Criterion's format in `target/criterion/` for detailed analysis.
+
+## GitHub Actions Integration
+
+The benchmarks can be run automatically via GitHub Actions:
+
+1. Go to the [Actions tab](../../actions/workflows/benchmarks.yml)
+2. Click on "Foundry Benchmarks" workflow
+3. Click "Run workflow"
+4. Configure options:
+   - PR number (optional) - Add benchmark results as a comment to a PR
+   - Versions - Foundry versions to test (default: stable,nightly)
+   - Repos - Custom repositories to benchmark
+   - Benchmarks - Specific benchmarks to run
+
+The workflow will:
+
+- Build and run the benchmark binary
+- Commit results to `benches/LATEST.md`
+- Optionally comment on a PR with the results
 
 ## Troubleshooting
 

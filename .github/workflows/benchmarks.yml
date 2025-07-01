@@ -7,6 +7,19 @@ on:
         description: "PR number to comment on (optional)"
         required: false
         type: string
+      versions:
+        description: "Comma-separated list of Foundry versions to benchmark (e.g., stable,nightly,v1.0.0)"
+        required: false
+        type: string
+        default: "stable,nightly"
+      repos:
+        description: "Comma-separated list of repos to benchmark (e.g., ithacaxyz/account:main,Vectorized/solady)"
+        required: false
+        type: string
+      benchmarks:
+        description: "Comma-separated list of benchmarks to run (forge_test,forge_build_no_cache,forge_build_with_cache)"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -36,16 +49,33 @@ jobs:
           curl -L https://foundry.paradigm.xyz | bash
           echo "$HOME/.foundry/bin" >> $GITHUB_PATH
 
-      - name: Install benchmark dependencies
-        run: |
-          cargo install cargo-criterion
-          cargo install criterion-table
+      - name: Build benchmark binary
+        run: cargo build --release --bin foundry-bench
 
       - name: Run benchmarks
-        working-directory: ./benches
         run: |
-          chmod +x run_benchmarks.sh
-          ./run_benchmarks.sh
+          VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
+          REPOS="${{ github.event.inputs.repos }}"
+          BENCHMARKS="${{ github.event.inputs.benchmarks }}"
+
+          # Build the command with force-install for CI
+          CMD="./target/release/foundry-bench --output-dir ./benches --force-install"
+
+          # Add versions
+          CMD="$CMD --versions $VERSIONS"
+
+          # Add repos if specified
+          if [ -n "$REPOS" ]; then
+            CMD="$CMD --repos $REPOS"
+          fi
+
+          # Add benchmarks if specified
+          if [ -n "$BENCHMARKS" ]; then
+            CMD="$CMD --benchmarks $BENCHMARKS"
+          fi
+
+          echo "Running: $CMD"
+          $CMD
 
       - name: Commit benchmark results
         run: |
@@ -55,7 +85,7 @@ jobs:
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "Update benchmark results
+            git commit -m "chore(`benches`): update benchmark results
 
             🤖 Generated with [Foundry Benchmarks](https://github.com/${{ github.repository }}/actions)
             
@@ -105,4 +135,3 @@ jobs:
               repo: context.repo.repo,
               body: comment
             });
-
