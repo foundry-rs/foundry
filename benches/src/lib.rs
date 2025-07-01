@@ -112,7 +112,7 @@ pub const SAMPLE_SIZE: usize = 10;
 /// - "nightly" - Latest nightly build
 /// - "v0.2.0" - Specific version tag
 /// - "commit-hash" - Specific commit hash
-/// - "nightly-<rev>" - Nightly build with specific revision
+/// - "nightly-rev" - Nightly build with specific revision
 pub static FOUNDRY_VERSIONS: &[&str] = &["stable", "nightly"];
 
 /// A benchmark project that represents a cloned repository ready for testing

@@ -133,8 +133,13 @@ fn main() -> Result<()> {
     }
 
     // Determine benchmarks to run
-    let all_benchmarks =
-        vec!["forge_test", "forge_build_no_cache", "forge_build_with_cache", "forge_fuzz_test", "forge_coverage"];
+    let all_benchmarks = vec![
+        "forge_test",
+        "forge_build_no_cache",
+        "forge_build_with_cache",
+        "forge_fuzz_test",
+        "forge_coverage",
+    ];
     let benchmarks = if let Some(b) = cli.benchmarks {
         b.into_iter().filter(|b| all_benchmarks.contains(&b.as_str())).collect()
     } else {
