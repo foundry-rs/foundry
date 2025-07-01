@@ -4102,11 +4102,14 @@ name = "foundry-bench"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "clap",
  "criterion",
  "eyre",
  "foundry-compilers",
  "foundry-config",
  "foundry-test-utils",
+ "num_cpus",
+ "once_cell",
  "rayon",
  "serde",
  "serde_json",

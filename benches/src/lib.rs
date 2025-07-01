@@ -1,30 +1,96 @@
 use eyre::{Result, WrapErr};
 use foundry_compilers::project_util::TempProject;
 use foundry_test_utils::util::clone_remote;
+use once_cell::sync::Lazy;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
     env,
     path::{Path, PathBuf},
     process::{Command, Output},
 };
 
+pub mod criterion_types;
+pub mod results;
+
 /// Configuration for repositories to benchmark
 #[derive(Debug, Clone)]
 pub struct RepoConfig {
-    pub name: &'static str,
-    pub org: &'static str,
-    pub repo: &'static str,
-    pub rev: &'static str,
+    pub name: String,
+    pub org: String,
+    pub repo: String,
+    pub rev: String,
+}
+
+impl TryFrom<&str> for RepoConfig {
+    type Error = eyre::Error;
+
+    fn try_from(spec: &str) -> Result<Self> {
+        // Split by ':' first to separate repo path from optional rev
+        let parts: Vec<&str> = spec.splitn(2, ':').collect();
+        let repo_path = parts[0];
+        let custom_rev = parts.get(1).map(|&s| s);
+
+        // Now split the repo path by '/'
+        let path_parts: Vec<&str> = repo_path.split('/').collect();
+        if path_parts.len() != 2 {
+            eyre::bail!("Invalid repo format '{}'. Expected 'org/repo' or 'org/repo:rev'", spec);
+        }
+
+        let org = path_parts[0];
+        let repo = path_parts[1];
+
+        // Try to find this repo in BENCHMARK_REPOS to get the full config
+        let existing_config = BENCHMARK_REPOS.iter().find(|r| r.org == org && r.repo == repo);
+
+        let config = if let Some(existing) = existing_config {
+            // Use existing config but allow custom rev to override
+            let mut config = existing.clone();
+            if let Some(rev) = custom_rev {
+                config.rev = rev.to_string();
+            }
+            config
+        } else {
+            // Create new config with custom rev or default
+            // Name should follow the format: org-repo (with hyphen)
+            RepoConfig {
+                name: format!("{}-{}", org, repo),
+                org: org.to_string(),
+                repo: repo.to_string(),
+                rev: custom_rev.unwrap_or("main").to_string(),
+            }
+        };
+
+        println!("Parsed repo spec '{}' -> {:?}", spec, config);
+        Ok(config)
+    }
 }
 
 /// Available repositories for benchmarking
-pub static BENCHMARK_REPOS: &[RepoConfig] = &[
-    RepoConfig { name: "ithacaxyz-account", org: "ithacaxyz", repo: "account", rev: "main" },
-    // Temporarily reduced for testing
-    // RepoConfig { name: "solady", org: "Vectorized", repo: "solady", rev: "main" },
-    // RepoConfig { name: "v4-core", org: "Uniswap", repo: "v4-core", rev: "main" },
-    // RepoConfig { name: "morpho-blue", org: "morpho-org", repo: "morpho-blue", rev: "main" },
-    // RepoConfig { name: "spark-psm", org: "marsfoundation", repo: "spark-psm", rev: "master" },
-];
+pub fn default_benchmark_repos() -> Vec<RepoConfig> {
+    vec![
+        RepoConfig {
+            name: "ithacaxyz-account".to_string(),
+            org: "ithacaxyz".to_string(),
+            repo: "account".to_string(),
+            rev: "main".to_string(),
+        },
+        RepoConfig {
+            name: "solady".to_string(),
+            org: "Vectorized".to_string(),
+            repo: "solady".to_string(),
+            rev: "main".to_string(),
+        },
+        // RepoConfig { name: "v4-core".to_string(), org: "Uniswap".to_string(), repo:
+        // "v4-core".to_string(), rev: "main".to_string() }, RepoConfig { name:
+        // "morpho-blue".to_string(), org: "morpho-org".to_string(), repo:
+        // "morpho-blue".to_string(), rev: "main".to_string() }, RepoConfig { name:
+        // "spark-psm".to_string(), org: "marsfoundation".to_string(), repo:
+        // "spark-psm".to_string(), rev: "master".to_string() },
+    ]
+}
+
+// Keep a lazy static for compatibility
+pub static BENCHMARK_REPOS: Lazy<Vec<RepoConfig>> = Lazy::new(|| default_benchmark_repos());
 
 /// Sample size for benchmark measurements
 ///
@@ -85,7 +151,7 @@ impl BenchmarkProject {
         if !config.rev.is_empty() && config.rev != "main" && config.rev != "master" {
             let status = Command::new("git")
                 .current_dir(root)
-                .args(["checkout", config.rev])
+                .args(["checkout", &config.rev])
                 .status()
                 .wrap_err("Failed to checkout revision")?;
 
@@ -162,7 +228,9 @@ pub fn switch_foundry_version(version: &str) -> Result<()> {
     // Check if the error is about forge --version failing
     let stderr = String::from_utf8_lossy(&output.stderr);
     if stderr.contains("command failed") && stderr.contains("forge --version") {
-        eyre::bail!("Foundry binaries maybe corrupted. Please reinstall, please run `foundryup` and install the required versions.");
+        eyre::bail!(
+            "Foundry binaries maybe corrupted. Please reinstall by running `foundryup --install <version>`"
+        );
     }
 
     if !output.status.success() {
@@ -192,20 +260,42 @@ pub fn get_forge_version() -> Result<String> {
 }
 
 /// Get Foundry versions to benchmark from environment variable or default
-/// 
+///
 /// Reads from FOUNDRY_BENCH_VERSIONS environment variable if set,
 /// otherwise returns the default versions from FOUNDRY_VERSIONS constant.
-/// 
+///
 /// The environment variable should be a comma-separated list of versions,
 /// e.g., "stable,nightly,v1.2.0"
 pub fn get_benchmark_versions() -> Vec<String> {
     if let Ok(versions_env) = env::var("FOUNDRY_BENCH_VERSIONS") {
-        versions_env
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect()
+        versions_env.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
     } else {
         FOUNDRY_VERSIONS.iter().map(|&s| s.to_string()).collect()
     }
+}
+
+/// Setup Repositories for benchmarking
+pub fn setup_benchmark_repos() -> Vec<(RepoConfig, BenchmarkProject)> {
+    // Check for FOUNDRY_BENCH_REPOS environment variable
+    let repos = if let Ok(repos_env) = env::var("FOUNDRY_BENCH_REPOS") {
+        // Parse repo specs from the environment variable
+        // Format should be: "org1/repo1,org2/repo2"
+        repos_env
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|spec| RepoConfig::try_from(spec))
+            .collect::<Result<Vec<_>>>()
+            .expect("Failed to parse FOUNDRY_BENCH_REPOS")
+    } else {
+        BENCHMARK_REPOS.clone()
+    };
+
+    repos
+        .par_iter()
+        .map(|repo_config| {
+            let project = BenchmarkProject::setup(repo_config).expect("Failed to setup project");
+            (repo_config.clone(), project)
+        })
+        .collect()
 }
