@@ -140,6 +140,7 @@ fn main() -> Result<()> {
             })
             .collect::<Result<_>>()?;
 
+        // Aggregate the results and add them to BenchmarkResults
         for (benchmark, bench_results) in bench_results {
             println!("Processing {} results for {}", bench_results.len(), benchmark);
             for result in bench_results {
