@@ -28,7 +28,7 @@ impl TryFrom<&str> for RepoConfig {
         // Split by ':' first to separate repo path from optional rev
         let parts: Vec<&str> = spec.splitn(2, ':').collect();
         let repo_path = parts[0];
-        let custom_rev = parts.get(1).map(|&s| s);
+        let custom_rev = parts.get(1).copied();
 
         // Now split the repo path by '/'
         let path_parts: Vec<&str> = repo_path.split('/').collect();
@@ -53,14 +53,14 @@ impl TryFrom<&str> for RepoConfig {
             // Create new config with custom rev or default
             // Name should follow the format: org-repo (with hyphen)
             RepoConfig {
-                name: format!("{}-{}", org, repo),
+                name: format!("{org}-{repo}"),
                 org: org.to_string(),
                 repo: repo.to_string(),
                 rev: custom_rev.unwrap_or("main").to_string(),
             }
         };
 
-        println!("Parsed repo spec '{}' -> {:?}", spec, config);
+        println!("Parsed repo spec '{spec}' -> {config:?}");
         Ok(config)
     }
 }
@@ -90,7 +90,7 @@ pub fn default_benchmark_repos() -> Vec<RepoConfig> {
 }
 
 // Keep a lazy static for compatibility
-pub static BENCHMARK_REPOS: Lazy<Vec<RepoConfig>> = Lazy::new(|| default_benchmark_repos());
+pub static BENCHMARK_REPOS: Lazy<Vec<RepoConfig>> = Lazy::new(default_benchmark_repos);
 
 /// Sample size for benchmark measurements
 ///
@@ -234,11 +234,11 @@ pub fn switch_foundry_version(version: &str) -> Result<()> {
     }
 
     if !output.status.success() {
-        eprintln!("foundryup stderr: {}", stderr);
+        eprintln!("foundryup stderr: {stderr}");
         eyre::bail!("Failed to switch to foundry version: {}", version);
     }
 
-    println!("  Successfully switched to version: {}", version);
+    println!("  Successfully switched to version: {version}");
     Ok(())
 }
 
@@ -284,7 +284,7 @@ pub fn setup_benchmark_repos() -> Vec<(RepoConfig, BenchmarkProject)> {
             .split(',')
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
-            .map(|spec| RepoConfig::try_from(spec))
+            .map(RepoConfig::try_from)
             .collect::<Result<Vec<_>>>()
             .expect("Failed to parse FOUNDRY_BENCH_REPOS")
     } else {

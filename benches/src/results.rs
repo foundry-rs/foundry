@@ -3,7 +3,7 @@ use eyre::Result;
 use std::{collections::HashMap, process::Command};
 
 /// Aggregated benchmark results
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct BenchmarkResults {
     /// Map of benchmark_name -> version -> repo -> result
     pub data: HashMap<String, HashMap<String, HashMap<String, CriterionResult>>>,
@@ -13,7 +13,7 @@ pub struct BenchmarkResults {
 
 impl BenchmarkResults {
     pub fn new() -> Self {
-        Self { data: HashMap::new(), baseline_version: None }
+        Self::default()
     }
 
     pub fn set_baseline_version(&mut self, version: String) {
@@ -29,9 +29,9 @@ impl BenchmarkResults {
     ) {
         self.data
             .entry(benchmark.to_string())
-            .or_insert_with(HashMap::new)
+            .or_default()
             .entry(version.to_string())
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(repo.to_string(), result);
     }
 
@@ -49,8 +49,8 @@ impl BenchmarkResults {
         output.push_str("## Summary\n\n");
         // Count actual repos that have results
         let mut repos_with_results = std::collections::HashSet::new();
-        for (_, version_data) in &self.data {
-            for (_, repo_data) in version_data {
+        for version_data in self.data.values() {
+            for repo_data in version_data.values() {
                 for repo_name in repo_data.keys() {
                     repos_with_results.insert(repo_name.clone());
                 }
@@ -79,13 +79,18 @@ impl BenchmarkResults {
         // Versions tested
         output.push_str("### Foundry Versions\n\n");
         for version in versions {
-            output.push_str(&format!("- {}\n", version));
+            output.push_str(&format!("- {version}\n"));
         }
         output.push('\n');
 
         // Results for each benchmark type
         for (benchmark_name, version_data) in &self.data {
-            output.push_str(&self.generate_benchmark_table(benchmark_name, version_data, versions, repos));
+            output.push_str(&self.generate_benchmark_table(
+                benchmark_name,
+                version_data,
+                versions,
+                repos,
+            ));
         }
 
         // System info
@@ -118,7 +123,7 @@ impl BenchmarkResults {
         // Create table header
         output.push_str("| Repository |");
         for version in versions {
-            output.push_str(&format!(" {} |", version));
+            output.push_str(&format!(" {version} |"));
         }
         output.push('\n');
 
@@ -153,7 +158,7 @@ fn generate_table_rows(
 
         for version in versions {
             let cell_content = get_benchmark_cell_content(version_data, version, &repo.name);
-            output.push_str(&format!(" {} |", cell_content));
+            output.push_str(&format!(" {cell_content} |"));
         }
 
         output.push('\n');
@@ -198,7 +203,7 @@ pub fn format_duration(nanos: f64, unit: &str) -> String {
     match unit {
         "ns" => {
             if nanos < 1_000.0 {
-                format!("{:.2} ns", nanos)
+                format!("{nanos:.2} ns")
             } else if nanos < 1_000_000.0 {
                 format!("{:.2} µs", nanos / 1_000.0)
             } else if nanos < 1_000_000_000.0 {
@@ -207,7 +212,7 @@ pub fn format_duration(nanos: f64, unit: &str) -> String {
                 format!("{:.2} s", nanos / 1_000_000_000.0)
             }
         }
-        _ => format!("{:.2} {}", nanos, unit),
+        _ => format!("{nanos:.2} {unit}"),
     }
 }
 

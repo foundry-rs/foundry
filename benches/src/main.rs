@@ -11,7 +11,7 @@ use rayon::prelude::*;
 use std::{
     fs::File,
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::Mutex,
 };
@@ -79,7 +79,7 @@ fn run_benchmark(
 
     // Run the benchmark
     let mut cmd = Command::new("cargo");
-    cmd.args(&["bench", "--bench", name]);
+    cmd.args(["bench", "--bench", name]);
 
     if verbose {
         cmd.stderr(Stdio::inherit());
@@ -152,7 +152,7 @@ fn main() -> Result<()> {
 
     // Run benchmarks for each version
     for version in &versions {
-        println!("🔧 Switching to Foundry version: {}", version);
+        println!("🔧 Switching to Foundry version: {version}");
         switch_version_safe(version)?;
 
         // Verify the switch
@@ -163,7 +163,7 @@ fn main() -> Result<()> {
         let bench_results: Vec<(String, Vec<CriterionResult>)> = benchmarks
             .par_iter()
             .map(|benchmark| -> Result<(String, Vec<CriterionResult>)> {
-                println!("Running {} benchmark...", benchmark);
+                println!("Running {benchmark} benchmark...");
                 let results = run_benchmark(benchmark, version, &repos, cli.verbose)?;
                 Ok((benchmark.clone(), results))
             })
@@ -208,15 +208,14 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-
 fn install_foundry_versions(versions: &[String]) -> Result<()> {
     println!("Installing Foundry versions...");
 
     for version in versions {
-        println!("Installing {}...", version);
+        println!("Installing {version}...");
 
         let status = Command::new("foundryup")
-            .args(&["--install", version])
+            .args(["--install", version])
             .status()
             .wrap_err("Failed to run foundryup")?;
 
@@ -268,15 +267,14 @@ fn collect_benchmark_results(
         // Only process repos that are in the specified repos list
         let is_valid_repo = repos.iter().any(|r| r.name == repo_name);
         if !is_valid_repo {
-            println!("Skipping unknown repo: {}", repo_name);
+            println!("Skipping unknown repo: {repo_name}");
             continue;
         }
 
-        println!("Processing repo: {}", repo_name);
+        println!("Processing repo: {repo_name}");
 
         // Process the benchmark results for this repository
         if let Some(result) = process_repo_benchmark(&path, benchmark_name, version, &repo_name)? {
-            println!("Found result: {}", result.id);
             results.push(result);
         }
     }
@@ -304,7 +302,7 @@ fn process_repo_benchmark(
     }
 
     // Create result ID
-    let id = format!("{}/{}/{}", benchmark_name, version, repo_name);
+    let id = format!("{benchmark_name}/{version}/{repo_name}");
 
     // Read new estimates for mean value
     let mean_estimate = read_mean_estimate(repo_path, repo_name)?;
@@ -315,7 +313,7 @@ fn process_repo_benchmark(
 }
 
 /// Read mean estimate from estimates.json
-fn read_mean_estimate(repo_path: &PathBuf, repo_name: &str) -> Result<Estimate> {
+fn read_mean_estimate(repo_path: &Path, repo_name: &str) -> Result<Estimate> {
     let estimates_json = repo_path.join("new/estimates.json");
     if !estimates_json.exists() {
         eyre::bail!(
@@ -334,7 +332,7 @@ fn read_mean_estimate(repo_path: &PathBuf, repo_name: &str) -> Result<Estimate> 
 }
 
 /// Read change data from change/estimates.json if it exists
-fn read_change_data(repo_path: &PathBuf) -> Result<Option<Change>> {
+fn read_change_data(repo_path: &Path) -> Result<Option<Change>> {
     let change_json = repo_path.join("change/estimates.json");
 
     if !change_json.exists() {

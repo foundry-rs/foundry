@@ -11,7 +11,7 @@ fn benchmark_forge_test(c: &mut Criterion) {
     let version =
         env::var("FOUNDRY_BENCH_CURRENT_VERSION").unwrap_or_else(|_| "unknown".to_string());
 
-    println!("Running forge-test for version: {}", version);
+    println!("Running forge-test for version: {version}");
 
     let projects = setup_benchmark_repos();
 
