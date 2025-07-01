@@ -90,10 +90,7 @@ split-debuginfo = "unpacked"
 strip = false
 
 [profile.bench]
-inherits = "release"
-debug = "full"
-split-debuginfo = "unpacked"
-strip = false
+inherits = "profiling"
 
 [profile.maxperf]
 inherits = "release"
