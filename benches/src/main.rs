@@ -206,7 +206,7 @@ fn install_foundry_versions(versions: &[String]) -> Result<()> {
 /// It processes:
 /// - benchmark.json for basic benchmark info
 /// - estimates.json for mean performance values
-/// - change.json for performance change data (if available)
+/// - change/estimates.json for performance change data (if available)
 fn collect_benchmark_results(
     group_dir: &PathBuf,
     benchmark_name: &str,
@@ -273,16 +273,11 @@ fn process_repo_benchmark(
         );
     }
 
-    // Read and validate benchmark.json
-    let content = std::fs::read_to_string(&benchmark_json)?;
-    let _benchmark_data = serde_json::from_str::<serde_json::Value>(&content)?;
-
     // Create result ID
     let id = format!("{}/{}/{}", benchmark_name, version, repo_name);
 
-    // Read estimates for mean value
+    // Read new estimates for mean value
     let mean_estimate = read_mean_estimate(repo_path, repo_name)?;
-
     // Read change data if available
     let change = read_change_data(repo_path)?;
 
@@ -315,18 +310,10 @@ fn read_mean_estimate(repo_path: &PathBuf, repo_name: &str) -> Result<Estimate> 
 
     let estimates_content = std::fs::read_to_string(&estimates_json)?;
     let estimates = serde_json::from_str::<serde_json::Value>(&estimates_content)?;
-
     let mean_obj = estimates.get("mean").ok_or_eyre("No mean value found in estimates.json")?;
-
-    Ok(Estimate {
-        point_estimate: mean_obj["point_estimate"].as_f64().unwrap_or(0.0),
-        standard_error: mean_obj["standard_error"].as_f64().unwrap_or(0.0),
-        confidence_interval: ConfidenceInterval {
-            confidence_level: 0.95,
-            lower_bound: mean_obj["confidence_interval"]["lower_bound"].as_f64().unwrap_or(0.0),
-            upper_bound: mean_obj["confidence_interval"]["upper_bound"].as_f64().unwrap_or(0.0),
-        },
-    })
+    let estimate = serde_json::from_value::<Estimate>(mean_obj.clone())
+        .wrap_err("Failed to parse mean estimate from estimates.json")?;
+    Ok(estimate)
 }
 
 /// Read change data from change/estimates.json if it exists
