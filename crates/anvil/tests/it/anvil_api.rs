@@ -1003,7 +1003,7 @@ async fn evm_mine_blk_with_same_timestamp() {
 
 // mine 4 blocks instantly.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_mine_blks_with_same_timestamp() {
+async fn test_mine_blk_with_same_timestamp() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
