@@ -4264,7 +4264,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#97bf6bc8399eb305894f90dc76cf91127a748982"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#7f708231a5d3454d69155eaf9e2cc02a78278091"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4303,7 +4303,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#97bf6bc8399eb305894f90dc76cf91127a748982"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#7f708231a5d3454d69155eaf9e2cc02a78278091"
 dependencies = [
  "foundry-compilers-artifacts-resolc",
  "foundry-compilers-artifacts-solc",
@@ -4313,7 +4313,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-resolc"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#97bf6bc8399eb305894f90dc76cf91127a748982"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#7f708231a5d3454d69155eaf9e2cc02a78278091"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4334,7 +4334,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#97bf6bc8399eb305894f90dc76cf91127a748982"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#7f708231a5d3454d69155eaf9e2cc02a78278091"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4357,7 +4357,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#97bf6bc8399eb305894f90dc76cf91127a748982"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#7f708231a5d3454d69155eaf9e2cc02a78278091"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4371,7 +4371,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#97bf6bc8399eb305894f90dc76cf91127a748982"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#7f708231a5d3454d69155eaf9e2cc02a78278091"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
