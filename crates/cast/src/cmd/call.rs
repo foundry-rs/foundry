@@ -463,7 +463,115 @@ fn address_slot_value_override(address_override: &str) -> Result<(Address, U256,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::hex;
+    use alloy_primitives::{address, b256, fixed_bytes, hex};
+
+    #[test]
+    fn test_get_state_overrides() {
+        let call_args = CallArgs::parse_from([
+            "foundry-cli",
+            "--override-balance",
+            "0x0000000000000000000000000000000000000001:2",
+            "--override-nonce",
+            "0x0000000000000000000000000000000000000001:3",
+            "--override-code",
+            "0x0000000000000000000000000000000000000001:0x04",
+            "--override-state",
+            "0x0000000000000000000000000000000000000001:5:6",
+            "--override-state-diff",
+            "0x0000000000000000000000000000000000000001:7:8",
+        ]);
+        let overrides = call_args.get_state_overrides().unwrap().unwrap();
+        let address = address!("0x0000000000000000000000000000000000000001");
+        if let Some(account_override) = overrides.get(&address) {
+            if let Some(balance) = account_override.balance {
+                assert_eq!(balance, U256::from(2));
+            }
+            if let Some(nonce) = account_override.nonce {
+                assert_eq!(nonce, 3);
+            }
+            if let Some(code) = &account_override.code {
+                assert_eq!(*code, Bytes::from([0x04]));
+            }
+            if let Some(state) = &account_override.state {
+                if let Some(value) = state.get(&b256!(
+                    "0x0000000000000000000000000000000000000000000000000000000000000005"
+                )) {
+                    assert_eq!(
+                        *value,
+                        b256!("0x0000000000000000000000000000000000000000000000000000000000000006")
+                    );
+                }
+            }
+            if let Some(state_diff) = &account_override.state_diff {
+                if let Some(value) = state_diff.get(&b256!(
+                    "0x0000000000000000000000000000000000000000000000000000000000000007"
+                )) {
+                    assert_eq!(
+                        *value,
+                        b256!("0x0000000000000000000000000000000000000000000000000000000000000008")
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_state_overrides_empty() {
+        let call_args = CallArgs::parse_from([""]);
+        let overrides = call_args.get_state_overrides().unwrap();
+        assert_eq!(overrides, None);
+    }
+
+    #[test]
+    fn test_get_block_overrides() {
+        let mut call_args = CallArgs::parse_from([""]);
+        call_args.block_number = Some(1);
+        call_args.block_time = Some(2);
+        let overrides = call_args.get_block_overrides().unwrap().unwrap();
+        assert_eq!(overrides.number, Some(U256::from(1)));
+        assert_eq!(overrides.time, Some(2));
+    }
+
+    #[test]
+    fn test_get_block_overrides_empty() {
+        let call_args = CallArgs::parse_from([""]);
+        let overrides = call_args.get_block_overrides().unwrap();
+        assert_eq!(overrides, None);
+    }
+
+    #[test]
+    fn test_address_value_override_success() {
+        let text = "0x0000000000000000000000000000000000000001:2";
+        let (address, value) = address_value_override(text).unwrap();
+        assert_eq!(address, "0x0000000000000000000000000000000000000001");
+        assert_eq!(value, "2");
+    }
+
+    #[test]
+    fn test_address_value_override_error() {
+        let text = "invalid_value";
+        let error = address_value_override(text).unwrap_err();
+        assert_eq!(error.to_string(), "Invalid override invalid_value. Expected <address>:<value>");
+    }
+
+    #[test]
+    fn test_address_slot_value_override_success() {
+        let text = "0x0000000000000000000000000000000000000001:2:3";
+        let (address, slot, value) = address_slot_value_override(text).unwrap();
+        assert_eq!(*address, fixed_bytes!("0x0000000000000000000000000000000000000001"));
+        assert_eq!(slot, U256::from(2));
+        assert_eq!(value, U256::from(3));
+    }
+
+    #[test]
+    fn test_address_slot_value_override_error() {
+        let text = "invalid_value";
+        let error = address_slot_value_override(text).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Invalid override invalid_value. Expected <address>:<slot>:<value>"
+        );
+    }
 
     #[test]
     fn can_parse_call_data() {
