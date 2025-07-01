@@ -90,7 +90,10 @@ split-debuginfo = "unpacked"
 strip = false
 
 [profile.bench]
-inherits = "profiling"
+inherits = "release"
+debug = "full"
+split-debuginfo = "unpacked"
+strip = false
 
 [profile.maxperf]
 inherits = "release"
@@ -204,7 +207,7 @@ foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.18.0", default-features = false }
-foundry-compilers = { version = "0.17.3", default-features = false }
+foundry-compilers = { version = "0.17.4", default-features = false }
 foundry-fork-db = "0.15"
 solang-parser = { version = "=0.3.9", package = "foundry-solang-parser" }
 solar-ast = { version = "=0.1.4", default-features = false }
@@ -261,13 +264,13 @@ op-alloy-rpc-types = "0.17.2"
 op-alloy-flz = "0.13.1"
 
 ## revm
-revm = { version = "26.0.1", default-features = false }
-revm-inspectors = { version = "0.25.0", features = ["serde"] }
-op-revm = { version = "7.0.1", default-features = false }
+revm = { version = "27.0.1", default-features = false }
+revm-inspectors = { version = "0.26.0", features = ["serde"] }
+op-revm = { version = "8.0.1", default-features = false }
 
 ## alloy-evm
-alloy-evm = "0.12.3"
-alloy-op-evm = "0.12.3"
+alloy-evm = "0.13.0"
+alloy-op-evm = "0.13.0"
 
 ## cli
 anstream = "0.6"
@@ -399,8 +402,8 @@ zip-extract = "=0.2.1"
 # alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "7fab7ee" }
 
 ## alloy-evm
-# alloy-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "7819acc" }
-# alloy-op-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "7819acc" }
+alloy-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "7762adc" }
+alloy-op-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "7762adc" }
 
 ## revm
 # revm = { git = "https://github.com/bluealloy/revm.git", rev = "b5808253" }
@@ -409,4 +412,4 @@ zip-extract = "=0.2.1"
 
 ## foundry
 # foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "e4a9b04" }
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "b742f13" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "c4f6bf0" }
