@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Benchmark result from Criterion JSON output
-/// 
+///
 /// This is a simplified version containing only the fields we actually use
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CriterionResult {
