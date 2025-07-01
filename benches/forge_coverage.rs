@@ -1,6 +1,6 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use foundry_bench::setup_benchmark_repos;
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use foundry_common::sh_println;
 use std::env;
 
 pub fn forge_coverage_benchmark(c: &mut Criterion) {
@@ -9,9 +9,9 @@ pub fn forge_coverage_benchmark(c: &mut Criterion) {
         env::var("FOUNDRY_BENCH_CURRENT_VERSION").unwrap_or_else(|_| "unknown".to_string());
 
     let mut group = c.benchmark_group("forge-coverage");
-    group.sample_size(foundry_bench::SAMPLE_SIZE as usize);
+    group.sample_size(foundry_bench::SAMPLE_SIZE);
 
-    println!("Running forge-coverage for version: {}", version);
+    let _ = sh_println!("Running forge-coverage for version: {}", version);
 
     let projects = setup_benchmark_repos();
 

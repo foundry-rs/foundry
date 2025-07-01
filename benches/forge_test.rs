@@ -1,5 +1,6 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use foundry_bench::{setup_benchmark_repos, SAMPLE_SIZE};
+use foundry_common::sh_println;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::env;
 
@@ -11,7 +12,7 @@ fn benchmark_forge_test(c: &mut Criterion) {
     let version =
         env::var("FOUNDRY_BENCH_CURRENT_VERSION").unwrap_or_else(|_| "unknown".to_string());
 
-    println!("Running forge-test for version: {version}");
+    sh_println!("Running forge-test for version: {version}");
 
     let projects = setup_benchmark_repos();
 

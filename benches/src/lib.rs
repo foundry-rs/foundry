@@ -1,4 +1,5 @@
 use eyre::{Result, WrapErr};
+use foundry_common::{sh_eprintln, sh_println};
 use foundry_compilers::project_util::TempProject;
 use foundry_test_utils::util::clone_remote;
 use once_cell::sync::Lazy;
@@ -60,7 +61,7 @@ impl TryFrom<&str> for RepoConfig {
             }
         };
 
-        println!("Parsed repo spec '{spec}' -> {config:?}");
+        sh_println!("Parsed repo spec '{spec}' -> {config:?}");
         Ok(config)
     }
 }
@@ -124,6 +125,7 @@ pub struct BenchmarkProject {
 
 impl BenchmarkProject {
     /// Set up a benchmark project by cloning the repository
+    #[allow(unused_must_use)]
     pub fn setup(config: &RepoConfig) -> Result<Self> {
         let temp_project =
             TempProject::dapptools().wrap_err("Failed to create temporary project")?;
@@ -164,14 +166,15 @@ impl BenchmarkProject {
         // But npm dependencies still need to be installed
         Self::install_npm_dependencies(&root_path)?;
 
-        println!("  ✅ Project {} setup complete at {}", config.name, root);
+        sh_println!("  ✅ Project {} setup complete at {}", config.name, root);
         Ok(BenchmarkProject { name: config.name.to_string(), root_path, temp_project })
     }
 
     /// Install npm dependencies if package.json exists
+    #[allow(unused_must_use)]
     fn install_npm_dependencies(root: &Path) -> Result<()> {
         if root.join("package.json").exists() {
-            println!("  📦 Running npm install...");
+            sh_println!("  📦 Running npm install...");
             let status = Command::new("npm")
                 .current_dir(root)
                 .args(["install"])
@@ -181,9 +184,12 @@ impl BenchmarkProject {
                 .wrap_err("Failed to run npm install")?;
 
             if !status.success() {
-                println!("  ⚠️  Warning: npm install failed with exit code: {:?}", status.code());
+                sh_println!(
+                    "  ⚠️  Warning: npm install failed with exit code: {:?}",
+                    status.code()
+                );
             } else {
-                println!("  ✅ npm install completed successfully");
+                sh_println!("  ✅ npm install completed successfully");
             }
         }
         Ok(())
@@ -238,6 +244,7 @@ impl BenchmarkProject {
 }
 
 /// Switch to a specific foundry version
+#[allow(unused_must_use)]
 pub fn switch_foundry_version(version: &str) -> Result<()> {
     let output = Command::new("foundryup")
         .args(["--use", version])
@@ -253,11 +260,11 @@ pub fn switch_foundry_version(version: &str) -> Result<()> {
     }
 
     if !output.status.success() {
-        eprintln!("foundryup stderr: {stderr}");
+        sh_eprintln!("foundryup stderr: {stderr}");
         eyre::bail!("Failed to switch to foundry version: {}", version);
     }
 
-    println!("  Successfully switched to version: {version}");
+    sh_println!("  Successfully switched to version: {version}");
     Ok(())
 }
 

@@ -6,6 +6,7 @@ use foundry_bench::{
     results::BenchmarkResults,
     switch_foundry_version, RepoConfig, BENCHMARK_REPOS, FOUNDRY_VERSIONS,
 };
+use foundry_common::sh_println;
 use once_cell::sync::Lazy;
 use rayon::prelude::*;
 use std::{
@@ -15,6 +16,14 @@ use std::{
     process::{Command, Stdio},
     sync::Mutex,
 };
+
+const ALL_BENCHMARKS: [&str; 5] = [
+    "forge_test",
+    "forge_build_no_cache",
+    "forge_build_with_cache",
+    "forge_fuzz_test",
+    "forge_coverage",
+];
 
 /// Foundry Benchmark Runner
 #[derive(Parser, Debug)]
@@ -96,7 +105,7 @@ fn run_benchmark(
 
     // Collect benchmark results from criterion output
     let results = collect_benchmark_results(&group_dir, &dir_name, version, repos)?;
-    println!("Total results collected: {}", results.len());
+    sh_println!("Total results collected: {}", results.len());
     Ok(results)
 }
 
@@ -120,9 +129,9 @@ fn main() -> Result<()> {
         BENCHMARK_REPOS.clone()
     };
 
-    println!("🚀 Foundry Benchmark Runner");
-    println!("Running with versions: {}", versions.join(", "));
-    println!(
+    sh_println!("🚀 Foundry Benchmark Runner");
+    sh_println!("Running with versions: {}", versions.join(", "));
+    sh_println!(
         "Running on repos: {}",
         repos.iter().map(|r| format!("{}/{}", r.org, r.repo)).collect::<Vec<_>>().join(", ")
     );
@@ -133,15 +142,9 @@ fn main() -> Result<()> {
     }
 
     // Determine benchmarks to run
-    let all_benchmarks = vec![
-        "forge_test",
-        "forge_build_no_cache",
-        "forge_build_with_cache",
-        "forge_fuzz_test",
-        "forge_coverage",
-    ];
+
     let benchmarks = if let Some(b) = cli.benchmarks {
-        b.into_iter().filter(|b| all_benchmarks.contains(&b.as_str())).collect()
+        b.into_iter().filter(|b| ALL_BENCHMARKS.contains(&b.as_str())).collect()
     } else {
         // Default: run all benchmarks except fuzz tests and coverage (which can be slow)
         vec!["forge_test", "forge_build_no_cache", "forge_build_with_cache"]
@@ -150,7 +153,7 @@ fn main() -> Result<()> {
             .collect::<Vec<_>>()
     };
 
-    println!(" Running benchmarks: {}", benchmarks.join(", "));
+    sh_println!(" Running benchmarks: {}", benchmarks.join(", "));
 
     let mut results = BenchmarkResults::new();
     // Set the first version as baseline
@@ -160,18 +163,18 @@ fn main() -> Result<()> {
 
     // Run benchmarks for each version
     for version in &versions {
-        println!("🔧 Switching to Foundry version: {version}");
+        sh_println!("🔧 Switching to Foundry version: {version}");
         switch_version_safe(version)?;
 
         // Verify the switch
         let current = get_forge_version()?;
-        println!("Current version: {}", current.trim());
+        sh_println!("Current version: {}", current.trim());
 
         // Run each benchmark in parallel
         let bench_results: Vec<(String, Vec<CriterionResult>)> = benchmarks
             .par_iter()
             .map(|benchmark| -> Result<(String, Vec<CriterionResult>)> {
-                println!("Running {benchmark} benchmark...");
+                sh_println!("Running {benchmark} benchmark...");
                 let results = run_benchmark(benchmark, version, &repos, cli.verbose)?;
                 Ok((benchmark.clone(), results))
             })
@@ -179,7 +182,7 @@ fn main() -> Result<()> {
 
         // Aggregate the results and add them to BenchmarkResults
         for (benchmark, bench_results) in bench_results {
-            println!("Processing {} results for {}", bench_results.len(), benchmark);
+            sh_println!("Processing {} results for {}", bench_results.len(), benchmark);
             for result in bench_results {
                 // Parse ID format: benchmark-name/version/repo
                 let parts: Vec<&str> = result.id.split('/').collect();
@@ -191,7 +194,7 @@ fn main() -> Result<()> {
                     // Debug: show change info if present
                     if let Some(change) = &result.change {
                         if let Some(mean) = &change.mean {
-                            println!(
+                            sh_println!(
                                 "Change from baseline: {:.2}% ({})",
                                 mean.estimate,
                                 change.change.as_ref().unwrap_or(&"Unknown".to_string())
@@ -206,21 +209,22 @@ fn main() -> Result<()> {
     }
 
     // Generate markdown report
-    println!("📝 Generating report...");
+    sh_println!("📝 Generating report...");
     let markdown = results.generate_markdown(&versions, &repos);
     let output_path = cli.output_dir.join(cli.output_file);
     let mut file = File::create(&output_path).wrap_err("Failed to create output file")?;
     file.write_all(markdown.as_bytes()).wrap_err("Failed to write output file")?;
-    println!("✅ Report written to: {}", output_path.display());
+    sh_println!("✅ Report written to: {}", output_path.display());
 
     Ok(())
 }
 
+#[allow(unused_must_use)]
 fn install_foundry_versions(versions: &[String]) -> Result<()> {
-    println!("Installing Foundry versions...");
+    sh_println!("Installing Foundry versions...");
 
     for version in versions {
-        println!("Installing {version}...");
+        sh_println!("Installing {version}...");
 
         let status = Command::new("foundryup")
             .args(["--install", version])
@@ -232,7 +236,7 @@ fn install_foundry_versions(versions: &[String]) -> Result<()> {
         }
     }
 
-    println!("✅ All versions installed successfully");
+    sh_println!("✅ All versions installed successfully");
     Ok(())
 }
 
@@ -243,6 +247,7 @@ fn install_foundry_versions(versions: &[String]) -> Result<()> {
 /// - benchmark.json for basic benchmark info
 /// - estimates.json for mean performance values
 /// - change/estimates.json for performance change data (if available)
+#[allow(unused_must_use)]
 fn collect_benchmark_results(
     group_dir: &PathBuf,
     benchmark_name: &str,
@@ -251,7 +256,7 @@ fn collect_benchmark_results(
 ) -> Result<Vec<CriterionResult>> {
     let mut results = Vec::new();
 
-    println!("Looking for results in: {}", group_dir.display());
+    sh_println!("Looking for results in: {}", group_dir.display());
     if !group_dir.exists() {
         eyre::bail!("Benchmark directory does not exist: {}", group_dir.display());
     }
@@ -262,7 +267,7 @@ fn collect_benchmark_results(
         let path = entry.path();
 
         if !path.is_dir() {
-            println!("Skipping non-directory entry: {}", path.display());
+            sh_println!("Skipping non-directory entry: {}", path.display());
             continue;
         }
 
@@ -275,11 +280,11 @@ fn collect_benchmark_results(
         // Only process repos that are in the specified repos list
         let is_valid_repo = repos.iter().any(|r| r.name == repo_name);
         if !is_valid_repo {
-            println!("Skipping unknown repo: {repo_name}");
+            sh_println!("Skipping unknown repo: {repo_name}");
             continue;
         }
 
-        println!("Processing repo: {repo_name}");
+        sh_println!("Processing repo: {repo_name}");
 
         // Process the benchmark results for this repository
         if let Some(result) = process_repo_benchmark(&path, benchmark_name, version, &repo_name)? {
@@ -294,7 +299,7 @@ fn collect_benchmark_results(
 ///
 /// Returns Some(CriterionResult) if valid results are found, None otherwise
 fn process_repo_benchmark(
-    repo_path: &PathBuf,
+    repo_path: &Path,
     benchmark_name: &str,
     version: &str,
     repo_name: &str,

@@ -37,6 +37,7 @@ harness = false
 criterion = { version = "0.5", features = ["html_reports"] }
 foundry-test-utils.workspace = true
 foundry-config.workspace = true
+foundry-common.workspace = true
 foundry-compilers = { workspace = true, features = ["project-util"] }
 eyre.workspace = true
 serde.workspace = true

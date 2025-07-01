@@ -1,5 +1,6 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use foundry_bench::{setup_benchmark_repos, SAMPLE_SIZE};
+use foundry_common::sh_println;
 use std::env;
 
 fn benchmark_forge_build_no_cache(c: &mut Criterion) {
@@ -10,7 +11,7 @@ fn benchmark_forge_build_no_cache(c: &mut Criterion) {
     let version =
         env::var("FOUNDRY_BENCH_CURRENT_VERSION").unwrap_or_else(|_| "unknown".to_string());
 
-    println!("Running forge-build-no-cache for version: {version}");
+    let _ = sh_println!("Running forge-build-no-cache for version: {version}");
 
     let projects = setup_benchmark_repos();
 
