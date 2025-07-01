@@ -614,6 +614,54 @@ impl Backend {
         }
     }
 
+    /// Resets the backend to a fresh in-memory state, clearing all existing data
+    pub async fn reset_to_in_mem(&self) -> Result<(), BlockchainError> {
+        // Clear the fork if any exists
+        *self.fork.write() = None;
+
+        // Get environment and genesis config
+        let env = self.env.read().clone();
+        let genesis_timestamp = self.genesis.timestamp;
+        let genesis_number = self.genesis.number;
+        let spec_id = self.spec_id();
+
+        // Reset environment to genesis state
+        {
+            let mut env = self.env.write();
+            env.evm_env.block_env.number = genesis_number;
+            env.evm_env.block_env.timestamp = genesis_timestamp;
+            // Reset other block env fields to their defaults
+            env.evm_env.block_env.basefee = self.fees.base_fee();
+            env.evm_env.block_env.prevrandao = Some(B256::ZERO);
+        }
+
+        // Clear all storage and reinitialize with genesis
+        let base_fee = if self.fees.is_eip1559() { Some(self.fees.base_fee()) } else { None };
+        *self.blockchain.storage.write() =
+            BlockchainStorage::new(&env, spec_id, base_fee, genesis_timestamp, genesis_number);
+        self.states.write().clear();
+
+        // Clear the database
+        self.db.write().await.clear();
+
+        // Reset time manager
+        self.time.reset(genesis_timestamp);
+
+        // Reset fees to initial state
+        if self.fees.is_eip1559() {
+            self.fees.set_base_fee(crate::eth::fees::INITIAL_BASE_FEE);
+        }
+
+        self.fees.set_gas_price(crate::eth::fees::INITIAL_GAS_PRICE);
+
+        // Reapply genesis configuration
+        self.apply_genesis().await?;
+
+        trace!(target: "backend", "reset to fresh in-memory state");
+
+        Ok(())
+    }
+
     async fn reset_block_number(
         &self,
         fork_url: String,

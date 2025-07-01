@@ -1906,7 +1906,9 @@ impl EthApi {
             self.reset_instance_id();
             self.backend.reset_fork(forking).await
         } else {
-            Err(BlockchainError::RpcUnimplemented)
+            // Reset to a fresh in-memory state
+            self.reset_instance_id();
+            self.backend.reset_to_in_mem().await
         }
     }
 
