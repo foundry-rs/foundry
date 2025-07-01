@@ -1,10 +1,14 @@
 use clap::Parser;
 use color_eyre::eyre::{Result, WrapErr};
-use foundry_bench::{BENCHMARK_REPOS, FOUNDRY_VERSIONS, get_forge_version, switch_foundry_version};
+use foundry_bench::{
+    criterion_types::{Change, ChangeEstimate, ConfidenceInterval, CriterionResult, Estimate},
+    get_forge_version,
+    results::BenchmarkResults,
+    switch_foundry_version, BENCHMARK_REPOS, FOUNDRY_VERSIONS,
+};
+use once_cell::sync::Lazy;
 use rayon::prelude::*;
-use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
     fs::File,
     io::Write,
     path::PathBuf,
@@ -14,11 +18,7 @@ use std::{
 
 /// Foundry Benchmark Runner
 #[derive(Parser, Debug)]
-#[clap(
-    name = "foundry-bench",
-    version = "1.0.0",
-    about = "Run Foundry benchmarks across multiple versions"
-)]
+#[clap(name = "foundry-bench", about = "Run Foundry benchmarks across multiple versions")]
 struct Cli {
     /// Comma-separated list of Foundry versions to test (e.g., stable,nightly,v1.2.0)
     #[clap(long, value_delimiter = ',')]
@@ -42,236 +42,8 @@ struct Cli {
     benchmarks: Option<Vec<String>>,
 }
 
-/// Benchmark result from Criterion JSON output
-#[derive(Debug, Deserialize, Serialize)]
-struct CriterionResult {
-    reason: String,
-    id: Option<String>,
-    report_directory: Option<String>,
-    iteration_count: Option<Vec<f64>>,
-    measured_values: Option<Vec<f64>>,
-    unit: Option<String>,
-    throughput: Option<Vec<Throughput>>,
-    typical: Option<Estimate>,
-    mean: Option<Estimate>,
-    median: Option<Estimate>,
-    slope: Option<Estimate>,
-    change: Option<Change>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct Throughput {
-    per_iteration: u64,
-    unit: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct Estimate {
-    confidence_interval: ConfidenceInterval,
-    point_estimate: f64,
-    standard_error: f64,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct ConfidenceInterval {
-    confidence_level: f64,
-    lower_bound: f64,
-    upper_bound: f64,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct Change {
-    mean: Option<ChangeEstimate>,
-    median: Option<ChangeEstimate>,
-    change: Option<String>, // "NoChange", "Improved", or "Regressed"
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct ChangeEstimate {
-    estimate: f64,
-    unit: String,
-}
-
-/// Aggregated benchmark results
-#[derive(Debug)]
-struct BenchmarkResults {
-    /// Map of benchmark_name -> version -> repo -> result
-    data: HashMap<String, HashMap<String, HashMap<String, CriterionResult>>>,
-    /// Track the baseline version for comparison
-    baseline_version: Option<String>,
-}
-
-impl BenchmarkResults {
-    fn new() -> Self {
-        Self { data: HashMap::new(), baseline_version: None }
-    }
-
-    fn set_baseline_version(&mut self, version: String) {
-        self.baseline_version = Some(version);
-    }
-
-    fn add_result(&mut self, benchmark: &str, version: &str, repo: &str, result: CriterionResult) {
-        self.data
-            .entry(benchmark.to_string())
-            .or_insert_with(HashMap::new)
-            .entry(version.to_string())
-            .or_insert_with(HashMap::new)
-            .insert(repo.to_string(), result);
-    }
-
-    fn generate_markdown(&self, versions: &[String]) -> String {
-        let mut output = String::new();
-
-        // Header
-        output.push_str("# Foundry Benchmark Results\n\n");
-        output.push_str(&format!(
-            "**Date**: {}\n\n",
-            chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
-        ));
-
-        // Summary
-        output.push_str("## Summary\n\n");
-        // Count actual repos that have results
-        let mut repos_with_results = std::collections::HashSet::new();
-        for (_, version_data) in &self.data {
-            for (_, repo_data) in version_data {
-                for repo_name in repo_data.keys() {
-                    repos_with_results.insert(repo_name.clone());
-                }
-            }
-        }
-
-        output.push_str(&format!(
-            "Benchmarked {} Foundry versions across {} repositories.\n\n",
-            versions.len(),
-            repos_with_results.len()
-        ));
-
-        // Repositories tested
-        output.push_str("### Repositories Tested\n\n");
-        for (i, repo) in BENCHMARK_REPOS.iter().enumerate() {
-            output.push_str(&format!(
-                "{}. [{}/{}](https://github.com/{}/{})\n",
-                i + 1,
-                repo.org,
-                repo.repo,
-                repo.org,
-                repo.repo
-            ));
-        }
-        output.push('\n');
-
-        // Versions tested
-        output.push_str("### Foundry Versions\n\n");
-        for version in versions {
-            output.push_str(&format!("- {}\n", version));
-        }
-        output.push('\n');
-
-        // Results for each benchmark type
-        for (benchmark_name, version_data) in &self.data {
-            output.push_str(&format!("## {}\n\n", format_benchmark_name(benchmark_name)));
-
-            // Create table header
-            output.push_str("| Repository |");
-            for version in versions {
-                output.push_str(&format!(" {} |", version));
-            }
-            output.push('\n');
-
-            // Table separator
-            output.push_str("|------------|");
-            for _ in versions {
-                output.push_str("----------|");
-            }
-            output.push('\n');
-
-            // Table rows
-            for repo in BENCHMARK_REPOS {
-                output.push_str(&format!("| {} |", repo.name));
-
-                let mut values = Vec::new();
-                for version in versions {
-                    if let Some(repo_data) = version_data.get(version) {
-                        if let Some(result) = repo_data.get(repo.name) {
-                            if let Some(mean) = &result.mean {
-                                let value = format_duration(
-                                    mean.point_estimate,
-                                    result.unit.as_deref().unwrap_or("ns"),
-                                );
-                                output.push_str(&format!(" {} |", value));
-                                values.push(Some(mean.point_estimate));
-                            } else {
-                                output.push_str(" N/A |");
-                                values.push(None);
-                            }
-                        } else {
-                            output.push_str(" N/A |");
-                            values.push(None);
-                        }
-                    } else {
-                        output.push_str(" N/A |");
-                        values.push(None);
-                    }
-                }
-
-                output.push('\n');
-            }
-            output.push('\n');
-        }
-
-        // System info
-        output.push_str("## System Information\n\n");
-        output.push_str(&format!("- **OS**: {}\n", std::env::consts::OS));
-        output.push_str(&format!("- **CPU**: {}\n", num_cpus::get()));
-        output.push_str(&format!(
-            "- **Rustc**: {}\n",
-            get_rustc_version().unwrap_or_else(|_| "unknown".to_string())
-        ));
-
-        output
-    }
-}
-
-fn format_benchmark_name(name: &str) -> String {
-    match name {
-        "forge-test" => "Forge Test Performance",
-        "forge-build-no-cache" => "Forge Build Performance (No Cache)",
-        "forge-build-with-cache" => "Forge Build Performance (With Cache)",
-        _ => name,
-    }
-    .to_string()
-}
-
-fn format_duration(nanos: f64, unit: &str) -> String {
-    match unit {
-        "ns" => {
-            if nanos < 1_000.0 {
-                format!("{:.2} ns", nanos)
-            } else if nanos < 1_000_000.0 {
-                format!("{:.2} µs", nanos / 1_000.0)
-            } else if nanos < 1_000_000_000.0 {
-                format!("{:.2} ms", nanos / 1_000_000.0)
-            } else {
-                format!("{:.2} s", nanos / 1_000_000_000.0)
-            }
-        }
-        _ => format!("{:.2} {}", nanos, unit),
-    }
-}
-
-fn get_rustc_version() -> Result<String> {
-    let output =
-        Command::new("rustc").arg("--version").output().wrap_err("Failed to get rustc version")?;
-
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-use once_cell::sync::Lazy;
-
 /// Mutex to prevent concurrent foundryup calls
 static FOUNDRY_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
-
 fn switch_version_safe(version: &str) -> Result<()> {
     let _lock = FOUNDRY_LOCK.lock().unwrap();
     switch_foundry_version(version)
@@ -282,9 +54,6 @@ fn run_benchmark(name: &str, version: &str, verbose: bool) -> Result<Vec<Criteri
     let criterion_dir = PathBuf::from("../target/criterion");
     let dir_name = name.replace('_', "-");
     let group_dir = criterion_dir.join(&dir_name).join(version);
-
-    // Always run fresh benchmarks
-    println!("      Running fresh benchmark...");
 
     // Set environment variable for the current version
     std::env::set_var("FOUNDRY_BENCH_CURRENT_VERSION", version);
@@ -352,14 +121,14 @@ fn run_benchmark(name: &str, version: &str, verbose: bool) -> Result<Vec<Criteri
                                             .unwrap_or(0.0),
                                         confidence_interval: ConfidenceInterval {
                                             confidence_level: 0.95,
-                                            lower_bound:
-                                                mean_obj["confidence_interval"]["lower_bound"]
-                                                    .as_f64()
-                                                    .unwrap_or(0.0),
-                                            upper_bound:
-                                                mean_obj["confidence_interval"]["upper_bound"]
-                                                    .as_f64()
-                                                    .unwrap_or(0.0),
+                                            lower_bound: mean_obj["confidence_interval"]
+                                                ["lower_bound"]
+                                                .as_f64()
+                                                .unwrap_or(0.0),
+                                            upper_bound: mean_obj["confidence_interval"]
+                                                ["upper_bound"]
+                                                .as_f64()
+                                                .unwrap_or(0.0),
                                         },
                                     };
 
@@ -502,7 +271,6 @@ fn main() -> Result<()> {
             })
             .collect();
 
-        // Process results sequentially to maintain order in output
         for (benchmark, bench_results) in bench_results {
             println!("      Processing {} results for {}", bench_results.len(), benchmark);
             for result in bench_results {

@@ -8,6 +8,9 @@ use std::{
     process::{Command, Output},
 };
 
+pub mod criterion_types;
+pub mod results;
+
 /// Configuration for repositories to benchmark
 #[derive(Debug, Clone)]
 pub struct RepoConfig {
