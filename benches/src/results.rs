@@ -166,7 +166,6 @@ fn generate_table_rows(
 /// The nested if-let statements handle the following cases:
 /// 1. Check if version data exists
 /// 2. Check if repository data exists for this version
-/// 3. Check if mean estimate exists for this result
 fn get_benchmark_cell_content(
     version_data: &HashMap<String, HashMap<String, CriterionResult>>,
     version: &str,
@@ -176,10 +175,7 @@ fn get_benchmark_cell_content(
     if let Some(repo_data) = version_data.get(version) {
         // Check if we have data for this repository
         if let Some(result) = repo_data.get(repo_name) {
-            // Check if we have a mean value to display
-            if let Some(mean) = &result.mean {
-                return format_duration(mean.point_estimate, result.unit.as_deref().unwrap_or("ns"));
-            }
+            return format_duration(result.mean.point_estimate, &result.unit);
         }
     }
 

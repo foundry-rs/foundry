@@ -1,26 +1,18 @@
 use serde::{Deserialize, Serialize};
 
 /// Benchmark result from Criterion JSON output
+/// 
+/// This is a simplified version containing only the fields we actually use
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CriterionResult {
-    pub reason: String,
-    pub id: Option<String>,
-    pub report_directory: Option<String>,
-    pub iteration_count: Option<Vec<f64>>,
-    pub measured_values: Option<Vec<f64>>,
-    pub unit: Option<String>,
-    pub throughput: Option<Vec<Throughput>>,
-    pub typical: Option<Estimate>,
-    pub mean: Option<Estimate>,
-    pub median: Option<Estimate>,
-    pub slope: Option<Estimate>,
-    pub change: Option<Change>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Throughput {
-    pub per_iteration: u64,
+    /// Unique identifier for the benchmark result (format: benchmark-name/version/repo)
+    pub id: String,
+    /// Mean performance estimate
+    pub mean: Estimate,
+    /// Unit of measurement (always "ns" for nanoseconds in our case)
     pub unit: String,
+    /// Performance change data compared to baseline (if available)
+    pub change: Option<Change>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

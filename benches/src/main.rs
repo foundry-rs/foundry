@@ -1,7 +1,7 @@
 use clap::Parser;
 use eyre::{OptionExt, Result, WrapErr};
 use foundry_bench::{
-    criterion_types::{Change, ChangeEstimate, ConfidenceInterval, CriterionResult, Estimate},
+    criterion_types::{Change, ChangeEstimate, CriterionResult, Estimate},
     get_forge_version,
     results::BenchmarkResults,
     switch_foundry_version, BENCHMARK_REPOS, FOUNDRY_VERSIONS,
@@ -144,27 +144,25 @@ fn main() -> Result<()> {
         for (benchmark, bench_results) in bench_results {
             println!("Processing {} results for {}", bench_results.len(), benchmark);
             for result in bench_results {
-                if let Some(id) = &result.id {
-                    // Parse ID format: benchmark-name/version/repo
-                    let parts: Vec<&str> = id.split('/').collect();
-                    if parts.len() >= 3 {
-                        let bench_type = parts[0].to_string();
-                        // Skip parts[1] which is the version (already known)
-                        let repo = parts[2].to_string();
+                // Parse ID format: benchmark-name/version/repo
+                let parts: Vec<&str> = result.id.split('/').collect();
+                if parts.len() >= 3 {
+                    let bench_type = parts[0].to_string();
+                    // Skip parts[1] which is the version (already known)
+                    let repo = parts[2].to_string();
 
-                        // Debug: show change info if present
-                        if let Some(change) = &result.change {
-                            if let Some(mean) = &change.mean {
-                                println!(
-                                    "Change from baseline: {:.2}% ({})",
-                                    mean.estimate,
-                                    change.change.as_ref().unwrap_or(&"Unknown".to_string())
-                                );
-                            }
+                    // Debug: show change info if present
+                    if let Some(change) = &result.change {
+                        if let Some(mean) = &change.mean {
+                            println!(
+                                "Change from baseline: {:.2}% ({})",
+                                mean.estimate,
+                                change.change.as_ref().unwrap_or(&"Unknown".to_string())
+                            );
                         }
-
-                        results.add_result(&bench_type, version, &repo, result);
                     }
+
+                    results.add_result(&bench_type, version, &repo, result);
                 }
             }
         }
@@ -247,7 +245,7 @@ fn collect_benchmark_results(
 
         // Process the benchmark results for this repository
         if let Some(result) = process_repo_benchmark(&path, benchmark_name, version, &repo_name)? {
-            println!("Found result: {}", result.id.as_ref().unwrap());
+            println!("Found result: {}", result.id);
             results.push(result);
         }
     }
@@ -283,17 +281,9 @@ fn process_repo_benchmark(
     let change = read_change_data(repo_path)?;
 
     Ok(Some(CriterionResult {
-        reason: "benchmark-complete".to_string(),
-        id: Some(id),
-        report_directory: None,
-        iteration_count: None,
-        measured_values: None,
-        unit: Some("ns".to_string()),
-        throughput: None,
-        typical: None,
-        mean: Some(mean_estimate),
-        median: None,
-        slope: None,
+        id,
+        mean: mean_estimate,
+        unit: "ns".to_string(),
         change,
     }))
 }
