@@ -1,8 +1,5 @@
 use super::{
-    backend::{
-        db::MaybeFullDatabase,
-        mem::{state, BlockRequest, State},
-    },
+    backend::mem::{state, BlockRequest, DatabaseRef, State},
     sign::build_typed_transaction,
 };
 use crate::{
@@ -83,7 +80,7 @@ use anvil_core::{
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::ProviderBuilder;
-use foundry_evm::{backend::DatabaseError, decode::RevertDecoder};
+use foundry_evm::decode::RevertDecoder;
 use futures::{
     channel::{mpsc::Receiver, oneshot},
     StreamExt,
@@ -93,7 +90,7 @@ use revm::{
     bytecode::Bytecode,
     context::BlockEnv,
     context_interface::{block::BlobExcessGasAndPrice, result::Output},
-    database::{CacheDB, DatabaseRef},
+    database::CacheDB,
     interpreter::{return_ok, return_revert, InstructionResult},
     primitives::eip7702::PER_EMPTY_ACCOUNT_COST,
 };
@@ -2946,7 +2943,7 @@ impl EthApi {
                     if let Some(block_overrides) = overrides.block {
                         state::apply_block_overrides(*block_overrides, &mut cache_db, &mut block);
                     }
-                    this.do_estimate_gas_with_state(request, cache_db.as_dyn(), block)
+                    this.do_estimate_gas_with_state(request, &cache_db as &dyn DatabaseRef, block)
                 })
                 .await?
         })
@@ -2959,7 +2956,7 @@ impl EthApi {
     fn do_estimate_gas_with_state(
         &self,
         mut request: WithOtherFields<TransactionRequest>,
-        state: &dyn DatabaseRef<Error = DatabaseError>,
+        state: &dyn DatabaseRef,
         block_env: BlockEnv,
     ) -> Result<u128> {
         // If the request is a simple native token transfer we can optimize

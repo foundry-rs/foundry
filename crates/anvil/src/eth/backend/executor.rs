@@ -40,7 +40,7 @@ use revm::{
     primitives::hardfork::SpecId,
     Database, DatabaseRef, Inspector, Journal,
 };
-use std::sync::Arc;
+use std::{fmt::Debug, sync::Arc};
 
 /// Represents an executed transaction (transacted on the DB)
 #[derive(Debug)]
@@ -430,7 +430,7 @@ pub fn new_evm_with_inspector<DB, I>(
     inspector: I,
 ) -> EitherEvm<DB, I, PrecompilesMap>
 where
-    DB: Database<Error = DatabaseError>,
+    DB: Database<Error = DatabaseError> + Debug,
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
 {
     if env.is_optimism {
@@ -502,7 +502,7 @@ pub fn new_evm_with_inspector_ref<'db, DB, I>(
     inspector: &'db mut I,
 ) -> EitherEvm<WrapDatabaseRef<&'db DB>, &'db mut I, PrecompilesMap>
 where
-    DB: DatabaseRef<Error = DatabaseError> + 'db + ?Sized,
+    DB: DatabaseRef<Error = DatabaseError> + Debug + 'db + ?Sized,
     I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>
         + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>,
     WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,

@@ -104,7 +104,7 @@ use revm::{
         block::BlobExcessGasAndPrice,
         result::{ExecutionResult, Output, ResultAndState},
     },
-    database::{CacheDB, DatabaseRef, WrapDatabaseRef},
+    database::{CacheDB, WrapDatabaseRef},
     interpreter::InstructionResult,
     precompile::secp256r1::{P256VERIFY, P256VERIFY_BASE_GAS_FEE},
     primitives::{eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE, hardfork::SpecId, KECCAK_EMPTY},
@@ -114,6 +114,7 @@ use revm::{
 use revm_inspectors::transfer::TransferInspector;
 use std::{
     collections::BTreeMap,
+    fmt::Debug,
     io::{Read, Write},
     ops::Not,
     path::PathBuf,
@@ -131,6 +132,13 @@ pub mod in_memory_db;
 pub mod inspector;
 pub mod state;
 pub mod storage;
+
+/// Helper trait that combines DatabaseRef with Debug.
+/// This is needed because alloy-evm requires Debug on Database implementations.
+/// Specific implementation for dyn Db since trait object upcasting is not stable.
+pub trait DatabaseRef: revm::DatabaseRef<Error = DatabaseError> + Debug {}
+impl<T> DatabaseRef for T where T: revm::DatabaseRef<Error = DatabaseError> + Debug {}
+impl DatabaseRef for dyn crate::eth::backend::db::Db {}
 
 // Gas per transaction not creating a contract.
 pub const MIN_TRANSACTION_GAS: u128 = 21000;
@@ -168,7 +176,7 @@ impl BlockRequest {
 }
 
 /// Gives access to the [revm::Database]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Backend {
     /// Access to [`revm::Database`] abstraction.
     ///
@@ -1084,21 +1092,17 @@ impl Backend {
     }
 
     /// Creates an EVM instance with optionally injected precompiles.
-    fn new_evm_with_inspector_ref<'db, I>(
+    fn new_evm_with_inspector_ref<'db, I, DB>(
         &self,
-        db: &'db dyn DatabaseRef<Error = DatabaseError>,
+        db: &'db DB,
         env: &Env,
         inspector: &'db mut I,
-    ) -> EitherEvm<
-        WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>,
-        &'db mut I,
-        PrecompilesMap,
-    >
+    ) -> EitherEvm<WrapDatabaseRef<&'db DB>, &'db mut I, PrecompilesMap>
     where
-        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>>>
-            + Inspector<OpContext<WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>>>,
-        WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>:
-            Database<Error = DatabaseError>,
+        DB: DatabaseRef + ?Sized,
+        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>
+            + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>,
+        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
         let mut evm = new_evm_with_inspector_ref(db, env, inspector);
 
@@ -1131,7 +1135,7 @@ impl Backend {
 
         let db = self.db.read().await;
         let mut inspector = self.build_inspector();
-        let mut evm = self.new_evm_with_inspector_ref(db.as_dyn(), &env, &mut inspector);
+        let mut evm = self.new_evm_with_inspector_ref(&**db, &env, &mut inspector);
         let ResultAndState { result, state } = evm.transact(env.tx)?;
         let (exit_reason, gas_used, out, logs) = match result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
@@ -1417,7 +1421,7 @@ impl Backend {
                 if let Some(block_overrides) = overrides.block {
                     state::apply_block_overrides(*block_overrides, &mut cache_db, &mut block);
                 }
-                self.call_with_state(cache_db.as_dyn(), request, fee_details, block)
+                self.call_with_state(&cache_db as &dyn DatabaseRef, request, fee_details, block)
             }?;
             trace!(target: "backend", "call return {:?} out: {:?} gas {} on block {}", exit, out, gas, block_number);
             Ok((exit, out, gas, state))
@@ -1627,7 +1631,7 @@ impl Backend {
                         // recorded and included in logs
                         let mut inspector = TransferInspector::new(false).with_logs(true);
                         let mut evm= self.new_evm_with_inspector_ref(
-                            cache_db.as_dyn(),
+                            &cache_db as &dyn DatabaseRef,
                             &env,
                             &mut inspector,
                         );
@@ -1637,7 +1641,7 @@ impl Backend {
                     } else {
                         let mut inspector = self.build_inspector();
                         let mut evm = self.new_evm_with_inspector_ref(
-                            cache_db.as_dyn(),
+                            &cache_db as &dyn DatabaseRef,
                             &env,
                             &mut inspector,
                         );
@@ -1775,7 +1779,7 @@ impl Backend {
 
     pub fn call_with_state(
         &self,
-        state: &dyn DatabaseRef<Error = DatabaseError>,
+        state: &dyn DatabaseRef,
         request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_env: BlockEnv,
@@ -1842,7 +1846,7 @@ impl Backend {
 
                             let env = self.build_call_env(request, fee_details, block);
                             let mut evm = self.new_evm_with_inspector_ref(
-                                cache_db.as_dyn(),
+                                &cache_db as &dyn DatabaseRef,
                                 &env,
                                 &mut inspector,
                             );
@@ -1877,7 +1881,11 @@ impl Backend {
                 .with_tracing_config(TracingInspectorConfig::from_geth_config(&config));
 
             let env = self.build_call_env(request, fee_details, block);
-            let mut evm = self.new_evm_with_inspector_ref(cache_db.as_dyn(), &env, &mut inspector);
+            let mut evm = self.new_evm_with_inspector_ref(
+                &cache_db as &dyn DatabaseRef,
+                &env,
+                &mut inspector,
+            );
             let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
 
             let (exit_reason, gas_used, out) = match result {
@@ -1910,7 +1918,7 @@ impl Backend {
 
     pub fn build_access_list_with_state(
         &self,
-        state: &dyn DatabaseRef<Error = DatabaseError>,
+        state: &dyn DatabaseRef,
         request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_env: BlockEnv,

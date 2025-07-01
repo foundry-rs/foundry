@@ -24,10 +24,14 @@ use serde::{
     de::{MapAccess, Visitor},
     Deserialize, Deserializer, Serialize,
 };
-use std::{collections::BTreeMap, fmt, path::Path};
+use std::{
+    collections::BTreeMap,
+    fmt::{self, Debug},
+    path::Path,
+};
 
 /// Helper trait get access to the full state data of the database
-pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> {
+pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> + Debug {
     /// Returns a reference to the database as a `dyn DatabaseRef`.
     // TODO: Required until trait upcasting is stabilized: <https://github.com/rust-lang/rust/issues/65991>
     fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError>;
@@ -242,7 +246,7 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
     }
 }
 
-impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
+impl<T: DatabaseRef<Error = DatabaseError> + Debug> MaybeFullDatabase for CacheDB<T> {
     fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
         self
     }
@@ -321,6 +325,7 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeForkedDatabase for CacheDB<T> {
 }
 
 /// Represents a state at certain point
+#[derive(Debug)]
 pub struct StateDb(pub(crate) Box<dyn MaybeFullDatabase + Send + Sync>);
 
 impl StateDb {
