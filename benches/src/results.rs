@@ -85,54 +85,7 @@ impl BenchmarkResults {
 
         // Results for each benchmark type
         for (benchmark_name, version_data) in &self.data {
-            output.push_str(&format!("## {}\n\n", format_benchmark_name(benchmark_name)));
-
-            // Create table header
-            output.push_str("| Repository |");
-            for version in versions {
-                output.push_str(&format!(" {} |", version));
-            }
-            output.push('\n');
-
-            // Table separator
-            output.push_str("|------------|");
-            for _ in versions {
-                output.push_str("----------|");
-            }
-            output.push('\n');
-
-            // Table rows
-            for repo in BENCHMARK_REPOS {
-                output.push_str(&format!("| {} |", repo.name));
-
-                let mut values = Vec::new();
-                for version in versions {
-                    if let Some(repo_data) = version_data.get(version) {
-                        if let Some(result) = repo_data.get(repo.name) {
-                            if let Some(mean) = &result.mean {
-                                let value = format_duration(
-                                    mean.point_estimate,
-                                    result.unit.as_deref().unwrap_or("ns"),
-                                );
-                                output.push_str(&format!(" {} |", value));
-                                values.push(Some(mean.point_estimate));
-                            } else {
-                                output.push_str(" N/A |");
-                                values.push(None);
-                            }
-                        } else {
-                            output.push_str(" N/A |");
-                            values.push(None);
-                        }
-                    } else {
-                        output.push_str(" N/A |");
-                        values.push(None);
-                    }
-                }
-
-                output.push('\n');
-            }
-            output.push('\n');
+            output.push_str(&self.generate_benchmark_table(benchmark_name, version_data, versions));
         }
 
         // System info
@@ -146,13 +99,98 @@ impl BenchmarkResults {
 
         output
     }
+
+    /// Generate a complete markdown table for a single benchmark type
+    ///
+    /// This includes the section header, table header, separator, and all rows
+    fn generate_benchmark_table(
+        &self,
+        benchmark_name: &str,
+        version_data: &HashMap<String, HashMap<String, CriterionResult>>,
+        versions: &[String],
+    ) -> String {
+        let mut output = String::new();
+
+        // Section header
+        output.push_str(&format!("## {}\n\n", format_benchmark_name(benchmark_name)));
+
+        // Create table header
+        output.push_str("| Repository |");
+        for version in versions {
+            output.push_str(&format!(" {} |", version));
+        }
+        output.push('\n');
+
+        // Table separator
+        output.push_str("|------------|");
+        for _ in versions {
+            output.push_str("----------|");
+        }
+        output.push('\n');
+
+        // Table rows
+        output.push_str(&generate_table_rows(version_data, versions));
+        output.push('\n');
+
+        output
+    }
+}
+
+/// Generate table rows for benchmark results
+///
+/// This function creates the markdown table rows for each repository,
+/// showing the benchmark results for each version.
+fn generate_table_rows(
+    version_data: &HashMap<String, HashMap<String, CriterionResult>>,
+    versions: &[String],
+) -> String {
+    let mut output = String::new();
+
+    for repo in BENCHMARK_REPOS {
+        output.push_str(&format!("| {} |", repo.name));
+
+        for version in versions {
+            let cell_content = get_benchmark_cell_content(version_data, version, repo.name);
+            output.push_str(&format!(" {} |", cell_content));
+        }
+
+        output.push('\n');
+    }
+
+    output
+}
+
+/// Get the content for a single benchmark table cell
+///
+/// Returns the formatted duration or "N/A" if no data is available.
+/// The nested if-let statements handle the following cases:
+/// 1. Check if version data exists
+/// 2. Check if repository data exists for this version
+/// 3. Check if mean estimate exists for this result
+fn get_benchmark_cell_content(
+    version_data: &HashMap<String, HashMap<String, CriterionResult>>,
+    version: &str,
+    repo_name: &str,
+) -> String {
+    // Check if we have data for this version
+    if let Some(repo_data) = version_data.get(version) {
+        // Check if we have data for this repository
+        if let Some(result) = repo_data.get(repo_name) {
+            // Check if we have a mean value to display
+            if let Some(mean) = &result.mean {
+                return format_duration(mean.point_estimate, result.unit.as_deref().unwrap_or("ns"));
+            }
+        }
+    }
+
+    "N/A".to_string()
 }
 
 pub fn format_benchmark_name(name: &str) -> String {
     match name {
-        "forge-test" => "Forge Test Performance",
-        "forge-build-no-cache" => "Forge Build Performance (No Cache)",
-        "forge-build-with-cache" => "Forge Build Performance (With Cache)",
+        "forge-test" => "Forge Test",
+        "forge-build-no-cache" => "Forge Build (No Cache)",
+        "forge-build-with-cache" => "Forge Build (With Cache)",
         _ => name,
     }
     .to_string()
