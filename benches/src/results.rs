@@ -1,5 +1,5 @@
 use crate::{criterion_types::CriterionResult, BENCHMARK_REPOS};
-use color_eyre::eyre::Result;
+use eyre::Result;
 use std::{collections::HashMap, process::Command};
 
 /// Aggregated benchmark results
