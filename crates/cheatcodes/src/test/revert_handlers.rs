@@ -229,10 +229,34 @@ pub(crate) fn handle_expect_revert(
                     // The revert doesn't match our criteria, which means it's a different revert
                     // For expectRevert with count=0, any revert should fail the test
                     let decoded_revert = decode_revert(retdata.to_vec());
-                    Err(fmt_err!(
-                        "call reverted with '{}' when it was expected not to revert",
-                        &stringify(&decoded_revert)
-                    ))
+                    
+                    // Provide more specific error messages based on what was expected
+                    if expected_revert.reverter.is_some() && expected_revert.reason.is_some() {
+                        Err(fmt_err!(
+                            "call reverted with '{}' from {}, but expected 0 reverts with reason '{}' from {}",
+                            &stringify(&decoded_revert),
+                            expected_revert.reverted_by.unwrap_or_default(),
+                            &stringify(expected_reason.unwrap_or_default()),
+                            expected_revert.reverter.unwrap()
+                        ))
+                    } else if expected_revert.reverter.is_some() {
+                        Err(fmt_err!(
+                            "call reverted with '{}' from {}, but expected 0 reverts from {}",
+                            &stringify(&decoded_revert),
+                            expected_revert.reverted_by.unwrap_or_default(),
+                            expected_revert.reverter.unwrap()
+                        ))
+                    } else if expected_revert.reason.is_some() {
+                        Err(fmt_err!(
+                            "call reverted with '{}' when it was expected not to revert",
+                            &stringify(&decoded_revert)
+                        ))
+                    } else {
+                        Err(fmt_err!(
+                            "call reverted with '{}' when it was expected not to revert",
+                            &stringify(&decoded_revert)
+                        ))
+                    }
                 }
             }
         } else {
