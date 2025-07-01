@@ -1,4 +1,4 @@
-use crate::{criterion_types::CriterionResult, BENCHMARK_REPOS};
+use crate::{criterion_types::CriterionResult, RepoConfig};
 use eyre::Result;
 use std::{collections::HashMap, process::Command};
 
@@ -35,7 +35,7 @@ impl BenchmarkResults {
             .insert(repo.to_string(), result);
     }
 
-    pub fn generate_markdown(&self, versions: &[String]) -> String {
+    pub fn generate_markdown(&self, versions: &[String], repos: &[RepoConfig]) -> String {
         let mut output = String::new();
 
         // Header
@@ -64,7 +64,7 @@ impl BenchmarkResults {
 
         // Repositories tested
         output.push_str("### Repositories Tested\n\n");
-        for (i, repo) in BENCHMARK_REPOS.iter().enumerate() {
+        for (i, repo) in repos.iter().enumerate() {
             output.push_str(&format!(
                 "{}. [{}/{}](https://github.com/{}/{})\n",
                 i + 1,
@@ -85,7 +85,7 @@ impl BenchmarkResults {
 
         // Results for each benchmark type
         for (benchmark_name, version_data) in &self.data {
-            output.push_str(&self.generate_benchmark_table(benchmark_name, version_data, versions));
+            output.push_str(&self.generate_benchmark_table(benchmark_name, version_data, versions, repos));
         }
 
         // System info
@@ -108,6 +108,7 @@ impl BenchmarkResults {
         benchmark_name: &str,
         version_data: &HashMap<String, HashMap<String, CriterionResult>>,
         versions: &[String],
+        repos: &[RepoConfig],
     ) -> String {
         let mut output = String::new();
 
@@ -129,7 +130,7 @@ impl BenchmarkResults {
         output.push('\n');
 
         // Table rows
-        output.push_str(&generate_table_rows(version_data, versions));
+        output.push_str(&generate_table_rows(version_data, versions, repos));
         output.push('\n');
 
         output
@@ -143,14 +144,15 @@ impl BenchmarkResults {
 fn generate_table_rows(
     version_data: &HashMap<String, HashMap<String, CriterionResult>>,
     versions: &[String],
+    repos: &[RepoConfig],
 ) -> String {
     let mut output = String::new();
 
-    for repo in BENCHMARK_REPOS {
+    for repo in repos {
         output.push_str(&format!("| {} |", repo.name));
 
         for version in versions {
-            let cell_content = get_benchmark_cell_content(version_data, version, repo.name);
+            let cell_content = get_benchmark_cell_content(version_data, version, &repo.name);
             output.push_str(&format!(" {} |", cell_content));
         }
 

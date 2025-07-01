@@ -21,7 +21,7 @@ fn benchmark_forge_test(c: &mut Criterion) {
 
     for (repo_config, project) in &projects {
         // This creates: forge-test/{version}/{repo_name}
-        let bench_id = BenchmarkId::new(&version, repo_config.name);
+        let bench_id = BenchmarkId::new(&version, &repo_config.name);
 
         group.bench_function(bench_id, |b| {
             b.iter(|| {

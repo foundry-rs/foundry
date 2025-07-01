@@ -4,7 +4,7 @@ use foundry_bench::{
     criterion_types::{Change, ChangeEstimate, CriterionResult, Estimate},
     get_forge_version,
     results::BenchmarkResults,
-    switch_foundry_version, BENCHMARK_REPOS, FOUNDRY_VERSIONS,
+    switch_foundry_version, RepoConfig, BENCHMARK_REPOS, FOUNDRY_VERSIONS,
 };
 use once_cell::sync::Lazy;
 use rayon::prelude::*;
@@ -44,6 +44,11 @@ struct Cli {
     /// forge_test,forge_build_no_cache,forge_build_with_cache)
     #[clap(long, value_delimiter = ',')]
     benchmarks: Option<Vec<String>>,
+
+    /// Run only on specific repositories (comma-separated in org/repo[:rev] format:
+    /// ithacaxyz/account,Vectorized/solady:main,foundry-rs/foundry:v1.0.0)
+    #[clap(long, value_delimiter = ',')]
+    repos: Option<Vec<String>>,
 }
 
 /// Mutex to prevent concurrent foundryup calls
@@ -53,14 +58,24 @@ fn switch_version_safe(version: &str) -> Result<()> {
     switch_foundry_version(version)
 }
 
-fn run_benchmark(name: &str, version: &str, verbose: bool) -> Result<Vec<CriterionResult>> {
+fn run_benchmark(
+    name: &str,
+    version: &str,
+    repos: &[RepoConfig],
+    verbose: bool,
+) -> Result<Vec<CriterionResult>> {
     // Setup paths
-    let criterion_dir = PathBuf::from("../target/criterion");
+    let criterion_dir = PathBuf::from("target/criterion");
     let dir_name = name.replace('_', "-");
     let group_dir = criterion_dir.join(&dir_name).join(version);
 
     // Set environment variable for the current version
     std::env::set_var("FOUNDRY_BENCH_CURRENT_VERSION", version);
+
+    // Set environment variable for the repos to benchmark
+    // Use org/repo format for proper parsing in benchmarks
+    let repo_specs: Vec<String> = repos.iter().map(|r| format!("{}/{}", r.org, r.repo)).collect();
+    std::env::set_var("FOUNDRY_BENCH_REPOS", repo_specs.join(","));
 
     // Run the benchmark
     let mut cmd = Command::new("cargo");
@@ -80,7 +95,7 @@ fn run_benchmark(name: &str, version: &str, verbose: bool) -> Result<Vec<Criteri
     }
 
     // Collect benchmark results from criterion output
-    let results = collect_benchmark_results(&group_dir, &dir_name, version)?;
+    let results = collect_benchmark_results(&group_dir, &dir_name, version, repos)?;
     println!("Total results collected: {}", results.len());
     Ok(results)
 }
@@ -95,8 +110,22 @@ fn main() -> Result<()> {
         FOUNDRY_VERSIONS.iter().map(|&s| s.to_string()).collect()
     };
 
+    // Determine repos to test
+    let repos = if let Some(repo_specs) = cli.repos {
+        repo_specs
+            .iter()
+            .map(|spec| RepoConfig::try_from(spec.as_str()))
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        BENCHMARK_REPOS.clone()
+    };
+
     println!("🚀 Foundry Benchmark Runner");
-    println!("Testing versions: {}", versions.join(", "));
+    println!("Running with versions: {}", versions.join(", "));
+    println!(
+        "Running on repos: {}",
+        repos.iter().map(|r| format!("{}/{}", r.org, r.repo)).collect::<Vec<_>>().join(", ")
+    );
 
     // Install versions if requested
     if cli.force_install {
@@ -135,7 +164,7 @@ fn main() -> Result<()> {
             .par_iter()
             .map(|benchmark| -> Result<(String, Vec<CriterionResult>)> {
                 println!("Running {} benchmark...", benchmark);
-                let results = run_benchmark(benchmark, version, cli.verbose)?;
+                let results = run_benchmark(benchmark, version, &repos, cli.verbose)?;
                 Ok((benchmark.clone(), results))
             })
             .collect::<Result<_>>()?;
@@ -170,7 +199,7 @@ fn main() -> Result<()> {
 
     // Generate markdown report
     println!("📝 Generating report...");
-    let markdown = results.generate_markdown(&versions);
+    let markdown = results.generate_markdown(&versions, &repos);
     let output_path = cli.output_dir.join(cli.output_file);
     let mut file = File::create(&output_path).wrap_err("Failed to create output file")?;
     file.write_all(markdown.as_bytes()).wrap_err("Failed to write output file")?;
@@ -178,6 +207,7 @@ fn main() -> Result<()> {
 
     Ok(())
 }
+
 
 fn install_foundry_versions(versions: &[String]) -> Result<()> {
     println!("Installing Foundry versions...");
@@ -210,6 +240,7 @@ fn collect_benchmark_results(
     group_dir: &PathBuf,
     benchmark_name: &str,
     version: &str,
+    repos: &[RepoConfig],
 ) -> Result<Vec<CriterionResult>> {
     let mut results = Vec::new();
 
@@ -234,8 +265,8 @@ fn collect_benchmark_results(
             .to_string_lossy()
             .to_string();
 
-        // Only process repos that are in BENCHMARK_REPOS
-        let is_valid_repo = BENCHMARK_REPOS.iter().any(|r| r.name == repo_name);
+        // Only process repos that are in the specified repos list
+        let is_valid_repo = repos.iter().any(|r| r.name == repo_name);
         if !is_valid_repo {
             println!("Skipping unknown repo: {}", repo_name);
             continue;
@@ -280,12 +311,7 @@ fn process_repo_benchmark(
     // Read change data if available
     let change = read_change_data(repo_path)?;
 
-    Ok(Some(CriterionResult {
-        id,
-        mean: mean_estimate,
-        unit: "ns".to_string(),
-        change,
-    }))
+    Ok(Some(CriterionResult { id, mean: mean_estimate, unit: "ns".to_string(), change }))
 }
 
 /// Read mean estimate from estimates.json

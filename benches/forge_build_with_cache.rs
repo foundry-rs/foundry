@@ -13,7 +13,7 @@ fn benchmark_forge_build_with_cache(c: &mut Criterion) {
 
     println!("Running forge-build-with-cache for version: {}", version);
 
-    let projects: Vec<_> = setup_benchmark_repos();
+    let projects = setup_benchmark_repos();
 
     // Prime the cache by building once
     projects.par_iter().for_each(|(_repo_config, project)| {
@@ -22,7 +22,7 @@ fn benchmark_forge_build_with_cache(c: &mut Criterion) {
 
     for (repo_config, project) in &projects {
         // This creates: forge-build-with-cache/{version}/{repo_name}
-        let bench_id = BenchmarkId::new(&version, repo_config.name);
+        let bench_id = BenchmarkId::new(&version, &repo_config.name);
         group.bench_function(bench_id, |b| {
             b.iter(|| {
                 let _output = project.run_forge_build(false).expect("forge build failed");

@@ -12,11 +12,11 @@ fn benchmark_forge_build_no_cache(c: &mut Criterion) {
 
     println!("Running forge-build-no-cache for version: {}", version);
 
-    let projects: Vec<_> = setup_benchmark_repos();
+    let projects = setup_benchmark_repos();
 
     for (repo_config, project) in &projects {
         // This creates: forge-build-no-cache/{version}/{repo_name}
-        let bench_id = BenchmarkId::new(&version, repo_config.name);
+        let bench_id = BenchmarkId::new(&version, &repo_config.name);
 
         group.bench_function(bench_id, |b| {
             b.iter(|| {
