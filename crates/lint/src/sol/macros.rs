@@ -1,3 +1,10 @@
+#[macro_export]
+macro_rules! link {
+    ($url:expr) => {
+        concat!("\x1b]8;;", $url, "\x1b\\", $url, "\x1b]8;;\x1b\\")
+    };
+}
+
 /// Macro for defining lints and relevant metadata for the Solidity linter.
 ///
 /// # Parameters
@@ -20,7 +27,7 @@ macro_rules! declare_forge_lint {
             id: $str_id,
             severity: $severity,
             description: $desc,
-            help: concat!("https://book.getfoundry.sh/reference/forge/forge-lint#", $str_id),
+            help: link!(concat!("https://book.getfoundry.sh/reference/forge/forge-lint#", $str_id)),
         };
     };
 

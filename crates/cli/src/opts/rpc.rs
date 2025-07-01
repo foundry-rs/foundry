@@ -23,6 +23,13 @@ pub struct RpcOpts {
     #[arg(short = 'r', long = "rpc-url", env = "ETH_RPC_URL")]
     pub url: Option<String>,
 
+    /// Allow insecure RPC connections (accept invalid HTTPS certificates).
+    ///
+    /// When the provider's inner runtime transport variant is HTTP, this configures the reqwest
+    /// client to accept invalid certificates.
+    #[arg(short = 'k', long = "insecure", default_value = "false")]
+    pub accept_invalid_certs: bool,
+
     /// Use the Flashbots RPC URL with fast mode (<https://rpc.flashbots.net/fast>).
     ///
     /// This shares the transaction privately with all registered builders.
@@ -103,6 +110,9 @@ impl RpcOpts {
         }
         if let Some(headers) = &self.rpc_headers {
             dict.insert("eth_rpc_headers".into(), headers.clone().into());
+        }
+        if self.accept_invalid_certs {
+            dict.insert("eth_rpc_accept_invalid_certs".into(), true.into());
         }
         dict
     }

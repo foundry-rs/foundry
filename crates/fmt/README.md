@@ -115,7 +115,7 @@ event Greet(string indexed name);
 The formatter supports multiple configuration options defined in `FormatterConfig`.
 
 | Option                       | Default          | Description                                                                                                                                                 |
-|------------------------------|------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| ---------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | line_length                  | 120              | Maximum line length where formatter will try to wrap the line                                                                                               |
 | tab_width                    | 4                | Number of spaces per indentation level                                                                                                                      |
 | bracket_spacing              | false            | Print spaces between brackets                                                                                                                               |
@@ -177,7 +177,7 @@ following process:
 
 1. Preparse comments with config values
 2. Parse and compare the AST for source & expected files.
-    - The `AstEq` trait defines the comparison rules for the AST nodes
+   - The `AstEq` trait defines the comparison rules for the AST nodes
 3. Format the source file and assert the equality of the output with the expected file.
 4. Format the expected files and assert the idempotency of the formatting operation.
 
@@ -190,17 +190,17 @@ Guidelines for contributing to `forge fmt`:
 ### Opening an issue
 
 1. Create a short concise title describing an issue.
-    - Bad Title Examples
-        ```text
-        Forge fmt does not work
-        Forge fmt breaks
-        Forge fmt unexpected behavior
-        ```
-    - Good Title Examples
-        ```text
-        Forge fmt postfix comment misplaced
-        Forge fmt does not inline short yul blocks
-        ```
+   - Bad Title Examples
+     ```text
+     Forge fmt does not work
+     Forge fmt breaks
+     Forge fmt unexpected behavior
+     ```
+   - Good Title Examples
+     ```text
+     Forge fmt postfix comment misplaced
+     Forge fmt does not inline short yul blocks
+     ```
 2. Fill in the issue template fields that include foundry version, platform & component info.
 3. Provide the code snippets showing the current & expected behaviors.
 4. If it's a feature request, specify why this feature is needed.
@@ -217,6 +217,6 @@ Guidelines for contributing to `forge fmt`:
 1. Specify an issue that is being addressed in the PR description.
 2. Add a note on the solution in the PR description.
 3. Provide the test coverage for the new feature. These should include:
-    - Adding malformatted & expected solidity code under `fmt/testdata/$dir/`
-    - Testing the behavior of pre and postfix comments
-    - If it's a new config value, tests covering **all** available options
+   - Adding malformatted & expected solidity code under `fmt/testdata/$dir/`
+   - Testing the behavior of pre and postfix comments
+   - If it's a new config value, tests covering **all** available options
