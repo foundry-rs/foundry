@@ -62,6 +62,9 @@ cargo run --release --bin foundry-bench -- --benchmarks forge_build_with_cache,f
 # Run only fuzz tests
 cargo run --release --bin foundry-bench -- --benchmarks forge_fuzz_test
 
+# Run coverage benchmark
+cargo run --release --bin foundry-bench -- --benchmarks forge_coverage
+
 # Combine options
 cargo run --release --bin foundry-bench -- \
   --versions stable,nightly \
@@ -96,6 +99,7 @@ cargo bench --bench forge_test
 cargo bench --bench forge_build_no_cache
 cargo bench --bench forge_build_with_cache
 cargo bench --bench forge_fuzz_test
+cargo bench --bench forge_coverage
 ```
 
 ## Benchmark Structure
@@ -104,6 +108,7 @@ cargo bench --bench forge_fuzz_test
 - `forge_build_no_cache` - Benchmarks `forge build` with clean cache
 - `forge_build_with_cache` - Benchmarks `forge build` with existing cache
 - `forge_fuzz_test` - Benchmarks `forge test` with only fuzz tests (tests with parameters)
+- `forge_coverage` - Benchmarks `forge coverage --ir-minimum` command across repos
 
 ## Configuration
 

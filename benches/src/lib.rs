@@ -226,6 +226,15 @@ impl BenchmarkProject {
             .output()
             .wrap_err("Failed to run forge fuzz tests")
     }
+
+    /// Run forge coverage command with --ir-minimum flag
+    pub fn run_forge_coverage(&self) -> Result<Output> {
+        Command::new("forge")
+            .current_dir(&self.root_path)
+            .args(["coverage", "--ir-minimum"])
+            .output()
+            .wrap_err("Failed to run forge coverage")
+    }
 }
 
 /// Switch to a specific foundry version

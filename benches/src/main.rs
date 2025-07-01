@@ -41,7 +41,7 @@ struct Cli {
     output_file: String,
 
     /// Run only specific benchmarks (comma-separated:
-    /// forge_test,forge_build_no_cache,forge_build_with_cache,forge_fuzz_test)
+    /// forge_test,forge_build_no_cache,forge_build_with_cache,forge_fuzz_test,forge_coverage)
     #[clap(long, value_delimiter = ',')]
     benchmarks: Option<Vec<String>>,
 
@@ -134,11 +134,11 @@ fn main() -> Result<()> {
 
     // Determine benchmarks to run
     let all_benchmarks =
-        vec!["forge_test", "forge_build_no_cache", "forge_build_with_cache", "forge_fuzz_test"];
+        vec!["forge_test", "forge_build_no_cache", "forge_build_with_cache", "forge_fuzz_test", "forge_coverage"];
     let benchmarks = if let Some(b) = cli.benchmarks {
         b.into_iter().filter(|b| all_benchmarks.contains(&b.as_str())).collect()
     } else {
-        // Default: run all benchmarks except fuzz tests (which can be slow)
+        // Default: run all benchmarks except fuzz tests and coverage (which can be slow)
         vec!["forge_test", "forge_build_no_cache", "forge_build_with_cache"]
             .into_iter()
             .map(String::from)

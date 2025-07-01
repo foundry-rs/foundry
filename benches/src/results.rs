@@ -195,6 +195,7 @@ pub fn format_benchmark_name(name: &str) -> String {
         "forge-build-no-cache" => "Forge Build (No Cache)",
         "forge-build-with-cache" => "Forge Build (With Cache)",
         "forge-fuzz-test" => "Forge Fuzz Test",
+        "forge-coverage" => "Forge Coverage",
         _ => name,
     }
     .to_string()

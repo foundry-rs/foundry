@@ -28,6 +28,11 @@ name = "forge_fuzz_test"
 path = "forge_fuzz_test.rs"
 harness = false
 
+[[bench]]
+name = "forge_coverage"
+path = "forge_coverage.rs"
+harness = false
+
 [dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 foundry-test-utils.workspace = true
