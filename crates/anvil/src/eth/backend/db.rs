@@ -47,7 +47,7 @@ pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> {
     /// Clears the entire database
     fn clear(&mut self);
 
-    /// Reverses `clear_into_snapshot` by initializing the db's state with the state snapshot.
+    /// Reverses `clear_into_state_snapshot` by initializing the db's state with the state snapshot.
     fn init_from_state_snapshot(&mut self, state_snapshot: StateSnapshot);
 }
 
