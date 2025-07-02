@@ -3,7 +3,7 @@ function groupBy(array, keyOrIterator) {
     var iterator;
 
     // use the function passed in, or create one
-    if(typeof keyOrIterator !== 'function') {
+    if (typeof keyOrIterator !== 'function') {
         const key = String(keyOrIterator);
         iterator = function (item) { return item[key]; };
     } else {
