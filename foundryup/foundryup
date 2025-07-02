@@ -162,6 +162,10 @@ main() {
     attestation_txt="$attestation_tmp_dir/attestation.txt"
     ensure download "$ATTESTATION_URL" "$attestation_txt"
     
+    # Read the first line of the attestation file to get the artifact link.
+    # The first line should contain the link to the attestation artifact.
+    # If the file is empty or contains an error message, we will skip the SHA verification
+    # and proceed to download the binaries.
     attestation_artifact_link="$(head -n1 "$attestation_txt" | tr -d '\r')"
 
     if [ -z "$attestation_artifact_link" ] || grep -q 'Not Found' "$attestation_txt"; then
@@ -169,9 +173,11 @@ main() {
     else
       say "found attestation for $FOUNDRYUP_TAG version, checking payload"
 
+      # Download the attestation artifact JSON file.
       attestation_json="$attestation_tmp_dir/foundry-attestation.sigstore.json"
       ensure download "${attestation_artifact_link}/download" "$attestation_json"
 
+      # Extract the payload from the JSON file.
       payload_b64=$(awk '/"payload":/ {gsub(/[",]/, "", $2); print $2; exit}' "$attestation_json")
       payload_json=$(printf '%s' "$payload_b64" | base64 -d 2>/dev/null || printf '%s' "$payload_b64" | base64 -D)
 
@@ -192,7 +198,7 @@ main() {
       # Check if the binaries are already installed and match the expected hashes.
       # If they do, skip the download.
       all_match=true
-      for bin in forge cast anvil chisel; do
+      for bin in "${BINS[@]}"; do
         expected="${HASHES[$bin]}"
         path="$FOUNDRY_BIN_DIR/$bin"
 
@@ -247,7 +253,7 @@ main() {
       say "verifying downloaded binaries against the attestation file"
 
       failed=false
-      for bin in forge cast anvil chisel; do
+      for bin in "${BINS[@]}"; do
         expected="${HASHES[$bin]}"
         path="$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG/$bin"
 
