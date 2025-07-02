@@ -132,6 +132,7 @@ impl SolidityLinter {
             let ctx = LintContext::new(sess, self.with_description, inline_config);
             let mut visitor = EarlyLintVisitor { ctx: &ctx, passes: &mut passes };
             _ = visitor.visit_source_unit(&ast);
+            visitor.post_source_unit(&ast);
 
             Ok(())
         });

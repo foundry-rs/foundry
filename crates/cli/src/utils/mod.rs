@@ -99,6 +99,8 @@ pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
     let url = config.get_rpc_url_or_localhost_http()?;
     let mut builder = ProviderBuilder::new(url.as_ref());
 
+    builder = builder.accept_invalid_certs(config.eth_rpc_accept_invalid_certs);
+
     if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
         builder = builder.chain(chain);
     }
