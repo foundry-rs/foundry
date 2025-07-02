@@ -76,9 +76,9 @@ pub enum ErrorCode {
     /// Server received Invalid JSON.
     /// server side error while parsing JSON
     ParseError,
-    /// send invalid request object.
+    /// sent invalid request object.
     InvalidRequest,
-    /// method does not exist or valid
+    /// method does not exist or is not valid
     MethodNotFound,
     /// invalid method parameter.
     InvalidParams,
