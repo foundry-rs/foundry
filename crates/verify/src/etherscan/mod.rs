@@ -362,13 +362,11 @@ impl EtherscanVerificationProvider {
         }
 
         if code_format == CodeFormat::VyperJson {
-            verify_args = if let Some(_optimizations) = args.num_of_optimizations {
-                verify_args.optimized().runs(1)
-            } else if context.config.optimizer == Some(true) {
+            verify_args = if args.num_of_optimizations.is_some() || context.config.optimizer == Some(true) {
                 verify_args.optimized().runs(1)
             } else {
                 verify_args.not_optimized().runs(0)
-            };
+            }
         }
 
         Ok(verify_args)
