@@ -238,9 +238,9 @@ mod tests {
     #[ignore = "run manually"]
     async fn test_etherscan_keys_compatibility() {
         let address = address!("0x111111125421cA6dc452d289314280a0f8842A65");
-        let ehterscan_key = "JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46";
+        let etherscan_key = "JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46";
         let client = foundry_block_explorers::Client::builder()
-            .with_api_key(ehterscan_key)
+            .with_api_key(etherscan_key)
             .chain(Chain::optimism_mainnet())
             .unwrap()
             .build()
@@ -250,7 +250,7 @@ mod tests {
         }
 
         let client = foundry_block_explorers::Client::builder()
-            .with_api_key(ehterscan_key)
+            .with_api_key(etherscan_key)
             .with_api_version(EtherscanApiVersion::V1)
             .chain(Chain::optimism_mainnet())
             .unwrap()
