@@ -8613,7 +8613,7 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.1.4"
-source = "git+https://github.com/0xrusowsky/solar?branch=rusowsky%2Ffn-header-spans#0b82a856ad5961e2bb5219e321d63a9069cb55f5"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#48d1d85dfbdaf27dc75f7844ff52c3a4a062b70b"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -8631,7 +8631,7 @@ dependencies = [
 [[package]]
 name = "solar-config"
 version = "0.1.4"
-source = "git+https://github.com/0xrusowsky/solar?branch=rusowsky%2Ffn-header-spans#0b82a856ad5961e2bb5219e321d63a9069cb55f5"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#48d1d85dfbdaf27dc75f7844ff52c3a4a062b70b"
 dependencies = [
  "strum 0.27.1",
 ]
@@ -8639,7 +8639,7 @@ dependencies = [
 [[package]]
 name = "solar-data-structures"
 version = "0.1.4"
-source = "git+https://github.com/0xrusowsky/solar?branch=rusowsky%2Ffn-header-spans#0b82a856ad5961e2bb5219e321d63a9069cb55f5"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#48d1d85dfbdaf27dc75f7844ff52c3a4a062b70b"
 dependencies = [
  "bumpalo",
  "index_vec",
@@ -8653,7 +8653,7 @@ dependencies = [
 [[package]]
 name = "solar-interface"
 version = "0.1.4"
-source = "git+https://github.com/0xrusowsky/solar?branch=rusowsky%2Ffn-header-spans#0b82a856ad5961e2bb5219e321d63a9069cb55f5"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#48d1d85dfbdaf27dc75f7844ff52c3a4a062b70b"
 dependencies = [
  "annotate-snippets",
  "anstream",
@@ -8663,7 +8663,7 @@ dependencies = [
  "derive_more 2.0.1",
  "dunce",
  "inturn",
- "itertools 0.13.0",
+ "itertools 0.10.5",
  "itoa",
  "match_cfg",
  "normalize-path",
@@ -8682,7 +8682,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.1.4"
-source = "git+https://github.com/0xrusowsky/solar?branch=rusowsky%2Ffn-header-spans#0b82a856ad5961e2bb5219e321d63a9069cb55f5"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#48d1d85dfbdaf27dc75f7844ff52c3a4a062b70b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8692,12 +8692,12 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.1.4"
-source = "git+https://github.com/0xrusowsky/solar?branch=rusowsky%2Ffn-header-spans#0b82a856ad5961e2bb5219e321d63a9069cb55f5"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#48d1d85dfbdaf27dc75f7844ff52c3a4a062b70b"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.9.1",
  "bumpalo",
- "itertools 0.13.0",
+ "itertools 0.10.5",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -8712,7 +8712,7 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.1.4"
-source = "git+https://github.com/0xrusowsky/solar?branch=rusowsky%2Ffn-header-spans#0b82a856ad5961e2bb5219e321d63a9069cb55f5"
+source = "git+https://github.com/paradigmxyz/solar?branch=main#48d1d85dfbdaf27dc75f7844ff52c3a4a062b70b"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",

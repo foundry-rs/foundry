@@ -79,6 +79,7 @@ fn format_doc_block_comment(line: &str) -> String {
     }
 }
 
+/// Splits a block comment into lines, ensuring that each line is properly formatted.
 fn split_block_comment_into_lines(text: &str, is_doc: bool, col: CharPos) -> Vec<String> {
     let mut res: Vec<String> = vec![];
     let mut lines = text.lines();
@@ -100,7 +101,6 @@ fn split_block_comment_into_lines(text: &str, is_doc: bool, col: CharPos) -> Vec
             res.push(line);
             continue;
         }
-
         if !pos.is_last {
             res.push(format_doc_block_comment(&line));
         } else {
@@ -173,9 +173,10 @@ fn gather_comments(sf: &SourceFile) -> Vec<Comment> {
                     !matches!(text[pos + token.len as usize..].chars().next(), Some('\r' | '\n'));
                 let style = match (code_to_the_left, code_to_the_right) {
                     (false, false) => CommentStyle::Isolated,
-                    // Unlike with `Trailing` comments, which are always printed with a hardbreak,
-                    // `Mixed` comments should be followed by a space and defer breaks to the
-                    // printer. Because of that, non-isolated code blocks are labeled as mixed.
+                    // NOTE(rusowsky): unlike with `Trailing` comments, which are always printed
+                    // with a hardbreak, `Mixed` comments should be followed by a space and defer
+                    // breaks to the printer. Because of that, non-isolated code blocks are labeled
+                    // as mixed.
                     _ => CommentStyle::Mixed,
                 };
                 let kind = CommentKind::Block;
@@ -198,7 +199,7 @@ fn gather_comments(sf: &SourceFile) -> Vec<Comment> {
                     } else {
                         CommentStyle::Isolated
                     },
-                    lines: vec![token_text.to_string()],
+                    lines: vec![token_text.trim_end().to_string()],
                     span,
                 });
             }

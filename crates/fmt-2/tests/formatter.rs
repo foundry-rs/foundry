@@ -170,7 +170,7 @@ fmt_tests! {
     FunctionCall, // TODO: fix PP so that comments aren't accounted for when breaking lines
     FunctionCallArgsStatement,
     FunctionDefinition, // TODO: fix fn block braces
-    FunctionDefinitionWithFunctionReturns, // TODO: impl return fn
+    FunctionDefinitionWithFunctionReturns,
     FunctionType,
     HexUnderscore,
     IfStatement,

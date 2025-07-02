@@ -54,11 +54,18 @@ impl Printer {
         self.spaces(SIZE_INFINITY as usize);
     }
 
+    pub fn last_token_is_neverbreak(&self) -> bool {
+        if let Some(token) = self.last_token() {
+            return token.is_neverbreak();
+        }
+
+        false
+    }
+
     pub fn last_token_is_hardbreak(&self) -> bool {
         if let Some(token) = self.last_token() {
             return token.is_hardbreak();
         }
-
         false
     }
 
@@ -68,7 +75,6 @@ impl Printer {
                 return true;
             }
         }
-
         let res = self.out.ends_with(" ");
         res
     }
@@ -165,32 +171,25 @@ impl Printer {
 }
 
 impl Token {
-    pub(crate) fn is_hardbreak(&self) -> bool {
-        if let Self::Break(BreakToken {
-            offset,
-            blank_space,
-            pre_break: _,
-            post_break: _,
-            if_nonempty: _,
-            never_break,
-        }) = *self
-        {
-            offset == 0 && blank_space == SIZE_INFINITY as usize && !never_break
-        } else {
-            false
+    pub(crate) fn is_neverbreak(&self) -> bool {
+        if let Self::Break(BreakToken { never_break, .. }) = *self {
+            return never_break;
         }
+        false
+    }
+
+    pub(crate) fn is_hardbreak(&self) -> bool {
+        if let Self::Break(BreakToken { offset, blank_space, never_break, .. }) = *self {
+            return offset == 0 && blank_space == SIZE_INFINITY as usize && !never_break;
+        }
+        false
     }
 
     pub(crate) fn is_space(&self) -> bool {
         match self {
-            Self::Break(BreakToken {
-                offset,
-                blank_space,
-                pre_break: _,
-                post_break: _,
-                if_nonempty: _,
-                never_break: _,
-            }) => *offset == 0 && *blank_space == 1,
+            Self::Break(BreakToken { offset, blank_space, .. }) => {
+                *offset == 0 && *blank_space == 1
+            }
             Self::String(s) => s.ends_with(' '),
             _ => false,
         }
