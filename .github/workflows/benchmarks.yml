@@ -16,20 +16,16 @@ on:
         description: "Comma-separated list of repos to benchmark (e.g., ithacaxyz/account:main,Vectorized/solady)"
         required: false
         type: string
-      benchmarks:
-        description: "Comma-separated list of benchmarks to run (forge_test,forge_build_no_cache,forge_build_with_cache,forge_fuzz_test)"
-        required: false
-        type: string
+        default: "ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22"
 
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
-  benchmark:
-    name: Run Foundry Benchmarks
+  forge-test:
+    name: Run forge_test and forge_fuzz_test benchmarks
     runs-on: ubuntu-latest
-    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
@@ -52,40 +48,180 @@ jobs:
       - name: Build benchmark binary
         run: cargo build --release --bin foundry-bench
 
-      - name: Run benchmarks
+      - name: Run forge_test and forge_fuzz_test benchmarks
         run: |
-          VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
+          VERSIONS="${{ github.event.inputs.versions }}"
           REPOS="${{ github.event.inputs.repos }}"
-          BENCHMARKS="${{ github.event.inputs.benchmarks }}"
 
           # Build the command with force-install for CI
           CMD="./target/release/foundry-bench --output-dir ./benches --force-install"
-
-          # Add versions
           CMD="$CMD --versions $VERSIONS"
-
-          # Add repos if specified
-          if [ -n "$REPOS" ]; then
-            CMD="$CMD --repos $REPOS"
-          fi
-
-          # Add benchmarks if specified
-          if [ -n "$BENCHMARKS" ]; then
-            CMD="$CMD --benchmarks $BENCHMARKS"
-          fi
+          CMD="$CMD --repos $REPOS"
+          CMD="$CMD --benchmarks forge_test,forge_fuzz_test"
+          CMD="$CMD --output-file forge_test_results.md"
 
           echo "Running: $CMD"
           $CMD
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-test-results
+          path: benches/forge_test_results.md
+
+  forge-build:
+    name: Run forge_build benchmarks (with and without cache)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            ./
+
+      - name: Install foundryup
+        run: |
+          curl -L https://foundry.paradigm.xyz | bash
+          echo "$HOME/.foundry/bin" >> $GITHUB_PATH
+
+      - name: Build benchmark binary
+        run: cargo build --release --bin foundry-bench
+
+      - name: Run forge_build benchmarks (with and without cache)
+        run: |
+          VERSIONS="${{ github.event.inputs.versions }}"
+          REPOS="${{ github.event.inputs.repos }}"
+
+          # Build the command with force-install for CI
+          CMD="./target/release/foundry-bench --output-dir ./benches --force-install"
+          CMD="$CMD --versions $VERSIONS"
+          CMD="$CMD --repos $REPOS"
+          CMD="$CMD --benchmarks forge_build_with_cache,forge_build_no_cache"
+          CMD="$CMD --output-file forge_build_results.md"
+
+          echo "Running: $CMD"
+          $CMD
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-build-results
+          path: benches/forge_build_results.md
+
+  forge-coverage:
+    name: Run forge_coverage benchmark
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            ./
+
+      - name: Install foundryup
+        run: |
+          curl -L https://foundry.paradigm.xyz | bash
+          echo "$HOME/.foundry/bin" >> $GITHUB_PATH
+
+      - name: Build benchmark binary
+        run: cargo build --release --bin foundry-bench
+
+      - name: Run forge_coverage benchmark
+        run: |
+          VERSIONS="${{ github.event.inputs.versions }}"
+          REPOS="${{ github.event.inputs.repos }}"
+
+          # Build the command with force-install for CI
+          CMD="./target/release/foundry-bench --output-dir ./benches --force-install"
+          CMD="$CMD --versions $VERSIONS"
+          CMD="$CMD --repos $REPOS"
+          CMD="$CMD --benchmarks forge_coverage"
+          CMD="$CMD --output-file forge_coverage_results.md"
+
+          echo "Running: $CMD"
+          $CMD
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-coverage-results
+          path: benches/forge_coverage_results.md
+
+  collect-results:
+    name: Collect and commit results
+    runs-on: ubuntu-latest
+    needs: [forge-test, forge-build, forge-coverage]
+    if: always()
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: benches/
+
+      - name: Combine benchmark results
+        run: |
+          # Create combined results file
+          echo "# Foundry Benchmark Results" > benches/LATEST.md
+          echo "" >> benches/LATEST.md
+          echo "Generated on: $(date -u)" >> benches/LATEST.md
+          echo "" >> benches/LATEST.md
+
+          # Add forge_test results if available
+          if [ -f "benches/forge-test-results/forge_test_results.md" ]; then
+            echo "## Forge Test and Fuzz Test Results" >> benches/LATEST.md
+            echo "" >> benches/LATEST.md
+            tail -n +2 benches/forge-test-results/forge_test_results.md >> benches/LATEST.md
+            echo "" >> benches/LATEST.md
+          fi
+
+          # Add forge_build results if available
+          if [ -f "benches/forge-build-results/forge_build_results.md" ]; then
+            echo "## Forge Build Results" >> benches/LATEST.md
+            echo "" >> benches/LATEST.md
+            tail -n +2 benches/forge-build-results/forge_build_results.md >> benches/LATEST.md
+            echo "" >> benches/LATEST.md
+          fi
+
+          # Add forge_coverage results if available
+          if [ -f "benches/forge-coverage-results/forge_coverage_results.md" ]; then
+            echo "## Forge Coverage Results" >> benches/LATEST.md
+            echo "" >> benches/LATEST.md
+            tail -n +2 benches/forge-coverage-results/forge_coverage_results.md >> benches/LATEST.md
+            echo "" >> benches/LATEST.md
+          fi
+
+          # Clean up artifact directories
+          rm -rf benches/forge-test-results
+          rm -rf benches/forge-build-results
+          rm -rf benches/forge-coverage-results
 
       - name: Commit benchmark results
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add benches/LATEST.md
+          git add benches/LATEST.md benches/forge_test_results.md benches/forge_build_results.md benches/forge_coverage_results.md 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "chore(`benches`): update benchmark results
+            git commit -m "chore(\`benches\`): update benchmark results
 
             🤖 Generated with [Foundry Benchmarks](https://github.com/${{ github.repository }}/actions)
             
@@ -127,7 +263,7 @@ jobs:
 
             🤖 This comment was automatically generated by the [Foundry Benchmarks workflow](https://github.com/${{ github.repository }}/actions).
 
-            To run benchmarks manually: Go to [Actions](https://github.com/${{ github.repository }}/actions/workflows/foundry-benchmarks.yml) → "Run workflow"`;
+            To run benchmarks manually: Go to [Actions](https://github.com/${{ github.repository }}/actions/workflows/benchmarks.yml) → "Run workflow"`;
 
             github.rest.issues.createComment({
               issue_number: prNumber,
