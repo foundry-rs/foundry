@@ -47,30 +47,6 @@ impl EtherscanSourceProvider for EtherscanStandardJsonSource {
 
         let source = match lang {
             ContractLanguage::Solidity => {
-                let mut input: StandardJsonCompilerInput = context
-                    .project
-                    .standard_json_input(&context.target_path)
-                    .wrap_err("Failed to get standard json input")?
-                    .normalize_evm_version(&context.compiler_version);
-
-                let mut settings = context.compiler_settings.solc.settings.clone();
-                settings.libraries.libs = input
-                    .settings
-                    .libraries
-                    .libs
-                    .into_iter()
-                    .map(|(f, libs)| {
-                        (f.strip_prefix(context.project.root()).unwrap_or(&f).to_path_buf(), libs)
-                    })
-                    .collect();
-
-                settings.remappings = input.settings.remappings;
-
-                // remove all incompatible settings
-                settings.sanitize(&context.compiler_version, SolcLanguage::Solidity);
-
-                input.settings = settings;
-
                 serde_json::to_string(&input).wrap_err("Failed to parse standard json input")?
             }
             ContractLanguage::Vyper => {
