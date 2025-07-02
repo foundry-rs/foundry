@@ -20,7 +20,7 @@ use std::{path::PathBuf, str::FromStr};
     name = "cast",
     version = SHORT_VERSION,
     long_version = LONG_VERSION,
-    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html",
+    after_help = "Find more information in the book: https://getfoundry.sh/cast/overview",
     next_display_order = None,
 )]
 pub struct Cast {
