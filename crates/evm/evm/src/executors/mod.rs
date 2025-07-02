@@ -15,6 +15,7 @@ use crate::{
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{
+    keccak256,
     map::{AddressHashMap, HashMap},
     Address, Bytes, Log, TxKind, U256,
 };
@@ -256,6 +257,36 @@ impl Executor {
     /// Returns the nonce of an account.
     pub fn get_nonce(&self, address: Address) -> BackendResult<u64> {
         Ok(self.backend().basic_ref(address)?.map(|acc| acc.nonce).unwrap_or_default())
+    }
+
+    /// Set the code of an account.
+    pub fn set_code(&mut self, address: Address, code: Bytecode) -> BackendResult<()> {
+        let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
+        account.code_hash = keccak256(code.original_byte_slice());
+        account.code = Some(code);
+        self.backend_mut().insert_account_info(address, account);
+        Ok(())
+    }
+
+    /// Set the storage of an account.
+    pub fn set_storage(
+        &mut self,
+        address: Address,
+        storage: HashMap<U256, U256>,
+    ) -> BackendResult<()> {
+        self.backend_mut().replace_account_storage(address, storage)?;
+        Ok(())
+    }
+
+    /// Set a storage slot of an account.
+    pub fn set_storage_slot(
+        &mut self,
+        address: Address,
+        slot: U256,
+        value: U256,
+    ) -> BackendResult<()> {
+        self.backend_mut().insert_account_storage(address, slot, value)?;
+        Ok(())
     }
 
     /// Returns `true` if the account has no code.

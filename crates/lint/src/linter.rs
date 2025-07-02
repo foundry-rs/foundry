@@ -1,12 +1,17 @@
 use foundry_compilers::Language;
 use foundry_config::lint::Severity;
-use solar_ast::{visit::Visit, Expr, ItemFunction, ItemStruct, VariableDefinition};
+use solar_ast::{
+    visit::Visit, Expr, ImportDirective, ItemContract, ItemFunction, ItemStruct, SourceUnit,
+    UsingDirective, VariableDefinition,
+};
 use solar_interface::{
     data_structures::Never,
     diagnostics::{DiagBuilder, DiagId, DiagMsg, MultiSpan, Style},
     Session, Span,
 };
 use std::{ops::ControlFlow, path::PathBuf};
+
+use crate::inline_config::InlineConfig;
 
 /// Trait representing a generic linter for analyzing and reporting issues in smart contract source
 /// code files. A linter can be implemented for any smart contract language supported by Foundry.
@@ -36,17 +41,22 @@ pub trait Lint {
 
 pub struct LintContext<'s> {
     sess: &'s Session,
-    desc: bool,
+    with_description: bool,
+    pub inline_config: InlineConfig,
 }
 
 impl<'s> LintContext<'s> {
-    pub fn new(sess: &'s Session, with_description: bool) -> Self {
-        Self { sess, desc: with_description }
+    pub fn new(sess: &'s Session, with_description: bool, config: InlineConfig) -> Self {
+        Self { sess, with_description, inline_config: config }
     }
 
     /// Helper method to emit diagnostics easily from passes.
     pub fn emit<L: Lint>(&self, lint: &'static L, span: Span) {
-        let desc = if self.desc { lint.description() } else { "" };
+        if self.inline_config.is_disabled(span, lint.id()) {
+            return;
+        }
+
+        let desc = if self.with_description { lint.description() } else { "" };
         let diag: DiagBuilder<'_, ()> = self
             .sess
             .dcx
@@ -60,7 +70,7 @@ impl<'s> LintContext<'s> {
 
     /// Emit a diagnostic with a code fix proposal.
     pub fn emit_with_fix<L: Lint>(&self, lint: &'static L, span: Span, snippet: Snippet) {
-        let desc = if self.desc { lint.description() } else { "" };
+        let desc = if self.with_description { lint.description() } else { "" };
 
         let diag: DiagBuilder<'_, ()> = self
             .sess
@@ -137,14 +147,43 @@ pub trait EarlyLintPass<'ast>: Send + Sync {
         _var: &'ast VariableDefinition<'ast>,
     ) {
     }
-
+    fn check_import_directive(
+        &mut self,
+        _ctx: &LintContext<'_>,
+        _import: &'ast ImportDirective<'ast>,
+    ) {
+    }
+    fn check_using_directive(
+        &mut self,
+        _ctx: &LintContext<'_>,
+        _using: &'ast UsingDirective<'ast>,
+    ) {
+    }
+    fn check_item_contract(&mut self, _ctx: &LintContext<'_>, _contract: &'ast ItemContract<'ast>) {
+    }
     // TODO: Add methods for each required AST node type
+
+    /// Should be called after the source unit has been visited. Enables lints that require
+    /// knowledge of the entire AST to perform their analysis.
+    fn check_full_source_unit(&mut self, _ctx: &LintContext<'_>, _ast: &'ast SourceUnit<'ast>) {}
 }
 
 /// Visitor struct for `EarlyLintPass`es
 pub struct EarlyLintVisitor<'a, 's, 'ast> {
     pub ctx: &'a LintContext<'s>,
     pub passes: &'a mut [Box<dyn EarlyLintPass<'ast> + 's>],
+}
+
+/// Extends the [`Visit`] trait functionality with a hook that can run after the initial traversal.
+impl<'s, 'ast> EarlyLintVisitor<'_, 's, 'ast>
+where
+    's: 'ast,
+{
+    pub fn post_source_unit(&mut self, ast: &'ast SourceUnit<'ast>) {
+        for pass in self.passes.iter_mut() {
+            pass.check_full_source_unit(self.ctx, ast);
+        }
+    }
 }
 
 impl<'s, 'ast> Visit<'ast> for EarlyLintVisitor<'_, 's, 'ast>
@@ -188,6 +227,36 @@ where
             pass.check_item_function(self.ctx, func)
         }
         self.walk_item_function(func)
+    }
+
+    fn visit_import_directive(
+        &mut self,
+        import: &'ast ImportDirective<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            pass.check_import_directive(self.ctx, import);
+        }
+        self.walk_import_directive(import)
+    }
+
+    fn visit_using_directive(
+        &mut self,
+        using: &'ast UsingDirective<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            pass.check_using_directive(self.ctx, using);
+        }
+        self.walk_using_directive(using)
+    }
+
+    fn visit_item_contract(
+        &mut self,
+        contract: &'ast ItemContract<'ast>,
+    ) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            pass.check_item_contract(self.ctx, contract);
+        }
+        self.walk_item_contract(contract)
     }
 
     // TODO: Add methods for each required AST node type, mirroring `solar_ast::visit::Visit` method

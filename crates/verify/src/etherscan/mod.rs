@@ -232,9 +232,11 @@ impl EtherscanVerificationProvider {
         let check = etherscan.contract_abi(verify_contract.address).await;
 
         if let Err(err) = check {
-            match err {
-                EtherscanError::ContractCodeNotVerified(_) => return Ok(false),
-                error => return Err(error.into()),
+            return match err {
+                EtherscanError::ContractCodeNotVerified(_) => Ok(false),
+                error => Err(error).wrap_err_with(|| {
+                    format!("Failed to obtain contract ABI for {}", verify_contract.address)
+                }),
             }
         }
 

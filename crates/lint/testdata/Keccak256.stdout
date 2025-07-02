@@ -1,0 +1,119 @@
+VARS: {
+    "HASH": FixedBytes(32),
+    "MixedCase_Variable": UInt(256),
+    "Enabled_MixedCase_Variable": UInt(256),
+    "YetAnother_MixedCase": UInt(256),
+    "Another_MixedCase": UInt(256),
+    "OTHER_HASH": FixedBytes(32),
+    "hash": FixedBytes(32),
+    "c": FixedBytes(32),
+    "b": UInt(256),
+    "a": UInt(256),
+}
+================
+NEW ABI CALL: encodePacked
+ALL ARE 1 WORD?
+"a" > UInt(256) (uint256)
+"b" > UInt(256) (uint256)
+TRUE
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(a) }
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(b) }
+------------
+NEW ABI CALL: encodePacked
+ALL ARE 1 WORD?
+"a" > UInt(256) (uint256)
+"b" > UInt(256) (uint256)
+TRUE
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(a) }
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(b) }
+------------
+NEW ABI CALL: encode
+ALL ARE 1 WORD?
+"a" > UInt(256) (uint256)
+"b" > UInt(256) (uint256)
+"c" > FixedBytes(32) (bytes32)
+TRUE
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(a) }
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(b) }
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(c) }
+------------
+NEW ABI CALL: encodePacked
+ALL ARE 1 WORD?
+"a" > UInt(256) (uint256)
+"b" > UInt(256) (uint256)
+TRUE
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(a) }
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(b) }
+------------
+NEW ABI CALL: encodePacked
+ALL ARE 1 WORD?
+"a" > UInt(256) (uint256)
+"b" > UInt(256) (uint256)
+TRUE
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(a) }
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(b) }
+------------
+NEW ABI CALL: encodePacked
+ALL ARE 1 WORD?
+"a" > UInt(256) (uint256)
+"b" > UInt(256) (uint256)
+TRUE
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(a) }
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(b) }
+------------
+NEW ABI CALL: encodePacked
+ALL ARE 1 WORD?
+"a" > UInt(256) (uint256)
+"b" > UInt(256) (uint256)
+TRUE
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(a) }
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(b) }
+------------
+NEW ABI CALL: encodePacked
+ALL ARE 1 WORD?
+"a" > UInt(256) (uint256)
+"b" > UInt(256) (uint256)
+TRUE
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(a) }
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(b) }
+------------
+NEW ABI CALL: encodePacked
+ALL ARE 1 WORD?
+"a" > UInt(256) (uint256)
+"b" > UInt(256) (uint256)
+TRUE
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(a) }
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(b) }
+------------
+NEW ABI CALL: encodePacked
+ALL ARE 1 WORD?
+"a" > UInt(256) (uint256)
+"b" > UInt(256) (uint256)
+TRUE
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(a) }
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(b) }
+------------
+NEW ABI CALL: encodePacked
+ALL ARE 1 WORD?
+"a" > UInt(256) (uint256)
+"b" > UInt(256) (uint256)
+TRUE
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(a) }
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(b) }
+------------
+NEW ABI CALL: encodePacked
+ALL ARE 1 WORD?
+"a" > UInt(256) (uint256)
+"b" > UInt(256) (uint256)
+TRUE
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(a) }
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(b) }
+------------
+NEW ABI CALL: encodePacked
+ALL ARE 1 WORD?
+"a" > UInt(256) (uint256)
+"b" > UInt(256) (uint256)
+TRUE
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(a) }
+Expr { span: ROOT/testdata/Keccak256.sol:LL:CC, kind: Ident(b) }
+------------
