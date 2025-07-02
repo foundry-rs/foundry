@@ -492,7 +492,7 @@ impl StructToWrite {
     }
 
     /// Path which can be used to reference this struct in input/output parameters. Either
-    /// StructName or ParantName.StructName
+    /// StructName or ParentName.StructName
     fn full_path(&self) -> String {
         if self.contract_name.is_some() {
             format!("{}.{}", self.struct_or_contract_name_with_alias(), self.name)

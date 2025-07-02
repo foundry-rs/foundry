@@ -296,7 +296,7 @@ pub struct WalletsInner {
     pub provided_sender: Option<Address>,
 }
 
-/// Clonable wrapper around [`WalletsInner`].
+/// Cloneable wrapper around [`WalletsInner`].
 #[derive(Debug, Clone)]
 pub struct Wallets {
     /// Inner data.

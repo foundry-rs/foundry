@@ -85,7 +85,7 @@ pub struct TxCorpusManager {
     // Whether corpus to use gzip file compression and decompression.
     corpus_gzip: bool,
     // Number of mutations until entry marked as eligible to be flushed from in-memory corpus.
-    // Mutations will be perfored at least `corpus_min_mutations` times.
+    // Mutations will be performed at least `corpus_min_mutations` times.
     corpus_min_mutations: usize,
     // Number of corpus that won't be evicted from memory.
     corpus_min_size: usize,

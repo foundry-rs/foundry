@@ -134,7 +134,7 @@ impl SequenceProgressState {
     }
 }
 
-/// Clonable wrapper around [SequenceProgressState].
+/// Cloneable wrapper around [SequenceProgressState].
 #[derive(Debug, Clone)]
 pub struct SequenceProgress {
     pub inner: Arc<RwLock<SequenceProgressState>>,
