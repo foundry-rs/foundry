@@ -213,6 +213,24 @@ where
     deserialize_u64_or_max(deserializer)?.try_into().map_err(D::Error::custom)
 }
 
+/// Deserialize into `U256` from either a `u64` or a `U256` hex string.
+pub fn deser_u64_to_u256<'de, D>(deserializer: D) -> Result<U256, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum NumericValue {
+        U256(U256),
+        U64(u64),
+    }
+
+    match NumericValue::deserialize(deserializer)? {
+        NumericValue::U64(n) => Ok(U256::from(n)),
+        NumericValue::U256(n) => Ok(n),
+    }
+}
+
 /// Helper type to parse both `u64` and `U256`
 #[derive(Clone, Copy, Deserialize)]
 #[serde(untagged)]
