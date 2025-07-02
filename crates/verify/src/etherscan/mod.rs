@@ -1,7 +1,7 @@
 use crate::{
     provider::{VerificationContext, VerificationProvider},
     retry::RETRY_CHECK_ON_VERIFY,
-    verify::{VerifyArgs, VerifyCheckArgs},
+    verify::{ContractLanguage, VerifyArgs, VerifyCheckArgs},
     VerifierArgs,
 };
 use alloy_json_abi::Function;
@@ -26,7 +26,6 @@ use foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER;
 use regex::Regex;
 use semver::{BuildMetadata, Version};
 use std::{fmt::Debug, sync::LazyLock};
-use crate::verify::ContractLanguage;
 
 mod flatten;
 
@@ -73,7 +72,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 verify_args.address.to_checksum(None)
             )?;
 
-            return Ok(())
+            return Ok(());
         }
 
         trace!(?verify_args, "submitting verification request");
@@ -104,14 +103,14 @@ impl VerificationProvider for EtherscanVerificationProvider {
                         // specific for blockscout response
                         || resp.result == "Smart-contract already verified."
                     {
-                        return Ok(None)
+                        return Ok(None);
                     }
 
                     if resp.result.starts_with("Unable to locate ContractCode at") ||
                         resp.result.starts_with("The address is not a smart contract")
                     {
                         warn!("{}", resp.result);
-                        return Err(eyre!("Could not detect the deployment."))
+                        return Err(eyre!("Could not detect the deployment."));
                     }
 
                     warn!("Failed verify submission: {:?}", resp);
@@ -143,7 +142,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     retry: RETRY_CHECK_ON_VERIFY,
                     verifier: args.verifier,
                 };
-                return self.check(check_args).await
+                return self.check(check_args).await;
             }
         } else {
             sh_println!("Contract source code already verified")?;
@@ -174,20 +173,20 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 );
 
                 if resp.result == "Pending in queue" {
-                    return Err(RetryError::Retry(eyre!("Verification is still pending...")))
+                    return Err(RetryError::Retry(eyre!("Verification is still pending...")));
                 }
 
                 if resp.result == "Unable to verify" {
-                    return Err(RetryError::Retry(eyre!("Unable to verify.")))
+                    return Err(RetryError::Retry(eyre!("Unable to verify.")));
                 }
 
                 if resp.result == "Already Verified" {
                     let _ = sh_println!("Contract source code already verified");
-                    return Ok(())
+                    return Ok(());
                 }
 
                 if resp.status == "0" {
-                    return Err(RetryError::Break(eyre!("Contract failed to verify.")))
+                    return Err(RetryError::Break(eyre!("Contract failed to verify.")));
                 }
 
                 if resp.result == "Pass - Verified" {
@@ -322,7 +321,7 @@ impl EtherscanVerificationProvider {
         let (source, contract_name, code_format) =
             self.source_provider(args).source(args, context)?;
 
-        let lang = args.detect_language( context);
+        let lang = args.detect_language(context);
 
         let mut compiler_version = context.compiler_version.clone();
         compiler_version.build = match RE_BUILD_COMMIT.captures(compiler_version.build.as_str()) {
@@ -335,8 +334,6 @@ impl EtherscanVerificationProvider {
         } else {
             format!("v{}", ensure_solc_build_metadata(context.compiler_version.clone()).await?)
         };
-
-
 
         let constructor_args = self.constructor_args(args, context).await?;
         let mut verify_args =
@@ -368,9 +365,7 @@ impl EtherscanVerificationProvider {
             verify_args = if let Some(_optimizations) = args.num_of_optimizations {
                 verify_args.optimized().runs(1)
             } else if context.config.optimizer == Some(true) {
-                verify_args
-                    .optimized()
-                    .runs(1)
+                verify_args.optimized().runs(1)
             } else {
                 verify_args.not_optimized().runs(0)
             };
@@ -403,10 +398,10 @@ impl EtherscanVerificationProvider {
                 read_constructor_args_file(constructor_args_path.to_path_buf())?,
             )?;
             let encoded_args = hex::encode(encoded_args);
-            return Ok(Some(encoded_args[8..].into()))
+            return Ok(Some(encoded_args[8..].into()));
         }
         if args.guess_constructor_args {
-            return Ok(Some(self.guess_constructor_args(args, context).await?))
+            return Ok(Some(self.guess_constructor_args(args, context).await?));
         }
 
         Ok(args.constructor_args.clone())

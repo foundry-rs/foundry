@@ -1,6 +1,5 @@
 use super::{EtherscanSourceProvider, VerifyArgs};
-use crate::provider::VerificationContext;
-use crate::verify::ContractLanguage;
+use crate::{provider::VerificationContext, verify::ContractLanguage};
 use eyre::{Context, Result};
 use foundry_block_explorers::verify::CodeFormat;
 use foundry_compilers::{artifacts::StandardJsonCompilerInput, solc::SolcLanguage};
