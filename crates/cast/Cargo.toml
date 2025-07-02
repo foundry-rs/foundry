@@ -34,6 +34,7 @@ alloy-chains.workspace = true
 alloy-consensus = { workspace = true, features = ["serde", "kzg"] }
 alloy-contract.workspace = true
 alloy-dyn-abi.workspace = true
+alloy-eips.workspace = true
 alloy-ens = { workspace = true, features = ["provider"] }
 alloy-json-abi.workspace = true
 alloy-json-rpc.workspace = true

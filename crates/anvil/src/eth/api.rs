@@ -189,6 +189,9 @@ impl EthApi {
             EthRequest::EthSendTransaction(request) => {
                 self.send_transaction(*request).await.to_rpc_result()
             }
+            EthRequest::EthSendTransactionSync(request) => {
+                self.send_transaction_sync(*request).await.to_rpc_result()
+            }
             EthRequest::EthChainId(_) => self.eth_chain_id().to_rpc_result(),
             EthRequest::EthNetworkId(_) => self.network_id().to_rpc_result(),
             EthRequest::NetListening(_) => self.net_listening().to_rpc_result(),
@@ -255,6 +258,9 @@ impl EthApi {
             }
             EthRequest::EthSendRawTransaction(tx) => {
                 self.send_raw_transaction(tx).await.to_rpc_result()
+            }
+            EthRequest::EthSendRawTransactionSync(tx) => {
+                self.send_raw_transaction_sync(tx).await.to_rpc_result()
             }
             EthRequest::EthCall(call, block, state_override, block_overrides) => self
                 .call(call, block, EvmOverrides::new(state_override, block_overrides))
@@ -1067,6 +1073,50 @@ impl EthApi {
         self.add_pending_transaction(pending_transaction, requires, provides)
     }
 
+    /// Waits for a transaction to be included in a block and returns its receipt (no timeout).
+    async fn await_transaction_inclusion(&self, hash: TxHash) -> Result<ReceiptResponse> {
+        let mut stream = self.new_block_notifications();
+        while let Some(notification) = stream.next().await {
+            if let Some(block) = self.backend.get_block_by_hash(notification.hash) {
+                if block.transactions.iter().any(|tx| tx.hash() == hash) {
+                    if let Some(receipt) = self.backend.transaction_receipt(hash).await? {
+                        return Ok(receipt);
+                    }
+                }
+            }
+        }
+
+        Err(BlockchainError::Message("Failed to await transaction inclusion".to_string()))
+    }
+
+    /// Waits for a transaction to be included in a block and returns its receipt, with timeout.
+    async fn check_transaction_inclusion(&self, hash: TxHash) -> Result<ReceiptResponse> {
+        const TIMEOUT_DURATION: Duration = Duration::from_secs(30);
+        tokio::time::timeout(TIMEOUT_DURATION, self.await_transaction_inclusion(hash))
+            .await
+            .unwrap_or_else(|_elapsed| {
+                Err(BlockchainError::TransactionConfirmationTimeout {
+                    hash,
+                    duration: TIMEOUT_DURATION,
+                })
+            })
+    }
+
+    /// Sends a transaction and waits for receipt
+    ///
+    /// Handler for ETH RPC call: `eth_sendTransactionSync`
+    pub async fn send_transaction_sync(
+        &self,
+        request: WithOtherFields<TransactionRequest>,
+    ) -> Result<ReceiptResponse> {
+        node_info!("eth_sendTransactionSync");
+        let hash = self.send_transaction(request).await?;
+
+        let receipt = self.check_transaction_inclusion(hash).await?;
+
+        Ok(ReceiptResponse::from(receipt))
+    }
+
     /// Sends signed transaction, returning its hash.
     ///
     /// Handler for ETH RPC call: `eth_sendRawTransaction`
@@ -1103,6 +1153,18 @@ impl EthApi {
         let tx = self.pool.add_transaction(pool_transaction)?;
         trace!(target: "node", "Added transaction: [{:?}] sender={:?}", tx.hash(), from);
         Ok(*tx.hash())
+    }
+
+    /// Sends signed transaction, returning its receipt.
+    ///
+    /// Handler for ETH RPC call: `eth_sendRawTransactionSync`
+    pub async fn send_raw_transaction_sync(&self, tx: Bytes) -> Result<ReceiptResponse> {
+        node_info!("eth_sendRawTransactionSync");
+
+        let hash = self.send_raw_transaction(tx).await?;
+        let receipt = self.check_transaction_inclusion(hash).await?;
+
+        Ok(ReceiptResponse::from(receipt))
     }
 
     /// Call contract, returning the output data.
@@ -1838,13 +1900,15 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_reset`
     pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
+        self.reset_instance_id();
         node_info!("anvil_reset");
         if let Some(forking) = forking {
             // if we're resetting the fork we need to reset the instance id
-            self.reset_instance_id();
             self.backend.reset_fork(forking).await
         } else {
-            Err(BlockchainError::RpcUnimplemented)
+            // Reset to a fresh in-memory state
+
+            self.backend.reset_to_in_mem().await
         }
     }
 
@@ -2662,7 +2726,7 @@ impl EthApi {
     }
 }
 
-// ===== impl Wallet endppoints =====
+// ===== impl Wallet endpoints =====
 impl EthApi {
     /// Get the capabilities of the wallet.
     ///
@@ -2905,7 +2969,9 @@ impl EthApi {
         let to = request.to.as_ref().and_then(TxKind::to);
 
         // check certain fields to see if the request could be a simple transfer
-        let maybe_transfer = request.input.input().is_none() &&
+        let maybe_transfer = (request.input.input().is_none() ||
+            request.input.input().is_some_and(|data| data.is_empty())) &&
+            request.authorization_list.is_none() &&
             request.access_list.is_none() &&
             request.blob_versioned_hashes.is_none();
 
@@ -3412,6 +3478,8 @@ enum GasEstimationCallResult {
 }
 
 /// Converts the result of a call to revm EVM into a [`GasEstimationCallResult`].
+///
+/// Expected to stay up to date with: <https://github.com/bluealloy/revm/blob/main/crates/interpreter/src/instruction_result.rs>
 impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEstimationCallResult {
     type Error = BlockchainError;
 
@@ -3425,8 +3493,15 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
             Ok((exit, output, gas, _)) => match exit {
                 return_ok!() | InstructionResult::CallOrCreate => Ok(Self::Success(gas)),
 
+                // Revert opcodes:
                 InstructionResult::Revert => Ok(Self::Revert(output.map(|o| o.into_data()))),
+                InstructionResult::CallTooDeep |
+                InstructionResult::OutOfFunds |
+                InstructionResult::CreateInitCodeStartingEF00 |
+                InstructionResult::InvalidEOFInitCode |
+                InstructionResult::InvalidExtDelegateCallTarget => Ok(Self::EvmError(exit)),
 
+                // Out of gas errors:
                 InstructionResult::OutOfGas |
                 InstructionResult::MemoryOOG |
                 InstructionResult::MemoryLimitOOG |
@@ -3434,11 +3509,10 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 InstructionResult::InvalidOperandOOG |
                 InstructionResult::ReentrancySentryOOG => Ok(Self::OutOfGas),
 
+                // Other errors:
                 InstructionResult::OpcodeNotFound |
                 InstructionResult::CallNotAllowedInsideStatic |
                 InstructionResult::StateChangeDuringStaticCall |
-                InstructionResult::InvalidExtDelegateCallTarget |
-                InstructionResult::InvalidEXTCALLTarget |
                 InstructionResult::InvalidFEOpcode |
                 InstructionResult::InvalidJump |
                 InstructionResult::NotActivated |
@@ -3453,17 +3527,12 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 InstructionResult::CreateContractStartingWithEF |
                 InstructionResult::CreateInitCodeSizeLimit |
                 InstructionResult::FatalExternalError |
-                InstructionResult::OutOfFunds |
-                InstructionResult::CallTooDeep => Ok(Self::EvmError(exit)),
-
-                // Handle Revm EOF InstructionResults: not supported
                 InstructionResult::ReturnContractInNotInitEOF |
                 InstructionResult::EOFOpcodeDisabledInLegacy |
                 InstructionResult::SubRoutineStackOverflow |
-                InstructionResult::CreateInitCodeStartingEF00 |
-                InstructionResult::InvalidEOFInitCode |
                 InstructionResult::EofAuxDataOverflow |
-                InstructionResult::EofAuxDataTooSmall => Ok(Self::EvmError(exit)),
+                InstructionResult::EofAuxDataTooSmall |
+                InstructionResult::InvalidEXTCALLTarget => Ok(Self::EvmError(exit)),
             },
         }
     }

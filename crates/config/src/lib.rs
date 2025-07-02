@@ -118,7 +118,7 @@ pub mod soldeer;
 use soldeer::{SoldeerConfig, SoldeerDependencyConfig};
 
 mod vyper;
-pub use vyper::{normalize_evm_version_vyper, VyperConfig};
+pub use vyper::VyperConfig;
 
 mod bind_json;
 use bind_json::BindJsonConfig;
@@ -270,6 +270,8 @@ pub struct Config {
     pub verbosity: u8,
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
+    /// Whether to accept invalid certificates for the rpc server.
+    pub eth_rpc_accept_invalid_certs: bool,
     /// JWT secret that should be used for any rpc calls
     pub eth_rpc_jwt: Option<String>,
     /// Timeout that should be used for any rpc calls
@@ -1059,6 +1061,7 @@ impl Config {
             }
         };
         remove_test_dir(&self.fuzz.failure_persist_dir);
+        remove_test_dir(&self.invariant.corpus_dir);
         remove_test_dir(&self.invariant.failure_persist_dir);
 
         Ok(())
@@ -1530,7 +1533,6 @@ impl Config {
             remappings: Vec::new(),
             // Set with `with_extra_output` below.
             output_selection: Default::default(),
-            eof_version: None,
         }
         .with_extra_output(self.configured_artifacts_handler().output_selection());
 
@@ -1549,7 +1551,7 @@ impl Config {
     /// - evm version
     pub fn vyper_settings(&self) -> Result<VyperSettings, SolcError> {
         Ok(VyperSettings {
-            evm_version: Some(normalize_evm_version_vyper(self.evm_version)),
+            evm_version: Some(self.evm_version),
             optimize: self.vyper.optimize,
             bytecode_metadata: None,
             // TODO: We don't yet have a way to deserialize other outputs correctly, so request only
@@ -2365,6 +2367,7 @@ impl Default for Config {
             disable_block_gas_limit: false,
             memory_limit: 1 << 27, // 2**27 = 128MiB = 134_217_728 bytes
             eth_rpc_url: None,
+            eth_rpc_accept_invalid_certs: false,
             eth_rpc_jwt: None,
             eth_rpc_timeout: None,
             eth_rpc_headers: None,
@@ -4538,6 +4541,7 @@ mod tests {
                     runs: 512,
                     depth: 10,
                     failure_persist_dir: Some(PathBuf::from("cache/invariant")),
+                    corpus_dir: None,
                     ..Default::default()
                 }
             );

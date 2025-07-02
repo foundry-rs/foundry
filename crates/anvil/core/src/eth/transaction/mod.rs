@@ -361,7 +361,7 @@ pub struct PendingTransaction {
     pub transaction: MaybeImpersonatedTransaction,
     /// the recovered sender of this transaction
     sender: Address,
-    /// hash of `transaction`, so it can easily be reused with encoding and hashing agan
+    /// hash of `transaction`, so it can easily be reused with encoding and hashing again
     hash: TxHash,
 }
 
@@ -1441,6 +1441,7 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
             0x01 => TypedReceipt::EIP2930(receipt_with_bloom),
             0x02 => TypedReceipt::EIP1559(receipt_with_bloom),
             0x03 => TypedReceipt::EIP4844(receipt_with_bloom),
+            0x04 => TypedReceipt::EIP7702(receipt_with_bloom),
             0x7E => TypedReceipt::Deposit(DepositReceipt {
                 inner: receipt_with_bloom,
                 deposit_nonce: other
@@ -1461,10 +1462,17 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use alloy_primitives::{b256, hex, LogData};
     use std::str::FromStr;
 
-    use super::*;
+    // <https://github.com/foundry-rs/foundry/issues/10852>
+    #[test]
+    fn test_receipt_convert() {
+        let s = r#"{"type":"0x4","status":"0x1","cumulativeGasUsed":"0x903fd1","logs":[{"address":"0x0000d9fcd47bf761e7287d8ee09917d7e2100000","topics":["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef","0x0000000000000000000000000000000000000000000000000000000000000000","0x000000000000000000000000234ce51365b9c417171b6dad280f49143e1b0547"],"data":"0x00000000000000000000000000000000000000000000032139b42c3431700000","blockHash":"0xd26b59c1d8b5bfa9362d19eb0da3819dfe0b367987a71f6d30908dd45e0d7a60","blockNumber":"0x159663e","blockTimestamp":"0x68411f7b","transactionHash":"0x17a6af73d1317e69cfc3cac9221bd98261d40f24815850a44dbfbf96652ae52a","transactionIndex":"0x22","logIndex":"0x158","removed":false}],"logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000000000000000008100000000000000000000000000000000000000000000000020000200000000000000800000000800000000000000010000000000000000002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000000","transactionHash":"0x17a6af73d1317e69cfc3cac9221bd98261d40f24815850a44dbfbf96652ae52a","transactionIndex":"0x22","blockHash":"0xd26b59c1d8b5bfa9362d19eb0da3819dfe0b367987a71f6d30908dd45e0d7a60","blockNumber":"0x159663e","gasUsed":"0x28ee7","effectiveGasPrice":"0x4bf02090","from":"0x234ce51365b9c417171b6dad280f49143e1b0547","to":"0x234ce51365b9c417171b6dad280f49143e1b0547","contractAddress":null}"#;
+        let receipt: AnyTransactionReceipt = serde_json::from_str(s).unwrap();
+        let _converted = convert_to_anvil_receipt(receipt).unwrap();
+    }
 
     #[test]
     fn test_decode_call() {

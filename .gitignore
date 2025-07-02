@@ -7,3 +7,8 @@ out.json
 .vscode
 .claude
 CLAUDE.md
+.env
+node_modules
+dist
+bin
+_

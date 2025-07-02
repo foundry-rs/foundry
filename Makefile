@@ -134,3 +134,20 @@ pr: ## Run all checks and tests.
 	make deny && \
 	make lint && \
 	make test
+
+# dprint formatting commands
+.PHONY: dprint-fmt
+dprint-fmt: ## Format code with dprint
+	@if ! command -v dprint > /dev/null; then \
+		echo "Installing dprint..."; \
+		cargo install dprint; \
+	fi
+	dprint fmt
+
+.PHONY: dprint-check
+dprint-check: ## Check formatting with dprint
+	@if ! command -v dprint > /dev/null; then \
+		echo "Installing dprint..."; \
+		cargo install dprint; \
+	fi
+	dprint check

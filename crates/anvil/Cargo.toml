@@ -84,7 +84,7 @@ futures.workspace = true
 async-trait.workspace = true
 
 # misc
-flate2 = "1.1"
+flate2.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 thiserror.workspace = true
@@ -125,6 +125,7 @@ cli = ["tokio/full", "cmd"]
 cmd = [
     "clap",
     "clap_complete",
+    "clap_complete_fig",
     "dep:fdlimit",
     "dep:ctrlc",
     "anvil-server/clap",
