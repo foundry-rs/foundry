@@ -4153,7 +4153,7 @@ mod tests {
 
             let config = Config::load().unwrap();
 
-            assert_eq!(config.block_number, 1337);
+            assert_eq!(config.block_number, U256::from(1337));
             assert_eq!(config.sender, addr);
             assert_eq!(config.fuzz.runs, 420);
             assert_eq!(config.invariant.depth, 20);
