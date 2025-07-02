@@ -2724,7 +2724,7 @@ impl EthApi {
     }
 }
 
-// ===== impl Wallet endppoints =====
+// ===== impl Wallet endpoints =====
 impl EthApi {
     /// Get the capabilities of the wallet.
     ///

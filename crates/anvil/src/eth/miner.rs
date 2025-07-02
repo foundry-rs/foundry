@@ -135,7 +135,7 @@ pub enum MiningMode {
     /// A miner that constructs a new block every `interval` tick
     FixedBlockTime(FixedBlockTimeMiner),
 
-    /// A minner that uses both Auto and FixedBlockTime
+    /// A miner that uses both Auto and FixedBlockTime
     Mixed(ReadyTransactionMiner, FixedBlockTimeMiner),
 }
 
