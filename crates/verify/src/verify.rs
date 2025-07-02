@@ -23,11 +23,14 @@ use reqwest::Url;
 use semver::BuildMetadata;
 use std::path::PathBuf;
 
-
-
+/// The programming language used for smart contract development.
+/// 
+/// This enum represents the supported contract languages for verification.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub enum ContractLanguage {
+    /// Solidity programming language
     Solidity,
+    /// Vyper programming language  
     Vyper,
 }
 
