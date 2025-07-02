@@ -20,7 +20,7 @@ use std::{path::PathBuf, str::FromStr};
     name = "cast",
     version = SHORT_VERSION,
     long_version = LONG_VERSION,
-    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html",
+    after_help = "Find more information in the book: https://getfoundry.sh/cast/overview",
     next_display_order = None,
 )]
 pub struct Cast {
@@ -422,8 +422,30 @@ pub enum CastSubcommand {
         address: Option<Address>,
 
         /// The nonce of the deployer address.
-        #[arg(long)]
+        #[arg(
+            long,
+            conflicts_with = "salt",
+            conflicts_with = "init_code",
+            conflicts_with = "init_code_hash"
+        )]
         nonce: Option<u64>,
+
+        /// The salt for CREATE2 address computation.
+        #[arg(long, conflicts_with = "nonce")]
+        salt: Option<B256>,
+
+        /// The init code for CREATE2 address computation.
+        #[arg(
+            long,
+            requires = "salt",
+            conflicts_with = "init_code_hash",
+            conflicts_with = "nonce"
+        )]
+        init_code: Option<String>,
+
+        /// The init code hash for CREATE2 address computation.
+        #[arg(long, requires = "salt", conflicts_with = "init_code", conflicts_with = "nonce")]
+        init_code_hash: Option<B256>,
 
         #[command(flatten)]
         rpc: RpcOpts,
@@ -1047,6 +1069,10 @@ pub enum CastSubcommand {
     /// Decodes a raw signed EIP 2718 typed transaction
     #[command(visible_aliases = &["dt", "decode-tx"])]
     DecodeTransaction { tx: Option<String> },
+
+    /// Recovery an EIP-7702 authority from a Authorization JSON string.
+    #[command(visible_aliases = &["decode-auth"])]
+    RecoverAuthority { auth: String },
 
     /// Extracts function selectors and arguments from bytecode
     #[command(visible_alias = "sel")]

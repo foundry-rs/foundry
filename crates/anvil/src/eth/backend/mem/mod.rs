@@ -24,7 +24,6 @@ use crate::{
         macros::node_info,
         pool::transactions::PoolTransaction,
         sign::build_typed_transaction,
-        util::get_precompiles_for,
     },
     inject_precompiles,
     mem::{
@@ -40,14 +39,7 @@ use alloy_consensus::{
     Account, BlockHeader, EnvKzgSettings, Header, Receipt, ReceiptWithBloom, Signed,
     Transaction as TransactionTrait, TxEnvelope,
 };
-use alloy_eips::{
-    eip1559::BaseFeeParams,
-    eip2718::{
-        EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
-        LEGACY_TX_TYPE_ID,
-    },
-    eip7840::BlobParams,
-};
+use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap, Database, Evm};
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
@@ -516,10 +508,6 @@ impl Backend {
         self.fork.read().is_some()
     }
 
-    pub fn precompiles(&self) -> Vec<Address> {
-        get_precompiles_for(self.env.read().evm_env.cfg_env.spec)
-    }
-
     /// Resets the fork to a fresh state
     pub async fn reset_fork(&self, forking: Forking) -> Result<(), BlockchainError> {
         if !self.is_fork() {
@@ -624,6 +612,54 @@ impl Backend {
         } else {
             Err(RpcError::invalid_params("Forking not enabled").into())
         }
+    }
+
+    /// Resets the backend to a fresh in-memory state, clearing all existing data
+    pub async fn reset_to_in_mem(&self) -> Result<(), BlockchainError> {
+        // Clear the fork if any exists
+        *self.fork.write() = None;
+
+        // Get environment and genesis config
+        let env = self.env.read().clone();
+        let genesis_timestamp = self.genesis.timestamp;
+        let genesis_number = self.genesis.number;
+        let spec_id = self.spec_id();
+
+        // Reset environment to genesis state
+        {
+            let mut env = self.env.write();
+            env.evm_env.block_env.number = genesis_number;
+            env.evm_env.block_env.timestamp = genesis_timestamp;
+            // Reset other block env fields to their defaults
+            env.evm_env.block_env.basefee = self.fees.base_fee();
+            env.evm_env.block_env.prevrandao = Some(B256::ZERO);
+        }
+
+        // Clear all storage and reinitialize with genesis
+        let base_fee = if self.fees.is_eip1559() { Some(self.fees.base_fee()) } else { None };
+        *self.blockchain.storage.write() =
+            BlockchainStorage::new(&env, spec_id, base_fee, genesis_timestamp, genesis_number);
+        self.states.write().clear();
+
+        // Clear the database
+        self.db.write().await.clear();
+
+        // Reset time manager
+        self.time.reset(genesis_timestamp);
+
+        // Reset fees to initial state
+        if self.fees.is_eip1559() {
+            self.fees.set_base_fee(crate::eth::fees::INITIAL_BASE_FEE);
+        }
+
+        self.fees.set_gas_price(crate::eth::fees::INITIAL_GAS_PRICE);
+
+        // Reapply genesis configuration
+        self.apply_genesis().await?;
+
+        trace!(target: "backend", "reset to fresh in-memory state");
+
+        Ok(())
     }
 
     async fn reset_block_number(
@@ -1448,6 +1484,8 @@ impl Backend {
         fee_details: FeeDetails,
         block_env: BlockEnv,
     ) -> Env {
+        let tx_type = request.minimal_tx_type() as u8;
+
         let WithOtherFields::<TransactionRequest> {
             inner:
                 TransactionRequest {
@@ -1463,26 +1501,10 @@ impl Backend {
                     sidecar: _,
                     chain_id,
                     transaction_type,
-                    max_fee_per_gas,
-                    max_priority_fee_per_gas,
                     .. // Rest of the gas fees related fields are taken from `fee_details`
                 },
             other,
         } = request;
-
-        let tx_type = transaction_type.unwrap_or_else(|| {
-            if authorization_list.is_some() {
-                EIP7702_TX_TYPE_ID
-            } else if blob_versioned_hashes.is_some() {
-                EIP4844_TX_TYPE_ID
-            } else if max_fee_per_gas.is_some() || max_priority_fee_per_gas.is_some() {
-                EIP1559_TX_TYPE_ID
-            } else if access_list.is_some() {
-                EIP2930_TX_TYPE_ID
-            } else {
-                LEGACY_TX_TYPE_ID
-            }
-        });
 
         let FeeDetails {
             gas_price,
