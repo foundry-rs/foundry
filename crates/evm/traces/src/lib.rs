@@ -117,8 +117,8 @@ impl SparsedTraceArena {
                                 remove = false;
                             }
                             // Handle ends of internal calls
-                            internal_calls.retain(|(start_item_idx, remove_start, end_step_idx)| {
-                                if *end_step_idx != step_idx {
+                            internal_calls.retain(|(start_item_idx, remove_start, end_idx)| {
+                                if *end_idx != step_idx {
                                     return true;
                                 }
                                 // only remove start if end should be removed as well
