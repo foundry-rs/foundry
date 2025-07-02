@@ -4051,9 +4051,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-block-explorers"
-version = "0.18.0"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dd57f39a860475780c0b001167b2bb9039e78d8d09323c6949897f5351ffae6"
+checksum = "1df5a84fc0c693ed224f6077652d3c7ac9dc1e475a2515680a97b498f6b8fd1d"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -8700,7 +8700,7 @@ dependencies = [
  "derive_builder",
  "derive_more 2.0.1",
  "dunce",
- "itertools 0.10.5",
+ "itertools 0.14.0",
  "itoa",
  "lasso",
  "match_cfg",
@@ -8712,7 +8712,7 @@ dependencies = [
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 1.0.69",
+ "thiserror 2.0.12",
  "tracing",
  "unicode-width 0.2.0",
 ]
@@ -8737,7 +8737,7 @@ dependencies = [
  "alloy-primitives",
  "bitflags 2.9.1",
  "bumpalo",
- "itertools 0.10.5",
+ "itertools 0.14.0",
  "memchr",
  "num-bigint",
  "num-rational",
