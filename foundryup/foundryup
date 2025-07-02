@@ -197,22 +197,29 @@ main() {
 
       # Check if the binaries are already installed and match the expected hashes.
       # If they do, skip the download.
+      version_dir="$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
       all_match=true
       for bin in "${BINS[@]}"; do
         expected="${HASHES[$bin]}"
-        path="$FOUNDRY_BIN_DIR/$bin"
+        path="$version_dir/$bin"
 
         if [ -z "$expected" ] || [ ! -x "$path" ]; then
           all_match=false
-          continue
+          break
         fi
 
         actual=$(sha256sum "$path" | cut -d' ' -f1)
-        [ "$actual" = "$expected" ] || all_match=false
+        if [ "$actual" != "$expected" ]; then
+          all_match=false
+          break
+        fi
       done
 
       if $all_match; then
-        say "binaries are already installed and verified, skipping download"
+        say "version $FOUNDRYUP_TAG already installed and verified, activating..."
+        FOUNDRYUP_VERSION=$FOUNDRYUP_TAG
+        use
+        say "done!"
         exit 0
       fi
     fi
