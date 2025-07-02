@@ -902,7 +902,7 @@ forgetest_async!(can_deploy_with_custom_create2_notmatched_bytecode, |prj, cmd| 
         .broadcast(ScriptOutcome::ScriptFailed);
 });
 
-forgetest_async!(canot_deploy_with_nonexist_create2, |prj, cmd| {
+forgetest_async!(cannot_deploy_with_nonexist_create2, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
     let create2 = address!("0x0000000000000000000000000000000000b4956c");
@@ -1376,7 +1376,7 @@ forgetest_async!(does_script_override_correctly, |prj, cmd| {
     tester.add_sig("CheckOverrides", "run()").simulate(ScriptOutcome::OkNoEndpoint);
 });
 
-forgetest_async!(assert_tx_origin_is_not_overritten, |prj, cmd| {
+forgetest_async!(assert_tx_origin_is_not_overwritten, |prj, cmd| {
     cmd.args(["init", "--force"])
         .arg(prj.root())
         .assert_success()

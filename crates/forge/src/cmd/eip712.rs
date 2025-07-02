@@ -37,14 +37,14 @@ pub struct Eip712Args {
 struct Eip712Output {
     path: String,
     #[serde(rename = "type")]
-    typ: String,
+    ty: String,
     hash: B256,
 }
 
 impl Display for Eip712Output {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         writeln!(f, "{}:", self.path)?;
-        writeln!(f, " - type: {}", self.typ)?;
+        writeln!(f, " - type: {}", self.ty)?;
         writeln!(f, " - hash: {}", self.hash)
     }
 }
@@ -73,7 +73,7 @@ impl Eip712Args {
                     Some(Eip712Output {
                         path: resolver.get_struct_path(id),
                         hash: keccak256(resolved.as_bytes()),
-                        typ: resolved,
+                        ty: resolved,
                     })
                 })
                 .collect::<Vec<_>>();
