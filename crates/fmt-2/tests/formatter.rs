@@ -152,56 +152,56 @@ macro_rules! fmt_tests {
 fmt_tests! {
     #[ignore = "annotations are not valid Solidity"]
     Annotation,
-    ArrayExpressions, // TODO
-    BlockComments,
-    BlockCommentsFunction,
-    ConditionalOperatorExpression,
-    ConstructorDefinition,
-    ConstructorModifierStyle,
-    ContractDefinition, // TODO
-    DocComments, // TODO: wrap comments
-    DoWhileStatement,
-    EmitStatement,
-    EnumDefinition,
-    EnumVariants,
-    ErrorDefinition,
-    EventDefinition,
-    ForStatement,
-    FunctionCall, // TODO: fix PP so that comments aren't accounted for when breaking lines
-    FunctionCallArgsStatement,
-    FunctionDefinition, // TODO: fix fn block braces
-    FunctionDefinitionWithFunctionReturns,
-    FunctionType,
-    HexUnderscore,
-    IfStatement,
-    IfStatement2,
-    ImportDirective,
-    InlineDisable,
-    IntTypes,
-    LiteralExpression,
-    MappingType,
-    ModifierDefinition,
-    NamedFunctionCallExpression,
-    NumberLiteralUnderscore,
-    OperatorExpressions,
-    PragmaDirective,
-    Repros,
-    ReturnStatement,
-    RevertNamedArgsStatement,
-    RevertStatement,
-    SimpleComments,
-    SortedImports,
-    StatementBlock,
-    StructDefinition,
-    ThisExpression,
-    TrailingComma,
-    TryStatement,
-    TypeDefinition,
-    UnitExpression,
-    UsingDirective,
-    VariableAssignment,
-    VariableDefinition,
-    WhileStatement,
-    Yul,
-    YulStrings,
+    ArrayExpressions, // TODO: print cmnt before memory kw once span is available (solar). Is the rest acceptable?
+    BlockComments, // FIX: empty line after doc cmnt and before constructor
+    BlockCommentsFunction, // OK
+    ConditionalOperatorExpression, // FIX: fn block braces
+    ConstructorDefinition, // OK
+    ConstructorModifierStyle, // OK
+    ContractDefinition, // TODO: check boxes, panics
+    DocComments, // FIX: idempotency (comment-related)
+    DoWhileStatement, // OK? (once block braces are fixed).. is it acceptable?
+    EmitStatement, // OK
+    EnumDefinition, // OK
+    EnumVariants, // OK
+    ErrorDefinition, // OK
+    EventDefinition, // OK? i think it works as intended.. is it acceptable?
+    ForStatement, // OK? (once block braces are fixed).. is it acceptable?
+    FunctionCall, // TODO: ask Dani how to enhance PP so that trailing comments aren't accounted for when breaking lines
+    FunctionCallArgsStatement, // FIX: fn block braces. Is the rest acceptable?
+    FunctionDefinition, // TODO: fix fn block braces + function postfix trailing cmnt
+    FunctionDefinitionWithFunctionReturns, // OK? is it acceptable?
+    FunctionType, // OK? is it acceptable?
+    HexUnderscore, // OK (once block braces are fixed)
+    IfStatement, // TODO: figure out correct comment placements
+    IfStatement2, // OK (once block braces are fixed)
+    ImportDirective, // OK
+    InlineDisable, // FIX: invalid output
+    IntTypes, // OK (once block braces are fixed)
+    LiteralExpression, // FIX: idempotency (comment-related)
+    MappingTyple, // TODO: comments
+    ModifierDefinition, // OK
+    NamedFunctionCallExpression, // FIX: idempotency (comment-related)
+    NumberLiteralUnderscore, // OK (once block braces are fixed)
+    OperatorExpressions, // FIX: idempotency (comment-related)
+    PragmaDirective, // OK
+    Repros, // TODO: check boxes, panics
+    ReturnStatement, // FIX: idempotency (comment-related)
+    RevertNamedArgsStatement, // TODO: comments
+    RevertStatement, // FIX: idempotency (comment-related)
+    SimpleComments, // FIX: idempotency (comment-related)
+    SortedImports, // FIX: sorting order
+    StatementBlock, // OK (once block braces are fixed)
+    StructDefinition, // OK
+    ThisExpression, // OK
+    TrailingComma, // OK (solar error)
+    TryStatement, // OK but kinda hacky. Is the fmt for the new test case acceptable?
+    TypeDefinition, // OK
+    UnitExpression, // FIX: idempotency (comment-related)
+    UsingDirective, // OK
+    VariableAssignment, // FIX: variable assignment
+    VariableDefinition, // FIX: variable assignment + declaration
+    WhileStatement, // FIX: indentation of the condition
+    Yul, // FIX: idemptency (comment-related)
+    YulStrings, // OK (once block braces are fixed)
 }

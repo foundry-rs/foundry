@@ -17,6 +17,21 @@ pub enum CommentStyle {
     BlankLine,
 }
 
+impl CommentStyle {
+    pub fn is_mixed(&self) -> bool {
+        matches!(self, Self::Mixed)
+    }
+    pub fn is_trailing(&self) -> bool {
+        matches!(self, Self::Trailing)
+    }
+    pub fn is_isolated(&self) -> bool {
+        matches!(self, Self::Isolated)
+    }
+    pub fn is_blank(&self) -> bool {
+        matches!(self, Self::BlankLine)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Comment {
     pub lines: Vec<String>,
