@@ -103,7 +103,7 @@ main() {
     FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-stable}
     FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
 
-    # Normalize versions (handle channels, versions without v prefix
+    # Normalize versions (handle channels, versions without v prefix)
     if [[ "$FOUNDRYUP_VERSION" =~ ^nightly ]]; then
       FOUNDRYUP_VERSION="nightly"
     elif [[ "$FOUNDRYUP_VERSION" == [[:digit:]]* ]]; then
@@ -148,10 +148,72 @@ main() {
 
     # Compute the URL of the release tarball in the Foundry repository.
     RELEASE_URL="https://github.com/${FOUNDRYUP_REPO}/releases/download/${FOUNDRYUP_TAG}/"
+    ATTESTATION_URL="${RELEASE_URL}foundry_${FOUNDRYUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.attestation.txt"
     BIN_ARCHIVE_URL="${RELEASE_URL}foundry_${FOUNDRYUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.$EXT"
     MAN_TARBALL_URL="${RELEASE_URL}foundry_man_${FOUNDRYUP_VERSION}.tar.gz"
 
     ensure mkdir -p "$FOUNDRY_VERSIONS_DIR"
+
+    # Check if the version is already installed by downloading the attestation file.
+    say "checking if forge, cast, anvil, and chisel for $FOUNDRYUP_TAG version are already installed"
+
+    # Create a temporary directory to store the attestation link and artifact.
+    attestation_tmp_dir="$(mktemp -d 2>/dev/null || echo ".")"
+    attestation_txt="$attestation_tmp_dir/attestation.txt"
+    ensure download "$ATTESTATION_URL" "$attestation_txt"
+    
+    attestation_artifact_link="$(head -n1 "$attestation_txt" | tr -d '\r')"
+
+    if [ -z "$attestation_artifact_link" ] || grep -q 'Not Found' "$attestation_txt"; then
+      say "no attestation found for this release, skipping SHA verification"
+    else
+      say "found attestation for $FOUNDRYUP_TAG version, checking payload"
+
+      attestation_json="$attestation_tmp_dir/foundry-attestation.sigstore.json"
+      ensure download "${attestation_artifact_link}/download" "$attestation_json"
+
+      payload_b64=$(awk '/"payload":/ {gsub(/[",]/, "", $2); print $2; exit}' "$attestation_json")
+      payload_json=$(printf '%s' "$payload_b64" | base64 -d 2>/dev/null || printf '%s' "$payload_b64" | base64 -D)
+
+      # Declare an associative array to hold the names and hashes of the binaries.
+      # This allows us to easily check if the binaries are already installed and match the expected hashes.
+      declare -A HASHES
+
+      # Extract the names and hashes from the payload JSON.
+      # The payload is expected to be a JSON array of objects with "name" and "sha256" fields.
+      while read -r name_line && read -r sha_line; do
+        name=$(echo "$name_line" | sed -nE 's/.*"name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')
+        sha=$(echo "$sha_line"  | sed -nE 's/.*"sha256"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')
+        if [ -n "$name" ] && [ -n "$sha" ]; then
+          HASHES["$name"]="$sha"
+        fi
+      done < <(echo "$payload_json" | tr '{}' '\n' | grep -E '"name"|sha256')
+
+      # Check if the binaries are already installed and match the expected hashes.
+      # If they do, skip the download.
+      all_match=true
+      for bin in forge cast anvil chisel; do
+        expected="${HASHES[$bin]}"
+        path="$FOUNDRY_BIN_DIR/$bin"
+
+        if [ -z "$expected" ] || [ ! -x "$path" ]; then
+          all_match=false
+          continue
+        fi
+
+        actual=$(sha256sum "$path" | cut -d' ' -f1)
+        [ "$actual" = "$expected" ] || all_match=false
+      done
+
+      if $all_match; then
+        say "binaries are already installed and verified, skipping download"
+        exit 0
+      fi
+    fi
+
+    # If we reach here, we need to download the binaries.
+    say "binaries not found or do not match expected hashes, downloading new binaries"
+
     # Download and extract the binaries archive
     say "downloading forge, cast, anvil, and chisel for $FOUNDRYUP_TAG version"
     if [ "$PLATFORM" = "win32" ]; then
@@ -176,6 +238,45 @@ main() {
       download "$MAN_TARBALL_URL" | tar -xzC "$FOUNDRY_MAN_DIR"
     else
       say 'skipping manpage download: missing "tar"'
+    fi
+
+    # Verify the downloaded binaries against the attestation file.
+    if [ -z "$attestation_artifact_link" ] || grep -q 'Not Found' "$attestation_txt"; then
+      say "no attestation found for these binaries, skipping SHA verification for downloaded binaries"
+    else
+      say "verifying downloaded binaries against the attestation file"
+
+      failed=false
+      for bin in forge cast anvil chisel; do
+        expected="${HASHES[$bin]}"
+        path="$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG/$bin"
+
+        if [ -z "$expected" ]; then
+          say "no expected hash for $bin"
+          failed=true
+          continue
+        fi
+
+        if [ ! -x "$path" ]; then
+          say "binary $bin not found at $path"
+          failed=true
+          continue
+        fi
+
+        actual=$(sha256sum "$path" | cut -d' ' -f1)
+        if [ "$actual" != "$expected" ]; then
+          say "$bin hash verification failed:"
+          say "  expected: $expected"
+          say "  actual:   $actual"
+          failed=true
+        else
+          say "$bin verified ✓"
+        fi
+      done
+
+      if $failed; then
+        err "one or more binaries failed post-installation verification"
+      fi
     fi
 
     # Use newly installed version.
