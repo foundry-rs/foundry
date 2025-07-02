@@ -94,7 +94,7 @@ impl Server {
 async fn serve(build_dir: PathBuf, address: SocketAddr, file_404: &str) -> io::Result<()> {
     let file_404 = build_dir.join(file_404);
     let svc = ServeDir::new(build_dir).not_found_service(ServeFile::new(file_404));
-    let app = Router::new().nest_service("/", get_service(svc));
+    let app = Router::new().fallback_service(get_service(svc));
     let tcp_listener = tokio::net::TcpListener::bind(address).await?;
     axum::serve(tcp_listener, app.into_make_service()).await
 }
