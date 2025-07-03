@@ -1,8 +1,8 @@
 use super::{fuzz_calldata, fuzz_param_from_state};
 use crate::{
-    invariant::{BasicTxDetails, CallDetails, FuzzRunIdentifiedContracts, SenderFilters},
-    strategies::{fuzz_calldata_from_state, fuzz_param, EvmFuzzState},
     FuzzFixtures,
+    invariant::{BasicTxDetails, CallDetails, FuzzRunIdentifiedContracts, SenderFilters},
+    strategies::{EvmFuzzState, fuzz_calldata_from_state, fuzz_param},
 };
 use alloy_json_abi::Function;
 use alloy_primitives::Address;
@@ -42,7 +42,7 @@ pub fn override_call_strat(
 
         func.prop_flat_map({
             move |func| {
-                fuzz_contract_with_calldata(fuzz_state.clone(), fuzz_fixtures.clone(), target_address, func)
+                fuzz_contract_with_calldata(&fuzz_state, &fuzz_fixtures, target_address, func)
             }
         })
     })
@@ -72,10 +72,10 @@ pub fn invariant_strat(
                 let contracts = contracts.targets.lock();
                 let functions = contracts.fuzzed_functions();
                 let (target_address, target_function) = selector.select(functions);
-                let sender = select_random_sender(fuzz_state.clone(), senders.clone(), dictionary_weight);
+                let sender = select_random_sender(&fuzz_state, senders.clone(), dictionary_weight);
                 let call_details = fuzz_contract_with_calldata(
-                    fuzz_state.clone(),
-                    fuzz_fixtures.clone(),
+                    &fuzz_state,
+                    &fuzz_fixtures,
                     *target_address,
                     target_function.clone(),
                 );
@@ -89,17 +89,17 @@ pub fn invariant_strat(
 /// * If `senders` is empty, then it's either a random address (10%) or from the dictionary (90%).
 /// * If `senders` is not empty, a random address is chosen from the list of senders.
 fn select_random_sender(
-    fuzz_state: EvmFuzzState,
+    fuzz_state: &EvmFuzzState,
     senders: Rc<SenderFilters>,
     dictionary_weight: u32,
-) -> impl Strategy<Value = Address> {
+) -> impl Strategy<Value = Address> + use<> {
     if !senders.targeted.is_empty() {
         any::<prop::sample::Index>().prop_map(move |index| *index.get(&senders.targeted)).boxed()
     } else {
         assert!(dictionary_weight <= 100, "dictionary_weight must be <= 100");
         proptest::prop_oneof![
             100 - dictionary_weight => fuzz_param(&alloy_dyn_abi::DynSolType::Address),
-            dictionary_weight => fuzz_param_from_state(&alloy_dyn_abi::DynSolType::Address, &fuzz_state),
+            dictionary_weight => fuzz_param_from_state(&alloy_dyn_abi::DynSolType::Address, fuzz_state),
         ]
         .prop_map(move |addr| addr.as_address().unwrap())
         // Too many exclusions can slow down testing.
@@ -111,17 +111,17 @@ fn select_random_sender(
 /// Given a function, it returns a proptest strategy which generates valid abi-encoded calldata
 /// for that function's input types.
 pub fn fuzz_contract_with_calldata(
-    fuzz_state: EvmFuzzState,
-    fuzz_fixtures: FuzzFixtures,
+    fuzz_state: &EvmFuzzState,
+    fuzz_fixtures: &FuzzFixtures,
     target: Address,
     func: Function,
-) -> impl Strategy<Value = CallDetails> {
+) -> impl Strategy<Value = CallDetails> + use<> {
     // We need to compose all the strategies generated for each parameter in all possible
     // combinations.
     // `prop_oneof!` / `TupleUnion` `Arc`s for cheap cloning.
     prop_oneof![
-        60 => fuzz_calldata(func.clone(), &fuzz_fixtures),
-        40 => fuzz_calldata_from_state(func, &fuzz_state),
+        60 => fuzz_calldata(func.clone(), fuzz_fixtures),
+        40 => fuzz_calldata_from_state(func, fuzz_state),
     ]
     .prop_map(move |calldata| {
         trace!(input=?calldata);
