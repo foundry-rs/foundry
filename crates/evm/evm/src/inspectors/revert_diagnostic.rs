@@ -5,14 +5,14 @@ use foundry_evm_core::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
 };
 use revm::{
+    Database, Inspector,
     bytecode::opcode,
     context::{ContextTr, JournalTr},
     inspector::JournalExt,
     interpreter::{
-        interpreter::EthInterpreter, interpreter_types::Jumps, CallInputs, CallOutcome, CallScheme,
-        InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
+        CallInputs, CallOutcome, CallScheme, InstructionResult, Interpreter, InterpreterAction,
+        InterpreterResult, interpreter::EthInterpreter, interpreter_types::Jumps,
     },
-    Database, Inspector,
 };
 use std::fmt;
 
@@ -73,11 +73,7 @@ impl RevertDiagnostic {
     /// Returns the effective target address whose code would be executed.
     /// For delegate calls, this is the `bytecode_address`. Otherwise, it's the `target_address`.
     fn code_target_address(&self, inputs: &mut CallInputs) -> Address {
-        if is_delegatecall(inputs.scheme) {
-            inputs.bytecode_address
-        } else {
-            inputs.target_address
-        }
+        if is_delegatecall(inputs.scheme) { inputs.bytecode_address } else { inputs.target_address }
     }
 
     /// Derives the revert reason based on the cached data. Should only be called after a revert.

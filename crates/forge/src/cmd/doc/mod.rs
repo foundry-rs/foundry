@@ -6,7 +6,7 @@ use forge_doc::{
 };
 use foundry_cli::opts::GH_REPO_PREFIX_REGEX;
 use foundry_common::compile::ProjectCompiler;
-use foundry_config::{load_config_with_root, Config};
+use foundry_config::{Config, load_config_with_root};
 use std::{path::PathBuf, process::Command};
 
 mod server;

@@ -1,20 +1,20 @@
 use crate::{
+    CallTrace, CallTraceArena, CallTraceNode, DecodedCallData,
     debug::DebugTraceIdentifier,
     identifier::{IdentifiedAddress, LocalTraceIdentifier, SignaturesIdentifier, TraceIdentifier},
-    CallTrace, CallTraceArena, CallTraceNode, DecodedCallData,
 };
 use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Error, Event, Function, JsonAbi};
 use alloy_primitives::{
-    map::{hash_map::Entry, HashMap, HashSet},
-    Address, LogData, Selector, B256,
+    Address, B256, LogData, Selector,
+    map::{HashMap, HashSet, hash_map::Entry},
 };
 use foundry_common::{
-    abi::get_indexed_event, fmt::format_token, get_contract_name, selectors::SelectorKind,
-    ContractsByArtifact, SELECTOR_LEN,
+    ContractsByArtifact, SELECTOR_LEN, abi::get_indexed_event, fmt::format_token,
+    get_contract_name, selectors::SelectorKind,
 };
 use foundry_evm_core::{
-    abi::{console, Vm},
+    abi::{Vm, console},
     constants::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS,
         TEST_CONTRACT_ADDRESS,
@@ -375,8 +375,8 @@ impl CallTraceDecoder {
             // Check if unsupported fn selector: calldata dooes NOT point to one of its selectors +
             // non-fallback contract + no receive
             if let Some(contract_selectors) = self.non_fallback_contracts.get(&trace.address) {
-                if !contract_selectors.contains(&selector) &&
-                    (!cdata.is_empty() || !self.receive_contracts.contains(&trace.address))
+                if !contract_selectors.contains(&selector)
+                    && (!cdata.is_empty() || !self.receive_contracts.contains(&trace.address))
                 {
                     let return_data = if !trace.success {
                         let revert_msg =
@@ -720,9 +720,9 @@ impl CallTraceDecoder {
             .iter()
             .filter(|&n| {
                 // Ignore known addresses.
-                if n.trace.address == DEFAULT_CREATE2_DEPLOYER ||
-                    n.is_precompile() ||
-                    precompiles::is_known_precompile(n.trace.address, 1)
+                if n.trace.address == DEFAULT_CREATE2_DEPLOYER
+                    || n.is_precompile()
+                    || precompiles::is_known_precompile(n.trace.address, 1)
                 {
                     return false;
                 }

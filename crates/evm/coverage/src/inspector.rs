@@ -1,10 +1,10 @@
 use crate::{HitMap, HitMaps};
 use alloy_primitives::B256;
 use revm::{
+    Inspector,
     context::ContextTr,
     inspector::JournalExt,
-    interpreter::{interpreter_types::Jumps, Interpreter},
-    Inspector,
+    interpreter::{Interpreter, interpreter_types::Jumps},
 };
 use std::ptr::NonNull;
 

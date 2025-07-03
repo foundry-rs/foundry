@@ -1,4 +1,4 @@
-use solar_ast::{self as ast, visit::Visit, SourceUnit, Span, Symbol};
+use solar_ast::{self as ast, SourceUnit, Span, Symbol, visit::Visit};
 use solar_data_structures::map::FxIndexSet;
 use std::ops::ControlFlow;
 

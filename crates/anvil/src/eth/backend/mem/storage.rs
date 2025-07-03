@@ -14,10 +14,11 @@ use crate::eth::{
 use alloy_consensus::constants::EMPTY_WITHDRAWALS;
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{
+    B256, Bytes, U256,
     map::{B256HashMap, HashMap},
-    Bytes, B256, U256,
 };
 use alloy_rpc_types::{
+    BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo,
     trace::{
         geth::{
             FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
@@ -26,7 +27,6 @@ use alloy_rpc_types::{
         otterscan::{InternalOperation, OperationType},
         parity::LocalizedTransactionTrace,
     },
-    BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo,
 };
 use anvil_core::eth::{
     block::{Block, PartialHeader},
@@ -574,10 +574,10 @@ impl MinedTransaction {
                             Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
                         };
                     }
-                    GethDebugBuiltInTracerType::PreStateTracer |
-                    GethDebugBuiltInTracerType::NoopTracer |
-                    GethDebugBuiltInTracerType::MuxTracer |
-                    GethDebugBuiltInTracerType::FlatCallTracer => {}
+                    GethDebugBuiltInTracerType::PreStateTracer
+                    | GethDebugBuiltInTracerType::NoopTracer
+                    | GethDebugBuiltInTracerType::MuxTracer
+                    | GethDebugBuiltInTracerType::FlatCallTracer => {}
                 },
                 GethDebugTracerType::JsTracer(_code) => {}
             }
@@ -609,7 +609,7 @@ pub struct MinedTransactionReceipt {
 mod tests {
     use super::*;
     use crate::eth::backend::db::Db;
-    use alloy_primitives::{hex, Address};
+    use alloy_primitives::{Address, hex};
     use alloy_rlp::Decodable;
     use anvil_core::eth::transaction::TypedTransaction;
     use revm::{database::DatabaseRef, state::AccountInfo};

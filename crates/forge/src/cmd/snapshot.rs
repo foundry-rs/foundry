@@ -1,7 +1,7 @@
 use super::test;
 use crate::result::{SuiteTestResult, TestKindReport, TestOutcome};
-use alloy_primitives::{map::HashMap, U256};
-use clap::{builder::RangedU64ValueParser, Parser, ValueHint};
+use alloy_primitives::{U256, map::HashMap};
+use clap::{Parser, ValueHint, builder::RangedU64ValueParser};
 use eyre::{Context, Result};
 use foundry_cli::utils::STATIC_FUZZ_SEED;
 use regex::Regex;
@@ -158,12 +158,12 @@ impl GasSnapshotConfig {
     fn is_in_gas_range(&self, gas_used: u64) -> bool {
         if let Some(min) = self.min {
             if gas_used < min {
-                return false
+                return false;
             }
         }
         if let Some(max) = self.max {
             if gas_used > max {
-                return false
+                return false;
             }
         }
         true

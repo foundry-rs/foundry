@@ -1,15 +1,16 @@
 use crate::eth::{
+    EthApi,
     error::{BlockchainError, Result},
     macros::node_info,
-    EthApi,
 };
 use alloy_consensus::Transaction as TransactionTrait;
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, BlockResponse,
     TransactionResponse,
 };
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types::{
+    Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
     trace::{
         otterscan::{
             BlockDetails, ContractCreator, InternalOperation, OtsBlock, OtsBlockTransactions,
@@ -17,7 +18,6 @@ use alloy_rpc_types::{
         },
         parity::{Action, CreateAction, CreateOutput, TraceOutput},
     },
-    Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
 };
 use futures::future::join_all;
 use itertools::Itertools;

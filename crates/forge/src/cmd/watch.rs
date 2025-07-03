@@ -11,22 +11,22 @@ use parking_lot::Mutex;
 use std::{
     path::PathBuf,
     sync::{
-        atomic::{AtomicU8, Ordering},
         Arc,
+        atomic::{AtomicU8, Ordering},
     },
     time::Duration,
 };
 use tokio::process::Command as TokioCommand;
 use watchexec::{
+    Watchexec,
     action::ActionHandler,
     command::{Command, Program},
     job::{CommandState, Job},
     paths::summarise_events_to_env,
-    Watchexec,
 };
 use watchexec_events::{
-    filekind::{AccessKind, FileEventKind},
     Event, Priority, ProcessEnd, Tag,
+    filekind::{AccessKind, FileEventKind},
 };
 use watchexec_signals::Signal;
 use yansi::{Color, Paint};
@@ -297,10 +297,10 @@ pub async fn watch_test(args: TestArgs) -> Result<()> {
     let config: Config = args.build.load_config()?;
     let filter = args.filter(&config)?;
     // Marker to check whether to override the command.
-    let no_reconfigure = filter.args().test_pattern.is_some() ||
-        filter.args().path_pattern.is_some() ||
-        filter.args().contract_pattern.is_some() ||
-        args.watch.run_all;
+    let no_reconfigure = filter.args().test_pattern.is_some()
+        || filter.args().path_pattern.is_some()
+        || filter.args().contract_pattern.is_some()
+        || args.watch.run_all;
 
     let last_test_files = Mutex::new(HashSet::<String>::default());
     let project_root = config.root.to_string_lossy().into_owned();
@@ -405,11 +405,11 @@ fn clean_cmd_args(num: usize, mut cmd_args: Vec<String>) -> Vec<String> {
         fn contains_w_in_short(arg: &str) -> Option<bool> {
             let mut iter = arg.chars().peekable();
             if *iter.peek()? != '-' {
-                return None
+                return None;
             }
             iter.next();
             if *iter.peek()? == '-' {
-                return None
+                return None;
             }
             Some(iter.any(|c| c == 'w'))
         }

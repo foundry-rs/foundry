@@ -4,11 +4,11 @@ use crate::Config;
 use alloy_primitives::U256;
 use figment::value::Value;
 use foundry_compilers::artifacts::{
-    remappings::{Remapping, RemappingError},
     EvmVersion,
+    remappings::{Remapping, RemappingError},
 };
 use revm::primitives::hardfork::SpecId;
-use serde::{de::Error, Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, de::Error};
 use std::{
     io,
     path::{Path, PathBuf},

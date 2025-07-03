@@ -2,13 +2,13 @@ use crate::invariant::{BasicTxDetails, FuzzRunIdentifiedContracts};
 use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt, FunctionExt};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{
+    Address, B256, Bytes, Log, U256,
     map::{AddressIndexSet, B256IndexSet, HashMap},
-    Address, Bytes, Log, B256, U256,
 };
 use foundry_common::ignore_metadata_hash;
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::utils::StateChangeset;
-use parking_lot::{lock_api::RwLockReadGuard, RawRwLock, RwLock};
+use parking_lot::{RawRwLock, RwLock, lock_api::RwLockReadGuard};
 use revm::{
     bytecode::opcode,
     database::{CacheDB, DatabaseRef, DbAccount},

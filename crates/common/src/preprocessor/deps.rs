@@ -7,7 +7,7 @@ use itertools::Itertools;
 use solar_parse::interface::Session;
 use solar_sema::{
     hir::{CallArgs, ContractId, Expr, ExprKind, Hir, NamedArg, Stmt, StmtKind, TypeKind, Visit},
-    interface::{data_structures::Never, source_map::FileName, SourceMap},
+    interface::{SourceMap, data_structures::Never, source_map::FileName},
 };
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
@@ -283,7 +283,7 @@ fn handle_call_expr(
                     },
                     loc: span_to_range(source_map, call_expr.span),
                     referenced_contract: contract_id,
-                })
+                });
             }
         }
     }

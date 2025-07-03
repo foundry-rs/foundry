@@ -10,20 +10,20 @@ use alloy_primitives::map::HashMap;
 use alloy_provider::network::BlockResponse;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_config::Config;
-use foundry_fork_db::{cache::BlockchainDbMeta, BackendHandler, BlockchainDb, SharedBackend};
+use foundry_fork_db::{BackendHandler, BlockchainDb, SharedBackend, cache::BlockchainDbMeta};
 use futures::{
-    channel::mpsc::{channel, Receiver, Sender},
+    FutureExt, StreamExt,
+    channel::mpsc::{Receiver, Sender, channel},
     stream::{Fuse, Stream},
     task::{Context, Poll},
-    Future, FutureExt, StreamExt,
 };
 use std::{
     fmt::{self, Write},
     pin::Pin,
     sync::{
-        atomic::AtomicUsize,
-        mpsc::{channel as oneshot_channel, Sender as OneshotSender},
         Arc,
+        atomic::AtomicUsize,
+        mpsc::{Sender as OneshotSender, channel as oneshot_channel},
     },
     time::Duration,
 };
@@ -432,8 +432,8 @@ impl Future for MultiForkHandler {
             .flush_cache_interval
             .as_mut()
             .map(|interval| interval.poll_tick(cx).is_ready())
-            .unwrap_or_default() &&
-            !pin.forks.is_empty()
+            .unwrap_or_default()
+            && !pin.forks.is_empty()
         {
             trace!(target: "fork::multi", "tick flushing caches");
             let forks = pin.forks.values().map(|f| f.backend.clone()).collect::<Vec<_>>();

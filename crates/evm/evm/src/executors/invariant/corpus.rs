@@ -1,6 +1,6 @@
 use crate::executors::{
-    invariant::{InvariantTest, InvariantTestRun},
     Executor,
+    invariant::{InvariantTest, InvariantTestRun},
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_primitives::U256;
@@ -134,7 +134,7 @@ impl TxCorpusManager {
                 in_memory_corpus,
                 current_mutated: None,
                 failed_replays,
-            })
+            });
         };
 
         // Ensure corpus dir for invariant function is created.
@@ -151,7 +151,7 @@ impl TxCorpusManager {
                 if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
                     // Ignore metadata files
                     if name.contains(METADATA_SUFFIX) {
-                        continue
+                        continue;
                     }
                 }
             }
@@ -163,7 +163,7 @@ impl TxCorpusManager {
 
             let Ok(tx_seq) = read_corpus_result else {
                 trace!(target: "corpus", "failed to load corpus from {}", path.display());
-                continue
+                continue;
             };
 
             if !tx_seq.is_empty() {
@@ -295,8 +295,8 @@ impl TxCorpusManager {
             let should_evict = self.in_memory_corpus.len() > self.corpus_min_size.max(1);
             if should_evict {
                 if let Some(index) = self.in_memory_corpus.iter().position(|corpus| {
-                    corpus.total_mutations > self.corpus_min_mutations &&
-                        (corpus.new_finds_produced as f64 / corpus.total_mutations as f64) < 0.3
+                    corpus.total_mutations > self.corpus_min_mutations
+                        && (corpus.new_finds_produced as f64 / corpus.total_mutations as f64) < 0.3
                 }) {
                     let corpus = self.in_memory_corpus.get(index).unwrap();
                     let uuid = corpus.uuid;
@@ -485,13 +485,13 @@ impl TxCorpusManager {
         // Early return with new input if corpus dir / coverage guided fuzzing not configured or if
         // call was discarded.
         if self.corpus_dir.is_none() || discarded {
-            return self.new_tx(test_runner)
+            return self.new_tx(test_runner);
         }
 
         // When running with coverage guided fuzzing enabled then generate new sequence if initial
         // sequence's length is less than depth or randomly, to occasionally intermix new txs.
         if depth > sequence.len().saturating_sub(1) || test_runner.rng().random_ratio(1, 10) {
-            return self.new_tx(test_runner)
+            return self.new_tx(test_runner);
         }
 
         // Continue with the next call initial sequence

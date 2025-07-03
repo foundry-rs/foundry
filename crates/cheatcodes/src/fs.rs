@@ -5,7 +5,7 @@ use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
 use alloy_network::AnyTransactionReceipt;
-use alloy_primitives::{hex, map::Entry, Bytes, U256};
+use alloy_primitives::{Bytes, U256, hex, map::Entry};
 use alloy_provider::network::ReceiptResponse;
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
@@ -380,7 +380,7 @@ fn deploy_code(
     )?;
 
     if !outcome.result.result.is_ok() {
-        return Err(crate::Error::from(outcome.result.output))
+        return Err(crate::Error::from(outcome.result.output));
     }
 
     let address = outcome.address.ok_or_else(|| fmt_err!("contract creation failed"))?;
@@ -449,9 +449,9 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
                         }
                     }
                     if let Some(ref version) = version {
-                        if id.version.minor != version.minor ||
-                            id.version.major != version.major ||
-                            id.version.patch != version.patch
+                        if id.version.minor != version.minor
+                            || id.version.major != version.major
+                            || id.version.patch != version.patch
                         {
                             return false;
                         }
@@ -476,17 +476,13 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
 
                             // Return artifact if only one matched
                             if filtered.len() == 1 {
-                                return Some(filtered[0])
+                                return Some(filtered[0]);
                             }
 
                             // Try filtering by profile as well
                             filtered.retain(|(id, _)| id.profile == running.profile);
 
-                            if filtered.len() == 1 {
-                                Some(filtered[0])
-                            } else {
-                                None
-                            }
+                            if filtered.len() == 1 { Some(filtered[0]) } else { None }
                         })
                         .ok_or_else(|| fmt_err!("multiple matching artifacts found"))
                 }

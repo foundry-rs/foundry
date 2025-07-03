@@ -4,18 +4,18 @@ use crate::{
 };
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{EthereumWallet, TransactionBuilder, TransactionResponse};
-use alloy_primitives::{address, hex, map::B256HashSet, Address, Bytes, FixedBytes, U256};
+use alloy_primitives::{Address, Bytes, FixedBytes, U256, address, hex, map::B256HashSet};
 use alloy_provider::{Provider, WsConnect};
 use alloy_rpc_types::{
-    state::{AccountOverride, EvmOverrides, StateOverride, StateOverridesBuilder},
     AccessList, AccessListItem, BlockId, BlockNumberOrTag, BlockOverrides, BlockTransactions,
     TransactionRequest,
+    state::{AccountOverride, EvmOverrides, StateOverride, StateOverridesBuilder},
 };
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::SolValue;
-use anvil::{spawn, NodeConfig};
+use anvil::{NodeConfig, spawn};
 use eyre::Ok;
-use futures::{future::join_all, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, future::join_all};
 use std::{str::FromStr, time::Duration};
 use tokio::time::timeout;
 
@@ -967,7 +967,7 @@ async fn can_stream_pending_transactions() {
                 let sent_txs = sent.iter().map(|tx| tx.transaction_hash).collect::<B256HashSet>();
                 assert_eq!(sent_txs, watch_received.iter().copied().collect());
                 assert_eq!(sent_txs, sub_received.iter().copied().collect());
-                break
+                break;
             }
         }
     }
@@ -1171,7 +1171,9 @@ async fn test_block_override() {
     //     function getBlockNumber() external view returns (uint256) {
     //         return block.number;
     //     }
-    let code = hex!("6080604052348015600e575f5ffd5b50600436106026575f3560e01c806342cbb15c14602a575b5f5ffd5b60306044565b604051603b91906061565b60405180910390f35b5f43905090565b5f819050919050565b605b81604b565b82525050565b5f60208201905060725f8301846054565b9291505056fea26469706673582212207741266d8151c5e7d1a96fc1697f8fc94e60e730b3f2861d398339c74a2180d464736f6c634300081e0033");
+    let code = hex!(
+        "6080604052348015600e575f5ffd5b50600436106026575f3560e01c806342cbb15c14602a575b5f5ffd5b60306044565b604051603b91906061565b60405180910390f35b5f43905090565b5f819050919050565b605b81604b565b82525050565b5f60208201905060725f8301846054565b9291505056fea26469706673582212207741266d8151c5e7d1a96fc1697f8fc94e60e730b3f2861d398339c74a2180d464736f6c634300081e0033"
+    );
 
     let account_override =
         AccountOverride { balance: Some(U256::from(1e18)), ..Default::default() };

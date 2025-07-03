@@ -1,9 +1,9 @@
 //! Various utilities to decode test results.
 
-use crate::abi::{console, Vm};
+use crate::abi::{Vm, console};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Error, JsonAbi};
-use alloy_primitives::{hex, map::HashMap, Log, Selector};
+use alloy_primitives::{Log, Selector, hex, map::HashMap};
 use alloy_sol_types::{
     ContractError::Revert, RevertReason, RevertReason::ContractError, SolEventInterface,
     SolInterface, SolValue,
@@ -129,11 +129,7 @@ impl RevertDecoder {
     /// than user output.
     pub fn decode(&self, err: &[u8], status: Option<InstructionResult>) -> String {
         self.maybe_decode(err, status).unwrap_or_else(|| {
-            if err.is_empty() {
-                "<empty revert data>".to_string()
-            } else {
-                trimmed_hex(err)
-            }
+            if err.is_empty() { "<empty revert data>".to_string() } else { trimmed_hex(err) }
         })
     }
 
@@ -174,7 +170,7 @@ impl RevertDecoder {
             }
 
             if string_decoded.is_some() {
-                return string_decoded
+                return string_decoded;
             }
 
             // Generic custom error.
@@ -188,11 +184,11 @@ impl RevertDecoder {
                     }
                 }
                 s
-            })
+            });
         }
 
         if string_decoded.is_some() {
-            return string_decoded
+            return string_decoded;
         }
 
         if let Some(status) = status {
@@ -272,7 +268,10 @@ mod tests {
             "0xe17594de"
             "756688fe00000000000000000000000000000000000000000000000000000000"
         );
-        assert_eq!(decoder.decode(data, None), "custom error 0xe17594de: 756688fe00000000000000000000000000000000000000000000000000000000");
+        assert_eq!(
+            decoder.decode(data, None),
+            "custom error 0xe17594de: 756688fe00000000000000000000000000000000000000000000000000000000"
+        );
 
         /*
         abi.encodeWithSelector(ValidationFailed.selector, abi.encodeWithSelector(InvalidNonce.selector))

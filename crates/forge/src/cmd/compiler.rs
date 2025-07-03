@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
 use foundry_common::shell;
-use foundry_compilers::{artifacts::EvmVersion, Graph};
+use foundry_compilers::{Graph, artifacts::EvmVersion};
 use foundry_config::Config;
 use semver::Version;
 use serde::Serialize;

@@ -1,5 +1,5 @@
 use alloy_json_abi::{Error, Event, Function, JsonAbi};
-use alloy_primitives::{map::HashMap, Selector, B256};
+use alloy_primitives::{B256, Selector, map::HashMap};
 use eyre::Result;
 use foundry_common::{
     abi::{get_error, get_event, get_func},

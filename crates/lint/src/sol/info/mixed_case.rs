@@ -56,7 +56,7 @@ pub fn is_mixed_case(s: &str, is_fn: bool) -> bool {
 
     // Remove leading/trailing underscores like `heck` does
     if s.trim_matches('_') == format!("{}", heck::AsLowerCamelCase(s)).as_str() {
-        return true
+        return true;
     }
 
     // Ignore `fn test*`, `fn invariant_*`, and `fn statefulFuzz*` patterns, as they usually contain

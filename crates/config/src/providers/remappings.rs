@@ -1,12 +1,12 @@
-use crate::{foundry_toml_dirs, remappings_from_env_var, remappings_from_newline, Config};
+use crate::{Config, foundry_toml_dirs, remappings_from_env_var, remappings_from_newline};
 use figment::{
-    value::{Dict, Map},
     Error, Figment, Metadata, Profile, Provider,
+    value::{Dict, Map},
 };
 use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping};
 use std::{
     borrow::Cow,
-    collections::{btree_map::Entry, BTreeMap, HashSet},
+    collections::{BTreeMap, HashSet, btree_map::Entry},
     fs,
     path::{Path, PathBuf},
 };
@@ -63,9 +63,7 @@ impl Remappings {
     /// Consumes the wrapper and returns the inner remappings vector.
     pub fn into_inner(self) -> Vec<Remapping> {
         let mut seen = HashSet::new();
-        let remappings =
-            self.remappings.iter().filter(|r| seen.insert(Self::filter_key(r))).cloned().collect();
-        remappings
+        self.remappings.iter().filter(|r| seen.insert(Self::filter_key(r))).cloned().collect()
     }
 
     /// Push an element to the remappings vector, but only if it's not already present.
@@ -78,9 +76,9 @@ impl Remappings {
         if self.remappings.iter().any(|existing| {
             if remapping.name.ends_with(".sol") {
                 // For .sol files, only prevent duplicate source names in the same context
-                return existing.name == remapping.name &&
-                    existing.context == remapping.context &&
-                    existing.path == remapping.path
+                return existing.name == remapping.name
+                    && existing.context == remapping.context
+                    && existing.path == remapping.path;
             }
 
             // What we're doing here is filtering for ambiguous paths. For example, if we have
@@ -97,8 +95,8 @@ impl Remappings {
             if !existing_name_path.ends_with('/') {
                 existing_name_path.push('/')
             }
-            let is_conflicting = remapping.name.starts_with(&existing_name_path) ||
-                existing.name.starts_with(&remapping.name);
+            let is_conflicting = remapping.name.starts_with(&existing_name_path)
+                || existing.name.starts_with(&remapping.name);
             is_conflicting && existing.context == remapping.context
         }) {
             return;
@@ -228,7 +226,7 @@ impl RemappingsProvider<'_> {
                 // this is an additional safety check for weird auto-detected remappings
                 if ["lib/", "src/", "contracts/"].contains(&r.name.as_str()) {
                     trace!(target: "forge", "- skipping the remapping");
-                    continue
+                    continue;
                 }
                 insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
             }
@@ -311,7 +309,7 @@ impl Provider for RemappingsProvider<'_> {
                 if let figment::error::Kind::MissingField(_) = err.kind {
                     self.get_remappings(vec![])
                 } else {
-                    return Err(err.clone())
+                    return Err(err.clone());
                 }
             }
         }?;
@@ -453,11 +451,15 @@ mod tests {
 
         let result = remappings.into_inner();
         assert_eq!(result.len(), 2, "Should allow same name with different contexts");
-        assert!(result
-            .iter()
-            .any(|r| r.context == Some("test/".to_string()) && r.path == "test/Contract.sol"));
-        assert!(result
-            .iter()
-            .any(|r| r.context == Some("prod/".to_string()) && r.path == "prod/Contract.sol"));
+        assert!(
+            result
+                .iter()
+                .any(|r| r.context == Some("test/".to_string()) && r.path == "test/Contract.sol")
+        );
+        assert!(
+            result
+                .iter()
+                .any(|r| r.context == Some("prod/".to_string()) && r.path == "prod/Contract.sol")
+        );
     }
 }

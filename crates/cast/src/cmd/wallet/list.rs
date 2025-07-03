@@ -42,9 +42,9 @@ pub struct ListArgs {
 impl ListArgs {
     pub async fn run(self) -> Result<()> {
         // list local accounts as files in keystore dir, no need to unlock / provide password
-        if self.dir.is_some() ||
-            self.all ||
-            (!self.ledger && !self.trezor && !self.aws && !self.gcp)
+        if self.dir.is_some()
+            || self.all
+            || (!self.ledger && !self.trezor && !self.aws && !self.gcp)
         {
             let _ = self.list_local_senders();
         }

@@ -1,11 +1,13 @@
 //! Cheatcode EVM inspector.
 
 use crate::{
+    CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result,
+    Vm::{self, AccountAccess},
     evm::{
+        DealRecord, GasRecord, RecordAccess,
         mapping::{self, MappingSlots},
         mock::{MockCallDataContext, MockCallReturnData},
         prank::Prank,
-        DealRecord, GasRecord, RecordAccess,
     },
     inspector::utils::CommonCreateInput,
     script::{Broadcast, Wallets},
@@ -18,29 +20,26 @@ use crate::{
         revert_handlers,
     },
     utils::IgnoredTraces,
-    CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result,
-    Vm::{self, AccountAccess},
 };
 use alloy_consensus::BlobTransactionSidecar;
 use alloy_evm::eth::EthEvmContext;
 use alloy_network::TransactionBuilder4844;
 use alloy_primitives::{
-    hex,
+    Address, B256, Bytes, Log, TxKind, U256, hex,
     map::{AddressHashMap, HashMap, HashSet},
-    Address, Bytes, Log, TxKind, B256, U256,
 };
 use alloy_rpc_types::{
-    request::{TransactionInput, TransactionRequest},
     AccessList,
+    request::{TransactionInput, TransactionRequest},
 };
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
-use foundry_common::{evm::Breakpoints, TransactionMaybeSigned, SELECTOR_LEN};
+use foundry_common::{SELECTOR_LEN, TransactionMaybeSigned, evm::Breakpoints};
 use foundry_evm_core::{
+    InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
-    evm::{new_evm_with_existing_context, FoundryEvm},
-    InspectorExt,
+    evm::{FoundryEvm, new_evm_with_existing_context},
 };
 use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
 use foundry_wallets::multi_wallet::MultiWallet;
@@ -48,17 +47,17 @@ use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
 use revm::{
+    Inspector, Journal,
     bytecode::opcode as op,
-    context::{result::EVMError, BlockEnv, JournalTr, LocalContext, TransactionType},
-    context_interface::{transaction::SignedAuthorization, CreateScheme},
+    context::{BlockEnv, JournalTr, LocalContext, TransactionType, result::EVMError},
+    context_interface::{CreateScheme, transaction::SignedAuthorization},
     handler::FrameResult,
     interpreter::{
-        interpreter_types::{Jumps, MemoryTr},
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas, Host,
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
+        interpreter_types::{Jumps, MemoryTr},
     },
     state::EvmStorageSlot,
-    Inspector, Journal,
 };
 use serde_json::Value;
 use std::{
@@ -612,8 +611,8 @@ impl Cheatcodes {
     /// There may be cheatcodes in the constructor of the new contract, in order to allow them
     /// automatically we need to determine the new address.
     fn allow_cheatcodes_on_create(&self, ecx: Ecx, caller: Address, created_address: Address) {
-        if ecx.journaled_state.depth <= 1 ||
-            ecx.journaled_state.database.has_cheatcode_access(&caller)
+        if ecx.journaled_state.depth <= 1
+            || ecx.journaled_state.database.has_cheatcode_access(&caller)
         {
             ecx.journaled_state.database.allow_cheatcode_access(created_address);
         }
@@ -685,7 +684,7 @@ impl Cheatcodes {
                             gas,
                         },
                         memory_offset: call.return_memory_offset.clone(),
-                    })
+                    });
                 }
             };
             let prev = account.info.nonce;
@@ -751,20 +750,16 @@ impl Cheatcodes {
                 value: call.transfer_value(),
             };
 
-            if let Some(return_data_queue) =
-                match mocks.get_mut(&ctx) {
-                    Some(queue) => Some(queue),
-                    None => mocks
-                        .iter_mut()
-                        .find(|(mock, _)| {
-                            call.input.bytes(ecx).get(..mock.calldata.len()) ==
-                                Some(&mock.calldata[..]) &&
-                                mock.value
-                                    .is_none_or(|value| Some(value) == call.transfer_value())
-                        })
-                        .map(|(_, v)| v),
-                }
-            {
+            if let Some(return_data_queue) = match mocks.get_mut(&ctx) {
+                Some(queue) => Some(queue),
+                None => mocks
+                    .iter_mut()
+                    .find(|(mock, _)| {
+                        call.input.bytes(ecx).get(..mock.calldata.len()) == Some(&mock.calldata[..])
+                            && mock.value.is_none_or(|value| Some(value) == call.transfer_value())
+                    })
+                    .map(|(_, v)| v),
+            } {
                 if let Some(return_data) = if return_data_queue.len() == 1 {
                     // If the mocked calls stack has a single element in it, don't empty it
                     return_data_queue.front().map(|x| x.to_owned())
@@ -917,8 +912,7 @@ impl Cheatcodes {
                         debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
                     }
                 } else if broadcast.single_call {
-                    let msg =
-                    "`staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead";
+                    let msg = "`staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead";
                     return Some(CallOutcome {
                         result: InterpreterResult {
                             result: InstructionResult::Revert,
@@ -1030,8 +1024,8 @@ impl Cheatcodes {
     ) -> bool {
         match &self.arbitrary_storage {
             Some(storage) => {
-                storage.overwrites.contains(address) &&
-                    storage
+                storage.overwrites.contains(address)
+                    && storage
                         .values
                         .get(address)
                         .and_then(|arbitrary_values| arbitrary_values.get(&storage_slot))
@@ -1152,8 +1146,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
     }
 
     fn call_end(&mut self, ecx: Ecx, call: &CallInputs, outcome: &mut CallOutcome) {
-        let cheatcode_call = call.target_address == CHEATCODE_ADDRESS ||
-            call.target_address == HARDHAT_CONSOLE_ADDRESS;
+        let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
+            || call.target_address == HARDHAT_CONSOLE_ADDRESS;
 
         // Clean up pranks/broadcasts if it's not a cheatcode call end. We shouldn't do
         // it for cheatcode calls because they are not applied for cheatcodes in the `call` hook.
@@ -1218,7 +1212,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                             outcome.result.result = InstructionResult::Revert;
                             outcome.result.output = error.abi_encode().into();
                         }
-                    }
+                    };
                 } else {
                     // Call didn't revert, reset `assume_no_revert` state.
                     self.assume_no_revert = None;
@@ -1234,8 +1228,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                 // Record current reverter address if expect revert is set with expected reverter
                 // address and no actual reverter was set yet or if we're expecting more than one
                 // revert.
-                if expected_revert.reverter.is_some() &&
-                    (expected_revert.reverted_by.is_none() || expected_revert.count > 1)
+                if expected_revert.reverter.is_some()
+                    && (expected_revert.reverted_by.is_none() || expected_revert.count > 1)
                 {
                     expected_revert.reverted_by = Some(call.target_address);
                 }
@@ -1390,11 +1384,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                         },
                     };
 
-                    if count != expected.count {
-                        Some((expected, count))
-                    } else {
-                        None
-                    }
+                    if count != expected.count { Some((expected, count)) } else { None }
                 })
                 .collect::<Vec<_>>();
 
@@ -1445,9 +1435,9 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         if let TxKind::Call(test_contract) = ecx.tx.kind {
             // if a call to a different contract than the original test contract returned with
             // `Stop` we check if the contract actually exists on the active fork
-            if ecx.journaled_state.db().is_forked_mode() &&
-                outcome.result.result == InstructionResult::Stop &&
-                call.target_address != test_contract
+            if ecx.journaled_state.db().is_forked_mode()
+                && outcome.result.result == InstructionResult::Stop
+                && call.target_address != test_contract
             {
                 let journaled_state = ecx.journaled_state.clone();
                 self.fork_revert_diagnostic =
@@ -1697,8 +1687,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if curr_depth <= expected_revert.depth &&
-                matches!(expected_revert.kind, ExpectedRevertKind::Default)
+            if curr_depth <= expected_revert.depth
+                && matches!(expected_revert.kind, ExpectedRevertKind::Default)
             {
                 let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
                 return match revert_handlers::handle_expect_revert(
@@ -1791,9 +1781,9 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                         created_acc.info.code.clone().unwrap_or_default().original_bytes();
                     if let Some((index, _)) =
                         self.expected_creates.iter().find_position(|expected_create| {
-                            expected_create.deployer == call.caller &&
-                                expected_create.create_scheme.eq(call.scheme.into()) &&
-                                expected_create.bytecode == bytecode
+                            expected_create.deployer == call.caller
+                                && expected_create.create_scheme.eq(call.scheme.into())
+                                && expected_create.bytecode == bytecode
                         })
                     {
                         self.expected_creates.swap_remove(index);
@@ -1816,8 +1806,8 @@ impl InspectorExt for Cheatcodes {
                 1
             };
 
-            depth == target_depth &&
-                (self.broadcast.is_some() || self.config.always_use_create_2_factory)
+            depth == target_depth
+                && (self.broadcast.is_some() || self.config.always_use_create_2_factory)
         } else {
             false
         }
@@ -1889,8 +1879,8 @@ impl Cheatcodes {
             // Reset gas if spent is less than refunded.
             // This can happen if gas was paused / resumed or reset.
             // https://github.com/foundry-rs/foundry/issues/4370
-            if interpreter.control.gas.spent() <
-                u64::try_from(interpreter.control.gas.refunded()).unwrap_or_default()
+            if interpreter.control.gas.spent()
+                < u64::try_from(interpreter.control.gas.refunded()).unwrap_or_default()
             {
                 interpreter.control.gas = Gas::new(interpreter.control.gas.limit());
             }
@@ -1909,15 +1899,15 @@ impl Cheatcodes {
         let (key, target_address) = if interpreter.bytecode.opcode() == op::SLOAD {
             (try_or_return!(interpreter.stack.peek(0)), interpreter.input.target_address)
         } else {
-            return
+            return;
         };
 
         let Some(value) = ecx.sload(target_address, key) else {
             return;
         };
 
-        if (value.is_cold && value.data.is_zero()) ||
-            self.should_overwrite_arbitrary_storage(&target_address, key)
+        if (value.is_cold && value.data.is_zero())
+            || self.should_overwrite_arbitrary_storage(&target_address, key)
         {
             if self.has_arbitrary_storage(&target_address) {
                 let arbitrary_value = self.rng().random();
@@ -2340,10 +2330,10 @@ fn check_if_fixed_gas_limit(ecx: &Ecx, call_gas_limit: u64) -> bool {
 fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
     matches!(
         kind,
-        crate::Vm::AccountAccessKind::Call |
-            crate::Vm::AccountAccessKind::StaticCall |
-            crate::Vm::AccountAccessKind::CallCode |
-            crate::Vm::AccountAccessKind::DelegateCall
+        crate::Vm::AccountAccessKind::Call
+            | crate::Vm::AccountAccessKind::StaticCall
+            | crate::Vm::AccountAccessKind::CallCode
+            | crate::Vm::AccountAccessKind::DelegateCall
     )
 }
 

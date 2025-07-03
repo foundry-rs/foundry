@@ -10,11 +10,11 @@ use eyre::Result;
 use serde::{Deserialize, Serialize};
 use std::{
     fmt,
-    io::{prelude::*, IsTerminal},
+    io::{IsTerminal, prelude::*},
     ops::DerefMut,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Mutex, OnceLock, PoisonError,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
@@ -547,9 +547,9 @@ impl ColorChoice {
 #[inline]
 fn supports_color(choice: anstream::ColorChoice) -> bool {
     match choice {
-        anstream::ColorChoice::Always |
-        anstream::ColorChoice::AlwaysAnsi |
-        anstream::ColorChoice::Auto => true,
+        anstream::ColorChoice::Always
+        | anstream::ColorChoice::AlwaysAnsi
+        | anstream::ColorChoice::Auto => true,
         anstream::ColorChoice::Never => false,
     }
 }
