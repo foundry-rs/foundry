@@ -22,7 +22,7 @@ use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
 use op_revm::{transaction::deposit::DepositTransactionParts, OpTransaction};
 use revm::{context::TxEnv, interpreter::InstructionResult};
 use serde::{Deserialize, Serialize};
-use std::ops::{Deref, Mul};
+use std::ops::Deref;
 
 /// Converts a [TransactionRequest] into a [TypedTransactionRequest].
 /// Should be removed once the call builder abstraction for providers is in place.
@@ -1463,7 +1463,7 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{b256, hex, LogData};
+    use alloy_primitives::{b256, hex};
     use std::str::FromStr;
 
     // <https://github.com/foundry-rs/foundry/issues/10852>
