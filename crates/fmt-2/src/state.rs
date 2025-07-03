@@ -2081,7 +2081,7 @@ impl<'ast> State<'_, 'ast> {
             }
             // Fallback for attributes not in the map (should never happen)
             None => {
-                if !is_first && !self.is_bol_or_only_ind() && !self.last_token_is_space() {
+                if !is_first && !self.is_bol_or_only_ind() {
                     self.space();
                 }
                 print_fn(self);
