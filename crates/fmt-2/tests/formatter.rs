@@ -153,7 +153,7 @@ fmt_tests! {
     #[ignore = "annotations are not valid Solidity"]
     Annotation,
     ArrayExpressions, // TODO: print cmnt before memory kw once span is available (solar). Is the rest acceptable?
-    BlockComments, // FIX: empty line after doc cmnt and before constructor
+    BlockComments, // OK (once block braces are fixed)
     BlockCommentsFunction, // OK
     ConditionalOperatorExpression, // OK (once block braces are fixed)
     ConstructorDefinition, // OK

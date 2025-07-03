@@ -129,6 +129,9 @@ impl<'sess> State<'sess, '_> {
                 }
             }
             CommentStyle::Isolated => {
+                println!("{cmnt:?}");
+                println!(" > BOL? {}", self.is_bol_or_only_ind());
+                println!("");
                 self.hardbreak_if_not_bol();
                 for line in cmnt.lines {
                     // Don't print empty lines because they will end up as trailing
@@ -583,9 +586,14 @@ impl<'ast> State<'_, 'ast> {
 
         self.word("{");
         if !body.is_empty() {
-            self.hardbreak();
-            if let Some(cmnt) = self.print_comments(body[0].span.lo()) {
-                if self.config.contract_new_lines && !cmnt.is_blank() {
+            if self.peek_comment_before(body[0].span.lo()).is_some() {
+                if self.config.contract_new_lines {
+                    self.hardbreak();
+                }
+                self.print_comments(body[0].span.lo());
+            } else {
+                self.hardbreak();
+                if self.config.contract_new_lines {
                     self.hardbreak();
                 }
             }
@@ -606,6 +614,9 @@ impl<'ast> State<'_, 'ast> {
             };
         }
         self.end();
+        if self.config.contract_new_lines {
+            self.hardbreak_if_nonempty();
+        }
         self.word("}");
 
         self.contract = None;
@@ -778,10 +789,12 @@ impl<'ast> State<'_, 'ast> {
         }
         self.end();
 
-        // trailing comments after the fn body are wapped
         if self.peek_trailing_comment(body_span.hi(), None).is_some() {
-            self.hardbreak();
-            self.hardbreak();
+            // trailing comments after the fn body are isolated
+            if self.config.wrap_comments {
+                self.hardbreak();
+                self.hardbreak();
+            }
             self.print_trailing_comment(body_span.hi(), None);
         }
     }
