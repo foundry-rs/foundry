@@ -1,21 +1,14 @@
 use clap::Parser;
-use eyre::{OptionExt, Result, WrapErr};
+use eyre::{Result, WrapErr};
 use foundry_bench::{
-    criterion_types::{Change, ChangeEstimate, CriterionResult, Estimate},
     get_forge_version,
-    results::BenchmarkResults,
-    switch_foundry_version, RepoConfig, BENCHMARK_REPOS, FOUNDRY_VERSIONS,
+    results::{BenchmarkResults, HyperfineResult},
+    switch_foundry_version, RepoConfig, BENCHMARK_REPOS, FOUNDRY_VERSIONS, RUNS,
 };
 use foundry_common::sh_println;
 use once_cell::sync::Lazy;
 use rayon::prelude::*;
-use std::{
-    fs::File,
-    io::Write,
-    path::{Path, PathBuf},
-    process::{Command, Stdio},
-    sync::Mutex,
-};
+use std::{fs::File, io::Write, path::PathBuf, process::Command, sync::Mutex};
 
 const ALL_BENCHMARKS: [&str; 5] = [
     "forge_test",
@@ -67,51 +60,16 @@ fn switch_version_safe(version: &str) -> Result<()> {
     switch_foundry_version(version)
 }
 
-fn run_benchmark(
-    name: &str,
-    version: &str,
-    repos: &[RepoConfig],
-    verbose: bool,
-) -> Result<Vec<CriterionResult>> {
-    // Setup paths
-    let criterion_dir = PathBuf::from("target/criterion");
-    let dir_name = name.replace('_', "-");
-    let group_dir = criterion_dir.join(&dir_name).join(version);
-
-    // Set environment variable for the current version
-    std::env::set_var("FOUNDRY_BENCH_CURRENT_VERSION", version);
-
-    // Set environment variable for the repos to benchmark
-    // Use org/repo format for proper parsing in benchmarks
-    let repo_specs: Vec<String> = repos.iter().map(|r| format!("{}/{}", r.org, r.repo)).collect();
-    std::env::set_var("FOUNDRY_BENCH_REPOS", repo_specs.join(","));
-
-    // Run the benchmark
-    let mut cmd = Command::new("cargo");
-    cmd.args(["bench", "--bench", name]);
-
-    if verbose {
-        cmd.stderr(Stdio::inherit());
-        cmd.stdout(Stdio::inherit());
-    } else {
-        cmd.stderr(Stdio::null());
-        cmd.stdout(Stdio::null());
-    }
-
-    let status = cmd.status().wrap_err("Failed to run benchmark")?;
-    if !status.success() {
-        eyre::bail!("Benchmark {} failed", name);
-    }
-
-    // Collect benchmark results from criterion output
-    let results = collect_benchmark_results(&group_dir, &dir_name, version, repos)?;
-    let _ = sh_println!("Total results collected: {}", results.len());
-    Ok(results)
-}
-
 #[allow(unused_must_use)]
 fn main() -> Result<()> {
+    color_eyre::install()?;
     let cli = Cli::parse();
+
+    // Check if hyperfine is installed
+    let hyperfine_check = Command::new("hyperfine").arg("--version").output();
+    if hyperfine_check.is_err() || !hyperfine_check.unwrap().status.success() {
+        eyre::bail!("hyperfine is not installed. Please install it first: https://github.com/sharkdp/hyperfine");
+    }
 
     // Determine versions to test
     let versions = if let Some(v) = cli.versions {
@@ -120,8 +78,9 @@ fn main() -> Result<()> {
         FOUNDRY_VERSIONS.iter().map(|&s| s.to_string()).collect()
     };
 
-    // Determine repos to test
-    let repos = if let Some(repo_specs) = cli.repos {
+
+    // Get repo configurations
+    let repos = if let Some(repo_specs) = cli.repos.clone() {
         repo_specs
             .iter()
             .map(|spec| RepoConfig::try_from(spec.as_str()))
@@ -143,7 +102,6 @@ fn main() -> Result<()> {
     }
 
     // Determine benchmarks to run
-
     let benchmarks = if let Some(b) = cli.benchmarks {
         b.into_iter().filter(|b| ALL_BENCHMARKS.contains(&b.as_str())).collect()
     } else {
@@ -154,7 +112,7 @@ fn main() -> Result<()> {
             .collect::<Vec<_>>()
     };
 
-    sh_println!(" Running benchmarks: {}", benchmarks.join(", "));
+    sh_println!("Running benchmarks: {}", benchmarks.join(", "));
 
     let mut results = BenchmarkResults::new();
     // Set the first version as baseline
@@ -171,41 +129,59 @@ fn main() -> Result<()> {
         let current = get_forge_version()?;
         sh_println!("Current version: {}", current.trim());
 
-        // Run each benchmark in parallel
-        let bench_results: Vec<(String, Vec<CriterionResult>)> = benchmarks
-            .par_iter()
-            .map(|benchmark| -> Result<(String, Vec<CriterionResult>)> {
-                sh_println!("Running {benchmark} benchmark...");
-                let results = run_benchmark(benchmark, version, &repos, cli.verbose)?;
-                Ok((benchmark.clone(), results))
+        // Create a list of all benchmark tasks
+        let benchmark_tasks: Vec<_> = repos
+            .iter()
+            .flat_map(|repo| {
+                benchmarks.iter().map(move |benchmark| (repo.clone(), benchmark.clone()))
             })
-            .collect::<Result<_>>()?;
+            .collect();
 
-        // Aggregate the results and add them to BenchmarkResults
-        for (benchmark, bench_results) in bench_results {
-            sh_println!("Processing {} results for {}", bench_results.len(), benchmark);
-            for result in bench_results {
-                // Parse ID format: benchmark-name/version/repo
-                let parts: Vec<&str> = result.id.split('/').collect();
-                if parts.len() >= 3 {
-                    let bench_type = parts[0].to_string();
-                    // Skip parts[1] which is the version (already known)
-                    let repo = parts[2].to_string();
+        sh_println!("Running {} benchmark tasks in parallel...", benchmark_tasks.len());
 
-                    // Debug: show change info if present
-                    if let Some(change) = &result.change {
-                        if let Some(mean) = &change.mean {
-                            sh_println!(
-                                "Change from baseline: {:.2}% ({})",
-                                mean.estimate,
-                                change.change.as_ref().unwrap_or(&"Unknown".to_string())
-                            );
-                        }
+        // Run all benchmarks in parallel
+        let version_results = benchmark_tasks
+            .par_iter()
+            .map(|(repo_config, benchmark)| -> Result<(String, String, HyperfineResult)> {
+                sh_println!("Setting up {}/{} for {}", repo_config.org, repo_config.repo, benchmark);
+                
+                // Setup a fresh project for this specific benchmark
+                let project = foundry_bench::BenchmarkProject::setup(&repo_config)
+                    .wrap_err(format!("Failed to setup project for {}/{}", repo_config.org, repo_config.repo))?;
+                
+                sh_println!("Running {} on {}/{}", benchmark, repo_config.org, repo_config.repo);
+
+                // Determine runs based on benchmark type
+                let runs = match benchmark.as_str() {
+                    "forge_coverage" => 1, // Coverage runs only once as an exception
+                    _ => RUNS,             // Use default RUNS constant for all other benchmarks
+                };
+
+                // Run the appropriate benchmark
+                let result = project.run(benchmark, version, runs, cli.verbose);
+
+                match result {
+                    Ok(hyperfine_result) => {
+                        sh_println!(
+                            "  {} on {}/{}: {:.3}s ± {:.3}s",
+                            benchmark,
+                            repo_config.org,
+                            repo_config.repo,
+                            hyperfine_result.mean,
+                            hyperfine_result.stddev
+                        );
+                        Ok((repo_config.name.clone(), benchmark.clone(), hyperfine_result))
                     }
-
-                    results.add_result(&bench_type, version, &repo, result);
+                    Err(e) => {
+                        eyre::bail!("Benchmark {} failed for {}/{}: {}", benchmark, repo_config.org, repo_config.repo, e);
+                    }
                 }
-            }
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        // Add all collected results to the main results structure
+        for (repo_name, benchmark, hyperfine_result) in version_results {
+            results.add_result(&benchmark, version, &repo_name, hyperfine_result);
         }
     }
 
@@ -239,131 +215,4 @@ fn install_foundry_versions(versions: &[String]) -> Result<()> {
 
     sh_println!("✅ All versions installed successfully");
     Ok(())
-}
-
-/// Collect benchmark results from Criterion output directory
-///
-/// This function reads the Criterion JSON output files and constructs CriterionResult objects.
-/// It processes:
-/// - benchmark.json for basic benchmark info
-/// - estimates.json for mean performance values
-/// - change/estimates.json for performance change data (if available)
-#[allow(unused_must_use)]
-fn collect_benchmark_results(
-    group_dir: &PathBuf,
-    benchmark_name: &str,
-    version: &str,
-    repos: &[RepoConfig],
-) -> Result<Vec<CriterionResult>> {
-    let mut results = Vec::new();
-
-    sh_println!("Looking for results in: {}", group_dir.display());
-    if !group_dir.exists() {
-        eyre::bail!("Benchmark directory does not exist: {}", group_dir.display());
-    }
-
-    // Iterate through each repository directory
-    for entry in std::fs::read_dir(group_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-
-        if !path.is_dir() {
-            sh_println!("Skipping non-directory entry: {}", path.display());
-            continue;
-        }
-
-        let repo_name = path
-            .file_name()
-            .ok_or_eyre("Failed to get repo_name using path")?
-            .to_string_lossy()
-            .to_string();
-
-        // Only process repos that are in the specified repos list
-        let is_valid_repo = repos.iter().any(|r| r.name == repo_name);
-        if !is_valid_repo {
-            sh_println!("Skipping unknown repo: {repo_name}");
-            continue;
-        }
-
-        sh_println!("Processing repo: {repo_name}");
-
-        // Process the benchmark results for this repository
-        if let Some(result) = process_repo_benchmark(&path, benchmark_name, version, &repo_name)? {
-            results.push(result);
-        }
-    }
-
-    Ok(results)
-}
-
-/// Process benchmark results for a single repository
-///
-/// Returns Some(CriterionResult) if valid results are found, None otherwise
-fn process_repo_benchmark(
-    repo_path: &Path,
-    benchmark_name: &str,
-    version: &str,
-    repo_name: &str,
-) -> Result<Option<CriterionResult>> {
-    let benchmark_json = repo_path.join("new/benchmark.json");
-
-    if !benchmark_json.exists() {
-        eyre::bail!(
-            "Benchmark JSON file does not exist for {}: {}",
-            repo_name,
-            benchmark_json.display()
-        );
-    }
-
-    // Create result ID
-    let id = format!("{benchmark_name}/{version}/{repo_name}");
-
-    // Read new estimates for mean value
-    let mean_estimate = read_mean_estimate(repo_path, repo_name)?;
-    // Read change data if available
-    let change = read_change_data(repo_path)?;
-
-    Ok(Some(CriterionResult { id, mean: mean_estimate, unit: "ns".to_string(), change }))
-}
-
-/// Read mean estimate from estimates.json
-fn read_mean_estimate(repo_path: &Path, repo_name: &str) -> Result<Estimate> {
-    let estimates_json = repo_path.join("new/estimates.json");
-    if !estimates_json.exists() {
-        eyre::bail!(
-            "Estimates JSON file does not exist for {}: {}",
-            repo_name,
-            estimates_json.display()
-        );
-    }
-
-    let estimates_content = std::fs::read_to_string(&estimates_json)?;
-    let estimates = serde_json::from_str::<serde_json::Value>(&estimates_content)?;
-    let mean_obj = estimates.get("mean").ok_or_eyre("No mean value found in estimates.json")?;
-    let estimate = serde_json::from_value::<Estimate>(mean_obj.clone())
-        .wrap_err("Failed to parse mean estimate from estimates.json")?;
-    Ok(estimate)
-}
-
-/// Read change data from change/estimates.json if it exists
-fn read_change_data(repo_path: &Path) -> Result<Option<Change>> {
-    let change_json = repo_path.join("change/estimates.json");
-
-    if !change_json.exists() {
-        return Ok(None);
-    }
-
-    let change_content = std::fs::read_to_string(&change_json)?;
-    let change_data = serde_json::from_str::<serde_json::Value>(&change_content)?;
-
-    let mean_change = change_data.get("mean").and_then(|m| {
-        // The change is in decimal format (e.g., 0.03 = 3%)
-        let decimal = m["point_estimate"].as_f64()?;
-        Some(ChangeEstimate {
-            estimate: decimal * 100.0, // Convert to percentage
-            unit: "%".to_string(),
-        })
-    });
-
-    Ok(Some(Change { mean: mean_change, median: None, change: None }))
 }

@@ -1,12 +1,37 @@
-use crate::{criterion_types::CriterionResult, RepoConfig};
+use crate::RepoConfig;
 use eyre::Result;
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, process::Command};
+
+/// Hyperfine benchmark result
+#[derive(Debug, Deserialize, Serialize)]
+pub struct HyperfineResult {
+    pub command: String,
+    pub mean: f64,
+    pub stddev: f64,
+    pub median: f64,
+    pub user: f64,
+    pub system: f64,
+    pub min: f64,
+    pub max: f64,
+    pub times: Vec<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_codes: Option<Vec<i32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// Hyperfine JSON output format
+#[derive(Debug, Deserialize, Serialize)]
+pub struct HyperfineOutput {
+    pub results: Vec<HyperfineResult>,
+}
 
 /// Aggregated benchmark results
 #[derive(Debug, Default)]
 pub struct BenchmarkResults {
     /// Map of benchmark_name -> version -> repo -> result
-    pub data: HashMap<String, HashMap<String, HashMap<String, CriterionResult>>>,
+    pub data: HashMap<String, HashMap<String, HashMap<String, HyperfineResult>>>,
     /// Track the baseline version for comparison
     pub baseline_version: Option<String>,
 }
@@ -25,7 +50,7 @@ impl BenchmarkResults {
         benchmark: &str,
         version: &str,
         repo: &str,
-        result: CriterionResult,
+        result: HyperfineResult,
     ) {
         self.data
             .entry(benchmark.to_string())
@@ -111,7 +136,7 @@ impl BenchmarkResults {
     fn generate_benchmark_table(
         &self,
         benchmark_name: &str,
-        version_data: &HashMap<String, HashMap<String, CriterionResult>>,
+        version_data: &HashMap<String, HashMap<String, HyperfineResult>>,
         versions: &[String],
         repos: &[RepoConfig],
     ) -> String {
@@ -147,7 +172,7 @@ impl BenchmarkResults {
 /// This function creates the markdown table rows for each repository,
 /// showing the benchmark results for each version.
 fn generate_table_rows(
-    version_data: &HashMap<String, HashMap<String, CriterionResult>>,
+    version_data: &HashMap<String, HashMap<String, HyperfineResult>>,
     versions: &[String],
     repos: &[RepoConfig],
 ) -> String {
@@ -174,7 +199,7 @@ fn generate_table_rows(
 /// 1. Check if version data exists
 /// 2. Check if repository data exists for this version
 fn get_benchmark_cell_content(
-    version_data: &HashMap<String, HashMap<String, CriterionResult>>,
+    version_data: &HashMap<String, HashMap<String, HyperfineResult>>,
     version: &str,
     repo_name: &str,
 ) -> String {
@@ -182,7 +207,7 @@ fn get_benchmark_cell_content(
     if let Some(repo_data) = version_data.get(version) {
         // Check if we have data for this repository
         if let Some(result) = repo_data.get(repo_name) {
-            return format_duration(result.mean.point_estimate, &result.unit);
+            return format_duration_seconds(result.mean);
         }
     }
 
@@ -191,30 +216,27 @@ fn get_benchmark_cell_content(
 
 pub fn format_benchmark_name(name: &str) -> String {
     match name {
-        "forge-test" => "Forge Test",
-        "forge-build-no-cache" => "Forge Build (No Cache)",
-        "forge-build-with-cache" => "Forge Build (With Cache)",
-        "forge-fuzz-test" => "Forge Fuzz Test",
-        "forge-coverage" => "Forge Coverage",
+        "forge_test" => "Forge Test",
+        "forge_build_no_cache" => "Forge Build (No Cache)",
+        "forge_build_with_cache" => "Forge Build (With Cache)",
+        "forge_fuzz_test" => "Forge Fuzz Test",
+        "forge_coverage" => "Forge Coverage",
         _ => name,
     }
     .to_string()
 }
 
-pub fn format_duration(nanos: f64, unit: &str) -> String {
-    match unit {
-        "ns" => {
-            if nanos < 1_000.0 {
-                format!("{nanos:.2} ns")
-            } else if nanos < 1_000_000.0 {
-                format!("{:.2} µs", nanos / 1_000.0)
-            } else if nanos < 1_000_000_000.0 {
-                format!("{:.2} ms", nanos / 1_000_000.0)
-            } else {
-                format!("{:.2} s", nanos / 1_000_000_000.0)
-            }
-        }
-        _ => format!("{nanos:.2} {unit}"),
+pub fn format_duration_seconds(seconds: f64) -> String {
+    if seconds < 0.001 {
+        format!("{:.2} ms", seconds * 1000.0)
+    } else if seconds < 1.0 {
+        format!("{:.3} s", seconds)
+    } else if seconds < 60.0 {
+        format!("{:.2} s", seconds)
+    } else {
+        let minutes = (seconds / 60.0).floor();
+        let remaining_seconds = seconds % 60.0;
+        format!("{:.0}m {:.1}s", minutes, remaining_seconds)
     }
 }
 

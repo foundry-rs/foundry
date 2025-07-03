@@ -1,3 +1,4 @@
+use crate::results::{HyperfineOutput, HyperfineResult};
 use eyre::{Result, WrapErr};
 use foundry_common::{sh_eprintln, sh_println};
 use foundry_compilers::project_util::TempProject;
@@ -7,11 +8,13 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
     env,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::Command,
 };
 
-pub mod criterion_types;
 pub mod results;
+
+/// Default number of runs for benchmarks
+pub const RUNS: u32 = 5;
 
 /// Configuration for repositories to benchmark
 #[derive(Debug, Clone)]
@@ -81,23 +84,12 @@ pub fn default_benchmark_repos() -> Vec<RepoConfig> {
             repo: "solady".to_string(),
             rev: "main".to_string(),
         },
-        // RepoConfig { name: "v4-core".to_string(), org: "Uniswap".to_string(), repo:
-        // "v4-core".to_string(), rev: "main".to_string() }, RepoConfig { name:
-        // "morpho-blue".to_string(), org: "morpho-org".to_string(), repo:
-        // "morpho-blue".to_string(), rev: "main".to_string() }, RepoConfig { name:
-        // "spark-psm".to_string(), org: "marsfoundation".to_string(), repo:
-        // "spark-psm".to_string(), rev: "master".to_string() },
     ]
 }
 
 // Keep a lazy static for compatibility
 pub static BENCHMARK_REPOS: Lazy<Vec<RepoConfig>> = Lazy::new(default_benchmark_repos);
 
-/// Sample size for benchmark measurements
-///
-/// This controls how many times each benchmark is run for statistical analysis.
-/// Higher values provide more accurate results but take longer to complete.
-pub const SAMPLE_SIZE: usize = 10;
 
 /// Foundry versions to benchmark
 ///
@@ -195,27 +187,124 @@ impl BenchmarkProject {
         Ok(())
     }
 
-    /// Run forge test command and return the output
-    pub fn run_forge_test(&self) -> Result<Output> {
-        Command::new("forge")
-            .current_dir(&self.root_path)
-            .args(["test"])
-            .output()
-            .wrap_err("Failed to run forge test")
-    }
+    /// Run a command with hyperfine and return the results
+    /// 
+    /// # Arguments
+    /// * `benchmark_name` - Name of the benchmark for organizing output
+    /// * `version` - Foundry version being benchmarked
+    /// * `command` - The command to benchmark
+    /// * `runs` - Number of runs to perform
+    /// * `setup` - Optional setup command to run before the benchmark series (e.g., "forge build")
+    /// * `conclude` - Optional conclude command to run after each timing run (e.g., cleanup)
+    /// * `verbose` - Whether to show command output
+    /// 
+    /// # Hyperfine flags used:
+    /// * `--runs` - Number of timing runs
+    /// * `--setup` - Execute before the benchmark series (not before each run)
+    /// * `--conclude` - Execute after each timing run
+    /// * `--export-json` - Export results to JSON for parsing
+    /// * `--shell=bash` - Use bash for shell command execution
+    /// * `--show-output` - Show command output (when verbose)
+    fn hyperfine(
+        &self,
+        benchmark_name: &str,
+        version: &str,
+        command: &str,
+        runs: u32,
+        setup: Option<&str>,
+        conclude: Option<&str>,
+        verbose: bool,
+    ) -> Result<HyperfineResult> {
+        // Create structured temp directory for JSON output
+        // Format: <temp_dir>/<benchmark_name>/<version>/<repo_name>/<benchmark_name>.json
+        let temp_dir = std::env::temp_dir();
+        let json_dir = temp_dir
+            .join("foundry-bench")
+            .join(benchmark_name)
+            .join(version)
+            .join(&self.name);
+        std::fs::create_dir_all(&json_dir)?;
+        
+        let json_path = json_dir.join(format!("{}.json", benchmark_name));
 
-    /// Run forge build command and return the output
-    pub fn run_forge_build(&self, clean_cache: bool) -> Result<Output> {
-        if clean_cache {
-            // Clean first
-            let _ = Command::new("forge").current_dir(&self.root_path).args(["clean"]).output();
+        // Build hyperfine command
+        let mut hyperfine_cmd = Command::new("hyperfine");
+        hyperfine_cmd
+            .current_dir(&self.root_path)
+            .arg("--runs")
+            .arg(runs.to_string())
+            .arg("--export-json")
+            .arg(&json_path)
+            .arg("--shell=bash");
+
+        // Add optional setup command
+        if let Some(setup_cmd) = setup {
+            hyperfine_cmd.arg("--setup").arg(setup_cmd);
         }
 
-        Command::new("forge")
-            .current_dir(&self.root_path)
-            .args(["build"])
-            .output()
-            .wrap_err("Failed to run forge build")
+        // Add optional conclude command
+        if let Some(conclude_cmd) = conclude {
+            hyperfine_cmd.arg("--conclude").arg(conclude_cmd);
+        }
+
+        if verbose {
+            hyperfine_cmd.arg("--show-output");
+            hyperfine_cmd.stderr(std::process::Stdio::inherit());
+            hyperfine_cmd.stdout(std::process::Stdio::inherit());
+        }
+
+        // Add the benchmark command last
+        hyperfine_cmd.arg(command);
+
+        let status = hyperfine_cmd.status().wrap_err("Failed to run hyperfine")?;
+        if !status.success() {
+            eyre::bail!("Hyperfine failed for command: {}", command);
+        }
+
+        // Read and parse the JSON output
+        let json_content = std::fs::read_to_string(json_path)?;
+        let output: HyperfineOutput = serde_json::from_str(&json_content)?;
+
+        // Extract the first result (we only run one command at a time)
+        output.results.into_iter().next().ok_or_else(|| eyre::eyre!("No results from hyperfine"))
+    }
+
+    /// Benchmark forge test
+    pub fn bench_forge_test(&self, version: &str, runs: u32, verbose: bool) -> Result<HyperfineResult> {
+        // Build before running tests
+        self.hyperfine("forge_test", version, "forge test", runs, Some("forge build"), None, verbose)
+    }
+
+    /// Benchmark forge build with cache
+    pub fn bench_forge_build_with_cache(&self, version: &str, runs: u32, verbose: bool) -> Result<HyperfineResult> {
+        // No setup needed, uses existing cache
+        self.hyperfine("forge_build_with_cache", version, "forge build", runs, None, None, verbose)
+    }
+
+    /// Benchmark forge build without cache
+    pub fn bench_forge_build_no_cache(&self, version: &str, runs: u32, verbose: bool) -> Result<HyperfineResult> {
+        // Clean before the benchmark series
+        self.hyperfine("forge_build_no_cache", version, "forge build", runs, Some("forge clean"), None, verbose)
+    }
+
+    /// Benchmark forge fuzz tests
+    pub fn bench_forge_fuzz_test(&self, version: &str, runs: u32, verbose: bool) -> Result<HyperfineResult> {
+        // Build before running fuzz tests
+        self.hyperfine(
+            "forge_fuzz_test",
+            version,
+            r#"forge test --match-test "test[^(]*\([^)]+\)""#,
+            runs,
+            Some("forge build"),
+            None,
+            verbose,
+        )
+    }
+
+    /// Benchmark forge coverage
+    pub fn bench_forge_coverage(&self, version: &str, runs: u32, verbose: bool) -> Result<HyperfineResult> {
+        // No setup needed, forge coverage builds internally
+        self.hyperfine("forge_coverage", version, "forge coverage", runs, None, None, verbose)
     }
 
     /// Get the root path of the project
@@ -223,23 +312,16 @@ impl BenchmarkProject {
         &self.root_path
     }
 
-    /// Run forge test with fuzz tests only (tests with parameters)
-    pub fn run_fuzz_tests(&self) -> Result<Output> {
-        // Use shell to properly handle the regex pattern
-        Command::new("sh")
-            .current_dir(&self.root_path)
-            .args(["-c", r#"forge test --match-test "test[^(]*\([^)]+\)""#])
-            .output()
-            .wrap_err("Failed to run forge fuzz tests")
-    }
-
-    /// Run forge coverage command with --ir-minimum flag
-    pub fn run_forge_coverage(&self) -> Result<Output> {
-        Command::new("forge")
-            .current_dir(&self.root_path)
-            .args(["coverage", "--ir-minimum"])
-            .output()
-            .wrap_err("Failed to run forge coverage")
+    /// Run a specific benchmark by name
+    pub fn run(&self, benchmark: &str, version: &str, runs: u32, verbose: bool) -> Result<HyperfineResult> {
+        match benchmark {
+            "forge_test" => self.bench_forge_test(version, runs, verbose),
+            "forge_build_no_cache" => self.bench_forge_build_no_cache(version, runs, verbose),
+            "forge_build_with_cache" => self.bench_forge_build_with_cache(version, runs, verbose),
+            "forge_fuzz_test" => self.bench_forge_fuzz_test(version, runs, verbose),
+            "forge_coverage" => self.bench_forge_coverage(version, runs, verbose),
+            _ => eyre::bail!("Unknown benchmark: {}", benchmark),
+        }
     }
 }
 
