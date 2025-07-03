@@ -39,11 +39,13 @@ merge_impl_figment_convert!(CreateArgs, build, eth);
 
 /// Deploy a smart contract to the specified network.
 ///
-/// This command compiles the contract, encodes constructor arguments, and sends a deployment transaction.
+/// This command compiles the contract, encodes constructor arguments, and sends a deployment
+/// transaction.
 ///
 /// Example:
 ///
-/// forge create src/Counter.sol:Counter --constructor-args 42 --rpc-url &lt;URL&gt; --private-key &lt;KEY&gt; --broadcast
+/// forge create src/Counter.sol:Counter --constructor-args 42 --rpc-url &lt;URL&gt; --private-key
+/// &lt;KEY&gt; --broadcast
 #[derive(Clone, Debug, Parser)]
 #[command(
     about = "Deploy a smart contract to the specified network.",
