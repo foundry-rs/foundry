@@ -203,8 +203,8 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.18.0", default-features = false }
-foundry-compilers = { version = "0.17.3", default-features = false }
+foundry-block-explorers = { version = "0.19.0", default-features = false }
+foundry-compilers = { version = "0.17.3",  default-features = false }
 foundry-fork-db = "0.15"
 solang-parser = { version = "=0.3.9", package = "foundry-solang-parser" }
 solar-ast = { version = "=0.1.4", default-features = false }

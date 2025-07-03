@@ -8,7 +8,7 @@ use crate::{
 };
 use alloy_primitives::{map::HashSet, Address};
 use alloy_provider::Provider;
-use clap::{Parser, ValueHint};
+use clap::{Parser, ValueEnum, ValueHint};
 use eyre::Result;
 use foundry_block_explorers::EtherscanApiVersion;
 use foundry_cli::{
@@ -22,6 +22,17 @@ use itertools::Itertools;
 use reqwest::Url;
 use semver::BuildMetadata;
 use std::path::PathBuf;
+
+/// The programming language used for smart contract development.
+///
+/// This enum represents the supported contract languages for verification.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum ContractLanguage {
+    /// Solidity programming language
+    Solidity,
+    /// Vyper programming language  
+    Vyper,
+}
 
 /// Verification provider arguments
 #[derive(Clone, Debug, Parser)]
@@ -147,6 +158,9 @@ pub struct VerifyArgs {
 
     #[command(flatten)]
     pub verifier: VerifierArgs,
+
+    #[arg(long, value_enum)]
+    pub language: Option<ContractLanguage>,
 }
 
 impl_figment_convert!(VerifyArgs);
@@ -406,6 +420,16 @@ impl VerifyArgs {
                 config,
                 settings.clone(),
             )
+        }
+    }
+
+    pub fn detect_language(&self, ctx: &VerificationContext) -> ContractLanguage {
+        if let Some(lang) = self.language {
+            return lang;
+        }
+        match ctx.target_path.extension().and_then(|e| e.to_str()) {
+            Some("vy") => ContractLanguage::Vyper,
+            _ => ContractLanguage::Solidity,
         }
     }
 }
