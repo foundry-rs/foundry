@@ -15,9 +15,10 @@ declare_forge_lint!(
 impl<'ast> EarlyLintPass<'ast> for DivideBeforeMultiply {
     fn check_expr(&mut self, ctx: &LintContext<'_>, expr: &'ast Expr<'ast>) {
         if let ExprKind::Binary(left_expr, BinOp { kind: BinOpKind::Mul, .. }, _) = &expr.kind
-            && contains_division(left_expr) {
-                ctx.emit(&DIVIDE_BEFORE_MULTIPLY, expr.span);
-            }
+            && contains_division(left_expr)
+        {
+            ctx.emit(&DIVIDE_BEFORE_MULTIPLY, expr.span);
+        }
     }
 }
 

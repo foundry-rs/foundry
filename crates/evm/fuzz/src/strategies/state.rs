@@ -177,12 +177,13 @@ impl FuzzDictionary {
         run_depth: u32,
     ) {
         if let Some(function) = function
-            && !function.outputs.is_empty() {
-                // Decode result and collect samples to be used in subsequent fuzz runs.
-                if let Ok(decoded_result) = function.abi_decode_output(result) {
-                    self.insert_sample_values(decoded_result, run_depth);
-                }
+            && !function.outputs.is_empty()
+        {
+            // Decode result and collect samples to be used in subsequent fuzz runs.
+            if let Ok(decoded_result) = function.abi_decode_output(result) {
+                self.insert_sample_values(decoded_result, run_depth);
             }
+        }
     }
 
     /// Insert values from call log topics and data into fuzz dictionary.

@@ -565,9 +565,10 @@ fn get_json_str(obj: &impl serde::Serialize, key: Option<&str>) -> Result<String
     let value = serde_json::to_value(obj)?;
     let mut value_ref = &value;
     if let Some(key) = key
-        && let Some(value2) = value.get(key) {
-            value_ref = value2;
-        }
+        && let Some(value2) = value.get(key)
+    {
+        value_ref = value2;
+    }
     let s = match value_ref.as_str() {
         Some(s) => s.to_string(),
         None => format!("{value_ref:#}"),

@@ -641,9 +641,10 @@ impl ReadyTransactions {
                 for mark in &tx.transaction.transaction.requires {
                     if let Some(hash) = self.provided_markers.get(mark)
                         && let Some(tx) = ready.get_mut(hash)
-                            && let Some(idx) = tx.unlocks.iter().position(|i| i == hash) {
-                                tx.unlocks.swap_remove(idx);
-                            }
+                        && let Some(idx) = tx.unlocks.iter().position(|i| i == hash)
+                    {
+                        tx.unlocks.swap_remove(idx);
+                    }
                 }
 
                 // remove from the independent set

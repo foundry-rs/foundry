@@ -167,9 +167,10 @@ impl CommentWithMetadata {
             s = stripped;
         }
         if let Some(end_token) = self.end_token()
-            && let Some(stripped) = s.strip_suffix(end_token) {
-                s = stripped;
-            }
+            && let Some(stripped) = s.strip_suffix(end_token)
+        {
+            s = stripped;
+        }
         s
     }
 
@@ -377,9 +378,10 @@ impl Iterator for CommentStateCharIndices<'_> {
             }
             CommentState::Block => {
                 if ch == '*'
-                    && let Some((_, '/')) = self.peek() {
-                        self.state = CommentState::BlockEnd1;
-                    }
+                    && let Some((_, '/')) = self.peek()
+                {
+                    self.state = CommentState::BlockEnd1;
+                }
             }
             CommentState::BlockEnd1 => {
                 self.state = CommentState::BlockEnd2;

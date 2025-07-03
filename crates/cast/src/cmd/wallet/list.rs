@@ -107,9 +107,10 @@ impl ListArgs {
             let path = entry?.path();
             if path.is_file()
                 && let Some(file_name) = path.file_name()
-                    && let Some(name) = file_name.to_str() {
-                        sh_println!("{name} (Local)")?;
-                    }
+                && let Some(name) = file_name.to_str()
+            {
+                sh_println!("{name} (Local)")?;
+            }
         }
 
         Ok(())

@@ -42,10 +42,11 @@ fn fuzz_param_inner(
     mut fuzz_fixtures: Option<(&[DynSolValue], &str)>,
 ) -> BoxedStrategy<DynSolValue> {
     if let Some((fixtures, name)) = fuzz_fixtures
-        && !fixtures.iter().all(|f| f.matches(param)) {
-            error!("fixtures for {name:?} do not match type {param}");
-            fuzz_fixtures = None;
-        }
+        && !fixtures.iter().all(|f| f.matches(param))
+    {
+        error!("fixtures for {name:?} do not match type {param}");
+        fuzz_fixtures = None;
+    }
     let fuzz_fixtures = fuzz_fixtures.map(|(f, _)| f);
 
     let value = || {

@@ -178,9 +178,10 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
                                 .get_code_at(addr)
                                 .block_id(block.unwrap_or_default())
                                 .await
-                                && code.is_empty() {
-                                    eyre::bail!("contract {addr:?} does not have any code")
-                                }
+                                && code.is_empty()
+                            {
+                                eyre::bail!("contract {addr:?} does not have any code")
+                            }
                         } else if Some(TxKind::Create) == req.to {
                             eyre::bail!("tx req is a contract deployment");
                         } else {
@@ -364,9 +365,11 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ) -> Result<String> {
         let block = block.into();
         if let Some(ref field) = field
-            && field == "transactions" && !full {
-                eyre::bail!("use --full to view transactions")
-            }
+            && field == "transactions"
+            && !full
+        {
+            eyre::bail!("use --full to view transactions")
+        }
 
         let block = self
             .provider

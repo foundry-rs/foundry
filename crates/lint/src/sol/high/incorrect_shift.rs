@@ -19,9 +19,10 @@ impl<'ast> EarlyLintPass<'ast> for IncorrectShift {
             BinOp { kind: BinOpKind::Shl | BinOpKind::Shr, .. },
             right_expr,
         ) = &expr.kind
-            && contains_incorrect_shift(left_expr, right_expr) {
-                ctx.emit(&INCORRECT_SHIFT, expr.span);
-            }
+            && contains_incorrect_shift(left_expr, right_expr)
+        {
+            ctx.emit(&INCORRECT_SHIFT, expr.span);
+        }
     }
 }
 

@@ -134,13 +134,14 @@ impl Display for AccountStateDiffs {
         }
         // Print balance diff if changed.
         if let Some(balance_diff) = &self.balance_diff
-            && balance_diff.previous_value != balance_diff.new_value {
-                writeln!(
-                    f,
-                    "- balance diff: {} → {}",
-                    balance_diff.previous_value, balance_diff.new_value
-                )?;
-            }
+            && balance_diff.previous_value != balance_diff.new_value
+        {
+            writeln!(
+                f,
+                "- balance diff: {} → {}",
+                balance_diff.previous_value, balance_diff.new_value
+            )?;
+        }
         // Print state diff if any.
         if !&self.state_diff.is_empty() {
             writeln!(f, "- state diff:")?;
@@ -1076,9 +1077,11 @@ fn inner_stop_gas_snapshot(
 
         // Clear last snapshot cache if we have an exact match.
         if let Some((snapshot_group, snapshot_name)) = &ccx.state.gas_metering.active_gas_snapshot
-            && snapshot_group == &group && snapshot_name == &name {
-                ccx.state.gas_metering.active_gas_snapshot = None;
-            }
+            && snapshot_group == &group
+            && snapshot_name == &name
+        {
+            ccx.state.gas_metering.active_gas_snapshot = None;
+        }
 
         Ok(value.abi_encode())
     } else {
@@ -1253,7 +1256,8 @@ fn get_recorded_state_diffs(state: &mut Cheatcodes) -> BTreeMap<Address, Account
 /// Helper function to set / unset cold storage slot of the target address.
 fn set_cold_slot(ccx: &mut CheatsCtxt, target: Address, slot: U256, cold: bool) {
     if let Some(account) = ccx.ecx.journaled_state.state.get_mut(&target)
-        && let Some(storage_slot) = account.storage.get_mut(&slot) {
-            storage_slot.is_cold = cold;
-        }
+        && let Some(storage_slot) = account.storage.get_mut(&slot)
+    {
+        storage_slot.is_cold = cold;
+    }
 }

@@ -64,9 +64,10 @@ pub(crate) fn assert_invariants(
     let mut inner_sequence = vec![];
 
     if let Some(fuzzer) = &executor.inspector().fuzzer
-        && let Some(call_generator) = &fuzzer.call_generator {
-            inner_sequence.extend(call_generator.last_sequence.read().iter().cloned());
-        }
+        && let Some(call_generator) = &fuzzer.call_generator
+    {
+        inner_sequence.extend(call_generator.last_sequence.read().iter().cloned());
+    }
 
     let (call_result, success) = call_invariant_function(
         executor,

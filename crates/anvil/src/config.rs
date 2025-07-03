@@ -1281,10 +1281,11 @@ latest block number: {latest_block}"
 
         // use remote gas price
         if self.gas_price.is_none()
-            && let Ok(gas_price) = provider.get_gas_price().await {
-                self.gas_price = Some(gas_price);
-                fees.set_gas_price(gas_price);
-            }
+            && let Ok(gas_price) = provider.get_gas_price().await
+        {
+            self.gas_price = Some(gas_price);
+            fees.set_gas_price(gas_price);
+        }
 
         let block_hash = block.header.hash;
 
@@ -1592,9 +1593,10 @@ async fn find_latest_fork_block<P: Provider<AnyNetwork>>(
     // leeway
     for _ in 0..2 {
         if let Some(block) = provider.get_block(num.into()).await?
-            && !block.header.hash.is_zero() {
-                break;
-            }
+            && !block.header.hash.is_zero()
+        {
+            break;
+        }
         // block not actually finalized, so we try the block before
         num = num.saturating_sub(1)
     }

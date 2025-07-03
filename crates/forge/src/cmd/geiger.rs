@@ -151,11 +151,12 @@ impl<'ast> Visit<'ast> for Visitor<'_> {
     fn visit_expr(&mut self, expr: &'ast ast::Expr<'ast>) -> ControlFlow<Self::BreakValue> {
         if let ast::ExprKind::Call(lhs, _args) = &expr.kind
             && let ast::ExprKind::Member(_lhs, member) = &lhs.kind
-                && self.unsafe_cheatcodes.iter().any(|c| c.as_str() == member.as_str()) {
-                    let msg = format!("usage of unsafe cheatcode `vm.{member}`");
-                    self.sess.dcx.err(msg).span(member.span).emit();
-                    self.count += 1;
-                }
+            && self.unsafe_cheatcodes.iter().any(|c| c.as_str() == member.as_str())
+        {
+            let msg = format!("usage of unsafe cheatcode `vm.{member}`");
+            self.sess.dcx.err(msg).span(member.span).emit();
+            self.count += 1;
+        }
         self.walk_expr(expr)
     }
 }

@@ -85,9 +85,10 @@ impl EthApi {
         node_info!("ots_getTransactionError");
 
         if let Some(receipt) = self.backend.mined_transaction_receipt(hash)
-            && !receipt.inner.inner.as_receipt_with_bloom().receipt.status.coerce_status() {
-                return Ok(receipt.out.map(|b| b.0.into()).unwrap_or(Bytes::default()));
-            }
+            && !receipt.inner.inner.as_receipt_with_bloom().receipt.status.coerce_status()
+        {
+            return Ok(receipt.out.map(|b| b.0.into()).unwrap_or(Bytes::default()));
+        }
 
         Ok(Bytes::default())
     }

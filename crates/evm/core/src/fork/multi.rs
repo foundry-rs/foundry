@@ -259,9 +259,10 @@ impl MultiForkHandler {
     fn find_in_progress_task(&mut self, id: &ForkId) -> Option<&mut Vec<CreateSender>> {
         for task in &mut self.pending_tasks {
             if let ForkTask::Create(_, in_progress, _, additional) = task
-                && in_progress == id {
-                    return Some(additional);
-                }
+                && in_progress == id
+            {
+                return Some(additional);
+            }
         }
         None
     }
@@ -494,10 +495,11 @@ impl Drop for ShutDownMultiFork {
         let (sender, rx) = oneshot_channel();
         let req = Request::ShutDown(sender);
         if let Some(mut handler) = self.handler.take()
-            && handler.try_send(req).is_ok() {
-                let _ = rx.recv();
-                trace!(target: "fork::cache", "multifork backend shutdown");
-            }
+            && handler.try_send(req).is_ok()
+        {
+            let _ = rx.recv();
+            trace!(target: "fork::cache", "multifork backend shutdown");
+        }
     }
 }
 

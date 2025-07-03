@@ -124,26 +124,27 @@ impl RevertDiagnostic {
     {
         // REVERT (offset, size)
         if let Ok(size) = interp.stack.peek(1)
-            && size.is_zero() {
-                // Check empty revert with same depth as a non-contract call
-                if let Some((_, _, depth)) = self.non_contract_call {
-                    if ctx.journal_ref().depth() == depth {
-                        self.broadcast_diagnostic(interp);
-                    } else {
-                        self.non_contract_call = None;
-                    }
-                    return;
+            && size.is_zero()
+        {
+            // Check empty revert with same depth as a non-contract call
+            if let Some((_, _, depth)) = self.non_contract_call {
+                if ctx.journal_ref().depth() == depth {
+                    self.broadcast_diagnostic(interp);
+                } else {
+                    self.non_contract_call = None;
                 }
+                return;
+            }
 
-                // Check empty revert with same depth as a non-contract size check
-                if let Some((_, depth)) = self.non_contract_size_check {
-                    if depth == ctx.journal_ref().depth() {
-                        self.broadcast_diagnostic(interp);
-                    } else {
-                        self.non_contract_size_check = None;
-                    }
+            // Check empty revert with same depth as a non-contract size check
+            if let Some((_, depth)) = self.non_contract_size_check {
+                if depth == ctx.journal_ref().depth() {
+                    self.broadcast_diagnostic(interp);
+                } else {
+                    self.non_contract_size_check = None;
                 }
             }
+        }
     }
 
     /// When an `EXTCODESIZE` opcode occurs:
@@ -174,9 +175,10 @@ impl RevertDiagnostic {
     #[cold]
     fn handle_extcodesize_output(&mut self, interp: &mut Interpreter) {
         if let Ok(size) = interp.stack.peek(0)
-            && size != U256::ZERO {
-                self.non_contract_size_check = None;
-            }
+            && size != U256::ZERO
+        {
+            self.non_contract_size_check = None;
+        }
 
         self.is_extcodesize_step = false;
     }
@@ -198,9 +200,11 @@ where
         }
 
         if let Ok(state) = ctx.journal().code(target)
-            && state.is_empty() && !inputs.input.is_empty() {
-                self.non_contract_call = Some((target, inputs.scheme, ctx.journal_ref().depth()));
-            }
+            && state.is_empty()
+            && !inputs.input.is_empty()
+        {
+            self.non_contract_call = Some((target, inputs.scheme, ctx.journal_ref().depth()));
+        }
         None
     }
 

@@ -55,10 +55,11 @@ impl SessionSource {
             let last_yul_return = run_func_statements.iter().find_map(|statement| {
                 if let pt::Statement::Assembly { loc: _, dialect: _, flags: _, block } = statement
                     && let Some(statement) = block.statements.last()
-                        && let pt::YulStatement::FunctionCall(yul_call) = statement
-                            && yul_call.id.name == "return" {
-                                return Some(statement.loc());
-                            }
+                    && let pt::YulStatement::FunctionCall(yul_call) = statement
+                    && yul_call.id.name == "return"
+                {
+                    return Some(statement.loc());
+                }
                 None
             });
 
@@ -107,9 +108,10 @@ impl SessionSource {
 
                 // Consider yul return statement as final statement (if it's loc is lower) .
                 if let Some(yul_return) = last_yul_return
-                    && yul_return.end() < source_loc.start() {
-                        source_loc = yul_return;
-                    }
+                    && yul_return.end() < source_loc.start()
+                {
+                    source_loc = yul_return;
+                }
 
                 // Map the source location of the final statement of the `run()` function to its
                 // corresponding runtime program counter

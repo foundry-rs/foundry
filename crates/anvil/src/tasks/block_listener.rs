@@ -55,9 +55,10 @@ where
         }
 
         if let Some(mut task) = pin.task.take()
-            && task.poll_unpin(cx).is_pending() {
-                pin.task = Some(task);
-            }
+            && task.poll_unpin(cx).is_pending()
+        {
+            pin.task = Some(task);
+        }
         Poll::Pending
     }
 }

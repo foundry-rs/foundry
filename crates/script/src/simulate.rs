@@ -329,9 +329,10 @@ impl FilledTransactionsState {
             // We only create a [`ScriptSequence`] object when we collect all the rpc related
             // transactions.
             if let Some(next_tx) = txes_iter.peek()
-                && next_tx.rpc == tx_rpc {
-                    continue;
-                }
+                && next_tx.rpc == tx_rpc
+            {
+                continue;
+            }
 
             let sequence =
                 self.create_sequence(is_multi_deployment, provider_info.chain, new_sequence)?;

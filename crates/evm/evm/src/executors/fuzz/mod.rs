@@ -220,10 +220,11 @@ impl FuzzedExecutor {
         }
 
         if let Some(reason) = &result.reason
-            && let Some(reason) = SkipReason::decode_self(reason) {
-                result.skipped = true;
-                result.reason = reason.0;
-            }
+            && let Some(reason) = SkipReason::decode_self(reason)
+        {
+            result.skipped = true;
+            result.reason = reason.0;
+        }
 
         state.log_stats();
 

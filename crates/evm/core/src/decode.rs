@@ -192,9 +192,10 @@ impl RevertDecoder {
         }
 
         if let Some(status) = status
-            && !status.is_ok() {
-                return Some(format!("EvmError: {status:?}"));
-            }
+            && !status.is_ok()
+        {
+            return Some(format!("EvmError: {status:?}"));
+        }
         if err.is_empty() {
             None
         } else {
@@ -207,9 +208,10 @@ impl RevertDecoder {
 fn decode_as_non_empty_string(err: &[u8]) -> Option<String> {
     // ABI-encoded `string`.
     if let Ok(s) = String::abi_decode(err)
-        && !s.is_empty() {
-            return Some(s);
-        }
+        && !s.is_empty()
+    {
+        return Some(s);
+    }
 
     // ASCII string.
     if err.is_ascii() {

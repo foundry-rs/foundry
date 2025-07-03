@@ -447,11 +447,12 @@ impl DocBuilder {
             }
         }
         if !readme.is_empty()
-            && let Some(path) = base_path {
-                let path = self.out_dir().join(Self::SRC).join(path);
-                fs::create_dir_all(&path)?;
-                fs::write(path.join(Self::README), readme.finish())?;
-            }
+            && let Some(path) = base_path
+        {
+            let path = self.out_dir().join(Self::SRC).join(path);
+            fs::create_dir_all(&path)?;
+            fs::write(path.join(Self::README), readme.finish())?;
+        }
         Ok(())
     }
 }

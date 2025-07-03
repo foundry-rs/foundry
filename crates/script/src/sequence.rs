@@ -18,9 +18,10 @@ fn format_transaction(index: usize, tx: &TransactionWithMetadata) -> Result<Stri
 
     // Show contract name and address if available
     if !tx.opcode.is_any_create()
-        && let (Some(name), Some(addr)) = (&tx.contract_name, &tx.contract_address) {
-            writeln!(output, "contract: {name}({addr})")?;
-        }
+        && let (Some(name), Some(addr)) = (&tx.contract_name, &tx.contract_address)
+    {
+        writeln!(output, "contract: {name}({addr})")?;
+    }
 
     // Show decoded function if available
     if let (Some(func), Some(args)) = (&tx.function, &tx.arguments) {

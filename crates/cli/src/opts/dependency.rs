@@ -118,10 +118,11 @@ impl FromStr for Dependency {
             if tag_or_branch.is_none() {
                 let maybe_tag_or_branch = split.next().unwrap();
                 if let Some(actual_url) = split.next()
-                    && !maybe_tag_or_branch.contains('/') {
-                        tag_or_branch = Some(maybe_tag_or_branch.to_string());
-                        url = actual_url;
-                    }
+                    && !maybe_tag_or_branch.contains('/')
+                {
+                    tag_or_branch = Some(maybe_tag_or_branch.to_string());
+                    url = actual_url;
+                }
             }
 
             let url = url.to_string();

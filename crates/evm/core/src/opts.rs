@@ -137,9 +137,10 @@ impl EvmOpts {
         .wrap_err_with(|| {
             let mut msg = "could not instantiate forked environment".to_string();
             if let Ok(url) = Url::parse(fork_url)
-                && let Some(provider) = url.host() {
-                    write!(msg, " with provider {provider}").unwrap();
-                }
+                && let Some(provider) = url.host()
+            {
+                write!(msg, " with provider {provider}").unwrap();
+            }
             msg
         })
     }

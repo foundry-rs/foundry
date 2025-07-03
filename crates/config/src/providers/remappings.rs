@@ -36,14 +36,12 @@ impl Remappings {
     pub fn with_figment(mut self, figment: &Figment) -> Self {
         let mut add_project_remapping = |path: &str| {
             if let Ok(path) = figment.find_value(path)
-                && let Some(path) = path.into_string() {
-                    let remapping = Remapping {
-                        context: None,
-                        name: format!("{path}/"),
-                        path: format!("{path}/"),
-                    };
-                    self.project_paths.push(remapping);
-                }
+                && let Some(path) = path.into_string()
+            {
+                let remapping =
+                    Remapping { context: None, name: format!("{path}/"), path: format!("{path}/") };
+                self.project_paths.push(remapping);
+            }
         };
         add_project_remapping("src");
         add_project_remapping("test");
@@ -267,17 +265,18 @@ impl RemappingsProvider<'_> {
                 let mut src_remapping = None;
                 if ![Path::new("src"), Path::new("contracts"), Path::new("lib")]
                     .contains(&config.src.as_path())
-                    && let Some(name) = lib.file_name().and_then(|s| s.to_str()) {
-                        let mut r = Remapping {
-                            context: None,
-                            name: format!("{name}/"),
-                            path: format!("{}", lib.join(&config.src).display()),
-                        };
-                        if !r.path.ends_with('/') {
-                            r.path.push('/')
-                        }
-                        src_remapping = Some(r);
+                    && let Some(name) = lib.file_name().and_then(|s| s.to_str())
+                {
+                    let mut r = Remapping {
+                        context: None,
+                        name: format!("{name}/"),
+                        path: format!("{}", lib.join(&config.src).display()),
+                    };
+                    if !r.path.ends_with('/') {
+                        r.path.push('/')
                     }
+                    src_remapping = Some(r);
+                }
 
                 // Eventually, we could set context for remappings at this location,
                 // taking into account the OS platform. We'll need to be able to handle nested

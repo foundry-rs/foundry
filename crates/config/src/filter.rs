@@ -47,9 +47,10 @@ impl GlobMatcher {
         }
 
         if let Some(file_name) = path.file_name().and_then(|n| n.to_str())
-            && file_name.contains(self.as_str()) {
-                return true;
-            }
+            && file_name.contains(self.as_str())
+        {
+            return true;
+        }
 
         if !path.starts_with("./") && self.as_str().starts_with("./") {
             return self.matcher.is_match(format!("./{}", path.display()));

@@ -148,12 +148,13 @@ impl TxCorpusManager {
         for entry in std::fs::read_dir(&corpus_dir)? {
             let path = entry?.path();
             if path.is_file()
-                && let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-                    // Ignore metadata files
-                    if name.contains(METADATA_SUFFIX) {
-                        continue;
-                    }
+                && let Some(name) = path.file_name().and_then(|s| s.to_str())
+            {
+                // Ignore metadata files
+                if name.contains(METADATA_SUFFIX) {
+                    continue;
                 }
+            }
 
             let read_corpus_result = match path.extension().and_then(|ext| ext.to_str()) {
                 Some("gz") => foundry_common::fs::read_json_gzip_file::<Vec<BasicTxDetails>>(&path),
@@ -296,25 +297,24 @@ impl TxCorpusManager {
                 && let Some(index) = self.in_memory_corpus.iter().position(|corpus| {
                     corpus.total_mutations > self.corpus_min_mutations
                         && (corpus.new_finds_produced as f64 / corpus.total_mutations as f64) < 0.3
-                }) {
-                    let corpus = self.in_memory_corpus.get(index).unwrap();
-                    let uuid = corpus.uuid;
-                    debug!(target: "corpus", "evict corpus {uuid}");
+                })
+            {
+                let corpus = self.in_memory_corpus.get(index).unwrap();
+                let uuid = corpus.uuid;
+                debug!(target: "corpus", "evict corpus {uuid}");
 
-                    // Flush to disk the seed metadata at the time of eviction.
-                    let eviction_time = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .expect("Time went backwards")
-                        .as_secs();
-                    foundry_common::fs::write_json_file(
-                        corpus_dir
-                            .join(format!("{uuid}-{eviction_time}-{METADATA_SUFFIX}"))
-                            .as_path(),
-                        &corpus,
-                    )?;
-                    // Remove corpus from memory.
-                    self.in_memory_corpus.remove(index);
-                }
+                // Flush to disk the seed metadata at the time of eviction.
+                let eviction_time = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_secs();
+                foundry_common::fs::write_json_file(
+                    corpus_dir.join(format!("{uuid}-{eviction_time}-{METADATA_SUFFIX}")).as_path(),
+                    &corpus,
+                )?;
+                // Remove corpus from memory.
+                self.in_memory_corpus.remove(index);
+            }
 
             let mutation_type = self
                 .mutation_generator

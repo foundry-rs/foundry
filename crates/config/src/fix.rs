@@ -204,13 +204,12 @@ pub fn fix_tomls() -> Vec<Warning> {
             })
         }
 
-        if was_edited
-            && let Err(err) = toml_file.save() {
-                warnings.push(Warning::CouldNotWriteToml {
-                    path: toml_file.path().into(),
-                    err: err.to_string(),
-                });
-            }
+        if was_edited && let Err(err) = toml_file.save() {
+            warnings.push(Warning::CouldNotWriteToml {
+                path: toml_file.path().into(),
+                err: err.to_string(),
+            });
+        }
     }
 
     warnings

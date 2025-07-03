@@ -139,9 +139,11 @@ impl SparsedTraceArena {
                     }
 
                     if let Some((end_node, end_step_idx)) = cur_ignore_end
-                        && node_idx == *end_node && item_idx == *end_step_idx {
-                            *cur_ignore_end = None;
-                        }
+                        && node_idx == *end_node
+                        && item_idx == *end_step_idx
+                    {
+                        *cur_ignore_end = None;
+                    }
                 }
 
                 for (offset, item_idx) in items_to_remove.into_iter().enumerate() {

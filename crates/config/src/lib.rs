@@ -655,11 +655,12 @@ impl Config {
         };
         let figment = figment.select(Self::PROFILE_SECTION);
         if let Ok(data) = figment.data()
-            && let Some(profiles) = data.get(&Profile::new(Self::PROFILE_SECTION)) {
-                for profile in profiles.keys() {
-                    add_profile(&Profile::new(profile));
-                }
+            && let Some(profiles) = data.get(&Profile::new(Self::PROFILE_SECTION))
+        {
+            for profile in profiles.keys() {
+                add_profile(&Profile::new(profile));
             }
+        }
         add_profile(&Self::DEFAULT_PROFILE);
         add_profile(&config.profile);
 
@@ -864,9 +865,10 @@ impl Config {
     /// Returns the normalized [EvmVersion] for the current solc version, or the configured one.
     pub fn get_normalized_evm_version(&self) -> EvmVersion {
         if let Some(version) = self.solc_version()
-            && let Some(evm_version) = self.evm_version.normalize_version_solc(&version) {
-                return evm_version;
-            }
+            && let Some(evm_version) = self.evm_version.normalize_version_solc(&version)
+        {
+            return evm_version;
+        }
         self.evm_version
     }
 
@@ -1358,14 +1360,15 @@ impl Config {
         let default_api_version = self.etherscan_api_version.unwrap_or_default();
 
         if let Some(maybe_alias) = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref())
-            && self.etherscan.contains_key(maybe_alias) {
-                return self
-                    .etherscan
-                    .clone()
-                    .resolved(default_api_version)
-                    .remove(maybe_alias)
-                    .transpose();
-            }
+            && self.etherscan.contains_key(maybe_alias)
+        {
+            return self
+                .etherscan
+                .clone()
+                .resolved(default_api_version)
+                .remove(maybe_alias)
+                .transpose();
+        }
 
         // try to find by comparing chain IDs after resolving
         if let Some(res) = chain.or(self.chain).and_then(|chain| {
@@ -1492,9 +1495,10 @@ impl Config {
         // If users wish to enable all options they need to do so explicitly.
         let mut model_checker = self.model_checker.clone();
         if let Some(model_checker_settings) = &mut model_checker
-            && model_checker_settings.targets.is_none() {
-                model_checker_settings.targets = Some(vec![ModelCheckerTarget::Assert]);
-            }
+            && model_checker_settings.targets.is_none()
+        {
+            model_checker_settings.targets = Some(vec![ModelCheckerTarget::Assert]);
+        }
 
         let mut settings = Settings {
             libraries: self.libraries_with_remappings()?,
@@ -2093,9 +2097,9 @@ impl Config {
                 .try_version()
                 .ok()
                 .and_then(|version| self.evm_version.normalize_version_solc(&version))
-            {
-                figment = figment.merge(("evm_version", version));
-            }
+        {
+            figment = figment.merge(("evm_version", version));
+        }
 
         figment
     }

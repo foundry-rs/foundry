@@ -158,12 +158,13 @@ pub async fn fetch_creation_code_from_etherscan(
 
         for trace in traces {
             if let Some(TraceOutput::Create(CreateOutput { address, .. })) = trace.trace.result
-                && address == contract {
-                    creation_bytecode = match trace.trace.action {
-                        Action::Create(CreateAction { init, .. }) => Some(init),
-                        _ => None,
-                    };
-                }
+                && address == contract
+            {
+                creation_bytecode = match trace.trace.action {
+                    Action::Create(CreateAction { init, .. }) => Some(init),
+                    _ => None,
+                };
+            }
         }
 
         creation_bytecode.ok_or_else(|| eyre!("Could not find contract creation trace."))?

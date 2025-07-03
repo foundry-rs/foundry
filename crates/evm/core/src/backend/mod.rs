@@ -945,9 +945,10 @@ impl DatabaseExt for Backend {
             // for failure here.
             if let Some(account) = current_state.state.get(&CHEATCODE_ADDRESS)
                 && let Some(slot) = account.storage.get(&GLOBAL_FAIL_SLOT)
-                    && !slot.present_value.is_zero() {
-                        self.set_state_snapshot_failure(true);
-                    }
+                && !slot.present_value.is_zero()
+            {
+                self.set_state_snapshot_failure(true);
+            }
 
             // merge additional logs
             snapshot.merge(current_state);
@@ -1590,9 +1591,10 @@ impl Fork {
     /// Returns true if the account is a contract
     pub fn is_contract(&self, acc: Address) -> bool {
         if let Ok(Some(acc)) = self.db.basic_ref(acc)
-            && acc.code_hash != KECCAK_EMPTY {
-                return true;
-            }
+            && acc.code_hash != KECCAK_EMPTY
+        {
+            return true;
+        }
         is_contract_in_state(&self.journaled_state, acc)
     }
 }

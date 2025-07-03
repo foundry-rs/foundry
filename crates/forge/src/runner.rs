@@ -752,35 +752,35 @@ impl<'a> FunctionRunner<'a> {
                 invariant_contract.invariant_function.selector().to_vec().into(),
                 invariant_config.fail_on_revert,
                 invariant_contract.call_after_invariant,
-            )
-                && !success {
-                    let _ = sh_warn!(
-                        "\
+            ) && !success
+            {
+                let _ = sh_warn!(
+                    "\
                             Replayed invariant failure from {:?} file. \
                             Run `forge clean` or remove file to ignore failure and to continue invariant test campaign.",
-                        failure_file.as_path()
-                    );
-                    // If sequence still fails then replay error to collect traces and
-                    // exit without executing new runs.
-                    let _ = replay_run(
-                        &invariant_contract,
-                        self.clone_executor(),
-                        &self.cr.mcr.known_contracts,
-                        identified_contracts.clone(),
-                        &mut self.result.logs,
-                        &mut self.result.traces,
-                        &mut self.result.line_coverage,
-                        &mut self.result.deprecated_cheatcodes,
-                        &txes,
-                        show_solidity,
-                    );
-                    self.result.invariant_replay_fail(
-                        replayed_entirely,
-                        &invariant_contract.invariant_function.name,
-                        call_sequence,
-                    );
-                    return self.result;
-                }
+                    failure_file.as_path()
+                );
+                // If sequence still fails then replay error to collect traces and
+                // exit without executing new runs.
+                let _ = replay_run(
+                    &invariant_contract,
+                    self.clone_executor(),
+                    &self.cr.mcr.known_contracts,
+                    identified_contracts.clone(),
+                    &mut self.result.logs,
+                    &mut self.result.traces,
+                    &mut self.result.line_coverage,
+                    &mut self.result.deprecated_cheatcodes,
+                    &txes,
+                    show_solidity,
+                );
+                self.result.invariant_replay_fail(
+                    replayed_entirely,
+                    &invariant_contract.invariant_function.name,
+                    call_sequence,
+                );
+                return self.result;
+            }
         }
 
         let progress = start_fuzz_progress(

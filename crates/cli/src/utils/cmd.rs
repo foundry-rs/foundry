@@ -50,13 +50,14 @@ pub fn remove_contract(
     }) else {
         let mut err = format!("could not find artifact: `{name}`");
         if let Some(suggestion) = super::did_you_mean(name, other).pop()
-            && suggestion != name {
-                err = format!(
-                    r#"{err}
+            && suggestion != name
+        {
+            err = format!(
+                r#"{err}
 
         Did you mean `{suggestion}`?"#
-                );
-            }
+            );
+        }
         eyre::bail!(err)
     };
 
@@ -117,11 +118,12 @@ pub fn get_cached_entry_by_name(
 /// Returns error if constructor has arguments.
 pub fn ensure_clean_constructor(abi: &JsonAbi) -> Result<()> {
     if let Some(constructor) = &abi.constructor
-        && !constructor.inputs.is_empty() {
-            eyre::bail!(
-                "Contract constructor should have no arguments. Add those arguments to  `run(...)` instead, and call it with `--sig run(...)`."
-            );
-        }
+        && !constructor.inputs.is_empty()
+    {
+        eyre::bail!(
+            "Contract constructor should have no arguments. Add those arguments to  `run(...)` instead, and call it with `--sig run(...)`."
+        );
+    }
     Ok(())
 }
 
@@ -361,9 +363,10 @@ pub async fn handle_traces(
         let mut iter = label_str.split(':');
 
         if let Some(addr) = iter.next()
-            && let (Ok(address), Some(label)) = (Address::from_str(addr), iter.next()) {
-                return Some((address, label.to_string()));
-            }
+            && let (Ok(address), Some(label)) = (Address::from_str(addr), iter.next())
+        {
+            return Some((address, label.to_string()));
+        }
         None
     });
     let config_labels = config.labels.clone().into_iter();

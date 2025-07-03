@@ -125,9 +125,9 @@ pub fn build_using_cache(
                     && !(artifact.version.major == version.major
                         && artifact.version.minor == version.minor
                         && artifact.version.patch == version.patch)
-                    {
-                        continue;
-                    }
+                {
+                    continue;
+                }
 
                 return Ok(artifact.artifact);
             }
@@ -290,12 +290,14 @@ pub fn check_args_len(
     args: &Bytes,
 ) -> Result<(), eyre::ErrReport> {
     if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor())
-        && !constructor.inputs.is_empty() && args.is_empty() {
-            eyre::bail!(
-                "Contract expects {} constructor argument(s), but none were provided",
-                constructor.inputs.len()
-            );
-        }
+        && !constructor.inputs.is_empty()
+        && args.is_empty()
+    {
+        eyre::bail!(
+            "Contract expects {} constructor argument(s), but none were provided",
+            constructor.inputs.len()
+        );
+    }
     Ok(())
 }
 

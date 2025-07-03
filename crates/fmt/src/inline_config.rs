@@ -131,13 +131,14 @@ impl InlineConfig {
                 InlineConfigItem::DisableEnd => {
                     disabled_depth = disabled_depth.saturating_sub(1);
                     if disabled_depth == 0
-                        && let Some(start) = disabled_range_start.take() {
-                            disabled_ranges.push(DisabledRange {
-                                start,
-                                end: loc.start(),
-                                loose: false,
-                            })
-                        }
+                        && let Some(start) = disabled_range_start.take()
+                    {
+                        disabled_ranges.push(DisabledRange {
+                            start,
+                            end: loc.start(),
+                            loose: false,
+                        })
+                    }
                 }
             }
         }

@@ -48,9 +48,10 @@ impl<'ast> Visit<'ast> for UncheckedTransferERC20Checker<'_, '_> {
     fn visit_stmt(&mut self, stmt: &'ast Stmt<'ast>) -> ControlFlow<Self::BreakValue> {
         // Only expression statements can contain unchecked transfers.
         if let StmtKind::Expr(expr) = &stmt.kind
-            && is_erc20_transfer_call(expr) {
-                self.ctx.emit(&ERC20_UNCHECKED_TRANSFER, expr.span);
-            }
+            && is_erc20_transfer_call(expr)
+        {
+            self.ctx.emit(&ERC20_UNCHECKED_TRANSFER, expr.span);
+        }
         self.walk_stmt(stmt)
     }
 }

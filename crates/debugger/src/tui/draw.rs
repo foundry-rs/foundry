@@ -312,10 +312,11 @@ impl TUIContext<'_> {
         // Fill in the rest of the line as unhighlighted.
         if let Some(last) = actual.last()
             && !last.ends_with('\n')
-                && let Some(post) = after.pop_front()
-                    && let Some(last) = lines.lines.last_mut() {
-                        last.spans.push(Span::raw(post));
-                    }
+            && let Some(post) = after.pop_front()
+            && let Some(last) = lines.lines.last_mut()
+        {
+            last.spans.push(Span::raw(post));
+        }
 
         // Add after highlighted text.
         while mid_len + after.len() > end_line {
@@ -423,10 +424,11 @@ impl TUIContext<'_> {
                         });
 
                         if self.stack_labels
-                            && let Some(param) = param {
-                                spans.push(Span::raw("| "));
-                                spans.push(Span::raw(param.name));
-                            }
+                            && let Some(param) = param
+                        {
+                            spans.push(Span::raw("| "));
+                            spans.push(Span::raw(param.name));
+                        }
 
                         spans.push(Span::raw("\n"));
 
@@ -462,18 +464,20 @@ impl TUIContext<'_> {
         let stack_len = step.stack.as_ref().map_or(0, |s| s.len());
         if stack_len > 0
             && let Some(stack) = step.stack.as_ref()
-                && let Some(accesses) = get_buffer_accesses(step.op.get(), stack) {
-                    if let Some(read_access) = accesses.read {
-                        offset = Some(read_access.1.offset);
-                        len = Some(read_access.1.len);
-                        color = Some(Color::Cyan);
-                    }
-                    if let Some(write_access) = accesses.write
-                        && self.active_buffer == BufferKind::Memory {
-                            write_offset = Some(write_access.offset);
-                            write_size = Some(write_access.len);
-                        }
-                }
+            && let Some(accesses) = get_buffer_accesses(step.op.get(), stack)
+        {
+            if let Some(read_access) = accesses.read {
+                offset = Some(read_access.1.offset);
+                len = Some(read_access.1.len);
+                color = Some(Color::Cyan);
+            }
+            if let Some(write_access) = accesses.write
+                && self.active_buffer == BufferKind::Memory
+            {
+                write_offset = Some(write_access.offset);
+                write_size = Some(write_access.len);
+            }
+        }
 
         // color word on previous write op
         // TODO: technically it's possible for this to conflict with the current op, ie, with
@@ -485,11 +489,12 @@ impl TUIContext<'_> {
             if let Some(stack) = prev_step.stack.as_ref()
                 && let Some(write_access) =
                     get_buffer_accesses(prev_step.op.get(), stack).and_then(|a| a.write)
-                    && self.active_buffer == BufferKind::Memory {
-                        offset = Some(write_access.offset);
-                        len = Some(write_access.len);
-                        color = Some(Color::Green);
-                    }
+                && self.active_buffer == BufferKind::Memory
+            {
+                offset = Some(write_access.offset);
+                len = Some(write_access.len);
+                color = Some(Color::Green);
+            }
         }
 
         let height = area.height as usize;

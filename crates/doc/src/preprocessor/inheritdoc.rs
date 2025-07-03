@@ -72,18 +72,19 @@ impl Inheritdoc {
         for candidate in documents {
             if let DocumentContent::Single(ref item) = candidate.content
                 && let ParseSource::Contract(ref contract) = item.source
-                    && base == contract.name.safe_unwrap().name {
-                        // Not matched for the contract because it's a noop
-                        // https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags
+                && base == contract.name.safe_unwrap().name
+            {
+                // Not matched for the contract because it's a noop
+                // https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags
 
-                        for children in &item.children {
-                            // TODO: improve matching logic
-                            if source.ident() == children.source.ident() {
-                                let key = format!("{}.{}", base, source.ident());
-                                return Some((key, children.comments.clone()));
-                            }
-                        }
+                for children in &item.children {
+                    // TODO: improve matching logic
+                    if source.ident() == children.source.ident() {
+                        let key = format!("{}.{}", base, source.ident());
+                        return Some((key, children.comments.clone()));
                     }
+                }
+            }
         }
         None
     }

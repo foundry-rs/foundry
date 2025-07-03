@@ -238,9 +238,10 @@ impl VerifyArgs {
             sh_println!("Optimizations:    {optimizations}")?
         }
         if let Some(args) = &self.constructor_args
-            && !args.is_empty() {
-                sh_println!("Constructor args: {args}")?
-            }
+            && !args.is_empty()
+        {
+            sh_println!("Constructor args: {args}")?
+        }
         self.verifier.verifier.client(self.etherscan.key().as_deref())?.verify(self, context).await.map_err(|err| {
             if let Some(verifier_url) = verifier_url {
                  match Url::parse(&verifier_url) {

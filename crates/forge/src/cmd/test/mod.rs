@@ -587,9 +587,10 @@ impl TestArgs {
 
                     // Display invariant metrics if invariant kind.
                     if let TestKind::Invariant { metrics, .. } = &result.kind
-                        && !metrics.is_empty() {
-                            let _ = sh_println!("\n{}\n", format_invariant_metrics_table(metrics));
-                        }
+                        && !metrics.is_empty()
+                    {
+                        let _ = sh_println!("\n{}\n", format_invariant_metrics_table(metrics));
+                    }
 
                     // We only display logs at level 2 and above
                     if verbosity >= 2 && show_traces {
@@ -921,12 +922,13 @@ fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
         let mut failures = outcome.failures().peekable();
         while let Some((test_name, _)) = failures.next() {
             if test_name.is_any_test()
-                && let Some(test_match) = test_name.split("(").next() {
-                    filter.push_str(test_match);
-                    if failures.peek().is_some() {
-                        filter.push('|');
-                    }
+                && let Some(test_match) = test_name.split("(").next()
+            {
+                filter.push_str(test_match);
+                if failures.peek().is_some() {
+                    filter.push('|');
                 }
+            }
         }
         let _ = fs::write(&config.test_failures_file, filter);
     }

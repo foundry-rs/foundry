@@ -97,9 +97,10 @@ impl SignaturesCache {
     #[instrument(target = "evm::traces", skip(self))]
     pub fn save(&self, path: &Path) {
         if let Some(parent) = path.parent()
-            && let Err(err) = std::fs::create_dir_all(parent) {
-                warn!(target: "evm::traces", ?parent, %err, "failed to create cache");
-            }
+            && let Err(err) = std::fs::create_dir_all(parent)
+        {
+            warn!(target: "evm::traces", ?parent, %err, "failed to create cache");
+        }
         if let Err(err) = fs::write_json_file(path, self) {
             warn!(target: "evm::traces", %err, "failed to flush signature cache");
         } else {

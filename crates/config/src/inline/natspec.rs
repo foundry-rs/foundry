@@ -46,15 +46,15 @@ impl NatSpec {
 
             let mut used_solc_ast = false;
             if let Some(ast) = &artifact.ast
-                && let Some(node) = solc.contract_root_node(&ast.nodes, &contract) {
-                    solc.parse(&mut natspecs, &contract, node, true);
-                    used_solc_ast = true;
-                }
+                && let Some(node) = solc.contract_root_node(&ast.nodes, &contract)
+            {
+                solc.parse(&mut natspecs, &contract, node, true);
+                used_solc_ast = true;
+            }
 
-            if !used_solc_ast
-                && let Ok(src) = std::fs::read_to_string(abs_path) {
-                    solar.parse(&mut natspecs, &src, &contract, contract_name);
-                }
+            if !used_solc_ast && let Ok(src) = std::fs::read_to_string(abs_path) {
+                solar.parse(&mut natspecs, &src, &contract, contract_name);
+            }
         }
 
         natspecs
@@ -125,9 +125,10 @@ impl SolcParser {
             if n.node_type == NodeType::ContractDefinition {
                 let contract_data = &n.other;
                 if let Value::String(contract_name) = contract_data.get("name")?
-                    && contract_id.ends_with(contract_name) {
-                        return Some(n);
-                    }
+                    && contract_id.ends_with(contract_name)
+                {
+                    return Some(n);
+                }
             }
         }
         None
@@ -137,10 +138,9 @@ impl SolcParser {
     /// If a natspec is found it is added to `natspecs`
     fn parse(&self, natspecs: &mut Vec<NatSpec>, contract: &str, node: &Node, root: bool) {
         // If we're at the root contract definition node, try parsing contract-level natspec
-        if root
-            && let Some((docs, line)) = self.get_node_docs(&node.other) {
-                natspecs.push(NatSpec { contract: contract.into(), function: None, docs, line })
-            }
+        if root && let Some((docs, line)) = self.get_node_docs(&node.other) {
+            natspecs.push(NatSpec { contract: contract.into(), function: None, docs, line })
+        }
         for n in &node.nodes {
             if let Some((function, docs, line)) = self.get_fn_data(n) {
                 natspecs.push(NatSpec {
@@ -188,15 +188,16 @@ impl SolcParser {
     fn get_node_docs(&self, data: &BTreeMap<String, Value>) -> Option<(String, String)> {
         if let Value::Object(fn_docs) = data.get("documentation")?
             && let Value::String(comment) = fn_docs.get("text")?
-                && comment.contains(INLINE_CONFIG_PREFIX) {
-                    let mut src_line = fn_docs
-                        .get("src")
-                        .map(|src| src.to_string())
-                        .unwrap_or_else(|| String::from("<no-src-line-available>"));
+            && comment.contains(INLINE_CONFIG_PREFIX)
+        {
+            let mut src_line = fn_docs
+                .get("src")
+                .map(|src| src.to_string())
+                .unwrap_or_else(|| String::from("<no-src-line-available>"));
 
-                    src_line.retain(|c| c != '"');
-                    return Some((comment.into(), src_line));
-                }
+            src_line.retain(|c| c != '"');
+            return Some((comment.into(), src_line));
+        }
         None
     }
 }

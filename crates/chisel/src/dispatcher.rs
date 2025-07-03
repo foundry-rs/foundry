@@ -476,9 +476,10 @@ impl ChiselDispatcher {
 
                 // Create "script" dir if it does not already exist.
                 if !Path::new("script").exists()
-                    && let Err(e) = std::fs::create_dir_all("script") {
-                        return DispatchResult::CommandFailed(Self::make_error(e.to_string()));
-                    }
+                    && let Err(e) = std::fs::create_dir_all("script")
+                {
+                    return DispatchResult::CommandFailed(Self::make_error(e.to_string()));
+                }
 
                 match self.format_source() {
                     Ok(formatted_source) => {
@@ -549,9 +550,9 @@ impl ChiselDispatcher {
                                                         | InternalType::Struct { contract: _, ty }
                                                         | InternalType::Other { contract: _, ty },
                                                     ) = &input.internal_type
-                                                    {
-                                                        param_type = ty;
-                                                    }
+                                                {
+                                                    param_type = ty;
+                                                }
                                                 format!("{} {}", param_type, input.name)
                                             })
                                             .collect::<Vec<_>>()
@@ -865,28 +866,28 @@ impl ChiselDispatcher {
                     // traces.
                     if (new_source.config.traces || failed)
                         && let Ok(decoder) = Self::decode_traces(&new_source.config, &mut res).await
-                        {
-                            if let Err(e) = Self::show_traces(&decoder, &mut res).await {
-                                return DispatchResult::CommandFailed(e.to_string());
-                            };
+                    {
+                        if let Err(e) = Self::show_traces(&decoder, &mut res).await {
+                            return DispatchResult::CommandFailed(e.to_string());
+                        };
 
-                            // Show console logs, if there are any
-                            let decoded_logs = decode_console_logs(&res.logs);
-                            if !decoded_logs.is_empty() {
-                                let _ = sh_println!("{}", "Logs:".green());
-                                for log in decoded_logs {
-                                    let _ = sh_println!("  {log}");
-                                }
-                            }
-
-                            // If the contract execution failed, continue on without adding the new
-                            // line to the source.
-                            if failed {
-                                return DispatchResult::Failure(Some(Self::make_error(
-                                    "Failed to execute REPL contract!",
-                                )));
+                        // Show console logs, if there are any
+                        let decoded_logs = decode_console_logs(&res.logs);
+                        if !decoded_logs.is_empty() {
+                            let _ = sh_println!("{}", "Logs:".green());
+                            for log in decoded_logs {
+                                let _ = sh_println!("  {log}");
                             }
                         }
+
+                        // If the contract execution failed, continue on without adding the new
+                        // line to the source.
+                        if failed {
+                            return DispatchResult::Failure(Some(Self::make_error(
+                                "Failed to execute REPL contract!",
+                            )));
+                        }
+                    }
 
                     // Replace the old session source with the new version
                     *self.source_mut() = new_source;
