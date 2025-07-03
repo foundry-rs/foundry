@@ -129,9 +129,6 @@ impl<'sess> State<'sess, '_> {
                 }
             }
             CommentStyle::Isolated => {
-                println!("{cmnt:?}");
-                println!(" > BOL? {}", self.is_bol_or_only_ind());
-                println!("");
                 self.hardbreak_if_not_bol();
                 for line in cmnt.lines {
                     // Don't print empty lines because they will end up as trailing
@@ -311,10 +308,10 @@ impl<'sess> State<'sess, '_> {
                 // If cmnts should break + comment before the 1st item, force hardbreak.
                 self.hardbreak();
             }
-            skip_first_break = self.print_trailing_comment(pos_lo, Some(first_pos));
-            skip_first_break = self
-                .peek_comment_before(first_pos)
-                .map_or(skip_first_break, |_| format.breaks_comments());
+            if self.peek_comment_before(first_pos).is_some() {
+                skip_first_break = true;
+            }
+            self.print_trailing_comment(pos_lo, Some(first_pos));
         }
         if !skip_first_break {
             self.zerobreak();
@@ -688,7 +685,7 @@ impl<'ast> State<'_, 'ast> {
 
         self.cbox(0);
         self.s.cbox(self.ind);
-        let fn_start_indent = self.s.current_indent();
+        // let fn_start_indent = self.s.current_indent();
 
         // Print fn name and params
         self.word(kind.to_str());
@@ -696,44 +693,32 @@ impl<'ast> State<'_, 'ast> {
             self.nbsp();
             self.print_ident(&name);
         }
-        self.s.ibox(-self.ind);
-        self.print_parameter_list(parameters, parameters.span, ListFormat::Compact(true));
+        // TODO(ask dani): unable to keep single param from breaking brackets when the attributes do
+        // break.
+        self.s.cbox(-self.ind);
+        self.print_parameter_list(parameters, parameters.span, ListFormat::Consistent(true));
         self.end();
 
         // Map attributes to their corresponding comments
         let (attributes, mut map) =
             AttributeCommentMapper::new(header.returns.span.lo()).build(self, header);
 
-        if !(attributes.len() == 1 && attributes[0].is_non_payable()) {
-            self.space();
-        }
-
-        self.s.cbox(0);
-        self.s.cbox(0);
         // Print fn attributes in correct order
+        self.s.cbox(0);
         let mut is_first = true;
         if let Some(v) = visibility {
             self.print_fn_attribute(v.span, &mut map, &mut |s| s.word(v.to_str()), is_first);
             is_first = false;
         }
         if *sm != ast::StateMutability::NonPayable {
-            if !self.is_bol_or_only_ind() && !self.last_token_is_space() {
-                self.space();
-            }
             self.print_fn_attribute(sm.span, &mut map, &mut |s| s.word(sm.to_str()), is_first);
             is_first = false;
         }
         if let Some(v) = virtual_ {
-            if !self.is_bol_or_only_ind() && !self.last_token_is_space() {
-                self.space();
-            }
             self.print_fn_attribute(v, &mut map, &mut |s| s.word("virtual"), is_first);
             is_first = false;
         }
         if let Some(o) = override_ {
-            if !self.is_bol_or_only_ind() && !self.last_token_is_space() {
-                self.space();
-            }
             self.print_fn_attribute(o.span, &mut map, &mut |s| s.print_override(o), is_first);
             is_first = false;
         }
@@ -760,22 +745,25 @@ impl<'ast> State<'_, 'ast> {
         self.end();
 
         // Print fn body
+        // TODO(ask dani): print manually-handling braces? (requires current indentation)
         if let Some(body) = body {
-            let current_indent = self.s.current_indent();
-            let new_line = current_indent > fn_start_indent;
-            if !new_line {
-                self.nbsp();
-                // self.word("{");
-                self.end();
-                if !body.is_empty() {
-                    self.hardbreak();
-                }
-            } else {
-                self.space();
-                self.s.offset(-self.ind);
-                // self.word("{");
-                self.end();
-            }
+            // let current_indent = self.s.current_indent();
+            // let new_line = current_indent > fn_start_indent;
+            // if !new_line {
+            // self.nbsp();
+            // self.word("{");
+            // self.end();
+            // if !body.is_empty() {
+            //     self.hardbreak();
+            // }
+            // } else {
+            // self.space();
+            // self.s.offset(-self.ind);
+            // self.word("{");
+            // self.end();
+            // }
+            self.end();
+            self.space();
             self.end();
             // self.print_block_without_braces(body, body_span, new_line);
             self.print_block(body, body_span);
@@ -787,7 +775,6 @@ impl<'ast> State<'_, 'ast> {
             self.end();
             self.word(";");
         }
-        self.end();
 
         if self.peek_trailing_comment(body_span.hi(), None).is_some() {
             // trailing comments after the fn body are isolated
@@ -1717,6 +1704,7 @@ impl<'ast> State<'_, 'ast> {
 
     fn print_if_cond(&mut self, kw: &'static str, cond: &'ast ast::Expr<'ast>, pos_hi: BytePos) {
         self.word_nbsp(kw);
+        // TODO(ask dani): how to prevent expressions from always breaking the parenthesis
         self.print_tuple(
             std::slice::from_ref(cond),
             cond.span.lo(),
@@ -1764,27 +1752,7 @@ impl<'ast> State<'_, 'ast> {
         } else {
             std::slice::from_ref(stmt)
         };
-        // TODO: figure out:
-        //  > why stmts are not indented
-        //  > why braces are not always printed?
-        if matches!(format, BlockFormat::NoBraces(_)) {
-            self.word("{");
-            self.zerobreak();
-            self.s.cbox(self.ind);
-        }
-        self.print_block_inner(
-            stmts,
-            format,
-            // if attempt_single_line { BlockFormat::Compact(true) } else { BlockFormat::Regular },
-            Self::print_stmt,
-            |b| b.span,
-            stmt.span,
-        );
-        if matches!(format, BlockFormat::NoBraces(_)) {
-            self.s.offset(-self.ind);
-            self.end();
-            self.word("}");
-        }
+        self.print_block_inner(stmts, format, Self::print_stmt, |b| b.span, stmt.span);
     }
 
     fn print_yul_block(
@@ -2101,7 +2069,7 @@ impl<'ast> State<'_, 'ast> {
                 for cmnt in pre_comments {
                     self.print_comment(cmnt, false);
                 }
-                if !is_first && !self.is_bol_or_only_ind() && !self.last_token_is_space() {
+                if !self.is_bol_or_only_ind() {
                     self.space();
                 }
                 self.ibox(0);
@@ -2111,7 +2079,7 @@ impl<'ast> State<'_, 'ast> {
                 }
                 self.end();
             }
-            // Fallback for attributes with no comments
+            // Fallback for attributes not in the map (should never happen)
             None => {
                 if !is_first && !self.is_bol_or_only_ind() && !self.last_token_is_space() {
                     self.space();
@@ -2179,16 +2147,36 @@ pub(crate) enum AttributeKind<'ast> {
     Modifier(&'ast ast::Modifier<'ast>),
 }
 
+impl<'ast> AttributeKind<'ast> {
+    fn is_visibility(&self) -> bool {
+        matches!(self, Self::Visibility(_))
+    }
+
+    fn is_state_mutability(&self) -> bool {
+        matches!(self, Self::StateMutability(_))
+    }
+
+    fn is_non_payable(&self) -> bool {
+        matches!(self, Self::StateMutability(ast::StateMutability::NonPayable))
+    }
+
+    fn is_virtual(&self) -> bool {
+        matches!(self, Self::Virtual)
+    }
+
+    fn is_override(&self) -> bool {
+        matches!(self, Self::Override(_))
+    }
+
+    fn is_modifier(&self) -> bool {
+        matches!(self, Self::Modifier(_))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct AttributeInfo<'ast> {
     pub(crate) kind: AttributeKind<'ast>,
     pub(crate) span: Span,
-}
-
-impl<'ast> AttributeInfo<'ast> {
-    fn is_non_payable(&self) -> bool {
-        matches!(self.kind, AttributeKind::StateMutability(ast::StateMutability::NonPayable))
-    }
 }
 
 /// Helper struct to map attributes to their associated comments in function headers.

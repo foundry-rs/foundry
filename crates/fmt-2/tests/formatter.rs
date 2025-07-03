@@ -158,8 +158,8 @@ fmt_tests! {
     ConditionalOperatorExpression, // OK (once block braces are fixed)
     ConstructorDefinition, // OK
     ConstructorModifierStyle, // OK
-    ContractDefinition, // OKish (FIX: extra blank line before constructors that have a preceeding cmnt + fn param alignement)
-    DocComments, // OK (once block braces are fixed)
+    ContractDefinition, // OKish (FIX: fn param alignement)
+    DocComments, // OK (once block braces are fixed). TODO: Ask dani how to wrap comments.
     DoWhileStatement, // OK? (once block braces are fixed).. is it acceptable?
     EmitStatement, // OK
     EnumDefinition, // OK
@@ -169,11 +169,11 @@ fmt_tests! {
     ForStatement, // OK? (once block braces are fixed).. is it acceptable?
     FunctionCall, // TODO: ask Dani how to enhance PP so that trailing comments aren't accounted for when breaking lines
     FunctionCallArgsStatement, // FIX: fn block braces. Is the rest acceptable?
-    FunctionDefinition, // TODO: fix fn block braces + function postfix trailing cmnt
-    FunctionDefinitionWithFunctionReturns, // OK? is it acceptable?
-    FunctionType, // OK? is it acceptable?
+    FunctionDefinition, // TODO: fix fn block braces + prevent oneParam fn from breaking when attributes break
+    FunctionDefinitionWithFunctionReturns, // OK? (once block braces are fixed) is it acceptable?
+    FunctionType, // OK? (once block braces are fixed) is it acceptable?
     HexUnderscore, // OK (once block braces are fixed)
-    IfStatement, // TODO: figure out correct comment placements
+    IfStatement, // TODO: figure out correct comment placements + condition parenthesis wrapping + support config line wrapping
     IfStatement2, // OK (once block braces are fixed)
     ImportDirective, // OK
     InlineDisable, // FIX: invalid output
