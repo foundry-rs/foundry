@@ -1076,6 +1076,10 @@ impl EthApi {
     /// Waits for a transaction to be included in a block and returns its receipt (no timeout).
     async fn await_transaction_inclusion(&self, hash: TxHash) -> Result<ReceiptResponse> {
         let mut stream = self.new_block_notifications();
+        // Check if the transaction is already included before listening for new blocks.
+        if let Some(receipt) = self.backend.transaction_receipt(hash).await? {
+            return Ok(receipt);
+        }
         while let Some(notification) = stream.next().await {
             if let Some(block) = self.backend.get_block_by_hash(notification.hash) {
                 if block.transactions.iter().any(|tx| tx.hash() == hash) {
