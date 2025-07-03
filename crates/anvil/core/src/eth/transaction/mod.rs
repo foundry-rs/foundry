@@ -709,7 +709,7 @@ impl TypedTransaction {
                 self.blob_gas()
                     .map(|g| g as u128)
                     .unwrap_or(0)
-                    .mul(self.max_fee_per_blob_gas().unwrap_or(0)),
+                    * self.max_fee_per_blob_gas().unwrap_or(0),
             )
         }
 
