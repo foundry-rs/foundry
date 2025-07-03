@@ -158,8 +158,8 @@ fmt_tests! {
     ConditionalOperatorExpression, // OK (once block braces are fixed)
     ConstructorDefinition, // OK
     ConstructorModifierStyle, // OK
-    ContractDefinition, // OKish
-    DocComments, // FIX: idempotency (comment-related)
+    ContractDefinition, // OKish (FIX: extra blank line before constructors that have a preceeding cmnt + fn param alignement)
+    DocComments, // OK (once block braces are fixed)
     DoWhileStatement, // OK? (once block braces are fixed).. is it acceptable?
     EmitStatement, // OK
     EnumDefinition, // OK

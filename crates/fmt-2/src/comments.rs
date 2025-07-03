@@ -33,25 +33,23 @@ fn all_whitespace(s: &str, col: CharPos) -> Option<usize> {
     Some(idx)
 }
 
-/// Returns `Some(k)` where `k` is the byte offset of the first non-whitespace char preceded by a
-/// whitespace. Returns `k = 0` if `s` starts with a non-whitespace char. If `s` only contains
-/// whitespaces, returns `None`.
+/// Returns `Some(k)` where `k` is the byte offset of the first non-whitespace char. Returns `k = 0`
+/// if `s` starts with a non-whitespace char. If `s` only contains whitespaces, returns `None`.
 fn first_non_whitespace(s: &str) -> Option<usize> {
     let mut len = 0;
     for (i, ch) in s.char_indices() {
         if ch.is_whitespace() {
             len = ch.len_utf8()
         } else {
-            return if i == 0 { Some(0) } else { Some(i - len) };
+            return if i == 0 { Some(0) } else { Some(i + 1 - len) };
         }
     }
     None
 }
 
 /// Returns a slice of `s` with a whitespace prefix removed based on `col`. If the first `col` chars
-/// of `s` are all whitespace, returns a slice starting after that prefix. Otherwise,
-/// returns a slice that leaves at most one leading whitespace char.
-fn normalize_block_comment(s: &str, col: CharPos) -> &str {
+/// of `s` are all whitespace, returns a slice starting after that prefix.
+fn normalize_block_comment_ws(s: &str, col: CharPos) -> &str {
     let len = s.len();
     if let Some(col) = all_whitespace(s, col) {
         return if col < len { &s[col..] } else { "" };
@@ -85,10 +83,20 @@ fn split_block_comment_into_lines(text: &str, is_doc: bool, col: CharPos) -> Vec
     let mut lines = text.lines();
     if let Some(line) = lines.next() {
         let line = line.trim_end();
+        // Ensure first line of a doc comment only has the `/**` decorator
         if let Some((_, second)) = line.split_once("/**") {
             res.push("/**".to_string());
             if !second.trim().is_empty() {
-                res.push(format!(" * {}", second.trim()));
+                let line = normalize_block_comment_ws(second, col).trim_end();
+                // Ensure last line of a doc comment only has the `*/` decorator
+                if let Some((first, _)) = line.split_once("*/") {
+                    if !first.trim().is_empty() {
+                        res.push(format_doc_block_comment(first.trim_end()));
+                    }
+                    res.push(" */".to_string());
+                } else {
+                    res.push(format_doc_block_comment(line.trim_end()));
+                }
             }
         } else {
             res.push(line.to_string());
@@ -96,7 +104,7 @@ fn split_block_comment_into_lines(text: &str, is_doc: bool, col: CharPos) -> Vec
     }
 
     for (pos, line) in lines.into_iter().delimited() {
-        let line = normalize_block_comment(line, col).trim_end().to_string();
+        let line = normalize_block_comment_ws(line, col).trim_end().to_string();
         if !is_doc {
             res.push(line);
             continue;
@@ -106,10 +114,10 @@ fn split_block_comment_into_lines(text: &str, is_doc: bool, col: CharPos) -> Vec
         } else {
             if let Some((first, _)) = line.split_once("*/") {
                 if !first.trim().is_empty() {
-                    res.push(format_doc_block_comment(first))
+                    res.push(format_doc_block_comment(first));
                 }
             }
-            res.push(" */".to_string())
+            res.push(" */".to_string());
         }
     }
     res
@@ -230,13 +238,12 @@ impl Comments {
     pub fn iter(&self) -> impl Iterator<Item = &Comment> {
         self.comments.as_slice().iter()
     }
-
-    pub fn trailing_comment(
-        &mut self,
+    pub fn peek_trailing_comment(
+        &self,
         sm: &SourceMap,
         span_pos: BytePos,
         next_pos: Option<BytePos>,
-    ) -> Option<Comment> {
+    ) -> Option<&Comment> {
         if let Some(cmnt) = self.peek() {
             if cmnt.style != CommentStyle::Trailing {
                 return None;
@@ -245,10 +252,22 @@ impl Comments {
             let comment_line = sm.lookup_char_pos(cmnt.pos());
             let next = next_pos.unwrap_or_else(|| cmnt.pos() + BytePos(1));
             if span_pos < cmnt.pos() && cmnt.pos() < next && span_line.line == comment_line.line {
-                return Some(self.next().unwrap());
+                return Some(cmnt);
             }
         }
 
         None
+    }
+
+    pub fn trailing_comment(
+        &mut self,
+        sm: &SourceMap,
+        span_pos: BytePos,
+        next_pos: Option<BytePos>,
+    ) -> Option<Comment> {
+        match self.peek_trailing_comment(sm, span_pos, next_pos) {
+            Some(_) => self.next(),
+            None => None,
+        }
     }
 }

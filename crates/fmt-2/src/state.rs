@@ -91,7 +91,7 @@ impl<'sess> State<'sess, '_> {
                 break;
             }
             let cmnt = self.next_comment().unwrap();
-            if skip_ws && cmnt.style == CommentStyle::BlankLine {
+            if skip_ws && cmnt.style.is_blank() {
                 continue;
             }
             last_style = Some(cmnt.style);
@@ -190,6 +190,17 @@ impl<'sess> State<'sess, '_> {
 
     fn next_comment(&mut self) -> Option<Comment> {
         self.comments.next()
+    }
+
+    fn peek_trailing_comment<'b>(
+        &'b self,
+        span_pos: BytePos,
+        next_pos: Option<BytePos>,
+    ) -> Option<&'b Comment>
+    where
+        'sess: 'b,
+    {
+        self.comments.peek_trailing_comment(self.sm, span_pos, next_pos)
     }
 
     fn print_trailing_comment(&mut self, span_pos: BytePos, next_pos: Option<BytePos>) -> bool {
@@ -573,16 +584,18 @@ impl<'ast> State<'_, 'ast> {
         self.word("{");
         if !body.is_empty() {
             self.hardbreak();
-            let comment = self.print_comments(body[0].span.lo());
-            if self.config.contract_new_lines && comment != Some(CommentStyle::BlankLine) {
-                self.hardbreak();
+            if let Some(cmnt) = self.print_comments(body[0].span.lo()) {
+                if self.config.contract_new_lines && !cmnt.is_blank() {
+                    self.hardbreak();
+                }
             }
             for item in body.iter() {
                 self.print_item(item);
             }
-            let comment = self.print_comments(span.hi());
-            if self.config.contract_new_lines && comment != Some(CommentStyle::BlankLine) {
-                self.hardbreak();
+            if let Some(cmnt) = self.print_comments(span.hi()) {
+                if self.config.contract_new_lines && !cmnt.is_blank() {
+                    self.hardbreak();
+                }
             }
             self.s.offset(-self.ind);
         } else {
@@ -764,7 +777,13 @@ impl<'ast> State<'_, 'ast> {
             self.word(";");
         }
         self.end();
-        self.print_trailing_comment(body_span.hi(), None);
+
+        // trailing comments after the fn body are wapped
+        if self.peek_trailing_comment(body_span.hi(), None).is_some() {
+            self.hardbreak();
+            self.hardbreak();
+            self.print_trailing_comment(body_span.hi(), None);
+        }
     }
 
     fn is_modifier_a_base_contract(
@@ -1816,17 +1835,23 @@ impl<'ast> State<'_, 'ast> {
         // Empty blocks with comments require special attention
         else if block.is_empty() {
             if let Some(comment) = self.peek_comment() {
-                if !comment.style.is_mixed() {
+                if comment.style.is_trailing() {
                     self.word("{}");
                     self.print_comments_skip_ws(span.hi());
                 } else {
-                    self.s.cbox(self.ind);
                     self.word("{");
-                    self.space();
+                    self.s.cbox(self.ind);
                     self.print_comments_skip_ws(span.hi());
-                    self.zerobreak();
-                    self.word("}");
+                    // manually adjust offset to ensure that the closing brace is properly indented.
+                    // if the last cmnt was breaking, we replace offset to avoid e a double //
+                    // break.
+                    if self.is_bol_or_only_ind() {
+                        self.break_offset_if_not_bol(0, -self.ind);
+                    } else {
+                        self.s.break_offset(0, -self.ind);
+                    }
                     self.end();
+                    self.word("}");
                 }
             } else {
                 self.word("{}");
