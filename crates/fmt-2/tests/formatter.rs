@@ -155,10 +155,10 @@ fmt_tests! {
     ArrayExpressions, // TODO: print cmnt before memory kw once span is available (solar). Is the rest acceptable?
     BlockComments, // FIX: empty line after doc cmnt and before constructor
     BlockCommentsFunction, // OK
-    ConditionalOperatorExpression, // FIX: fn block braces
+    ConditionalOperatorExpression, // OK (once block braces are fixed)
     ConstructorDefinition, // OK
     ConstructorModifierStyle, // OK
-    ContractDefinition, // TODO: check boxes, panics
+    ContractDefinition, // OKish
     DocComments, // FIX: idempotency (comment-related)
     DoWhileStatement, // OK? (once block braces are fixed).. is it acceptable?
     EmitStatement, // OK
