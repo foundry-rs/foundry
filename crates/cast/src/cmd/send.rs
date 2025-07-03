@@ -21,49 +21,49 @@ use std::{path::PathBuf, str::FromStr};
 ///
 /// Example:
 ///
-/// cast send 0xAbC... "transfer(address,uint256)" 0x123... 100 --private-key <KEY> --rpc-url <URL>
-/// cast send --create <BYTECODE> --private-key <KEY> --rpc-url <URL>
+/// cast send 0xAbC... "transfer(address,uint256)" 0x123... 100 --private-key &lt;KEY&gt; --rpc-url &lt;URL&gt;
+/// cast send --create &lt;BYTECODE&gt; --private-key &lt;KEY&gt; --rpc-url &lt;URL&gt;
 #[derive(Debug, Parser)]
 #[command(
     about = "Send a transaction to a contract or deploy a new contract.",
     long_about = "Send a transaction to a contract or deploy a new contract.\n\
 EXAMPLES:\n\
-    cast send 0xAbC... 'transfer(address,uint256)' 0x123... 100 --private-key <KEY> --rpc-url <URL>\n\
-    cast send --create <BYTECODE> --private-key <KEY> --rpc-url <URL>\n\
+    cast send 0xAbC... 'transfer(address,uint256)' 0x123... 100 --private-key &lt;KEY&gt; --rpc-url &lt;URL&gt;\n\
+    cast send --create &lt;BYTECODE&gt; --private-key &lt;KEY&gt; --rpc-url &lt;URL&gt;\n\
 See more: https://book.getfoundry.sh/reference/cast/cast-send.html"
 )]
 pub struct SendTxArgs {
     /// Destination address of the transaction (contract or EOA).
     ///
     /// If not provided, you must use `cast send --create`.
-    #[arg(help = "Destination address of the transaction.", value_name = "TO", value_parser = NameOrAddress::from_str)]
+    #[arg(value_name = "TO", value_parser = NameOrAddress::from_str)]
     to: Option<NameOrAddress>,
 
     /// Function signature to call, e.g. `transfer(address,uint256)`.
-    #[arg(help = "Function signature to call.", value_name = "SIG")]
+    #[arg(value_name = "SIG")]
     sig: Option<String>,
 
     /// Arguments for the function call.
-    #[arg(help = "Arguments for the function call.", value_name = "ARGS")]
+    #[arg(value_name = "ARGS")]
     args: Vec<String>,
 
     /// Only print the transaction hash and exit immediately.
-    #[arg(id = "async", long = "async", alias = "cast-async", env = "CAST_ASYNC", help = "Only print the transaction hash and exit immediately.")]
+    #[arg(id = "async", long = "async", alias = "cast-async", env = "CAST_ASYNC")]
     cast_async: bool,
 
     /// Number of confirmations to wait for the receipt.
-    #[arg(long, default_value = "1", value_name = "NUM", help = "Number of confirmations to wait for the receipt.")]
+    #[arg(long, default_value = "1", value_name = "NUM")]
     confirmations: u64,
 
     #[command(subcommand)]
     command: Option<SendTxSubcommands>,
 
     /// Use `eth_sendTransaction` with an unlocked account (requires --from or $ETH_FROM).
-    #[arg(long, requires = "from", help = "Send via eth_sendTransaction using an unlocked account.")]
+    #[arg(long, requires = "from")]
     unlocked: bool,
 
     /// Timeout (in seconds) for sending the transaction.
-    #[arg(long, env = "ETH_TIMEOUT", value_name = "SECONDS", help = "Timeout in seconds for sending the transaction.")]
+    #[arg(long, env = "ETH_TIMEOUT", value_name = "SECONDS")]
     pub timeout: Option<u64>,
 
     #[command(flatten)]
@@ -78,8 +78,7 @@ pub struct SendTxArgs {
         value_name = "BLOB_DATA_PATH",
         conflicts_with = "legacy",
         requires = "blob",
-        help_heading = "Transaction options",
-        help = "Path to a file containing blob data to be sent."
+        help_heading = "Transaction options"
     )]
     path: Option<PathBuf>,
 }
@@ -90,15 +89,15 @@ pub enum SendTxSubcommands {
     #[command(name = "--create")]
     Create {
         /// Bytecode of the contract to deploy.
-        #[arg(help = "Bytecode of the contract to deploy.", value_name = "BYTECODE")]
+        #[arg(value_name = "BYTECODE")]
         code: String,
 
         /// Constructor signature, e.g. `constructor(uint256)`.
-        #[arg(help = "Constructor signature.", value_name = "SIG")]
+        #[arg(value_name = "SIG")]
         sig: Option<String>,
 
         /// Arguments for the constructor.
-        #[arg(help = "Arguments for the constructor.", value_name = "ARGS")]
+        #[arg(value_name = "ARGS")]
         args: Vec<String>,
     },
 }
