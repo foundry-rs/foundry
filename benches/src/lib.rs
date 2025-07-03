@@ -367,6 +367,39 @@ pub fn get_forge_version() -> Result<String> {
     Ok(version.lines().next().unwrap_or("unknown").to_string())
 }
 
+/// Get the full forge version details including commit hash and date
+pub fn get_forge_version_details() -> Result<String> {
+    let output = Command::new("forge")
+        .args(["--version"])
+        .output()
+        .wrap_err("Failed to get forge version")?;
+
+    if !output.status.success() {
+        eyre::bail!("forge --version failed");
+    }
+
+    let full_output =
+        String::from_utf8(output.stdout).wrap_err("Invalid UTF-8 in forge version output")?;
+
+    // Extract relevant lines and format them
+    let lines: Vec<&str> = full_output.lines().collect();
+    if lines.len() >= 3 {
+        // Extract version, commit, and timestamp
+        let version = lines[0].trim();
+        let commit = lines[1].trim().replace("Commit SHA: ", "");
+        let timestamp = lines[2].trim().replace("Build Timestamp: ", "");
+        
+        // Format as: "forge 1.2.3-nightly (51650ea 2025-06-27)"
+        let short_commit = &commit[..7]; // First 7 chars of commit hash
+        let date = timestamp.split('T').next().unwrap_or(&timestamp);
+        
+        Ok(format!("{} ({} {})", version, short_commit, date))
+    } else {
+        // Fallback to just the first line if format is unexpected
+        Ok(lines.first().unwrap_or(&"unknown").to_string())
+    }
+}
+
 /// Get Foundry versions to benchmark from environment variable or default
 ///
 /// Reads from FOUNDRY_BENCH_VERSIONS environment variable if set,

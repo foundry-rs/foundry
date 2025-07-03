@@ -34,6 +34,8 @@ pub struct BenchmarkResults {
     pub data: HashMap<String, HashMap<String, HashMap<String, HyperfineResult>>>,
     /// Track the baseline version for comparison
     pub baseline_version: Option<String>,
+    /// Map of version name -> full version details
+    pub version_details: HashMap<String, String>,
 }
 
 impl BenchmarkResults {
@@ -58,6 +60,10 @@ impl BenchmarkResults {
             .entry(version.to_string())
             .or_default()
             .insert(repo.to_string(), result);
+    }
+
+    pub fn add_version_details(&mut self, version: &str, details: String) {
+        self.version_details.insert(version.to_string(), details);
     }
 
     pub fn generate_markdown(&self, versions: &[String], repos: &[RepoConfig]) -> String {
@@ -104,7 +110,11 @@ impl BenchmarkResults {
         // Versions tested
         output.push_str("### Foundry Versions\n\n");
         for version in versions {
-            output.push_str(&format!("- {version}\n"));
+            if let Some(details) = self.version_details.get(version) {
+                output.push_str(&format!("- **{version}**: {}\n", details.trim()));
+            } else {
+                output.push_str(&format!("- {version}\n"));
+            }
         }
         output.push('\n');
 

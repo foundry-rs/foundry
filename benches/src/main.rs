@@ -1,14 +1,14 @@
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_bench::{
-    get_forge_version,
+    get_forge_version, get_forge_version_details,
     results::{BenchmarkResults, HyperfineResult},
     switch_foundry_version, RepoConfig, BENCHMARK_REPOS, FOUNDRY_VERSIONS, RUNS,
 };
 use foundry_common::sh_println;
 use once_cell::sync::Lazy;
 use rayon::prelude::*;
-use std::{fs::File, io::Write, path::PathBuf, process::Command, sync::Mutex};
+use std::{fs, path::PathBuf, process::Command, sync::Mutex};
 
 const ALL_BENCHMARKS: [&str; 5] = [
     "forge_test",
@@ -125,9 +125,13 @@ fn main() -> Result<()> {
         sh_println!("🔧 Switching to Foundry version: {version}");
         switch_version_safe(version)?;
 
-        // Verify the switch
+        // Verify the switch and capture full version details
         let current = get_forge_version()?;
         sh_println!("Current version: {}", current.trim());
+        
+        // Get and store the full version details with commit hash and date
+        let version_details = get_forge_version_details()?;
+        results.add_version_details(version, version_details);
 
         // Create a list of all benchmark tasks
         let benchmark_tasks: Vec<_> = repos
@@ -189,8 +193,7 @@ fn main() -> Result<()> {
     sh_println!("📝 Generating report...");
     let markdown = results.generate_markdown(&versions, &repos);
     let output_path = cli.output_dir.join(cli.output_file);
-    let mut file = File::create(&output_path).wrap_err("Failed to create output file")?;
-    file.write_all(markdown.as_bytes()).wrap_err("Failed to write output file")?;
+    fs::write(&output_path, markdown).wrap_err("Failed to write output file")?;
     sh_println!("✅ Report written to: {}", output_path.display());
 
     Ok(())

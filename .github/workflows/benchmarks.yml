@@ -1,6 +1,8 @@
 name: Foundry Benchmarks
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -23,8 +25,8 @@ permissions:
   pull-requests: write
 
 jobs:
-  forge-test:
-    name: Run forge_test and forge_fuzz_test benchmarks
+  benchmark:
+    name: Run Foundry Benchmarks
     runs-on: ubuntu-latest
 
     steps:
@@ -40,184 +42,75 @@ jobs:
           workspaces: |
             ./
 
-      - name: Install foundryup
+      - name: Install Foundry
         run: |
           curl -L https://foundry.paradigm.xyz | bash
           echo "$HOME/.foundry/bin" >> $GITHUB_PATH
 
-      - name: Build benchmark binary
-        run: cargo build --release --bin foundry-bench
-
-      - name: Run forge_test and forge_fuzz_test benchmarks
+      - name: Install hyperfine
         run: |
-          VERSIONS="${{ github.event.inputs.versions }}"
-          REPOS="${{ github.event.inputs.repos }}"
-
-          # Build the command with force-install for CI
-          CMD="./target/release/foundry-bench --output-dir ./benches --force-install"
-          CMD="$CMD --versions $VERSIONS"
-          CMD="$CMD --repos $REPOS"
-          CMD="$CMD --benchmarks forge_test,forge_fuzz_test"
-          CMD="$CMD --output-file forge_test_results.md"
-
-          echo "Running: $CMD"
-          $CMD
-
-      - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
-        with:
-          name: forge-test-results
-          path: benches/forge_test_results.md
-
-  forge-build:
-    name: Run forge_build benchmarks (with and without cache)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            ./
-
-      - name: Install foundryup
-        run: |
-          curl -L https://foundry.paradigm.xyz | bash
-          echo "$HOME/.foundry/bin" >> $GITHUB_PATH
+          wget https://github.com/sharkdp/hyperfine/releases/download/v1.18.0/hyperfine_1.18.0_amd64.deb
+          sudo dpkg -i hyperfine_1.18.0_amd64.deb
 
       - name: Build benchmark binary
         run: cargo build --release --bin foundry-bench
 
-      - name: Run forge_build benchmarks (with and without cache)
+      - name: Run forge test benchmark
         run: |
-          VERSIONS="${{ github.event.inputs.versions }}"
-          REPOS="${{ github.event.inputs.repos }}"
+          VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
+          REPOS="${{ github.event.inputs.repos || 'ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22' }}"
+          
+          ./target/release/foundry-bench --output-dir ./benches --force-install \
+            --versions $VERSIONS \
+            --repos $REPOS \
+            --benchmarks forge_test \
+            --output-file forge_test.md
 
-          # Build the command with force-install for CI
-          CMD="./target/release/foundry-bench --output-dir ./benches --force-install"
-          CMD="$CMD --versions $VERSIONS"
-          CMD="$CMD --repos $REPOS"
-          CMD="$CMD --benchmarks forge_build_with_cache,forge_build_no_cache"
-          CMD="$CMD --output-file forge_build_results.md"
-
-          echo "Running: $CMD"
-          $CMD
-
-      - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
-        with:
-          name: forge-build-results
-          path: benches/forge_build_results.md
-
-  forge-coverage:
-    name: Run forge_coverage benchmark
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            ./
-
-      - name: Install foundryup
+      - name: Run forge build (no cache) benchmark
         run: |
-          curl -L https://foundry.paradigm.xyz | bash
-          echo "$HOME/.foundry/bin" >> $GITHUB_PATH
+          VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
+          REPOS="${{ github.event.inputs.repos || 'ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22' }}"
+          
+          ./target/release/foundry-bench --output-dir ./benches --force-install \
+            --versions $VERSIONS \
+            --repos $REPOS \
+            --benchmarks forge_build_no_cache \
+            --output-file forge_build_no_cache.md
 
-      - name: Build benchmark binary
-        run: cargo build --release --bin foundry-bench
-
-      - name: Run forge_coverage benchmark
+      - name: Run forge build (with cache) benchmark
         run: |
-          VERSIONS="${{ github.event.inputs.versions }}"
-          REPOS="${{ github.event.inputs.repos }}"
-
-          # Build the command with force-install for CI
-          CMD="./target/release/foundry-bench --output-dir ./benches --force-install"
-          CMD="$CMD --versions $VERSIONS"
-          CMD="$CMD --repos $REPOS"
-          CMD="$CMD --benchmarks forge_coverage"
-          CMD="$CMD --output-file forge_coverage_results.md"
-
-          echo "Running: $CMD"
-          $CMD
-
-      - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
-        with:
-          name: forge-coverage-results
-          path: benches/forge_coverage_results.md
-
-  collect-results:
-    name: Collect and commit results
-    runs-on: ubuntu-latest
-    needs: [forge-test, forge-build, forge-coverage]
-    if: always()
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: benches/
+          VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
+          REPOS="${{ github.event.inputs.repos || 'ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22' }}"
+          
+          ./target/release/foundry-bench --output-dir ./benches --force-install \
+            --versions $VERSIONS \
+            --repos $REPOS \
+            --benchmarks forge_build_with_cache \
+            --output-file forge_build_with_cache.md
 
       - name: Combine benchmark results
         run: |
-          # Create combined results file
+          # Combine all benchmark results into LATEST.md
           echo "# Foundry Benchmark Results" > benches/LATEST.md
           echo "" >> benches/LATEST.md
-          echo "Generated on: $(date -u)" >> benches/LATEST.md
+          echo "Generated at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> benches/LATEST.md
           echo "" >> benches/LATEST.md
-
-          # Add forge_test results if available
-          if [ -f "benches/forge-test-results/forge_test_results.md" ]; then
-            echo "## Forge Test and Fuzz Test Results" >> benches/LATEST.md
-            echo "" >> benches/LATEST.md
-            tail -n +2 benches/forge-test-results/forge_test_results.md >> benches/LATEST.md
-            echo "" >> benches/LATEST.md
-          fi
-
-          # Add forge_build results if available
-          if [ -f "benches/forge-build-results/forge_build_results.md" ]; then
-            echo "## Forge Build Results" >> benches/LATEST.md
-            echo "" >> benches/LATEST.md
-            tail -n +2 benches/forge-build-results/forge_build_results.md >> benches/LATEST.md
-            echo "" >> benches/LATEST.md
-          fi
-
-          # Add forge_coverage results if available
-          if [ -f "benches/forge-coverage-results/forge_coverage_results.md" ]; then
-            echo "## Forge Coverage Results" >> benches/LATEST.md
-            echo "" >> benches/LATEST.md
-            tail -n +2 benches/forge-coverage-results/forge_coverage_results.md >> benches/LATEST.md
-            echo "" >> benches/LATEST.md
-          fi
-
-          # Clean up artifact directories
-          rm -rf benches/forge-test-results
-          rm -rf benches/forge-build-results
-          rm -rf benches/forge-coverage-results
+          
+          # Add each benchmark result if it exists
+          for bench in forge_test forge_build_no_cache forge_build_with_cache; do
+            if [ -f "benches/${bench}.md" ]; then
+              # Skip the header from individual files and append content
+              tail -n +2 "benches/${bench}.md" >> benches/LATEST.md
+              echo "" >> benches/LATEST.md
+            fi
+          done
 
       - name: Commit benchmark results
+        if: github.event_name != 'pull_request'
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add benches/LATEST.md benches/forge_test_results.md benches/forge_build_results.md benches/forge_coverage_results.md 2>/dev/null || true
+          git add benches/LATEST.md benches/forge_test.md benches/forge_build_no_cache.md benches/forge_build_with_cache.md
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
@@ -243,11 +136,11 @@ jobs:
           fi
 
       - name: Comment on PR
-        if: github.event.inputs.pr_number != ''
+        if: github.event.inputs.pr_number != '' || github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
-            const prNumber = ${{ github.event.inputs.pr_number }};
+            const prNumber = ${{ github.event.inputs.pr_number || github.event.pull_request.number }};
             const benchmarkResults = `${{ steps.benchmark_results.outputs.results }}`;
 
             const comment = `## 📊 Foundry Benchmark Results
