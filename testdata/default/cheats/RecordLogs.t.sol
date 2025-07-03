@@ -190,7 +190,7 @@ contract RecordLogsTest is DSTest {
         assertEq(entries[2].emitter, emitter2.getEmitterAddr());
     }
 
-    function testRecordsConsumednAsRead() public {
+    function testRecordsConsumedAsRead() public {
         Vm.Log[] memory entries;
 
         emitter.emitEvent(1, generateTestData(16));
