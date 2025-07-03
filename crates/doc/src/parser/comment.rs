@@ -1,5 +1,5 @@
 use alloy_primitives::map::HashMap;
-use derive_more::{derive::Display, Deref, DerefMut};
+use derive_more::{Deref, DerefMut, derive::Display};
 use solang_parser::doccomment::DocCommentTag;
 
 /// The natspec comment tag explaining the purpose of the comment.
@@ -88,11 +88,7 @@ impl Comment {
     pub fn match_first_word(&self, expected: &str) -> Option<&str> {
         self.split_first_word().and_then(
             |(word, rest)| {
-                if word == expected {
-                    Some(rest)
-                } else {
-                    None
-                }
+                if word == expected { Some(rest) } else { None }
             },
         )
     }

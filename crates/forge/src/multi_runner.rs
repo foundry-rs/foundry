@@ -1,20 +1,21 @@
 //! Forge test runner for multiple contracts.
 
 use crate::{
-    progress::TestsProgress, result::SuiteResult, runner::LIBRARY_DEPLOYER, ContractRunner,
-    TestFilter,
+    ContractRunner, TestFilter, progress::TestsProgress, result::SuiteResult,
+    runner::LIBRARY_DEPLOYER,
 };
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
-use foundry_common::{get_contract_name, shell::verbosity, ContractsByArtifact, TestFunctionExt};
+use foundry_common::{ContractsByArtifact, TestFunctionExt, get_contract_name, shell::verbosity};
 use foundry_compilers::{
+    Artifact, ArtifactId, ProjectCompileOutput,
     artifacts::{Contract, Libraries},
     compilers::Compiler,
-    Artifact, ArtifactId, ProjectCompileOutput,
 };
 use foundry_config::{Config, InlineConfig};
 use foundry_evm::{
+    Env,
     backend::Backend,
     decode::RevertDecoder,
     executors::{Executor, ExecutorBuilder},
@@ -22,7 +23,6 @@ use foundry_evm::{
     inspectors::CheatsConfig,
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
-    Env,
 };
 use foundry_linking::{LinkOutput, Linker};
 use rayon::prelude::*;
@@ -32,7 +32,7 @@ use std::{
     collections::BTreeMap,
     fmt::Debug,
     path::Path,
-    sync::{mpsc, Arc},
+    sync::{Arc, mpsc},
     time::Instant,
 };
 

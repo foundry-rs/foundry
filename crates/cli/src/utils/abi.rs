@@ -1,8 +1,8 @@
 use alloy_chains::Chain;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
-use alloy_primitives::{hex, Address};
-use alloy_provider::{network::AnyNetwork, Provider};
+use alloy_primitives::{Address, hex};
+use alloy_provider::{Provider, network::AnyNetwork};
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::EtherscanApiVersion;
 use foundry_common::abi::{encode_function_args, get_func, get_func_etherscan};

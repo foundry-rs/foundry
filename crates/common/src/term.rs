@@ -8,11 +8,11 @@ use itertools::Itertools;
 use semver::Version;
 use std::{
     io,
-    io::{prelude::*, IsTerminal},
+    io::{IsTerminal, prelude::*},
     path::{Path, PathBuf},
     sync::{
-        mpsc::{self, TryRecvError},
         LazyLock,
+        mpsc::{self, TryRecvError},
     },
     thread,
     time::Duration,

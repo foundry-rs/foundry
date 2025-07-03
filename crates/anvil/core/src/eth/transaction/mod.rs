@@ -1,25 +1,25 @@
 //! Transaction related types
 use alloy_consensus::{
-    transaction::{
-        eip4844::{TxEip4844, TxEip4844Variant, TxEip4844WithSidecar},
-        Recovered, TxEip7702,
-    },
     Receipt, ReceiptEnvelope, ReceiptWithBloom, Signed, Transaction, TxEip1559, TxEip2930,
     TxEnvelope, TxLegacy, TxReceipt, Typed2718,
+    transaction::{
+        Recovered, TxEip7702,
+        eip4844::{TxEip4844, TxEip4844Variant, TxEip4844WithSidecar},
+    },
 };
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
 use alloy_network::{AnyReceiptEnvelope, AnyRpcTransaction, AnyTransactionReceipt, AnyTxEnvelope};
-use alloy_primitives::{Address, Bloom, Bytes, Log, Signature, TxHash, TxKind, B256, U256, U64};
-use alloy_rlp::{length_of_length, Decodable, Encodable, Header};
+use alloy_primitives::{Address, B256, Bloom, Bytes, Log, Signature, TxHash, TxKind, U64, U256};
+use alloy_rlp::{Decodable, Encodable, Header, length_of_length};
 use alloy_rpc_types::{
-    request::TransactionRequest, trace::otterscan::OtsReceipt, AccessList, ConversionError,
-    Transaction as RpcTransaction, TransactionReceipt,
+    AccessList, ConversionError, Transaction as RpcTransaction, TransactionReceipt,
+    request::TransactionRequest, trace::otterscan::OtsReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
 use bytes::BufMut;
 use foundry_evm::traces::CallTraceNode;
-use op_alloy_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
-use op_revm::{transaction::deposit::DepositTransactionParts, OpTransaction};
+use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
+use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
 use revm::{context::TxEnv, interpreter::InstructionResult};
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, Mul};
@@ -1463,7 +1463,7 @@ pub fn convert_to_anvil_receipt(receipt: AnyTransactionReceipt) -> Option<Receip
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{b256, hex, LogData};
+    use alloy_primitives::{LogData, b256, hex};
     use std::str::FromStr;
 
     // <https://github.com/foundry-rs/foundry/issues/10852>

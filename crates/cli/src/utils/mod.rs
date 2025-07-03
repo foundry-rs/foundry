@@ -1,6 +1,6 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::U256;
-use alloy_provider::{network::AnyNetwork, Provider};
+use alloy_provider::{Provider, network::AnyNetwork};
 use eyre::{ContextCompat, Result};
 use foundry_common::{
     provider::{ProviderBuilder, RetryProvider},
@@ -603,11 +603,7 @@ ignore them in the `.gitignore` file."
 
     // don't set this in cmd() because it's not wanted for all commands
     fn stderr(self) -> Stdio {
-        if self.quiet {
-            Stdio::piped()
-        } else {
-            Stdio::inherit()
-        }
+        if self.quiet { Stdio::piped() } else { Stdio::inherit() }
     }
 }
 

@@ -1,7 +1,7 @@
 use clap::Parser;
 use foundry_common::TestFilter;
 use foundry_compilers::{FileFilter, ProjectPathsConfig};
-use foundry_config::{filter::GlobMatcher, Config};
+use foundry_config::{Config, filter::GlobMatcher};
 use std::{fmt, path::Path};
 
 /// The filter to use during testing.

@@ -1,8 +1,8 @@
-use crate::receipts::{check_tx_status, format_receipt, TxStatus};
+use crate::receipts::{TxStatus, check_tx_status, format_receipt};
 use alloy_chains::Chain;
 use alloy_primitives::{
-    map::{B256HashMap, HashMap},
     B256,
+    map::{B256HashMap, HashMap},
 };
 use eyre::Result;
 use forge_script_sequence::ScriptSequence;

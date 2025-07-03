@@ -17,8 +17,8 @@ use foundry_common::{
 };
 use revm::bytecode::opcode::OpCode;
 use revm_inspectors::tracing::{
-    types::{DecodedTraceStep, TraceMemberOrder},
     OpcodeFilter,
+    types::{DecodedTraceStep, TraceMemberOrder},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -30,12 +30,12 @@ use std::{
 use alloy_primitives::map::HashMap;
 
 pub use revm_inspectors::tracing::{
+    CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
+    TraceWriter, TracingInspector, TracingInspectorConfig,
     types::{
         CallKind, CallLog, CallTrace, CallTraceNode, DecodedCallData, DecodedCallLog,
         DecodedCallTrace,
     },
-    CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
-    TraceWriter, TracingInspector, TracingInspectorConfig,
 };
 
 /// Call trace address identifiers.
@@ -335,11 +335,7 @@ impl TraceMode {
     }
 
     pub fn with_debug(self, yes: bool) -> Self {
-        if yes {
-            std::cmp::max(self, Self::Debug)
-        } else {
-            self
-        }
+        if yes { std::cmp::max(self, Self::Debug) } else { self }
     }
 
     pub fn with_decode_internal(self, mode: InternalTraceMode) -> Self {
@@ -347,19 +343,11 @@ impl TraceMode {
     }
 
     pub fn with_state_changes(self, yes: bool) -> Self {
-        if yes {
-            std::cmp::max(self, Self::RecordStateDiff)
-        } else {
-            self
-        }
+        if yes { std::cmp::max(self, Self::RecordStateDiff) } else { self }
     }
 
     pub fn with_verbosity(self, verbosity: u8) -> Self {
-        if verbosity >= 3 {
-            std::cmp::max(self, Self::Call)
-        } else {
-            self
-        }
+        if verbosity >= 3 { std::cmp::max(self, Self::Call) } else { self }
     }
 
     pub fn into_config(self) -> Option<TracingInspectorConfig> {

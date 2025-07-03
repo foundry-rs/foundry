@@ -1,7 +1,7 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Address, Bytes, TxKind};
-use alloy_provider::{network::AnyRpcBlock, Provider};
+use alloy_provider::{Provider, network::AnyRpcBlock};
 use alloy_rpc_types::BlockId;
 use clap::ValueEnum;
 use eyre::{OptionExt, Result};
@@ -16,8 +16,8 @@ use foundry_common::{
 use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
 use foundry_evm::{
-    constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, opts::EvmOpts,
-    traces::TraceMode, Env, EnvMut,
+    Env, EnvMut, constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, opts::EvmOpts,
+    traces::TraceMode,
 };
 use reqwest::Url;
 use revm::{bytecode::Bytecode, database::Database, primitives::hardfork::SpecId};
@@ -352,7 +352,9 @@ pub fn deploy_contract(
     if to.is_some_and(|to| to.is_call()) {
         let TxKind::Call(to) = to.unwrap() else { unreachable!() };
         if to != DEFAULT_CREATE2_DEPLOYER {
-            eyre::bail!("Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx.");
+            eyre::bail!(
+                "Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx."
+            );
         }
         let result = executor.transact_with_env(env)?;
 

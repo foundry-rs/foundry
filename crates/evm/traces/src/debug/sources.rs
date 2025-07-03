@@ -1,17 +1,17 @@
 use eyre::{Context, Result};
 use foundry_common::{compact_to_contract, strip_bytecode_placeholders};
 use foundry_compilers::{
+    Artifact, Compiler, ProjectCompileOutput,
     artifacts::{
-        sourcemap::{SourceElement, SourceMap},
         Bytecode, Contract, ContractBytecodeSome, Libraries, Source,
+        sourcemap::{SourceElement, SourceMap},
     },
     multi::MultiCompilerLanguage,
-    Artifact, Compiler, ProjectCompileOutput,
 };
 use foundry_evm_core::ic::PcIcMap;
 use foundry_linking::Linker;
 use rayon::prelude::*;
-use solar_parse::{interface::Session, Parser};
+use solar_parse::{Parser, interface::Session};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt::Write,

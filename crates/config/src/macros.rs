@@ -95,8 +95,9 @@ macro_rules! impl_figment_convert {
 ///
 /// ```rust
 /// use foundry_config::{
+///     Config,
 ///     figment::{value::*, *},
-///     impl_figment_convert, merge_impl_figment_convert, Config,
+///     impl_figment_convert, merge_impl_figment_convert,
 /// };
 /// use std::path::PathBuf;
 ///

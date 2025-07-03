@@ -1,8 +1,8 @@
 //! Implementations of [`Json`](spec::Group::Json) cheatcodes.
 
-use crate::{string, Cheatcode, Cheatcodes, Result, Vm::*};
-use alloy_dyn_abi::{eip712_parser::EncodeType, DynSolType, DynSolValue, Resolver};
-use alloy_primitives::{hex, Address, B256, I256};
+use crate::{Cheatcode, Cheatcodes, Result, Vm::*, string};
+use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver, eip712_parser::EncodeType};
+use alloy_primitives::{Address, B256, I256, hex};
 use alloy_sol_types::SolValue;
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
@@ -493,11 +493,7 @@ fn encode(values: Vec<DynSolValue>) -> Vec<u8> {
 /// Canonicalize a json path key to always start from the root of the document.
 /// Read more about json path syntax: <https://goessner.net/articles/JsonPath/>
 pub(super) fn canonicalize_json_path(path: &str) -> Cow<'_, str> {
-    if !path.starts_with('$') {
-        format!("${path}").into()
-    } else {
-        path.into()
-    }
+    if !path.starts_with('$') { format!("${path}").into() } else { path.into() }
 }
 
 /// Converts a JSON [`Value`] to a [`DynSolValue`] by trying to guess encoded type. For safer

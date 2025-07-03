@@ -3,15 +3,15 @@
 use crate::{compile::PathOrContractInfo, strip_bytecode_placeholders};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Event, Function, JsonAbi};
-use alloy_primitives::{hex, Address, Bytes, Selector, B256};
+use alloy_primitives::{Address, B256, Bytes, Selector, hex};
 use eyre::{OptionExt, Result};
 use foundry_compilers::{
+    ArtifactId, Project, ProjectCompileOutput,
     artifacts::{
         BytecodeObject, CompactBytecode, CompactContractBytecode, CompactDeployedBytecode,
         ConfigurableContractArtifact, ContractBytecodeSome, Offsets,
     },
     utils::canonicalized,
-    ArtifactId, Project, ProjectCompileOutput,
 };
 use std::{
     collections::BTreeMap,
@@ -510,7 +510,9 @@ pub fn find_matching_contract_artifact(
             .collect::<Vec<_>>();
 
         if possible_targets.is_empty() {
-            eyre::bail!("Could not find artifact linked to source `{target_path:?}` in the compiled artifacts");
+            eyre::bail!(
+                "Could not find artifact linked to source `{target_path:?}` in the compiled artifacts"
+            );
         }
 
         let (target_id, target_artifact) = possible_targets[0].clone();
@@ -524,7 +526,9 @@ pub fn find_matching_contract_artifact(
         if !target_id.name.contains(".") &&
             possible_targets.iter().any(|(id, _)| id.name != target_id.name)
         {
-            eyre::bail!("Multiple contracts found in the same file, please specify the target <path>:<contract> or <contract>");
+            eyre::bail!(
+                "Multiple contracts found in the same file, please specify the target <path>:<contract> or <contract>"
+            );
         }
 
         // Otherwise, we're dealing with additional compiler profiles wherein `id.source` is the

@@ -1,9 +1,9 @@
 use crate::{invariant::RandomCallGenerator, strategies::EvmFuzzState};
 use revm::{
+    Inspector,
     context::{ContextTr, Transaction},
     inspector::JournalExt,
     interpreter::{CallInput, CallInputs, CallOutcome, CallScheme, Interpreter},
-    Inspector,
 };
 
 /// An inspector that can fuzz and collect data for that effect.

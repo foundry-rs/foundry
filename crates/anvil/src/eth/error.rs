@@ -1,7 +1,7 @@
 //! Aggregated error type for this module
 
 use crate::eth::pool::transactions::PoolTransaction;
-use alloy_primitives::{Bytes, SignatureError, B256};
+use alloy_primitives::{B256, Bytes, SignatureError};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Error as SignerError;
 use alloy_transport::TransportError;
@@ -81,15 +81,25 @@ pub enum BlockchainError {
     TimestampError(String),
     #[error(transparent)]
     DatabaseError(#[from] DatabaseError),
-    #[error("EIP-1559 style fee params (maxFeePerGas or maxPriorityFeePerGas) received but they are not supported by the current hardfork.\n\nYou can use them by running anvil with '--hardfork london' or later.")]
+    #[error(
+        "EIP-1559 style fee params (maxFeePerGas or maxPriorityFeePerGas) received but they are not supported by the current hardfork.\n\nYou can use them by running anvil with '--hardfork london' or later."
+    )]
     EIP1559TransactionUnsupportedAtHardfork,
-    #[error("Access list received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork berlin' or later.")]
+    #[error(
+        "Access list received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork berlin' or later."
+    )]
     EIP2930TransactionUnsupportedAtHardfork,
-    #[error("EIP-4844 fields received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork cancun' or later.")]
+    #[error(
+        "EIP-4844 fields received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork cancun' or later."
+    )]
     EIP4844TransactionUnsupportedAtHardfork,
-    #[error("EIP-7702 fields received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork prague' or later.")]
+    #[error(
+        "EIP-7702 fields received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork prague' or later."
+    )]
     EIP7702TransactionUnsupportedAtHardfork,
-    #[error("op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--optimism'.")]
+    #[error(
+        "op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--optimism'."
+    )]
     DepositTransactionUnsupported,
     #[error("UnknownTransactionType not supported ")]
     UnknownTransactionType,
@@ -97,9 +107,7 @@ pub enum BlockchainError {
     ExcessBlobGasNotSet,
     #[error("{0}")]
     Message(String),
-    #[error(
-        "Transaction {hash} was added to the mempool but wasn't confirmed within {duration:?}"
-    )]
+    #[error("Transaction {hash} was added to the mempool but wasn't confirmed within {duration:?}")]
     TransactionConfirmationTimeout {
         /// Hash of the transaction that timed out
         hash: B256,

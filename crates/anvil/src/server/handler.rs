@@ -1,14 +1,14 @@
 //! Contains RPC handlers
 use crate::{
+    EthApi,
     eth::error::to_rpc_result,
     pubsub::{EthSubscription, LogsSubscription},
-    EthApi,
 };
 use alloy_rpc_types::{
-    pubsub::{Params, SubscriptionKind},
     FilteredParams,
+    pubsub::{Params, SubscriptionKind},
 };
-use anvil_core::eth::{subscription::SubscriptionId, EthPubSub, EthRequest, EthRpcCall};
+use anvil_core::eth::{EthPubSub, EthRequest, EthRpcCall, subscription::SubscriptionId};
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use anvil_server::{PubSubContext, PubSubRpcHandler, RpcHandler};
 

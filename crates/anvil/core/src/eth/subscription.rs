@@ -1,6 +1,6 @@
 //! Subscription types
 use alloy_primitives::hex;
-use rand::{distr::Alphanumeric, rng, Rng};
+use rand::{Rng, distr::Alphanumeric, rng};
 use std::fmt;
 
 /// Unique subscription id

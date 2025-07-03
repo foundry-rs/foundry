@@ -1,4 +1,4 @@
-use crate::{error::RequestError, handler::handle_request, RpcHandler};
+use crate::{RpcHandler, error::RequestError, handler::handle_request};
 use anvil_rpc::{
     error::RpcError,
     request::Request,

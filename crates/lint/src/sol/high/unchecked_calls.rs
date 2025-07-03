@@ -3,7 +3,7 @@ use crate::{
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use solar_ast::{visit::Visit, Expr, ExprKind, ItemFunction, Stmt, StmtKind};
+use solar_ast::{Expr, ExprKind, ItemFunction, Stmt, StmtKind, visit::Visit};
 use solar_interface::kw;
 use std::ops::ControlFlow;
 
