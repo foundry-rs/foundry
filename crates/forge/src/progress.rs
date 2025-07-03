@@ -1,7 +1,9 @@
 use alloy_primitives::map::HashMap;
+use chrono::Utc;
 use indicatif::{MultiProgress, ProgressBar};
 use parking_lot::Mutex;
 use std::{sync::Arc, time::Duration};
+
 /// State of [ProgressBar]s displayed for the given test run.
 /// Shows progress of all test suites matching filter.
 /// For each test within the test suite an individual progress bar is displayed.
@@ -64,17 +66,22 @@ impl TestsProgressState {
         &mut self,
         suite_name: &str,
         test_name: &String,
+        timeout: Option<u32>,
         runs: u32,
     ) -> Option<ProgressBar> {
         if let Some(suite_progress) = self.suites_progress.get(suite_name) {
             let fuzz_progress =
                 self.multi.insert_after(suite_progress, ProgressBar::new(runs as u64));
+            let template = if let Some(timeout) = timeout {
+                let ends_at = (Utc::now() + chrono::Duration::seconds(timeout.into()))
+                    .format("%H:%M:%S %Y-%m-%d")
+                    .to_string();
+                format!("    ↪ {{prefix:.bold.dim}}: [{{pos}}]{{msg}} Runs, ends at {ends_at} UTC")
+            } else {
+                "    ↪ {prefix:.bold.dim}: [{pos}/{len}]{msg} Runs".to_string()
+            };
             fuzz_progress.set_style(
-                indicatif::ProgressStyle::with_template(
-                    "    ↪ {prefix:.bold.dim}: [{pos}/{len}]{msg} Runs",
-                )
-                .unwrap()
-                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
+                indicatif::ProgressStyle::with_template(&template).unwrap().tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
             );
             fuzz_progress.set_prefix(test_name.to_string());
             Some(fuzz_progress)
@@ -89,7 +96,7 @@ impl TestsProgressState {
     }
 }
 
-/// Clonable wrapper around [TestsProgressState].
+/// Cloneable wrapper around [TestsProgressState].
 #[derive(Debug, Clone)]
 pub struct TestsProgress {
     pub inner: Arc<Mutex<TestsProgressState>>,
@@ -106,10 +113,11 @@ pub fn start_fuzz_progress(
     tests_progress: Option<&TestsProgress>,
     suite_name: &str,
     test_name: &String,
+    timeout: Option<u32>,
     runs: u32,
 ) -> Option<ProgressBar> {
     if let Some(progress) = tests_progress {
-        progress.inner.lock().start_fuzz_progress(suite_name, test_name, runs)
+        progress.inner.lock().start_fuzz_progress(suite_name, test_name, timeout, runs)
     } else {
         None
     }

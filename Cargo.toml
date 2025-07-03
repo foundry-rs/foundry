@@ -203,14 +203,15 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.18.0", default-features = false }
-foundry-compilers = { version = "0.17.1", default-features = false }
+foundry-block-explorers = { version = "0.19.1", default-features = false }
+foundry-compilers = { version = "0.17.3", default-features = false }
 foundry-fork-db = "0.15"
 solang-parser = { version = "=0.3.9", package = "foundry-solang-parser" }
 solar-ast = { version = "=0.1.4", default-features = false }
 solar-parse = { version = "=0.1.4", default-features = false }
 solar-interface = { version = "=0.1.4", default-features = false }
 solar-sema = { version = "=0.1.4", default-features = false }
+solar-data-structures = { version = "=0.1.4", default-features = false }
 
 ## alloy
 alloy-consensus = { version = "1.0.11", default-features = false }
@@ -239,21 +240,21 @@ alloy-hardforks = { version = "0.2.6", default-features = false }
 alloy-op-hardforks = { version = "0.2.6", default-features = false }
 
 ## alloy-core
-alloy-dyn-abi = "1.1"
-alloy-json-abi = "1.1"
-alloy-primitives = { version = "1.1", features = [
+alloy-dyn-abi = "1.2.1"
+alloy-json-abi = "1.2.1"
+alloy-primitives = { version = "1.2.1", features = [
     "getrandom",
     "rand",
     "map-fxhash",
     "map-foldhash",
 ] }
-alloy-sol-macro-expander = "1.1"
-alloy-sol-macro-input = "1.1"
-alloy-sol-types = "1.1"
+alloy-sol-macro-expander = "1.2.1"
+alloy-sol-macro-input = "1.2.1"
+alloy-sol-types = "1.2.1"
 
 alloy-chains = "0.2"
 alloy-rlp = "0.3"
-alloy-trie = "0.8.1"
+alloy-trie = "0.9"
 
 ## op-alloy
 op-alloy-consensus = "0.17.2"
@@ -349,6 +350,8 @@ yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 path-slash = "0.2"
 jiff = "0.2"
 heck = "0.5"
+uuid = "1.17.0"
+flate2 = "1.1"
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
@@ -406,5 +409,13 @@ zip-extract = "=0.2.1"
 # revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "a625c04" }
 
 ## foundry
-# foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "855dee4" }
+# foundry-block-explorers = { git = "https://github.com/foundry-rs/block-explorers.git", rev = "e09cb89" }
+# foundry-compilers = { git = "https://github.com/foundry-rs/compilers.git", rev = "e4a9b04" }
 # foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "811a61a" }
+
+## solar
+# solar-ast = { git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
+# solar-parse = { git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
+# solar-interface = { git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
+# solar-sema = { git = "https://github.com/paradigmxyz/solar.git", branch = "main" }
+# solar-data-structures = { git = "https://github.com/paradigmxyz/solar.git", branch = "main" }

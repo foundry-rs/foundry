@@ -69,7 +69,7 @@ Display options:
           - 4 (-vvvv): Print execution traces for all tests, and setup traces for failing tests.
           - 5 (-vvvvv): Print execution and setup traces for all tests, including storage changes.
 
-Find more information in the book: http://book.getfoundry.sh/reference/forge/forge.html
+Find more information in the book: https://getfoundry.sh/forge/overview
 
 "#]]);
 });
@@ -1503,7 +1503,7 @@ Installing forge-5980-test in [..] (url: Some("https://github.com/evalir/forge-5
         prj.update_config(|config| {
             config.remappings = vec![
                 Remapping::from_str("forge-5980-test/=lib/forge-5980-test/src/").unwrap().into(),
-                // explicit remapping for sub-dependendy seems necessary for some reason
+                // explicit remapping for sub-dependency seems necessary for some reason
                 Remapping::from_str(
                     "forge-5980-test-dep/=lib/forge-5980-test/lib/forge-5980-test-dep/src/",
                 )

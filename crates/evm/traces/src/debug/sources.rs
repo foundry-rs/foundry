@@ -1,5 +1,5 @@
 use eyre::{Context, Result};
-use foundry_common::compact_to_contract;
+use foundry_common::{compact_to_contract, strip_bytecode_placeholders};
 use foundry_compilers::{
     artifacts::{
         sourcemap::{SourceElement, SourceMap},
@@ -94,9 +94,9 @@ impl ArtifactData {
                 })
             };
 
-            // Only parse bytecode if it's not empty.
-            let pc_ic_map = if let Some(bytes) = b.bytes() {
-                (!bytes.is_empty()).then(|| PcIcMap::new(bytes))
+            // Only parse bytecode if it's not empty, stripping placeholders if necessary.
+            let pc_ic_map = if let Some(bytes) = strip_bytecode_placeholders(&b.object) {
+                (!bytes.is_empty()).then(|| PcIcMap::new(bytes.as_ref()))
             } else {
                 None
             };

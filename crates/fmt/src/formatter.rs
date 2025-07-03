@@ -1,6 +1,7 @@
 //! A Solidity formatter
 
 use crate::{
+    FormatterConfig, InlineConfig, IntTypes,
     buffer::*,
     chunk::*,
     comments::{
@@ -12,7 +13,6 @@ use crate::{
     solang_ext::{pt::*, *},
     string::{QuoteState, QuotedStringExt},
     visit::{Visitable, Visitor},
-    FormatterConfig, InlineConfig, IntTypes,
 };
 use alloy_primitives::Address;
 use foundry_config::fmt::{HexUnderscore, MultilineFuncHeaderStyle, SingleLineBlockStyle};
@@ -1174,11 +1174,11 @@ impl<'a, W: Write> Formatter<'a, W> {
         let whitespace = if !prefix.is_empty() { " " } else { "" };
         let next_after_start_offset = items.first().map(|item| item.loc().start());
         let first_surrounding = SurroundingChunk::new("", start_offset, next_after_start_offset);
-        let last_surronding = SurroundingChunk::new(")", None, end_offset);
+        let last_surrounding = SurroundingChunk::new(")", None, end_offset);
         if items.is_empty() {
             if paren_required {
                 write!(self.buf(), "{whitespace}(")?;
-                self.surrounded(first_surrounding, last_surronding, |fmt, _| {
+                self.surrounded(first_surrounding, last_surrounding, |fmt, _| {
                     // write comments before the list end
                     write_chunk!(fmt, end_offset.unwrap_or_default(), "")?;
                     Ok(())
@@ -1186,7 +1186,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             }
         } else {
             write!(self.buf(), "{whitespace}(")?;
-            self.surrounded(first_surrounding, last_surronding, |fmt, multiline| {
+            self.surrounded(first_surrounding, last_surrounding, |fmt, multiline| {
                 let args =
                     fmt.items_to_chunks(end_offset, items.iter_mut().map(|arg| (arg.loc(), arg)))?;
                 let multiline =
@@ -1259,7 +1259,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         // Determine writable statements by excluding statements from disabled start / end lines.
         // We check the position of last statement from first line (if disabled) and position of
         // first statement from last line (if disabled) and slice accordingly.
-        let writable_statments = match (
+        let writable_statements = match (
             statements.iter().rposition(|stmt| {
                 is_start_disabled &&
                     self.find_next_line(stmt.loc().end()).unwrap_or_default() ==
@@ -1300,7 +1300,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         // Write statements that are not on any disabled first / last block line.
         let mut statements_loc = loc;
-        if let Some(writable_statements) = writable_statments {
+        if let Some(writable_statements) = writable_statements {
             if let Some(first_statement) = writable_statements.first() {
                 statements_loc = statements_loc.with_start(first_statement.loc().start());
                 self.write_whitespace_separator(true)?;
@@ -1412,11 +1412,7 @@ impl<'a, W: Write> Formatter<'a, W> {
                 .quote_state_char_indices()
                 .find_map(
                     |(state, _, ch)| {
-                        if matches!(state, QuoteState::Opening(_)) {
-                            Some(ch)
-                        } else {
-                            None
-                        }
+                        if matches!(state, QuoteState::Opening(_)) { Some(ch) } else { None }
                     },
                 )
                 .expect("Could not find quote character for quoted string")
@@ -2374,7 +2370,7 @@ impl<W: Write> Visitor for Formatter<'_, W> {
         return_source_if_disabled!(self, loc);
 
         match expr {
-            Expression::Type(loc, typ) => match typ {
+            Expression::Type(loc, ty) => match ty {
                 Type::Address => write_chunk!(self, loc.start(), "address")?,
                 Type::AddressPayable => write_chunk!(self, loc.start(), "address payable")?,
                 Type::Payable => write_chunk!(self, loc.start(), "payable")?,
@@ -2384,7 +2380,7 @@ impl<W: Write> Visitor for Formatter<'_, W> {
                 Type::Rational => write_chunk!(self, loc.start(), "rational")?,
                 Type::DynamicBytes => write_chunk!(self, loc.start(), "bytes")?,
                 &mut Type::Int(ref n) | &mut Type::Uint(ref n) => {
-                    let int = if matches!(typ, Type::Int(_)) { "int" } else { "uint" };
+                    let int = if matches!(ty, Type::Int(_)) { "int" } else { "uint" };
                     match n {
                         256 => match self.config.int_types {
                             IntTypes::Long => write_chunk!(self, loc.start(), "{int}{n}")?,

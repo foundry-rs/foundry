@@ -2,10 +2,12 @@
 
 use crate::{
     abi::{Multicall, SimpleStorage},
-    utils::{connect_pubsub_with_wallet, http_provider_with_signer},
+    utils::{connect_pubsub_with_wallet, http_provider, http_provider_with_signer},
 };
-use alloy_network::{EthereumWallet, TransactionBuilder};
+use alloy_consensus::{SignableTransaction, Transaction, TxEip1559};
+use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
 use alloy_primitives::{
+    bytes,
     map::{AddressHashMap, B256HashMap, HashMap},
     Address, ChainId, B256, U256,
 };
@@ -15,7 +17,7 @@ use alloy_rpc_types::{
     BlockTransactions,
 };
 use alloy_serde::WithOtherFields;
-use anvil::{eth::api::CLIENT_VERSION, spawn, NodeConfig, CHAIN_ID};
+use anvil::{eth::api::CLIENT_VERSION, spawn, EthereumHardfork, NodeConfig, CHAIN_ID};
 use futures::join;
 use std::time::Duration;
 
@@ -402,4 +404,53 @@ async fn can_mine_while_mining() {
 
     let block = api.block_by_number(BlockNumberOrTag::Number(block_number)).await.unwrap().unwrap();
     assert_eq!(block.header.number, total_blocks);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_send_raw_tx_sync() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(node_config).await;
+    let provider = http_provider(&handle.http_endpoint());
+
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
+
+    let from = wallets[0].address();
+    let mut tx = TxEip1559 {
+        max_fee_per_gas: eip1559_est.max_fee_per_gas,
+        max_priority_fee_per_gas: eip1559_est.max_priority_fee_per_gas,
+        gas_limit: 100000,
+        chain_id: 31337,
+        to: alloy_primitives::TxKind::Call(from),
+        input: bytes!("11112222"),
+        ..Default::default()
+    };
+    let signature = wallets[1].sign_transaction_sync(&mut tx).unwrap();
+
+    let tx = tx.into_signed(signature);
+    let mut encoded = Vec::new();
+    tx.eip2718_encode(&mut encoded);
+
+    let receipt = api.send_raw_transaction_sync(encoded.into()).await.unwrap();
+    assert_eq!(receipt.from, wallets[1].address());
+    assert_eq!(receipt.to, tx.to());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_send_tx_sync() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(node_config).await;
+
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let logger_bytecode = bytes!("66365f5f37365fa05f5260076019f3");
+
+    let from = wallets[0].address();
+    let tx = TransactionRequest::default()
+        .with_from(from)
+        .into_create()
+        .with_nonce(0)
+        .with_input(logger_bytecode);
+
+    let receipt = api.send_transaction_sync(WithOtherFields::new(tx)).await.unwrap();
+    assert_eq!(receipt.from, wallets[0].address());
 }

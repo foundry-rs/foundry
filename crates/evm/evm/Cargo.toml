@@ -32,6 +32,7 @@ alloy-primitives = { workspace = true, features = [
     "arbitrary",
     "rlp",
 ] }
+alloy-rpc-types.workspace = true
 alloy-sol-types.workspace = true
 revm = { workspace = true, default-features = false, features = [
     "std",
@@ -52,3 +53,4 @@ thiserror.workspace = true
 tracing.workspace = true
 indicatif.workspace = true
 serde.workspace = true
+uuid.workspace = true

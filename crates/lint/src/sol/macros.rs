@@ -1,9 +1,16 @@
+#[macro_export]
+macro_rules! link {
+    ($url:expr) => {
+        concat!("\x1b]8;;", $url, "\x1b\\", $url, "\x1b]8;;\x1b\\")
+    };
+}
+
 /// Macro for defining lints and relevant metadata for the Solidity linter.
 ///
 /// # Parameters
 ///
 /// Each lint requires the following input fields:
-/// - `$id`: Identitifier of the generated `SolLint` constant.
+/// - `$id`: Identifier of the generated `SolLint` constant.
 /// - `$severity`: The `Severity` of the lint (e.g. `High`, `Med`, `Low`, `Info`, `Gas`).
 /// - `$str_id`: A unique identifier used to reference a specific lint during configuration.
 /// - `$desc`: A short description of the lint.
@@ -20,7 +27,7 @@ macro_rules! declare_forge_lint {
             id: $str_id,
             severity: $severity,
             description: $desc,
-            help: concat!("https://book.getfoundry.sh/reference/forge/forge-lint#", $str_id),
+            help: link!(concat!("https://book.getfoundry.sh/reference/forge/forge-lint#", $str_id)),
         };
     };
 
@@ -33,7 +40,7 @@ macro_rules! declare_forge_lint {
 ///
 /// # Parameters
 ///
-/// - `$pass_id`: Identitifier of the generated struct that will implement the pass trait.
+/// - `$pass_id`: Identifier of the generated struct that will implement the pass trait.
 /// - (`$lint`): tuple with `SolLint` constants that should be evaluated on every input that pass.
 ///
 /// # Outputs

@@ -1,6 +1,5 @@
 use super::{MixedCaseFunction, MixedCaseVariable};
 use crate::{
-    declare_forge_lint,
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
