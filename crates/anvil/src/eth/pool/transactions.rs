@@ -639,12 +639,11 @@ impl ReadyTransactions {
 
                 // remove from unlocks
                 for mark in &tx.transaction.transaction.requires {
-                    if let Some(hash) = self.provided_markers.get(mark) {
-                        if let Some(tx) = ready.get_mut(hash) {
-                            if let Some(idx) = tx.unlocks.iter().position(|i| i == hash) {
-                                tx.unlocks.swap_remove(idx);
-                            }
-                        }
+                    if let Some(hash) = self.provided_markers.get(mark)
+                        && let Some(tx) = ready.get_mut(hash)
+                        && let Some(idx) = tx.unlocks.iter().position(|i| i == hash)
+                    {
+                        tx.unlocks.swap_remove(idx);
                     }
                 }
 

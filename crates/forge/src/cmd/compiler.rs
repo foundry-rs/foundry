@@ -82,10 +82,10 @@ impl ResolveArgs {
                                 .to_string();
 
                             // Skip files that match the given regex pattern.
-                            if let Some(ref regex) = skip {
-                                if regex.is_match(&path_str) {
-                                    return None;
-                                }
+                            if let Some(ref regex) = skip
+                                && regex.is_match(&path_str)
+                            {
+                                return None;
                             }
 
                             Some(path_str)

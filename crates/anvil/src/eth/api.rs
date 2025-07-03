@@ -716,12 +716,11 @@ impl EthApi {
         let block_request = self.block_request(block_number).await?;
 
         // check if the number predates the fork, if in fork mode
-        if let BlockRequest::Number(number) = block_request {
-            if let Some(fork) = self.get_fork() {
-                if fork.predates_fork(number) {
-                    return Ok(fork.get_balance(address, number).await?);
-                }
-            }
+        if let BlockRequest::Number(number) = block_request
+            && let Some(fork) = self.get_fork()
+            && fork.predates_fork(number)
+        {
+            return Ok(fork.get_balance(address, number).await?);
         }
 
         self.backend.get_balance(address, Some(block_request)).await
@@ -739,12 +738,11 @@ impl EthApi {
         let block_request = self.block_request(block_number).await?;
 
         // check if the number predates the fork, if in fork mode
-        if let BlockRequest::Number(number) = block_request {
-            if let Some(fork) = self.get_fork() {
-                if fork.predates_fork(number) {
-                    return Ok(fork.get_account(address, number).await?);
-                }
-            }
+        if let BlockRequest::Number(number) = block_request
+            && let Some(fork) = self.get_fork()
+            && fork.predates_fork(number)
+        {
+            return Ok(fork.get_account(address, number).await?);
         }
 
         self.backend.get_account_at_block(address, Some(block_request)).await
@@ -782,14 +780,13 @@ impl EthApi {
         let block_request = self.block_request(block_number).await?;
 
         // check if the number predates the fork, if in fork mode
-        if let BlockRequest::Number(number) = block_request {
-            if let Some(fork) = self.get_fork() {
-                if fork.predates_fork(number) {
-                    return Ok(B256::from(
-                        fork.storage_at(address, index, Some(BlockNumber::Number(number))).await?,
-                    ));
-                }
-            }
+        if let BlockRequest::Number(number) = block_request
+            && let Some(fork) = self.get_fork()
+            && fork.predates_fork(number)
+        {
+            return Ok(B256::from(
+                fork.storage_at(address, index, Some(BlockNumber::Number(number))).await?,
+            ));
         }
 
         self.backend.storage_at(address, index, Some(block_request)).await
@@ -915,12 +912,11 @@ impl EthApi {
         node_info!("eth_getCode");
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
-        if let BlockRequest::Number(number) = block_request {
-            if let Some(fork) = self.get_fork() {
-                if fork.predates_fork(number) {
-                    return Ok(fork.get_code(address, number).await?);
-                }
-            }
+        if let BlockRequest::Number(number) = block_request
+            && let Some(fork) = self.get_fork()
+            && fork.predates_fork(number)
+        {
+            return Ok(fork.get_code(address, number).await?);
         }
         self.backend.get_code(address, Some(block_request)).await
     }
@@ -940,12 +936,11 @@ impl EthApi {
 
         // If we're in forking mode, or still on the forked block (no blocks mined yet) then we can
         // delegate the call.
-        if let BlockRequest::Number(number) = block_request {
-            if let Some(fork) = self.get_fork() {
-                if fork.predates_fork_inclusive(number) {
-                    return Ok(fork.get_proof(address, keys, Some(number.into())).await?);
-                }
-            }
+        if let BlockRequest::Number(number) = block_request
+            && let Some(fork) = self.get_fork()
+            && fork.predates_fork_inclusive(number)
+        {
+            return Ok(fork.get_proof(address, keys, Some(number.into())).await?);
         }
 
         let proof = self.backend.prove_account_at(address, keys, Some(block_request)).await?;
@@ -1081,12 +1076,11 @@ impl EthApi {
             return Ok(receipt);
         }
         while let Some(notification) = stream.next().await {
-            if let Some(block) = self.backend.get_block_by_hash(notification.hash) {
-                if block.transactions.iter().any(|tx| tx.hash() == hash) {
-                    if let Some(receipt) = self.backend.transaction_receipt(hash).await? {
-                        return Ok(receipt);
-                    }
-                }
+            if let Some(block) = self.backend.get_block_by_hash(notification.hash)
+                && block.transactions.iter().any(|tx| tx.hash() == hash)
+                && let Some(receipt) = self.backend.transaction_receipt(hash).await?
+            {
+                return Ok(receipt);
             }
         }
 
@@ -1183,17 +1177,16 @@ impl EthApi {
         node_info!("eth_call");
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
-        if let BlockRequest::Number(number) = block_request {
-            if let Some(fork) = self.get_fork() {
-                if fork.predates_fork(number) {
-                    if overrides.has_state() || overrides.has_block() {
-                        return Err(BlockchainError::EvmOverrideError(
-                            "not available on past forked blocks".to_string(),
-                        ));
-                    }
-                    return Ok(fork.call(&request, Some(number.into())).await?);
-                }
+        if let BlockRequest::Number(number) = block_request
+            && let Some(fork) = self.get_fork()
+            && fork.predates_fork(number)
+        {
+            if overrides.has_state() || overrides.has_block() {
+                return Err(BlockchainError::EvmOverrideError(
+                    "not available on past forked blocks".to_string(),
+                ));
             }
+            return Ok(fork.call(&request, Some(number.into())).await?);
         }
 
         let fees = FeeDetails::new(
@@ -1223,12 +1216,11 @@ impl EthApi {
         node_info!("eth_simulateV1");
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
-        if let BlockRequest::Number(number) = block_request {
-            if let Some(fork) = self.get_fork() {
-                if fork.predates_fork(number) {
-                    return Ok(fork.simulate_v1(&request, Some(number.into())).await?);
-                }
-            }
+        if let BlockRequest::Number(number) = block_request
+            && let Some(fork) = self.get_fork()
+            && fork.predates_fork(number)
+        {
+            return Ok(fork.simulate_v1(&request, Some(number.into())).await?);
         }
 
         // this can be blocking for a bit, especially in forking mode
@@ -1263,12 +1255,11 @@ impl EthApi {
         node_info!("eth_createAccessList");
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
-        if let BlockRequest::Number(number) = block_request {
-            if let Some(fork) = self.get_fork() {
-                if fork.predates_fork(number) {
-                    return Ok(fork.create_access_list(&request, Some(number.into())).await?);
-                }
-            }
+        if let BlockRequest::Number(number) = block_request
+            && let Some(fork) = self.get_fork()
+            && fork.predates_fork(number)
+        {
+            return Ok(fork.create_access_list(&request, Some(number.into())).await?);
         }
 
         self.backend
@@ -1408,10 +1399,10 @@ impl EthApi {
         node_info!("eth_getUncleByBlockHashAndIndex");
         let number =
             self.backend.ensure_block_number(Some(BlockId::Hash(block_hash.into()))).await?;
-        if let Some(fork) = self.get_fork() {
-            if fork.predates_fork_inclusive(number) {
-                return Ok(fork.uncle_by_block_hash_and_index(block_hash, idx.into()).await?);
-            }
+        if let Some(fork) = self.get_fork()
+            && fork.predates_fork_inclusive(number)
+        {
+            return Ok(fork.uncle_by_block_hash_and_index(block_hash, idx.into()).await?);
         }
         // It's impossible to have uncles outside of fork mode
         Ok(None)
@@ -1427,10 +1418,10 @@ impl EthApi {
     ) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getUncleByBlockNumberAndIndex");
         let number = self.backend.ensure_block_number(Some(BlockId::Number(block_number))).await?;
-        if let Some(fork) = self.get_fork() {
-            if fork.predates_fork_inclusive(number) {
-                return Ok(fork.uncle_by_block_number_and_index(number, idx.into()).await?);
-            }
+        if let Some(fork) = self.get_fork()
+            && fork.predates_fork_inclusive(number)
+        {
+            return Ok(fork.uncle_by_block_number_and_index(number, idx.into()).await?);
         }
         // It's impossible to have uncles outside of fork mode
         Ok(None)
@@ -2343,13 +2334,12 @@ impl EthApi {
                         );
 
                         // Estimate gas
-                        if tx_req.gas.is_none() {
-                            if let Ok(gas) = self
+                        if tx_req.gas.is_none()
+                            && let Ok(gas) = self
                                 .estimate_gas(tx_req.clone(), None, EvmOverrides::default())
                                 .await
-                            {
-                                tx_req.gas = Some(gas.to());
-                            }
+                        {
+                            tx_req.gas = Some(gas.to());
                         }
 
                         // Build typed transaction request
@@ -2528,31 +2518,28 @@ impl EthApi {
                     BlockTransactions::Hashes(_) | BlockTransactions::Uncle => unreachable!(),
                 };
                 for tx in block_txs.iter_mut() {
-                    if let Some(receipt) = self.backend.mined_transaction_receipt(tx.tx_hash()) {
-                        if let Some(output) = receipt.out {
-                            // insert revert reason if failure
-                            if !receipt
-                                .inner
-                                .inner
-                                .as_receipt_with_bloom()
-                                .receipt
-                                .status
-                                .coerce_status()
-                            {
-                                if let Some(reason) =
-                                    RevertDecoder::new().maybe_decode(&output, None)
-                                {
-                                    tx.other.insert(
-                                        "revertReason".to_string(),
-                                        serde_json::to_value(reason).expect("Infallible"),
-                                    );
-                                }
-                            }
+                    if let Some(receipt) = self.backend.mined_transaction_receipt(tx.tx_hash())
+                        && let Some(output) = receipt.out
+                    {
+                        // insert revert reason if failure
+                        if !receipt
+                            .inner
+                            .inner
+                            .as_receipt_with_bloom()
+                            .receipt
+                            .status
+                            .coerce_status()
+                            && let Some(reason) = RevertDecoder::new().maybe_decode(&output, None)
+                        {
                             tx.other.insert(
-                                "output".to_string(),
-                                serde_json::to_value(output).expect("Infallible"),
+                                "revertReason".to_string(),
+                                serde_json::to_value(reason).expect("Infallible"),
                             );
                         }
+                        tx.other.insert(
+                            "output".to_string(),
+                            serde_json::to_value(output).expect("Infallible"),
+                        );
                     }
                 }
                 block.transactions = BlockTransactions::Full(block_txs.to_vec());
@@ -2770,10 +2757,10 @@ impl EthApi {
             .map(|caps| caps.delegation.addresses.as_ref())
             .unwrap_or_default();
 
-        if let Some(authorizations) = &request.authorization_list {
-            if authorizations.iter().any(|auth| !valid_delegations.contains(&auth.address)) {
-                return Err(WalletError::InvalidAuthorization.into());
-            }
+        if let Some(authorizations) = &request.authorization_list
+            && authorizations.iter().any(|auth| !valid_delegations.contains(&auth.address))
+        {
+            return Err(WalletError::InvalidAuthorization.into());
         }
 
         // validate the destination address
@@ -2924,17 +2911,16 @@ impl EthApi {
     ) -> Result<u128> {
         let block_request = self.block_request(block_number).await?;
         // check if the number predates the fork, if in fork mode
-        if let BlockRequest::Number(number) = block_request {
-            if let Some(fork) = self.get_fork() {
-                if fork.predates_fork(number) {
-                    if overrides.has_state() || overrides.has_block() {
-                        return Err(BlockchainError::EvmOverrideError(
-                            "not available on past forked blocks".to_string(),
-                        ));
-                    }
-                    return Ok(fork.estimate_gas(&request, Some(number.into())).await?);
-                }
+        if let BlockRequest::Number(number) = block_request
+            && let Some(fork) = self.get_fork()
+            && fork.predates_fork(number)
+        {
+            if overrides.has_state() || overrides.has_block() {
+                return Err(BlockchainError::EvmOverrideError(
+                    "not available on past forked blocks".to_string(),
+                ));
             }
+            return Ok(fork.estimate_gas(&request, Some(number.into())).await?);
         }
 
         // this can be blocking for a bit, especially in forking mode
@@ -2979,14 +2965,12 @@ impl EthApi {
             && request.access_list.is_none()
             && request.blob_versioned_hashes.is_none();
 
-        if maybe_transfer {
-            if let Some(to) = to {
-                if let Ok(target_code) = self.backend.get_code_with_state(&state, *to) {
-                    if target_code.as_ref().is_empty() {
-                        return Ok(MIN_TRANSACTION_GAS);
-                    }
-                }
-            }
+        if maybe_transfer
+            && let Some(to) = to
+            && let Ok(target_code) = self.backend.get_code_with_state(&state, *to)
+            && target_code.as_ref().is_empty()
+        {
+            return Ok(MIN_TRANSACTION_GAS);
         }
 
         let fees = FeeDetails::new(
@@ -3003,21 +2987,20 @@ impl EthApi {
 
         let gas_price = fees.gas_price.unwrap_or_default();
         // If we have non-zero gas price, cap gas limit by sender balance
-        if gas_price > 0 {
-            if let Some(from) = request.from {
-                let mut available_funds = self.backend.get_balance_with_state(state, from)?;
-                if let Some(value) = request.value {
-                    if value > available_funds {
-                        return Err(InvalidTransactionError::InsufficientFunds.into());
-                    }
-                    // safe: value < available_funds
-                    available_funds -= value;
+        if gas_price > 0
+            && let Some(from) = request.from
+        {
+            let mut available_funds = self.backend.get_balance_with_state(state, from)?;
+            if let Some(value) = request.value {
+                if value > available_funds {
+                    return Err(InvalidTransactionError::InsufficientFunds.into());
                 }
-                // amount of gas the sender can afford with the `gas_price`
-                let allowance =
-                    available_funds.checked_div(U256::from(gas_price)).unwrap_or_default();
-                highest_gas_limit = std::cmp::min(highest_gas_limit, allowance.saturating_to());
+                // safe: value < available_funds
+                available_funds -= value;
             }
+            // amount of gas the sender can afford with the `gas_price`
+            let allowance = available_funds.checked_div(U256::from(gas_price)).unwrap_or_default();
+            highest_gas_limit = std::cmp::min(highest_gas_limit, allowance.saturating_to());
         }
 
         let mut call_to_estimate = request.clone();
@@ -3146,10 +3129,10 @@ impl EthApi {
 
         tokio::spawn(async move {
             while let Some(hash) = hashes.next().await {
-                if let Ok(Some(txn)) = this.transaction_by_hash(hash).await {
-                    if tx.send(txn).is_err() {
-                        break;
-                    }
+                if let Ok(Some(txn)) = this.transaction_by_hash(hash).await
+                    && tx.send(txn).is_err()
+                {
+                    break;
                 }
             }
         });
@@ -3347,12 +3330,11 @@ impl EthApi {
     ) -> Result<u64> {
         let block_request = self.block_request(block_number).await?;
 
-        if let BlockRequest::Number(number) = block_request {
-            if let Some(fork) = self.get_fork() {
-                if fork.predates_fork(number) {
-                    return Ok(fork.get_nonce(address, number).await?);
-                }
-            }
+        if let BlockRequest::Number(number) = block_request
+            && let Some(fork) = self.get_fork()
+            && fork.predates_fork(number)
+        {
+            return Ok(fork.get_nonce(address, number).await?);
         }
 
         self.backend.get_nonce(address, block_request).await

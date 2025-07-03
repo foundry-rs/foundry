@@ -54,10 +54,10 @@ where
             pin.task = Some(Box::pin((pin.task_factory)(block)));
         }
 
-        if let Some(mut task) = pin.task.take() {
-            if task.poll_unpin(cx).is_pending() {
-                pin.task = Some(task);
-            }
+        if let Some(mut task) = pin.task.take()
+            && task.poll_unpin(cx).is_pending()
+        {
+            pin.task = Some(task);
         }
         Poll::Pending
     }

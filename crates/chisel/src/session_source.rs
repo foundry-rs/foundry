@@ -476,15 +476,13 @@ contract {contract_name} is Script {{
                 .remappings
                 .iter()
                 .find(|remapping| remapping.name == "forge-std/")
-            {
-                if let Some(vm_path) = WalkDir::new(&remapping.path.path)
+                && let Some(vm_path) = WalkDir::new(&remapping.path.path)
                     .into_iter()
                     .filter_map(|e| e.ok())
                     .find(|e| e.file_name() == "Vm.sol")
-                {
-                    vm_import = format!("import {{Vm}} from \"{}\";\n", vm_path.path().display());
-                    vm_constant = "Vm internal constant vm = Vm(address(uint160(uint256(keccak256(\"hevm cheat code\")))));\n".to_string();
-                }
+            {
+                vm_import = format!("import {{Vm}} from \"{}\";\n", vm_path.path().display());
+                vm_constant = "Vm internal constant vm = Vm(address(uint160(uint256(keccak256(\"hevm cheat code\")))));\n".to_string();
             }
         }
 

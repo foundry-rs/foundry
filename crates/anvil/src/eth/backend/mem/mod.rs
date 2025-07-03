@@ -940,11 +940,11 @@ impl Backend {
 
                 for n in ((num + 1)..=current_height).rev() {
                     trace!(target: "backend", "reverting block {}", n);
-                    if let Some(hash) = storage.hashes.remove(&n) {
-                        if let Some(block) = storage.blocks.remove(&hash) {
-                            for tx in block.transactions {
-                                let _ = storage.transactions.remove(&tx.hash());
-                            }
+                    if let Some(hash) = storage.hashes.remove(&n)
+                        && let Some(block) = storage.blocks.remove(&hash)
+                    {
+                        for tx in block.transactions {
+                            let _ = storage.transactions.remove(&tx.hash());
                         }
                     }
                 }
@@ -1394,12 +1394,12 @@ impl Backend {
             }
 
             // remove old transactions that exceed the transaction block keeper
-            if let Some(transaction_block_keeper) = self.transaction_block_keeper {
-                if storage.blocks.len() > transaction_block_keeper {
-                    let to_clear = block_number
-                        .saturating_sub(transaction_block_keeper.try_into().unwrap_or(u64::MAX));
-                    storage.remove_block_transactions_by_number(to_clear)
-                }
+            if let Some(transaction_block_keeper) = self.transaction_block_keeper
+                && storage.blocks.len() > transaction_block_keeper
+            {
+                let to_clear = block_number
+                    .saturating_sub(transaction_block_keeper.try_into().unwrap_or(u64::MAX));
+                storage.remove_block_transactions_by_number(to_clear)
             }
 
             // we intentionally set the difficulty to `0` for newer blocks
@@ -2381,20 +2381,19 @@ impl Backend {
                 .block_by_number(BlockNumber::Number(block_number))
                 .await?
                 .map(|block| (block.header.hash, block))
+                && let Some(state) = self.states.write().get(&block_hash)
             {
-                if let Some(state) = self.states.write().get(&block_hash) {
-                    let block = BlockEnv {
-                        number: block_number,
-                        beneficiary: block.header.beneficiary,
-                        timestamp: block.header.timestamp,
-                        difficulty: block.header.difficulty,
-                        prevrandao: block.header.mix_hash,
-                        basefee: block.header.base_fee_per_gas.unwrap_or_default(),
-                        gas_limit: block.header.gas_limit,
-                        ..Default::default()
-                    };
-                    return Ok(f(Box::new(state), block));
-                }
+                let block = BlockEnv {
+                    number: block_number,
+                    beneficiary: block.header.beneficiary,
+                    timestamp: block.header.timestamp,
+                    difficulty: block.header.difficulty,
+                    prevrandao: block.header.mix_hash,
+                    basefee: block.header.base_fee_per_gas.unwrap_or_default(),
+                    gas_limit: block.header.gas_limit,
+                    ..Default::default()
+                };
+                return Ok(f(Box::new(state), block));
             }
 
             warn!(target: "backend", "Not historic state found for block={}", block_number);
@@ -2503,10 +2502,10 @@ impl Backend {
         address: Address,
         block_request: BlockRequest,
     ) -> Result<u64, BlockchainError> {
-        if let BlockRequest::Pending(pool_transactions) = &block_request {
-            if let Some(value) = get_pool_transactions_nonce(pool_transactions, address) {
-                return Ok(value);
-            }
+        if let BlockRequest::Pending(pool_transactions) = &block_request
+            && let Some(value) = get_pool_transactions_nonce(pool_transactions, address)
+        {
+            return Ok(value);
         }
         let final_block_request = match block_request {
             BlockRequest::Pending(_) => BlockRequest::Number(self.best_number()),
@@ -2598,10 +2597,10 @@ impl Backend {
             return Ok(traces);
         }
 
-        if let Some(fork) = self.get_fork() {
-            if fork.predates_fork(number) {
-                return Ok(fork.trace_block(number).await?);
-            }
+        if let Some(fork) = self.get_fork()
+            && fork.predates_fork(number)
+        {
+            return Ok(fork.trace_block(number).await?);
         }
 
         Ok(vec![])
@@ -3158,24 +3157,22 @@ impl TransactionValidator for Backend {
 
             if let (Some(max_priority_fee_per_gas), Some(max_fee_per_gas)) =
                 (tx.essentials().max_priority_fee_per_gas, tx.essentials().max_fee_per_gas)
+                && max_priority_fee_per_gas > max_fee_per_gas
             {
-                if max_priority_fee_per_gas > max_fee_per_gas {
-                    warn!(target: "backend", "max priority fee per gas={}, too high, max fee per gas={}", max_priority_fee_per_gas, max_fee_per_gas);
-                    return Err(InvalidTransactionError::TipAboveFeeCap);
-                }
+                warn!(target: "backend", "max priority fee per gas={}, too high, max fee per gas={}", max_priority_fee_per_gas, max_fee_per_gas);
+                return Err(InvalidTransactionError::TipAboveFeeCap);
             }
         }
 
         // EIP-4844 Cancun hard fork validation steps
         if env.evm_env.cfg_env.spec >= SpecId::CANCUN && tx.transaction.is_eip4844() {
             // Light checks first: see if the blob fee cap is too low.
-            if let Some(max_fee_per_blob_gas) = tx.essentials().max_fee_per_blob_gas {
-                if let Some(blob_gas_and_price) = &env.evm_env.block_env.blob_excess_gas_and_price {
-                    if max_fee_per_blob_gas < blob_gas_and_price.blob_gasprice {
-                        warn!(target: "backend", "max fee per blob gas={}, too low, block blob gas price={}", max_fee_per_blob_gas, blob_gas_and_price.blob_gasprice);
-                        return Err(InvalidTransactionError::BlobFeeCapTooLow);
-                    }
-                }
+            if let Some(max_fee_per_blob_gas) = tx.essentials().max_fee_per_blob_gas
+                && let Some(blob_gas_and_price) = &env.evm_env.block_env.blob_excess_gas_and_price
+                && max_fee_per_blob_gas < blob_gas_and_price.blob_gasprice
+            {
+                warn!(target: "backend", "max fee per blob gas={}, too low, block blob gas price={}", max_fee_per_blob_gas, blob_gas_and_price.blob_gasprice);
+                return Err(InvalidTransactionError::BlobFeeCapTooLow);
             }
 
             // Heavy (blob validation) checks
@@ -3198,10 +3195,10 @@ impl TransactionValidator for Backend {
             }
 
             // Check for any blob validation errors if not impersonating.
-            if !self.skip_blob_validation(Some(*pending.sender())) {
-                if let Err(err) = tx.validate(EnvKzgSettings::default().get()) {
-                    return Err(InvalidTransactionError::BlobTransactionValidationError(err));
-                }
+            if !self.skip_blob_validation(Some(*pending.sender()))
+                && let Err(err) = tx.validate(EnvKzgSettings::default().get())
+            {
+                return Err(InvalidTransactionError::BlobTransactionValidationError(err));
             }
         }
 

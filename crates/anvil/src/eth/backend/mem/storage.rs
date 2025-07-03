@@ -176,11 +176,11 @@ impl InMemoryBlockStates {
     /// Returns the state for the given `hash` if present
     pub fn get(&mut self, hash: &B256) -> Option<&StateDb> {
         self.states.get(hash).or_else(|| {
-            if let Some(state) = self.on_disk_states.get_mut(hash) {
-                if let Some(cached) = self.disk_cache.read(*hash) {
-                    state.init_from_state_snapshot(cached);
-                    return Some(state);
-                }
+            if let Some(state) = self.on_disk_states.get_mut(hash)
+                && let Some(cached) = self.disk_cache.read(*hash)
+            {
+                state.init_from_state_snapshot(cached);
+                return Some(state);
             }
             None
         })
@@ -340,10 +340,10 @@ impl BlockchainStorage {
     pub fn unwind_to(&mut self, block_number: u64, block_hash: B256) {
         let best_num: u64 = self.best_number;
         for i in (block_number + 1)..=best_num {
-            if let Some(hash) = self.hashes.remove(&i) {
-                if let Some(block) = self.blocks.remove(&hash) {
-                    self.remove_block_transactions_by_number(block.header.number);
-                }
+            if let Some(hash) = self.hashes.remove(&i)
+                && let Some(block) = self.blocks.remove(&hash)
+            {
+                self.remove_block_transactions_by_number(block.header.number);
             }
         }
         self.best_hash = block_hash;

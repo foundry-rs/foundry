@@ -216,11 +216,11 @@ impl Stream for EtherscanFetcher {
         let pin = self.get_mut();
 
         loop {
-            if let Some(mut backoff) = pin.backoff.take() {
-                if backoff.poll_tick(cx).is_pending() {
-                    pin.backoff = Some(backoff);
-                    return Poll::Pending;
-                }
+            if let Some(mut backoff) = pin.backoff.take()
+                && backoff.poll_tick(cx).is_pending()
+            {
+                pin.backoff = Some(backoff);
+                return Poll::Pending;
             }
 
             pin.queue_next_reqs();

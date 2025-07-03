@@ -871,10 +871,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
             ],
             |inspector| {
                 let mut out = None;
-                if let Some(output) = inspector.call(ecx, call) {
-                    if output.result.result != InstructionResult::Continue {
-                        out = Some(Some(output));
-                    }
+                if let Some(output) = inspector.call(ecx, call)
+                    && output.result.result != InstructionResult::Continue
+                {
+                    out = Some(Some(output));
                 }
                 out
             },
@@ -892,10 +892,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
                 }
             }
 
-            if let Some(output) = cheatcodes.call_with_executor(ecx, call, self.inner) {
-                if output.result.result != InstructionResult::Continue {
-                    return Some(output);
-                }
+            if let Some(output) = cheatcodes.call_with_executor(ecx, call, self.inner)
+                && output.result.result != InstructionResult::Continue
+            {
+                return Some(output);
             }
         }
 
@@ -923,10 +923,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
                         &mut ecx.journaled_state.inner;
                     for (addr, acc_mut) in state {
                         // Do not mark accounts and storage cold accounts with arbitrary storage.
-                        if let Some(cheatcodes) = &self.cheatcodes {
-                            if cheatcodes.has_arbitrary_storage(addr) {
-                                continue;
-                            }
+                        if let Some(cheatcodes) = &self.cheatcodes
+                            && cheatcodes.has_arbitrary_storage(addr)
+                        {
+                            continue;
                         }
 
                         if !warm_preloaded_addresses.contains(addr) {

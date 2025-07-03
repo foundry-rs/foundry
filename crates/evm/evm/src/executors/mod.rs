@@ -619,17 +619,16 @@ impl Executor {
         }
 
         // Check the global failure slot.
-        if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS) {
-            if let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT) {
-                if !failed_slot.present_value().is_zero() {
-                    return false;
-                }
-            }
+        if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS)
+            && let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT)
+            && !failed_slot.present_value().is_zero()
+        {
+            return false;
         }
-        if let Ok(failed_slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT) {
-            if !failed_slot.is_zero() {
-                return false;
-            }
+        if let Ok(failed_slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
+            && !failed_slot.is_zero()
+        {
+            return false;
         }
 
         if !self.legacy_assertions {

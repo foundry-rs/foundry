@@ -133,10 +133,10 @@ pub(crate) fn step(mapping_slots: &mut AddressHashMap<MappingSlots>, interpreter
             }
         }
         opcode::SSTORE => {
-            if let Some(mapping_slots) = mapping_slots.get_mut(&interpreter.input.target_address) {
-                if let Ok(slot) = interpreter.stack.peek(0) {
-                    mapping_slots.insert(slot.into());
-                }
+            if let Some(mapping_slots) = mapping_slots.get_mut(&interpreter.input.target_address)
+                && let Ok(slot) = interpreter.stack.peek(0)
+            {
+                mapping_slots.insert(slot.into());
             }
         }
         _ => {}
