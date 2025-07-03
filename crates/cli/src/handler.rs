@@ -38,7 +38,7 @@ impl EyreHandler for Handler {
         }
 
         if f.alternate() {
-            return fmt::Debug::fmt(error, f)
+            return fmt::Debug::fmt(error, f);
         }
         let errors = foundry_common::errors::dedup_chain(error);
 

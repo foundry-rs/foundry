@@ -345,8 +345,8 @@ impl VerifyBytecodeArgs {
         };
 
         // Extract creation code from creation tx input.
-        let maybe_creation_code = if receipt.to.is_none() &&
-            receipt.contract_address == Some(self.address)
+        let maybe_creation_code = if receipt.to.is_none()
+            && receipt.contract_address == Some(self.address)
         {
             match &transaction.input.input {
                 Some(input) => &input[..],

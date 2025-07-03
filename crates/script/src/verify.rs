@@ -164,7 +164,7 @@ impl VerifyBundle {
                     compilation_profile: Some(artifact.profile.to_string()),
                 };
 
-                return Some(verify)
+                return Some(verify);
             }
         }
         None
@@ -251,7 +251,7 @@ async fn verify_contracts(
         if num_of_successful_verifications < num_verifications {
             return Err(eyre!(
                 "Not all ({num_of_successful_verifications} / {num_verifications}) contracts were verified!"
-            ))
+            ));
         }
 
         sh_println!("All ({num_verifications}) contracts were verified!")?;

@@ -1423,7 +1423,7 @@ impl SimpleCast {
     /// assert_eq!(Cast::parse_units("2.5", 6)?, "2500000");
     /// assert_eq!(Cast::parse_units("1.0", 12)?, "1000000000000"); // 12 decimals
     /// assert_eq!(Cast::parse_units("1.23", 3)?, "1230"); // 3 decimals
-    ///     
+    ///
     /// # Ok(())
     /// # }
     /// ```
@@ -1445,7 +1445,7 @@ impl SimpleCast {
     /// assert_eq!(Cast::format_units("2500000", 6)?, "2.500000");
     /// assert_eq!(Cast::format_units("1000000000000", 12)?, "1"); // 12 decimals
     /// assert_eq!(Cast::format_units("1230", 3)?, "1.230"); // 3 decimals
-    ///     
+    ///
     /// # Ok(())
     /// # }
     /// ```
@@ -1862,20 +1862,20 @@ impl SimpleCast {
         match k_ty {
             // For value types, `h` pads the value to 32 bytes in the same way as when storing the
             // value in memory.
-            DynSolType::Bool |
-            DynSolType::Int(_) |
-            DynSolType::Uint(_) |
-            DynSolType::FixedBytes(_) |
-            DynSolType::Address |
-            DynSolType::Function => hasher.update(k.as_word().unwrap()),
+            DynSolType::Bool
+            | DynSolType::Int(_)
+            | DynSolType::Uint(_)
+            | DynSolType::FixedBytes(_)
+            | DynSolType::Address
+            | DynSolType::Function => hasher.update(k.as_word().unwrap()),
 
             // For strings and byte arrays, `h(k)` is just the unpadded data.
             DynSolType::String | DynSolType::Bytes => hasher.update(k.as_packed_seq().unwrap()),
 
-            DynSolType::Array(..) |
-            DynSolType::FixedArray(..) |
-            DynSolType::Tuple(..) |
-            DynSolType::CustomStruct { .. } => {
+            DynSolType::Array(..)
+            | DynSolType::FixedArray(..)
+            | DynSolType::Tuple(..)
+            | DynSolType::CustomStruct { .. } => {
                 eyre::bail!("Type `{k_ty}` is not supported as a mapping key")
             }
         }

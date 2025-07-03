@@ -47,12 +47,12 @@ pub struct FilterArgs {
 impl FilterArgs {
     /// Returns true if the filter is empty.
     pub fn is_empty(&self) -> bool {
-        self.test_pattern.is_none() &&
-            self.test_pattern_inverse.is_none() &&
-            self.contract_pattern.is_none() &&
-            self.contract_pattern_inverse.is_none() &&
-            self.path_pattern.is_none() &&
-            self.path_pattern_inverse.is_none()
+        self.test_pattern.is_none()
+            && self.test_pattern_inverse.is_none()
+            && self.contract_pattern.is_none()
+            && self.contract_pattern_inverse.is_none()
+            && self.path_pattern.is_none()
+            && self.path_pattern_inverse.is_none()
     }
 
     /// Merges the set filter globs with the config's values

@@ -472,7 +472,7 @@ impl Backend {
     /// Returns `true` if the account is already impersonated
     pub fn impersonate(&self, addr: Address) -> bool {
         if self.cheats.impersonated_accounts().contains(&addr) {
-            return true
+            return true;
         }
         // Ensure EIP-3607 is disabled
         let mut env = self.env.write();
@@ -698,8 +698,8 @@ impl Backend {
 
     /// Whether to skip blob validation
     pub fn skip_blob_validation(&self, impersonator: Option<Address>) -> bool {
-        self.cheats().auto_impersonate_accounts() ||
-            impersonator
+        self.cheats().auto_impersonate_accounts()
+            || impersonator
                 .is_some_and(|addr| self.cheats().impersonated_accounts().contains(&addr))
     }
 
@@ -866,7 +866,7 @@ impl Backend {
     /// Returns an error if op-stack deposits are not active
     pub fn ensure_op_deposits_active(&self) -> Result<(), BlockchainError> {
         if self.is_optimism() {
-            return Ok(())
+            return Ok(());
         }
         Err(BlockchainError::DepositTransactionUnsupported)
     }
@@ -1908,10 +1908,10 @@ impl Backend {
                                 .into())
                         }
                         GethDebugBuiltInTracerType::NoopTracer => Ok(NoopFrame::default().into()),
-                        GethDebugBuiltInTracerType::FourByteTracer |
-                        GethDebugBuiltInTracerType::PreStateTracer |
-                        GethDebugBuiltInTracerType::MuxTracer |
-                        GethDebugBuiltInTracerType::FlatCallTracer => {
+                        GethDebugBuiltInTracerType::FourByteTracer
+                        | GethDebugBuiltInTracerType::PreStateTracer
+                        | GethDebugBuiltInTracerType::MuxTracer
+                        | GethDebugBuiltInTracerType::FlatCallTracer => {
                             Err(RpcError::invalid_params("unsupported tracer type").into())
                         }
                     },
@@ -1919,7 +1919,7 @@ impl Backend {
                     GethDebugTracerType::JsTracer(_code) => {
                         Err(RpcError::invalid_params("unsupported tracer type").into())
                     }
-                }
+                };
             }
 
             // defaults to StructLog tracer used since no tracer is specified
@@ -2134,7 +2134,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.block_by_hash_full(hash).await?)
+            return Ok(fork.block_by_hash_full(hash).await?);
         }
 
         Ok(None)
@@ -2185,7 +2185,7 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
             if fork.predates_fork_inclusive(number) {
-                return Ok(fork.block_by_number(number).await?)
+                return Ok(fork.block_by_number(number).await?);
             }
         }
 
@@ -2204,7 +2204,7 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
             if fork.predates_fork_inclusive(number) {
-                return Ok(fork.block_by_number_full(number).await?)
+                return Ok(fork.block_by_number_full(number).await?);
             }
         }
 
@@ -2530,7 +2530,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.trace_transaction(hash).await?)
+            return Ok(fork.trace_transaction(hash).await?);
         }
 
         Ok(vec![])
@@ -2574,7 +2574,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.debug_trace_transaction(hash, opts).await?)
+            return Ok(fork.debug_trace_transaction(hash, opts).await?);
         }
 
         Ok(GethTrace::Default(Default::default()))
@@ -2600,7 +2600,7 @@ impl Backend {
 
         if let Some(fork) = self.get_fork() {
             if fork.predates_fork(number) {
-                return Ok(fork.trace_block(number).await?)
+                return Ok(fork.trace_block(number).await?);
             }
         }
 
@@ -2833,7 +2833,7 @@ impl Backend {
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
             if fork.predates_fork(number) {
-                return Ok(fork.transaction_by_block_number_and_index(number, index.into()).await?)
+                return Ok(fork.transaction_by_block_number_and_index(number, index.into()).await?);
             }
         }
 
@@ -2850,7 +2850,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.transaction_by_block_hash_and_index(hash, index.into()).await?)
+            return Ok(fork.transaction_by_block_hash_and_index(hash, index.into()).await?);
         }
 
         Ok(None)
@@ -2889,7 +2889,7 @@ impl Backend {
         }
 
         if let Some(fork) = self.get_fork() {
-            return fork.transaction_by_hash(hash).await.map_err(BlockchainError::AlloyForkProvider)
+            return fork.transaction_by_hash(hash).await.map_err(BlockchainError::AlloyForkProvider);
         }
 
         Ok(None)
@@ -3078,7 +3078,7 @@ fn get_pool_transactions_nonce(
         .max()
     {
         let tx_count = highest_nonce.saturating_add(1);
-        return Some(tx_count)
+        return Some(tx_count);
     }
     None
 }
@@ -3108,8 +3108,8 @@ impl TransactionValidator for Backend {
             if chain_id.to::<u64>() != tx_chain_id {
                 if let Some(legacy) = tx.as_legacy() {
                     // <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-155.md>
-                    if env.evm_env.cfg_env.spec >= SpecId::SPURIOUS_DRAGON &&
-                        legacy.tx().chain_id.is_none()
+                    if env.evm_env.cfg_env.spec >= SpecId::SPURIOUS_DRAGON
+                        && legacy.tx().chain_id.is_none()
                     {
                         warn!(target: "backend", ?chain_id, ?tx_chain_id, "incompatible EIP155-based V");
                         return Err(InvalidTransactionError::IncompatibleEIP155);
@@ -3127,8 +3127,8 @@ impl TransactionValidator for Backend {
         }
 
         // Check gas limit, iff block gas limit is set.
-        if !env.evm_env.cfg_env.disable_block_gas_limit &&
-            tx.gas_limit() > env.evm_env.block_env.gas_limit
+        if !env.evm_env.cfg_env.disable_block_gas_limit
+            && tx.gas_limit() > env.evm_env.block_env.gas_limit
         {
             warn!(target: "backend", "[{:?}] gas too high", tx.hash());
             return Err(InvalidTransactionError::GasTooHigh(ErrDetail {
@@ -3183,19 +3183,19 @@ impl TransactionValidator for Backend {
 
             // Ensure there are blob hashes.
             if blob_count == 0 {
-                return Err(InvalidTransactionError::NoBlobHashes)
+                return Err(InvalidTransactionError::NoBlobHashes);
             }
 
             // Ensure the tx does not exceed the max blobs per block.
             let max_blob_count = self.blob_params().max_blob_count as usize;
             if blob_count > max_blob_count {
-                return Err(InvalidTransactionError::TooManyBlobs(blob_count, max_blob_count))
+                return Err(InvalidTransactionError::TooManyBlobs(blob_count, max_blob_count));
             }
 
             // Check for any blob validation errors if not impersonating.
             if !self.skip_blob_validation(Some(*pending.sender())) {
                 if let Err(err) = tx.validate(EnvKzgSettings::default().get()) {
-                    return Err(InvalidTransactionError::BlobTransactionValidationError(err))
+                    return Err(InvalidTransactionError::BlobTransactionValidationError(err));
                 }
             }
         }
@@ -3400,7 +3400,7 @@ pub fn prove_storage(storage: &HashMap<U256, U256>, keys: &[B256]) -> Vec<Vec<By
 
 pub fn is_arbitrum(chain_id: u64) -> bool {
     if let Ok(chain) = NamedChain::try_from(chain_id) {
-        return chain.is_arbitrum()
+        return chain.is_arbitrum();
     }
     false
 }

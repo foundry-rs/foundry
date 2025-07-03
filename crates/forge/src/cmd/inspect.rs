@@ -179,7 +179,7 @@ fn parse_event_params(ev_params: &[EventParam]) -> String {
         .iter()
         .map(|p| {
             if let Some(ty) = p.internal_type() {
-                return internal_ty(ty)
+                return internal_ty(ty);
             }
             p.ty.clone()
         })
@@ -189,7 +189,7 @@ fn parse_event_params(ev_params: &[EventParam]) -> String {
 
 fn print_abi(abi: &JsonAbi) -> Result<()> {
     if shell::is_json() {
-        return print_json(abi)
+        return print_json(abi);
     }
 
     let headers = vec![Cell::new("Type"), Cell::new("Signature"), Cell::new("Selector")];
@@ -280,7 +280,7 @@ pub fn print_storage_layout(storage_layout: Option<&StorageLayout>) -> Result<()
     };
 
     if shell::is_json() {
-        return print_json(&storage_layout)
+        return print_json(&storage_layout);
     }
 
     let headers = vec![
@@ -313,7 +313,7 @@ fn print_method_identifiers(method_identifiers: &Option<BTreeMap<String, String>
     };
 
     if shell::is_json() {
-        return print_json(method_identifiers)
+        return print_json(method_identifiers);
     }
 
     let headers = vec![Cell::new("Method"), Cell::new("Identifier")];
@@ -502,21 +502,21 @@ impl PartialEq<ContractOutputSelection> for ContractArtifactField {
         type Eos = EvmOutputSelection;
         matches!(
             (self, other),
-            (Self::Abi | Self::Events, Cos::Abi) |
-                (Self::Errors, Cos::Abi) |
-                (Self::Bytecode, Cos::Evm(Eos::ByteCode(_))) |
-                (Self::DeployedBytecode, Cos::Evm(Eos::DeployedByteCode(_))) |
-                (Self::Assembly | Self::AssemblyOptimized, Cos::Evm(Eos::Assembly)) |
-                (Self::LegacyAssembly, Cos::Evm(Eos::LegacyAssembly)) |
-                (Self::MethodIdentifiers, Cos::Evm(Eos::MethodIdentifiers)) |
-                (Self::GasEstimates, Cos::Evm(Eos::GasEstimates)) |
-                (Self::StorageLayout, Cos::StorageLayout) |
-                (Self::DevDoc, Cos::DevDoc) |
-                (Self::Ir, Cos::Ir) |
-                (Self::IrOptimized, Cos::IrOptimized) |
-                (Self::Metadata, Cos::Metadata) |
-                (Self::UserDoc, Cos::UserDoc) |
-                (Self::Ewasm, Cos::Ewasm(_))
+            (Self::Abi | Self::Events, Cos::Abi)
+                | (Self::Errors, Cos::Abi)
+                | (Self::Bytecode, Cos::Evm(Eos::ByteCode(_)))
+                | (Self::DeployedBytecode, Cos::Evm(Eos::DeployedByteCode(_)))
+                | (Self::Assembly | Self::AssemblyOptimized, Cos::Evm(Eos::Assembly))
+                | (Self::LegacyAssembly, Cos::Evm(Eos::LegacyAssembly))
+                | (Self::MethodIdentifiers, Cos::Evm(Eos::MethodIdentifiers))
+                | (Self::GasEstimates, Cos::Evm(Eos::GasEstimates))
+                | (Self::StorageLayout, Cos::StorageLayout)
+                | (Self::DevDoc, Cos::DevDoc)
+                | (Self::Ir, Cos::Ir)
+                | (Self::IrOptimized, Cos::IrOptimized)
+                | (Self::Metadata, Cos::Metadata)
+                | (Self::UserDoc, Cos::UserDoc)
+                | (Self::Ewasm, Cos::Ewasm(_))
         )
     }
 }

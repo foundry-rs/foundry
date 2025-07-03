@@ -348,15 +348,15 @@ impl From<InvalidTransaction> for InvalidTransactionError {
             InvalidTransaction::AuthorizationListNotSupported => {
                 Self::AuthorizationListNotSupported
             }
-            InvalidTransaction::AuthorizationListInvalidFields |
-            InvalidTransaction::Eip1559NotSupported |
-            InvalidTransaction::Eip2930NotSupported |
-            InvalidTransaction::Eip4844NotSupported |
-            InvalidTransaction::Eip7702NotSupported |
-            InvalidTransaction::EofCreateShouldHaveToAddress |
-            InvalidTransaction::EmptyAuthorizationList |
-            InvalidTransaction::Eip7873NotSupported |
-            InvalidTransaction::Eip7873MissingTarget => Self::Revm(err),
+            InvalidTransaction::AuthorizationListInvalidFields
+            | InvalidTransaction::Eip1559NotSupported
+            | InvalidTransaction::Eip2930NotSupported
+            | InvalidTransaction::Eip4844NotSupported
+            | InvalidTransaction::Eip7702NotSupported
+            | InvalidTransaction::EofCreateShouldHaveToAddress
+            | InvalidTransaction::EmptyAuthorizationList
+            | InvalidTransaction::Eip7873NotSupported
+            | InvalidTransaction::Eip7873MissingTarget => Self::Revm(err),
         }
     }
 }
@@ -365,8 +365,8 @@ impl From<OpTransactionError> for InvalidTransactionError {
     fn from(value: OpTransactionError) -> Self {
         match value {
             OpTransactionError::Base(err) => err.into(),
-            OpTransactionError::DepositSystemTxPostRegolith |
-            OpTransactionError::HaltedDepositPostRegolith => Self::DepositTxErrorPostRegolith,
+            OpTransactionError::DepositSystemTxPostRegolith
+            | OpTransactionError::HaltedDepositPostRegolith => Self::DepositTxErrorPostRegolith,
         }
     }
 }

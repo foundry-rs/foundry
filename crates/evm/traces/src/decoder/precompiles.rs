@@ -47,19 +47,19 @@ macro_rules! tri {
 }
 
 pub(super) fn is_known_precompile(address: Address, _chain_id: u64) -> bool {
-    address[..19].iter().all(|&x| x == 0) &&
-        matches!(
+    address[..19].iter().all(|&x| x == 0)
+        && matches!(
             address,
-            EC_RECOVER |
-                SHA_256 |
-                RIPEMD_160 |
-                IDENTITY |
-                MOD_EXP |
-                EC_ADD |
-                EC_MUL |
-                EC_PAIRING |
-                BLAKE_2F |
-                POINT_EVALUATION
+            EC_RECOVER
+                | SHA_256
+                | RIPEMD_160
+                | IDENTITY
+                | MOD_EXP
+                | EC_ADD
+                | EC_MUL
+                | EC_PAIRING
+                | BLAKE_2F
+                | POINT_EVALUATION
         )
 }
 

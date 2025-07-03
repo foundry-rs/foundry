@@ -31,9 +31,9 @@ where
     fn step(&mut self, interpreter: &mut Interpreter, _ecx: &mut CTX) {
         // Check if both target and bytecode address are the same as script contract address
         // (allow calling external libraries when bytecode address is different).
-        if interpreter.bytecode.opcode() == ADDRESS &&
-            interpreter.input.target_address == self.script_address &&
-            interpreter.input.bytecode_address == Some(self.script_address)
+        if interpreter.bytecode.opcode() == ADDRESS
+            && interpreter.input.target_address == self.script_address
+            && interpreter.input.bytecode_address == Some(self.script_address)
         {
             // Log the reason for revert
             let _ = sh_err!(

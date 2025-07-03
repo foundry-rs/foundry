@@ -340,10 +340,10 @@ impl Serialize for RpcEndpoint {
     where
         S: Serializer,
     {
-        if self.config.retries.is_none() &&
-            self.config.retry_backoff.is_none() &&
-            self.config.compute_units_per_second.is_none() &&
-            self.auth.is_none()
+        if self.config.retries.is_none()
+            && self.config.retry_backoff.is_none()
+            && self.config.compute_units_per_second.is_none()
+            && self.auth.is_none()
         {
             // serialize as endpoint if there's no additional config
             self.endpoint.serialize(serializer)
@@ -438,7 +438,7 @@ impl ResolvedRpcEndpoint {
     // Attempts to resolve unresolved environment variables into a new instance
     pub fn try_resolve(mut self) -> Self {
         if !self.is_unresolved() {
-            return self
+            return self;
         }
         if let Err(err) = self.endpoint {
             self.endpoint = err.try_resolve()

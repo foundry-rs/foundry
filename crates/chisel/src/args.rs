@@ -77,7 +77,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
                 DispatchResult::CommandFailed(e) => sh_err!("{e}")?,
                 _ => panic!("Unexpected result: Please report this bug."),
             }
-            return Ok(())
+            return Ok(());
         }
         Some(ChiselSubcommand::Load { id }) | Some(ChiselSubcommand::View { id }) => {
             // For both of these subcommands, we need to attempt to load the session from cache
@@ -85,7 +85,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
                 DispatchResult::CommandSuccess(_) => { /* Continue */ }
                 DispatchResult::CommandFailed(e) => {
                     sh_err!("{e}")?;
-                    return Ok(())
+                    return Ok(());
                 }
                 _ => panic!("Unexpected result! Please report this bug."),
             }
@@ -98,7 +98,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
                     }
                     _ => panic!("Unexpected result! Please report this bug."),
                 }
-                return Ok(())
+                return Ok(());
             }
         }
         Some(ChiselSubcommand::ClearCache) => {
@@ -107,11 +107,11 @@ pub async fn run_command(args: Chisel) -> Result<()> {
                 DispatchResult::CommandFailed(e) => sh_err!("{e}")?,
                 _ => panic!("Unexpected result! Please report this bug."),
             }
-            return Ok(())
+            return Ok(());
         }
         Some(ChiselSubcommand::Eval { command }) => {
             dispatch_repl_line(&mut dispatcher, command).await?;
-            return Ok(())
+            return Ok(());
         }
         None => { /* No chisel subcommand present; Continue */ }
     }
@@ -153,7 +153,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
             }
             Err(ReadlineError::Interrupted) => {
                 if interrupt {
-                    break
+                    break;
                 } else {
                     sh_println!("(To exit, press Ctrl+C again)")?;
                     interrupt = true;
@@ -162,7 +162,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
             Err(ReadlineError::Eof) => break,
             Err(err) => {
                 sh_err!("{err:?}")?;
-                break
+                break;
             }
         }
     }

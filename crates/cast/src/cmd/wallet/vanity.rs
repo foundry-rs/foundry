@@ -91,7 +91,7 @@ impl VanityArgs {
         }
 
         macro_rules! find_vanity {
-            ($m:ident, $nonce: ident) => {
+            ($m:ident, $nonce:ident) => {
                 if let Some(nonce) = $nonce {
                     find_vanity_address_with_nonce($m, nonce)
                 } else {

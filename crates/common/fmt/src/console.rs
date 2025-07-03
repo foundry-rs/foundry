@@ -184,10 +184,10 @@ impl ConsoleFmt for String {
         match spec {
             FormatSpec::String => self.clone(),
             FormatSpec::Object => format!("'{}'", self.clone()),
-            FormatSpec::Number |
-            FormatSpec::Integer |
-            FormatSpec::Exponential(_) |
-            FormatSpec::Hexadecimal => Self::from("NaN"),
+            FormatSpec::Number
+            | FormatSpec::Integer
+            | FormatSpec::Exponential(_)
+            | FormatSpec::Hexadecimal => Self::from("NaN"),
         }
     }
 }

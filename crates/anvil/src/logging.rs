@@ -42,9 +42,9 @@ where
     }
 
     fn enabled(&self, metadata: &Metadata<'_>, _ctx: Context<'_, S>) -> bool {
-        self.state.is_enabled() &&
-            (metadata.target() == NODE_USER_LOG_TARGET ||
-                metadata.target() == EVM_CONSOLE_LOG_TARGET)
+        self.state.is_enabled()
+            && (metadata.target() == NODE_USER_LOG_TARGET
+                || metadata.target() == EVM_CONSOLE_LOG_TARGET)
     }
 }
 

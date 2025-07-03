@@ -283,7 +283,7 @@ fn handle_call_expr(
                     },
                     loc: span_to_range(source_map, call_expr.span),
                     referenced_contract: contract_id,
-                })
+                });
             }
         }
     }

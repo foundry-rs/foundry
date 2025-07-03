@@ -111,7 +111,7 @@ impl ScriptTransactionBuilder {
         // `create2` transactions are prefixed by a 32 byte salt.
         let creation_code = if is_create2 {
             if data.len() < 32 {
-                return Ok(())
+                return Ok(());
             }
             &data[32..]
         } else {

@@ -66,8 +66,8 @@ fn is_erc20_transfer_call(expr: &Expr<'_>) -> bool {
     if let ExprKind::Call(call_expr, args) = &expr.kind {
         // Must be a member access pattern: `token.transfer(...)`
         if let ExprKind::Member(_, member) = &call_expr.kind {
-            return (args.len() == 2 && member.as_str() == "transfer") ||
-                (args.len() == 3 && member.as_str() == "transferFrom")
+            return (args.len() == 2 && member.as_str() == "transfer")
+                || (args.len() == 3 && member.as_str() == "transferFrom");
         }
     }
     false
@@ -140,7 +140,7 @@ fn is_low_level_call(expr: &Expr<'_>) -> bool {
 
         if let ExprKind::Member(_, member) = &callee.kind {
             // Check for low-level call methods
-            return matches!(member.name, kw::Call | kw::Delegatecall | kw::Staticcall)
+            return matches!(member.name, kw::Call | kw::Delegatecall | kw::Staticcall);
         }
     }
     false

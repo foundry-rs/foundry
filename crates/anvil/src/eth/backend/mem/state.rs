@@ -100,7 +100,7 @@ where
             (Some(_), Some(_)) => {
                 return Err(BlockchainError::StateOverrideError(
                     "state and state_diff can't be used together".to_string(),
-                ))
+                ));
             }
             (None, None) => (),
             (Some(new_account_state), None) => {

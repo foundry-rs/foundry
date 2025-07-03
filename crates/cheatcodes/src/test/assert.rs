@@ -491,8 +491,8 @@ fn get_delta_int(left: I256, right: I256) -> U256 {
 ///
 /// Avoids overflow in the multiplication by using [`U512`] to hold the intermediary result.
 fn calc_delta_full<T>(abs_diff: U256, right: U256) -> Result<U256, EqRelAssertionError<T>> {
-    let delta = U512::from(abs_diff) * U512::from(10).pow(U512::from(EQ_REL_DELTA_RESOLUTION)) /
-        U512::from(right);
+    let delta = U512::from(abs_diff) * U512::from(10).pow(U512::from(EQ_REL_DELTA_RESOLUTION))
+        / U512::from(right);
     U256::checked_from_limbs_slice(delta.as_limbs()).ok_or(EqRelAssertionError::Overflow)
 }
 
@@ -531,14 +531,14 @@ fn uint_assert_approx_eq_rel(
 ) -> Result<Vec<u8>, EqRelAssertionError<U256>> {
     if right.is_zero() {
         if left.is_zero() {
-            return Ok(Default::default())
+            return Ok(Default::default());
         } else {
             return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
                 left,
                 right,
                 max_delta,
                 real_delta: EqRelDelta::Undefined,
-            })))
+            })));
         };
     }
 
@@ -563,14 +563,14 @@ fn int_assert_approx_eq_rel(
 ) -> Result<Vec<u8>, EqRelAssertionError<I256>> {
     if right.is_zero() {
         if left.is_zero() {
-            return Ok(Default::default())
+            return Ok(Default::default());
         } else {
             return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
                 left,
                 right,
                 max_delta,
                 real_delta: EqRelDelta::Undefined,
-            })))
+            })));
         }
     }
 

@@ -337,13 +337,13 @@ impl<I: InspectorExt> InspectorHandler for FoundryHandler<'_, I> {
         let frame_or_result = self.inner.inspect_frame_call(frame, evm)?;
 
         let ItemOrResult::Item(FrameInput::Create(inputs)) = &frame_or_result else {
-            return Ok(frame_or_result)
+            return Ok(frame_or_result);
         };
 
         let CreateScheme::Create2 { salt } = inputs.scheme else { return Ok(frame_or_result) };
 
         if !evm.inspector.should_use_create2_factory(&mut evm.ctx, inputs) {
-            return Ok(frame_or_result)
+            return Ok(frame_or_result);
         }
 
         let gas_limit = inputs.gas_limit;
@@ -369,7 +369,7 @@ impl<I: InspectorExt> InspectorHandler for FoundryHandler<'_, I> {
                     gas: Gas::new(gas_limit),
                 },
                 memory_offset: 0..0,
-            })))
+            })));
         } else if code_hash != DEFAULT_CREATE2_DEPLOYER_CODEHASH {
             return Ok(ItemOrResult::Result(FrameResult::Call(CallOutcome {
                 result: InterpreterResult {
@@ -378,7 +378,7 @@ impl<I: InspectorExt> InspectorHandler for FoundryHandler<'_, I> {
                     gas: Gas::new(gas_limit),
                 },
                 memory_offset: 0..0,
-            })))
+            })));
         }
 
         // Return the created CALL frame instead

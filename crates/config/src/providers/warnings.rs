@@ -47,8 +47,8 @@ impl<P: Provider> WarningsProvider<P> {
         out.extend(
             data.keys()
                 .filter(|k| {
-                    **k != Config::PROFILE_SECTION &&
-                        !Config::STANDALONE_SECTIONS.iter().any(|s| s == k)
+                    **k != Config::PROFILE_SECTION
+                        && !Config::STANDALONE_SECTIONS.iter().any(|s| s == k)
                 })
                 .map(|unknown_section| {
                     let source = self.provider.metadata().source.map(|s| s.to_string());

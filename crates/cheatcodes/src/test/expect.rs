@@ -790,7 +790,7 @@ pub(crate) fn handle_expect_emit(
     // This allows a contract to arbitrarily emit more events than expected (additive behavior),
     // as long as all the previous events were matched in the order they were expected to be.
     if state.expected_emits.iter().all(|(expected, _)| expected.found) {
-        return
+        return;
     }
 
     let should_fill_logs = state.expected_emits.iter().any(|(expected, _)| expected.log.is_none());
@@ -833,7 +833,7 @@ pub(crate) fn handle_expect_emit(
                 },
             };
         }
-        return
+        return;
     };
 
     // Increment/set `count` for `log.address` and `log.data`
@@ -858,7 +858,7 @@ pub(crate) fn handle_expect_emit(
 
     event_to_fill_or_check.found = || -> bool {
         if !checks_topics_and_data(event_to_fill_or_check.checks, expected, log) {
-            return false
+            return false;
         }
 
         // Maybe match source address.
@@ -923,11 +923,11 @@ impl LogCountMap {
         if self.map.contains_key(log) {
             self.map.entry(log.clone()).and_modify(|c| *c += 1);
 
-            return true
+            return true;
         }
 
         if !self.satisfies_checks(log) {
-            return false
+            return false;
         }
 
         self.map.entry(log.clone()).and_modify(|c| *c += 1).or_insert(1);
@@ -942,7 +942,7 @@ impl LogCountMap {
 
     pub fn count(&self, log: &RawLog) -> u64 {
         if !self.satisfies_checks(log) {
-            return 0
+            return 0;
         }
 
         self.count_unchecked()
@@ -998,7 +998,7 @@ fn expect_revert(
 
 fn checks_topics_and_data(checks: [bool; 5], expected: &RawLog, log: &RawLog) -> bool {
     if log.topics().len() != expected.topics().len() {
-        return false
+        return false;
     }
 
     // Check topics.
@@ -1009,12 +1009,12 @@ fn checks_topics_and_data(checks: [bool; 5], expected: &RawLog, log: &RawLog) ->
         .filter(|(i, _)| checks[*i])
         .all(|(i, topic)| topic == &expected.topics()[i])
     {
-        return false
+        return false;
     }
 
     // Check data
     if checks[4] && expected.data.as_ref() != log.data.as_ref() {
-        return false
+        return false;
     }
 
     true

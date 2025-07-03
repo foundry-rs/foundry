@@ -199,8 +199,8 @@ impl CoverageArgs {
             report.add_source(version.clone(), source_file.id as usize, path.clone());
 
             // Filter out libs dependencies and tests.
-            if (!self.include_libs && project_paths.has_library_ancestor(path)) ||
-                (self.exclude_tests && project_paths.is_test(path))
+            if (!self.include_libs && project_paths.has_library_ancestor(path))
+                || (self.exclude_tests && project_paths.is_test(path))
             {
                 continue;
             }

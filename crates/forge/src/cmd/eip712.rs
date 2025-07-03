@@ -177,7 +177,7 @@ impl<'hir> Resolver<'hir> {
                 subtypes.iter().map(|(name, id)| (name.clone(), *id)).collect::<Vec<_>>()
             {
                 if subtype_id == id {
-                    continue
+                    continue;
                 }
                 let encoded_subtype =
                     self.resolve_eip712_inner(subtype_id, subtypes, false, Some(&subtype_name))?;

@@ -180,7 +180,7 @@ fn next_delegation_nonce(
             if let Some(broadcast) = broadcast {
                 // Increment nonce if authority is the sender of transaction.
                 if broadcast.new_origin == authority {
-                    return account_nonce + 1
+                    return account_nonce + 1;
                 }
             }
             // Return current nonce if authority is not the sender of transaction.

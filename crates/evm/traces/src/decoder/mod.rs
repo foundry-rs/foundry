@@ -375,8 +375,8 @@ impl CallTraceDecoder {
             // Check if unsupported fn selector: calldata dooes NOT point to one of its selectors +
             // non-fallback contract + no receive
             if let Some(contract_selectors) = self.non_fallback_contracts.get(&trace.address) {
-                if !contract_selectors.contains(&selector) &&
-                    (!cdata.is_empty() || !self.receive_contracts.contains(&trace.address))
+                if !contract_selectors.contains(&selector)
+                    && (!cdata.is_empty() || !self.receive_contracts.contains(&trace.address))
                 {
                     let return_data = if !trace.success {
                         let revert_msg =
@@ -720,9 +720,9 @@ impl CallTraceDecoder {
             .iter()
             .filter(|&n| {
                 // Ignore known addresses.
-                if n.trace.address == DEFAULT_CREATE2_DEPLOYER ||
-                    n.is_precompile() ||
-                    precompiles::is_known_precompile(n.trace.address, 1)
+                if n.trace.address == DEFAULT_CREATE2_DEPLOYER
+                    || n.is_precompile()
+                    || precompiles::is_known_precompile(n.trace.address, 1)
                 {
                     return false;
                 }

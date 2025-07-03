@@ -96,7 +96,7 @@ impl ScriptSequence {
         self.sort_receipts();
 
         if self.transactions.is_empty() {
-            return Ok(())
+            return Ok(());
         }
 
         let Some((path, sensitive_path)) = self.paths.clone() else { return Ok(()) };
@@ -225,12 +225,12 @@ impl ScriptSequence {
 pub fn sig_to_file_name(sig: &str) -> String {
     if let Some((name, _)) = sig.split_once('(') {
         // strip until call argument parenthesis
-        return name.to_string()
+        return name.to_string();
     }
     // assume calldata if `sig` is hex
     if let Ok(calldata) = hex::decode(sig) {
         // in which case we return the function signature
-        return hex::encode(&calldata[..SELECTOR_LEN])
+        return hex::encode(&calldata[..SELECTOR_LEN]);
     }
 
     // return sig as is
