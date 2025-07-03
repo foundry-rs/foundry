@@ -1308,13 +1308,12 @@ impl<'a, W: Write> Formatter<'a, W> {
                 self.write_postfix_comments_before(statements_loc.start())?;
             }
             // If last line is disabled then statements location ends where last block line starts.
-            if is_end_disabled {
-                if let Some(last_statement) = writable_statements.last() {
+            if is_end_disabled
+                && let Some(last_statement) = writable_statements.last() {
                     statements_loc = statements_loc.with_end(
                         self.find_next_line(last_statement.loc().end()).unwrap_or_default(),
                     );
                 }
-            }
             self.indented(1, |fmt| {
                 fmt.write_lined_visitable(
                     statements_loc,
@@ -2269,8 +2268,8 @@ impl<W: Write> Visitor for Formatter<'_, W> {
         if let Some(StringLiteral { loc, string, .. }) = dialect {
             write_chunk!(self, loc.start(), loc.end(), "\"{string}\"")?;
         }
-        if let Some(flags) = flags {
-            if !flags.is_empty() {
+        if let Some(flags) = flags
+            && !flags.is_empty() {
                 let loc_start = flags.first().unwrap().loc.start();
                 self.surrounded(
                     SurroundingChunk::new("(", Some(loc_start), None),
@@ -2295,7 +2294,6 @@ impl<W: Write> Visitor for Formatter<'_, W> {
                     },
                 )?;
             }
-        }
 
         block.visit(self)
     }
@@ -2338,14 +2336,13 @@ impl<W: Write> Visitor for Formatter<'_, W> {
             })?);
         }
 
-        if let Some(first) = chunks.first_mut() {
-            if first.prefixes.is_empty()
+        if let Some(first) = chunks.first_mut()
+            && first.prefixes.is_empty()
                 && first.postfixes_before.is_empty()
                 && !self.config.bracket_spacing
             {
                 first.needs_space = Some(false);
             }
-        }
         let multiline = self.are_chunks_separated_multiline("{}}", &chunks, ",")?;
         self.indented_if(multiline, 1, |fmt| fmt.write_chunks_separated(&chunks, ",", multiline))?;
 
@@ -2891,12 +2888,11 @@ impl<W: Write> Visitor for Formatter<'_, W> {
 
         write_chunk!(self, loc.start(), "revert")?;
         let mut error_indented = false;
-        if let Some(error) = error {
-            if !self.try_on_single_line(|fmt| error.visit(fmt))? {
+        if let Some(error) = error
+            && !self.try_on_single_line(|fmt| error.visit(fmt))? {
                 error.visit(self)?;
                 error_indented = true;
             }
-        }
 
         if args.is_empty() {
             write!(self.buf(), "({{}});")?;

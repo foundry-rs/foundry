@@ -29,11 +29,10 @@ impl<'ast> EarlyLintPass<'ast> for Imports {
         import: &'ast ast::ImportDirective<'ast>,
     ) {
         // Non-aliased plain imports like `import "File.sol";`.
-        if let ast::ImportItems::Plain(_) = &import.items {
-            if import.source_alias().is_none() {
+        if let ast::ImportItems::Plain(_) = &import.items
+            && import.source_alias().is_none() {
                 ctx.emit(&UNALIASED_PLAIN_IMPORT, import.path.span);
             }
-        }
     }
 
     fn check_full_source_unit(&mut self, ctx: &LintContext<'_>, ast: &'ast SourceUnit<'ast>) {
@@ -70,11 +69,10 @@ impl UnusedChecker {
             let ast::ItemKind::Import(import) = &item.kind else { continue };
             match &import.items {
                 ast::ImportItems::Plain(_) | ast::ImportItems::Glob(_) => {
-                    if let Some(alias) = import.source_alias() {
-                        if !self.used_symbols.contains(&alias.name) {
+                    if let Some(alias) = import.source_alias()
+                        && !self.used_symbols.contains(&alias.name) {
                             self.unused_import(ctx, span);
                         }
-                    }
                 }
                 ast::ImportItems::Aliases(symbols) => {
                     for &(orig, alias) in symbols.iter() {

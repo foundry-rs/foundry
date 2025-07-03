@@ -76,8 +76,8 @@ impl BaseCounterExample {
         traces: Option<SparsedTraceArena>,
         show_solidity: bool,
     ) -> Self {
-        if let Some((name, abi)) = &contracts.get(&addr) {
-            if let Some(func) = abi.functions().find(|f| f.selector() == bytes[..4]) {
+        if let Some((name, abi)) = &contracts.get(&addr)
+            && let Some(func) = abi.functions().find(|f| f.selector() == bytes[..4]) {
                 // skip the function selector when decoding
                 if let Ok(args) = func.abi_decode_input(&bytes[4..]) {
                     return Self {
@@ -98,7 +98,6 @@ impl BaseCounterExample {
                     };
                 }
             }
-        }
 
         Self {
             sender: Some(sender),
@@ -138,8 +137,8 @@ impl BaseCounterExample {
 impl fmt::Display for BaseCounterExample {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Display counterexample as solidity.
-        if self.show_solidity {
-            if let (Some(sender), Some(contract), Some(address), Some(func_name), Some(args)) =
+        if self.show_solidity
+            && let (Some(sender), Some(contract), Some(address), Some(func_name), Some(args)) =
                 (&self.sender, &self.contract_name, &self.addr, &self.func_name, &self.raw_args)
             {
                 writeln!(f, "\t\tvm.prank({sender});")?;
@@ -154,7 +153,6 @@ impl fmt::Display for BaseCounterExample {
 
                 return Ok(());
             }
-        }
 
         // Regular counterexample display.
         if let Some(sender) = self.sender {

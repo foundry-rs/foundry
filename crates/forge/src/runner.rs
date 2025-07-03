@@ -752,8 +752,8 @@ impl<'a> FunctionRunner<'a> {
                 invariant_contract.invariant_function.selector().to_vec().into(),
                 invariant_config.fail_on_revert,
                 invariant_contract.call_after_invariant,
-            ) {
-                if !success {
+            )
+                && !success {
                     let _ = sh_warn!(
                         "\
                             Replayed invariant failure from {:?} file. \
@@ -781,7 +781,6 @@ impl<'a> FunctionRunner<'a> {
                     );
                     return self.result;
                 }
-            }
         }
 
         let progress = start_fuzz_progress(

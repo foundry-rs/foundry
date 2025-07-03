@@ -446,13 +446,12 @@ impl DocBuilder {
                 self.write_summary_section(summary, &files, Some(&path), depth + 1)?;
             }
         }
-        if !readme.is_empty() {
-            if let Some(path) = base_path {
+        if !readme.is_empty()
+            && let Some(path) = base_path {
                 let path = self.out_dir().join(Self::SRC).join(path);
                 fs::create_dir_all(&path)?;
                 fs::write(path.join(Self::README), readme.finish())?;
             }
-        }
         Ok(())
     }
 }

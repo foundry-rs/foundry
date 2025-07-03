@@ -196,12 +196,11 @@ impl WatchArgs {
                         break;
                     } else {
                         for tag in &e.tags {
-                            if let Tag::FileEventKind(kind) = tag {
-                                if !matches!(kind, FileEventKind::Access(AccessKind::Open(_))) {
+                            if let Tag::FileEventKind(kind) = tag
+                                && !matches!(kind, FileEventKind::Access(AccessKind::Open(_))) {
                                     has_file_events = true;
                                     break 'outer;
                                 }
-                            }
                         }
                     }
                 }

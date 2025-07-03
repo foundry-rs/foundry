@@ -961,15 +961,14 @@ async fn can_stream_pending_transactions() {
             complete => unreachable!(),
         };
 
-        if watch_received.len() == num_txs && sub_received.len() == num_txs {
-            if let Some(sent) = &sent {
+        if watch_received.len() == num_txs && sub_received.len() == num_txs
+            && let Some(sent) = &sent {
                 assert_eq!(sent.len(), watch_received.len());
                 let sent_txs = sent.iter().map(|tx| tx.transaction_hash).collect::<B256HashSet>();
                 assert_eq!(sent_txs, watch_received.iter().copied().collect());
                 assert_eq!(sent_txs, sub_received.iter().copied().collect());
                 break;
             }
-        }
     }
 }
 

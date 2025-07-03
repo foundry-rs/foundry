@@ -475,11 +475,10 @@ impl ChiselDispatcher {
                 }
 
                 // Create "script" dir if it does not already exist.
-                if !Path::new("script").exists() {
-                    if let Err(e) = std::fs::create_dir_all("script") {
+                if !Path::new("script").exists()
+                    && let Err(e) = std::fs::create_dir_all("script") {
                         return DispatchResult::CommandFailed(Self::make_error(e.to_string()));
                     }
-                }
 
                 match self.format_source() {
                     Ok(formatted_source) => {
@@ -544,8 +543,8 @@ impl ChiselDispatcher {
                                                 let mut param_type = &input.ty;
                                                 // If complex type then add the name of custom type.
                                                 // see <https://github.com/foundry-rs/foundry/issues/6618>.
-                                                if input.is_complex_type() {
-                                                    if let Some(
+                                                if input.is_complex_type()
+                                                    && let Some(
                                                         InternalType::Enum { contract: _, ty }
                                                         | InternalType::Struct { contract: _, ty }
                                                         | InternalType::Other { contract: _, ty },
@@ -553,7 +552,6 @@ impl ChiselDispatcher {
                                                     {
                                                         param_type = ty;
                                                     }
-                                                }
                                                 format!("{} {}", param_type, input.name)
                                             })
                                             .collect::<Vec<_>>()
@@ -865,8 +863,8 @@ impl ChiselDispatcher {
 
                     // If traces are enabled or there was an error in execution, show the execution
                     // traces.
-                    if new_source.config.traces || failed {
-                        if let Ok(decoder) = Self::decode_traces(&new_source.config, &mut res).await
+                    if (new_source.config.traces || failed)
+                        && let Ok(decoder) = Self::decode_traces(&new_source.config, &mut res).await
                         {
                             if let Err(e) = Self::show_traces(&decoder, &mut res).await {
                                 return DispatchResult::CommandFailed(e.to_string());
@@ -889,7 +887,6 @@ impl ChiselDispatcher {
                                 )));
                             }
                         }
-                    }
 
                     // Replace the old session source with the new version
                     *self.source_mut() = new_source;

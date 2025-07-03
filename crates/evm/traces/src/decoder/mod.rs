@@ -328,11 +328,10 @@ impl CallTraceDecoder {
                 log.decoded = self.decode_event(&log.raw_log).await;
             }
 
-            if let Some(debug) = self.debug_identifier.as_ref() {
-                if let Some(identified) = self.contracts.get(&node.trace.address) {
+            if let Some(debug) = self.debug_identifier.as_ref()
+                && let Some(identified) = self.contracts.get(&node.trace.address) {
                     debug.identify_node_steps(node, get_contract_name(identified))
                 }
-            }
         }
     }
 
@@ -363,19 +362,18 @@ impl CallTraceDecoder {
             let functions = match self.functions.get(&selector) {
                 Some(fs) => fs,
                 None => {
-                    if let Some(identifier) = &self.signature_identifier {
-                        if let Some(function) = identifier.identify_function(selector).await {
+                    if let Some(identifier) = &self.signature_identifier
+                        && let Some(function) = identifier.identify_function(selector).await {
                             functions.push(function);
                         }
-                    }
                     &functions
                 }
             };
 
             // Check if unsupported fn selector: calldata dooes NOT point to one of its selectors +
             // non-fallback contract + no receive
-            if let Some(contract_selectors) = self.non_fallback_contracts.get(&trace.address) {
-                if !contract_selectors.contains(&selector)
+            if let Some(contract_selectors) = self.non_fallback_contracts.get(&trace.address)
+                && !contract_selectors.contains(&selector)
                     && (!cdata.is_empty() || !self.receive_contracts.contains(&trace.address))
                 {
                     let return_data = if !trace.success {
@@ -408,7 +406,6 @@ impl CallTraceDecoder {
                         };
                     };
                 }
-            }
 
             let [func, ..] = &functions[..] else {
                 return DecodedCallTrace {
@@ -421,13 +418,11 @@ impl CallTraceDecoder {
             // If traced contract is a fallback contract, check if it has the decoded function.
             // If not, then replace call data signature with `fallback`.
             let mut call_data = self.decode_function_input(trace, func);
-            if let Some(fallback_functions) = self.fallback_contracts.get(&trace.address) {
-                if !fallback_functions.contains(&selector) {
-                    if let Some(cd) = self.fallback_call_data(trace) {
+            if let Some(fallback_functions) = self.fallback_contracts.get(&trace.address)
+                && !fallback_functions.contains(&selector)
+                    && let Some(cd) = self.fallback_call_data(trace) {
                         call_data.signature = cd.signature;
                     }
-                }
-            }
 
             DecodedCallTrace {
                 label,
@@ -454,11 +449,10 @@ impl CallTraceDecoder {
                 }
             }
 
-            if args.is_none() {
-                if let Ok(v) = func.abi_decode_input(&trace.data[SELECTOR_LEN..]) {
+            if args.is_none()
+                && let Ok(v) = func.abi_decode_input(&trace.data[SELECTOR_LEN..]) {
                     args = Some(v.iter().map(|value| self.format_value(value)).collect());
                 }
-            }
         }
 
         DecodedCallData { signature: func.signature(), args: args.unwrap_or_default() }
@@ -599,12 +593,11 @@ impl CallTraceDecoder {
             return self.default_return_data(trace);
         }
 
-        if trace.address == CHEATCODE_ADDRESS {
-            if let Some(decoded) = funcs.iter().find_map(|func| self.decode_cheatcode_outputs(func))
+        if trace.address == CHEATCODE_ADDRESS
+            && let Some(decoded) = funcs.iter().find_map(|func| self.decode_cheatcode_outputs(func))
             {
                 return Some(decoded);
             }
-        }
 
         if let Some(values) =
             funcs.iter().find_map(|func| func.abi_decode_output(&trace.output).ok())
@@ -665,11 +658,10 @@ impl CallTraceDecoder {
         let events = match self.events.get(&(t0, log.topics().len() - 1)) {
             Some(es) => es,
             None => {
-                if let Some(identifier) = &self.signature_identifier {
-                    if let Some(event) = identifier.identify_event(t0).await {
+                if let Some(identifier) = &self.signature_identifier
+                    && let Some(event) = identifier.identify_event(t0).await {
                         events.push(get_indexed_event(event, log));
                     }
-                }
                 &events
             }
         };
@@ -706,11 +698,10 @@ impl CallTraceDecoder {
                     .iter()
                     .map(|log| log.raw_log.topics())
                     .filter(|&topics| {
-                        if let Some(&first) = topics.first() {
-                            if self.events.contains_key(&(first, topics.len() - 1)) {
+                        if let Some(&first) = topics.first()
+                            && self.events.contains_key(&(first, topics.len() - 1)) {
                                 return false;
                             }
-                        }
                         true
                     })
                     .filter_map(|topics| topics.first())
@@ -744,11 +735,10 @@ impl CallTraceDecoder {
 
     /// Pretty-prints a value.
     fn format_value(&self, value: &DynSolValue) -> String {
-        if let DynSolValue::Address(addr) = value {
-            if let Some(label) = self.labels.get(addr) {
+        if let DynSolValue::Address(addr) = value
+            && let Some(label) = self.labels.get(addr) {
                 return format!("{label}: [{addr}]");
             }
-        }
         format_token(value)
     }
 }

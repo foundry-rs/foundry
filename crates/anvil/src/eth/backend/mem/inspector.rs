@@ -155,11 +155,10 @@ where
     }
 
     fn create(&mut self, ecx: &mut CTX, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
-        if let Some(tracer) = &mut self.tracer {
-            if let Some(out) = tracer.create(ecx, inputs) {
+        if let Some(tracer) = &mut self.tracer
+            && let Some(out) = tracer.create(ecx, inputs) {
                 return Some(out);
             }
-        }
         None
     }
 

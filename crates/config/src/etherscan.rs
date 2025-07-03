@@ -37,11 +37,10 @@ impl Provider for EtherscanEnvProvider {
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut dict = Dict::default();
         let env_provider = Env::raw().only(&["ETHERSCAN_API_KEY"]);
-        if let Some((key, value)) = env_provider.iter().next() {
-            if !value.trim().is_empty() {
+        if let Some((key, value)) = env_provider.iter().next()
+            && !value.trim().is_empty() {
                 dict.insert(key.as_str().to_string(), value.into());
             }
-        }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }

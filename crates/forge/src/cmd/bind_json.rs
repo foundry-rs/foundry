@@ -433,8 +433,8 @@ impl<'ast> Visit<'ast> for PreprocessorVisitor {
         func: &'ast ast::ItemFunction<'ast>,
     ) -> ControlFlow<Self::BreakValue> {
         // Replace function bodies with a noop statement.
-        if let Some(block) = &func.body {
-            if !block.is_empty() {
+        if let Some(block) = &func.body
+            && !block.is_empty() {
                 let span = block.first().unwrap().span.to(block.last().unwrap().span);
                 let new_body = match func.kind {
                     FunctionKind::Modifier => "_;",
@@ -442,7 +442,6 @@ impl<'ast> Visit<'ast> for PreprocessorVisitor {
                 };
                 self.updates.push((span, new_body));
             }
-        }
 
         self.walk_item_function(func)
     }

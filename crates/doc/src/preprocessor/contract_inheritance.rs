@@ -27,8 +27,8 @@ impl Preprocessor for ContractInheritance {
 
     fn preprocess(&self, documents: Vec<Document>) -> Result<Vec<Document>, eyre::Error> {
         for document in &documents {
-            if let DocumentContent::Single(ref item) = document.content {
-                if let ParseSource::Contract(ref contract) = item.source {
+            if let DocumentContent::Single(ref item) = document.content
+                && let ParseSource::Contract(ref contract) = item.source {
                     let mut links = HashMap::default();
 
                     // Attempt to match bases to other contracts
@@ -45,7 +45,6 @@ impl Preprocessor for ContractInheritance {
                             .add_context(self.id(), PreprocessorOutput::ContractInheritance(links));
                     }
                 }
-            }
         }
 
         Ok(documents)
@@ -58,13 +57,11 @@ impl ContractInheritance {
             if candidate.from_library && !self.include_libraries {
                 continue;
             }
-            if let DocumentContent::Single(ref item) = candidate.content {
-                if let ParseSource::Contract(ref contract) = item.source {
-                    if base == contract.name.safe_unwrap().name {
+            if let DocumentContent::Single(ref item) = candidate.content
+                && let ParseSource::Contract(ref contract) = item.source
+                    && base == contract.name.safe_unwrap().name {
                         return Some(candidate.target_path.clone());
                     }
-                }
-            }
         }
         None
     }

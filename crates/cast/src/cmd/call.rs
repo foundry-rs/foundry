@@ -334,14 +334,13 @@ impl CallArgs {
             .call(&tx, func.as_ref(), block, state_overrides, block_overrides)
             .await?;
 
-        if response == "0x" {
-            if let Some(contract_address) = tx.to.and_then(|tx_kind| tx_kind.into_to()) {
+        if response == "0x"
+            && let Some(contract_address) = tx.to.and_then(|tx_kind| tx_kind.into_to()) {
                 let code = provider.get_code_at(contract_address).await?;
                 if code.is_empty() {
                     sh_warn!("Contract code is empty")?;
                 }
             }
-        }
         sh_println!("{}", response)?;
 
         Ok(())
@@ -487,8 +486,8 @@ mod tests {
             if let Some(code) = &account_override.code {
                 assert_eq!(*code, Bytes::from([0x04]));
             }
-            if let Some(state) = &account_override.state {
-                if let Some(value) = state.get(&b256!(
+            if let Some(state) = &account_override.state
+                && let Some(value) = state.get(&b256!(
                     "0x0000000000000000000000000000000000000000000000000000000000000005"
                 )) {
                     assert_eq!(
@@ -496,9 +495,8 @@ mod tests {
                         b256!("0x0000000000000000000000000000000000000000000000000000000000000006")
                     );
                 }
-            }
-            if let Some(state_diff) = &account_override.state_diff {
-                if let Some(value) = state_diff.get(&b256!(
+            if let Some(state_diff) = &account_override.state_diff
+                && let Some(value) = state_diff.get(&b256!(
                     "0x0000000000000000000000000000000000000000000000000000000000000007"
                 )) {
                     assert_eq!(
@@ -506,7 +504,6 @@ mod tests {
                         b256!("0x0000000000000000000000000000000000000000000000000000000000000008")
                     );
                 }
-            }
         }
     }
 

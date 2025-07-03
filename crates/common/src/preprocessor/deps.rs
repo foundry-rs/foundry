@@ -198,19 +198,16 @@ impl<'hir> Visit<'hir> for BytecodeDependencyCollector<'hir> {
                 }
             }
             ExprKind::Member(member_expr, ident) => {
-                if let ExprKind::TypeCall(ty) = &member_expr.kind {
-                    if let TypeKind::Custom(contract_id) = &ty.kind {
-                        if ident.name.as_str() == "creationCode" {
-                            if let Some(contract_id) = contract_id.as_contract() {
+                if let ExprKind::TypeCall(ty) = &member_expr.kind
+                    && let TypeKind::Custom(contract_id) = &ty.kind
+                        && ident.name.as_str() == "creationCode"
+                            && let Some(contract_id) = contract_id.as_contract() {
                                 self.collect_dependency(BytecodeDependency {
                                     kind: BytecodeDependencyKind::CreationCode,
                                     loc: span_to_range(self.source_map, expr.span),
                                     referenced_contract: contract_id,
                                 });
                             }
-                        }
-                    }
-                }
             }
             _ => {}
         }
@@ -218,9 +215,9 @@ impl<'hir> Visit<'hir> for BytecodeDependencyCollector<'hir> {
     }
 
     fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
-        if let StmtKind::Try(stmt_try) = stmt.kind {
-            if let ExprKind::Call(call_expr, call_args, named_args) = &stmt_try.expr.kind {
-                if let Some(dependency) = handle_call_expr(
+        if let StmtKind::Try(stmt_try) = stmt.kind
+            && let ExprKind::Call(call_expr, call_args, named_args) = &stmt_try.expr.kind
+                && let Some(dependency) = handle_call_expr(
                     self.src,
                     self.source_map,
                     &stmt_try.expr,
@@ -240,8 +237,6 @@ impl<'hir> Visit<'hir> for BytecodeDependencyCollector<'hir> {
                     }
                     return ControlFlow::Continue(());
                 }
-            }
-        }
         self.walk_stmt(stmt)
     }
 }
@@ -256,9 +251,9 @@ fn handle_call_expr(
     named_args: &Option<&[NamedArg<'_>]>,
     try_stmt: bool,
 ) -> Option<BytecodeDependency> {
-    if let ExprKind::New(ty_new) = &call_expr.kind {
-        if let TypeKind::Custom(item_id) = ty_new.kind {
-            if let Some(contract_id) = item_id.as_contract() {
+    if let ExprKind::New(ty_new) = &call_expr.kind
+        && let TypeKind::Custom(item_id) = ty_new.kind
+            && let Some(contract_id) = item_id.as_contract() {
                 let name_loc = span_to_range(source_map, ty_new.span);
                 let name = &src[name_loc];
 
@@ -285,8 +280,6 @@ fn handle_call_expr(
                     referenced_contract: contract_id,
                 });
             }
-        }
-    }
     None
 }
 

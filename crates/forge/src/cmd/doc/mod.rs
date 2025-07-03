@@ -79,8 +79,8 @@ impl DocArgs {
         }
         if doc_config.repository.is_none() {
             // Attempt to read repo from git
-            if let Ok(output) = Command::new("git").args(["remote", "get-url", "origin"]).output() {
-                if !output.stdout.is_empty() {
+            if let Ok(output) = Command::new("git").args(["remote", "get-url", "origin"]).output()
+                && !output.stdout.is_empty() {
                     let remote = String::from_utf8(output.stdout)?.trim().to_owned();
                     if let Some(captures) = GH_REPO_PREFIX_REGEX.captures(&remote) {
                         let brand = captures.name("brand").unwrap().as_str();
@@ -92,7 +92,6 @@ impl DocArgs {
                         ));
                     }
                 }
-            }
         }
 
         let commit = foundry_cli::utils::Git::new(root).commit_hash(false, "HEAD").ok();

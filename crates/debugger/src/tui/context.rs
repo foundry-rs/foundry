@@ -124,12 +124,11 @@ impl TUIContext<'_> {
 
     fn handle_key_event(&mut self, event: KeyEvent) -> ControlFlow<ExitReason> {
         // Breakpoints
-        if let KeyCode::Char(c) = event.code {
-            if c.is_alphabetic() && self.key_buffer.starts_with('\'') {
+        if let KeyCode::Char(c) = event.code
+            && c.is_alphabetic() && self.key_buffer.starts_with('\'') {
                 self.handle_breakpoint(c);
                 return ControlFlow::Continue(());
             }
-        }
 
         let control = event.modifiers.contains(KeyModifiers::CONTROL);
 
@@ -262,13 +261,12 @@ impl TUIContext<'_> {
         // this pc)
         if let Some((caller, pc)) = self.debugger_context.breakpoints.get(&c) {
             for (i, node) in self.debug_arena().iter().enumerate() {
-                if node.address == *caller {
-                    if let Some(step) = node.steps.iter().position(|step| step.pc == *pc) {
+                if node.address == *caller
+                    && let Some(step) = node.steps.iter().position(|step| step.pc == *pc) {
                         self.draw_memory.inner_call_index = i;
                         self.current_step = step;
                         break;
                     }
-                }
             }
         }
         self.key_buffer.clear();

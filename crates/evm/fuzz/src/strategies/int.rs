@@ -147,11 +147,10 @@ impl IntStrategy {
 
         // Generate value tree from fixture.
         let fixture = &self.fixtures[runner.rng().random_range(0..self.fixtures.len())];
-        if let Some(int_fixture) = fixture.as_int() {
-            if int_fixture.1 == self.bits {
+        if let Some(int_fixture) = fixture.as_int()
+            && int_fixture.1 == self.bits {
                 return Ok(IntValueTree::new(int_fixture.0, false));
             }
-        }
 
         // If fixture is not a valid type, raise error and generate random value.
         error!("{:?} is not a valid {} fixture", fixture, DynSolType::Int(self.bits));

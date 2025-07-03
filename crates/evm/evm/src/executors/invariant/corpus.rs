@@ -147,14 +147,13 @@ impl TxCorpusManager {
 
         for entry in std::fs::read_dir(&corpus_dir)? {
             let path = entry?.path();
-            if path.is_file() {
-                if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+            if path.is_file()
+                && let Some(name) = path.file_name().and_then(|s| s.to_str()) {
                     // Ignore metadata files
                     if name.contains(METADATA_SUFFIX) {
                         continue;
                     }
                 }
-            }
 
             let read_corpus_result = match path.extension().and_then(|ext| ext.to_str()) {
                 Some("gz") => foundry_common::fs::read_json_gzip_file::<Vec<BasicTxDetails>>(&path),
@@ -293,8 +292,8 @@ impl TxCorpusManager {
             // Flush oldest corpus mutated more than configured max mutations unless they are
             // producing new finds more than 1/3 of the time.
             let should_evict = self.in_memory_corpus.len() > self.corpus_min_size.max(1);
-            if should_evict {
-                if let Some(index) = self.in_memory_corpus.iter().position(|corpus| {
+            if should_evict
+                && let Some(index) = self.in_memory_corpus.iter().position(|corpus| {
                     corpus.total_mutations > self.corpus_min_mutations
                         && (corpus.new_finds_produced as f64 / corpus.total_mutations as f64) < 0.3
                 }) {
@@ -316,7 +315,6 @@ impl TxCorpusManager {
                     // Remove corpus from memory.
                     self.in_memory_corpus.remove(index);
                 }
-            }
 
             let mutation_type = self
                 .mutation_generator

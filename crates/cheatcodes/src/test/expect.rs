@@ -697,8 +697,8 @@ fn expect_call(
 ) -> Result {
     let expecteds = state.expected_calls.entry(*target).or_default();
 
-    if let Some(val) = value {
-        if *val > U256::ZERO {
+    if let Some(val) = value
+        && *val > U256::ZERO {
             // If the value of the transaction is non-zero, the EVM adds a call stipend of 2300 gas
             // to ensure that the basic fallback function can be called.
             let positive_value_cost_stipend = 2300;
@@ -709,7 +709,6 @@ fn expect_call(
                 *min_gas += positive_value_cost_stipend;
             }
         }
-    }
 
     match call_type {
         ExpectedCallType::Count => {

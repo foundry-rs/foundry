@@ -185,19 +185,17 @@ impl Visitor for Parser {
         // `@custom:name` tag if any was provided
         let mut start_loc = func.loc.start();
         for (loc, param) in &mut func.params {
-            if let Some(param) = param {
-                if param.name.is_none() {
+            if let Some(param) = param
+                && param.name.is_none() {
                     let docs = self.parse_docs_range(start_loc, loc.end())?;
                     let name_tag =
                         docs.iter().find(|c| c.tag == CommentTag::Custom("name".to_owned()));
-                    if let Some(name_tag) = name_tag {
-                        if let Some(name) = name_tag.value.trim().split(' ').next() {
+                    if let Some(name_tag) = name_tag
+                        && let Some(name) = name_tag.value.trim().split(' ').next() {
                             param.name =
                                 Some(Identifier { loc: Loc::Implicit, name: name.to_owned() })
                         }
-                    }
                 }
-            }
             start_loc = loc.end();
         }
 

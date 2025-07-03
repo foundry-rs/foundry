@@ -178,11 +178,9 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
                                 .get_code_at(addr)
                                 .block_id(block.unwrap_or_default())
                                 .await
-                            {
-                                if code.is_empty() {
+                                && code.is_empty() {
                                     eyre::bail!("contract {addr:?} does not have any code")
                                 }
-                            }
                         } else if Some(TxKind::Create) == req.to {
                             eyre::bail!("tx req is a contract deployment");
                         } else {
@@ -365,11 +363,10 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         field: Option<String>,
     ) -> Result<String> {
         let block = block.into();
-        if let Some(ref field) = field {
-            if field == "transactions" && !full {
+        if let Some(ref field) = field
+            && field == "transactions" && !full {
                 eyre::bail!("use --full to view transactions")
             }
-        }
 
         let block = self
             .provider
@@ -1061,11 +1058,10 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
                 } else {
                     Either::Right(futures::future::pending())
                 } => {
-                    if let (Some(block), Some(to_block)) = (block, to_block_number) {
-                        if block.number  > to_block {
+                    if let (Some(block), Some(to_block)) = (block, to_block_number)
+                        && block.number  > to_block {
                             break;
                         }
-                    }
                 },
                 // Process incoming log
                 log = subscription.next() => {

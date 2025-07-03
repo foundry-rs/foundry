@@ -79,11 +79,10 @@ impl<'a> Linker<'a> {
         version: Option<&Version>,
     ) -> Option<&'a ArtifactId> {
         for id in self.contracts.keys() {
-            if let Some(version) = version {
-                if id.version != *version {
+            if let Some(version) = version
+                && id.version != *version {
                     continue;
                 }
-            }
             let (artifact_path, artifact_name) = self.convert_artifact_id_to_lib_path(id);
 
             if artifact_name == *name && artifact_path == Path::new(file) {
@@ -106,11 +105,10 @@ impl<'a> Linker<'a> {
         if let Some(bytecode) = &contract.bytecode {
             references.extend(bytecode.link_references.clone());
         }
-        if let Some(deployed_bytecode) = &contract.deployed_bytecode {
-            if let Some(bytecode) = &deployed_bytecode.bytecode {
+        if let Some(deployed_bytecode) = &contract.deployed_bytecode
+            && let Some(bytecode) = &deployed_bytecode.bytecode {
                 references.extend(bytecode.link_references.clone());
             }
-        }
 
         for (file, libs) in &references {
             for contract in libs.keys() {

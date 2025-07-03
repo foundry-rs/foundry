@@ -943,13 +943,11 @@ impl DatabaseExt for Backend {
             // Check if an error occurred either during or before the snapshot.
             // DSTest contracts don't have snapshot functionality, so this slot is enough to check
             // for failure here.
-            if let Some(account) = current_state.state.get(&CHEATCODE_ADDRESS) {
-                if let Some(slot) = account.storage.get(&GLOBAL_FAIL_SLOT) {
-                    if !slot.present_value.is_zero() {
+            if let Some(account) = current_state.state.get(&CHEATCODE_ADDRESS)
+                && let Some(slot) = account.storage.get(&GLOBAL_FAIL_SLOT)
+                    && !slot.present_value.is_zero() {
                         self.set_state_snapshot_failure(true);
                     }
-                }
-            }
 
             // merge additional logs
             snapshot.merge(current_state);
@@ -1591,11 +1589,10 @@ pub struct Fork {
 impl Fork {
     /// Returns true if the account is a contract
     pub fn is_contract(&self, acc: Address) -> bool {
-        if let Ok(Some(acc)) = self.db.basic_ref(acc) {
-            if acc.code_hash != KECCAK_EMPTY {
+        if let Ok(Some(acc)) = self.db.basic_ref(acc)
+            && acc.code_hash != KECCAK_EMPTY {
                 return true;
             }
-        }
         is_contract_in_state(&self.journaled_state, acc)
     }
 }

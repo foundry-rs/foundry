@@ -55,12 +55,10 @@ impl Preprocessor<SolcCompiler> for TestOptimizerPreprocessor {
             for (path, source) in sources.iter() {
                 if let Ok(src_file) =
                     sess.source_map().new_source_file(path.clone(), source.content.as_str())
-                {
-                    if paths.is_test_or_script(path) {
+                    && paths.is_test_or_script(path) {
                         parsing_context.add_file(src_file);
                         preprocessed_paths.push(path.clone());
                     }
-                }
             }
 
             // Parse and preprocess.

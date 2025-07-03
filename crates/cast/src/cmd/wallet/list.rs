@@ -105,13 +105,11 @@ impl ListArgs {
         // List all files within the keystore directory.
         for entry in std::fs::read_dir(keystore_dir)? {
             let path = entry?.path();
-            if path.is_file() {
-                if let Some(file_name) = path.file_name() {
-                    if let Some(name) = file_name.to_str() {
+            if path.is_file()
+                && let Some(file_name) = path.file_name()
+                    && let Some(name) = file_name.to_str() {
                         sh_println!("{name} (Local)")?;
                     }
-                }
-            }
         }
 
         Ok(())
