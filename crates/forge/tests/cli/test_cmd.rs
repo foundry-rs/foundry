@@ -933,6 +933,65 @@ Encountered a total of 2 failing tests, 0 tests succeeded
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/10693>
+forgetest_init!(should_replay_failures_only_correct_contract, |prj, cmd| {
+    prj.wipe_contracts();
+
+    // Create two contracts with tests that have the same name
+    prj.add_test(
+        "Contract1.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Contract1Test is Test {
+    function testSameName() public pure {
+        require(2 > 1); // This should pass
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    prj.add_test(
+        "Contract2.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Contract2Test is Test {
+    function testSameName() public pure {
+        require(1 > 2, "testSameName failed"); // This should fail
+    }
+}
+     "#,
+    )
+    .unwrap();
+
+    // Run initial test - should have 1 failure and 1 pass
+    cmd.args(["test"]).assert_failure();
+
+    // Test failure filter should be persisted.
+    assert!(prj.root().join("cache/test-failures").exists());
+
+    // This is the key test: --rerun should NOT run both contracts with same test name
+    // Before the fix, this would run 2 tests (both testSameName functions)
+    // After the fix, this should run only 1 test (only the specific failing one)
+    let output = cmd.forge_fuse().args(["test", "--rerun"]).assert_failure();
+
+    // Verify that only 1 test is executed (not 2)
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(
+        stdout.contains("0 tests passed, 1 failed, 0 skipped (1 total tests)"),
+        "Expected exactly 1 test to be executed (the failing one), but got different count in stdout: {stdout}"
+    );
+
+    // Additional verification: Check the test failures file exists and contains our test
+    let failures_content = std::fs::read_to_string(prj.root().join("cache/test-failures")).unwrap();
+    assert!(
+        failures_content.contains("testSameName"),
+        "Expected test name in failure file, got: {failures_content}"
+    );
+});
+
 // <https://github.com/foundry-rs/foundry/issues/9285>
 forgetest_init!(should_not_record_setup_failures, |prj, cmd| {
     prj.add_test(
