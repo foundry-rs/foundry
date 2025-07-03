@@ -42,76 +42,69 @@ use super::run::fetch_contracts_bytecode_from_trace;
 static OVERRIDE_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^([^:]+):([^:]+):([^:]+)$").unwrap());
 
-/// CLI arguments for `cast call`.
+/// Call a contract function locally (eth_call) and print the result.
 ///
-/// ## State Override Flags
+/// Example:
 ///
-/// The following flags can be used to override the state for the call:
-///
-/// * `--override-balance <address>:<balance>` - Override the balance of an account
-/// * `--override-nonce <address>:<nonce>` - Override the nonce of an account
-/// * `--override-code <address>:<code>` - Override the code of an account
-/// * `--override-state <address>:<slot>:<value>` - Override a storage slot of an account
-///
-/// Multiple overrides can be specified for the same account. For example:
-///
-/// ```bash
-/// cast call 0x... "transfer(address,uint256)" 0x... 100 \
-///   --override-balance 0x123:0x1234 \
-///   --override-nonce 0x123:1 \
-///   --override-code 0x123:0x1234 \
-///   --override-state 0x123:0x1:0x1234
-///   --override-state-diff 0x123:0x1:0x1234
-/// ```
+/// cast call 0xAbC... "balanceOf(address)" 0x123... --rpc-url <URL>
 #[derive(Debug, Parser)]
+#[command(
+    about = "Call a contract function locally (eth_call) and print the result.",
+    long_about = "Call a contract function locally (eth_call) and print the result.\n\
+EXAMPLES:\n\
+    cast call 0xAbC... 'balanceOf(address)' 0x123... --rpc-url <URL>\n\
+    cast call 0xAbC... --data 0xabcdef... --rpc-url <URL>\n\
+    cast call 0xAbC... 'transfer(address,uint256)' 0x123... 100 --override-balance 0x123:1000\n\
+See more: https://book.getfoundry.sh/reference/cast/cast-call.html"
+)]
 pub struct CallArgs {
-    /// The destination of the transaction.
-    #[arg(value_parser = NameOrAddress::from_str)]
+    /// Destination address of the contract to call.
+    #[arg(help = "Destination address of the contract to call.", value_name = "TO", value_parser = NameOrAddress::from_str)]
     to: Option<NameOrAddress>,
 
-    /// The signature of the function to call.
+    /// Function signature to call, e.g. `balanceOf(address)`.
+    #[arg(help = "Function signature to call.", value_name = "SIG")]
     sig: Option<String>,
 
-    /// The arguments of the function to call.
+    /// Arguments for the function call.
+    #[arg(help = "Arguments for the function call.", value_name = "ARGS")]
     args: Vec<String>,
 
-    /// Raw hex-encoded data for the transaction. Used instead of \[SIG\] and \[ARGS\].
+    /// Raw hex-encoded data for the transaction. Used instead of [SIG] and [ARGS].
     #[arg(
         long,
-        conflicts_with_all = &["sig", "args"]
+        conflicts_with_all = &["sig", "args"],
+        value_name = "DATA",
+        help = "Raw hex-encoded data for the transaction. Used instead of [SIG] and [ARGS]."
     )]
     data: Option<String>,
 
-    /// Forks the remote rpc, executes the transaction locally and prints a trace
-    #[arg(long, default_value_t = false)]
+    /// Forks the remote rpc, executes the transaction locally and prints a trace.
+    #[arg(long, default_value_t = false, help = "Forks the remote rpc, executes the transaction locally and prints a trace.")]
     trace: bool,
 
-    /// Opens an interactive debugger.
-    /// Can only be used with `--trace`.
-    #[arg(long, requires = "trace")]
+    /// Opens an interactive debugger (requires --trace).
+    #[arg(long, requires = "trace", help = "Opens an interactive debugger (requires --trace).")]
     debug: bool,
 
-    #[arg(long, requires = "trace")]
+    /// Decode internal calls in traces (requires --trace).
+    #[arg(long, requires = "trace", help = "Decode internal calls in traces (requires --trace).")]
     decode_internal: bool,
 
-    /// Labels to apply to the traces; format: `address:label`.
-    /// Can only be used with `--trace`.
-    #[arg(long, requires = "trace")]
+    /// Labels to apply to the traces; format: `address:label` (requires --trace).
+    #[arg(long, requires = "trace", help = "Labels to apply to the traces; format: address:label (requires --trace).")]
     labels: Vec<String>,
 
-    /// The EVM Version to use.
-    /// Can only be used with `--trace`.
-    #[arg(long, requires = "trace")]
+    /// EVM Version to use (requires --trace).
+    #[arg(long, requires = "trace", value_name = "EVM_VERSION", help = "EVM Version to use (requires --trace).")]
     evm_version: Option<EvmVersion>,
 
-    /// The block height to query at.
-    ///
-    /// Can also be the tags earliest, finalized, safe, latest, or pending.
-    #[arg(long, short)]
+    /// Block height to query at (number or tag: earliest, latest, pending, etc).
+    #[arg(long, short, value_name = "BLOCK", help = "Block height to query at (number or tag: earliest, latest, pending, etc).")]
     block: Option<BlockId>,
 
     /// Enable Odyssey features.
-    #[arg(long, alias = "alphanet")]
+    #[arg(long, alias = "alphanet", help = "Enable Odyssey features.")]
     pub odyssey: bool,
 
     #[command(subcommand)]
@@ -124,63 +117,57 @@ pub struct CallArgs {
     eth: EthereumOpts,
 
     /// Use current project artifacts for trace decoding.
-    #[arg(long, visible_alias = "la")]
+    #[arg(long, visible_alias = "la", help = "Use current project artifacts for trace decoding.")]
     pub with_local_artifacts: bool,
 
-    /// Override the balance of an account.
-    /// Format: address:balance
-    #[arg(long = "override-balance", value_name = "ADDRESS:BALANCE")]
+    /// Override the balance of an account. Format: address:balance
+    #[arg(long = "override-balance", value_name = "ADDRESS:BALANCE", help = "Override the balance of an account. Format: address:balance")]
     pub balance_overrides: Option<Vec<String>>,
 
-    /// Override the nonce of an account.
-    /// Format: address:nonce
-    #[arg(long = "override-nonce", value_name = "ADDRESS:NONCE")]
+    /// Override the nonce of an account. Format: address:nonce
+    #[arg(long = "override-nonce", value_name = "ADDRESS:NONCE", help = "Override the nonce of an account. Format: address:nonce")]
     pub nonce_overrides: Option<Vec<String>>,
 
-    /// Override the code of an account.
-    /// Format: address:code
-    #[arg(long = "override-code", value_name = "ADDRESS:CODE")]
+    /// Override the code of an account. Format: address:code
+    #[arg(long = "override-code", value_name = "ADDRESS:CODE", help = "Override the code of an account. Format: address:code")]
     pub code_overrides: Option<Vec<String>>,
 
-    /// Override the state of an account.
-    /// Format: address:slot:value
-    #[arg(long = "override-state", value_name = "ADDRESS:SLOT:VALUE")]
+    /// Override the state of an account. Format: address:slot:value
+    #[arg(long = "override-state", value_name = "ADDRESS:SLOT:VALUE", help = "Override the state of an account. Format: address:slot:value")]
     pub state_overrides: Option<Vec<String>>,
 
-    /// Override the state diff of an account.
-    /// Format: address:slot:value
-    #[arg(long = "override-state-diff", value_name = "ADDRESS:SLOT:VALUE")]
+    /// Override the state diff of an account. Format: address:slot:value
+    #[arg(long = "override-state-diff", value_name = "ADDRESS:SLOT:VALUE", help = "Override the state diff of an account. Format: address:slot:value")]
     pub state_diff_overrides: Option<Vec<String>>,
 
     /// Override the block timestamp.
-    #[arg(long = "block.time", value_name = "TIME")]
+    #[arg(long = "block.time", value_name = "TIME", help = "Override the block timestamp.")]
     pub block_time: Option<u64>,
 
     /// Override the block number.
-    #[arg(long = "block.number", value_name = "NUMBER")]
+    #[arg(long = "block.number", value_name = "NUMBER", help = "Override the block number.")]
     pub block_number: Option<u64>,
 }
 
 #[derive(Debug, Parser)]
 pub enum CallSubcommands {
-    /// ignores the address field and simulates creating a contract
+    /// Simulate contract creation (ignores the address field).
     #[command(name = "--create")]
     Create {
-        /// Bytecode of contract.
+        /// Bytecode of contract to deploy.
+        #[arg(help = "Bytecode of contract to deploy.", value_name = "BYTECODE")]
         code: String,
 
-        /// The signature of the constructor.
+        /// Constructor signature, e.g. `constructor(uint256)`.
+        #[arg(help = "Constructor signature.", value_name = "SIG")]
         sig: Option<String>,
 
-        /// The arguments of the constructor.
+        /// Arguments for the constructor.
+        #[arg(help = "Arguments for the constructor.", value_name = "ARGS")]
         args: Vec<String>,
 
-        /// Ether to send in the transaction.
-        ///
-        /// Either specified in wei, or as a string with a unit type.
-        ///
-        /// Examples: 1ether, 10gwei, 0.01ether
-        #[arg(long, value_parser = parse_ether_value)]
+        /// Ether to send in the transaction (e.g. 1ether, 10gwei, 0.01ether).
+        #[arg(long, value_parser = parse_ether_value, value_name = "VALUE", help = "Ether to send in the transaction (e.g. 1ether, 10gwei, 0.01ether).")]
         value: Option<U256>,
     },
 }
