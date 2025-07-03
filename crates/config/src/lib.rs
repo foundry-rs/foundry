@@ -50,6 +50,8 @@ use std::{
     str::FromStr,
 };
 
+use tracing::warn;
+
 mod macros;
 
 pub mod utils;
@@ -642,7 +644,30 @@ impl Config {
         Self::from_provider(provider)
     }
 
+    /// Read `foundry.toml`, collect any unknown keys, and log a warning.
+    fn warn_unknown_keys() -> Result<(), ExtractConfigError> {
+        let path = Path::new(Self::FILE_NAME);
+
+        // if the file exists & is readable, deserialize and collect ignored keys
+        if let Ok(raw) = fs::read_to_string(path) {
+            let mut ignored = Vec::new();
+            let deserializer = toml::Deserializer::new(&raw);
+
+            // collect every ignored field name
+            let _: Result<Self, _> =
+                serde_ignored::deserialize(deserializer, |field| ignored.push(field.to_string()));
+
+            // if we found any, log a single warning with a list
+            if !ignored.is_empty() {
+                warn!("Found unknown config keys in {}: {}", Self::FILE_NAME, ignored.join(", "));
+            }
+        }
+        Ok(())
+    }
+
     fn from_figment(figment: Figment) -> Result<Self, ExtractConfigError> {
+        Self::warn_unknown_keys()?;
+
         let mut config = figment.extract::<Self>().map_err(ExtractConfigError::new)?;
         config.profile = figment.profile().clone();
 
@@ -2583,8 +2608,9 @@ mod tests {
     };
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
-    use std::{fs::File, io::Write};
+    use std::{env, fs::File, io::Write};
     use tempfile::tempdir;
+    use tracing_test::traced_test;
     use NamedChain::Moonbeam;
 
     // Helper function to clear `__warnings` in config, since it will be populated during loading
@@ -4979,5 +5005,45 @@ mod tests {
 
             Ok(())
         });
+    }
+
+    #[traced_test]
+    #[test]
+    fn warn_unknown_keys_logs_warning_for_unknown_keys() {
+        let dir = tempdir().expect("failed to create temp dir");
+        let path = dir.path().join("foundry.toml");
+        fs::write(&path, "optimizor = false\n").expect("Failed to write foundry.toml");
+
+        let old_dir = env::current_dir().expect("failed to get current dir");
+        env::set_current_dir(&dir).expect("failed to set current dir");
+
+        let _ = Config::warn_unknown_keys();
+
+        assert!(
+            logs_contain("Found unknown config keys") && logs_contain("optimizor"),
+            "Expected a warning log containing 'optimizor'"
+        );
+
+        env::set_current_dir(old_dir).expect("failed to restore dir");
+    }
+
+    #[traced_test]
+    #[test]
+    fn warn_unknown_keys_logs_nothing_for_valid_keys() {
+        let dir = tempdir().expect("failed to create temp dir");
+        let path = dir.path().join("foundry.toml");
+        fs::write(&path, "optimizer = false\n").expect("Failed to write foundry.toml");
+
+        let old_dir = env::current_dir().expect("failed to get current dir");
+        env::set_current_dir(&dir).expect("failed to set current dir");
+
+        let _ = Config::warn_unknown_keys();
+
+        assert!(
+            !logs_contain("Found unknown config keys"),
+            "Did not expect a warning for only valid keys"
+        );
+
+        env::set_current_dir(old_dir).expect("failed to restore dir");
     }
 }
