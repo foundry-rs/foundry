@@ -59,52 +59,51 @@ See more: https://book.getfoundry.sh/reference/cast/cast-call.html"
 )]
 pub struct CallArgs {
     /// Destination address of the contract to call.
-    #[arg(help = "Destination address of the contract to call.", value_name = "TO", value_parser = NameOrAddress::from_str)]
+    #[arg(value_name = "TO", value_parser = NameOrAddress::from_str)]
     to: Option<NameOrAddress>,
 
     /// Function signature to call, e.g. `balanceOf(address)`.
-    #[arg(help = "Function signature to call.", value_name = "SIG")]
+    #[arg(value_name = "SIG")]
     sig: Option<String>,
 
     /// Arguments for the function call.
-    #[arg(help = "Arguments for the function call.", value_name = "ARGS")]
+    #[arg(value_name = "ARGS")]
     args: Vec<String>,
 
-    /// Raw hex-encoded data for the transaction. Used instead of [SIG] and [ARGS].
+    /// Raw hex-encoded data for the transaction. Used instead of \[SIG\] and \[ARGS\].
     #[arg(
         long,
         conflicts_with_all = &["sig", "args"],
         value_name = "DATA",
-        help = "Raw hex-encoded data for the transaction. Used instead of [SIG] and [ARGS]."
     )]
     data: Option<String>,
 
     /// Forks the remote rpc, executes the transaction locally and prints a trace.
-    #[arg(long, default_value_t = false, help = "Forks the remote rpc, executes the transaction locally and prints a trace.")]
+    #[arg(long, default_value_t = false)]
     trace: bool,
 
     /// Opens an interactive debugger (requires --trace).
-    #[arg(long, requires = "trace", help = "Opens an interactive debugger (requires --trace).")]
+    #[arg(long, requires = "trace")]
     debug: bool,
 
     /// Decode internal calls in traces (requires --trace).
-    #[arg(long, requires = "trace", help = "Decode internal calls in traces (requires --trace).")]
+    #[arg(long, requires = "trace")]
     decode_internal: bool,
 
     /// Labels to apply to the traces; format: `address:label` (requires --trace).
-    #[arg(long, requires = "trace", help = "Labels to apply to the traces; format: address:label (requires --trace).")]
+    #[arg(long, requires = "trace")]
     labels: Vec<String>,
 
     /// EVM Version to use (requires --trace).
-    #[arg(long, requires = "trace", value_name = "EVM_VERSION", help = "EVM Version to use (requires --trace).")]
+    #[arg(long, requires = "trace", value_name = "EVM_VERSION")]
     evm_version: Option<EvmVersion>,
 
     /// Block height to query at (number or tag: earliest, latest, pending, etc).
-    #[arg(long, short, value_name = "BLOCK", help = "Block height to query at (number or tag: earliest, latest, pending, etc).")]
+    #[arg(long, short, value_name = "BLOCK")]
     block: Option<BlockId>,
 
     /// Enable Odyssey features.
-    #[arg(long, alias = "alphanet", help = "Enable Odyssey features.")]
+    #[arg(long, alias = "alphanet")]
     pub odyssey: bool,
 
     #[command(subcommand)]
@@ -117,35 +116,35 @@ pub struct CallArgs {
     eth: EthereumOpts,
 
     /// Use current project artifacts for trace decoding.
-    #[arg(long, visible_alias = "la", help = "Use current project artifacts for trace decoding.")]
+    #[arg(long, visible_alias = "la")]
     pub with_local_artifacts: bool,
 
     /// Override the balance of an account. Format: address:balance
-    #[arg(long = "override-balance", value_name = "ADDRESS:BALANCE", help = "Override the balance of an account. Format: address:balance")]
+    #[arg(long = "override-balance", value_name = "ADDRESS:BALANCE")]
     pub balance_overrides: Option<Vec<String>>,
 
     /// Override the nonce of an account. Format: address:nonce
-    #[arg(long = "override-nonce", value_name = "ADDRESS:NONCE", help = "Override the nonce of an account. Format: address:nonce")]
+    #[arg(long = "override-nonce", value_name = "ADDRESS:NONCE")]
     pub nonce_overrides: Option<Vec<String>>,
 
     /// Override the code of an account. Format: address:code
-    #[arg(long = "override-code", value_name = "ADDRESS:CODE", help = "Override the code of an account. Format: address:code")]
+    #[arg(long = "override-code", value_name = "ADDRESS:CODE")]
     pub code_overrides: Option<Vec<String>>,
 
     /// Override the state of an account. Format: address:slot:value
-    #[arg(long = "override-state", value_name = "ADDRESS:SLOT:VALUE", help = "Override the state of an account. Format: address:slot:value")]
+    #[arg(long = "override-state", value_name = "ADDRESS:SLOT:VALUE")]
     pub state_overrides: Option<Vec<String>>,
 
     /// Override the state diff of an account. Format: address:slot:value
-    #[arg(long = "override-state-diff", value_name = "ADDRESS:SLOT:VALUE", help = "Override the state diff of an account. Format: address:slot:value")]
+    #[arg(long = "override-state-diff", value_name = "ADDRESS:SLOT:VALUE")]
     pub state_diff_overrides: Option<Vec<String>>,
 
     /// Override the block timestamp.
-    #[arg(long = "block.time", value_name = "TIME", help = "Override the block timestamp.")]
+    #[arg(long = "block.time", value_name = "TIME")]
     pub block_time: Option<u64>,
 
     /// Override the block number.
-    #[arg(long = "block.number", value_name = "NUMBER", help = "Override the block number.")]
+    #[arg(long = "block.number", value_name = "NUMBER")]
     pub block_number: Option<u64>,
 }
 
@@ -155,19 +154,19 @@ pub enum CallSubcommands {
     #[command(name = "--create")]
     Create {
         /// Bytecode of contract to deploy.
-        #[arg(help = "Bytecode of contract to deploy.", value_name = "BYTECODE")]
+        #[arg(value_name = "BYTECODE")]
         code: String,
 
         /// Constructor signature, e.g. `constructor(uint256)`.
-        #[arg(help = "Constructor signature.", value_name = "SIG")]
+        #[arg(value_name = "SIG")]
         sig: Option<String>,
 
         /// Arguments for the constructor.
-        #[arg(help = "Arguments for the constructor.", value_name = "ARGS")]
+        #[arg(value_name = "ARGS")]
         args: Vec<String>,
 
         /// Ether to send in the transaction (e.g. 1ether, 10gwei, 0.01ether).
-        #[arg(long, value_parser = parse_ether_value, value_name = "VALUE", help = "Ether to send in the transaction (e.g. 1ether, 10gwei, 0.01ether).")]
+        #[arg(long, value_parser = parse_ether_value, value_name = "VALUE")]
         value: Option<U256>,
     },
 }
