@@ -40,10 +40,8 @@ pub fn override_call_strat(
             any::<prop::sample::Index>().prop_map(move |index| index.get(&fuzzed_functions).clone())
         };
 
-        func.prop_flat_map({
-            move |func| {
-                fuzz_contract_with_calldata(&fuzz_state, &fuzz_fixtures, target_address, func)
-            }
+        func.prop_flat_map(move |func| {
+            fuzz_contract_with_calldata(&fuzz_state, &fuzz_fixtures, target_address, func)
         })
     })
 }
@@ -67,20 +65,18 @@ pub fn invariant_strat(
 ) -> impl Strategy<Value = BasicTxDetails> {
     let senders = Rc::new(senders);
     any::<prop::sample::Selector>()
-        .prop_flat_map({
-            move |selector| {
-                let contracts = contracts.targets.lock();
-                let functions = contracts.fuzzed_functions();
-                let (target_address, target_function) = selector.select(functions);
-                let sender = select_random_sender(&fuzz_state, senders.clone(), dictionary_weight);
-                let call_details = fuzz_contract_with_calldata(
-                    &fuzz_state,
-                    &fuzz_fixtures,
-                    *target_address,
-                    target_function.clone(),
-                );
-                (sender, call_details)
-            }
+        .prop_flat_map(move |selector| {
+            let contracts = contracts.targets.lock();
+            let functions = contracts.fuzzed_functions();
+            let (target_address, target_function) = selector.select(functions);
+            let sender = select_random_sender(&fuzz_state, senders.clone(), dictionary_weight);
+            let call_details = fuzz_contract_with_calldata(
+                &fuzz_state,
+                &fuzz_fixtures,
+                *target_address,
+                target_function.clone(),
+            );
+            (sender, call_details)
         })
         .prop_map(|(sender, call_details)| BasicTxDetails { sender, call_details })
 }

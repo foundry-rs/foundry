@@ -919,15 +919,11 @@ mod tests {
             ["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec()
         );
 
-        unsafe {
-            env::set_var("ANVIL_IP_ADDR", "1.1.1.1");
-        }
+        unsafe { env::set_var("ANVIL_IP_ADDR", "1.1.1.1") };
         let args = NodeArgs::parse_from(["anvil"]);
         assert_eq!(args.host, vec!["1.1.1.1".parse::<IpAddr>().unwrap()]);
 
-        unsafe {
-            env::set_var("ANVIL_IP_ADDR", "::1,1.1.1.1,2.2.2.2");
-        }
+        unsafe { env::set_var("ANVIL_IP_ADDR", "::1,1.1.1.1,2.2.2.2") };
         let args = NodeArgs::parse_from(["anvil"]);
         assert_eq!(
             args.host,
