@@ -37,51 +37,66 @@ use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc, time::D
 
 merge_impl_figment_convert!(CreateArgs, build, eth);
 
-/// CLI arguments for `forge create`.
+/// Deploy a smart contract to the specified network.
+///
+/// This command compiles the contract, encodes constructor arguments, and sends a deployment transaction.
+///
+/// Example:
+///
+/// forge create src/Counter.sol:Counter --constructor-args 42 --rpc-url <URL> --private-key <KEY> --broadcast
 #[derive(Clone, Debug, Parser)]
+#[command(
+    about = "Deploy a smart contract to the specified network.",
+    long_about = "Deploy a smart contract to the specified network.\n\
+Compiles the contract, encodes constructor arguments, and sends a deployment transaction.\n\
+EXAMPLES:\n\
+    forge create src/Counter.sol:Counter --constructor-args 42 --rpc-url <URL> --private-key <KEY> --broadcast\n\
+Use --verify to automatically verify the contract after deployment.\n\
+See more: https://book.getfoundry.sh/reference/forge/forge-create.html"
+)]
 pub struct CreateArgs {
-    /// The contract identifier in the form `<path>:<contractname>`.
+    /// Contract identifier in the form `<path>:<contractname>`, e.g. `src/Counter.sol:Counter`.
+    #[arg(help = "Contract identifier in the form <path>:<contractname>.", value_name = "CONTRACT")]
     contract: ContractInfo,
 
-    /// The constructor arguments.
+    /// Constructor arguments as a space-separated list, e.g. `42 "hello"`.
     #[arg(
         long,
         num_args(1..),
         conflicts_with = "constructor_args_path",
         value_name = "ARGS",
         allow_hyphen_values = true,
+        help = "Constructor arguments as a space-separated list."
     )]
     constructor_args: Vec<String>,
 
-    /// The path to a file containing the constructor arguments.
+    /// Path to a file containing constructor arguments (one per line or as JSON array).
     #[arg(
         long,
         value_hint = ValueHint::FilePath,
         value_name = "PATH",
+        help = "Path to a file containing constructor arguments (one per line or as JSON array)."
     )]
     constructor_args_path: Option<PathBuf>,
 
-    /// Broadcast the transaction.
-    #[arg(long)]
+    /// Broadcast the transaction to the network (otherwise, dry-run only).
+    #[arg(long, help = "Actually send the deployment transaction to the network.")]
     pub broadcast: bool,
 
-    /// Verify contract after creation.
-    #[arg(long)]
+    /// Verify contract after creation (using the selected block explorer).
+    #[arg(long, help = "Automatically verify the contract after deployment.")]
     verify: bool,
 
-    /// Send via `eth_sendTransaction` using the `--from` argument or `$ETH_FROM` as sender
-    #[arg(long, requires = "from")]
+    /// Use `eth_sendTransaction` with an unlocked account (requires --from or $ETH_FROM).
+    #[arg(long, requires = "from", help = "Send via eth_sendTransaction using an unlocked account.")]
     unlocked: bool,
 
-    /// Prints the standard json compiler input if `--verify` is provided.
-    ///
-    /// The standard json compiler input can be used to manually submit contract verification in
-    /// the browser.
-    #[arg(long, requires = "verify")]
+    /// Print the standard JSON compiler input (for manual verification in a browser).
+    #[arg(long, requires = "verify", help = "Print the standard JSON compiler input if --verify is provided.")]
     show_standard_json_input: bool,
 
-    /// Timeout to use for broadcasting transactions.
-    #[arg(long, env = "ETH_TIMEOUT")]
+    /// Timeout (in seconds) for broadcasting transactions.
+    #[arg(long, env = "ETH_TIMEOUT", value_name = "SECONDS", help = "Timeout in seconds for broadcasting transactions.")]
     pub timeout: Option<u64>,
 
     #[command(flatten)]
