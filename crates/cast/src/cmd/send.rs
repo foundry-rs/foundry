@@ -17,38 +17,53 @@ use foundry_cli::{
 };
 use std::{path::PathBuf, str::FromStr};
 
-/// CLI arguments for `cast send`.
+/// Send a transaction to a contract or deploy a new contract.
+///
+/// Example:
+///
+/// cast send 0xAbC... "transfer(address,uint256)" 0x123... 100 --private-key <KEY> --rpc-url <URL>
+/// cast send --create <BYTECODE> --private-key <KEY> --rpc-url <URL>
 #[derive(Debug, Parser)]
+#[command(
+    about = "Send a transaction to a contract or deploy a new contract.",
+    long_about = "Send a transaction to a contract or deploy a new contract.\n\
+EXAMPLES:\n\
+    cast send 0xAbC... 'transfer(address,uint256)' 0x123... 100 --private-key <KEY> --rpc-url <URL>\n\
+    cast send --create <BYTECODE> --private-key <KEY> --rpc-url <URL>\n\
+See more: https://book.getfoundry.sh/reference/cast/cast-send.html"
+)]
 pub struct SendTxArgs {
-    /// The destination of the transaction.
+    /// Destination address of the transaction (contract or EOA).
     ///
-    /// If not provided, you must use cast send --create.
-    #[arg(value_parser = NameOrAddress::from_str)]
+    /// If not provided, you must use `cast send --create`.
+    #[arg(help = "Destination address of the transaction.", value_name = "TO", value_parser = NameOrAddress::from_str)]
     to: Option<NameOrAddress>,
 
-    /// The signature of the function to call.
+    /// Function signature to call, e.g. `transfer(address,uint256)`.
+    #[arg(help = "Function signature to call.", value_name = "SIG")]
     sig: Option<String>,
 
-    /// The arguments of the function to call.
+    /// Arguments for the function call.
+    #[arg(help = "Arguments for the function call.", value_name = "ARGS")]
     args: Vec<String>,
 
     /// Only print the transaction hash and exit immediately.
-    #[arg(id = "async", long = "async", alias = "cast-async", env = "CAST_ASYNC")]
+    #[arg(id = "async", long = "async", alias = "cast-async", env = "CAST_ASYNC", help = "Only print the transaction hash and exit immediately.")]
     cast_async: bool,
 
-    /// The number of confirmations until the receipt is fetched.
-    #[arg(long, default_value = "1")]
+    /// Number of confirmations to wait for the receipt.
+    #[arg(long, default_value = "1", value_name = "NUM", help = "Number of confirmations to wait for the receipt.")]
     confirmations: u64,
 
     #[command(subcommand)]
     command: Option<SendTxSubcommands>,
 
-    /// Send via `eth_sendTransaction` using the `--from` argument or $ETH_FROM as sender
-    #[arg(long, requires = "from")]
+    /// Use `eth_sendTransaction` with an unlocked account (requires --from or $ETH_FROM).
+    #[arg(long, requires = "from", help = "Send via eth_sendTransaction using an unlocked account.")]
     unlocked: bool,
 
-    /// Timeout for sending the transaction.
-    #[arg(long, env = "ETH_TIMEOUT")]
+    /// Timeout (in seconds) for sending the transaction.
+    #[arg(long, env = "ETH_TIMEOUT", value_name = "SECONDS", help = "Timeout in seconds for sending the transaction.")]
     pub timeout: Option<u64>,
 
     #[command(flatten)]
@@ -57,29 +72,33 @@ pub struct SendTxArgs {
     #[command(flatten)]
     eth: EthereumOpts,
 
-    /// The path of blob data to be sent.
+    /// Path to a file containing blob data to be sent.
     #[arg(
         long,
         value_name = "BLOB_DATA_PATH",
         conflicts_with = "legacy",
         requires = "blob",
-        help_heading = "Transaction options"
+        help_heading = "Transaction options",
+        help = "Path to a file containing blob data to be sent."
     )]
     path: Option<PathBuf>,
 }
 
 #[derive(Debug, Parser)]
 pub enum SendTxSubcommands {
-    /// Use to deploy raw contract bytecode.
+    /// Deploy raw contract bytecode as a new contract.
     #[command(name = "--create")]
     Create {
-        /// The bytecode of the contract to deploy.
+        /// Bytecode of the contract to deploy.
+        #[arg(help = "Bytecode of the contract to deploy.", value_name = "BYTECODE")]
         code: String,
 
-        /// The signature of the function to call.
+        /// Constructor signature, e.g. `constructor(uint256)`.
+        #[arg(help = "Constructor signature.", value_name = "SIG")]
         sig: Option<String>,
 
-        /// The arguments of the function to call.
+        /// Arguments for the constructor.
+        #[arg(help = "Arguments for the constructor.", value_name = "ARGS")]
         args: Vec<String>,
     },
 }
