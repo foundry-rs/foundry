@@ -58,7 +58,8 @@ impl Default for VerifierArgs {
 ///
 /// Example:
 ///
-/// forge verify-contract 0x123... src/Counter.sol:Counter --compiler-version 0.8.20 --etherscan-api-key &lt;KEY&gt;
+/// forge verify-contract 0x123... src/Counter.sol:Counter --compiler-version 0.8.20
+/// --etherscan-api-key &lt;KEY&gt;
 #[derive(Clone, Debug, Parser)]
 #[command(
     about = "Verify a deployed contract's source code on a block explorer.",
@@ -122,7 +123,7 @@ pub struct VerifyArgs {
     #[arg(long)]
     pub watch: bool,
 
-    /// Pre-linked libraries in the format <file>:<lib>=<address> (repeatable).
+    /// Pre-linked libraries in the format &lt;file&gt;:&lt;lib&gt;=&lt;address&gt; (repeatable).
     #[arg(long, help_heading = "Linker options", env = "DAPP_LIBRARIES", value_name = "LIBRARIES")]
     pub libraries: Vec<String>,
 
