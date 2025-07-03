@@ -21,8 +21,8 @@ use std::{path::PathBuf, str::FromStr};
 ///
 /// Example:
 ///
-/// cast send 0xAbC... "transfer(address,uint256)" 0x123... 100 --private-key &lt;KEY&gt; --rpc-url &lt;URL&gt;
-/// cast send --create &lt;BYTECODE&gt; --private-key &lt;KEY&gt; --rpc-url &lt;URL&gt;
+/// cast send 0xAbC... "transfer(address,uint256)" 0x123... 100 --private-key &lt;KEY&gt; --rpc-url
+/// &lt;URL&gt; cast send --create &lt;BYTECODE&gt; --private-key &lt;KEY&gt; --rpc-url &lt;URL&gt;
 #[derive(Debug, Parser)]
 #[command(
     about = "Send a transaction to a contract or deploy a new contract.",
