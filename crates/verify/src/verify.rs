@@ -58,23 +58,23 @@ impl Default for VerifierArgs {
 ///
 /// Example:
 ///
-/// forge verify-contract 0x123... src/Counter.sol:Counter --compiler-version 0.8.20 --etherscan-api-key <KEY>
+/// forge verify-contract 0x123... src/Counter.sol:Counter --compiler-version 0.8.20 --etherscan-api-key &lt;KEY&gt;
 #[derive(Clone, Debug, Parser)]
 #[command(
     about = "Verify a deployed contract's source code on a block explorer.",
     long_about = "Submit a contract's source code for verification on a block explorer (e.g. Etherscan, Sourcify).\n\
 EXAMPLES:\n\
-    forge verify-contract 0x123... src/Counter.sol:Counter --compiler-version 0.8.20 --etherscan-api-key <KEY>\n\
+    forge verify-contract 0x123... src/Counter.sol:Counter --compiler-version 0.8.20 --etherscan-api-key &lt;KEY&gt;\n\
     forge verify-contract 0x123... src/Counter.sol:Counter --constructor-args 42 --compiler-version 0.8.20\n\
 See more: https://book.getfoundry.sh/reference/forge/forge-verify-contract.html"
 )]
 pub struct VerifyArgs {
     /// Address of the deployed contract to verify.
-    #[arg(help = "Address of the deployed contract to verify.", value_name = "ADDRESS")]
+    #[arg(value_name = "ADDRESS")]
     pub address: Address,
 
     /// Contract identifier in the form `<path>:<contractname>`, e.g. `src/Counter.sol:Counter`.
-    #[arg(help = "Contract identifier in the form <path>:<contractname>.", value_name = "CONTRACT")]
+    #[arg(value_name = "CONTRACT")]
     pub contract: Option<ContractInfo>,
 
     /// ABI-encoded constructor arguments (hex string, e.g. 000000...)
@@ -82,65 +82,64 @@ pub struct VerifyArgs {
         long,
         conflicts_with = "constructor_args_path",
         value_name = "ARGS",
-        visible_alias = "encoded-constructor-args",
-        help = "ABI-encoded constructor arguments as a hex string."
+        visible_alias = "encoded-constructor-args"
     )]
     pub constructor_args: Option<String>,
 
     /// Path to a file containing constructor arguments (one per line or as JSON array).
-    #[arg(long, value_hint = ValueHint::FilePath, value_name = "PATH", help = "Path to a file containing constructor arguments.")]
+    #[arg(long, value_hint = ValueHint::FilePath, value_name = "PATH")]
     pub constructor_args_path: Option<PathBuf>,
 
     /// Try to extract constructor arguments from on-chain creation code.
-    #[arg(long, help = "Try to extract constructor arguments from on-chain creation code.")]
+    #[arg(long)]
     pub guess_constructor_args: bool,
 
     /// Solidity compiler version to use (e.g. 0.8.20).
-    #[arg(long, value_name = "VERSION", help = "Solidity compiler version to use for verification.")]
+    #[arg(long, value_name = "VERSION")]
     pub compiler_version: Option<String>,
 
     /// Compilation profile to use (e.g. default, release).
-    #[arg(long, value_name = "PROFILE_NAME", help = "Compilation profile to use for building the contract.")]
+    #[arg(long, value_name = "PROFILE_NAME")]
     pub compilation_profile: Option<String>,
 
     /// Number of optimizer runs used to build the contract.
-    #[arg(long, visible_alias = "optimizer-runs", value_name = "NUM", help = "Number of optimizer runs used during compilation.")]
+    #[arg(long, visible_alias = "optimizer-runs", value_name = "NUM")]
     pub num_of_optimizations: Option<usize>,
 
     /// Flatten the source code before verifying.
-    #[arg(long, help = "Flatten the source code before verifying.")]
+    #[arg(long)]
     pub flatten: bool,
 
     /// Do not compile the flattened contract before verifying (if --flatten is passed).
-    #[arg(short, long, help = "Do not compile the flattened contract before verifying (if --flatten is passed).")]
+    #[arg(short, long)]
     pub force: bool,
 
     /// Do not check if the contract is already verified before verifying.
-    #[arg(long, help = "Skip the check if the contract is already verified before submitting.")]
+    #[arg(long)]
     pub skip_is_verified_check: bool,
 
     /// Wait for verification result after submission.
-    #[arg(long, help = "Wait for verification result after submission.")]
+    #[arg(long)]
     pub watch: bool,
 
     /// Pre-linked libraries in the format <file>:<lib>=<address> (repeatable).
-    #[arg(long, help_heading = "Linker options", env = "DAPP_LIBRARIES", value_name = "LIBRARIES", help = "Pre-linked libraries in the format <file>:<lib>=<address>.")]
+    #[arg(long, help_heading = "Linker options", env = "DAPP_LIBRARIES", value_name = "LIBRARIES")]
     pub libraries: Vec<String>,
 
     /// Project's root path (default: git root or current directory).
-    #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH", help = "Project's root path.")]
+    #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     pub root: Option<PathBuf>,
 
     /// Print the standard JSON compiler input (for manual verification in a browser).
-    #[arg(long, conflicts_with = "flatten", help = "Print the standard JSON compiler input for manual verification.")]
+    #[arg(long, conflicts_with = "flatten")]
     pub show_standard_json_input: bool,
 
     /// Use the Yul intermediate representation compilation pipeline.
-    #[arg(long, help = "Use the Yul intermediate representation compilation pipeline.")]
+    #[arg(long)]
     pub via_ir: bool,
 
     /// EVM version to use (overrides config).
-    #[arg(long, value_name = "EVM_VERSION", help = "EVM version to use for verification.")]
+    #[arg(long, value_name = "EVM_VERSION")]
     pub evm_version: Option<EvmVersion>,
 
     #[command(flatten)]
@@ -230,7 +229,7 @@ impl VerifyArgs {
                 .create_verify_request(&self, &context)
                 .await?;
             sh_println!("{}", args.source)?;
-            return Ok(())
+            return Ok(());
         }
 
         let verifier_url = self.verifier.verifier_url.clone();
