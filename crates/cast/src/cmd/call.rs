@@ -46,7 +46,7 @@ static OVERRIDE_PATTERN: LazyLock<Regex> =
 ///
 /// Example:
 ///
-/// cast call 0xAbC... "balanceOf(address)" 0x123... --rpc-url <URL>
+/// cast call 0xAbC... "balanceOf(address)" 0x123... --rpc-url &lt;URL&gt;
 #[derive(Debug, Parser)]
 #[command(
     about = "Call a contract function locally (eth_call) and print the result.",
