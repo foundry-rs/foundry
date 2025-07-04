@@ -153,37 +153,37 @@ fmt_tests! {
     #[ignore = "annotations are not valid Solidity"]
     Annotation,
     ArrayExpressions, // TODO: print cmnt before memory kw once span is available (solar). Is the rest acceptable?
-    BlockComments, // OK (once block braces are fixed)
+    BlockComments, // OK
     BlockCommentsFunction, // OK
-    ConditionalOperatorExpression, // OK (once block braces are fixed)
+    ConditionalOperatorExpression, // OK
     ConstructorDefinition, // OK
     ConstructorModifierStyle, // OK
-    ContractDefinition, // OKish (FIX: fn param alignement)
-    DocComments, // OK (once block braces are fixed). TODO: Ask dani how to wrap comments.
-    DoWhileStatement, // OK? (once block braces are fixed).. is it acceptable?
+    ContractDefinition, // OK? Is it acceptable?
+    DocComments, // OK (basics). TODO: wrapp comments
+    DoWhileStatement, // OK? TODO: try to improve nested conditional expressions
     EmitStatement, // OK
     EnumDefinition, // OK
     EnumVariants, // OK
     ErrorDefinition, // OK
-    EventDefinition, // OK? i think it works as intended.. is it acceptable?
-    ForStatement, // OK? (once block braces are fixed).. is it acceptable?
-    FunctionCall, // TODO: ask Dani how to enhance PP so that trailing comments aren't accounted for when breaking lines
-    FunctionCallArgsStatement, // FIX: fn block braces. Is the rest acceptable?
-    FunctionDefinition, // TODO: fix fn block braces + prevent oneParam fn from breaking when attributes break
-    FunctionDefinitionWithFunctionReturns, // OK? (once block braces are fixed) is it acceptable?
-    FunctionType, // OK? (once block braces are fixed) is it acceptable?
-    HexUnderscore, // OK (once block braces are fixed)
+    EventDefinition, // OK
+    ForStatement, // OK? TODO: try to improve nested conditional expressions
+    FunctionCall, // OK: TODO: enhance PP so that trailing comments aren't accounted for when breaking lines after a simcolon.
+    FunctionCallArgsStatement, // OK? Is it acceptable?
+    FunctionDefinition, // OK? Is it acceptable?
+    FunctionDefinitionWithFunctionReturns, // OK
+    FunctionType, // OK? is it acceptable?
+    HexUnderscore, // OK
     IfStatement, // TODO: figure out correct comment placements + condition parenthesis wrapping + support config line wrapping
-    IfStatement2, // OK (once block braces are fixed)
+    IfStatement2, // OK
     ImportDirective, // OK
     InlineDisable, // FIX: invalid output
-    IntTypes, // OK (once block braces are fixed)
+    IntTypes, // OK
     LiteralExpression, // FIX: idempotency (comment-related)
-    MappingTyple, // TODO: comments
+    MappingType, // TODO: comments
     ModifierDefinition, // OK
     NamedFunctionCallExpression, // FIX: idempotency (comment-related)
-    NumberLiteralUnderscore, // OK (once block braces are fixed)
-    OperatorExpressions, // FIX: idempotency (comment-related)
+    NumberLiteralUnderscore, // OK
+    OperatorExpressions, // OKish: TODO: improve nested conditional expressions
     PragmaDirective, // OK
     Repros, // TODO: check boxes, panics
     ReturnStatement, // FIX: idempotency (comment-related)
@@ -191,17 +191,17 @@ fmt_tests! {
     RevertStatement, // FIX: idempotency (comment-related)
     SimpleComments, // FIX: idempotency (comment-related)
     SortedImports, // FIX: sorting order
-    StatementBlock, // OK (once block braces are fixed)
+    StatementBlock, // OK
     StructDefinition, // OK
     ThisExpression, // OK
     TrailingComma, // OK (solar error)
-    TryStatement, // OK but kinda hacky. Is the fmt for the new test case acceptable?
+    TryStatement, // OK? is it acceptable?
     TypeDefinition, // OK
     UnitExpression, // FIX: idempotency (comment-related)
     UsingDirective, // OK
     VariableAssignment, // FIX: variable assignment
     VariableDefinition, // FIX: variable assignment + declaration
-    WhileStatement, // FIX: indentation of the condition
+    WhileStatement,  // OKish: TODO: improve nested conditional expressions
     Yul, // FIX: idemptency (comment-related)
-    YulStrings, // OK (once block braces are fixed)
+    YulStrings, // OK
 }

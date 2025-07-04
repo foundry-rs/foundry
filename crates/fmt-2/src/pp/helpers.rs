@@ -12,7 +12,6 @@ impl Printer {
     pub fn hardbreak_if_not_bol(&mut self) {
         if !self.is_bol_or_only_ind() {
             if let Some(Token::Break(last)) = self.last_token_still_buffered() {
-                println!("> last: {last:?}");
                 if last.offset != 0 {
                     self.replace_last_token_still_buffered(Self::hardbreak_tok_offset(last.offset));
                     return;

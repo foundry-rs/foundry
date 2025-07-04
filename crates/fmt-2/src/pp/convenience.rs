@@ -179,8 +179,8 @@ impl Token {
     }
 
     pub(crate) fn is_hardbreak(&self) -> bool {
-        if let Self::Break(BreakToken { offset, blank_space, never_break, .. }) = *self {
-            return offset == 0 && blank_space == SIZE_INFINITY as usize && !never_break;
+        if let Self::Break(BreakToken { blank_space, never_break, .. }) = *self {
+            return blank_space == SIZE_INFINITY as usize && !never_break;
         }
         false
     }
