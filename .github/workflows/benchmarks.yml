@@ -41,9 +41,9 @@ jobs:
           workspaces: |
             ./
 
-      - name: Install Foundry
+      - name: Setup Foundry
         run: |
-          curl -L https://foundry.paradigm.xyz | bash
+          ./.github/scripts/setup-foundryup.sh
           echo "$HOME/.foundry/bin" >> $GITHUB_PATH
 
       - name: Install hyperfine
@@ -68,9 +68,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Foundry
+      - name: Setup Foundry
         run: |
-          curl -L https://foundry.paradigm.xyz | bash
+          ./.github/scripts/setup-foundryup.sh
           echo "$HOME/.foundry/bin" >> $GITHUB_PATH
 
       - name: Install hyperfine
@@ -111,9 +111,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Foundry
+      - name: Setup Foundry
         run: |
-          curl -L https://foundry.paradigm.xyz | bash
+          ./.github/scripts/setup-foundryup.sh
           echo "$HOME/.foundry/bin" >> $GITHUB_PATH
 
       - name: Install hyperfine
@@ -154,9 +154,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Foundry
+      - name: Setup Foundry
         run: |
-          curl -L https://foundry.paradigm.xyz | bash
+          ./.github/scripts/setup-foundryup.sh
           echo "$HOME/.foundry/bin" >> $GITHUB_PATH
 
       - name: Install hyperfine
