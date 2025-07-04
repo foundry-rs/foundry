@@ -17,6 +17,8 @@ FOUNDRYUP_JOBS=""
 FOUNDRYUP_IGNORE_VERIFICATION=false
 
 BINS=(forge cast anvil chisel)
+HASH_NAMES=()
+HASH_VALUES=()
 
 export RUSTFLAGS="${RUSTFLAGS:--C target-cpu=native}"
 
@@ -192,9 +194,6 @@ main() {
         payload_b64=$(awk '/"payload":/ {gsub(/[",]/, "", $2); print $2; exit}' "$tmp")
         payload_json=$(printf '%s' "$payload_b64" | base64 -d 2>/dev/null || printf '%s' "$payload_b64" | base64 -D)
 
-        # Declare an associative array to hold the names and hashes of the binaries.
-        # This allows us to easily check if the binaries are already installed and match the expected hashes.
-        declare -A HASHES
 
         # Extract the names and hashes from the payload JSON.
         # The payload is expected to be a JSON array of objects with "name" and "sha256" fields.
@@ -202,7 +201,8 @@ main() {
           name=$(echo "$name_line" | sed -nE 's/.*"name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')
           sha=$(echo "$sha_line"  | sed -nE 's/.*"sha256"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')
           if [ -n "$name" ] && [ -n "$sha" ]; then
-            HASHES["$name"]="$sha"
+            HASH_NAMES+=("$name")
+            HASH_VALUES+=("$sha")
           fi
         done < <(echo "$payload_json" | tr '{}' '\n' | grep -E '"name"|sha256')
 
@@ -215,7 +215,14 @@ main() {
         version_dir="$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
         all_match=true
         for bin in "${BINS[@]}"; do
-          expected="${HASHES[$bin]}"
+          expected=""
+          for i in "${!HASH_NAMES[@]}"; do
+            if [ "${HASH_NAMES[$i]}" = "$bin" ]; then
+              expected="${HASH_VALUES[$i]}"
+              break
+            fi
+          done
+
           path="$version_dir/$bin"
 
           if [ -z "$expected" ] || [ ! -x "$path" ]; then
@@ -281,7 +288,14 @@ main() {
 
         failed=false
         for bin in "${BINS[@]}"; do
-          expected="${HASHES[$bin]}"
+          expected=""
+          for i in "${!HASH_NAMES[@]}"; do
+            if [ "${HASH_NAMES[$i]}" = "$bin" ]; then
+              expected="${HASH_VALUES[$i]}"
+              break
+            fi
+          done
+
           path="$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG/$bin"
 
           if [ -z "$expected" ]; then
