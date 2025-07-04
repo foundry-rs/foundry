@@ -240,13 +240,13 @@ pub fn format_duration_seconds(seconds: f64) -> String {
     if seconds < 0.001 {
         format!("{:.2} ms", seconds * 1000.0)
     } else if seconds < 1.0 {
-        format!("{:.3} s", seconds)
+        format!("{seconds:.3} s")
     } else if seconds < 60.0 {
-        format!("{:.2} s", seconds)
+        format!("{seconds:.2} s")
     } else {
         let minutes = (seconds / 60.0).floor();
         let remaining_seconds = seconds % 60.0;
-        format!("{:.0}m {:.1}s", minutes, remaining_seconds)
+        format!("{minutes:.0}m {remaining_seconds:.1}s")
     }
 }
 

@@ -154,7 +154,7 @@ fn main() -> Result<()> {
                 );
 
                 // Setup a fresh project for this specific benchmark
-                let project = foundry_bench::BenchmarkProject::setup(&repo_config).wrap_err(
+                let project = foundry_bench::BenchmarkProject::setup(repo_config).wrap_err(
                     format!("Failed to setup project for {}/{}", repo_config.org, repo_config.repo),
                 )?;
 

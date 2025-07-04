@@ -204,6 +204,7 @@ impl BenchmarkProject {
     /// * `--export-json` - Export results to JSON for parsing
     /// * `--shell=bash` - Use bash for shell command execution
     /// * `--show-output` - Show command output (when verbose)
+    #[allow(clippy::too_many_arguments)]
     fn hyperfine(
         &self,
         benchmark_name: &str,
@@ -221,7 +222,7 @@ impl BenchmarkProject {
             temp_dir.join("foundry-bench").join(benchmark_name).join(version).join(&self.name);
         std::fs::create_dir_all(&json_dir)?;
 
-        let json_path = json_dir.join(format!("{}.json", benchmark_name));
+        let json_path = json_dir.join(format!("{benchmark_name}.json"));
 
         // Build hyperfine command
         let mut hyperfine_cmd = Command::new("hyperfine");
@@ -445,7 +446,7 @@ pub fn get_forge_version_details() -> Result<String> {
         let short_commit = &commit[..7]; // First 7 chars of commit hash
         let date = timestamp.split('T').next().unwrap_or(&timestamp);
 
-        Ok(format!("{} ({} {})", version, short_commit, date))
+        Ok(format!("{version} ({short_commit} {date})"))
     } else {
         // Fallback to just the first line if format is unexpected
         Ok(lines.first().unwrap_or(&"unknown").to_string())
