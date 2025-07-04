@@ -90,7 +90,6 @@ pub fn default_benchmark_repos() -> Vec<RepoConfig> {
 // Keep a lazy static for compatibility
 pub static BENCHMARK_REPOS: Lazy<Vec<RepoConfig>> = Lazy::new(default_benchmark_repos);
 
-
 /// Foundry versions to benchmark
 ///
 /// To add more versions for comparison, install them first:
@@ -188,7 +187,7 @@ impl BenchmarkProject {
     }
 
     /// Run a command with hyperfine and return the results
-    /// 
+    ///
     /// # Arguments
     /// * `benchmark_name` - Name of the benchmark for organizing output
     /// * `version` - Foundry version being benchmarked
@@ -197,7 +196,7 @@ impl BenchmarkProject {
     /// * `setup` - Optional setup command to run before the benchmark series (e.g., "forge build")
     /// * `conclude` - Optional conclude command to run after each timing run (e.g., cleanup)
     /// * `verbose` - Whether to show command output
-    /// 
+    ///
     /// # Hyperfine flags used:
     /// * `--runs` - Number of timing runs
     /// * `--setup` - Execute before the benchmark series (not before each run)
@@ -218,13 +217,10 @@ impl BenchmarkProject {
         // Create structured temp directory for JSON output
         // Format: <temp_dir>/<benchmark_name>/<version>/<repo_name>/<benchmark_name>.json
         let temp_dir = std::env::temp_dir();
-        let json_dir = temp_dir
-            .join("foundry-bench")
-            .join(benchmark_name)
-            .join(version)
-            .join(&self.name);
+        let json_dir =
+            temp_dir.join("foundry-bench").join(benchmark_name).join(version).join(&self.name);
         std::fs::create_dir_all(&json_dir)?;
-        
+
         let json_path = json_dir.join(format!("{}.json", benchmark_name));
 
         // Build hyperfine command
@@ -269,27 +265,62 @@ impl BenchmarkProject {
         output.results.into_iter().next().ok_or_else(|| eyre::eyre!("No results from hyperfine"))
     }
 
-
     /// Benchmark forge test
-    pub fn bench_forge_test(&self, version: &str, runs: u32, verbose: bool) -> Result<HyperfineResult> {
+    pub fn bench_forge_test(
+        &self,
+        version: &str,
+        runs: u32,
+        verbose: bool,
+    ) -> Result<HyperfineResult> {
         // Build before running tests
-        self.hyperfine("forge_test", version, "forge test", runs, Some("forge build"), None, verbose)
+        self.hyperfine(
+            "forge_test",
+            version,
+            "forge test",
+            runs,
+            Some("forge build"),
+            None,
+            verbose,
+        )
     }
 
     /// Benchmark forge build with cache
-    pub fn bench_forge_build_with_cache(&self, version: &str, runs: u32, verbose: bool) -> Result<HyperfineResult> {
+    pub fn bench_forge_build_with_cache(
+        &self,
+        version: &str,
+        runs: u32,
+        verbose: bool,
+    ) -> Result<HyperfineResult> {
         // No setup needed, uses existing cache
         self.hyperfine("forge_build_with_cache", version, "forge build", runs, None, None, verbose)
     }
 
     /// Benchmark forge build without cache
-    pub fn bench_forge_build_no_cache(&self, version: &str, runs: u32, verbose: bool) -> Result<HyperfineResult> {
+    pub fn bench_forge_build_no_cache(
+        &self,
+        version: &str,
+        runs: u32,
+        verbose: bool,
+    ) -> Result<HyperfineResult> {
         // Clean before the benchmark series
-        self.hyperfine("forge_build_no_cache", version, "forge build", runs, Some("forge clean"), None, verbose)
+        self.hyperfine(
+            "forge_build_no_cache",
+            version,
+            "forge build",
+            runs,
+            Some("forge clean"),
+            None,
+            verbose,
+        )
     }
 
     /// Benchmark forge fuzz tests
-    pub fn bench_forge_fuzz_test(&self, version: &str, runs: u32, verbose: bool) -> Result<HyperfineResult> {
+    pub fn bench_forge_fuzz_test(
+        &self,
+        version: &str,
+        runs: u32,
+        verbose: bool,
+    ) -> Result<HyperfineResult> {
         // Build before running fuzz tests
         self.hyperfine(
             "forge_fuzz_test",
@@ -303,10 +334,23 @@ impl BenchmarkProject {
     }
 
     /// Benchmark forge coverage
-    pub fn bench_forge_coverage(&self, version: &str, runs: u32, verbose: bool) -> Result<HyperfineResult> {
+    pub fn bench_forge_coverage(
+        &self,
+        version: &str,
+        runs: u32,
+        verbose: bool,
+    ) -> Result<HyperfineResult> {
         // No setup needed, forge coverage builds internally
         // Use --ir-minimum to avoid "Stack too deep" errors
-        self.hyperfine("forge_coverage", version, "forge coverage --ir-minimum", runs, None, None, verbose)
+        self.hyperfine(
+            "forge_coverage",
+            version,
+            "forge coverage --ir-minimum",
+            runs,
+            None,
+            None,
+            verbose,
+        )
     }
 
     /// Get the root path of the project
@@ -315,7 +359,13 @@ impl BenchmarkProject {
     }
 
     /// Run a specific benchmark by name
-    pub fn run(&self, benchmark: &str, version: &str, runs: u32, verbose: bool) -> Result<HyperfineResult> {
+    pub fn run(
+        &self,
+        benchmark: &str,
+        version: &str,
+        runs: u32,
+        verbose: bool,
+    ) -> Result<HyperfineResult> {
         match benchmark {
             "forge_test" => self.bench_forge_test(version, runs, verbose),
             "forge_build_no_cache" => self.bench_forge_build_no_cache(version, runs, verbose),
@@ -390,11 +440,11 @@ pub fn get_forge_version_details() -> Result<String> {
         let version = lines[0].trim();
         let commit = lines[1].trim().replace("Commit SHA: ", "");
         let timestamp = lines[2].trim().replace("Build Timestamp: ", "");
-        
+
         // Format as: "forge 1.2.3-nightly (51650ea 2025-06-27)"
         let short_commit = &commit[..7]; // First 7 chars of commit hash
         let date = timestamp.split('T').next().unwrap_or(&timestamp);
-        
+
         Ok(format!("{} ({} {})", version, short_commit, date))
     } else {
         // Fallback to just the first line if format is unexpected

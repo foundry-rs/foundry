@@ -205,51 +205,11 @@ jobs:
           merge-multiple: true
 
       - name: Combine benchmark results
-        run: |
-          # Combine all benchmark results into LATEST.md
-          echo "# Foundry Benchmark Results" > benches/LATEST.md
-          echo "" >> benches/LATEST.md
-          echo "Generated at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> benches/LATEST.md
-          echo "" >> benches/LATEST.md
+        run: ./.github/scripts/combine-benchmarks.sh benches
 
-          # Add each benchmark result if it exists
-          for bench in forge_test_bench forge_build_bench forge_coverage_bench; do
-            if [ -f "benches/${bench}.md" ]; then
-              # Skip the header from individual files and append content
-              tail -n +2 "benches/${bench}.md" >> benches/LATEST.md
-              echo "" >> benches/LATEST.md
-            fi
-          done
-
-      - name: Commit benchmark results
-        if: github.event_name != 'pull_request'
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add benches/LATEST.md benches/forge_test_bench.md benches/forge_build_bench.md benches/forge_coverage_bench.md
-          if git diff --staged --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "chore(\`benches\`): update benchmark results
-
-            🤖 Generated with [Foundry Benchmarks](https://github.com/${{ github.repository }}/actions)
-            
-            Co-Authored-By: github-actions <github-actions@github.com>"
-            git push
-          fi
-
-      - name: Read benchmark results
+      - name: Commit and read benchmark results
         id: benchmark_results
-        run: |
-          if [ -f "benches/LATEST.md" ]; then
-            {
-              echo 'results<<EOF'
-              cat benches/LATEST.md
-              echo 'EOF'
-            } >> $GITHUB_OUTPUT
-          else
-            echo 'results=No benchmark results found.' >> $GITHUB_OUTPUT
-          fi
+        run: ./.github/scripts/commit-and-read-benchmarks.sh benches "${{ github.event_name }}" "${{ github.repository }}"
 
       - name: Comment on PR
         if: github.event.inputs.pr_number != '' || github.event_name == 'pull_request'
