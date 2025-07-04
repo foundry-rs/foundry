@@ -8,7 +8,7 @@ use std::{collections::HashMap, process::Command};
 pub struct HyperfineResult {
     pub command: String,
     pub mean: f64,
-    pub stddev: f64,
+    pub stddev: Option<f64>,
     pub median: f64,
     pub user: f64,
     pub system: f64,

@@ -1,6 +1,6 @@
 # Foundry Benchmark Results
 
-**Date**: 2025-06-30 17:23:42
+**Date**: 2025-07-04 11:14:10
 
 ## Summary
 
@@ -13,29 +13,29 @@ Benchmarked 2 Foundry versions across 2 repositories.
 
 ### Foundry Versions
 
-- stable
-- nightly
+- **stable**: forge Version: 1.2.3-stable (a813a2c 2025-06-08)
+- **nightly**: forge Version: 1.2.3-nightly (51650ea 2025-06-27)
 
-## Forge Build Performance (With Cache)
-
-| Repository        | stable    | nightly   |
-| ----------------- | --------- | --------- |
-| ithacaxyz-account | 227.20 ms | 263.73 ms |
-| solady            | 148.77 ms | 192.25 ms |
-
-## Forge Test Performance
+## Forge Test
 
 | Repository        | stable | nightly |
 | ----------------- | ------ | ------- |
-| ithacaxyz-account | 4.88 s | 4.37 s  |
-| solady            | 3.45 s | 3.43 s  |
+| ithacaxyz-account | 4.07 s | 4.39 s  |
+| solady            | 3.93 s | 5.26 s  |
 
-## Forge Build Performance (No Cache)
+## Forge Build (With Cache)
 
-| Repository        | stable  | nightly |
-| ----------------- | ------- | ------- |
-| ithacaxyz-account | 16.35 s | 13.85 s |
-| solady            | 15.27 s | 15.12 s |
+| Repository        | stable | nightly |
+| ----------------- | ------ | ------- |
+| ithacaxyz-account | 2.02 s | 4.96 s  |
+| solady            | 3.22 s | 3.66 s  |
+
+## Forge Build (No Cache)
+
+| Repository        | stable | nightly |
+| ----------------- | ------ | ------- |
+| ithacaxyz-account | 3.54 s | 3.18 s  |
+| solady            | 5.36 s | 3.71 s  |
 
 ## System Information
 

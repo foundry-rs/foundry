@@ -1,10 +1,10 @@
 # Foundry Benchmark Results
 
-**Date**: 2025-07-01 17:32:13
+**Date**: 2025-07-04 11:37:27
 
 ## Summary
 
-Benchmarked 1 Foundry versions across 1 repositories.
+Benchmarked 2 Foundry versions across 1 repositories.
 
 ### Repositories Tested
 
@@ -12,13 +12,14 @@ Benchmarked 1 Foundry versions across 1 repositories.
 
 ### Foundry Versions
 
-- nightly
+- **stable**: forge Version: 1.2.3-stable (a813a2c 2025-06-08)
+- **nightly**: forge Version: 1.2.3-nightly (51650ea 2025-06-27)
 
 ## Forge Coverage
 
-| Repository        | nightly |
-| ----------------- | ------- |
-| ithacaxyz-account | 25.54 s |
+| Repository        | stable  | nightly |
+| ----------------- | ------- | ------- |
+| ithacaxyz-account | 26.44 s | 32.34 s |
 
 ## System Information
 

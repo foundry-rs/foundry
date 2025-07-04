@@ -59,7 +59,7 @@ jobs:
         run: |
           VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
           REPOS="${{ github.event.inputs.repos || 'ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22' }}"
-          
+
           ./target/release/foundry-bench --output-dir ./benches --force-install \
             --versions $VERSIONS \
             --repos $REPOS \
@@ -70,7 +70,7 @@ jobs:
         run: |
           VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
           REPOS="${{ github.event.inputs.repos || 'ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22' }}"
-          
+
           ./target/release/foundry-bench --output-dir ./benches --force-install \
             --versions $VERSIONS \
             --repos $REPOS \
@@ -81,7 +81,7 @@ jobs:
         run: |
           VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
           REPOS="${{ github.event.inputs.repos || 'ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22' }}"
-          
+
           ./target/release/foundry-bench --output-dir ./benches --force-install \
             --versions $VERSIONS \
             --repos $REPOS \
@@ -95,7 +95,7 @@ jobs:
           echo "" >> benches/LATEST.md
           echo "Generated at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> benches/LATEST.md
           echo "" >> benches/LATEST.md
-          
+
           # Add each benchmark result if it exists
           for bench in forge_test forge_build_no_cache forge_build_with_cache; do
             if [ -f "benches/${bench}.md" ]; then

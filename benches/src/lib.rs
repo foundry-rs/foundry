@@ -269,6 +269,7 @@ impl BenchmarkProject {
         output.results.into_iter().next().ok_or_else(|| eyre::eyre!("No results from hyperfine"))
     }
 
+
     /// Benchmark forge test
     pub fn bench_forge_test(&self, version: &str, runs: u32, verbose: bool) -> Result<HyperfineResult> {
         // Build before running tests
@@ -304,7 +305,8 @@ impl BenchmarkProject {
     /// Benchmark forge coverage
     pub fn bench_forge_coverage(&self, version: &str, runs: u32, verbose: bool) -> Result<HyperfineResult> {
         // No setup needed, forge coverage builds internally
-        self.hyperfine("forge_coverage", version, "forge coverage", runs, None, None, verbose)
+        // Use --ir-minimum to avoid "Stack too deep" errors
+        self.hyperfine("forge_coverage", version, "forge coverage --ir-minimum", runs, None, None, verbose)
     }
 
     /// Get the root path of the project

@@ -78,7 +78,6 @@ fn main() -> Result<()> {
         FOUNDRY_VERSIONS.iter().map(|&s| s.to_string()).collect()
     };
 
-
     // Get repo configurations
     let repos = if let Some(repo_specs) = cli.repos.clone() {
         repo_specs
@@ -128,7 +127,7 @@ fn main() -> Result<()> {
         // Verify the switch and capture full version details
         let current = get_forge_version()?;
         sh_println!("Current version: {}", current.trim());
-        
+
         // Get and store the full version details with commit hash and date
         let version_details = get_forge_version_details()?;
         results.add_version_details(version, version_details);
@@ -147,12 +146,18 @@ fn main() -> Result<()> {
         let version_results = benchmark_tasks
             .par_iter()
             .map(|(repo_config, benchmark)| -> Result<(String, String, HyperfineResult)> {
-                sh_println!("Setting up {}/{} for {}", repo_config.org, repo_config.repo, benchmark);
-                
+                sh_println!(
+                    "Setting up {}/{} for {}",
+                    repo_config.org,
+                    repo_config.repo,
+                    benchmark
+                );
+
                 // Setup a fresh project for this specific benchmark
-                let project = foundry_bench::BenchmarkProject::setup(&repo_config)
-                    .wrap_err(format!("Failed to setup project for {}/{}", repo_config.org, repo_config.repo))?;
-                
+                let project = foundry_bench::BenchmarkProject::setup(&repo_config).wrap_err(
+                    format!("Failed to setup project for {}/{}", repo_config.org, repo_config.repo),
+                )?;
+
                 sh_println!("Running {} on {}/{}", benchmark, repo_config.org, repo_config.repo);
 
                 // Determine runs based on benchmark type
@@ -172,12 +177,18 @@ fn main() -> Result<()> {
                             repo_config.org,
                             repo_config.repo,
                             hyperfine_result.mean,
-                            hyperfine_result.stddev
+                            hyperfine_result.stddev.unwrap_or(0.0)
                         );
                         Ok((repo_config.name.clone(), benchmark.clone(), hyperfine_result))
                     }
                     Err(e) => {
-                        eyre::bail!("Benchmark {} failed for {}/{}: {}", benchmark, repo_config.org, repo_config.repo, e);
+                        eyre::bail!(
+                            "Benchmark {} failed for {}/{}: {}",
+                            benchmark,
+                            repo_config.org,
+                            repo_config.repo,
+                            e
+                        );
                     }
                 }
             })
