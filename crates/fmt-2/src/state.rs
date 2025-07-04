@@ -101,6 +101,11 @@ impl<'sess> State<'sess, '_> {
     }
 
     fn print_comment(&mut self, mut cmnt: Comment, with_space: bool) {
+        // // DEBUG
+        // if !cmnt.style.is_blank() {
+        //     println!("{cmnt:?}");
+        //     println!(" > BOL? {}\n", self.is_bol_or_only_ind());
+        // }
         match cmnt.style {
             CommentStyle::Mixed => {
                 let never_break = self.last_token_is_neverbreak();
@@ -263,8 +268,7 @@ impl<'sess> State<'sess, '_> {
             if let Some(span) = get_span(&values[0]) {
                 self.print_comments(span.lo());
             }
-            self.word("(");
-            print(self, &values[0]);
+
             self.word(")");
             return;
         }
@@ -301,8 +305,13 @@ impl<'sess> State<'sess, '_> {
             return;
         }
 
+        // TODO(rusowsky): this should be false for expressions, as they have sub-items and break
+        // themselves (see IF, WHILE, DO-WHILE)
+        let is_single_without_cmnts =
+            values.len() == 1 && self.peek_comment_before(pos_hi).is_none();
+
         self.s.cbox(self.ind);
-        let mut skip_first_break = false;
+        let mut skip_first_break = is_single_without_cmnts;
         if let Some(first_pos) = get_span(&values[0]).map(Span::lo) {
             if format.breaks_comments() && self.peek_comment_before(first_pos).is_some() {
                 // If cmnts should break + comment before the 1st item, force hardbreak.
@@ -320,12 +329,10 @@ impl<'sess> State<'sess, '_> {
             self.s.cbox(0);
         }
 
-        let mut skip_last_break = false;
+        let mut skip_last_break = is_single_without_cmnts;
         for (i, value) in values.iter().enumerate() {
             let is_last = i == values.len() - 1;
             let span = get_span(value);
-
-            // <cmnt> box(<value><cmnt>)
             if let Some(span) = span {
                 if self
                     .print_cmnts_with_space_skip_ws(span.lo())
@@ -683,9 +690,7 @@ impl<'ast> State<'_, 'ast> {
             ..
         } = *header;
 
-        self.cbox(0);
         self.s.cbox(self.ind);
-        // let fn_start_indent = self.s.current_indent();
 
         // Print fn name and params
         self.word(kind.to_str());
@@ -693,8 +698,6 @@ impl<'ast> State<'_, 'ast> {
             self.nbsp();
             self.print_ident(&name);
         }
-        // TODO(ask dani): unable to keep single param from breaking brackets when the attributes do
-        // break.
         self.s.cbox(-self.ind);
         self.print_parameter_list(parameters, parameters.span, ListFormat::Consistent(true));
         self.end();
@@ -719,7 +722,12 @@ impl<'ast> State<'_, 'ast> {
             is_first = false;
         }
         if let Some(o) = override_ {
-            self.print_fn_attribute(o.span, &mut map, &mut |s| s.print_override(o), is_first);
+            self.print_fn_attribute(
+                o.span,
+                &mut map,
+                &mut |s| s.print_override(o),
+                is_first && o.paths.is_empty(),
+            );
             is_first = false;
         }
         for m in attributes.iter().filter(|a| matches!(a.kind, AttributeKind::Modifier(_))) {
@@ -742,37 +750,27 @@ impl<'ast> State<'_, 'ast> {
             self.print_parameter_list(returns, returns.span, ListFormat::Consistent(false));
         }
         self.print_comments_skip_ws(body_span.lo());
-        self.end();
 
         // Print fn body
-        // TODO(ask dani): print manually-handling braces? (requires current indentation)
         if let Some(body) = body {
-            // let current_indent = self.s.current_indent();
-            // let new_line = current_indent > fn_start_indent;
-            // if !new_line {
-            // self.nbsp();
-            // self.word("{");
-            // self.end();
-            // if !body.is_empty() {
-            //     self.hardbreak();
-            // }
-            // } else {
-            // self.space();
-            // self.s.offset(-self.ind);
-            // self.word("{");
-            // self.end();
-            // }
-            self.end();
             self.space();
-            self.end();
-            // self.print_block_without_braces(body, body_span, new_line);
-            self.print_block(body, body_span);
-            // self.word("}");
+            self.s.offset(-self.ind);
+            if !body.is_empty() {
+                self.word("{");
+                self.end();
+                self.end();
+                self.print_block_without_braces(body, body_span, self.ind);
+                self.word("}");
+            } else {
+                // it may have comments
+                self.end();
+                self.end();
+                self.print_block(body, body_span);
+            }
         } else {
             self.end();
-            self.neverbreak();
-            self.s.offset(-self.ind);
             self.end();
+            self.neverbreak();
             self.word(";");
         }
 
@@ -1658,7 +1656,7 @@ impl<'ast> State<'_, 'ast> {
                         self.word("catch ");
                         self.neverbreak();
                         if !args.is_empty() {
-                            self.print_comments(args[0].span.lo());
+                            self.print_cmnts_with_space_skip_ws(args[0].span.lo());
                             if let Some(name) = name {
                                 self.print_ident(name);
                             }
@@ -1682,8 +1680,6 @@ impl<'ast> State<'_, 'ast> {
                 self.print_if_cond("while", cond, stmt.span.lo());
                 self.nbsp();
                 self.end();
-                // TODO: handle braces manually
-                // self.print_stmt_as_block(stmt, BlockFormat::NoBraces(false));
                 self.print_stmt_as_block(stmt, BlockFormat::Compact(true));
             }
             ast::StmtKind::Placeholder => self.word("_"),
@@ -1704,7 +1700,7 @@ impl<'ast> State<'_, 'ast> {
 
     fn print_if_cond(&mut self, kw: &'static str, cond: &'ast ast::Expr<'ast>, pos_hi: BytePos) {
         self.word_nbsp(kw);
-        // TODO(ask dani): how to prevent expressions from always breaking the parenthesis
+        // TODO(ask dani): prevent exprs from always breaking the brackets (i.e. While test)
         self.print_tuple(
             std::slice::from_ref(cond),
             cond.span.lo(),
@@ -1734,11 +1730,11 @@ impl<'ast> State<'_, 'ast> {
         &mut self,
         block: &'ast [ast::Stmt<'ast>],
         span: Span,
-        new_line: bool,
+        offset: isize,
     ) {
         self.print_block_inner(
             block,
-            BlockFormat::NoBraces(new_line),
+            BlockFormat::NoBraces(offset),
             Self::print_stmt,
             |b| b.span,
             span,
@@ -1778,22 +1774,8 @@ impl<'ast> State<'_, 'ast> {
         mut get_block_span: impl FnMut(&'ast T) -> Span,
         span: Span,
     ) {
-        // Braces are explicitly handled by the caller
-        if let BlockFormat::NoBraces(new_line) = block_format {
-            if new_line {
-                self.hardbreak_if_nonempty();
-            }
-            for stmt in block {
-                print(self, stmt);
-                self.hardbreak_if_not_bol();
-            }
-            self.print_comments_skip_ws(block.last().map_or(span.hi(), |b| get_block_span(b).hi()));
-        }
         // Attempt to print in a single line
-        else if block_format.attempt_single_line() &&
-            block.len() == 1 &&
-            self.single_line_block(span)
-        {
+        if block_format.attempt_single_line() && block.len() == 1 && self.single_line_block(span) {
             self.s.cbox(self.ind);
             if matches!(block_format, BlockFormat::Compact(true)) {
                 self.scan_break(BreakToken { pre_break: Some('{'), ..Default::default() });
@@ -1812,9 +1794,11 @@ impl<'ast> State<'_, 'ast> {
                 self.word("}");
             }
             self.end();
+            return;
         }
+
         // Empty blocks with comments require special attention
-        else if block.is_empty() {
+        if block.is_empty() {
             if let Some(comment) = self.peek_comment() {
                 if comment.style.is_trailing() {
                     self.word("{}");
@@ -1822,7 +1806,7 @@ impl<'ast> State<'_, 'ast> {
                 } else {
                     self.word("{");
                     self.s.cbox(self.ind);
-                    self.print_comments_skip_ws(span.hi());
+                    self.print_cmnts_with_space_skip_ws(span.hi());
                     // manually adjust offset to ensure that the closing brace is properly indented.
                     // if the last cmnt was breaking, we replace offset to avoid e a double //
                     // break.
@@ -1837,19 +1821,32 @@ impl<'ast> State<'_, 'ast> {
             } else {
                 self.word("{}");
             }
+            return;
         }
-        // Regular blocks
-        else {
+
+        if let BlockFormat::NoBraces(offset) = block_format {
+            // Braces are explicitly handled by the caller
+            if !block.is_empty() {
+                self.zerobreak();
+                self.s.offset(offset);
+            }
+            self.s.cbox(self.ind);
+        } else {
+            // Regular blocks
             self.word("{");
             self.s.cbox(self.ind);
             self.hardbreak_if_nonempty();
-            for stmt in block {
-                print(self, stmt);
-                self.hardbreak_if_not_bol();
-            }
-            self.print_comments_skip_ws(block.last().map_or(span.hi(), |b| get_block_span(b).hi()));
-            self.s.offset(-self.ind);
-            self.end();
+        }
+        for stmt in block {
+            print(self, stmt);
+            self.hardbreak_if_not_bol();
+        }
+        self.print_cmnts_with_space_skip_ws(
+            block.last().map_or(span.hi(), |b| get_block_span(b).hi()),
+        );
+        self.s.offset(-self.ind);
+        self.end();
+        if block_format.with_braces() {
             self.word("}");
         }
     }
@@ -2127,12 +2124,16 @@ pub(crate) enum BlockFormat {
     /// Attempts to fit all elements in one line, before breaking consistently. Flags whether to
     /// use braces or not.
     Compact(bool),
-    /// Prints blocks without braces. Flags whether the block starts at a new line or not.
-    /// Usefull for complex box/break setups.
-    NoBraces(bool),
+    /// Doesn't print braces. Flags the offset that should be applied before opening the block box.
+    /// Usefull when the caller needs to manually handle the braces.
+    NoBraces(isize),
 }
 
 impl BlockFormat {
+    pub(crate) fn with_braces(&self) -> bool {
+        !matches!(self, Self::NoBraces(_))
+    }
+
     pub(crate) fn attempt_single_line(&self) -> bool {
         matches!(self, Self::Compact(_))
     }
