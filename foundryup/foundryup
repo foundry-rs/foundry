@@ -276,7 +276,7 @@ main() {
       say 'skipping manpage download: missing "tar"'
     fi
     
-    if [ -n "$FOUNDRYUP_IGNORE_VERIFICATION" ]; then
+    if [ "$FOUNDRYUP_IGNORE_VERIFICATION" = true ]; then
       say "skipped SHA verification for downloaded binaries due to --force flag"
     else 
       # Verify the downloaded binaries against the attestation file.
