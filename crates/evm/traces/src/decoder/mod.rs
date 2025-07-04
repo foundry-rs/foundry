@@ -650,6 +650,13 @@ impl CallTraceDecoder {
 
     /// The default decoded return data for a trace.
     fn default_return_data(&self, trace: &CallTrace) -> Option<String> {
+        // For calls with status None or successful status, don't decode revert data
+        // This is due to trace.status is derived from the revm_interpreter::InstructionResult in
+        // revm-inspectors status will `None` post revm 27, as `InstructionResult::Continue` does
+        // not exists anymore.
+        if trace.status.is_none() || trace.status.is_some_and(|s| s.is_ok()) {
+            return None;
+        }
         (!trace.success).then(|| self.revert_decoder.decode(&trace.output, trace.status))
     }
 
