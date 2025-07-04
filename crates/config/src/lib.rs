@@ -1286,6 +1286,14 @@ impl Config {
             return Some(Ok(Cow::Owned(endpoint.url)));
         }
 
+        if maybe_alias.chars().all(|c| c.is_numeric()) {
+            // try to lookup the mesc network by chain id if alias is numeric
+            if let Ok(Some(endpoint)) = mesc::get_endpoint_by_network(maybe_alias, Some("foundry"))
+            {
+                return Some(Ok(Cow::Owned(endpoint.url)));
+            }
+        }
+
         None
     }
 
