@@ -1317,11 +1317,11 @@ latest block number: {latest_block}"
 
         // This will spawn the background thread that will use the provider to fetch
         // blockchain data from the other client
-        let backend = SharedBackend::spawn_backend_thread(
+        let backend = SharedBackend::spawn_backend(
             Arc::clone(&provider),
             block_chain_db.clone(),
             Some(fork_block_number.into()),
-        );
+        ).await;
 
         let config = ClientForkConfig {
             eth_rpc_url,
