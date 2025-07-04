@@ -1321,7 +1321,8 @@ latest block number: {latest_block}"
             Arc::clone(&provider),
             block_chain_db.clone(),
             Some(fork_block_number.into()),
-        ).await;
+        )
+        .await;
 
         let config = ClientForkConfig {
             eth_rpc_url,
