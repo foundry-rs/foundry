@@ -2,9 +2,9 @@ use crate::{
     executors::{Executor, RawCallResult},
     inspectors::Fuzzer,
 };
-use alloy_primitives::{map::HashMap, Address, Bytes, FixedBytes, Selector, U256};
-use alloy_sol_types::{sol, SolCall};
-use eyre::{eyre, ContextCompat, Result};
+use alloy_primitives::{Address, Bytes, FixedBytes, Selector, U256, map::HashMap};
+use alloy_sol_types::{SolCall, sol};
+use eyre::{ContextCompat, Result, eyre};
 use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::InvariantConfig;
 use foundry_evm_core::{
@@ -14,12 +14,12 @@ use foundry_evm_core::{
     precompiles::PRECOMPILES,
 };
 use foundry_evm_fuzz::{
+    FuzzCase, FuzzFixtures, FuzzedCases,
     invariant::{
         ArtifactFilters, BasicTxDetails, FuzzRunIdentifiedContracts, InvariantContract,
         RandomCallGenerator, SenderFilters, TargetedContract, TargetedContracts,
     },
-    strategies::{invariant_strat, override_call_strat, EvmFuzzState},
-    FuzzCase, FuzzFixtures, FuzzedCases,
+    strategies::{EvmFuzzState, invariant_strat, override_call_strat},
 };
 use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use indicatif::ProgressBar;
@@ -30,7 +30,7 @@ use revm::state::Account;
 use shrink::shrink_sequence;
 use std::{
     cell::RefCell,
-    collections::{btree_map::Entry, HashMap as Map},
+    collections::{HashMap as Map, btree_map::Entry},
     sync::Arc,
 };
 
@@ -49,7 +49,7 @@ use serde::{Deserialize, Serialize};
 mod corpus;
 
 mod shrink;
-use crate::executors::{invariant::corpus::TxCorpusManager, EvmError, FuzzTestTimer};
+use crate::executors::{EvmError, FuzzTestTimer, invariant::corpus::TxCorpusManager};
 pub use shrink::check_sequence;
 
 sol! {
@@ -346,7 +346,7 @@ impl<'a> InvariantExecutor<'a> {
         let continue_campaign = |runs: u32| {
             // If timeout is configured, then perform invariant runs until expires.
             if self.config.timeout.is_some() {
-                return !timer.is_timed_out()
+                return !timer.is_timed_out();
             }
             // If no timeout configured then loop until configured runs.
             runs < self.config.runs
@@ -365,7 +365,7 @@ impl<'a> InvariantExecutor<'a> {
 
             // We stop the run immediately if we have reverted, and `fail_on_revert` is set.
             if self.config.fail_on_revert && invariant_test.reverts() > 0 {
-                return Err(eyre!("call reverted"))
+                return Err(eyre!("call reverted"));
             }
 
             while current_run.depth < self.config.depth {
@@ -404,8 +404,8 @@ impl<'a> InvariantExecutor<'a> {
                 invariant_test.merge_coverage(call_result.line_coverage.clone());
                 // If coverage guided fuzzing is enabled then merge edge count with current history
                 // map and set new coverage in current run.
-                if self.config.corpus_dir.is_some() &&
-                    call_result.merge_edge_coverage(&mut self.history_map)
+                if self.config.corpus_dir.is_some()
+                    && call_result.merge_edge_coverage(&mut self.history_map)
                 {
                     current_run.new_coverage = true;
                 }
@@ -598,7 +598,7 @@ impl<'a> InvariantExecutor<'a> {
             &mut failures,
         )?;
         if let Some(error) = failures.error {
-            return Err(eyre!(error.revert_reason().unwrap_or_default()))
+            return Err(eyre!(error.revert_reason().unwrap_or_default()));
         }
 
         let corpus_manager = TxCorpusManager::new(
@@ -667,13 +667,13 @@ impl<'a> InvariantExecutor<'a> {
                 .filter(|func| {
                     !matches!(
                         func.state_mutability,
-                        alloy_json_abi::StateMutability::Pure |
-                            alloy_json_abi::StateMutability::View
+                        alloy_json_abi::StateMutability::Pure
+                            | alloy_json_abi::StateMutability::View
                     )
                 })
-                .count() ==
-                0 &&
-                !self.artifact_filters.excluded.contains(&artifact.identifier())
+                .count()
+                == 0
+                && !self.artifact_filters.excluded.contains(&artifact.identifier())
             {
                 self.artifact_filters.excluded.push(artifact.identifier());
             }
@@ -684,8 +684,8 @@ impl<'a> InvariantExecutor<'a> {
         for contract in targeted_artifacts {
             let identifier = self.validate_selected_contract(contract, &[])?;
 
-            if !self.artifact_filters.targeted.contains_key(&identifier) &&
-                !self.artifact_filters.excluded.contains(&identifier)
+            if !self.artifact_filters.targeted.contains_key(&identifier)
+                && !self.artifact_filters.excluded.contains(&identifier)
             {
                 self.artifact_filters.targeted.insert(identifier, vec![]);
             }
@@ -712,9 +712,11 @@ impl<'a> InvariantExecutor<'a> {
                     .wrap_err(format!("{contract} does not have the selector {selector:?}"))?;
             }
 
-            return Ok(artifact.identifier())
+            return Ok(artifact.identifier());
         }
-        eyre::bail!("{contract} not found in the project. Allowed format: `contract_name` or `contract_path:contract_name`.");
+        eyre::bail!(
+            "{contract} not found in the project. Allowed format: `contract_name` or `contract_path:contract_name`."
+        );
     }
 
     /// Selects senders and contracts based on the contract methods `targetSenders() -> address[]`,
@@ -749,12 +751,12 @@ impl<'a> InvariantExecutor<'a> {
                     return true;
                 }
 
-                *addr != to &&
-                    *addr != CHEATCODE_ADDRESS &&
-                    *addr != HARDHAT_CONSOLE_ADDRESS &&
-                    (selected.is_empty() || selected.contains(addr)) &&
-                    (excluded.is_empty() || !excluded.contains(addr)) &&
-                    self.artifact_filters.matches(identifier)
+                *addr != to
+                    && *addr != CHEATCODE_ADDRESS
+                    && *addr != HARDHAT_CONSOLE_ADDRESS
+                    && (selected.is_empty() || selected.contains(addr))
+                    && (excluded.is_empty() || !excluded.contains(addr))
+                    && self.artifact_filters.matches(identifier)
             })
             .map(|(addr, (identifier, abi))| {
                 (*addr, TargetedContract::new(identifier.clone(), abi.clone()))
@@ -837,8 +839,8 @@ impl<'a> InvariantExecutor<'a> {
                 .filter_map(|func| {
                     if matches!(
                         func.state_mutability,
-                        alloy_json_abi::StateMutability::Pure |
-                            alloy_json_abi::StateMutability::View
+                        alloy_json_abi::StateMutability::Pure
+                            | alloy_json_abi::StateMutability::View
                     ) || func.is_reserved()
                     {
                         None
@@ -883,7 +885,7 @@ impl<'a> InvariantExecutor<'a> {
     ) -> eyre::Result<()> {
         // Do not add address in target contracts if no function selected.
         if selectors.is_empty() {
-            return Ok(())
+            return Ok(());
         }
 
         let contract = match targeted_contracts.entry(address) {

@@ -1,13 +1,13 @@
 use std::fmt::Debug;
 
 use alloy_evm::{
+    Database, Evm,
     eth::EthEvmContext,
     precompiles::{DynPrecompile, PrecompilesMap},
-    Database, Evm,
 };
 use foundry_evm_core::either_evm::EitherEvm;
 use op_revm::OpContext;
-use revm::{precompile::PrecompileWithAddress, Inspector};
+use revm::{Inspector, precompile::PrecompileWithAddress};
 
 /// Object-safe trait that enables injecting extra precompiles when using
 /// `anvil` as a library.
@@ -34,16 +34,17 @@ pub fn inject_precompiles<DB, I>(
 mod tests {
     use std::convert::Infallible;
 
-    use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap, EthEvm, Evm, EvmEnv};
+    use alloy_evm::{EthEvm, Evm, EvmEnv, eth::EthEvmContext, precompiles::PrecompilesMap};
     use alloy_op_evm::OpEvm;
-    use alloy_primitives::{address, Address, Bytes, TxKind, U256};
+    use alloy_primitives::{Address, Bytes, TxKind, U256, address};
     use foundry_evm_core::either_evm::EitherEvm;
     use itertools::Itertools;
-    use op_revm::{precompiles::OpPrecompiles, L1BlockInfo, OpContext, OpSpecId, OpTransaction};
+    use op_revm::{L1BlockInfo, OpContext, OpSpecId, OpTransaction, precompiles::OpPrecompiles};
     use revm::{
+        Journal,
         context::{CfgEnv, Evm as RevmEvm, JournalTr, LocalContext, TxEnv},
         database::{EmptyDB, EmptyDBTyped},
-        handler::{instructions::EthInstructions, EthPrecompiles},
+        handler::{EthPrecompiles, instructions::EthInstructions},
         inspector::NoOpInspector,
         interpreter::interpreter::EthInterpreter,
         precompile::{
@@ -51,10 +52,9 @@ mod tests {
             Precompiles,
         },
         primitives::hardfork::SpecId,
-        Journal,
     };
 
-    use crate::{inject_precompiles, PrecompileFactory};
+    use crate::{PrecompileFactory, inject_precompiles};
 
     // A precompile activated in the `Prague` spec.
     const ETH_PRAGUE_PRECOMPILE: Address = address!("0x0000000000000000000000000000000000000011");

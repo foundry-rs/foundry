@@ -1,5 +1,5 @@
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{map::HashMap, Address, Bytes};
+use alloy_primitives::{Address, Bytes, map::HashMap};
 use foundry_common::ContractsByArtifact;
 use foundry_compilers::ArtifactId;
 use foundry_config::{Chain, Config};

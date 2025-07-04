@@ -102,7 +102,7 @@ fn derive_call(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<T
 /// Generates the `CHEATCODES` constant and implements `CheatcodeImpl` dispatch for an enum.
 fn derive_calls_enum(name: &Ident, input: &syn::DataEnum) -> Result<TokenStream> {
     if input.variants.iter().any(|v| v.fields.len() != 1) {
-        return Err(syn::Error::new(name.span(), "expected all variants to have a single field"))
+        return Err(syn::Error::new(name.span(), "expected all variants to have a single field"));
     }
 
     // keep original order for matching
@@ -135,7 +135,7 @@ fn derive_errors_events_enum(
     events: bool,
 ) -> Result<TokenStream> {
     if input.variants.iter().any(|v| v.fields.len() != 1) {
-        return Err(syn::Error::new(name.span(), "expected all variants to have a single field"))
+        return Err(syn::Error::new(name.span(), "expected all variants to have a single field"));
     }
 
     let (ident, ty_assoc_name, ty, doc) = if events {
@@ -325,14 +325,14 @@ fn get_docstring(attrs: &[Attribute]) -> String {
     let mut doc = String::new();
     for attr in attrs {
         if !attr.path().is_ident("doc") {
-            continue
+            continue;
         }
         let syn::Meta::NameValue(syn::MetaNameValue {
             value: syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }),
             ..
         }) = &attr.meta
         else {
-            continue
+            continue;
         };
 
         let value = s.value();
@@ -406,7 +406,7 @@ fn func_docstring(doc: &str) -> (&str, &str, &str, &str) {
 /// Returns `(visibility, mutability)` from a given Solidity function declaration.
 fn parse_function_attrs(f: &str, span: Span) -> Result<(&str, &str)> {
     let Some(ext_start) = f.find("external") else {
-        return Err(Error::new(span, "functions must have `external` visibility"))
+        return Err(Error::new(span, "functions must have `external` visibility"));
     };
     let visibility = "External";
 
