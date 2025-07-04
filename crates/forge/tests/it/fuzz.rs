@@ -7,7 +7,7 @@ use forge::{
     fuzz::CounterExample,
     result::{SuiteResult, TestStatus},
 };
-use foundry_test_utils::{forgetest_init, str, Filter};
+use foundry_test_utils::{Filter, forgetest_init, str};
 use std::collections::BTreeMap;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -23,10 +23,10 @@ async fn test_fuzz() {
     for (_, SuiteResult { test_results, .. }) in suite_result {
         for (test_name, result) in test_results {
             match test_name.as_str() {
-                "testPositive(uint256)" |
-                "testPositive(int256)" |
-                "testSuccessfulFuzz(uint128,uint128)" |
-                "testToStringFuzz(bytes32)" => assert_eq!(
+                "testPositive(uint256)"
+                | "testPositive(int256)"
+                | "testSuccessfulFuzz(uint128,uint128)"
+                | "testToStringFuzz(bytes32)" => assert_eq!(
                     result.status,
                     TestStatus::Success,
                     "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
@@ -60,9 +60,9 @@ async fn test_successful_fuzz_cases() {
     for (_, SuiteResult { test_results, .. }) in suite_result {
         for (test_name, result) in test_results {
             match test_name.as_str() {
-                "testSuccessChecker(uint256)" |
-                "testSuccessChecker2(int256)" |
-                "testSuccessChecker3(uint32)" => assert_eq!(
+                "testSuccessChecker(uint256)"
+                | "testSuccessChecker2(int256)"
+                | "testSuccessChecker3(uint32)" => assert_eq!(
                     result.status,
                     TestStatus::Success,
                     "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",

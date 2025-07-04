@@ -1,16 +1,16 @@
-use alloy_evm::{eth::EthEvmContext, Database, EthEvm, Evm, EvmEnv};
+use alloy_evm::{Database, EthEvm, Evm, EvmEnv, eth::EthEvmContext};
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{Address, Bytes};
 use op_revm::{OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError};
 use revm::{
+    DatabaseCommit, Inspector,
     context::{
-        result::{EVMError, ExecResultAndState, ExecutionResult, ResultAndState},
         BlockEnv, TxEnv,
+        result::{EVMError, ExecResultAndState, ExecutionResult, ResultAndState},
     },
     handler::PrecompileProvider,
     interpreter::InterpreterResult,
     primitives::hardfork::SpecId,
-    DatabaseCommit, Inspector,
 };
 
 /// Alias for result type returned by [`Evm::transact`] methods.

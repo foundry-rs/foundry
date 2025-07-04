@@ -1,4 +1,4 @@
-use crate::{utils::apply_chain_and_block_specific_env_changes, AsEnvMut, Env, EvmEnv};
+use crate::{AsEnvMut, Env, EvmEnv, utils::apply_chain_and_block_specific_env_changes};
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, U256};
 use alloy_provider::{network::BlockResponse, Network, Provider};

@@ -3,14 +3,14 @@ use crate::provider::VerificationContext;
 use eyre::{Context, Result};
 use foundry_block_explorers::verify::CodeFormat;
 use foundry_compilers::{
+    AggregatedCompilerOutput,
     artifacts::{BytecodeHash, Source, Sources},
     buildinfo::RawBuildInfo,
     compilers::{
-        solc::{SolcCompiler, SolcLanguage, SolcVersionedInput},
         Compiler, CompilerInput,
+        solc::{SolcCompiler, SolcLanguage, SolcVersionedInput},
     },
     solc::Solc,
-    AggregatedCompilerOutput,
 };
 use semver::{BuildMetadata, Version};
 use std::path::Path;

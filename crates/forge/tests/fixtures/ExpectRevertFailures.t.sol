@@ -253,7 +253,7 @@ contract ExpectRevertCountFailureTest is DSTest {
         reverter.revertWithMessage("revert");
     }
 
-    function testShouldFailReverCountSpecifc() public {
+    function testShouldFailRevertCountSpecific() public {
         uint64 count = 2;
         Reverter reverter = new Reverter();
         vm.expectRevert("revert", count);

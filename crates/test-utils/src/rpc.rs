@@ -6,8 +6,8 @@ use foundry_config::{
 };
 use rand::seq::SliceRandom;
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     LazyLock,
+    atomic::{AtomicUsize, Ordering},
 };
 
 fn shuffled<T>(mut vec: Vec<T>) -> Vec<T> {
@@ -128,11 +128,7 @@ fn archive_urls(is_ws: bool) -> &'static [String] {
         urls
     }
 
-    if is_ws {
-        &WS
-    } else {
-        &HTTP
-    }
+    if is_ws { &WS } else { &HTTP }
 }
 
 /// Returns the next etherscan api key.
@@ -159,11 +155,7 @@ fn next_url(is_ws: bool, chain: NamedChain) -> String {
         // For Mainnet pick one of Reth nodes.
         let idx = next_idx() % RETH_HOSTS.len();
         let host = RETH_HOSTS[idx];
-        if is_ws {
-            format!("{host}/ws")
-        } else {
-            format!("{host}/rpc")
-        }
+        if is_ws { format!("{host}/ws") } else { format!("{host}/rpc") }
     } else {
         // DRPC for other networks used in tests.
         let idx = next_idx() % DRPC_KEYS.len();
@@ -238,9 +230,9 @@ mod tests {
     #[ignore = "run manually"]
     async fn test_etherscan_keys_compatibility() {
         let address = address!("0x111111125421cA6dc452d289314280a0f8842A65");
-        let ehterscan_key = "JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46";
+        let etherscan_key = "JQNGFHINKS1W7Y5FRXU4SPBYF43J3NYK46";
         let client = foundry_block_explorers::Client::builder()
-            .with_api_key(ehterscan_key)
+            .with_api_key(etherscan_key)
             .chain(Chain::optimism_mainnet())
             .unwrap()
             .build()
@@ -250,7 +242,7 @@ mod tests {
         }
 
         let client = foundry_block_explorers::Client::builder()
-            .with_api_key(ehterscan_key)
+            .with_api_key(etherscan_key)
             .with_api_version(EtherscanApiVersion::V1)
             .chain(Chain::optimism_mainnet())
             .unwrap()

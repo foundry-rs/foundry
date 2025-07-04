@@ -4,11 +4,11 @@ use crate::state_snapshot::StateSnapshots;
 use alloy_primitives::{Address, B256, U256};
 use foundry_fork_db::DatabaseError;
 use revm::{
+    Database, DatabaseCommit,
     bytecode::Bytecode,
     database::{CacheDB, DatabaseRef, EmptyDB},
     primitives::HashMap as Map,
     state::{Account, AccountInfo},
-    Database, DatabaseCommit,
 };
 
 /// Type alias for an in-memory database.

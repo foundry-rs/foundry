@@ -4,15 +4,15 @@ use crate::{
     backend::{RevertStateSnapshotAction, StateSnapshot},
     state_snapshot::StateSnapshots,
 };
-use alloy_primitives::{map::HashMap, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, map::HashMap};
 use alloy_rpc_types::BlockId;
 use foundry_fork_db::{BlockchainDb, DatabaseError, SharedBackend};
 use parking_lot::Mutex;
 use revm::{
+    Database, DatabaseCommit,
     bytecode::Bytecode,
     database::{CacheDB, DatabaseRef},
     state::{Account, AccountInfo},
-    Database, DatabaseCommit,
 };
 use std::sync::Arc;
 
