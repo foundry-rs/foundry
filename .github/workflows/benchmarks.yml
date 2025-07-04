@@ -42,9 +42,11 @@ jobs:
             ./
 
       - name: Setup Foundry
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
         run: |
           ./.github/scripts/setup-foundryup.sh
-          echo "$HOME/.foundry/bin" >> $GITHUB_PATH
+          echo "${{ github.workspace }}/.foundry/bin" >> $GITHUB_PATH
 
       - name: Install hyperfine
         run: |
@@ -69,9 +71,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Foundry
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
         run: |
           ./.github/scripts/setup-foundryup.sh
-          echo "$HOME/.foundry/bin" >> $GITHUB_PATH
+          echo "${{ github.workspace }}/.foundry/bin" >> $GITHUB_PATH
 
       - name: Install hyperfine
         run: |
@@ -87,6 +91,8 @@ jobs:
         run: chmod +x foundry-bench
 
       - name: Run forge test benchmarks
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
         run: |
           VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
           REPOS="${{ github.event.inputs.repos || 'ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22' }}"
@@ -112,9 +118,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Foundry
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
         run: |
           ./.github/scripts/setup-foundryup.sh
-          echo "$HOME/.foundry/bin" >> $GITHUB_PATH
+          echo "${{ github.workspace }}/.foundry/bin" >> $GITHUB_PATH
 
       - name: Install hyperfine
         run: |
@@ -130,6 +138,8 @@ jobs:
         run: chmod +x foundry-bench
 
       - name: Run forge build benchmarks
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
         run: |
           VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
           REPOS="${{ github.event.inputs.repos || 'ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22' }}"
@@ -155,9 +165,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Foundry
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
         run: |
           ./.github/scripts/setup-foundryup.sh
-          echo "$HOME/.foundry/bin" >> $GITHUB_PATH
+          echo "${{ github.workspace }}/.foundry/bin" >> $GITHUB_PATH
 
       - name: Install hyperfine
         run: |
@@ -173,6 +185,8 @@ jobs:
         run: chmod +x foundry-bench
 
       - name: Run forge coverage benchmarks
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
         run: |
           VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
           # Coverage only runs on ithacaxyz/account:v0.3.2

@@ -27,11 +27,18 @@ echo "foundryup is now available at: $(which foundryup)"
 
 # Create foundry directories
 echo "Creating foundry directories..."
-mkdir -p "$HOME/.foundry/bin"
-mkdir -p "$HOME/.foundry/versions"
+
+# Use FOUNDRY_DIR if set, otherwise default to $HOME/.foundry
+FOUNDRY_DIR="${FOUNDRY_DIR:-$HOME/.foundry}"
+echo "Using FOUNDRY_DIR: $FOUNDRY_DIR"
+
+# Create all necessary directories
+mkdir -p "$FOUNDRY_DIR/bin"
+mkdir -p "$FOUNDRY_DIR/versions"
+mkdir -p "$FOUNDRY_DIR/share/man/man1"
 
 # Export PATH for current session
-export PATH="$HOME/.foundry/bin:$PATH"
+export PATH="$FOUNDRY_DIR/bin:$PATH"
 
 # Run foundryup to install default version
 echo "Installing default foundry version..."
