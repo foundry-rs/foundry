@@ -262,9 +262,9 @@ op-alloy-rpc-types = "0.17.2"
 op-alloy-flz = "0.13.1"
 
 ## revm
-revm = { version = "27.0.1", default-features = false }
-revm-inspectors = { version = "0.26.0", features = ["serde"] }
-op-revm = { version = "8.0.1", default-features = false }
+revm = { version = "27.0.2", default-features = false }
+revm-inspectors = { version = "0.26.5", features = ["serde"] }
+op-revm = { version = "8.0.2", default-features = false }
 
 ## alloy-evm
 alloy-evm = "0.13.0"
