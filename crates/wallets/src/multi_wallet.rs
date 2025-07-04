@@ -89,7 +89,10 @@ macro_rules! create_hw_wallets {
 #[derive(Builder, Clone, Debug, Default, Serialize, Parser)]
 #[command(next_help_heading = "Wallet options", about = None, long_about = None)]
 pub struct MultiWalletOpts {
-    /// The sender accounts.
+    /// The sender accounts for transactions when using local signers (private keys, keystores, hardware wallets, etc.).
+    ///
+    /// These addresses are derived from the provided private keys/signers and specify which accounts to use for signing transactions locally.
+    /// This is different from --unlocked which uses eth_sendTransaction with pre-unlocked accounts on the RPC.
     #[arg(
         long,
         short = 'a',
