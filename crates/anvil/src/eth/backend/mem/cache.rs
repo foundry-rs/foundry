@@ -62,7 +62,7 @@ impl DiskStateCache {
     /// Caution: this requires a running tokio Runtime.
     pub fn write(&mut self, hash: B256, state: StateSnapshot) {
         self.with_cache_file(hash, |file| {
-            tokio::task::spawn(async move {
+            tokio::task::spawn_blocking(move || {
                 match foundry_common::fs::write_json_file(&file, &state) {
                     Ok(_) => {
                         trace!(target: "backend", ?hash, "wrote state json file");
