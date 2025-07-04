@@ -18,9 +18,8 @@ env:
   RUST_BACKTRACE: full
   RESOLC_VERSION: 0.1.0-dev.13
   DLRP_API_KEY: ${{ secrets.DLRP_API_KEY }}
-  ETH_RPC_VERSION: 0.4.0
-  SUBSTRATE_NODE_COMMIT_SHA: 6ce6110199a429ce449841fe7222a5ba96eafb5c
-
+  ETH_RPC_VERSION: 0.5.0
+  SUBSTRATE_NODE_COMMIT_SHA: f4dba53bfac614b054735aa725d2b0c44efda414
 jobs:
   matrices:
     name: build matrices
@@ -129,7 +128,7 @@ jobs:
 
       - name: Install eth-rpc proxy (if not cached)
         if: steps.cache-ethrpc.outputs.cache-hit != 'true' && !contains(matrix.runner_label, 'windows')
-        run: cargo install pallet-revive-eth-rpc --version ${{env.ETH_RPC_VERSION}}
+        run: cargo install pallet-revive-eth-rpc --version ${{env.ETH_RPC_VERSION}} --locked
         shell: bash
 
       # Temporary hack to make the tests work on macOS.

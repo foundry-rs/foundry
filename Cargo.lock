@@ -2004,7 +2004,7 @@ dependencies = [
  "bitflags 2.9.0",
  "cexpr",
  "clang-sys",
- "itertools 0.11.0",
+ "itertools 0.10.5",
  "lazy_static",
  "lazycell",
  "log",
@@ -4311,7 +4311,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#7f708231a5d3454d69155eaf9e2cc02a78278091"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#aaaa8d6d05913247566788c948e0785b27d57676"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4350,7 +4350,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#7f708231a5d3454d69155eaf9e2cc02a78278091"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#aaaa8d6d05913247566788c948e0785b27d57676"
 dependencies = [
  "foundry-compilers-artifacts-resolc",
  "foundry-compilers-artifacts-solc",
@@ -4360,7 +4360,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-resolc"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#7f708231a5d3454d69155eaf9e2cc02a78278091"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#aaaa8d6d05913247566788c948e0785b27d57676"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4381,7 +4381,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#7f708231a5d3454d69155eaf9e2cc02a78278091"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#aaaa8d6d05913247566788c948e0785b27d57676"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4404,7 +4404,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#7f708231a5d3454d69155eaf9e2cc02a78278091"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#aaaa8d6d05913247566788c948e0785b27d57676"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4418,7 +4418,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.14.0"
-source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#7f708231a5d3454d69155eaf9e2cc02a78278091"
+source = "git+https://github.com/paritytech/foundry-compilers-polkadot.git?branch=main#aaaa8d6d05913247566788c948e0785b27d57676"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -8585,9 +8585,9 @@ dependencies = [
 
 [[package]]
 name = "rvm-rs"
-version = "0.0.2"
+version = "0.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fddc18d5d859095757aead7729951c38cbaf0acd8a53fdfbbc98fa2d05eae56a"
+checksum = "182d1f864af70df89984364b45e7959fec29ae8feabd164f0848e25a46306cec"
 dependencies = [
  "anyhow",
  "clap",

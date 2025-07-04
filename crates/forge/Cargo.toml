@@ -109,7 +109,7 @@ similar-asserts.workspace = true
 svm = { package = "svm-rs", version = "0.5", default-features = false, features = [
     "rustls",
 ] }
-rvm = { package = "rvm-rs", version = "0.0.2" }
+rvm = { package = "rvm-rs", version = "0.0.3" }
 lazy_static = "1.5"
 tempfile.workspace = true
 
