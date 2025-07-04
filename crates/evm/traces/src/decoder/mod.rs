@@ -151,7 +151,7 @@ pub struct CallTraceDecoder {
     /// Optional identifier of individual trace steps.
     pub debug_identifier: Option<DebugTraceIdentifier>,
 
-    /// Optional bool to disable labels.
+    /// Disable showing of labels.
     pub disable_labels: bool,
 }
 

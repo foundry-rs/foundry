@@ -2612,7 +2612,7 @@ forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
 });
 
 // https://github.com/foundry-rs/foundry/issues/10189
-forgetest_async!(cast_call_disable_alias, |prj, cmd| {
+forgetest_async!(cast_call_disable_labels, |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
     foundry_test_utils::util::initialize(prj.root());
@@ -2698,7 +2698,7 @@ Transaction successfully executed.
             "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x1234",
             "number()(uint256)",
             "--trace",
-            "--disable-alias",
+            "--disable-labels",
         ])
         .assert_success()
         .stdout_eq(str![[r#"

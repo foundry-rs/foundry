@@ -85,10 +85,10 @@ pub struct CallArgs {
     #[arg(long, default_value_t = false)]
     trace: bool,
 
-    /// Forks the remote rpc, executes the transaction locally and prints a trace
+    /// Disables the labels in the traces.
     /// Can only be set with `--trace`.
     #[arg(long, default_value_t = false, requires = "trace")]
-    disable_alias: bool,
+    disable_labels: bool,
 
     /// Opens an interactive debugger.
     /// Can only be used with `--trace`.
@@ -212,7 +212,7 @@ impl CallArgs {
             labels,
             data,
             with_local_artifacts,
-            disable_alias,
+            disable_labels,
             ..
         } = self;
 
@@ -330,7 +330,7 @@ impl CallArgs {
                 with_local_artifacts,
                 debug,
                 decode_internal,
-                Some(disable_alias),
+                Some(disable_labels),
             )
             .await?;
 
