@@ -25,10 +25,9 @@ permissions:
   pull-requests: write
 
 jobs:
-  benchmark:
-    name: Run Foundry Benchmarks
+  setup:
+    name: Setup and Build
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -49,44 +48,161 @@ jobs:
 
       - name: Install hyperfine
         run: |
-          wget https://github.com/sharkdp/hyperfine/releases/download/v1.18.0/hyperfine_1.18.0_amd64.deb
-          sudo dpkg -i hyperfine_1.18.0_amd64.deb
+          wget https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb
+          sudo dpkg -i hyperfine_1.19.0_amd64.deb
 
       - name: Build benchmark binary
         run: cargo build --release --bin foundry-bench
 
-      - name: Run forge test benchmark
+      - name: Upload benchmark binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: foundry-bench
+          path: target/release/foundry-bench
+
+  forge-test-bench:
+    name: Forge Test Benchmarks
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        run: |
+          curl -L https://foundry.paradigm.xyz | bash
+          echo "$HOME/.foundry/bin" >> $GITHUB_PATH
+
+      - name: Install hyperfine
+        run: |
+          wget https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb
+          sudo dpkg -i hyperfine_1.19.0_amd64.deb
+
+      - name: Download benchmark binary
+        uses: actions/download-artifact@v4
+        with:
+          name: foundry-bench
+
+      - name: Make binary executable
+        run: chmod +x foundry-bench
+
+      - name: Run forge test benchmarks
         run: |
           VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
           REPOS="${{ github.event.inputs.repos || 'ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22' }}"
 
-          ./target/release/foundry-bench --output-dir ./benches --force-install \
+          ./foundry-bench --output-dir ./benches --force-install \
             --versions $VERSIONS \
             --repos $REPOS \
-            --benchmarks forge_test \
-            --output-file forge_test.md
+            --benchmarks forge_test,forge_fuzz_test \
+            --output-file forge_test_bench.md
 
-      - name: Run forge build (no cache) benchmark
+      - name: Upload test benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-test-results
+          path: benches/forge_test_bench.md
+
+  forge-build-bench:
+    name: Forge Build Benchmarks
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        run: |
+          curl -L https://foundry.paradigm.xyz | bash
+          echo "$HOME/.foundry/bin" >> $GITHUB_PATH
+
+      - name: Install hyperfine
+        run: |
+          wget https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb
+          sudo dpkg -i hyperfine_1.19.0_amd64.deb
+
+      - name: Download benchmark binary
+        uses: actions/download-artifact@v4
+        with:
+          name: foundry-bench
+
+      - name: Make binary executable
+        run: chmod +x foundry-bench
+
+      - name: Run forge build benchmarks
         run: |
           VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
           REPOS="${{ github.event.inputs.repos || 'ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22' }}"
 
-          ./target/release/foundry-bench --output-dir ./benches --force-install \
+          ./foundry-bench --output-dir ./benches --force-install \
             --versions $VERSIONS \
             --repos $REPOS \
-            --benchmarks forge_build_no_cache \
-            --output-file forge_build_no_cache.md
+            --benchmarks forge_build_no_cache,forge_build_with_cache \
+            --output-file forge_build_bench.md
 
-      - name: Run forge build (with cache) benchmark
+      - name: Upload build benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-build-results
+          path: benches/forge_build_bench.md
+
+  forge-coverage-bench:
+    name: Forge Coverage Benchmarks
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        run: |
+          curl -L https://foundry.paradigm.xyz | bash
+          echo "$HOME/.foundry/bin" >> $GITHUB_PATH
+
+      - name: Install hyperfine
+        run: |
+          wget https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb
+          sudo dpkg -i hyperfine_1.19.0_amd64.deb
+
+      - name: Download benchmark binary
+        uses: actions/download-artifact@v4
+        with:
+          name: foundry-bench
+
+      - name: Make binary executable
+        run: chmod +x foundry-bench
+
+      - name: Run forge coverage benchmarks
         run: |
           VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
-          REPOS="${{ github.event.inputs.repos || 'ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22' }}"
+          # Coverage only runs on ithacaxyz/account:v0.3.2
 
-          ./target/release/foundry-bench --output-dir ./benches --force-install \
+          ./foundry-bench --output-dir ./benches --force-install \
             --versions $VERSIONS \
-            --repos $REPOS \
-            --benchmarks forge_build_with_cache \
-            --output-file forge_build_with_cache.md
+            --repos ithacaxyz/account:v0.3.2 \
+            --benchmarks forge_coverage \
+            --output-file forge_coverage_bench.md
+
+      - name: Upload coverage benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-coverage-results
+          path: benches/forge_coverage_bench.md
+
+  combine-results:
+    name: Combine and Publish Results
+    needs: [forge-test-bench, forge-build-bench, forge-coverage-bench]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all benchmark results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: forge-*-results
+          path: benches/
+          merge-multiple: true
 
       - name: Combine benchmark results
         run: |
@@ -97,7 +213,7 @@ jobs:
           echo "" >> benches/LATEST.md
 
           # Add each benchmark result if it exists
-          for bench in forge_test forge_build_no_cache forge_build_with_cache; do
+          for bench in forge_test_bench forge_build_bench forge_coverage_bench; do
             if [ -f "benches/${bench}.md" ]; then
               # Skip the header from individual files and append content
               tail -n +2 "benches/${bench}.md" >> benches/LATEST.md
@@ -110,7 +226,7 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add benches/LATEST.md benches/forge_test.md benches/forge_build_no_cache.md benches/forge_build_with_cache.md
+          git add benches/LATEST.md benches/forge_test_bench.md benches/forge_build_bench.md benches/forge_coverage_bench.md
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
