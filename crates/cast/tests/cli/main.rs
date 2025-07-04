@@ -2612,6 +2612,108 @@ forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
 });
 
 // https://github.com/foundry-rs/foundry/issues/10189
+forgetest_async!(cast_call_disable_alias, |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "Counter",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function getBalance(address target) public returns (uint256) {
+        return target.balance;
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    // Deploy counter contract.
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "CounterScript",
+    ])
+    .assert_success();
+
+    // Override state, `number()` should return overridden value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-state",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x1234",
+            "number()(uint256)",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+4660
+
+"#]]);
+
+    // Override state, `number()` should return overridden value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--labels",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:WETH",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-state",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x1234",
+            "number()(uint256)",
+            "--trace",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [2402] WETH::number()
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000001234
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+
+    // Override state, `number()` with `disable_labels`.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--labels",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:WETH",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-state",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x1234",
+            "number()(uint256)",
+            "--trace",
+            "--disable-alias",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [2402] 0x5FbDB2315678afecb367f032d93F642f64180aa3::number()
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000001234
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
+// https://github.com/foundry-rs/foundry/issues/10189
 forgetest_async!(cast_call_custom_override, |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 

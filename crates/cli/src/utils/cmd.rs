@@ -343,6 +343,7 @@ pub async fn handle_traces(
     with_local_artifacts: bool,
     debug: bool,
     decode_internal: bool,
+    disable_alias: Option<bool>,
 ) -> Result<()> {
     let (known_contracts, mut sources) = if with_local_artifacts {
         let _ = sh_println!("Compiling project to generate artifacts");
@@ -373,7 +374,8 @@ pub async fn handle_traces(
 
     let mut builder = CallTraceDecoderBuilder::new()
         .with_labels(labels.chain(config_labels))
-        .with_signature_identifier(SignaturesIdentifier::from_config(config)?);
+        .with_signature_identifier(SignaturesIdentifier::from_config(config)?)
+        .with_alias_disabled(disable_alias.unwrap_or_default());
     let mut identifier = TraceIdentifiers::new().with_etherscan(config, chain)?;
     if let Some(contracts) = &known_contracts {
         builder = builder.with_known_contracts(contracts);

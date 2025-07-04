@@ -89,6 +89,13 @@ impl CallTraceDecoderBuilder {
         self
     }
 
+    /// Sets the signature identifier for events and functions.
+    #[inline]
+    pub fn with_alias_disabled(mut self, disable_alias: bool) -> Self {
+        self.decoder.disable_labels = disable_alias;
+        self
+    }
+
     /// Sets the debug identifier for the decoder.
     #[inline]
     pub fn with_debug_identifier(mut self, identifier: DebugTraceIdentifier) -> Self {
@@ -143,6 +150,9 @@ pub struct CallTraceDecoder {
 
     /// Optional identifier of individual trace steps.
     pub debug_identifier: Option<DebugTraceIdentifier>,
+
+    /// Optional bool to disable labels.
+    pub disable_labels: bool,
 }
 
 impl CallTraceDecoder {
@@ -198,6 +208,8 @@ impl CallTraceDecoder {
             verbosity: 0,
 
             debug_identifier: None,
+
+            disable_labels: false,
         }
     }
 
@@ -261,6 +273,10 @@ impl CallTraceDecoder {
     /// Adds a single error to the decoder.
     pub fn push_error(&mut self, error: Error) {
         self.revert_decoder.push_error(error);
+    }
+
+    pub fn without_label(&mut self, disable: bool) {
+        self.disable_labels = disable;
     }
 
     fn collect_identified_addresses(&mut self, mut addrs: Vec<IdentifiedAddress<'_>>) {
@@ -341,7 +357,10 @@ impl CallTraceDecoder {
         let label = self.labels.get(&trace.address).cloned();
 
         if trace.kind.is_any_create() {
-            return DecodedCallTrace { label, ..Default::default() };
+            return DecodedCallTrace {
+                label: if self.disable_labels { None } else { label },
+                ..Default::default()
+            };
         }
 
         if let Some(trace) = precompiles::decode(trace, 1) {
@@ -351,7 +370,7 @@ impl CallTraceDecoder {
         let cdata = &trace.data;
         if trace.address == DEFAULT_CREATE2_DEPLOYER {
             return DecodedCallTrace {
-                label,
+                label: if self.disable_labels { None } else { label },
                 call_data: Some(DecodedCallData { signature: "create2".to_string(), args: vec![] }),
                 return_data: self.default_return_data(trace),
             };
@@ -395,13 +414,13 @@ impl CallTraceDecoder {
 
                 if let Some(func) = functions.first() {
                     return DecodedCallTrace {
-                        label,
+                        label: if self.disable_labels { None } else { label },
                         call_data: Some(self.decode_function_input(trace, func)),
                         return_data,
                     };
                 } else {
                     return DecodedCallTrace {
-                        label,
+                        label: if self.disable_labels { None } else { label },
                         call_data: self.fallback_call_data(trace),
                         return_data,
                     };
@@ -410,7 +429,7 @@ impl CallTraceDecoder {
 
             let [func, ..] = &functions[..] else {
                 return DecodedCallTrace {
-                    label,
+                    label: if self.disable_labels { None } else { label },
                     call_data: self.fallback_call_data(trace),
                     return_data: self.default_return_data(trace),
                 };
@@ -427,13 +446,13 @@ impl CallTraceDecoder {
             }
 
             DecodedCallTrace {
-                label,
+                label: if self.disable_labels { None } else { label },
                 call_data: Some(call_data),
                 return_data: self.decode_function_output(trace, functions),
             }
         } else {
             DecodedCallTrace {
-                label,
+                label: if self.disable_labels { None } else { label },
                 call_data: self.fallback_call_data(trace),
                 return_data: self.default_return_data(trace),
             }
