@@ -201,11 +201,10 @@ where
             return None;
         }
 
-        if let Ok(state) = ctx.journal_mut().code(target) {
-            if state.is_empty() && !inputs.input.is_empty() {
+        if let Ok(state) = ctx.journal_mut().code(target)
+            && state.is_empty() && !inputs.input.is_empty() {
                 self.non_contract_call = Some((target, inputs.scheme, ctx.journal_ref().depth()));
             }
-        }
         None
     }
 

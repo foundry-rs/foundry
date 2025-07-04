@@ -359,8 +359,8 @@ impl<I: InspectorExt> InspectorHandler for FoundryHandler<'_, I> {
             let result = match call_or_result {
                 ItemOrResult::Item(mut init) => {
                     // Correctly match on FrameInit::Create
-                    if let FrameInput::Create(inputs) = &init.frame_input {
-                        if let CreateScheme::Create2 { salt } = inputs.scheme {
+                    if let FrameInput::Create(inputs) = &init.frame_input
+                        && let CreateScheme::Create2 { salt } = inputs.scheme {
                             let (ctx, inspector) = evm.ctx_inspector();
 
                             if inspector.should_use_create2_factory(ctx, inputs) {
@@ -412,7 +412,6 @@ impl<I: InspectorExt> InspectorHandler for FoundryHandler<'_, I> {
                                 init.frame_input = FrameInput::Call(Box::new(call_inputs));
                             }
                         }
-                    }
 
                     match evm.inspect_frame_init(init)? {
                         ItemOrResult::Item(_) => continue,

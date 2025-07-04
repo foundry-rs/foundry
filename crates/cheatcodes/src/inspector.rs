@@ -1846,11 +1846,10 @@ impl Cheatcodes {
     #[cold]
     fn meter_gas_end(&mut self, interpreter: &mut Interpreter) {
         // Remove recorded gas if we exit frame.
-        if let Some(interpreter_action) = interpreter.bytecode.action.as_ref() {
-            if will_exit(interpreter_action) {
+        if let Some(interpreter_action) = interpreter.bytecode.action.as_ref()
+            && will_exit(interpreter_action) {
                 self.gas_metering.paused_frames.pop();
             }
-        }
     }
 
     #[cold]
@@ -1861,8 +1860,8 @@ impl Cheatcodes {
 
     #[cold]
     fn meter_gas_check(&mut self, interpreter: &mut Interpreter) {
-        if let Some(interpreter_action) = interpreter.bytecode.action.as_ref() {
-            if will_exit(interpreter_action) {
+        if let Some(interpreter_action) = interpreter.bytecode.action.as_ref()
+            && will_exit(interpreter_action) {
                 // Reset gas if spent is less than refunded.
                 // This can happen if gas was paused / resumed or reset.
                 // https://github.com/foundry-rs/foundry/issues/4370
@@ -1872,7 +1871,6 @@ impl Cheatcodes {
                     interpreter.gas = Gas::new(interpreter.gas.limit());
                 }
             }
-        }
     }
 
     /// Generates or copies arbitrary values for storage slots.
