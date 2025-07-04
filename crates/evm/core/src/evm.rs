@@ -306,7 +306,7 @@ impl<'db, I: InspectorExt> Handler for FoundryHandler<'db, I> {
             let result = if self
                 .create2_overrides
                 .last()
-                .is_some_and(|(depth, _)| *depth == evm.journal().depth)
+                .is_some_and(|(depth, _)| *depth == evm.journal().depth())
             {
                 let (_, call_inputs) = self.create2_overrides.pop().unwrap();
                 let FrameResult::Call(mut call) = result else {
@@ -419,6 +419,36 @@ impl<I: InspectorExt> InspectorHandler for FoundryHandler<'_, I> {
                     }
                 }
                 ItemOrResult::Result(result) => result,
+            };
+
+            // Handle CREATE2 override transformation if needed
+            let result = if self
+                .create2_overrides
+                .last()
+                .is_some_and(|(depth, _)| *depth == evm.journal().depth())
+            {
+                let (_, call_inputs) = self.create2_overrides.pop().unwrap();
+                let FrameResult::Call(mut call) = result else {
+                    unreachable!("create2 override should be a call frame");
+                };
+
+                // Decode address from output.
+                let address = match call.instruction_result() {
+                    return_ok!() => Address::try_from(call.output().as_ref())
+                        .map_err(|_| {
+                            call.result = InterpreterResult {
+                                result: InstructionResult::Revert,
+                                output: "invalid CREATE2 factory output".into(),
+                                gas: Gas::new(call_inputs.gas_limit),
+                            };
+                        })
+                        .ok(),
+                    _ => None,
+                };
+
+                FrameResult::Create(CreateOutcome { result: call.result, address })
+            } else {
+                result
             };
 
             if let Some(result) = evm.frame_return_result(result)? {
