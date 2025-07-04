@@ -3707,8 +3707,8 @@ mod tests {
                 block_coinbase = '0x0000000000000000000000000000000000000000'
                 block_difficulty = 0
                 block_prevrandao = '0x0000000000000000000000000000000000000000000000000000000000000000'
-                block_number = 1
-                block_timestamp = 1
+                block_number = "0x1"
+                block_timestamp = "0x1"
                 use_literal_content = false
                 bytecode_hash = 'ipfs'
                 cbor_metadata = true
