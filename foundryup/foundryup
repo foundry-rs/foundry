@@ -230,7 +230,7 @@ main() {
             break
           fi
 
-          actual=$(sha256sum "$path" | cut -d' ' -f1)
+          actual=$(compute_sha256 "$path")
           if [ "$actual" != "$expected" ]; then
             all_match=false
             break
@@ -310,7 +310,7 @@ main() {
             continue
           fi
 
-          actual=$(sha256sum "$path" | cut -d' ' -f1)
+          actual=$(compute_sha256 "$path")
           if [ "$actual" != "$expected" ]; then
             say "$bin hash verification failed:"
             say "  expected: $expected"
@@ -513,6 +513,14 @@ err() {
 
 tolower() {
   echo "$1" | awk '{print tolower($0)}'
+}
+
+compute_sha256() {
+  if check_cmd sha256sum; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
 }
 
 need_cmd() {
