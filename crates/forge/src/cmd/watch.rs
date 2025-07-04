@@ -24,7 +24,10 @@ use watchexec::{
     paths::summarise_events_to_env,
     Watchexec,
 };
-use watchexec_events::{Event, Priority, ProcessEnd};
+use watchexec_events::{
+    filekind::{AccessKind, FileEventKind},
+    Event, Priority, ProcessEnd, Tag,
+};
 use watchexec_signals::Signal;
 use yansi::{Color, Paint};
 
@@ -177,6 +180,35 @@ impl WatchArgs {
             if action.paths().next().is_none() && !action.events.iter().any(|e| e.is_empty()) {
                 debug!("no filesystem or synthetic events, skip without doing more");
                 return action;
+            }
+
+            if cfg!(target_os = "linux") {
+                // Reading a file now triggers `Access(Open)` events on Linux due to:
+                // https://github.com/notify-rs/notify/pull/612
+                // This causes an infinite rebuild loop: the build reads a file,
+                // which triggers a notification, which restarts the build, and so on.
+                // To prevent this, we ignore `Access(Open)` events during event processing.
+                let mut has_file_events = false;
+                let mut has_synthetic_events = false;
+                'outer: for e in action.events.iter() {
+                    if e.is_empty() {
+                        has_synthetic_events = true;
+                        break;
+                    } else {
+                        for tag in &e.tags {
+                            if let Tag::FileEventKind(kind) = tag {
+                                if !matches!(kind, FileEventKind::Access(AccessKind::Open(_))) {
+                                    has_file_events = true;
+                                    break 'outer;
+                                }
+                            }
+                        }
+                    }
+                }
+                if !has_file_events && !has_synthetic_events {
+                    debug!("no filesystem events (other than Access(Open)) or synthetic events, skip without doing more");
+                    return action;
+                }
             }
 
             job.run({

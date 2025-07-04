@@ -119,6 +119,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         eth_rpc_timeout: None,
         eth_rpc_headers: None,
         etherscan_api_key: None,
+        etherscan_api_version: None,
         etherscan: Default::default(),
         verbosity: 4,
         remappings: vec![Remapping::from_str("forge-std/=lib/forge-std/").unwrap().into()],
@@ -147,6 +148,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         build_info: false,
         build_info_path: None,
         fmt: Default::default(),
+        lint: Default::default(),
         doc: Default::default(),
         bind_json: Default::default(),
         fs_permissions: Default::default(),
@@ -163,12 +165,10 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         assertions_revert: true,
         legacy_assertions: false,
         extra_args: vec![],
-        eof_version: None,
         odyssey: false,
         transaction_timeout: 120,
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
-        eof: false,
         script_execution_protection: true,
         _non_exhaustive: (),
     };
@@ -983,7 +983,7 @@ allow_paths = []
 include_paths = []
 skip = []
 force = false
-evm_version = "cancun"
+evm_version = "prague"
 gas_reports = ["*"]
 gas_reports_ignore = []
 gas_reports_include_tests = false
@@ -1039,7 +1039,6 @@ assertions_revert = true
 legacy_assertions = false
 odyssey = false
 transaction_timeout = 120
-eof = false
 additional_compiler_profiles = []
 compilation_restrictions = []
 script_execution_protection = true
@@ -1067,6 +1066,12 @@ wrap_comments = false
 ignore = []
 contract_new_lines = false
 sort_imports = false
+
+[lint]
+severity = []
+exclude_lints = []
+ignore = []
+lint_on_build = true
 
 [doc]
 out = "docs"
@@ -1102,7 +1107,7 @@ shrink_run_limit = 5000
 max_assume_rejects = 65536
 gas_report_samples = 256
 failure_persist_dir = "cache/invariant"
-show_metrics = false
+show_metrics = true
 show_solidity = false
 
 [labels]
@@ -1142,7 +1147,7 @@ exclude = []
   "include_paths": [],
   "skip": [],
   "force": false,
-  "evm_version": "cancun",
+  "evm_version": "prague",
   "gas_reports": [
     "*"
   ],
@@ -1161,6 +1166,7 @@ exclude = []
   "eth_rpc_timeout": null,
   "eth_rpc_headers": null,
   "etherscan_api_key": null,
+  "etherscan_api_version": null,
   "ignored_error_codes": [
     "license",
     "code-size",
@@ -1208,7 +1214,7 @@ exclude = []
     "max_assume_rejects": 65536,
     "gas_report_samples": 256,
     "failure_persist_dir": "cache/invariant",
-    "show_metrics": false,
+    "show_metrics": true,
     "timeout": null,
     "show_solidity": false
   },
@@ -1267,6 +1273,12 @@ exclude = []
     "contract_new_lines": false,
     "sort_imports": false
   },
+  "lint": {
+    "severity": [],
+    "exclude_lints": [],
+    "ignore": [],
+    "lint_on_build": true
+  },
   "doc": {
     "out": "docs",
     "title": "",
@@ -1298,7 +1310,6 @@ exclude = []
   "legacy_assertions": false,
   "odyssey": false,
   "transaction_timeout": 120,
-  "eof": false,
   "additional_compiler_profiles": [],
   "compilation_restrictions": [],
   "script_execution_protection": true
@@ -1703,7 +1714,7 @@ contract Counter {
     let v1_profile = SettingsOverrides {
         name: "v1".to_string(),
         via_ir: Some(true),
-        evm_version: Some(EvmVersion::Cancun),
+        evm_version: Some(EvmVersion::Prague),
         optimizer: None,
         optimizer_runs: Some(44444444),
         bytecode_hash: None,
@@ -1789,19 +1800,19 @@ contract Counter {
 
     let (via_ir, evm_version, enabled, runs) = artifact_settings("Counter.sol/Counter.json");
     assert_eq!(None, via_ir);
-    assert_eq!("\"cancun\"", evm_version.unwrap().to_string());
+    assert_eq!("\"prague\"", evm_version.unwrap().to_string());
     assert_eq!("false", enabled.unwrap().to_string());
     assert_eq!("200", runs.unwrap().to_string());
 
     let (via_ir, evm_version, enabled, runs) = artifact_settings("v1/Counter.sol/Counter.json");
     assert_eq!("true", via_ir.unwrap().to_string());
-    assert_eq!("\"cancun\"", evm_version.unwrap().to_string());
+    assert_eq!("\"prague\"", evm_version.unwrap().to_string());
     assert_eq!("true", enabled.unwrap().to_string());
     assert_eq!("44444444", runs.unwrap().to_string());
 
     let (via_ir, evm_version, enabled, runs) = artifact_settings("v2/Counter.sol/Counter.json");
     assert_eq!("true", via_ir.unwrap().to_string());
-    assert_eq!("\"cancun\"", evm_version.unwrap().to_string());
+    assert_eq!("\"prague\"", evm_version.unwrap().to_string());
     assert_eq!("true", enabled.unwrap().to_string());
     assert_eq!("111", runs.unwrap().to_string());
 

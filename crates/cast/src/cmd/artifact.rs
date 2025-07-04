@@ -1,12 +1,11 @@
 use super::{
-    creation_code::{fetch_creation_code, parse_code_output},
+    creation_code::{fetch_creation_code_from_etherscan, parse_code_output},
     interface::{fetch_abi_from_etherscan, load_abi_from_file},
 };
 use alloy_primitives::Address;
 use alloy_provider::Provider;
 use clap::{command, Parser};
 use eyre::Result;
-use foundry_block_explorers::Client;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::{self, LoadConfig},
@@ -46,15 +45,12 @@ pub struct ArtifactArgs {
 
 impl ArtifactArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { contract, etherscan, rpc, output: output_location, abi_path } = self;
+        let Self { contract, mut etherscan, rpc, output: output_location, abi_path } = self;
 
-        let mut etherscan = etherscan;
         let config = rpc.load_config()?;
         let provider = utils::get_provider(&config)?;
-        let api_key = etherscan.key().unwrap_or_default();
         let chain = provider.get_chain_id().await?;
         etherscan.chain = Some(chain.into());
-        let client = Client::new(chain.into(), api_key)?;
 
         let abi = if let Some(ref abi_path) = abi_path {
             load_abi_from_file(abi_path, None)?
@@ -64,7 +60,7 @@ impl ArtifactArgs {
 
         let (abi, _) = abi.first().ok_or_else(|| eyre::eyre!("No ABI found"))?;
 
-        let bytecode = fetch_creation_code(contract, client, provider).await?;
+        let bytecode = fetch_creation_code_from_etherscan(contract, &etherscan, provider).await?;
         let bytecode =
             parse_code_output(bytecode, contract, &etherscan, abi_path.as_deref(), true, false)
                 .await?;

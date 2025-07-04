@@ -1082,7 +1082,7 @@ contract CounterTest is Test {
 
     function test_Increment_In_Counter_With_Salt() public {
         CounterWithSalt counter = new CounterWithSalt{value: 111, salt: bytes32("preprocess_counter_with_salt")}(1);
-        assertEq(address(counter), 0x3Efe9ecFc73fB3baB7ECafBB40D3e134260Be6AB);
+        assertEq(address(counter), 0x223e63BE3BF01DD04f852d70f1bE217017055f49);
     }
 }
     "#,
@@ -1160,7 +1160,7 @@ contract CounterWithSalt {
 Compiling 1 files with [..]
 ...
 [FAIL: assertion failed: 113 != 112] test_Increment_In_Counter() (gas: [..])
-[FAIL: assertion failed: 0x6cDcb015cFcAd0C23560322EdEE8f324520E4b93 != 0x3Efe9ecFc73fB3baB7ECafBB40D3e134260Be6AB] test_Increment_In_Counter_With_Salt() (gas: [..])
+[FAIL: assertion failed: 0x11acEfcD29A1BA964A05C0E7F3901054BEfb17c0 != 0x223e63BE3BF01DD04f852d70f1bE217017055f49] test_Increment_In_Counter_With_Salt() (gas: [..])
 ...
 
 "#]]);
@@ -1409,6 +1409,183 @@ Traces:
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10492>
+// Preprocess test contracts with try constructor statements.
+forgetest_init!(preprocess_contract_with_try_ctor_stmt, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+    });
+
+    prj.add_source(
+        "CounterA.sol",
+        r#"
+contract CounterA {
+    uint256 number;
+}
+    "#,
+    )
+    .unwrap();
+    prj.add_source(
+        "CounterB.sol",
+        r#"
+contract CounterB {
+    uint256 number;
+    constructor(uint256 a) payable {
+        require(a > 0, "ctor failure");
+        number = a;
+    }
+}
+    "#,
+    )
+    .unwrap();
+    prj.add_source(
+        "CounterC.sol",
+        r#"
+contract CounterC {
+    uint256 number;
+    constructor(uint256 a) {
+        require(a > 0, "ctor failure");
+        number = a;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {CounterA} from "../src/CounterA.sol";
+import {CounterB} from "../src/CounterB.sol";
+import {CounterC} from "../src/CounterC.sol";
+
+contract CounterTest is Test {
+    function test_try_counterA_creation() public {
+        try new CounterA() {} catch {
+            revert();
+        }
+    }
+
+    function test_try_counterB_creation() public {
+        try new CounterB(1) {} catch {
+            revert();
+        }
+    }
+
+    function test_try_counterB_creation_with_salt() public {
+        try new CounterB{value: 111, salt: bytes32("preprocess_counter_with_salt")}(1) {} catch {
+            revert();
+        }
+    }
+
+    function test_try_counterC_creation() public {
+        try new CounterC(2) {
+            new CounterC(1);
+        } catch {
+            revert();
+        }
+    }
+}
+    "#,
+    )
+    .unwrap();
+    // All 23 files should properly compile, tests pass.
+    cmd.args(["test"]).with_no_redact().assert_success().stdout_eq(str![[r#"
+...
+Compiling 23 files with [..]
+...
+[PASS] test_try_counterA_creation() (gas: [..])
+[PASS] test_try_counterB_creation() (gas: [..])
+[PASS] test_try_counterB_creation_with_salt() (gas: [..])
+[PASS] test_try_counterC_creation() (gas: [..])
+...
+
+"#]]);
+
+    // Change CounterB to fail test.
+    prj.add_source(
+        "CounterB.sol",
+        r#"
+contract CounterB {
+    uint256 number;
+    constructor(uint256 a) payable {
+        require(a > 11, "ctor failure");
+        number = a;
+    }
+}
+    "#,
+    )
+    .unwrap();
+    // Only CounterB should compile.
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+Compiling 1 files with [..]
+...
+[PASS] test_try_counterA_creation() (gas: [..])
+[FAIL: EvmError: Revert] test_try_counterB_creation() (gas: [..])
+[FAIL: EvmError: Revert] test_try_counterB_creation_with_salt() (gas: [..])
+[PASS] test_try_counterC_creation() (gas: [..])
+...
+
+"#]]);
+
+    // Change CounterC to fail test in try statement.
+    prj.add_source(
+        "CounterC.sol",
+        r#"
+contract CounterC {
+    uint256 number;
+    constructor(uint256 a) {
+        require(a > 1, "ctor failure");
+        number = a;
+    }
+}
+    "#,
+    )
+    .unwrap();
+    // Only CounterC should compile.
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+Compiling 1 files with [..]
+...
+[PASS] test_try_counterA_creation() (gas: [..])
+[FAIL: EvmError: Revert] test_try_counterB_creation() (gas: [..])
+[FAIL: EvmError: Revert] test_try_counterB_creation_with_salt() (gas: [..])
+[FAIL: ctor failure] test_try_counterC_creation() (gas: [..])
+...
+
+"#]]);
+
+    // Change CounterC to fail test in try statement.
+    prj.add_source(
+        "CounterC.sol",
+        r#"
+contract CounterC {
+    uint256 number;
+    constructor(uint256 a) {
+        require(a > 2, "ctor failure");
+        number = a;
+    }
+}
+    "#,
+    )
+    .unwrap();
+    // Only CounterC should compile and revert.
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+Compiling 1 files with [..]
+...
+[PASS] test_try_counterA_creation() (gas: [..])
+[FAIL: EvmError: Revert] test_try_counterB_creation() (gas: [..])
+[FAIL: EvmError: Revert] test_try_counterB_creation_with_salt() (gas: [..])
+[FAIL: EvmError: Revert] test_try_counterC_creation() (gas: [..])
+...
 
 "#]]);
 });

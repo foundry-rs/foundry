@@ -2,19 +2,19 @@ use crate::{
     tx::{self, CastTxBuilder},
     Cast,
 };
+use alloy_ens::NameOrAddress;
 use alloy_network::{AnyNetwork, EthereumWallet};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use clap::Parser;
-use eyre::Result;
+use eyre::{eyre, Result};
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils,
     utils::LoadConfig,
 };
-use foundry_common::ens::NameOrAddress;
 use std::{path::PathBuf, str::FromStr};
 
 /// CLI arguments for `cast send`.
@@ -109,6 +109,17 @@ impl SendTxArgs {
             args: constructor_args,
         }) = command
         {
+            // ensure we don't violate settings for transactions that can't be CREATE: 7702 and 4844
+            // which require mandatory target
+            if to.is_none() && tx.auth.is_some() {
+                return Err(eyre!("EIP-7702 transactions can't be CREATE transactions and require a destination address"));
+            }
+            // ensure we don't violate settings for transactions that can't be CREATE: 7702 and 4844
+            // which require mandatory target
+            if to.is_none() && blob_data.is_some() {
+                return Err(eyre!("EIP-4844 transactions can't be CREATE transactions and require a destination address"));
+            }
+
             sig = constructor_sig;
             args = constructor_args;
             Some(code)
@@ -172,7 +183,7 @@ impl SendTxArgs {
             let wallet = EthereumWallet::from(signer);
             let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
                 .wallet(wallet)
-                .on_provider(&provider);
+                .connect_provider(&provider);
 
             cast_send(provider, tx, cast_async, confirmations, timeout).await
         }

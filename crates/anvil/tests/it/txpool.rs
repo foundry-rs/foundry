@@ -26,10 +26,8 @@ async fn geth_txpool() {
     let tx = WithOtherFields::new(tx);
 
     // send a few transactions
-    let mut txs = Vec::new();
     for _ in 0..10 {
-        let tx_hash = provider.send_transaction(tx.clone()).await.unwrap();
-        txs.push(tx_hash);
+        let _ = provider.send_transaction(tx.clone()).await.unwrap();
     }
 
     // we gave a 20s block time, should be plenty for us to get the txpool's content

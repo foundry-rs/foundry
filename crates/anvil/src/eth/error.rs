@@ -10,13 +10,11 @@ use anvil_rpc::{
     error::{ErrorCode, RpcError},
     response::ResponseResult,
 };
-use foundry_evm::{
-    backend::DatabaseError,
-    decode::RevertDecoder,
-    revm::{
-        interpreter::InstructionResult,
-        primitives::{EVMError, InvalidHeader},
-    },
+use foundry_evm::{backend::DatabaseError, decode::RevertDecoder};
+use op_revm::OpTransactionError;
+use revm::{
+    context_interface::result::{EVMError, InvalidHeader, InvalidTransaction},
+    interpreter::InstructionResult,
 };
 use serde::Serialize;
 
@@ -60,6 +58,8 @@ pub enum BlockchainError {
     AlloyForkProvider(#[from] TransportError),
     #[error("EVM error {0:?}")]
     EvmError(InstructionResult),
+    #[error("Evm override error: {0}")]
+    EvmOverrideError(String),
     #[error("Invalid url {0:?}")]
     InvalidUrl(String),
     #[error("Internal error: {0:?}")]
@@ -122,7 +122,31 @@ where
                 InvalidHeader::PrevrandaoNotSet => Self::PrevrandaoNotSet,
             },
             EVMError::Database(err) => err.into(),
-            EVMError::Precompile(err) => Self::Message(err),
+            EVMError::Custom(err) => Self::Message(err),
+        }
+    }
+}
+
+impl<T> From<EVMError<T, OpTransactionError>> for BlockchainError
+where
+    T: Into<Self>,
+{
+    fn from(err: EVMError<T, OpTransactionError>) -> Self {
+        match err {
+            EVMError::Transaction(err) => match err {
+                OpTransactionError::Base(err) => InvalidTransactionError::from(err).into(),
+                OpTransactionError::DepositSystemTxPostRegolith => {
+                    Self::DepositTransactionUnsupported
+                }
+                OpTransactionError::HaltedDepositPostRegolith => {
+                    Self::DepositTransactionUnsupported
+                }
+            },
+            EVMError::Header(err) => match err {
+                InvalidHeader::ExcessBlobGasNotSet => Self::ExcessBlobGasNotSet,
+                InvalidHeader::PrevrandaoNotSet => Self::PrevrandaoNotSet,
+            },
+            EVMError::Database(err) => err.into(),
             EVMError::Custom(err) => Self::Message(err),
         }
     }
@@ -246,8 +270,8 @@ pub enum InvalidTransactionError {
     /// Thrown when there are no `blob_hashes` in the transaction, and it is an EIP-4844 tx.
     #[error("`blob_hashes` are required for EIP-4844 transactions")]
     NoBlobHashes,
-    #[error("too many blobs in one transaction, have: {0}")]
-    TooManyBlobs(usize),
+    #[error("too many blobs in one transaction, have: {0}, max: {1}")]
+    TooManyBlobs(usize, usize),
     /// Thrown when there's a blob validation error
     #[error(transparent)]
     BlobTransactionValidationError(#[from] alloy_consensus::BlobTransactionValidationError),
@@ -265,12 +289,14 @@ pub enum InvalidTransactionError {
     AuthorizationListNotSupported,
     /// Forwards error from the revm
     #[error(transparent)]
-    Revm(revm::primitives::InvalidTransaction),
+    Revm(revm::context_interface::result::InvalidTransaction),
+    /// Deposit transaction error post regolith
+    #[error("op-deposit failure post regolith")]
+    DepositTxErrorPostRegolith,
 }
 
-impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
-    fn from(err: revm::primitives::InvalidTransaction) -> Self {
-        use revm::primitives::InvalidTransaction;
+impl From<InvalidTransaction> for InvalidTransactionError {
+    fn from(err: InvalidTransaction) -> Self {
         match err {
             InvalidTransaction::InvalidChainId => Self::InvalidChainId,
             InvalidTransaction::PriorityFeeGreaterThanMaxFee => Self::TipAboveFeeCap,
@@ -278,10 +304,10 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
             InvalidTransaction::CallerGasLimitMoreThanBlock => {
                 Self::GasTooHigh(ErrDetail { detail: String::from("CallerGasLimitMoreThanBlock") })
             }
-            InvalidTransaction::CallGasCostMoreThanGasLimit => {
+            InvalidTransaction::CallGasCostMoreThanGasLimit { .. } => {
                 Self::GasTooHigh(ErrDetail { detail: String::from("CallGasCostMoreThanGasLimit") })
             }
-            InvalidTransaction::GasFloorMoreThanGasLimit => {
+            InvalidTransaction::GasFloorMoreThanGasLimit { .. } => {
                 Self::GasTooHigh(ErrDetail { detail: String::from("CallGasCostMoreThanGasLimit") })
             }
             InvalidTransaction::RejectCallerWithCode => Self::SenderNoEOA,
@@ -300,18 +326,32 @@ impl From<revm::primitives::InvalidTransaction> for InvalidTransactionError {
             InvalidTransaction::BlobCreateTransaction => Self::BlobCreateTransaction,
             InvalidTransaction::BlobVersionNotSupported => Self::BlobVersionNotSupported,
             InvalidTransaction::EmptyBlobs => Self::EmptyBlobs,
-            InvalidTransaction::TooManyBlobs { have } => Self::TooManyBlobs(have),
+            InvalidTransaction::TooManyBlobs { have, max } => Self::TooManyBlobs(have, max),
             InvalidTransaction::AuthorizationListNotSupported => {
                 Self::AuthorizationListNotSupported
             }
             InvalidTransaction::AuthorizationListInvalidFields |
-            InvalidTransaction::OptimismError(_) |
-            InvalidTransaction::EofCrateShouldHaveToAddress |
-            InvalidTransaction::EmptyAuthorizationList => Self::Revm(err),
+            InvalidTransaction::Eip1559NotSupported |
+            InvalidTransaction::Eip2930NotSupported |
+            InvalidTransaction::Eip4844NotSupported |
+            InvalidTransaction::Eip7702NotSupported |
+            InvalidTransaction::EofCreateShouldHaveToAddress |
+            InvalidTransaction::EmptyAuthorizationList |
+            InvalidTransaction::Eip7873NotSupported |
+            InvalidTransaction::Eip7873MissingTarget => Self::Revm(err),
         }
     }
 }
 
+impl From<OpTransactionError> for InvalidTransactionError {
+    fn from(value: OpTransactionError) -> Self {
+        match value {
+            OpTransactionError::Base(err) => err.into(),
+            OpTransactionError::DepositSystemTxPostRegolith |
+            OpTransactionError::HaltedDepositPostRegolith => Self::DepositTxErrorPostRegolith,
+        }
+    }
+}
 /// Helper trait to easily convert results to rpc results
 pub(crate) trait ToRpcResponseResult {
     fn to_rpc_result(self) -> ResponseResult;
@@ -427,6 +467,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 }
                 err @ BlockchainError::EvmError(_) => {
                     RpcError::internal_error_with(err.to_string())
+                }
+                err @ BlockchainError::EvmOverrideError(_) => {
+                    RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::InvalidUrl(_) => RpcError::invalid_params(err.to_string()),
                 BlockchainError::Internal(err) => RpcError::internal_error_with(err),

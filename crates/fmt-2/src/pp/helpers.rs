@@ -1,4 +1,4 @@
-use super::Printer;
+use super::{Printer, Token};
 use std::borrow::Cow;
 
 impl Printer {
@@ -7,14 +7,23 @@ impl Printer {
         self.space();
     }
 
+    /// Adds a new hardbrak if not at the beginning of the line.
+    /// If there was a buffered break token, replaces it (ensures hardbreak) keeping the offset.
     pub fn hardbreak_if_not_bol(&mut self) {
-        if !self.is_beginning_of_line() {
+        if !self.is_bol_or_only_ind() {
+            if let Some(Token::Break(last)) = self.last_token_still_buffered() {
+                if last.offset != 0 {
+                    self.replace_last_token_still_buffered(Self::hardbreak_tok_offset(last.offset));
+                    return;
+                }
+            }
             self.hardbreak();
+            return;
         }
     }
 
     pub fn space_if_not_bol(&mut self) {
-        if !self.is_beginning_of_line() {
+        if !self.is_bol_or_only_ind() {
             self.space();
         }
     }

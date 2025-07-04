@@ -152,56 +152,56 @@ macro_rules! fmt_tests {
 fmt_tests! {
     #[ignore = "annotations are not valid Solidity"]
     Annotation,
-    ArrayExpressions,
-    BlockComments,
-    BlockCommentsFunction,
-    ConditionalOperatorExpression,
-    ConstructorDefinition,
-    ConstructorModifierStyle,
-    ContractDefinition,
-    DocComments,
-    DoWhileStatement,
-    EmitStatement,
-    EnumDefinition,
-    EnumVariants,
-    ErrorDefinition,
-    EventDefinition,
-    ForStatement,
-    FunctionCall,
-    FunctionCallArgsStatement,
-    FunctionDefinition,
-    FunctionDefinitionWithFunctionReturns,
-    FunctionType,
-    HexUnderscore,
-    IfStatement,
-    IfStatement2,
-    ImportDirective,
-    InlineDisable,
-    IntTypes,
-    LiteralExpression,
-    MappingType,
-    ModifierDefinition,
-    NamedFunctionCallExpression,
-    NumberLiteralUnderscore,
-    OperatorExpressions,
-    PragmaDirective,
-    Repros,
-    ReturnStatement,
-    RevertNamedArgsStatement,
-    RevertStatement,
-    SimpleComments,
-    SortedImports,
-    StatementBlock,
-    StructDefinition,
-    ThisExpression,
-    TrailingComma,
-    TryStatement,
-    TypeDefinition,
-    UnitExpression,
-    UsingDirective,
-    VariableAssignment,
-    VariableDefinition,
-    WhileStatement,
-    Yul,
-    YulStrings,
+    ArrayExpressions, // TODO: print cmnt before memory kw once span is available (solar). Is the rest acceptable?
+    BlockComments, // OK
+    BlockCommentsFunction, // OK
+    ConditionalOperatorExpression, // OK
+    ConstructorDefinition, // OK
+    ConstructorModifierStyle, // OK
+    ContractDefinition, // OK? Is it acceptable?
+    DocComments, // OK (basics). TODO: wrapp comments
+    DoWhileStatement, // OK? TODO: try to improve nested conditional expressions
+    EmitStatement, // OK
+    EnumDefinition, // OK
+    EnumVariants, // OK
+    ErrorDefinition, // OK
+    EventDefinition, // OK
+    ForStatement, // OK? TODO: try to improve nested conditional expressions
+    FunctionCall, // OK: TODO: enhance PP so that trailing comments aren't accounted for when breaking lines after a simcolon.
+    FunctionCallArgsStatement, // OK? Is it acceptable?
+    FunctionDefinition, // OK? Is it acceptable?
+    FunctionDefinitionWithFunctionReturns, // OK
+    FunctionType, // OK? is it acceptable?
+    HexUnderscore, // OK
+    IfStatement, // TODO: figure out correct comment placements + condition parenthesis wrapping + support config line wrapping
+    IfStatement2, // OK
+    ImportDirective, // OK
+    InlineDisable, // FIX: invalid output
+    IntTypes, // OK
+    LiteralExpression, // FIX: idempotency (comment-related)
+    MappingType, // TODO: comments
+    ModifierDefinition, // OK
+    NamedFunctionCallExpression, // FIX: idempotency (comment-related)
+    NumberLiteralUnderscore, // OK
+    OperatorExpressions, // OKish: TODO: improve nested conditional expressions
+    PragmaDirective, // OK
+    Repros, // TODO: check boxes, panics
+    ReturnStatement, // FIX: idempotency (comment-related)
+    RevertNamedArgsStatement, // TODO: comments
+    RevertStatement, // FIX: idempotency (comment-related)
+    SimpleComments, // FIX: idempotency (comment-related)
+    SortedImports, // FIX: sorting order
+    StatementBlock, // OK
+    StructDefinition, // OK
+    ThisExpression, // OK
+    TrailingComma, // OK (solar error)
+    TryStatement, // OK? is it acceptable?
+    TypeDefinition, // OK
+    UnitExpression, // FIX: idempotency (comment-related)
+    UsingDirective, // OK
+    VariableAssignment, // FIX: variable assignment
+    VariableDefinition, // FIX: variable assignment + declaration
+    WhileStatement,  // OKish: TODO: improve nested conditional expressions
+    Yul, // FIX: idemptency (comment-related)
+    YulStrings, // OK
 }

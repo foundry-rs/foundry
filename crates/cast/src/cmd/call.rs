@@ -3,10 +3,11 @@ use crate::{
     tx::{CastTxBuilder, SenderKind},
     Cast,
 };
+use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types::{
     state::{StateOverride, StateOverridesBuilder},
-    BlockId, BlockNumberOrTag,
+    BlockId, BlockNumberOrTag, BlockOverrides,
 };
 use clap::Parser;
 use eyre::Result;
@@ -14,7 +15,7 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, handle_traces, parse_ether_value, TraceResult},
 };
-use foundry_common::{ens::NameOrAddress, shell};
+use foundry_common::shell;
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
     figment::{
@@ -30,6 +31,7 @@ use foundry_evm::{
     traces::{InternalTraceMode, TraceMode},
 };
 use regex::Regex;
+use revm::context::TransactionType;
 use std::{str::FromStr, sync::LazyLock};
 
 // matches override pattern <address>:<slot>:<value>
@@ -146,6 +148,14 @@ pub struct CallArgs {
     /// Format: address:slot:value
     #[arg(long = "override-state-diff", value_name = "ADDRESS:SLOT:VALUE")]
     pub state_diff_overrides: Option<Vec<String>>,
+
+    /// Override the block timestamp.
+    #[arg(long = "block.time", value_name = "TIME")]
+    pub block_time: Option<u64>,
+
+    /// Override the block number.
+    #[arg(long = "block.number", value_name = "NUMBER")]
+    pub block_number: Option<u64>,
 }
 
 #[derive(Debug, Parser)]
@@ -178,6 +188,7 @@ impl CallArgs {
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::from_provider(figment)?.sanitized();
         let state_overrides = self.get_state_overrides()?;
+        let block_overrides = self.get_block_overrides()?;
 
         let Self {
             to,
@@ -242,8 +253,8 @@ impl CallArgs {
                 TracingExecutor::get_fork_material(&config, evm_opts).await?;
 
             // modify settings that usually set in eth_call
-            env.cfg.disable_block_gas_limit = true;
-            env.block.gas_limit = U256::MAX;
+            env.evm_env.cfg_env.disable_block_gas_limit = true;
+            env.evm_env.block_env.gas_limit = u64::MAX;
 
             let trace_mode = TraceMode::Call
                 .with_debug(debug)
@@ -265,9 +276,18 @@ impl CallArgs {
             let value = tx.value.unwrap_or_default();
             let input = tx.inner.input.into_input().unwrap_or_default();
             let tx_kind = tx.inner.to.expect("set by builder");
+            let env_tx = &mut executor.env_mut().tx;
+
+            if let Some(tx_type) = tx.inner.transaction_type {
+                env_tx.tx_type = tx_type;
+            }
 
             if let Some(access_list) = tx.inner.access_list {
-                executor.env_mut().tx.access_list = access_list.0
+                env_tx.access_list = access_list;
+
+                if env_tx.tx_type == TransactionType::Legacy as u8 {
+                    env_tx.tx_type = TransactionType::Eip2930 as u8;
+                }
             }
 
             let trace = match tx_kind {
@@ -297,13 +317,29 @@ impl CallArgs {
 
         sh_println!(
             "{}",
-            Cast::new(provider).call(&tx, func.as_ref(), block, state_overrides).await?
+            Cast::new(provider)
+                .call(&tx, func.as_ref(), block, state_overrides, block_overrides)
+                .await?
         )?;
 
         Ok(())
     }
-    /// Parse state overrides from command line arguments
-    pub fn get_state_overrides(&self) -> eyre::Result<StateOverride> {
+
+    /// Parse state overrides from command line arguments.
+    pub fn get_state_overrides(&self) -> eyre::Result<Option<StateOverride>> {
+        // Early return if no override set - <https://github.com/foundry-rs/foundry/issues/10705>
+        if [
+            self.balance_overrides.as_ref(),
+            self.nonce_overrides.as_ref(),
+            self.code_overrides.as_ref(),
+            self.state_overrides.as_ref(),
+        ]
+        .iter()
+        .all(Option::is_none)
+        {
+            return Ok(None);
+        }
+
         let mut state_overrides_builder = StateOverridesBuilder::default();
 
         // Parse balance overrides
@@ -341,7 +377,23 @@ impl CallArgs {
                 state_overrides_builder.with_state_diff(addr, [(slot.into(), value.into())]);
         }
 
-        Ok(state_overrides_builder.build())
+        Ok(Some(state_overrides_builder.build()))
+    }
+
+    /// Parse block overrides from command line arguments.
+    pub fn get_block_overrides(&self) -> eyre::Result<Option<BlockOverrides>> {
+        let mut overrides = BlockOverrides::default();
+        if let Some(number) = self.block_number {
+            overrides = overrides.with_number(U256::from(number));
+        }
+        if let Some(time) = self.block_time {
+            overrides = overrides.with_time(time);
+        }
+        if overrides.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(overrides))
+        }
     }
 }
 

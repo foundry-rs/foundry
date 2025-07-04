@@ -18,7 +18,7 @@ contract GetBlockTimestampTest is DSTest {
         assertEq(vm.getBlockTimestamp(), 10, "warp failed");
     }
 
-    function testGetTimestampWithWarpFuzzed(uint128 jump) public {
+    function testGetTimestampWithWarpFuzzed(uint32 jump) public {
         uint256 pre = vm.getBlockTimestamp();
         vm.warp(pre + jump);
         assertEq(vm.getBlockTimestamp(), pre + jump, "warp failed");

@@ -1,19 +1,17 @@
 use crate::cmd::{
     access_list::AccessListArgs, artifact::ArtifactArgs, bind::BindArgs, call::CallArgs,
     constructor_args::ConstructorArgsArgs, create2::Create2Args, creation_code::CreationCodeArgs,
-    estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs,
-    mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs,
-    txpool::TxPoolSubcommands, wallet::WalletSubcommands,
+    da_estimate::DAEstimateArgs, estimate::EstimateArgs, find_block::FindBlockArgs,
+    interface::InterfaceArgs, logs::LogsArgs, mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs,
+    send::SendTxArgs, storage::StorageArgs, txpool::TxPoolSubcommands, wallet::WalletSubcommands,
 };
+use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, Selector, B256, U256};
 use alloy_rpc_types::BlockId;
 use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
 use foundry_cli::opts::{EtherscanOpts, GlobalArgs, RpcOpts};
-use foundry_common::{
-    ens::NameOrAddress,
-    version::{LONG_VERSION, SHORT_VERSION},
-};
+use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
 use std::{path::PathBuf, str::FromStr};
 
 /// A Swiss Army knife for interacting with Ethereum applications from the command line.
@@ -424,8 +422,30 @@ pub enum CastSubcommand {
         address: Option<Address>,
 
         /// The nonce of the deployer address.
-        #[arg(long)]
+        #[arg(
+            long,
+            conflicts_with = "salt",
+            conflicts_with = "init_code",
+            conflicts_with = "init_code_hash"
+        )]
         nonce: Option<u64>,
+
+        /// The salt for CREATE2 address computation.
+        #[arg(long, conflicts_with = "nonce")]
+        salt: Option<B256>,
+
+        /// The init code for CREATE2 address computation.
+        #[arg(
+            long,
+            requires = "salt",
+            conflicts_with = "init_code_hash",
+            conflicts_with = "nonce"
+        )]
+        init_code: Option<String>,
+
+        /// The init code hash for CREATE2 address computation.
+        #[arg(long, requires = "salt", conflicts_with = "init_code", conflicts_with = "nonce")]
+        init_code_hash: Option<B256>,
 
         #[command(flatten)]
         rpc: RpcOpts,
@@ -1061,16 +1081,15 @@ pub enum CastSubcommand {
         resolve: bool,
     },
 
-    /// Decodes EOF container bytes
-    #[command()]
-    DecodeEof { eof: Option<String> },
-
     /// Inspect the TxPool of a node.
     #[command(visible_alias = "tp")]
     TxPool {
         #[command(subcommand)]
         command: TxPoolSubcommands,
     },
+    /// Estimates the data availability size of a given opstack block.
+    #[command(name = "da-estimate")]
+    DAEstimate(DAEstimateArgs),
 }
 
 /// CLI arguments for `cast --to-base`.
