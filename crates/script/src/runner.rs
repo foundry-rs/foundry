@@ -10,7 +10,7 @@ use foundry_evm::{
     constants::CALLER,
     executors::{DeployResult, EvmError, ExecutionErr, Executor, RawCallResult},
     opts::EvmOpts,
-    revm::interpreter::{return_ok, InstructionResult},
+    revm::interpreter::{InstructionResult, return_ok},
     traces::{TraceKind, Traces},
 };
 use std::collections::VecDeque;

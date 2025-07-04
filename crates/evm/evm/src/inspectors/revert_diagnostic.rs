@@ -5,15 +5,15 @@ use foundry_evm_core::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
 };
 use revm::{
+    Database, Inspector,
     bytecode::opcode,
     context::{ContextTr, JournalTr},
     inspector::JournalExt,
     interpreter::{
+        CallInputs, CallOutcome, CallScheme, InstructionResult, Interpreter, InterpreterAction,
         interpreter::EthInterpreter,
         interpreter_types::{Jumps, LoopControl},
-        CallInputs, CallOutcome, CallScheme, InstructionResult, Interpreter, InterpreterAction,
     },
-    Database, Inspector,
 };
 use std::fmt;
 
@@ -74,11 +74,7 @@ impl RevertDiagnostic {
     /// Returns the effective target address whose code would be executed.
     /// For delegate calls, this is the `bytecode_address`. Otherwise, it's the `target_address`.
     fn code_target_address(&self, inputs: &mut CallInputs) -> Address {
-        if is_delegatecall(inputs.scheme) {
-            inputs.bytecode_address
-        } else {
-            inputs.target_address
-        }
+        if is_delegatecall(inputs.scheme) { inputs.bytecode_address } else { inputs.target_address }
     }
 
     /// Derives the revert reason based on the cached data. Should only be called after a revert.
@@ -202,9 +198,11 @@ where
         }
 
         if let Ok(state) = ctx.journal_mut().code(target)
-            && state.is_empty() && !inputs.input.is_empty() {
-                self.non_contract_call = Some((target, inputs.scheme, ctx.journal_ref().depth()));
-            }
+            && state.is_empty()
+            && !inputs.input.is_empty()
+        {
+            self.non_contract_call = Some((target, inputs.scheme, ctx.journal_ref().depth()));
+        }
         None
     }
 

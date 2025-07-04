@@ -11,7 +11,7 @@ use alloy_primitives::{
 use revm::{
     context::JournalTr,
     interpreter::{
-        interpreter_types::LoopControl, InstructionResult, Interpreter, InterpreterAction,
+        InstructionResult, Interpreter, InterpreterAction, interpreter_types::LoopControl,
     },
 };
 

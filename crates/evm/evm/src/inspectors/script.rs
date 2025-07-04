@@ -2,15 +2,15 @@ use alloy_evm::Database;
 use alloy_primitives::{Address, Bytes};
 use foundry_evm_core::backend::DatabaseError;
 use revm::{
+    Inspector,
     bytecode::opcode::ADDRESS,
     context::ContextTr,
     inspector::JournalExt,
     interpreter::{
+        InstructionResult, Interpreter, InterpreterAction,
         interpreter::EthInterpreter,
         interpreter_types::{Jumps, LoopControl},
-        InstructionResult, Interpreter, InterpreterAction,
     },
-    Inspector,
 };
 
 /// An inspector that enforces certain rules during script execution.

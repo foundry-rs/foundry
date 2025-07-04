@@ -1,7 +1,7 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
-use alloy_provider::{network::AnyRpcBlock, Provider};
+use alloy_provider::{Provider, network::AnyRpcBlock};
 use alloy_rpc_types::BlockId;
 use clap::ValueEnum;
 use eyre::{OptionExt, Result};

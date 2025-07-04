@@ -4,16 +4,16 @@
 use foundry_common::sh_println;
 use foundry_evm_core::backend::DatabaseError;
 use revm::{
+    Database, Inspector,
     bytecode::opcode::OpCode,
     context::{ContextTr, JournalTr},
-    inspector::{inspectors::GasInspector, JournalExt},
+    inspector::{JournalExt, inspectors::GasInspector},
     interpreter::{
+        CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter,
         interpreter::EthInterpreter,
         interpreter_types::{Jumps, MemoryTr},
-        CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter,
     },
     primitives::{Address, U256},
-    Database, Inspector,
 };
 
 /// Custom print [Inspector], it has step level information of execution.

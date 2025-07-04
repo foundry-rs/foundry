@@ -6,7 +6,7 @@
 use super::CreateFork;
 use crate::Env;
 use alloy_consensus::BlockHeader;
-use alloy_primitives::{map::HashMap, U256};
+use alloy_primitives::{U256, map::HashMap};
 use alloy_provider::network::BlockResponse;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_config::Config;

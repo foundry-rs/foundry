@@ -26,8 +26,8 @@ use revm::{
     inspector::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{
-        eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE, hardfork::SpecId, HashMap as Map, Log,
-        KECCAK_EMPTY,
+        HashMap as Map, KECCAK_EMPTY, Log, eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+        hardfork::SpecId,
     },
     state::{Account, AccountInfo, EvmState, EvmStorageSlot},
 };
