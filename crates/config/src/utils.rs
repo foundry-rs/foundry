@@ -106,7 +106,7 @@ pub fn remappings_from_env_var(env_var: &str) -> Option<Result<Vec<Remapping>, R
 /// Converts the `val` into a `figment::Value::Array`
 ///
 /// The values should be separated by commas, surrounding brackets are also supported `[a,b,c]`
-pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
+pub fn to_array_value(val: &str) -> Result<Value, Box<figment::Error>> {
     let value: Value = match Value::from(val) {
         Value::String(_, val) => val
             .trim_start_matches('[')
@@ -117,7 +117,7 @@ pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
             .into(),
         Value::Empty(_, _) => Vec::<Value>::new().into(),
         val @ Value::Array(_, _) => val,
-        _ => return Err(format!("Invalid value `{val}`, expected an array").into()),
+        _ => return Err(Box::new(format!("Invalid value `{val}`, expected an array").into())),
     };
     Ok(value)
 }
