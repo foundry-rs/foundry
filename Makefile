@@ -77,6 +77,15 @@ docker-build-prepare: ## Prepare the Docker build environment.
 
 ##@ Test
 
+## Run unit/doc tests and generate html coverage report in `target/llvm-cov/html` folder.
+## Notice that `llvm-cov` supports doc tests only in nightly builds because the `--doc` flag 
+## is unstable (https://github.com/taiki-e/cargo-llvm-cov/issues/2).
+.PHONY: test-coverage
+test-coverage: 
+	cargo +nightly llvm-cov --no-report nextest -E 'kind(test) & !test(/\b(issue|ext_integration)/)' && \
+	cargo +nightly llvm-cov --no-report --doc && \
+	cargo +nightly llvm-cov report --doctests --open
+
 .PHONY: test-unit
 test-unit: ## Run unit tests.
 	cargo nextest run -E 'kind(test) & !test(/\b(issue|ext_integration)/)'
