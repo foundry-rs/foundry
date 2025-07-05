@@ -1291,7 +1291,8 @@ impl Config {
 
     /// Attempts to resolve the URL for the given alias from [`mesc`](https://github.com/paradigmxyz/mesc)
     pub fn get_rpc_url_from_mesc(&self, maybe_alias: &str) -> Option<String> {
-        // mesc is opinionated about how the config is loaded and requires
+        // Note: mesc requires a MESC_PATH in the env, which the user can configure and is expected
+        // to be part of the shell profile, default is ~/mesc.json
         let mesc_config = mesc::load::load_config_data()
             .inspect_err(|err| debug!(%err, "failed to load mesc config"))
             .ok()?;
@@ -1304,6 +1305,10 @@ impl Config {
 
         if maybe_alias.chars().all(|c| c.is_numeric()) {
             // try to lookup the mesc network by chain id if alias is numeric
+            // This only succeeds if the chain id has a default:
+            // "network_defaults": {
+            //    "50104": "sophon_50104"
+            // }
             if let Ok(Some(endpoint)) =
                 mesc::query::get_endpoint_by_network(&mesc_config, maybe_alias, Some("foundry"))
             {
