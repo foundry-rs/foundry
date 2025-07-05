@@ -2,8 +2,16 @@ use super::{EtherscanSourceProvider, VerifyArgs};
 use crate::{provider::VerificationContext, verify::ContractLanguage};
 use eyre::{Context, Result};
 use foundry_block_explorers::verify::CodeFormat;
-use foundry_compilers::{artifacts::StandardJsonCompilerInput, solc::SolcLanguage};
-use std::process::Command;
+use foundry_compilers::{
+    artifacts::{
+        vyper::{VyperInput, VyperSettings},
+        Source, StandardJsonCompilerInput,
+    },
+    error::SolcError,
+    solc::SolcLanguage,
+    Vyper, VyperOutput,
+};
+use std::{path::Path, process::Command};
 
 #[derive(Debug)]
 pub struct EtherscanStandardJsonSource;
@@ -49,21 +57,15 @@ impl EtherscanSourceProvider for EtherscanStandardJsonSource {
                 serde_json::to_string(&input).wrap_err("Failed to parse standard json input")?
             }
             ContractLanguage::Vyper => {
-                // Execute vyper -f solc_json {target_path}
-                let output = Command::new("vyper")
-                    .arg("-f")
-                    .arg("solc_json")
-                    .arg(&context.target_path)
-                    .output()
-                    .wrap_err("Failed to execute vyper command")?;
+                let path = Path::new(&context.target_path);
+                let sources = Source::read_all_from(path, &["vy", "vyi"])?;
+                let input = VyperInput::new(
+                    sources,
+                    context.clone().compiler_settings.vyper,
+                    &context.compiler_version,
+                );
 
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    return Err(eyre::eyre!("Vyper command failed: {}", stderr));
-                }
-
-                String::from_utf8(output.stdout)
-                    .wrap_err("Failed to parse vyper output as UTF-8")?
+                serde_json::to_string(&input).wrap_err("Failed to parse vyper json input")?
             }
         };
 
