@@ -9,8 +9,11 @@ pub const DEV_CHAIN_ID: u64 = 31337;
 /// The first four bytes of the call data for a function call specifies the function to be called.
 pub const SELECTOR_LEN: usize = 4;
 
-/// Maximum size in bytes (0x6000) that a contract can have.
+/// Maximum size in bytes (0x6000) that a contract can have (EIP-170).
 pub const CONTRACT_MAX_SIZE: usize = 24576;
+
+/// Maximum size in bytes (0xC000) that a contract can have under EIP-7907.
+pub const CONTRACT_MAX_SIZE_EIP_7907: usize = 49152;
 
 /// Default request timeout for http requests
 ///
