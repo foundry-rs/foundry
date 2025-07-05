@@ -6,12 +6,12 @@ import "cheats/Vm.sol";
 
 // https://github.com/foundry-rs/foundry/issues/4832
 contract Issue4832Test is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
     function testFailExample() public {
         assertEq(uint256(1), 2);
 
-        vm.expectRevert();
+        VM.expectRevert();
         revert();
     }
 }

@@ -341,8 +341,6 @@ contract PrankTest is DSTest {
     /// forge-config: default.allow_internal_expect_revert = true
     function testRevertIfOverwriteUnusedPrank(address sender, address origin) public {
         // Set the prank, but not use it
-        address oldOrigin = tx.origin;
-        Victim victim = new Victim();
         vm.startPrank(sender, origin);
         // try to overwrite the prank. This should fail.
         vm.expectRevert("vm.startPrank: cannot overwrite a prank until it is applied at least once");
@@ -352,7 +350,6 @@ contract PrankTest is DSTest {
     /// forge-config: default.allow_internal_expect_revert = true
     function testRevertIfOverwriteUnusedPrankAfterSuccessfulPrank(address sender, address origin) public {
         // Set the prank, but not use it
-        address oldOrigin = tx.origin;
         Victim victim = new Victim();
         vm.startPrank(sender, origin);
         victim.assertCallerAndOrigin(
@@ -538,8 +535,6 @@ contract PrankTest is DSTest {
     ///
     /// Ref: issue #1210
     function testTxOriginInNestedPrank(address sender, address origin) public {
-        address oldSender = msg.sender;
-        address oldOrigin = tx.origin;
 
         Victim innerVictim = new Victim();
         NestedVictim victim = new NestedVictim(innerVictim);
