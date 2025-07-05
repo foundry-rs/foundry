@@ -100,8 +100,8 @@ impl ForgeTestProfile {
         config.gas_limit = u64::MAX.into();
         config.chain = None;
         config.tx_origin = CALLER;
-        config.block_number = 1;
-        config.block_timestamp = 1;
+        config.block_number = U256::from(1);
+        config.block_timestamp = U256::from(1);
 
         config.sender = CALLER;
         config.initial_balance = U256::MAX;

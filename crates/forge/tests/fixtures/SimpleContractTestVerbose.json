@@ -75,7 +75,7 @@
                   "idx": 0,
                   "trace": {
                     "depth": 0,
-                    "success": true,
+                    "success": false,
                     "caller": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
                     "address": "0x7fa9385be102ac3eac297483dd6233d62b3e1496",
                     "maybe_precompile": null,
@@ -88,7 +88,7 @@
                     "output": "0x",
                     "gas_used": "{...}",
                     "gas_limit": "{...}",
-                    "status": "Stop",
+                    "status": null,
                     "steps": [],
                     "decoded": {
                       "label": null,
