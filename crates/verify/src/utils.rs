@@ -226,9 +226,12 @@ fn find_mismatch_in_settings(
     if local_settings.optimizer_runs.is_some_and(|runs| etherscan_settings.runs != runs as u64)
         || (local_settings.optimizer_runs.is_none() && etherscan_settings.runs > 0)
     {
+        let local_runs = local_settings.optimizer_runs
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "None".to_string());
         let str = format!(
             "Optimizer runs mismatch: local={}, onchain={}",
-            local_settings.optimizer_runs.unwrap(),
+            local_runs,
             etherscan_settings.runs
         );
         mismatches.push(str);
