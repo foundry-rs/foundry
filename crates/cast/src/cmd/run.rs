@@ -286,6 +286,7 @@ impl RunArgs {
             self.with_local_artifacts,
             self.debug,
             self.decode_internal,
+            None,
         )
         .await?;
 
