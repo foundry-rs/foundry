@@ -98,10 +98,10 @@ fn get_memory_input_for_opcode(
     let Some(stack_data) = stack else { return memory_input };
     let Some(memory_data) = memory else { return memory_input };
 
-    if let Some(accesses) = get_buffer_accesses(opcode, stack_data) {
-        if let Some((BufferKind::Memory, access)) = accesses.read {
-            memory_input = get_slice_from_memory(memory_data.as_bytes(), access.offset, access.len);
-        }
+    if let Some(accesses) = get_buffer_accesses(opcode, stack_data)
+        && let Some((BufferKind::Memory, access)) = accesses.read
+    {
+        memory_input = get_slice_from_memory(memory_data.as_bytes(), access.offset, access.len);
     };
 
     memory_input

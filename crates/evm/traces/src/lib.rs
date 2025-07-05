@@ -138,10 +138,11 @@ impl SparsedTraceArena {
                         items_to_remove.insert(item_idx);
                     }
 
-                    if let Some((end_node, end_step_idx)) = cur_ignore_end {
-                        if node_idx == *end_node && item_idx == *end_step_idx {
-                            *cur_ignore_end = None;
-                        }
+                    if let Some((end_node, end_step_idx)) = cur_ignore_end
+                        && node_idx == *end_node
+                        && item_idx == *end_step_idx
+                    {
+                        *cur_ignore_end = None;
                     }
                 }
 

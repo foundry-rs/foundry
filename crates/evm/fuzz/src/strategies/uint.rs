@@ -125,10 +125,10 @@ impl UintStrategy {
 
         // Generate value tree from fixture.
         let fixture = &self.fixtures[runner.rng().random_range(0..self.fixtures.len())];
-        if let Some(uint_fixture) = fixture.as_uint() {
-            if uint_fixture.1 == self.bits {
-                return Ok(UintValueTree::new(uint_fixture.0, false));
-            }
+        if let Some(uint_fixture) = fixture.as_uint()
+            && uint_fixture.1 == self.bits
+        {
+            return Ok(UintValueTree::new(uint_fixture.0, false));
         }
 
         // If fixture is not a valid type, raise error and generate random value.

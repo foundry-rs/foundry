@@ -1280,11 +1280,11 @@ latest block number: {latest_block}"
         }
 
         // use remote gas price
-        if self.gas_price.is_none() {
-            if let Ok(gas_price) = provider.get_gas_price().await {
-                self.gas_price = Some(gas_price);
-                fees.set_gas_price(gas_price);
-            }
+        if self.gas_price.is_none()
+            && let Ok(gas_price) = provider.get_gas_price().await
+        {
+            self.gas_price = Some(gas_price);
+            fees.set_gas_price(gas_price);
         }
 
         let block_hash = block.header.hash;
@@ -1317,11 +1317,12 @@ latest block number: {latest_block}"
 
         // This will spawn the background thread that will use the provider to fetch
         // blockchain data from the other client
-        let backend = SharedBackend::spawn_backend_thread(
+        let backend = SharedBackend::spawn_backend(
             Arc::clone(&provider),
             block_chain_db.clone(),
             Some(fork_block_number.into()),
-        );
+        )
+        .await;
 
         let config = ClientForkConfig {
             eth_rpc_url,
@@ -1592,10 +1593,10 @@ async fn find_latest_fork_block<P: Provider<AnyNetwork>>(
     // walk back from the head of the chain, but at most 2 blocks, which should be more than enough
     // leeway
     for _ in 0..2 {
-        if let Some(block) = provider.get_block(num.into()).await? {
-            if !block.header.hash.is_zero() {
-                break;
-            }
+        if let Some(block) = provider.get_block(num.into()).await?
+            && !block.header.hash.is_zero()
+        {
+            break;
         }
         // block not actually finalized, so we try the block before
         num = num.saturating_sub(1)

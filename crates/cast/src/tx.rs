@@ -98,16 +98,16 @@ pub fn validate_from_address(
     specified_from: Option<Address>,
     signer_address: Address,
 ) -> Result<()> {
-    if let Some(specified_from) = specified_from {
-        if specified_from != signer_address {
-            eyre::bail!(
+    if let Some(specified_from) = specified_from
+        && specified_from != signer_address
+    {
+        eyre::bail!(
                 "\
 The specified sender via CLI/env vars does not match the sender configured via
 the hardware wallet's HD Path.
 Please use the `--hd-path <PATH>` parameter to specify the BIP32 Path which
 corresponds to the sender, or let foundry automatically detect it by not specifying any sender address."
             )
-        }
     }
     Ok(())
 }
@@ -177,10 +177,8 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InitState> {
             }
         }
 
-        if !legacy {
-            if let Some(priority_fee) = tx_opts.priority_gas_price {
-                tx.set_max_priority_fee_per_gas(priority_fee.to());
-            }
+        if !legacy && let Some(priority_fee) = tx_opts.priority_gas_price {
+            tx.set_max_priority_fee_per_gas(priority_fee.to());
         }
 
         if let Some(max_blob_fee) = tx_opts.blob_gas_price {
@@ -408,12 +406,11 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
                 if let TransportError::ErrorResp(payload) = &err {
                     // If execution reverted with code 3 during provider gas estimation then try
                     // to decode custom errors and append it to the error message.
-                    if payload.code == 3 {
-                        if let Some(data) = &payload.data {
-                            if let Ok(Some(decoded_error)) = decode_execution_revert(data).await {
-                                eyre::bail!("Failed to estimate gas: {}: {}", err, decoded_error)
-                            }
-                        }
+                    if payload.code == 3
+                        && let Some(data) = &payload.data
+                        && let Ok(Some(decoded_error)) = decode_execution_revert(data).await
+                    {
+                        eyre::bail!("Failed to estimate gas: {}: {}", err, decoded_error)
                     }
                 }
                 eyre::bail!("Failed to estimate gas: {}", err)
@@ -475,10 +472,10 @@ async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
         SignaturesIdentifier::new(false)?.identify_error(selector.try_into().unwrap()).await
     {
         let mut decoded_error = known_error.name.clone();
-        if !known_error.inputs.is_empty() {
-            if let Ok(error) = known_error.decode_error(&err_data) {
-                write!(decoded_error, "({})", format_tokens(&error.body).format(", "))?;
-            }
+        if !known_error.inputs.is_empty()
+            && let Ok(error) = known_error.decode_error(&err_data)
+        {
+            write!(decoded_error, "({})", format_tokens(&error.body).format(", "))?;
         }
         return Ok(Some(decoded_error));
     }

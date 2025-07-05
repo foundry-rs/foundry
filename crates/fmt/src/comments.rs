@@ -166,10 +166,10 @@ impl CommentWithMetadata {
         if let Some(stripped) = s.strip_prefix(self.start_token()) {
             s = stripped;
         }
-        if let Some(end_token) = self.end_token() {
-            if let Some(stripped) = s.strip_suffix(end_token) {
-                s = stripped;
-            }
+        if let Some(end_token) = self.end_token()
+            && let Some(stripped) = s.strip_suffix(end_token)
+        {
+            s = stripped;
         }
         s
     }
@@ -377,10 +377,10 @@ impl Iterator for CommentStateCharIndices<'_> {
                 self.state = CommentState::Block;
             }
             CommentState::Block => {
-                if ch == '*' {
-                    if let Some((_, '/')) = self.peek() {
-                        self.state = CommentState::BlockEnd1;
-                    }
+                if ch == '*'
+                    && let Some((_, '/')) = self.peek()
+                {
+                    self.state = CommentState::BlockEnd1;
                 }
             }
             CommentState::BlockEnd1 => {
@@ -406,7 +406,7 @@ impl Iterator for CommentStateCharIndices<'_> {
 
 impl std::iter::FusedIterator for CommentStateCharIndices<'_> {}
 
-/// An Iterator over characters in a string slice which are not a apart of comments
+/// An Iterator over characters in a string slice which are not a part of comments
 pub struct NonCommentChars<'a>(CommentStateCharIndices<'a>);
 
 impl Iterator for NonCommentChars<'_> {

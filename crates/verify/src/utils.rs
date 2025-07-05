@@ -121,13 +121,12 @@ pub fn build_using_cache(
                 }
 
                 // Check if Solidity version matches
-                if let Ok(version) = Version::parse(&version) {
-                    if !(artifact.version.major == version.major
+                if let Ok(version) = Version::parse(&version)
+                    && !(artifact.version.major == version.major
                         && artifact.version.minor == version.minor
                         && artifact.version.patch == version.patch)
-                    {
-                        continue;
-                    }
+                {
+                    continue;
                 }
 
                 return Ok(artifact.artifact);
@@ -290,13 +289,14 @@ pub fn check_args_len(
     artifact: &CompactContractBytecode,
     args: &Bytes,
 ) -> Result<(), eyre::ErrReport> {
-    if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) {
-        if !constructor.inputs.is_empty() && args.is_empty() {
-            eyre::bail!(
-                "Contract expects {} constructor argument(s), but none were provided",
-                constructor.inputs.len()
-            );
-        }
+    if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor())
+        && !constructor.inputs.is_empty()
+        && args.is_empty()
+    {
+        eyre::bail!(
+            "Contract expects {} constructor argument(s), but none were provided",
+            constructor.inputs.len()
+        );
     }
     Ok(())
 }
