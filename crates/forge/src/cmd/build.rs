@@ -101,6 +101,7 @@ impl BuildArgs {
             .print_names(self.names)
             .print_sizes(self.sizes)
             .ignore_eip_3860(self.ignore_eip_3860)
+            .evm_version(config.evm_version)
             .bail(!format_json);
 
         // Runs the SolidityLinter before compilation.

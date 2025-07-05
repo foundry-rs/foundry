@@ -12,7 +12,7 @@ use eyre::Result;
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
-    artifacts::{BytecodeObject, Contract, Source, remappings::Remapping},
+    artifacts::{BytecodeObject, Contract, EvmVersion, Source, remappings::Remapping},
     compilers::{
         Compiler,
         solc::{Solc, SolcCompiler},
@@ -59,6 +59,9 @@ pub struct ProjectCompiler {
     /// Whether to ignore the contract initcode size limit introduced by EIP-3860.
     ignore_eip_3860: bool,
 
+    /// The EVM version to check for contract size limits (EIP-7907).
+    evm_version: EvmVersion,
+
     /// Extra files to include, that are not necessarily in the project's source dir.
     files: Vec<PathBuf>,
 
@@ -85,6 +88,7 @@ impl ProjectCompiler {
             quiet: Some(crate::shell::is_quiet()),
             bail: None,
             ignore_eip_3860: false,
+            evm_version: EvmVersion::Prague,
             files: Vec::new(),
             dynamic_test_linking: false,
         }
@@ -130,6 +134,13 @@ impl ProjectCompiler {
     #[inline]
     pub fn ignore_eip_3860(mut self, yes: bool) -> Self {
         self.ignore_eip_3860 = yes;
+        self
+    }
+
+    /// Sets the EVM version to check for EIP-7907 size limits.
+    #[inline]
+    pub fn evm_version(mut self, version: EvmVersion) -> Self {
+        self.evm_version = version;
         self
     }
 
@@ -276,8 +287,11 @@ impl ProjectCompiler {
                 sh_println!()?;
             }
 
-            let mut size_report =
-                SizeReport { report_kind: report_kind(), contracts: BTreeMap::new() };
+            let mut size_report = SizeReport {
+                report_kind: report_kind(),
+                evm_version: self.evm_version,
+                contracts: BTreeMap::new(),
+            };
 
             let mut artifacts: BTreeMap<String, Vec<_>> = BTreeMap::new();
             for (id, artifact) in output.artifact_ids().filter(|(id, _)| {
@@ -322,16 +336,22 @@ impl ProjectCompiler {
 
             sh_println!("{size_report}")?;
 
+            let runtime_limit = size_report.runtime_size_limit();
+            let eip_name =
+                if is_eip_7907_enabled(self.evm_version) { "EIP-7907" } else { "EIP-170" };
             eyre::ensure!(
                 !size_report.exceeds_runtime_size_limit(),
                 "some contracts exceed the runtime size limit \
-                 (EIP-170: {CONTRACT_RUNTIME_SIZE_LIMIT} bytes)"
+                 ({eip_name}: {runtime_limit} bytes)"
             );
             // Check size limits only if not ignoring EIP-3860
+            let initcode_limit = size_report.initcode_size_limit();
+            let init_eip_name =
+                if is_eip_7907_enabled(self.evm_version) { "EIP-7907" } else { "EIP-3860" };
             eyre::ensure!(
                 self.ignore_eip_3860 || !size_report.exceeds_initcode_size_limit(),
                 "some contracts exceed the initcode size limit \
-                 (EIP-3860: {CONTRACT_INITCODE_SIZE_LIMIT} bytes)"
+                  ({init_eip_name}: {initcode_limit} bytes)"
             );
         }
 
@@ -345,10 +365,18 @@ const CONTRACT_RUNTIME_SIZE_LIMIT: usize = 24576;
 // https://eips.ethereum.org/EIPS/eip-3860
 const CONTRACT_INITCODE_SIZE_LIMIT: usize = 49152;
 
+// https://eips.ethereum.org/EIPS/eip-7907
+const CONTRACT_RUNTIME_SIZE_LIMIT_EIP_7907: usize = 49152;
+
+// https://eips.ethereum.org/EIPS/eip-7907
+const CONTRACT_INITCODE_SIZE_LIMIT_EIP_7907: usize = 98304;
+
 /// Contracts with info about their size
 pub struct SizeReport {
     /// What kind of report to generate.
     report_kind: ReportKind,
+    /// The EVM version to check for EIP-7907 size limits.
+    evm_version: EvmVersion,
     /// `contract name -> info`
     pub contracts: BTreeMap<String, ContractInfo>,
 }
@@ -376,12 +404,40 @@ impl SizeReport {
 
     /// Returns true if any contract exceeds the runtime size limit, excluding dev contracts.
     pub fn exceeds_runtime_size_limit(&self) -> bool {
-        self.max_runtime_size() > CONTRACT_RUNTIME_SIZE_LIMIT
+        let limit = if is_eip_7907_enabled(self.evm_version) {
+            CONTRACT_RUNTIME_SIZE_LIMIT_EIP_7907
+        } else {
+            CONTRACT_RUNTIME_SIZE_LIMIT
+        };
+        self.max_runtime_size() > limit
     }
 
     /// Returns true if any contract exceeds the initcode size limit, excluding dev contracts.
     pub fn exceeds_initcode_size_limit(&self) -> bool {
-        self.max_init_size() > CONTRACT_INITCODE_SIZE_LIMIT
+        let limit = if is_eip_7907_enabled(self.evm_version) {
+            CONTRACT_INITCODE_SIZE_LIMIT_EIP_7907
+        } else {
+            CONTRACT_INITCODE_SIZE_LIMIT
+        };
+        self.max_init_size() > limit
+    }
+
+    /// Returns the runtime size limit based on EIP configuration.
+    pub fn runtime_size_limit(&self) -> usize {
+        if is_eip_7907_enabled(self.evm_version) {
+            CONTRACT_RUNTIME_SIZE_LIMIT_EIP_7907
+        } else {
+            CONTRACT_RUNTIME_SIZE_LIMIT
+        }
+    }
+
+    /// Returns the initcode size limit based on EIP configuration.
+    pub fn initcode_size_limit(&self) -> usize {
+        if is_eip_7907_enabled(self.evm_version) {
+            CONTRACT_INITCODE_SIZE_LIMIT_EIP_7907
+        } else {
+            CONTRACT_INITCODE_SIZE_LIMIT
+        }
     }
 }
 
@@ -402,6 +458,9 @@ impl Display for SizeReport {
 
 impl SizeReport {
     fn format_json_output(&self) -> String {
+        let runtime_limit = self.runtime_size_limit();
+        let initcode_limit = self.initcode_size_limit();
+
         let contracts = self
             .contracts
             .iter()
@@ -412,8 +471,8 @@ impl SizeReport {
                     serde_json::json!({
                         "runtime_size": contract.runtime_size,
                         "init_size": contract.init_size,
-                        "runtime_margin": CONTRACT_RUNTIME_SIZE_LIMIT as isize - contract.runtime_size as isize,
-                        "init_margin": CONTRACT_INITCODE_SIZE_LIMIT as isize - contract.init_size as isize,
+                        "runtime_margin": runtime_limit as isize - contract.runtime_size as isize,
+                        "init_margin": initcode_limit as isize - contract.init_size as isize,
                     }),
                 )
             })
@@ -425,6 +484,9 @@ impl SizeReport {
     fn format_table_output(&self) -> Table {
         let mut table = Table::new();
         table.apply_modifier(UTF8_ROUND_CORNERS);
+
+        let runtime_limit = self.runtime_size_limit();
+        let initcode_limit = self.initcode_size_limit();
 
         table.set_header(vec![
             Cell::new("Contract"),
@@ -440,19 +502,22 @@ impl SizeReport {
             .iter()
             .filter(|(_, c)| !c.is_dev_contract && (c.runtime_size > 0 || c.init_size > 0));
         for (name, contract) in contracts {
-            let runtime_margin =
-                CONTRACT_RUNTIME_SIZE_LIMIT as isize - contract.runtime_size as isize;
-            let init_margin = CONTRACT_INITCODE_SIZE_LIMIT as isize - contract.init_size as isize;
+            let runtime_margin = runtime_limit as isize - contract.runtime_size as isize;
+            let init_margin = initcode_limit as isize - contract.init_size as isize;
+
+            // Dynamic color thresholds based on the limit of the active EIP
+            let runtime_yellow_threshold = runtime_limit * 3 / 4;
+            let init_yellow_threshold = initcode_limit * 3 / 4;
 
             let runtime_color = match contract.runtime_size {
-                ..18_000 => Color::Reset,
-                18_000..=CONTRACT_RUNTIME_SIZE_LIMIT => Color::Yellow,
+                size if size < runtime_yellow_threshold => Color::Reset,
+                size if size <= runtime_limit => Color::Yellow,
                 _ => Color::Red,
             };
 
             let init_color = match contract.init_size {
-                ..36_000 => Color::Reset,
-                36_000..=CONTRACT_INITCODE_SIZE_LIMIT => Color::Yellow,
+                size if size < init_yellow_threshold => Color::Reset,
+                size if size <= initcode_limit => Color::Yellow,
                 _ => Color::Red,
             };
 
@@ -504,6 +569,13 @@ pub struct ContractInfo {
     pub init_size: usize,
     /// A development contract is either a Script or a Test contract.
     pub is_dev_contract: bool,
+}
+
+/// Returns true if EIP-7907 size limits should be used based on the EVM version.
+/// EIP-7907 is enabled in Osaka.
+#[inline]
+pub fn is_eip_7907_enabled(evm_version: EvmVersion) -> bool {
+    evm_version >= EvmVersion::Osaka
 }
 
 /// Compiles target file path.
@@ -677,5 +749,28 @@ mod tests {
                 name: "Counter".to_string()
             })
         );
+    }
+
+    #[test]
+    fn test_size_report_limits_based_on_evm_version() {
+        let size_report_osaka = SizeReport {
+            report_kind: ReportKind::Text,
+            evm_version: EvmVersion::Osaka,
+            contracts: BTreeMap::new(),
+        };
+
+        let size_report_prague = SizeReport {
+            report_kind: ReportKind::Text,
+            evm_version: EvmVersion::Prague,
+            contracts: BTreeMap::new(),
+        };
+
+        // Osaka should use EIP-7907 limits
+        assert_eq!(size_report_osaka.runtime_size_limit(), CONTRACT_RUNTIME_SIZE_LIMIT_EIP_7907);
+        assert_eq!(size_report_osaka.initcode_size_limit(), CONTRACT_INITCODE_SIZE_LIMIT_EIP_7907);
+
+        // Prague should use EIP-170/EIP-3860 limits
+        assert_eq!(size_report_prague.runtime_size_limit(), CONTRACT_RUNTIME_SIZE_LIMIT);
+        assert_eq!(size_report_prague.initcode_size_limit(), CONTRACT_INITCODE_SIZE_LIMIT);
     }
 }
