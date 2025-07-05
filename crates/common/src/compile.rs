@@ -88,7 +88,7 @@ impl ProjectCompiler {
             quiet: Some(crate::shell::is_quiet()),
             bail: None,
             ignore_eip_3860: false,
-            evm_version: EvmVersion::Prague,
+            evm_version: EvmVersion::default(),
             files: Vec::new(),
             dynamic_test_linking: false,
         }
