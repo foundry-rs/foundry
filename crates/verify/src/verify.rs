@@ -54,16 +54,31 @@ impl Default for VerifierArgs {
     }
 }
 
-/// CLI arguments for `forge verify-contract`.
+/// Submit a contract's source code for verification on a block explorer (e.g. Etherscan, Sourcify).
+///
+/// Example:
+///
+/// forge verify-contract 0x123... src/Counter.sol:Counter --compiler-version 0.8.20
+/// --etherscan-api-key &lt;KEY&gt;
 #[derive(Clone, Debug, Parser)]
+#[command(
+    about = "Verify a deployed contract's source code on a block explorer.",
+    long_about = "Submit a contract's source code for verification on a block explorer (e.g. Etherscan, Sourcify).\n\
+EXAMPLES:\n\
+    forge verify-contract 0x123... src/Counter.sol:Counter --compiler-version 0.8.20 --etherscan-api-key &lt;KEY&gt;\n\
+    forge verify-contract 0x123... src/Counter.sol:Counter --constructor-args 42 --compiler-version 0.8.20\n\
+See more: https://book.getfoundry.sh/reference/forge/forge-verify-contract.html"
+)]
 pub struct VerifyArgs {
-    /// The address of the contract to verify.
+    /// Address of the deployed contract to verify.
+    #[arg(value_name = "ADDRESS")]
     pub address: Address,
 
-    /// The contract identifier in the form `<path>:<contractname>`.
+    /// Contract identifier in the form `<path>:<contractname>`, e.g. `src/Counter.sol:Counter`.
+    #[arg(value_name = "CONTRACT")]
     pub contract: Option<ContractInfo>,
 
-    /// The ABI-encoded constructor arguments.
+    /// ABI-encoded constructor arguments (hex string, e.g. 000000...)
     #[arg(
         long,
         conflicts_with = "constructor_args_path",
@@ -72,7 +87,7 @@ pub struct VerifyArgs {
     )]
     pub constructor_args: Option<String>,
 
-    /// The path to a file containing the constructor arguments.
+    /// Path to a file containing constructor arguments (one per line or as JSON array).
     #[arg(long, value_hint = ValueHint::FilePath, value_name = "PATH")]
     pub constructor_args_path: Option<PathBuf>,
 
@@ -80,15 +95,15 @@ pub struct VerifyArgs {
     #[arg(long)]
     pub guess_constructor_args: bool,
 
-    /// The `solc` version to use to build the smart contract.
+    /// Solidity compiler version to use (e.g. 0.8.20).
     #[arg(long, value_name = "VERSION")]
     pub compiler_version: Option<String>,
 
-    /// The compilation profile to use to build the smart contract.
+    /// Compilation profile to use (e.g. default, release).
     #[arg(long, value_name = "PROFILE_NAME")]
     pub compilation_profile: Option<String>,
 
-    /// The number of optimization runs used to build the smart contract.
+    /// Number of optimizer runs used to build the contract.
     #[arg(long, visible_alias = "optimizer-runs", value_name = "NUM")]
     pub num_of_optimizations: Option<usize>,
 
@@ -96,7 +111,7 @@ pub struct VerifyArgs {
     #[arg(long)]
     pub flatten: bool,
 
-    /// Do not compile the flattened smart contract before verifying (if --flatten is passed).
+    /// Do not compile the flattened contract before verifying (if --flatten is passed).
     #[arg(short, long)]
     pub force: bool,
 
@@ -108,21 +123,15 @@ pub struct VerifyArgs {
     #[arg(long)]
     pub watch: bool,
 
-    /// Set pre-linked libraries.
-    #[arg(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
+    /// Pre-linked libraries in the format &lt;file&gt;:&lt;lib&gt;=&lt;address&gt; (repeatable).
+    #[arg(long, help_heading = "Linker options", env = "DAPP_LIBRARIES", value_name = "LIBRARIES")]
     pub libraries: Vec<String>,
 
-    /// The project's root path.
-    ///
-    /// By default root of the Git repository, if in one,
-    /// or the current working directory.
+    /// Project's root path (default: git root or current directory).
     #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     pub root: Option<PathBuf>,
 
-    /// Prints the standard json compiler input.
-    ///
-    /// The standard json compiler input can be used to manually submit contract verification in
-    /// the browser.
+    /// Print the standard JSON compiler input (for manual verification in a browser).
     #[arg(long, conflicts_with = "flatten")]
     pub show_standard_json_input: bool,
 
@@ -130,10 +139,8 @@ pub struct VerifyArgs {
     #[arg(long)]
     pub via_ir: bool,
 
-    /// The EVM version to use.
-    ///
-    /// Overrides the version specified in the config.
-    #[arg(long)]
+    /// EVM version to use (overrides config).
+    #[arg(long, value_name = "EVM_VERSION")]
     pub evm_version: Option<EvmVersion>,
 
     #[command(flatten)]

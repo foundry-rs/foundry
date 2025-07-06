@@ -37,13 +37,31 @@ use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc, time::D
 
 merge_impl_figment_convert!(CreateArgs, build, eth);
 
-/// CLI arguments for `forge create`.
+/// Deploy a smart contract to the specified network.
+///
+/// This command compiles the contract, encodes constructor arguments, and sends a deployment
+/// transaction.
+///
+/// Example:
+///
+/// forge create src/Counter.sol:Counter --constructor-args 42 --rpc-url &lt;URL&gt; --private-key
+/// &lt;KEY&gt; --broadcast
 #[derive(Clone, Debug, Parser)]
+#[command(
+    about = "Deploy a smart contract to the specified network.",
+    long_about = "Deploy a smart contract to the specified network.\n\
+Compiles the contract, encodes constructor arguments, and sends a deployment transaction.\n\
+EXAMPLES:\n\
+    forge create src/Counter.sol:Counter --constructor-args 42 --rpc-url &lt;URL&gt; --private-key &lt;KEY&gt; --broadcast\n\
+Use --verify to automatically verify the contract after deployment.\n\
+See more: https://book.getfoundry.sh/reference/forge/forge-create.html"
+)]
 pub struct CreateArgs {
-    /// The contract identifier in the form `<path>:<contractname>`.
+    /// Contract identifier in the form `<path>:<contractname>`, e.g. `src/Counter.sol:Counter`.
+    #[arg(value_name = "CONTRACT")]
     contract: ContractInfo,
 
-    /// The constructor arguments.
+    /// Constructor arguments as a space-separated list, e.g. `42 \"hello\"`.
     #[arg(
         long,
         num_args(1..),
@@ -53,7 +71,7 @@ pub struct CreateArgs {
     )]
     constructor_args: Vec<String>,
 
-    /// The path to a file containing the constructor arguments.
+    /// Path to a file containing constructor arguments (one per line or as JSON array).
     #[arg(
         long,
         value_hint = ValueHint::FilePath,
@@ -61,27 +79,24 @@ pub struct CreateArgs {
     )]
     constructor_args_path: Option<PathBuf>,
 
-    /// Broadcast the transaction.
+    /// Broadcast the transaction to the network (otherwise, dry-run only).
     #[arg(long)]
     pub broadcast: bool,
 
-    /// Verify contract after creation.
+    /// Verify contract after creation (using the selected block explorer).
     #[arg(long)]
     verify: bool,
 
-    /// Send via `eth_sendTransaction` using the `--from` argument or `$ETH_FROM` as sender
+    /// Use `eth_sendTransaction` with an unlocked account (requires --from or $ETH_FROM).
     #[arg(long, requires = "from")]
     unlocked: bool,
 
-    /// Prints the standard json compiler input if `--verify` is provided.
-    ///
-    /// The standard json compiler input can be used to manually submit contract verification in
-    /// the browser.
+    /// Print the standard JSON compiler input (for manual verification in a browser).
     #[arg(long, requires = "verify")]
     show_standard_json_input: bool,
 
-    /// Timeout to use for broadcasting transactions.
-    #[arg(long, env = "ETH_TIMEOUT")]
+    /// Timeout (in seconds) for broadcasting transactions.
+    #[arg(long, env = "ETH_TIMEOUT", value_name = "SECONDS")]
     pub timeout: Option<u64>,
 
     #[command(flatten)]
