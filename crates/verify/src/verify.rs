@@ -159,6 +159,9 @@ pub struct VerifyArgs {
     #[command(flatten)]
     pub verifier: VerifierArgs,
 
+    /// The contract language (`solidity` or `vyper`).
+    ///
+    /// Defaults to `solidity` if none provided.
     #[arg(long, value_enum)]
     pub language: Option<ContractLanguage>,
 }
@@ -430,14 +433,14 @@ impl VerifyArgs {
         }
     }
 
+    /// Detects the language for verification from source file extension, if none provided.
     pub fn detect_language(&self, ctx: &VerificationContext) -> ContractLanguage {
-        if let Some(lang) = self.language {
-            return lang;
-        }
-        match ctx.target_path.extension().and_then(|e| e.to_str()) {
-            Some("vy") => ContractLanguage::Vyper,
-            _ => ContractLanguage::Solidity,
-        }
+        self.language.unwrap_or_else(|| {
+            match ctx.target_path.extension().and_then(|e| e.to_str()) {
+                Some("vy") => ContractLanguage::Vyper,
+                _ => ContractLanguage::Solidity,
+            }
+        })
     }
 }
 
