@@ -2611,7 +2611,7 @@ forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
         .assert_success();
 });
 
-// https://github.com/foundry-rs/foundry/issues/10189
+// https://github.com/foundry-rs/foundry/issues/10848
 forgetest_async!(cast_call_disable_labels, |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 

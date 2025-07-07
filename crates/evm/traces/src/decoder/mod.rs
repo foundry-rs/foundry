@@ -354,13 +354,11 @@ impl CallTraceDecoder {
 
     /// Decodes a call trace.
     pub async fn decode_function(&self, trace: &CallTrace) -> DecodedCallTrace {
-        let label=if self.disable_labels { None } else { self.labels.get(&trace.address).cloned() };
+        let label =
+            if self.disable_labels { None } else { self.labels.get(&trace.address).cloned() };
 
         if trace.kind.is_any_create() {
-            return DecodedCallTrace {
-                label,
-                ..Default::default()
-            };
+            return DecodedCallTrace { label, ..Default::default() };
         }
 
         if let Some(trace) = precompiles::decode(trace, 1) {
