@@ -797,6 +797,26 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
         );
     }
 
+    fn step(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
+    ) {
+        call_inspectors!(
+            [
+                &mut self.fuzzer,
+                &mut self.tracer,
+                &mut self.line_coverage,
+                &mut self.edge_coverage,
+                &mut self.cheatcodes,
+                &mut self.script_execution_inspector,
+                &mut self.printer,
+                &mut self.revert_diag
+            ],
+            |inspector| inspector.step(interpreter, ecx),
+        );
+    }
+
     fn step_end(
         &mut self,
         interpreter: &mut Interpreter,
