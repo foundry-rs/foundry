@@ -1,6 +1,6 @@
 use crate::{
-    json::json_value_to_token, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, DatabaseExt,
-    Result, Vm::*,
+    Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, DatabaseExt, Result, Vm::*,
+    json::json_value_to_token,
 };
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{B256, U256};
@@ -8,7 +8,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
 use foundry_common::provider::ProviderBuilder;
-use foundry_evm_core::{fork::CreateFork, AsEnvMut, ContextExt};
+use foundry_evm_core::{AsEnvMut, ContextExt, fork::CreateFork};
 
 impl Cheatcode for activeForkCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
@@ -326,8 +326,8 @@ fn create_fork_request(
         evm_opts.fork_headers = Some(vec![format!("Authorization: {auth}")]);
     }
     let fork = CreateFork {
-        enable_caching: !ccx.state.config.no_storage_caching &&
-            ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
+        enable_caching: !ccx.state.config.no_storage_caching
+            && ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
         url,
         env: ccx.ecx.as_env_mut().to_owned(),
         evm_opts,

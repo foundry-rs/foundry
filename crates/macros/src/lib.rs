@@ -9,7 +9,7 @@
 extern crate proc_macro_error2;
 
 use proc_macro::TokenStream;
-use syn::{parse_macro_input, DeriveInput, Error};
+use syn::{DeriveInput, Error, parse_macro_input};
 
 mod cheatcodes;
 mod console_fmt;

@@ -10,7 +10,7 @@ macro_rules! link {
 /// # Parameters
 ///
 /// Each lint requires the following input fields:
-/// - `$id`: Identitifier of the generated `SolLint` constant.
+/// - `$id`: Identifier of the generated `SolLint` constant.
 /// - `$severity`: The `Severity` of the lint (e.g. `High`, `Med`, `Low`, `Info`, `Gas`).
 /// - `$str_id`: A unique identifier used to reference a specific lint during configuration.
 /// - `$desc`: A short description of the lint.
@@ -40,7 +40,7 @@ macro_rules! declare_forge_lint {
 ///
 /// # Parameters
 ///
-/// - `$pass_id`: Identitifier of the generated struct that will implement the pass trait.
+/// - `$pass_id`: Identifier of the generated struct that will implement the pass trait.
 /// - (`$lint`): tuple with `SolLint` constants that should be evaluated on every input that pass.
 ///
 /// # Outputs

@@ -1,7 +1,7 @@
 use foundry_common::fs::{self, files_with_ext};
 use foundry_test_utils::{
-    snapbox::{Data, IntoData},
     TestCommand, TestProject,
+    snapbox::{Data, IntoData},
 };
 use std::path::Path;
 

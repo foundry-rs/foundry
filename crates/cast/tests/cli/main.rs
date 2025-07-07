@@ -3,7 +3,7 @@
 use alloy_chains::NamedChain;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{TransactionBuilder, TransactionResponse};
-use alloy_primitives::{address, b256, Bytes, B256};
+use alloy_primitives::{B256, Bytes, address, b256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{BlockNumberOrTag, Index, TransactionRequest};
 use anvil::NodeConfig;
@@ -90,7 +90,7 @@ Display options:
           - 4 (-vvvv): Print execution traces for all tests, and setup traces for failing tests.
           - 5 (-vvvvv): Print execution and setup traces for all tests, including storage changes.
 
-Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html
+Find more information in the book: https://getfoundry.sh/cast/overview
 
 "#]]);
 });

@@ -1,14 +1,14 @@
 use alloy_primitives::hex;
 use clap::Parser;
-use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Table};
+use comfy_table::{Table, modifiers::UTF8_ROUND_CORNERS};
 use eyre::Result;
 use foundry_cli::{
     opts::{BuildOpts, CompilerOpts, ProjectPathOpts},
-    utils::{cache_local_signatures, FoundryPathExt},
+    utils::{FoundryPathExt, cache_local_signatures},
 };
 use foundry_common::{
-    compile::{compile_target, PathOrContractInfo, ProjectCompiler},
-    selectors::{import_selectors, SelectorImportData},
+    compile::{PathOrContractInfo, ProjectCompiler, compile_target},
+    selectors::{SelectorImportData, import_selectors},
 };
 use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo};
 use std::fs::canonicalize;
@@ -155,7 +155,7 @@ impl SelectorsSubcommands {
                 while let Some((contract, artifact)) = artifacts.next() {
                     let abi = artifact.abi.ok_or_else(|| eyre::eyre!("Unable to fetch abi"))?;
                     if abi.functions.is_empty() && abi.events.is_empty() && abi.errors.is_empty() {
-                        continue
+                        continue;
                     }
 
                     sh_println!("Uploading selectors for {contract}...")?;
@@ -276,7 +276,7 @@ impl SelectorsSubcommands {
                 while let Some((contract, artifact)) = artifacts.next() {
                     let abi = artifact.abi.ok_or_else(|| eyre::eyre!("Unable to fetch abi"))?;
                     if abi.functions.is_empty() && abi.events.is_empty() && abi.errors.is_empty() {
-                        continue
+                        continue;
                     }
 
                     sh_println!("{contract}")?;

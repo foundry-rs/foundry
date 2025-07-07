@@ -1,13 +1,13 @@
 use foundry_compilers::Language;
 use foundry_config::lint::Severity;
 use solar_ast::{
-    visit::Visit, Expr, ImportDirective, ItemContract, ItemFunction, ItemStruct, SourceUnit,
-    UsingDirective, VariableDefinition,
+    Expr, ImportDirective, ItemContract, ItemFunction, ItemStruct, SourceUnit, UsingDirective,
+    VariableDefinition, visit::Visit,
 };
 use solar_interface::{
+    Session, Span,
     data_structures::Never,
     diagnostics::{DiagBuilder, DiagId, MultiSpan},
-    Session, Span,
 };
 use std::{ops::ControlFlow, path::PathBuf};
 

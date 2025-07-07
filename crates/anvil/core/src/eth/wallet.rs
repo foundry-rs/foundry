@@ -1,4 +1,4 @@
-use alloy_primitives::{map::HashMap, Address, ChainId, U64};
+use alloy_primitives::{Address, ChainId, U64, map::HashMap};
 use serde::{Deserialize, Serialize};
 
 /// The capability to perform [EIP-7702][eip-7702] delegations, sponsored by the sequencer.

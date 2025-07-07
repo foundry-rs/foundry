@@ -3,15 +3,10 @@ use crate::{provider::VerificationContext, verify::ContractLanguage};
 use eyre::{Context, Result};
 use foundry_block_explorers::verify::CodeFormat;
 use foundry_compilers::{
-    artifacts::{
-        vyper::{VyperInput, VyperSettings},
-        Source, StandardJsonCompilerInput,
-    },
-    error::SolcError,
+    artifacts::{Source, StandardJsonCompilerInput, vyper::VyperInput},
     solc::SolcLanguage,
-    Vyper, VyperOutput,
 };
-use std::{path::Path, process::Command};
+use std::path::Path;
 
 #[derive(Debug)]
 pub struct EtherscanStandardJsonSource;

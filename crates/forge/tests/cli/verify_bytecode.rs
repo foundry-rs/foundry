@@ -1,10 +1,9 @@
 use foundry_compilers::artifacts::{BytecodeHash, EvmVersion};
 use foundry_config::Config;
 use foundry_test_utils::{
-    forgetest_async,
+    TestCommand, TestProject, forgetest_async,
     rpc::{next_etherscan_api_key, next_http_archive_rpc_url},
     util::OutputExt,
-    TestCommand, TestProject,
 };
 
 #[expect(clippy::too_many_arguments)]
@@ -55,10 +54,14 @@ fn test_verify_bytecode(
 
     let output = cmd.forge_fuse().args(args).assert_success().get_output().stdout_lossy();
 
-    assert!(output
-        .contains(format!("Creation code matched with status {}", expected_matches.0).as_str()));
-    assert!(output
-        .contains(format!("Runtime code matched with status {}", expected_matches.1).as_str()));
+    assert!(
+        output
+            .contains(format!("Creation code matched with status {}", expected_matches.0).as_str())
+    );
+    assert!(
+        output
+            .contains(format!("Runtime code matched with status {}", expected_matches.1).as_str())
+    );
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -128,11 +131,17 @@ fn test_verify_bytecode_with_ignore(
     }
 
     if ignore == "runtime" {
-        assert!(!output
-            .contains(format!("Runtime code matched with status {}", expected_matches.1).as_str()));
+        assert!(
+            !output.contains(
+                format!("Runtime code matched with status {}", expected_matches.1).as_str()
+            )
+        );
     } else {
-        assert!(output
-            .contains(format!("Runtime code matched with status {}", expected_matches.1).as_str()));
+        assert!(
+            output.contains(
+                format!("Runtime code matched with status {}", expected_matches.1).as_str()
+            )
+        );
     }
 }
 forgetest_async!(can_verify_bytecode_no_metadata, |prj, cmd| {

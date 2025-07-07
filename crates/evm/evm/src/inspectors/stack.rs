@@ -2,23 +2,24 @@ use super::{
     Cheatcodes, CheatsConfig, ChiselState, CustomPrintTracer, Fuzzer, LineCoverageCollector,
     LogCollector, RevertDiagnostic, ScriptExecutionInspector, TracingInspector,
 };
-use alloy_evm::{eth::EthEvmContext, Evm};
+use alloy_evm::{Evm, eth::EthEvmContext};
 use alloy_primitives::{
-    map::{AddressHashMap, HashMap},
     Address, Bytes, Log, TxKind, U256,
+    map::{AddressHashMap, HashMap},
 };
 use foundry_cheatcodes::{CheatcodesExecutor, Wallets};
 use foundry_evm_core::{
+    ContextExt, Env, InspectorExt,
     backend::{DatabaseExt, JournaledState},
     evm::new_evm_with_inspector,
-    ContextExt, Env, InspectorExt,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
+    Inspector,
     context::{
-        result::{ExecutionResult, Output},
         BlockEnv,
+        result::{ExecutionResult, Output},
     },
     context_interface::CreateScheme,
     interpreter::{
@@ -26,7 +27,6 @@ use revm::{
         Interpreter, InterpreterResult,
     },
     state::{Account, AccountStatus},
-    Inspector,
 };
 use revm_inspectors::edge_cov::EdgeCovInspector;
 use std::{
@@ -560,9 +560,9 @@ impl InspectorStackRefMut<'_> {
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
-                let different = outcome.result.result != result ||
-                    (outcome.result.result == InstructionResult::Revert &&
-                        outcome.output() != previous_outcome.output());
+                let different = outcome.result.result != result
+                    || (outcome.result.result == InstructionResult::Revert
+                        && outcome.output() != previous_outcome.output());
                 different.then_some(outcome.clone())
             },
         );
@@ -586,9 +586,9 @@ impl InspectorStackRefMut<'_> {
 
                 // If the inspector returns a different status or a revert with a non-empty message,
                 // we assume it wants to tell us something
-                let different = outcome.result.result != result ||
-                    (outcome.result.result == InstructionResult::Revert &&
-                        outcome.output() != previous_outcome.output());
+                let different = outcome.result.result != result
+                    || (outcome.result.result == InstructionResult::Revert
+                        && outcome.output() != previous_outcome.output());
                 different.then_some(outcome.clone())
             },
         );
@@ -683,8 +683,8 @@ impl InspectorStackRefMut<'_> {
             };
 
             // make sure accounts that were warmed earlier do not become cold
-            if acc.status.contains(AccountStatus::Cold) &&
-                !acc_mut.status.contains(AccountStatus::Cold)
+            if acc.status.contains(AccountStatus::Cold)
+                && !acc_mut.status.contains(AccountStatus::Cold)
             {
                 acc.status -= AccountStatus::Cold;
             }
@@ -871,10 +871,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
             ],
             |inspector| {
                 let mut out = None;
-                if let Some(output) = inspector.call(ecx, call) {
-                    if output.result.result != InstructionResult::Continue {
-                        out = Some(Some(output));
-                    }
+                if let Some(output) = inspector.call(ecx, call)
+                    && output.result.result != InstructionResult::Continue
+                {
+                    out = Some(Some(output));
                 }
                 out
             },
@@ -892,10 +892,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
                 }
             }
 
-            if let Some(output) = cheatcodes.call_with_executor(ecx, call, self.inner) {
-                if output.result.result != InstructionResult::Continue {
-                    return Some(output);
-                }
+            if let Some(output) = cheatcodes.call_with_executor(ecx, call, self.inner)
+                && output.result.result != InstructionResult::Continue
+            {
+                return Some(output);
             }
         }
 
@@ -923,10 +923,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
                         &mut ecx.journaled_state.inner;
                     for (addr, acc_mut) in state {
                         // Do not mark accounts and storage cold accounts with arbitrary storage.
-                        if let Some(cheatcodes) = &self.cheatcodes {
-                            if cheatcodes.has_arbitrary_storage(addr) {
-                                continue;
-                            }
+                        if let Some(cheatcodes) = &self.cheatcodes
+                            && cheatcodes.has_arbitrary_storage(addr)
+                        {
+                            continue;
                         }
 
                         if !warm_preloaded_addresses.contains(addr) {
@@ -985,10 +985,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
             |inspector| inspector.create(ecx, create).map(Some),
         );
 
-        if !matches!(create.scheme, CreateScheme::Create2 { .. }) &&
-            self.enable_isolation &&
-            !self.in_inner_context &&
-            ecx.journaled_state.depth == 1
+        if !matches!(create.scheme, CreateScheme::Create2 { .. })
+            && self.enable_isolation
+            && !self.in_inner_context
+            && ecx.journaled_state.depth == 1
         {
             let (result, address) = self.transact_inner(
                 ecx,

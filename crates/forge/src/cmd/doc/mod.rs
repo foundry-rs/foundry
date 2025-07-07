@@ -6,7 +6,7 @@ use forge_doc::{
 };
 use foundry_cli::opts::GH_REPO_PREFIX_REGEX;
 use foundry_common::compile::ProjectCompiler;
-use foundry_config::{load_config_with_root, Config};
+use foundry_config::{Config, load_config_with_root};
 use std::{path::PathBuf, process::Command};
 
 mod server;
@@ -79,18 +79,16 @@ impl DocArgs {
         }
         if doc_config.repository.is_none() {
             // Attempt to read repo from git
-            if let Ok(output) = Command::new("git").args(["remote", "get-url", "origin"]).output() {
-                if !output.stdout.is_empty() {
-                    let remote = String::from_utf8(output.stdout)?.trim().to_owned();
-                    if let Some(captures) = GH_REPO_PREFIX_REGEX.captures(&remote) {
-                        let brand = captures.name("brand").unwrap().as_str();
-                        let tld = captures.name("tld").unwrap().as_str();
-                        let project = GH_REPO_PREFIX_REGEX.replace(&remote, "");
-                        doc_config.repository = Some(format!(
-                            "https://{brand}.{tld}/{}",
-                            project.trim_end_matches(".git")
-                        ));
-                    }
+            if let Ok(output) = Command::new("git").args(["remote", "get-url", "origin"]).output()
+                && !output.stdout.is_empty()
+            {
+                let remote = String::from_utf8(output.stdout)?.trim().to_owned();
+                if let Some(captures) = GH_REPO_PREFIX_REGEX.captures(&remote) {
+                    let brand = captures.name("brand").unwrap().as_str();
+                    let tld = captures.name("tld").unwrap().as_str();
+                    let project = GH_REPO_PREFIX_REGEX.replace(&remote, "");
+                    doc_config.repository =
+                        Some(format!("https://{brand}.{tld}/{}", project.trim_end_matches(".git")));
                 }
             }
         }

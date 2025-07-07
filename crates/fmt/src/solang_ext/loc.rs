@@ -93,10 +93,10 @@ impl CodeLocationExt for pt::ImportPath {
 impl CodeLocationExt for pt::VersionComparator {
     fn loc(&self) -> pt::Loc {
         match self {
-            Self::Plain { loc, .. } |
-            Self::Operator { loc, .. } |
-            Self::Or { loc, .. } |
-            Self::Range { loc, .. } => *loc,
+            Self::Plain { loc, .. }
+            | Self::Operator { loc, .. }
+            | Self::Or { loc, .. }
+            | Self::Range { loc, .. } => *loc,
         }
     }
 }
