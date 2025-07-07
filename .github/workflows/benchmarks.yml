@@ -35,7 +35,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config
+          sudo apt-get install -y build-essential pkg-config nodejs npm
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -82,11 +82,6 @@ jobs:
           ./.github/scripts/setup-foundryup.sh
           echo "${{ github.workspace }}/.foundry/bin" >> $GITHUB_PATH
 
-      - name: Install hyperfine
-        run: |
-          curl -L -o hyperfine_1.19.0_amd64.deb https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb
-          sudo dpkg -i hyperfine_1.19.0_amd64.deb || sudo apt-get install -f -y
-
       - name: Download benchmark binary
         uses: actions/download-artifact@v4
         with:
@@ -129,11 +124,6 @@ jobs:
           ./.github/scripts/setup-foundryup.sh
           echo "${{ github.workspace }}/.foundry/bin" >> $GITHUB_PATH
 
-      - name: Install hyperfine
-        run: |
-          curl -L -o hyperfine_1.19.0_amd64.deb https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb
-          sudo dpkg -i hyperfine_1.19.0_amd64.deb || sudo apt-get install -f -y
-
       - name: Download benchmark binary
         uses: actions/download-artifact@v4
         with:
@@ -175,11 +165,6 @@ jobs:
         run: |
           ./.github/scripts/setup-foundryup.sh
           echo "${{ github.workspace }}/.foundry/bin" >> $GITHUB_PATH
-
-      - name: Install hyperfine
-        run: |
-          curl -L -o hyperfine_1.19.0_amd64.deb https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb
-          sudo dpkg -i hyperfine_1.19.0_amd64.deb || sudo apt-get install -f -y
 
       - name: Download benchmark binary
         uses: actions/download-artifact@v4
