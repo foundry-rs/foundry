@@ -344,14 +344,14 @@ impl ProjectCompiler {
                 "some contracts exceed the runtime size limit \
                  ({eip_name}: {runtime_limit} bytes)"
             );
-            // Check size limits only if not ignoring EIP-3860
+            // Check init code size limit only if not ignoring it
             let initcode_limit = size_report.initcode_size_limit();
             let init_eip_name =
                 if is_eip_7907_enabled(self.evm_version) { "EIP-7907" } else { "EIP-3860" };
             eyre::ensure!(
                 self.ignore_eip_3860 || !size_report.exceeds_initcode_size_limit(),
                 "some contracts exceed the initcode size limit \
-                  ({init_eip_name}: {initcode_limit} bytes)"
+                 ({init_eip_name}: {initcode_limit} bytes)"
             );
         }
 
@@ -404,22 +404,12 @@ impl SizeReport {
 
     /// Returns true if any contract exceeds the runtime size limit, excluding dev contracts.
     pub fn exceeds_runtime_size_limit(&self) -> bool {
-        let limit = if is_eip_7907_enabled(self.evm_version) {
-            CONTRACT_RUNTIME_SIZE_LIMIT_EIP_7907
-        } else {
-            CONTRACT_RUNTIME_SIZE_LIMIT
-        };
-        self.max_runtime_size() > limit
+        self.max_runtime_size() > self.runtime_size_limit()
     }
 
     /// Returns true if any contract exceeds the initcode size limit, excluding dev contracts.
     pub fn exceeds_initcode_size_limit(&self) -> bool {
-        let limit = if is_eip_7907_enabled(self.evm_version) {
-            CONTRACT_INITCODE_SIZE_LIMIT_EIP_7907
-        } else {
-            CONTRACT_INITCODE_SIZE_LIMIT
-        };
-        self.max_init_size() > limit
+        self.max_init_size() > self.initcode_size_limit()
     }
 
     /// Returns the runtime size limit based on EIP configuration.
