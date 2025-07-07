@@ -115,6 +115,7 @@ impl ForgeTestProfile {
 
         config.fuzz = FuzzConfig {
             runs: 256,
+            fail_on_revert: true,
             max_test_rejects: 65536,
             seed: None,
             dictionary: FuzzDictionaryConfig {
