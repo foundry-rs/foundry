@@ -156,7 +156,7 @@ pub struct LogsFilter {
     pub filter: FilteredParams,
     /// existing logs that matched the filter when the listener was installed
     ///
-    /// They'll be returned on the first pill
+    /// They'll be returned on the first poll
     pub historic: Option<Vec<Log>>,
 }
 
