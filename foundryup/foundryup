@@ -217,7 +217,7 @@ main() {
         for bin in "${BINS[@]}"; do
           expected=""
           for i in "${!HASH_NAMES[@]}"; do
-            if [ "${HASH_NAMES[$i]}" = "$bin" ]; then
+            if [ "${HASH_NAMES[$i]}" = "$bin" ] || [ "${HASH_NAMES[$i]}" = "$bin.exe" ]; then
               expected="${HASH_VALUES[$i]}"
               break
             fi
@@ -290,7 +290,7 @@ main() {
         for bin in "${BINS[@]}"; do
           expected=""
           for i in "${!HASH_NAMES[@]}"; do
-            if [ "${HASH_NAMES[$i]}" = "$bin" ]; then
+            if [ "${HASH_NAMES[$i]}" = "$bin" ] || [ "${HASH_NAMES[$i]}" = "$bin.exe" ]; then
               expected="${HASH_VALUES[$i]}"
               break
             fi
