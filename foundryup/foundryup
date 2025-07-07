@@ -64,6 +64,9 @@ main() {
   # Print the banner after successfully parsing args
   banner
 
+  # Check if the foundryup installer is up to date, warn the user if not
+  check_installer_up_to_date
+
   if [ -n "$FOUNDRYUP_PR" ]; then
     if [ -z "$FOUNDRYUP_BRANCH" ]; then
       FOUNDRYUP_BRANCH="refs/pull/$FOUNDRYUP_PR/head"
@@ -278,7 +281,7 @@ main() {
     
     if [ "$FOUNDRYUP_IGNORE_VERIFICATION" = true ]; then
       say "skipped SHA verification for downloaded binaries due to --force flag"
-    else 
+    else
       # Verify the downloaded binaries against the attestation file.
       # If the attestation file was not found or is empty, we skip the verification.
       if $attestation_missing; then
@@ -434,15 +437,28 @@ version() {
 update() {
   say "updating foundryup..."
 
-  # Download to a temporary file first
+  # Current version is guaranteed
+  current_version="$FOUNDRYUP_INSTALLER_VERSION"
+
+  # Download the new version
   tmp_file="$(mktemp)"
   ensure download "$FOUNDRY_BIN_URL" "$tmp_file"
 
-  # Replace the current foundryup with the downloaded file
+  # Extract new version from downloaded file
+  new_version=$(grep -Eo 'FOUNDRYUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' "$tmp_file" | cut -d'"' -f2)
+
+  # If the new version could not be determined, skip the check.
+  # This is in case the new file is not available or does not contain the version.
+  if [ -z "$new_version" ]; then
+    warn "Could not determine new foundryup version. Skipping version check."
+    return 0
+  fi
+
+  # Overwrite existing foundryup
   ensure mv "$tmp_file" "$FOUNDRY_BIN_PATH"
   ensure chmod +x "$FOUNDRY_BIN_PATH"
 
-  say "successfully updated foundryup"
+  say "successfully updated foundryup: $current_version → $new_version"
   exit 0
 }
 
@@ -533,6 +549,40 @@ check_cmd() {
   command -v "$1" &>/dev/null
 }
 
+check_installer_up_to_date() {
+  say "checking if foundryup is up to date..."
+
+  tmp_file="$(mktemp)"
+  ensure download "$FOUNDRY_BIN_URL" "$tmp_file"
+
+  remote_version=$(grep -Eo 'FOUNDRYUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' "$tmp_file" | cut -d'"' -f2)
+  rm -f "$tmp_file"
+
+  if [ -z "$remote_version" ]; then
+    warn "Could not determine remote foundryup version. Skipping version check."
+    return 0
+  fi
+
+  newest=$(printf "%s\n%s\n" "$FOUNDRYUP_INSTALLER_VERSION" "$remote_version" | sort -V | tail -n1)
+
+  if [ "$newest" = "$remote_version" ] && [ "$FOUNDRYUP_INSTALLER_VERSION" != "$remote_version" ]; then
+    printf '
+Your foundryup is out of date.
+
+Installed: %s → Latest: %s
+
+To update, run:
+
+  foundryup --update
+
+Updating gives you access to the latest features and bug fixes.
+
+' "$FOUNDRYUP_INSTALLER_VERSION" "$remote_version" >&2
+  else
+    say "foundryup is up to date."
+  fi
+}
+
 check_bins_in_use() {
   if check_cmd pgrep; then
     for bin in "${BINS[@]}"; do
@@ -570,7 +620,7 @@ download() {
   fi
 }
 
-# Banner Function for Foundry
+# Banner prompt for Foundry
 banner() {
   printf '
 
