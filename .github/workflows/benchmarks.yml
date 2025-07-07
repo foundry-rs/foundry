@@ -50,8 +50,8 @@ jobs:
 
       - name: Install hyperfine
         run: |
-          wget https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb
-          sudo dpkg -i hyperfine_1.19.0_amd64.deb
+          curl -L -o hyperfine_1.19.0_amd64.deb https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb
+          sudo dpkg -i hyperfine_1.19.0_amd64.deb || sudo apt-get install -f -y
 
       - name: Build benchmark binary
         run: cargo build --release --bin foundry-bench
@@ -79,8 +79,8 @@ jobs:
 
       - name: Install hyperfine
         run: |
-          wget https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb
-          sudo dpkg -i hyperfine_1.19.0_amd64.deb
+          curl -L -o hyperfine_1.19.0_amd64.deb https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb
+          sudo dpkg -i hyperfine_1.19.0_amd64.deb || sudo apt-get install -f -y
 
       - name: Download benchmark binary
         uses: actions/download-artifact@v4
@@ -126,8 +126,8 @@ jobs:
 
       - name: Install hyperfine
         run: |
-          wget https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb
-          sudo dpkg -i hyperfine_1.19.0_amd64.deb
+          curl -L -o hyperfine_1.19.0_amd64.deb https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb
+          sudo dpkg -i hyperfine_1.19.0_amd64.deb || sudo apt-get install -f -y
 
       - name: Download benchmark binary
         uses: actions/download-artifact@v4
@@ -173,8 +173,8 @@ jobs:
 
       - name: Install hyperfine
         run: |
-          wget https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb
-          sudo dpkg -i hyperfine_1.19.0_amd64.deb
+          curl -L -o hyperfine_1.19.0_amd64.deb https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb
+          sudo dpkg -i hyperfine_1.19.0_amd64.deb || sudo apt-get install -f -y
 
       - name: Download benchmark binary
         uses: actions/download-artifact@v4
