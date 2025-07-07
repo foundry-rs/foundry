@@ -6,7 +6,7 @@ use eyre::Result;
 use foundry_common::evm::Breakpoints;
 use foundry_config::FuzzConfig;
 use foundry_evm_core::{
-    constants::{MAGIC_ASSUME, TEST_TIMEOUT},
+    constants::{CHEATCODE_ADDRESS, MAGIC_ASSUME, TEST_TIMEOUT},
     decode::{RevertDecoder, SkipReason},
 };
 use foundry_evm_coverage::HitMaps;
@@ -253,7 +253,18 @@ impl FuzzedExecutor {
                 (cheats.breakpoints.clone(), cheats.deprecated.clone())
             });
 
-        let success = self.executor.is_raw_call_mut_success(address, &mut call, false);
+        // Consider call success if test should not fail on reverts and reverter is not the
+        // cheatcode or test address.
+        let success = if !self.config.fail_on_revert
+            && call
+                .reverter
+                .is_some_and(|reverter| reverter != address && reverter != CHEATCODE_ADDRESS)
+        {
+            true
+        } else {
+            self.executor.is_raw_call_mut_success(address, &mut call, false)
+        };
+
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {
                 case: FuzzCase { calldata, gas: call.gas_used, stipend: call.stipend },
