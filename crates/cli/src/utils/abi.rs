@@ -5,7 +5,9 @@ use alloy_primitives::{Address, hex};
 use alloy_provider::{Provider, network::AnyNetwork};
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::EtherscanApiVersion;
-use foundry_common::abi::{encode_function_args, get_func, get_func_etherscan};
+use foundry_common::abi::{
+    encode_function_args, encode_function_args_raw, get_func, get_func_etherscan,
+};
 use futures::future::join_all;
 
 async fn resolve_name_args<P: Provider<AnyNetwork>>(args: &[String], provider: &P) -> Vec<String> {
@@ -53,5 +55,9 @@ pub async fn parse_function_args<P: Provider<AnyNetwork>>(
         get_func_etherscan(sig, to, &args, chain, etherscan_api_key, etherscan_api_version).await?
     };
 
-    Ok((encode_function_args(&func, &args)?, Some(func)))
+    if to.is_none() {
+        Ok((encode_function_args_raw(&func, &args)?, Some(func)))
+    } else {
+        Ok((encode_function_args(&func, &args)?, Some(func)))
+    }
 }
