@@ -102,7 +102,7 @@ Compiler run successful!
 
     // EIP-7907 increased code size limits
 
-    cmd.forge_fuse().args(["build", "--sizes", "--evm_version", "osaka"]).assert_success().stdout_eq(
+    cmd.forge_fuse().args(["build", "--sizes", "--evm-version", "osaka"]).assert_success().stdout_eq(
           str![[r#"
   No files changed, compilation skipped
 
