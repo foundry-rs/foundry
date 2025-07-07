@@ -277,3 +277,93 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 });
+
+forgetest_init!(test_fuzz_fail_on_revert, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.update_config(|config| config.fuzz.fail_on_revert = false);
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function setNumber(uint256 newNumber) public {
+        require(number > 10000000000, "low number");
+        number = newNumber;
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    prj.add_test(
+        "CounterTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import "src/Counter.sol";
+
+contract CounterTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+    }
+
+    function testFuzz_SetNumberRequire(uint256 x) public {
+        counter.setNumber(x);
+        require(counter.number() == 1);
+    }
+
+    function testFuzz_SetNumberAssert(uint256 x) public {
+        counter.setNumber(x);
+        assertEq(counter.number(), 1);
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    // Tests should not fail as revert happens in Counter contract.
+    cmd.args(["test", "--mc", "CounterTest"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/CounterTest.t.sol:CounterTest
+[PASS] testFuzz_SetNumberAssert(uint256) (runs: 256, [AVG_GAS])
+[PASS] testFuzz_SetNumberRequire(uint256) (runs: 256, [AVG_GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+
+    // Tested contract does not revert.
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    // Tests should fail as revert happens in cheatcode (assert) and test (require) contract.
+    cmd.assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/CounterTest.t.sol:CounterTest
+[FAIL: assertion failed: [..]] testFuzz_SetNumberAssert(uint256) (runs: 0, [AVG_GAS])
+[FAIL: EvmError: Revert; [..]] testFuzz_SetNumberRequire(uint256) (runs: 0, [AVG_GAS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+...
+
+"#]]);
+});
