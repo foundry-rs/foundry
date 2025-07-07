@@ -56,10 +56,10 @@ pub struct BuildArgs {
     #[serde(skip)]
     pub sizes: bool,
 
-    /// Ignore initcode contract bytecode size limit introduced by EIP-3860.
-    #[arg(long, alias = "ignore-initcode-size")]
+    /// Ignore initcode contract bytecode size limit.
+    #[arg(long, alias = "ignore-eip-3860")]
     #[serde(skip)]
-    pub ignore_eip_3860: bool,
+    pub ignore_initcode_size: bool,
 
     #[command(flatten)]
     #[serde(flatten)]
@@ -100,7 +100,7 @@ impl BuildArgs {
             .dynamic_test_linking(config.dynamic_test_linking)
             .print_names(self.names)
             .print_sizes(self.sizes)
-            .ignore_eip_3860(self.ignore_eip_3860)
+            .ignore_initcode_size(self.ignore_initcode_size)
             .evm_version(config.evm_version)
             .bail(!format_json);
 
@@ -208,8 +208,8 @@ impl Provider for BuildArgs {
             dict.insert("sizes".to_string(), true.into());
         }
 
-        if self.ignore_eip_3860 {
-            dict.insert("ignore_eip_3860".to_string(), true.into());
+        if self.ignore_initcode_size {
+            dict.insert("ignore_initcode_size".to_string(), true.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))

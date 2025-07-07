@@ -100,7 +100,39 @@ Compiler run successful!
         .is_json(),
     );
 
-    // Ignore EIP-3860
+    // EIP-7907 increased code size limits
+
+    cmd.forge_fuse().args(["build", "--sizes", "--evm_version", "osaka"]).assert_success().stdout_eq(
+          str![[r#"
+  No files changed, compilation skipped
+
+  ╭---------------+------------------+-------------------+--------------------+---------------------╮
+  | Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
+  +=================================================================================================+
+  | LargeContract | 62               | 50,125            | 49,090             | 48,179              |
+  ╰---------------+------------------+-------------------+--------------------+---------------------╯
+
+
+  "#]],
+      );
+
+    // Ignore initcode size
+
+    cmd.forge_fuse().args(["build", "--sizes", "--ignore-initcode-size"]).assert_success().stdout_eq(
+          str![[r#"
+  No files changed, compilation skipped
+
+  ╭---------------+------------------+-------------------+--------------------+---------------------╮
+  | Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
+  +=================================================================================================+
+  | LargeContract | 62               | 50,125            | 24,514             | -973                |
+  ╰---------------+------------------+-------------------+--------------------+---------------------╯
+
+
+  "#]],
+      );
+
+    // Ignore initcode size using EIP-3860 alias (legacy)
 
     cmd.forge_fuse().args(["build", "--sizes", "--ignore-eip-3860"]).assert_success().stdout_eq(
         str![[r#"

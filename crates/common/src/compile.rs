@@ -56,8 +56,8 @@ pub struct ProjectCompiler {
     /// Whether to bail on compiler errors.
     bail: Option<bool>,
 
-    /// Whether to ignore the contract initcode size limit introduced by EIP-3860.
-    ignore_eip_3860: bool,
+    /// Whether to ignore the contract initcode size limit.
+    ignore_initcode_size: bool,
 
     /// The EVM version to check for contract size limits (EIP-7907).
     evm_version: EvmVersion,
@@ -87,7 +87,7 @@ impl ProjectCompiler {
             print_sizes: None,
             quiet: Some(crate::shell::is_quiet()),
             bail: None,
-            ignore_eip_3860: false,
+            ignore_initcode_size: false,
             evm_version: EvmVersion::default(),
             files: Vec::new(),
             dynamic_test_linking: false,
@@ -130,10 +130,10 @@ impl ProjectCompiler {
         self
     }
 
-    /// Sets whether to ignore EIP-3860 initcode size limits.
+    /// Sets whether to ignore initcode size limits.
     #[inline]
-    pub fn ignore_eip_3860(mut self, yes: bool) -> Self {
-        self.ignore_eip_3860 = yes;
+    pub fn ignore_initcode_size(mut self, yes: bool) -> Self {
+        self.ignore_initcode_size = yes;
         self
     }
 
@@ -349,7 +349,7 @@ impl ProjectCompiler {
             let init_eip_name =
                 if is_eip_7907_enabled(self.evm_version) { "EIP-7907" } else { "EIP-3860" };
             eyre::ensure!(
-                self.ignore_eip_3860 || !size_report.exceeds_initcode_size_limit(),
+                self.ignore_initcode_size || !size_report.exceeds_initcode_size_limit(),
                 "some contracts exceed the initcode size limit \
                  ({init_eip_name}: {initcode_limit} bytes)"
             );
