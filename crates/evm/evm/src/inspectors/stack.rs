@@ -263,6 +263,7 @@ pub struct InspectorData {
     pub edge_coverage: Option<Vec<u8>>,
     pub cheatcodes: Option<Cheatcodes>,
     pub chisel_state: Option<(Vec<U256>, Vec<u8>, InstructionResult)>,
+    pub reverter: Option<Address>,
 }
 
 /// Contains data about the state of outer/main EVM which created and invoked the inner EVM context.
@@ -314,6 +315,8 @@ pub struct InspectorStackInner {
     pub in_inner_context: bool,
     pub inner_context_data: Option<InnerContextData>,
     pub top_frame_journal: HashMap<Address, Account>,
+    /// Address that reverted the call, if any.
+    pub reverter: Option<Address>,
 }
 
 /// Struct keeping mutable references to both parts of [InspectorStack] and implementing
@@ -485,6 +488,7 @@ impl InspectorStack {
                     edge_coverage,
                     log_collector,
                     tracer,
+                    reverter,
                     ..
                 },
         } = self;
@@ -518,6 +522,7 @@ impl InspectorStack {
             edge_coverage: edge_coverage.map(|edge_coverage| edge_coverage.into_hitcount()),
             cheatcodes,
             chisel_state: chisel_state.and_then(|state| state.state),
+            reverter,
         }
     }
 
@@ -566,6 +571,11 @@ impl InspectorStackRefMut<'_> {
                 different.then_some(outcome.clone())
             },
         );
+
+        // Record first address that reverted the call.
+        if result.is_revert() && self.reverter.is_none() {
+            self.reverter = Some(inputs.target_address);
+        }
 
         outcome.clone()
     }
