@@ -32,7 +32,7 @@ use crate::{
         storage::{BlockchainStorage, InMemoryBlockStates, MinedBlockOutcome},
     },
 };
-use alloy_chains::NamedChain;
+use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::{
     Account, BlockHeader, EnvKzgSettings, Header, Receipt, ReceiptWithBloom, Signed,
     Transaction as TransactionTrait, TxEnvelope,
@@ -1100,8 +1100,8 @@ impl Backend {
             // update next base fee
             self.fees.set_base_fee(next_block_base_fee);
 
-            let hardfork = EthereumHardfork::from_chain_id_and_timestamp(
-                self.env().read().evm_env.cfg_env.chain_id,
+            let hardfork = EthereumHardfork::from_chain_and_timestamp(
+                Chain::from_id(self.env.read().evm_env.cfg_env.chain_id),
                 header.timestamp,
             )
             .unwrap_or_default();

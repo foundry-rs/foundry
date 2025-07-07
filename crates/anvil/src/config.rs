@@ -517,10 +517,11 @@ impl NodeConfig {
     }
 
     pub fn get_blob_excess_gas_and_price(&self) -> BlobExcessGasAndPrice {
-        let chain_id = self.chain_id.unwrap_or(Chain::mainnet().id());
-        let hardfork =
-            EthereumHardfork::from_chain_id_and_timestamp(chain_id, self.get_genesis_timestamp())
-                .unwrap_or_default();
+        let hardfork = EthereumHardfork::from_chain_and_timestamp(
+            Chain::from_id(self.chain_id.unwrap_or(Chain::mainnet().id())),
+            self.get_genesis_timestamp(),
+        )
+        .unwrap_or_default();
 
         let blob_base_fee_update_fraction = if hardfork >= EthereumHardfork::Prague {
             BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
@@ -1281,10 +1282,12 @@ latest block number: {latest_block}"
             if let (Some(blob_excess_gas), Some(blob_gas_used)) =
                 (block.header.excess_blob_gas, block.header.blob_gas_used)
             {
-                let hardfork = EthereumHardfork::from_chain_id_and_timestamp(
-                    fork_chain_id
-                        .unwrap_or_else(|| U256::from(Chain::mainnet().id()))
-                        .saturating_to(),
+                let hardfork = EthereumHardfork::from_chain_and_timestamp(
+                    Chain::from_id(
+                        fork_chain_id
+                            .unwrap_or_else(|| U256::from(Chain::mainnet().id()))
+                            .saturating_to(),
+                    ),
                     block.header.timestamp,
                 )
                 .unwrap_or_default();
