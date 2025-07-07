@@ -1284,8 +1284,38 @@ impl Config {
             return Some(endpoint.url().map(Cow::Owned));
         }
 
-        if let Ok(Some(endpoint)) = mesc::get_endpoint_by_query(maybe_alias, Some("foundry")) {
-            return Some(Ok(Cow::Owned(endpoint.url)));
+        if let Some(mesc_url) = self.get_rpc_url_from_mesc(maybe_alias) {
+            return Some(Ok(Cow::Owned(mesc_url)));
+        }
+
+        None
+    }
+
+    /// Attempts to resolve the URL for the given alias from [`mesc`](https://github.com/paradigmxyz/mesc)
+    pub fn get_rpc_url_from_mesc(&self, maybe_alias: &str) -> Option<String> {
+        // Note: mesc requires a MESC_PATH in the env, which the user can configure and is expected
+        // to be part of the shell profile, default is ~/mesc.json
+        let mesc_config = mesc::load::load_config_data()
+            .inspect_err(|err| debug!(%err, "failed to load mesc config"))
+            .ok()?;
+
+        if let Ok(Some(endpoint)) =
+            mesc::query::get_endpoint_by_query(&mesc_config, maybe_alias, Some("foundry"))
+        {
+            return Some(endpoint.url);
+        }
+
+        if maybe_alias.chars().all(|c| c.is_numeric()) {
+            // try to lookup the mesc network by chain id if alias is numeric
+            // This only succeeds if the chain id has a default:
+            // "network_defaults": {
+            //    "50104": "sophon_50104"
+            // }
+            if let Ok(Some(endpoint)) =
+                mesc::query::get_endpoint_by_network(&mesc_config, maybe_alias, Some("foundry"))
+            {
+                return Some(endpoint.url);
+            }
         }
 
         None
@@ -4978,5 +5008,68 @@ mod tests {
 
             Ok(())
         });
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/10926>
+    #[test]
+    fn test_resolve_mesc_by_chain_id() {
+        let s = r#"{
+    "mesc_version": "0.2.1",
+    "default_endpoint": null,
+    "endpoints": {
+        "sophon_50104": {
+            "name": "sophon_50104",
+            "url": "https://rpc.sophon.xyz",
+            "chain_id": "50104",
+            "endpoint_metadata": {}
+        }
+    },
+    "network_defaults": {
+    },
+    "network_names": {},
+    "profiles": {
+        "foundry": {
+            "name": "foundry",
+            "default_endpoint": "local_ethereum",
+            "network_defaults": {
+                "50104": "sophon_50104"
+            },
+            "profile_metadata": {},
+            "use_mesc": true
+        }
+    },
+    "global_metadata": {}
+}"#;
+
+        let config = serde_json::from_str(s).unwrap();
+        let endpoint = mesc::query::get_endpoint_by_network(&config, "50104", Some("foundry"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(endpoint.url, "https://rpc.sophon.xyz");
+
+        let s = r#"{
+    "mesc_version": "0.2.1",
+    "default_endpoint": null,
+    "endpoints": {
+        "sophon_50104": {
+            "name": "sophon_50104",
+            "url": "https://rpc.sophon.xyz",
+            "chain_id": "50104",
+            "endpoint_metadata": {}
+        }
+    },
+    "network_defaults": {
+        "50104": "sophon_50104"
+    },
+    "network_names": {},
+    "profiles": {},
+    "global_metadata": {}
+}"#;
+
+        let config = serde_json::from_str(s).unwrap();
+        let endpoint = mesc::query::get_endpoint_by_network(&config, "50104", Some("foundry"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(endpoint.url, "https://rpc.sophon.xyz");
     }
 }

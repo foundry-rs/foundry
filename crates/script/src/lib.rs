@@ -132,7 +132,7 @@ pub struct ScriptArgs {
     #[arg(long, short, default_value = "130")]
     pub gas_estimate_multiplier: u64,
 
-    /// Send via `eth_sendTransaction` using the `--from` argument or `$ETH_FROM` as sender
+    /// Send via `eth_sendTransaction` using the `--sender` argument or `$ETH_FROM` as sender
     #[arg(
         long,
         conflicts_with_all = &["private_key", "private_keys", "froms", "ledger", "trezor", "aws"],
