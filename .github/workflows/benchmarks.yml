@@ -27,7 +27,7 @@ permissions:
 jobs:
   setup:
     name: Setup and Build
-    runs-on: ubuntu-latest
+    runs-on: foundry-runner
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -65,7 +65,7 @@ jobs:
   forge-test-bench:
     name: Forge Test Benchmarks
     needs: setup
-    runs-on: ubuntu-latest
+    runs-on: foundry-runner
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -112,7 +112,7 @@ jobs:
   forge-build-bench:
     name: Forge Build Benchmarks
     needs: setup
-    runs-on: ubuntu-latest
+    runs-on: foundry-runner
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -159,7 +159,7 @@ jobs:
   forge-coverage-bench:
     name: Forge Coverage Benchmarks
     needs: setup
-    runs-on: ubuntu-latest
+    runs-on: foundry-runner
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -206,7 +206,7 @@ jobs:
   combine-results:
     name: Combine and Publish Results
     needs: [forge-test-bench, forge-build-bench, forge-coverage-bench]
-    runs-on: ubuntu-latest
+    runs-on: foundry-runner
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
