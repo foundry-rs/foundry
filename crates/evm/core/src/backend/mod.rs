@@ -18,7 +18,7 @@ use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
 pub use foundry_fork_db::{BlockchainDb, SharedBackend, cache::BlockchainDbMeta};
 use revm::{
-    Database, DatabaseCommit, JournalEntry,
+    Database, DatabaseCommit, ExecuteEvm, JournalEntry,
     bytecode::Bytecode,
     context::JournalInner,
     context_interface::{block::BlobExcessGasAndPrice, result::ResultAndState},
@@ -779,7 +779,7 @@ impl Backend {
         self.initialize(env);
         let mut evm = crate::evm::new_evm_with_inspector(self, env.to_owned(), inspector);
 
-        let res = evm.transact(env.tx.clone()).wrap_err("EVM error")?;
+        let res = evm.inner.transact(env.tx.clone()).wrap_err("EVM error")?;
 
         *env = evm.as_env_mut().to_owned();
 
@@ -1317,7 +1317,7 @@ impl DatabaseExt for Backend {
             let mut db = self.clone();
             let mut evm = new_evm_with_inspector(&mut db, env.to_owned(), inspector);
             evm.journaled_state.depth = journaled_state.depth + 1;
-            evm.transact(env.tx)?
+            evm.inner.transact(env.tx)?
         };
 
         self.commit(res.state);
@@ -1983,7 +1983,7 @@ fn commit_transaction(
         let mut evm = crate::evm::new_evm_with_inspector(&mut db as _, env.to_owned(), inspector);
         // Adjust inner EVM depth to ensure that inspectors receive accurate data.
         evm.journaled_state.depth = depth + 1;
-        evm.transact(env.tx.clone()).wrap_err("backend: failed committing transaction")?
+        evm.inner.transact(env.tx.clone()).wrap_err("backend: failed committing transaction")?
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 

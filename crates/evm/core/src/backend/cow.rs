@@ -16,7 +16,7 @@ use alloy_rpc_types::TransactionRequest;
 use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
 use revm::{
-    Database, DatabaseCommit,
+    Database, DatabaseCommit, ExecuteEvm,
     bytecode::Bytecode,
     context_interface::result::ResultAndState,
     database::DatabaseRef,
@@ -76,7 +76,7 @@ impl<'a> CowBackend<'a> {
 
         let mut evm = crate::evm::new_evm_with_inspector(self, env.to_owned(), inspector);
 
-        let res = evm.transact(env.tx.clone()).wrap_err("EVM error")?;
+        let res = evm.inner.transact(env.tx.clone()).wrap_err("EVM error")?;
 
         *env = evm.as_env_mut().to_owned();
 

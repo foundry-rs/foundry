@@ -52,6 +52,7 @@ use revm::{
     context::{BlockEnv, JournalTr, LocalContext, TransactionType, result::EVMError},
     context_interface::{CreateScheme, transaction::SignedAuthorization},
     handler::FrameResult,
+    inspector::InspectorEvmTr,
     interpreter::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas, Host,
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
@@ -93,12 +94,23 @@ pub trait CheatcodesExecutor {
         with_evm(self, ccx, |evm| {
             evm.inner.ctx.journaled_state.depth += 1;
 
-            let frame = FrameInput::Create(Box::new(inputs));
+            // let frame_input = FrameInput::Create(Box::new(inputs));
 
-            let outcome = match evm.run_execution(frame)? {
-                FrameResult::Call(_) => unreachable!(),
-                FrameResult::Create(create) => create,
-            };
+            // let outcome = match evm.inner.run_execution(frame)? {
+            //     FrameResult::Call(_) => unreachable!(),
+            //     FrameResult::Create(create) => create,
+            // };
+
+            // let outcome =
+            //     match evm.inner.inspect_frame_run()(frame, |evm| evm.inner.run_execution(frame))?
+            // {         FrameResult::Call(_) => unreachable!(),
+            //         FrameResult::Create(create) => create,
+            //     };
+
+            // let outcome = evm
+            //     .inner
+            //     .inspect_frame_init(FrameInput::Create(Box::new(inputs)))?
+            //     .run(evm.inner.run_execution)?;
 
             evm.inner.ctx.journaled_state.depth -= 1;
 
