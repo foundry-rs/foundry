@@ -504,7 +504,7 @@ impl Cheatcode for blobBaseFeeCall {
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
 
-        let base_fee_fraction_update = if ccx.ecx.cfg.spec >= SpecId::PRAGUE {
+        let blob_base_fee_update_fraction = if ccx.ecx.cfg.spec >= SpecId::PRAGUE {
             BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
         } else {
             BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN
@@ -512,7 +512,7 @@ impl Cheatcode for blobBaseFeeCall {
 
         ccx.ecx
             .block
-            .set_blob_excess_gas_and_price((*newBlobBaseFee).to(), base_fee_fraction_update);
+            .set_blob_excess_gas_and_price((*newBlobBaseFee).to(), blob_base_fee_update_fraction);
         Ok(Default::default())
     }
 }

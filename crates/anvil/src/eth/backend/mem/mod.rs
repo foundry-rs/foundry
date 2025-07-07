@@ -41,6 +41,7 @@ use alloy_consensus::{
 };
 use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::{Database, Evm, eth::EthEvmContext, precompiles::PrecompilesMap};
+use alloy_hardforks::EthereumHardfork;
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
     EthereumWallet, UnknownTxEnvelope, UnknownTypedTransaction,
@@ -108,7 +109,11 @@ use revm::{
     database::{CacheDB, WrapDatabaseRef},
     interpreter::InstructionResult,
     precompile::secp256r1::{P256VERIFY, P256VERIFY_BASE_GAS_FEE},
-    primitives::{KECCAK_EMPTY, eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE, hardfork::SpecId},
+    primitives::{
+        KECCAK_EMPTY,
+        eip4844::{BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
+        hardfork::SpecId,
+    },
     state::AccountInfo,
 };
 use revm_inspectors::transfer::TransferInspector;
@@ -1094,9 +1099,22 @@ impl Backend {
 
             // update next base fee
             self.fees.set_base_fee(next_block_base_fee);
+
+            let hardfork = EthereumHardfork::from_chain_id_and_timestamp(
+                self.env().read().evm_env.cfg_env.chain_id,
+                header.timestamp,
+            )
+            .unwrap_or_default();
+
+            let blob_base_fee_update_fraction = if hardfork >= EthereumHardfork::Prague {
+                BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
+            } else {
+                BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN
+            };
+
             self.fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
                 next_block_excess_blob_gas,
-                BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+                blob_base_fee_update_fraction,
             ));
         }
 
@@ -1440,9 +1458,17 @@ impl Backend {
 
         // update next base fee
         self.fees.set_base_fee(next_block_base_fee);
+
+        let blob_base_fee_update_fraction = if self.env.read().evm_env.spec_id() >= &SpecId::PRAGUE
+        {
+            BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
+        } else {
+            BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN
+        };
+
         self.fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
             next_block_excess_blob_gas,
-            BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+            blob_base_fee_update_fraction,
         ));
 
         // notify all listeners

@@ -26,7 +26,8 @@ use revm::{
     inspector::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{
-        HashMap as Map, KECCAK_EMPTY, Log, eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+        HashMap as Map, KECCAK_EMPTY, Log,
+        eip4844::{BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
         hardfork::SpecId,
     },
     state::{Account, AccountInfo, EvmState, EvmStorageSlot},
@@ -1948,8 +1949,14 @@ fn update_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock) {
     env.block.number = U256::from(block.header.number);
 
     if let Some(excess_blob_gas) = block.header.excess_blob_gas {
+        let blob_base_fee_update_fraction = if env.cfg.spec >= SpecId::PRAGUE {
+            BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
+        } else {
+            BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN
+        };
+
         env.block.blob_excess_gas_and_price =
-            Some(BlobExcessGasAndPrice::new(excess_blob_gas, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE));
+            Some(BlobExcessGasAndPrice::new(excess_blob_gas, blob_base_fee_update_fraction));
     }
 }
 
