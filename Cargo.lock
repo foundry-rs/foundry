@@ -3934,6 +3934,7 @@ dependencies = [
  "solar-data-structures",
  "solar-interface",
  "solar-parse",
+ "solar-sema",
  "thiserror 2.0.12",
 ]
 
