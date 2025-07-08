@@ -45,7 +45,8 @@ pub enum ChiselCommand {
     /// Export the current REPL session source to a Script file
     Export,
     /// Fetch an interface of a verified contract on Etherscan
-    /// Takes: `<addr> <interface-name>`
+    /// Takes: `<addr> <interface-name>` and optional `<chain-id>` (defaults to `1` / mainnet if
+    /// not specified).
     Fetch,
     /// Executes a shell command
     Exec,
