@@ -2,7 +2,7 @@ use super::{
     Cheatcodes, CheatsConfig, ChiselState, CustomPrintTracer, Fuzzer, LineCoverageCollector,
     LogCollector, RevertDiagnostic, ScriptExecutionInspector, TracingInspector,
 };
-use alloy_evm::{Evm, eth::EthEvmContext};
+use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256,
     map::{AddressHashMap, HashMap},
@@ -16,7 +16,7 @@ use foundry_evm_core::{
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
-    Inspector,
+    ExecuteEvm, Inspector,
     context::{
         BlockEnv,
         result::{ExecutionResult, Output},
@@ -662,7 +662,7 @@ impl InspectorStackRefMut<'_> {
             // set depth to 1 to make sure traces are collected correctly
             evm.journaled_state.depth = 1;
 
-            let res = evm.transact(env.tx.clone());
+            let res = evm.inner.transact(env.tx.clone());
 
             // need to reset the env in case it was modified via cheatcodes during execution
             *env.cfg = evm.cfg.clone();

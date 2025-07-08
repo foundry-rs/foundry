@@ -49,13 +49,17 @@ use rand::Rng;
 use revm::{
     Inspector, Journal,
     bytecode::opcode as op,
-    context::{BlockEnv, JournalTr, LocalContext, TransactionType, result::EVMError},
+    context::{
+        BlockEnv, ContextTr, JournalTr, LocalContext, LocalContextTr, TransactionType,
+        result::EVMError,
+    },
     context_interface::{CreateScheme, transaction::SignedAuthorization},
-    handler::FrameResult,
+    handler::{EvmTr, FrameResult},
     inspector::InspectorEvmTr,
     interpreter::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas, Host,
-        InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
+        InstructionResult, Interpreter, InterpreterAction, InterpreterResult, SharedMemory,
+        interpreter_action::FrameInit,
         interpreter_types::{Jumps, LoopControl, MemoryTr},
     },
     state::EvmStorageSlot,
@@ -94,23 +98,24 @@ pub trait CheatcodesExecutor {
         with_evm(self, ccx, |evm| {
             evm.inner.ctx.journaled_state.depth += 1;
 
-            // let frame_input = FrameInput::Create(Box::new(inputs));
+            let frame_input = FrameInput::Create(Box::new(inputs));
+            let memory = SharedMemory::new_with_buffer(
+                evm.inner.ctx().local().shared_memory_buffer().clone(),
+            );
+            let frame_init =
+                FrameInit { depth: evm.inner.ctx.journaled_state.depth, memory, frame_input };
 
-            // let outcome = match evm.inner.run_execution(frame)? {
-            //     FrameResult::Call(_) => unreachable!(),
-            //     FrameResult::Create(create) => create,
-            // };
+            let _set_frame = evm.inner.inspect_frame_init(frame_init)?;
 
-            // let outcome =
-            //     match evm.inner.inspect_frame_run()(frame, |evm| evm.inner.run_execution(frame))?
-            // {         FrameResult::Call(_) => unreachable!(),
-            //         FrameResult::Create(create) => create,
-            //     };
+            let result = match evm.inner.inspect_frame_run()? {
+                revm::handler::ItemOrResult::Result(result) => result,
+                revm::handler::ItemOrResult::Item(_) => unreachable!(),
+            };
 
-            // let outcome = evm
-            //     .inner
-            //     .inspect_frame_init(FrameInput::Create(Box::new(inputs)))?
-            //     .run(evm.inner.run_execution)?;
+            let outcome = match result {
+                FrameResult::Create(outcome) => outcome,
+                FrameResult::Call(_) => unreachable!(),
+            };
 
             evm.inner.ctx.journaled_state.depth -= 1;
 
