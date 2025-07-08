@@ -445,7 +445,7 @@ update() {
   ensure download "$FOUNDRY_BIN_URL" "$tmp_file"
 
   # Extract new version from downloaded file
-  new_version=$(grep -Eo 'FOUNDRYUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' "$tmp_file" | cut -d'"' -f2)
+  new_version=$(extract_installer_version "$tmp_file")
 
   # If the new version could not be determined, skip the check.
   # This is in case the new file is not available or does not contain the version.
@@ -555,7 +555,7 @@ check_installer_up_to_date() {
   tmp_file="$(mktemp)"
   ensure download "$FOUNDRY_BIN_URL" "$tmp_file"
 
-  remote_version=$(grep -Eo 'FOUNDRYUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' "$tmp_file" | cut -d'"' -f2)
+  remote_version=$(extract_installer_version "$tmp_file")
   rm -f "$tmp_file"
 
   if [ -z "$remote_version" ]; then
@@ -563,9 +563,7 @@ check_installer_up_to_date() {
     return 0
   fi
 
-  newest=$(printf "%s\n%s\n" "$FOUNDRYUP_INSTALLER_VERSION" "$remote_version" | sort -V | tail -n1)
-
-  if [ "$newest" = "$remote_version" ] && [ "$FOUNDRYUP_INSTALLER_VERSION" != "$remote_version" ]; then
+  if version_gt "$remote_version" "$FOUNDRYUP_INSTALLER_VERSION"; then
     printf '
 Your installation of foundryup is out of date.
 
@@ -581,6 +579,41 @@ Updating is highly recommended as it gives you access to the latest features and
   else
     say "foundryup is up to date."
   fi
+}
+
+# Compares two version strings in the format "major.minor.patch".
+# Returns 0 if $1 is greater than $2, 1 if $1 is less than $2, and 1 if they are equal.
+#
+# Assumes that the version strings are well-formed and contain three numeric components separated by dots.
+#
+# Example: version_gt "1.2.3" "1.2.4"
+#          returns 1 (1.2.3 < 1.2.4)
+#          version_gt "1.2.3" "1.2.3"
+#          returns 1 (1.2.3 == 1.2.3)
+#          version_gt "1.2.4" "1.2.3"
+#          returns 0 (1.2.4 > 1.2.3)
+version_gt() {
+  [ "$1" = "$2" ] && return 1
+
+  IFS=. read -r major1 minor1 patch1 <<EOF
+$1
+EOF
+  IFS=. read -r major2 minor2 patch2 <<EOF
+$2
+EOF
+
+  [ "$major1" -gt "$major2" ] && return 0
+  [ "$major1" -lt "$major2" ] && return 1
+  [ "$minor1" -gt "$minor2" ] && return 0
+  [ "$minor1" -lt "$minor2" ] && return 1
+  [ "$patch1" -gt "$patch2" ] && return 0
+  [ "$patch1" -lt "$patch2" ] && return 1
+
+  return 1
+}
+
+extract_installer_version() {
+  grep -Eo 'FOUNDRYUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' "$1" | cut -d'"' -f2
 }
 
 check_bins_in_use() {
