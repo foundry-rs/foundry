@@ -5,10 +5,10 @@ use crate::{
 };
 use solar_ast::{
     self as ast, CallArgs, CallArgsKind, ElementaryType, Expr, ExprKind, SourceUnit, Symbol,
-    TypeKind, TypeSize, Visit,
+    TypeKind, Visit,
 };
-use solar_data_structures::map::{FxHashMap, FxIndexSet};
-use solar_interface::kw::{self, uint};
+use solar_data_structures::map::FxHashMap;
+use solar_interface::kw::{self};
 use std::{borrow::Cow, fmt::Write, ops::ControlFlow};
 
 declare_forge_lint!(

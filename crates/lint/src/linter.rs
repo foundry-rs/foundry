@@ -6,7 +6,7 @@ use solar_interface::{
     diagnostics::{DiagBuilder, DiagId, DiagMsg, MultiSpan, Style},
     Session, Span,
 };
-use solar_sema::hir;
+use solar_sema::{hir, ParsingContext};
 use std::{ops::ControlFlow, path::PathBuf};
 
 use crate::inline_config::InlineConfig;
@@ -27,7 +27,9 @@ pub trait Linter: Send + Sync + Clone {
     type Language: Language;
     type Lint: Lint;
 
-    fn lint(&self, input: &[PathBuf]);
+    fn init(&self) -> Session;
+    fn early_lint<'sess>(&self, input: &[PathBuf], sess: &'sess Session);
+    fn late_lint<'sess>(&self, input: &[PathBuf], pcx: ParsingContext<'sess>);
 }
 
 pub trait Lint {
@@ -186,11 +188,19 @@ pub struct EarlyLintVisitor<'a, 's, 'ast> {
     pub passes: &'a mut [Box<dyn EarlyLintPass<'ast> + 's>],
 }
 
-/// Extends the [`Visit`] trait functionality with a hook that can run after the initial traversal.
-impl<'s, 'ast> EarlyLintVisitor<'_, 's, 'ast>
+impl<'a, 's, 'ast> EarlyLintVisitor<'a, 's, 'ast>
 where
     's: 'ast,
 {
+    pub fn new(
+        ctx: &'a LintContext<'s>,
+        passes: &'a mut [Box<dyn EarlyLintPass<'ast> + 's>],
+    ) -> Self {
+        Self { ctx, passes }
+    }
+
+    /// Extends the [`Visit`] trait functionality with a hook that can run after the initial
+    /// traversal.
     pub fn post_source_unit(&mut self, ast: &'ast ast::SourceUnit<'ast>) {
         for pass in self.passes.iter_mut() {
             pass.check_full_source_unit(self.ctx, ast);
@@ -278,7 +288,7 @@ where
 /// Trait for lints that operate on the HIR (High-level Intermediate Representation).
 /// Its methods mirror `solar_ast::visit::Visit`, with the addition of `LintCotext`.
 pub trait LateLintPass<'hir>: Send + Sync {
-    fn check_nested_source(&mut self, _ctx: &LintContext<'_>, _id: &'hir hir::SourceId) {}
+    fn check_nested_source(&mut self, _ctx: &LintContext<'_>, _id: hir::SourceId) {}
     fn check_nested_item(&mut self, _ctx: &LintContext<'_>, _id: &'hir hir::ItemId) {}
     fn check_nested_contract(&mut self, _ctx: &LintContext<'_>, _id: &'hir hir::ContractId) {}
     fn check_nested_function(&mut self, _ctx: &LintContext<'_>, _id: &'hir hir::FunctionId) {}
@@ -300,18 +310,26 @@ pub trait LateLintPass<'hir>: Send + Sync {
 
 /// Visitor struct for `LateLintPass`es
 pub struct LateLintVisitor<'a, 's, 'hir> {
-    pub ctx: &'a LintContext<'s>,
-    pub passes: &'a mut [Box<dyn LateLintPass<'hir> + 's>],
+    ctx: &'a LintContext<'s>,
+    passes: &'a mut [Box<dyn LateLintPass<'hir> + 's>],
     hir: &'hir hir::Hir<'hir>,
 }
 
-impl<'s, 'hir> LateLintVisitor<'_, 's, 'hir>
+impl<'a, 's, 'hir> LateLintVisitor<'a, 's, 'hir>
 where
     's: 'hir,
 {
-    pub fn post_hir(&mut self, hir: &'hir hir::Hir<'hir>) {
+    pub fn new(
+        ctx: &'a LintContext<'s>,
+        passes: &'a mut [Box<dyn LateLintPass<'hir> + 's>],
+        hir: &'hir hir::Hir<'hir>,
+    ) -> Self {
+        Self { ctx, passes, hir }
+    }
+
+    pub fn post_hir(&mut self) {
         for pass in self.passes.iter_mut() {
-            pass.check_post_hir(self.ctx, hir);
+            pass.check_post_hir(self.ctx, self.hir);
         }
     }
 }
@@ -324,6 +342,13 @@ where
 
     fn hir(&self) -> &'hir hir::Hir<'hir> {
         self.hir
+    }
+
+    fn visit_nested_source(&mut self, id: hir::SourceId) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            pass.check_nested_source(self.ctx, id);
+        }
+        self.walk_nested_source(id)
     }
 
     fn visit_contract(

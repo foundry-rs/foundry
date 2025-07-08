@@ -3,7 +3,7 @@ use clap::Parser;
 use eyre::Result;
 use forge_lint::{linter::Linter, sol::SolidityLinter};
 use foundry_cli::{
-    opts::BuildOpts,
+    opts::{solar_pcx_from_build_opts, BuildOpts},
     utils::{cache_local_signatures, LoadConfig},
 };
 use foundry_common::{compile::ProjectCompiler, shell};
@@ -156,7 +156,12 @@ impl BuildArgs {
                 .collect::<Vec<_>>();
 
             if !input_files.is_empty() {
-                linter.lint(&input_files);
+                let sess = linter.init();
+                linter.early_lint(&input_files, &sess);
+
+                let parsing_context =
+                    solar_pcx_from_build_opts(&sess, self.build.clone(), Some(&input_files))?;
+                linter.late_lint(&input_files, parsing_context);
             }
         }
 

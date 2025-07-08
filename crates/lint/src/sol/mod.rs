@@ -7,13 +7,17 @@ use crate::{
 use foundry_common::comments::Comments;
 use foundry_compilers::{solc::SolcLanguage, ProjectPathsConfig};
 use foundry_config::lint::Severity;
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use solar_ast::{visit::Visit, Arena, SourceUnit};
+use rayon::iter::{IntoParallelRefIterator, ParallelBridge, ParallelIterator};
+use solar_ast::{self as ast, visit::Visit as VisitAST};
 use solar_interface::{
     diagnostics::{self, DiagCtxt, JsonEmitter},
+    source_map::{FileName, SourceFile},
     Session, SourceMap,
 };
-use solar_sema::hir;
+use solar_sema::{
+    hir::{self, Visit as VisitHIR},
+    ParsingContext,
+};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -77,11 +81,11 @@ impl SolidityLinter {
         self
     }
 
-    fn process_file(&self, sess: &Session, path: &Path) {
-        let arena = Arena::new();
+    fn process_file<'sess>(&self, sess: &'sess Session, path: &Path) {
+        let arena = ast::Arena::new();
 
         let _ = sess.enter(|| -> Result<(), diagnostics::ErrorGuaranteed> {
-            // Initialize the parser, get the AST, and process the inline-config
+            // Parse the file
             let mut parser = solar_parse::Parser::from_file(sess, &arena, path)?;
             let file = sess
                 .source_map()
@@ -90,19 +94,19 @@ impl SolidityLinter {
             let ast = parser.parse_file().map_err(|e| e.emit())?;
 
             // Declare all available early passes and lints
-            let mut early_passes_and_lints = Vec::new();
-            early_passes_and_lints.extend(high::create_early_lint_passes());
-            early_passes_and_lints.extend(med::create_early_lint_passes());
-            early_passes_and_lints.extend(info::create_early_lint_passes());
+            let mut passes_and_lints = Vec::new();
+            passes_and_lints.extend(high::create_early_lint_passes());
+            passes_and_lints.extend(med::create_early_lint_passes());
+            passes_and_lints.extend(info::create_early_lint_passes());
 
             // Do not apply gas-severity rules on tests and scripts
             if !self.path_config.is_test_or_script(path) {
-                early_passes_and_lints.extend(gas::create_early_lint_passes());
+                passes_and_lints.extend(gas::create_early_lint_passes());
             }
 
-            // Filter early passes based on linter config
-            let (lints, mut early_passes): (Vec<&str>, Vec<Box<dyn EarlyLintPass<'_>>>) =
-                early_passes_and_lints
+            // Filter passes based on linter config
+            let (lints, mut passes): (Vec<&str>, Vec<Box<dyn EarlyLintPass<'_>>>) =
+                passes_and_lints
                     .into_iter()
                     .filter_map(|(pass, lint)| {
                         let matches_severity = match self.severity {
@@ -131,10 +135,95 @@ impl SolidityLinter {
             let inline_config = parse_inline_config(sess, &comments, &lints, &ast, source);
 
             // Initialize and run the early lint visitor
-            let ctx = LintContext::new(sess, self.with_description, inline_config.clone());
-            let mut early_visitor = EarlyLintVisitor { ctx: &ctx, passes: &mut early_passes };
+            let ctx = LintContext::new(sess, self.with_description, inline_config);
+            let mut early_visitor = EarlyLintVisitor::new(&ctx, &mut passes);
             _ = early_visitor.visit_source_unit(&ast);
             early_visitor.post_source_unit(&ast);
+
+            Ok(())
+        });
+    }
+
+    fn late_lint<'sess>(&self, input: &[PathBuf], mut pcx: ParsingContext<'sess>) {
+        let sess = pcx.sess;
+
+        // TODO: handle errors properly
+        // Load all files into the ParsingContext
+        if pcx.load_files(input).is_err() {
+            return;
+        }
+
+        // Parse and lower to HIR
+        let hir_arena = solar_sema::thread_local::ThreadLocal::new();
+        let hir_result = pcx.parse_and_lower(&hir_arena);
+
+        if let Ok(Some(gcx_wrapper)) = hir_result {
+            let gcx = gcx_wrapper.get();
+
+            // Process each source with HIR
+            sess.enter_parallel(|| {
+                gcx.hir.sources_enumerated().par_bridge().for_each(|(source_id, source)| {
+                    if let FileName::Real(ref path) = source.file.name {
+                        self.process_source_hir(sess, &gcx, source_id, &path);
+                    }
+                });
+            });
+        }
+    }
+
+    fn process_source_hir<'sess, 'hir>(
+        &self,
+        sess: &'sess Session,
+        gcx: &solar_sema::ty::Gcx<'hir>,
+        source_id: hir::SourceId,
+        path: &Path,
+    ) {
+        let _ = sess.enter(|| -> Result<(), diagnostics::ErrorGuaranteed> {
+            // Get late lint passes
+            let mut passes_and_lints = Vec::new();
+            passes_and_lints.extend(high::create_late_lint_passes());
+            passes_and_lints.extend(med::create_late_lint_passes());
+            passes_and_lints.extend(info::create_late_lint_passes());
+
+            // Do not apply gas-severity rules on tests and scripts
+            if !self.path_config.is_test_or_script(path) {
+                passes_and_lints.extend(gas::create_late_lint_passes());
+            }
+
+            // Filter passes based on config
+            let (_, mut passes): (Vec<&'static str>, Vec<Box<dyn LateLintPass<'_>>>) =
+                passes_and_lints
+                    .into_iter()
+                    .filter_map(|(pass, lint)| {
+                        let matches_severity = match self.severity {
+                            Some(ref target) => target.contains(&lint.severity()),
+                            None => true,
+                        };
+                        let matches_lints_inc = match self.lints_included {
+                            Some(ref target) => target.contains(&lint),
+                            None => true,
+                        };
+                        let matches_lints_exc = match self.lints_excluded {
+                            Some(ref target) => target.contains(&lint),
+                            None => false,
+                        };
+                        if matches_severity && matches_lints_inc && !matches_lints_exc {
+                            Some((lint.id(), pass))
+                        } else {
+                            None
+                        }
+                    })
+                    .unzip();
+
+            // Process inline config
+            let inline_config = InlineConfig::default();
+            // Run late lint visitor
+            let ctx = LintContext::new(sess, self.with_description, inline_config);
+            let mut late_visitor = LateLintVisitor::new(&ctx, &mut passes, &gcx.hir);
+
+            // Visit this specific source
+            _ = late_visitor.visit_nested_source(source_id);
+            late_visitor.post_hir();
 
             Ok(())
         });
@@ -145,7 +234,7 @@ impl Linter for SolidityLinter {
     type Language = SolcLanguage;
     type Lint = SolLint;
 
-    fn lint(&self, input: &[PathBuf]) {
+    fn init(&self) -> Session {
         let mut builder = Session::builder();
 
         // Build session based on the linter config
@@ -163,21 +252,26 @@ impl Linter for SolidityLinter {
         // Create a single session for all files
         let mut sess = builder.build();
         sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
+        sess
+    }
 
+    fn early_lint<'sess>(&self, input: &[PathBuf], sess: &'sess Session) {
         // Process the files in parallel
         sess.enter_parallel(|| {
-            input.into_par_iter().for_each(|file| {
-                self.process_file(&sess, file);
+            input.par_iter().for_each(|path| {
+                self.process_file(&sess, path);
             });
         });
     }
+
+    fn late_lint<'sess>(&self, input: &[PathBuf], pcx: ParsingContext<'sess>) {}
 }
 
 fn parse_inline_config<'ast>(
     sess: &Session,
     comments: &Comments,
     lints: &[&'static str],
-    ast: &'ast SourceUnit<'ast>,
+    ast: &'ast ast::SourceUnit<'ast>,
     src: &str,
 ) -> InlineConfig {
     let items = comments.iter().filter_map(|comment| {
