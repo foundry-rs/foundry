@@ -398,6 +398,12 @@ pub struct Cheatcodes {
     /// Additional diagnostic for reverts
     pub fork_revert_diagnostic: Option<RevertDiagnostic>,
 
+    /// Current call context for fork diagnostics
+    pub current_call_target: Option<Address>,
+
+    /// Pending fork diagnostic message to be applied
+    pub pending_fork_diagnostic: Option<Bytes>,
+
     /// Recorded storage reads and writes
     pub accesses: RecordAccess,
 
@@ -519,6 +525,8 @@ impl Cheatcodes {
             expected_revert: Default::default(),
             assume_no_revert: Default::default(),
             fork_revert_diagnostic: Default::default(),
+            current_call_target: Default::default(),
+            pending_fork_diagnostic: Default::default(),
             accesses: Default::default(),
             recording_accesses: Default::default(),
             recorded_account_diffs_stack: Default::default(),
@@ -666,6 +674,9 @@ impl Cheatcodes {
         call: &mut CallInputs,
         executor: &mut impl CheatcodesExecutor,
     ) -> Option<CallOutcome> {
+        // Store the current call target for fork diagnostics
+        self.current_call_target = Some(call.target_address);
+        
         let gas = Gas::new(call.gas_limit);
         let curr_depth = ecx.journaled_state.depth();
 
@@ -1063,6 +1074,31 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
     #[inline]
     fn step(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+        // Check for REVERT opcode to handle fork diagnostics before RevertDiagnostic
+        if interpreter.bytecode.opcode() == op::REVERT {
+            // Check if this is a revert with empty data (size = 0)
+            if let Ok(size) = interpreter.stack.peek(1)
+                && size.is_zero()
+            {
+                // Use the stored call target to check fork diagnostics
+                if let Some(target_address) = self.current_call_target {
+                    if let TxKind::Call(test_contract) = ecx.tx.kind {
+                        if ecx.journaled_state.db().is_forked_mode()
+                            && target_address != test_contract
+                        {
+                            let journaled_state = ecx.journaled_state.clone();
+                            if let Some(diagnostic) = ecx.journaled_state.db().diagnose_revert(target_address, &journaled_state) {
+                                // Store the fork diagnostic error message to be applied later
+                                let error_data = Error::encode(diagnostic.to_error_msg(&self.labels));
+                                self.pending_fork_diagnostic = Some(error_data);
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         self.pc = interpreter.bytecode.pc();
 
         // `pauseGasMetering`: pause / resume interpreter gas.
@@ -1140,6 +1176,17 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
     }
 
     fn call_end(&mut self, ecx: Ecx, call: &CallInputs, outcome: &mut CallOutcome) {
+        // Clear the current call target
+        self.current_call_target = None;
+        
+        // Apply pending fork diagnostic if we have one
+        if let Some(diagnostic_data) = self.pending_fork_diagnostic.take() {
+            if outcome.result.is_revert() {
+                outcome.result.output = diagnostic_data;
+                return;
+            }
+        }
+        
         let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
             || call.target_address == HARDHAT_CONSOLE_ADDRESS;
 
@@ -1411,33 +1458,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
             self.expected_emits.clear()
         }
 
-        // this will ensure we don't have false positives when trying to diagnose reverts in fork
-        // mode
-        let diag = self.fork_revert_diagnostic.take();
 
-        // if there's a revert and a previous call was diagnosed as fork related revert then we can
-        // return a better error here
-        if outcome.result.is_revert()
-            && let Some(err) = diag
-        {
-            outcome.result.output = Error::encode(err.to_error_msg(&self.labels));
-            return;
-        }
-
-        // try to diagnose reverts in multi-fork mode where a call is made to an address that does
-        // not exist
-        if let TxKind::Call(test_contract) = ecx.tx.kind {
-            // if a call to a different contract than the original test contract returned with
-            // `Stop` we check if the contract actually exists on the active fork
-            if ecx.journaled_state.db().is_forked_mode()
-                && outcome.result.result == InstructionResult::Stop
-                && call.target_address != test_contract
-            {
-                let journaled_state = ecx.journaled_state.clone();
-                self.fork_revert_diagnostic =
-                    ecx.journaled_state.db().diagnose_revert(call.target_address, &journaled_state);
-            }
-        }
+        // Fork diagnostics are now handled in the step method to run before RevertDiagnostic
 
         // If the depth is 0, then this is the root call terminating
         if ecx.journaled_state.depth() == 0 {
