@@ -39,7 +39,7 @@ use std::{
 };
 
 mod diagnostic;
-pub use diagnostic::RevertDiagnostic;
+pub use diagnostic::{ForkRevertDiagnostic, RevertDiagnostic};
 
 mod error;
 pub use error::{BackendError, BackendResult, DatabaseError, DatabaseResult};
