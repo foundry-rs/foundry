@@ -4,12 +4,12 @@ use clap::Parser;
 use eyre::Result;
 use foundry_block_explorers::EtherscanApiVersion;
 use foundry_config::{
+    Chain, Config,
     figment::{
-        self,
+        self, Metadata, Profile,
         value::{Dict, Map},
-        Metadata, Profile,
     },
-    impl_figment_convert_cast, Chain, Config,
+    impl_figment_convert_cast,
 };
 use foundry_wallets::WalletOpts;
 use serde::Serialize;
@@ -22,6 +22,13 @@ pub struct RpcOpts {
     /// The RPC endpoint, default value is http://localhost:8545.
     #[arg(short = 'r', long = "rpc-url", env = "ETH_RPC_URL")]
     pub url: Option<String>,
+
+    /// Allow insecure RPC connections (accept invalid HTTPS certificates).
+    ///
+    /// When the provider's inner runtime transport variant is HTTP, this configures the reqwest
+    /// client to accept invalid certificates.
+    #[arg(short = 'k', long = "insecure", default_value = "false")]
+    pub accept_invalid_certs: bool,
 
     /// Use the Flashbots RPC URL with fast mode (<https://rpc.flashbots.net/fast>).
     ///
@@ -103,6 +110,9 @@ impl RpcOpts {
         }
         if let Some(headers) = &self.rpc_headers {
             dict.insert("eth_rpc_headers".into(), headers.clone().into());
+        }
+        if self.accept_invalid_certs {
+            dict.insert("eth_rpc_accept_invalid_certs".into(), true.into());
         }
         dict
     }

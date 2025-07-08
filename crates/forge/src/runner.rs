@@ -1,35 +1,34 @@
 //! The Forge test runner.
 
 use crate::{
-    fuzz::{invariant::BasicTxDetails, BaseCounterExample},
-    multi_runner::{is_matching_test, TestContract, TestRunnerConfig},
-    progress::{start_fuzz_progress, TestsProgress},
-    result::{SuiteResult, TestResult, TestSetup},
     MultiContractRunner, TestFilter,
+    fuzz::{BaseCounterExample, invariant::BasicTxDetails},
+    multi_runner::{TestContract, TestRunnerConfig, is_matching_test},
+    progress::{TestsProgress, start_fuzz_progress},
+    result::{SuiteResult, TestResult, TestSetup},
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
-use alloy_primitives::{address, map::HashMap, Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, U256, address, map::HashMap};
 use eyre::Result;
-use foundry_common::{contracts::ContractsByAddress, TestFunctionExt, TestFunctionKind};
+use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
 use foundry_compilers::utils::canonicalized;
 use foundry_config::{Config, InvariantConfig};
 use foundry_evm::{
     constants::CALLER,
     decode::RevertDecoder,
     executors::{
+        CallResult, EvmError, Executor, ITest, RawCallResult,
         fuzz::FuzzedExecutor,
         invariant::{
-            check_sequence, replay_error, replay_run, InvariantExecutor, InvariantFuzzError,
+            InvariantExecutor, InvariantFuzzError, check_sequence, replay_error, replay_run,
         },
-        CallResult, EvmError, Executor, ITest, RawCallResult,
     },
     fuzz::{
-        fixture_name,
+        CounterExample, FuzzFixtures, fixture_name,
         invariant::{CallDetails, InvariantContract},
-        CounterExample, FuzzFixtures,
     },
-    traces::{load_contracts, TraceKind, TraceMode},
+    traces::{TraceKind, TraceMode, load_contracts},
 };
 use itertools::Itertools;
 use proptest::test_runner::{
@@ -307,7 +306,7 @@ impl<'a> ContractRunner<'a> {
                 [("setUp()".to_string(), TestResult::fail("multiple setUp functions".to_string()))]
                     .into(),
                 warnings,
-            )
+            );
         }
 
         // Check if `afterInvariant` function with valid signature declared.
@@ -323,7 +322,7 @@ impl<'a> ContractRunner<'a> {
                 )]
                 .into(),
                 warnings,
-            )
+            );
         }
         let call_after_invariant = after_invariant_fns.first().is_some_and(|after_invariant_fn| {
             let match_sig = after_invariant_fn.name == "afterInvariant";
@@ -362,7 +361,7 @@ impl<'a> ContractRunner<'a> {
                 start.elapsed(),
                 [(fail_msg, TestResult::setup_result(setup))].into(),
                 warnings,
-            )
+            );
         }
 
         // Filter out functions sequentially since it's very fast and there is no need to do it
@@ -401,7 +400,7 @@ impl<'a> ContractRunner<'a> {
                 test_fail_instances.join(", ")
             );
             let fail =  TestResult::fail("`testFail*` has been removed. Consider changing to test_Revert[If|When]_Condition and expecting a revert".to_string());
-            return SuiteResult::new(start.elapsed(), [(instances, fail)].into(), warnings)
+            return SuiteResult::new(start.elapsed(), [(instances, fail)].into(), warnings);
         }
 
         let test_results = functions
@@ -753,34 +752,34 @@ impl<'a> FunctionRunner<'a> {
                 invariant_contract.invariant_function.selector().to_vec().into(),
                 invariant_config.fail_on_revert,
                 invariant_contract.call_after_invariant,
-            ) {
-                if !success {
-                    let _= sh_warn!("\
+            ) && !success
+            {
+                let _ = sh_warn!(
+                    "\
                             Replayed invariant failure from {:?} file. \
                             Run `forge clean` or remove file to ignore failure and to continue invariant test campaign.",
-                        failure_file.as_path()
-                    );
-                    // If sequence still fails then replay error to collect traces and
-                    // exit without executing new runs.
-                    let _ = replay_run(
-                        &invariant_contract,
-                        self.clone_executor(),
-                        &self.cr.mcr.known_contracts,
-                        identified_contracts.clone(),
-                        &mut self.result.logs,
-                        &mut self.result.traces,
-                        &mut self.result.line_coverage,
-                        &mut self.result.deprecated_cheatcodes,
-                        &txes,
-                        show_solidity,
-                    );
-                    self.result.invariant_replay_fail(
-                        replayed_entirely,
-                        &invariant_contract.invariant_function.name,
-                        call_sequence,
-                    );
-                    return self.result;
-                }
+                    failure_file.as_path()
+                );
+                // If sequence still fails then replay error to collect traces and
+                // exit without executing new runs.
+                let _ = replay_run(
+                    &invariant_contract,
+                    self.clone_executor(),
+                    &self.cr.mcr.known_contracts,
+                    identified_contracts.clone(),
+                    &mut self.result.logs,
+                    &mut self.result.traces,
+                    &mut self.result.line_coverage,
+                    &mut self.result.deprecated_cheatcodes,
+                    &txes,
+                    show_solidity,
+                );
+                self.result.invariant_replay_fail(
+                    replayed_entirely,
+                    &invariant_contract.invariant_function.name,
+                    call_sequence,
+                );
+                return self.result;
             }
         }
 
@@ -813,8 +812,8 @@ impl<'a> FunctionRunner<'a> {
         match invariant_result.error {
             // If invariants were broken, replay the error to collect logs and traces
             Some(error) => match error {
-                InvariantFuzzError::BrokenInvariant(case_data) |
-                InvariantFuzzError::Revert(case_data) => {
+                InvariantFuzzError::BrokenInvariant(case_data)
+                | InvariantFuzzError::Revert(case_data) => {
                     // Replay error to create counterexample and to collect logs, traces and
                     // coverage.
                     match replay_error(
@@ -951,8 +950,8 @@ impl<'a> FunctionRunner<'a> {
         let address = self.setup.address;
 
         // Apply before test configured functions (if any).
-        if self.cr.contract.abi.functions().filter(|func| func.name.is_before_test_setup()).count() ==
-            1
+        if self.cr.contract.abi.functions().filter(|func| func.name.is_before_test_setup()).count()
+            == 1
         {
             for calldata in self.executor.call_sol_default(
                 address,

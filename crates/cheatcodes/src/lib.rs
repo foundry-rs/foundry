@@ -20,13 +20,13 @@ use alloy_primitives::Address;
 use foundry_evm_core::backend::DatabaseExt;
 use spec::Status;
 
+pub use Vm::ForgeContext;
 pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
 pub use inspector::{
     BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor,
 };
 pub use spec::{CheatcodeDef, Vm};
-pub use Vm::ForgeContext;
 
 #[macro_use]
 mod error;

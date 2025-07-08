@@ -8,7 +8,7 @@ use crate::{
     },
 };
 use alloy_primitives::U256;
-use foundry_config::{fs_permissions::PathPermission, FsPermissions};
+use foundry_config::{FsPermissions, fs_permissions::PathPermission};
 use foundry_test_utils::Filter;
 
 /// Executes all cheat code tests but not fork cheat codes or tests that require isolation mode or

@@ -43,7 +43,7 @@ pub fn run_command(args: Anvil) -> Result<()> {
                 &mut std::io::stdout(),
             ),
         }
-        return Ok(())
+        return Ok(());
     }
 
     let _ = fdlimit::raise_fd_limit();

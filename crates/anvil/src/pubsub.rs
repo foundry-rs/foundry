@@ -1,13 +1,13 @@
 use crate::{
-    eth::{backend::notifications::NewBlockNotifications, error::to_rpc_result},
     StorageInfo,
+    eth::{backend::notifications::NewBlockNotifications, error::to_rpc_result},
 };
 use alloy_network::AnyRpcTransaction;
-use alloy_primitives::{TxHash, B256};
-use alloy_rpc_types::{pubsub::SubscriptionResult, FilteredParams, Log, Transaction};
+use alloy_primitives::{B256, TxHash};
+use alloy_rpc_types::{FilteredParams, Log, Transaction, pubsub::SubscriptionResult};
 use anvil_core::eth::{block::Block, subscription::SubscriptionId, transaction::TypedReceipt};
 use anvil_rpc::{request::Version, response::ResponseResult};
-use futures::{channel::mpsc::Receiver, ready, Stream, StreamExt};
+use futures::{Stream, StreamExt, channel::mpsc::Receiver, ready};
 use serde::Serialize;
 use std::{
     collections::VecDeque,
@@ -157,10 +157,10 @@ pub fn filter_logs(block: Block, receipts: Vec<TypedReceipt>, filter: &FilteredP
     ) -> bool {
         if params.filter.is_some() {
             let block_number = block.header.number;
-            if !params.filter_block_range(block_number) ||
-                !params.filter_block_hash(block_hash) ||
-                !params.filter_address(&l.address) ||
-                !params.filter_topics(l.topics())
+            if !params.filter_block_range(block_number)
+                || !params.filter_block_hash(block_hash)
+                || !params.filter_address(&l.address)
+                || !params.filter_topics(l.topics())
             {
                 return false;
             }

@@ -3,13 +3,13 @@ use crate::{
     linter::{EarlyLintPass, EarlyLintVisitor, Lint, LintContext, Linter},
 };
 use foundry_common::comments::Comments;
-use foundry_compilers::{solc::SolcLanguage, ProjectPathsConfig};
+use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
 use foundry_config::lint::Severity;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use solar_ast::{visit::Visit, Arena, SourceUnit};
+use solar_ast::{Arena, SourceUnit, visit::Visit};
 use solar_interface::{
-    diagnostics::{self, DiagCtxt, JsonEmitter},
     Session, SourceMap,
+    diagnostics::{self, DiagCtxt, JsonEmitter},
 };
 use std::{
     path::{Path, PathBuf},
@@ -132,6 +132,7 @@ impl SolidityLinter {
             let ctx = LintContext::new(sess, self.with_description, inline_config);
             let mut visitor = EarlyLintVisitor { ctx: &ctx, passes: &mut passes };
             _ = visitor.visit_source_unit(&ast);
+            visitor.post_source_unit(&ast);
 
             Ok(())
         });

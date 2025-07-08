@@ -9,34 +9,35 @@
 extern crate tracing;
 
 use crate::cache::StorageCachingConfig;
-use alloy_primitives::{address, map::AddressHashMap, Address, FixedBytes, B256, U256};
+use alloy_primitives::{Address, B256, FixedBytes, U256, address, map::AddressHashMap};
 use eyre::{ContextCompat, WrapErr};
 use figment::{
+    Error, Figment, Metadata, Profile, Provider,
     providers::{Env, Format, Serialized, Toml},
     value::{Dict, Map, Value},
-    Error, Figment, Metadata, Profile, Provider,
 };
 use filter::GlobMatcher;
 use foundry_compilers::{
+    ArtifactOutput, ConfigurableArtifacts, Graph, Project, ProjectPathsConfig,
+    RestrictionsWithVersion, VyperLanguage,
     artifacts::{
+        BytecodeHash, DebuggingSettings, EvmVersion, Libraries, ModelCheckerSettings,
+        ModelCheckerTarget, Optimizer, OptimizerDetails, RevertStrings, Settings, SettingsMetadata,
+        Severity,
         output_selection::{ContractOutputSelection, OutputSelection},
         remappings::{RelativeRemapping, Remapping},
-        serde_helpers, BytecodeHash, DebuggingSettings, EvmVersion, Libraries,
-        ModelCheckerSettings, ModelCheckerTarget, Optimizer, OptimizerDetails, RevertStrings,
-        Settings, SettingsMetadata, Severity,
+        serde_helpers,
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     compilers::{
+        Compiler,
         multi::{MultiCompiler, MultiCompilerSettings},
         solc::{Solc, SolcCompiler},
         vyper::{Vyper, VyperSettings},
-        Compiler,
     },
     error::SolcError,
     multi::{MultiCompilerParsedSource, MultiCompilerRestrictions},
     solc::{CliSettings, SolcSettings},
-    ArtifactOutput, ConfigurableArtifacts, Graph, Project, ProjectPathsConfig,
-    RestrictionsWithVersion, VyperLanguage,
 };
 use regex::Regex;
 use revm::primitives::hardfork::SpecId;
@@ -270,6 +271,8 @@ pub struct Config {
     pub verbosity: u8,
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
+    /// Whether to accept invalid certificates for the rpc server.
+    pub eth_rpc_accept_invalid_certs: bool,
     /// JWT secret that should be used for any rpc calls
     pub eth_rpc_jwt: Option<String>,
     /// Timeout that should be used for any rpc calls
@@ -651,11 +654,11 @@ impl Config {
             }
         };
         let figment = figment.select(Self::PROFILE_SECTION);
-        if let Ok(data) = figment.data() {
-            if let Some(profiles) = data.get(&Profile::new(Self::PROFILE_SECTION)) {
-                for profile in profiles.keys() {
-                    add_profile(&Profile::new(profile));
-                }
+        if let Ok(data) = figment.data()
+            && let Some(profiles) = data.get(&Profile::new(Self::PROFILE_SECTION))
+        {
+            for profile in profiles.keys() {
+                add_profile(&Profile::new(profile));
             }
         }
         add_profile(&Self::DEFAULT_PROFILE);
@@ -861,10 +864,10 @@ impl Config {
 
     /// Returns the normalized [EvmVersion] for the current solc version, or the configured one.
     pub fn get_normalized_evm_version(&self) -> EvmVersion {
-        if let Some(version) = self.solc_version() {
-            if let Some(evm_version) = self.evm_version.normalize_version_solc(&version) {
-                return evm_version;
-            }
+        if let Some(version) = self.solc_version()
+            && let Some(evm_version) = self.evm_version.normalize_version_solc(&version)
+        {
+            return evm_version;
         }
         self.evm_version
     }
@@ -1121,9 +1124,9 @@ impl Config {
 
     /// Whether caching should be enabled for the given chain id
     pub fn enable_caching(&self, endpoint: &str, chain_id: impl Into<u64>) -> bool {
-        !self.no_storage_caching &&
-            self.rpc_storage_caching.enable_for_chain_id(chain_id.into()) &&
-            self.rpc_storage_caching.enable_for_endpoint(endpoint)
+        !self.no_storage_caching
+            && self.rpc_storage_caching.enable_for_chain_id(chain_id.into())
+            && self.rpc_storage_caching.enable_for_endpoint(endpoint)
     }
 
     /// Returns the `ProjectPathsConfig` sub set of the config.
@@ -1279,8 +1282,38 @@ impl Config {
             return Some(endpoint.url().map(Cow::Owned));
         }
 
-        if let Ok(Some(endpoint)) = mesc::get_endpoint_by_query(maybe_alias, Some("foundry")) {
-            return Some(Ok(Cow::Owned(endpoint.url)));
+        if let Some(mesc_url) = self.get_rpc_url_from_mesc(maybe_alias) {
+            return Some(Ok(Cow::Owned(mesc_url)));
+        }
+
+        None
+    }
+
+    /// Attempts to resolve the URL for the given alias from [`mesc`](https://github.com/paradigmxyz/mesc)
+    pub fn get_rpc_url_from_mesc(&self, maybe_alias: &str) -> Option<String> {
+        // Note: mesc requires a MESC_PATH in the env, which the user can configure and is expected
+        // to be part of the shell profile, default is ~/mesc.json
+        let mesc_config = mesc::load::load_config_data()
+            .inspect_err(|err| debug!(%err, "failed to load mesc config"))
+            .ok()?;
+
+        if let Ok(Some(endpoint)) =
+            mesc::query::get_endpoint_by_query(&mesc_config, maybe_alias, Some("foundry"))
+        {
+            return Some(endpoint.url);
+        }
+
+        if maybe_alias.chars().all(|c| c.is_numeric()) {
+            // try to lookup the mesc network by chain id if alias is numeric
+            // This only succeeds if the chain id has a default:
+            // "network_defaults": {
+            //    "50104": "sophon_50104"
+            // }
+            if let Ok(Some(endpoint)) =
+                mesc::query::get_endpoint_by_network(&mesc_config, maybe_alias, Some("foundry"))
+            {
+                return Some(endpoint.url);
+            }
         }
 
         None
@@ -1301,11 +1334,7 @@ impl Config {
         &'a self,
         fallback: impl Into<Cow<'a, str>>,
     ) -> Result<Cow<'a, str>, UnresolvedEnvVarError> {
-        if let Some(url) = self.get_rpc_url() {
-            url
-        } else {
-            Ok(fallback.into())
-        }
+        if let Some(url) = self.get_rpc_url() { url } else { Ok(fallback.into()) }
     }
 
     /// Returns the configured rpc or `"http://localhost:8545"` if no `eth_rpc_url` is set
@@ -1360,15 +1389,15 @@ impl Config {
     ) -> Result<Option<ResolvedEtherscanConfig>, EtherscanConfigError> {
         let default_api_version = self.etherscan_api_version.unwrap_or_default();
 
-        if let Some(maybe_alias) = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref()) {
-            if self.etherscan.contains_key(maybe_alias) {
-                return self
-                    .etherscan
-                    .clone()
-                    .resolved(default_api_version)
-                    .remove(maybe_alias)
-                    .transpose();
-            }
+        if let Some(maybe_alias) = self.etherscan_api_key.as_ref().or(self.eth_rpc_url.as_ref())
+            && self.etherscan.contains_key(maybe_alias)
+        {
+            return self
+                .etherscan
+                .clone()
+                .resolved(default_api_version)
+                .remove(maybe_alias)
+                .transpose();
         }
 
         // try to find by comparing chain IDs after resolving
@@ -1434,20 +1463,12 @@ impl Config {
 
     /// Returns the remapping for the project's _test_ directory, but only if it exists
     pub fn get_test_dir_remapping(&self) -> Option<Remapping> {
-        if self.root.join(&self.test).exists() {
-            get_dir_remapping(&self.test)
-        } else {
-            None
-        }
+        if self.root.join(&self.test).exists() { get_dir_remapping(&self.test) } else { None }
     }
 
     /// Returns the remapping for the project's _script_ directory, but only if it exists
     pub fn get_script_dir_remapping(&self) -> Option<Remapping> {
-        if self.root.join(&self.script).exists() {
-            get_dir_remapping(&self.script)
-        } else {
-            None
-        }
+        if self.root.join(&self.script).exists() { get_dir_remapping(&self.script) } else { None }
     }
 
     /// Returns the `Optimizer` based on the configured settings
@@ -1503,10 +1524,10 @@ impl Config {
         // This might be too much here, so only enable assertion checks.
         // If users wish to enable all options they need to do so explicitly.
         let mut model_checker = self.model_checker.clone();
-        if let Some(model_checker_settings) = &mut model_checker {
-            if model_checker_settings.targets.is_none() {
-                model_checker_settings.targets = Some(vec![ModelCheckerTarget::Assert]);
-            }
+        if let Some(model_checker_settings) = &mut model_checker
+            && model_checker_settings.targets.is_none()
+        {
+            model_checker_settings.targets = Some(vec![ModelCheckerTarget::Assert]);
         }
 
         let mut settings = Settings {
@@ -2011,8 +2032,8 @@ impl Config {
             let file_name = block.file_name();
             let filepath = if file_type.is_dir() {
                 block.path().join("storage.json")
-            } else if file_type.is_file() &&
-                file_name.to_string_lossy().chars().all(char::is_numeric)
+            } else if file_type.is_file()
+                && file_name.to_string_lossy().chars().all(char::is_numeric)
             {
                 block.path()
             } else {
@@ -2101,14 +2122,13 @@ impl Config {
         }
 
         // Normalize `evm_version` based on the provided solc version.
-        if let Ok(solc) = figment.extract_inner::<SolcReq>("solc") {
-            if let Some(version) = solc
+        if let Ok(solc) = figment.extract_inner::<SolcReq>("solc")
+            && let Some(version) = solc
                 .try_version()
                 .ok()
                 .and_then(|version| self.evm_version.normalize_version_solc(&version))
-            {
-                figment = figment.merge(("evm_version", version));
-            }
+        {
+            figment = figment.merge(("evm_version", version));
         }
 
         figment
@@ -2365,6 +2385,7 @@ impl Default for Config {
             disable_block_gas_limit: false,
             memory_limit: 1 << 27, // 2**27 = 128MiB = 134_217_728 bytes
             eth_rpc_url: None,
+            eth_rpc_accept_invalid_certs: false,
             eth_rpc_jwt: None,
             eth_rpc_timeout: None,
             eth_rpc_headers: None,
@@ -2483,11 +2504,7 @@ impl SolcReq {
 impl<T: AsRef<str>> From<T> for SolcReq {
     fn from(s: T) -> Self {
         let s = s.as_ref();
-        if let Ok(v) = Version::from_str(s) {
-            Self::Version(v)
-        } else {
-            Self::Local(s.into())
-        }
+        if let Ok(v) = Version::from_str(s) { Self::Version(v) } else { Self::Local(s.into()) }
     }
 }
 
@@ -2573,16 +2590,16 @@ mod tests {
         endpoints::RpcEndpointType,
         etherscan::ResolvedEtherscanConfigs,
     };
+    use NamedChain::Moonbeam;
     use endpoints::{RpcAuth, RpcEndpointConfig};
     use figment::error::Kind::InvalidType;
     use foundry_compilers::artifacts::{
-        vyper::VyperOptimizationMode, ModelCheckerEngine, YulDetails,
+        ModelCheckerEngine, YulDetails, vyper::VyperOptimizationMode,
     };
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
     use std::{fs::File, io::Write};
     use tempfile::tempdir;
-    use NamedChain::Moonbeam;
 
     // Helper function to clear `__warnings` in config, since it will be populated during loading
     // from file, causing testing problem when comparing to those created from `default()`, etc.
@@ -3015,11 +3032,15 @@ mod tests {
             )?;
 
             let config = Config::load().unwrap();
-            assert!(config
-                .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain.into()))
-                .is_err());
+            assert!(
+                config
+                    .get_etherscan_config_with_chain(Some(NamedChain::BinanceSmartChain.into()))
+                    .is_err()
+            );
 
-            std::env::set_var(env_key, env_value);
+            unsafe {
+                std::env::set_var(env_key, env_value);
+            }
 
             assert_eq!(
                 config
@@ -3042,7 +3063,9 @@ mod tests {
                 "via etherscan_api_key"
             );
 
-            std::env::remove_var(env_key);
+            unsafe {
+                std::env::remove_var(env_key);
+            }
             Ok(())
         });
     }
@@ -3279,7 +3302,10 @@ mod tests {
 
             let config = config.get_etherscan_config_with_chain(Some(NamedChain::Arbitrum.into()));
             assert!(config.is_err());
-            assert_eq!(config.unwrap_err().to_string(), "At least one of `url` or `chain` must be present for Etherscan config with unknown alias `arbitrum_alias`");
+            assert_eq!(
+                config.unwrap_err().to_string(),
+                "At least one of `url` or `chain` must be present for Etherscan config with unknown alias `arbitrum_alias`"
+            );
 
             Ok(())
         });
@@ -4170,8 +4196,10 @@ mod tests {
             let config = Config::load().unwrap();
             assert_eq!(
                 config.libraries,
-                vec!["src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"
-                    .to_string()]
+                vec![
+                    "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"
+                        .to_string()
+                ]
             );
 
             jail.set_env(
@@ -4181,8 +4209,10 @@ mod tests {
             let config = Config::load().unwrap();
             assert_eq!(
                 config.libraries,
-                vec!["src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"
-                    .to_string(),]
+                vec![
+                    "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"
+                        .to_string(),
+                ]
             );
 
             jail.set_env(
@@ -4976,5 +5006,68 @@ mod tests {
 
             Ok(())
         });
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/10926>
+    #[test]
+    fn test_resolve_mesc_by_chain_id() {
+        let s = r#"{
+    "mesc_version": "0.2.1",
+    "default_endpoint": null,
+    "endpoints": {
+        "sophon_50104": {
+            "name": "sophon_50104",
+            "url": "https://rpc.sophon.xyz",
+            "chain_id": "50104",
+            "endpoint_metadata": {}
+        }
+    },
+    "network_defaults": {
+    },
+    "network_names": {},
+    "profiles": {
+        "foundry": {
+            "name": "foundry",
+            "default_endpoint": "local_ethereum",
+            "network_defaults": {
+                "50104": "sophon_50104"
+            },
+            "profile_metadata": {},
+            "use_mesc": true
+        }
+    },
+    "global_metadata": {}
+}"#;
+
+        let config = serde_json::from_str(s).unwrap();
+        let endpoint = mesc::query::get_endpoint_by_network(&config, "50104", Some("foundry"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(endpoint.url, "https://rpc.sophon.xyz");
+
+        let s = r#"{
+    "mesc_version": "0.2.1",
+    "default_endpoint": null,
+    "endpoints": {
+        "sophon_50104": {
+            "name": "sophon_50104",
+            "url": "https://rpc.sophon.xyz",
+            "chain_id": "50104",
+            "endpoint_metadata": {}
+        }
+    },
+    "network_defaults": {
+        "50104": "sophon_50104"
+    },
+    "network_names": {},
+    "profiles": {},
+    "global_metadata": {}
+}"#;
+
+        let config = serde_json::from_str(s).unwrap();
+        let endpoint = mesc::query::get_endpoint_by_network(&config, "50104", Some("foundry"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(endpoint.url, "https://rpc.sophon.xyz");
     }
 }
