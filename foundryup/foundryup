@@ -567,7 +567,7 @@ check_installer_up_to_date() {
 
   if [ "$newest" = "$remote_version" ] && [ "$FOUNDRYUP_INSTALLER_VERSION" != "$remote_version" ]; then
     printf '
-Your foundryup is out of date.
+Your installation of foundryup is out of date.
 
 Installed: %s → Latest: %s
 
@@ -575,7 +575,7 @@ To update, run:
 
   foundryup --update
 
-Updating gives you access to the latest features and bug fixes.
+Updating is highly recommended as it gives you access to the latest features and bug fixes.
 
 ' "$FOUNDRYUP_INSTALLER_VERSION" "$remote_version" >&2
   else
