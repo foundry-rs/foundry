@@ -7,19 +7,20 @@
 // the concrete `Executor` type.
 
 use crate::{
-    inspectors::{
-        cheatcodes::BroadcastableTransactions, Cheatcodes, InspectorData, InspectorStack,
-    },
     Env,
+    inspectors::{
+        Cheatcodes, InspectorData, InspectorStack, cheatcodes::BroadcastableTransactions,
+    },
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{
+    Address, Bytes, Log, TxKind, U256, keccak256,
     map::{AddressHashMap, HashMap},
-    Address, Bytes, Log, TxKind, U256,
 };
-use alloy_sol_types::{sol, SolCall};
+use alloy_sol_types::{SolCall, sol};
 use foundry_evm_core::{
+    EvmEnv, InspectorExt,
     backend::{Backend, BackendError, BackendResult, CowBackend, DatabaseExt, GLOBAL_FAIL_SLOT},
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
@@ -27,7 +28,6 @@ use foundry_evm_core::{
     },
     decode::{RevertDecoder, SkipReason},
     utils::StateChangeset,
-    EvmEnv, InspectorExt,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
@@ -39,7 +39,7 @@ use revm::{
         transaction::SignedAuthorization,
     },
     database::{DatabaseCommit, DatabaseRef},
-    interpreter::{return_ok, InstructionResult},
+    interpreter::{InstructionResult, return_ok},
     primitives::hardfork::SpecId,
 };
 use std::{
@@ -256,6 +256,36 @@ impl Executor {
     /// Returns the nonce of an account.
     pub fn get_nonce(&self, address: Address) -> BackendResult<u64> {
         Ok(self.backend().basic_ref(address)?.map(|acc| acc.nonce).unwrap_or_default())
+    }
+
+    /// Set the code of an account.
+    pub fn set_code(&mut self, address: Address, code: Bytecode) -> BackendResult<()> {
+        let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
+        account.code_hash = keccak256(code.original_byte_slice());
+        account.code = Some(code);
+        self.backend_mut().insert_account_info(address, account);
+        Ok(())
+    }
+
+    /// Set the storage of an account.
+    pub fn set_storage(
+        &mut self,
+        address: Address,
+        storage: HashMap<U256, U256>,
+    ) -> BackendResult<()> {
+        self.backend_mut().replace_account_storage(address, storage)?;
+        Ok(())
+    }
+
+    /// Set a storage slot of an account.
+    pub fn set_storage_slot(
+        &mut self,
+        address: Address,
+        slot: U256,
+        value: U256,
+    ) -> BackendResult<()> {
+        self.backend_mut().insert_account_storage(address, slot, value)?;
+        Ok(())
     }
 
     /// Returns `true` if the account has no code.
@@ -589,17 +619,16 @@ impl Executor {
         }
 
         // Check the global failure slot.
-        if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS) {
-            if let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT) {
-                if !failed_slot.present_value().is_zero() {
-                    return false;
-                }
-            }
+        if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS)
+            && let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT)
+            && !failed_slot.present_value().is_zero()
+        {
+            return false;
         }
-        if let Ok(failed_slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT) {
-            if !failed_slot.is_zero() {
-                return false;
-            }
+        if let Ok(failed_slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
+            && !failed_slot.is_zero()
+        {
+            return false;
         }
 
         if !self.legacy_assertions {
@@ -818,6 +847,7 @@ pub struct RawCallResult {
     pub out: Option<Output>,
     /// The chisel state
     pub chisel_state: Option<(Vec<U256>, Vec<u8>, InstructionResult)>,
+    pub reverter: Option<Address>,
 }
 
 impl Default for RawCallResult {
@@ -841,6 +871,7 @@ impl Default for RawCallResult {
             cheatcodes: Default::default(),
             out: None,
             chisel_state: None,
+            reverter: None,
         }
     }
 }
@@ -879,11 +910,7 @@ impl RawCallResult {
 
     /// Returns an `EvmError` if the call failed, otherwise returns `self`.
     pub fn into_result(self, rd: Option<&RevertDecoder>) -> Result<Self, EvmError> {
-        if self.exit_reason.is_ok() {
-            Ok(self)
-        } else {
-            Err(self.into_evm_error(rd))
-        }
+        if self.exit_reason.is_ok() { Ok(self) } else { Err(self.into_evm_error(rd)) }
     }
 
     /// Decodes the result of the call with the given function.
@@ -1011,6 +1038,7 @@ fn convert_executed_result(
         edge_coverage,
         cheatcodes,
         chisel_state,
+        reverter,
     } = inspector.collect();
 
     if logs.is_empty() {
@@ -1041,6 +1069,7 @@ fn convert_executed_result(
         cheatcodes,
         out,
         chisel_state,
+        reverter,
     })
 }
 

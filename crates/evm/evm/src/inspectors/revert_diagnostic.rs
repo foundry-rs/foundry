@@ -5,14 +5,14 @@ use foundry_evm_core::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
 };
 use revm::{
+    Database, Inspector,
     bytecode::opcode,
     context::{ContextTr, JournalTr},
     inspector::JournalExt,
     interpreter::{
-        interpreter::EthInterpreter, interpreter_types::Jumps, CallInputs, CallOutcome, CallScheme,
-        InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
+        CallInputs, CallOutcome, CallScheme, InstructionResult, Interpreter, InterpreterAction,
+        InterpreterResult, interpreter::EthInterpreter, interpreter_types::Jumps,
     },
-    Database, Inspector,
 };
 use std::fmt;
 
@@ -73,11 +73,7 @@ impl RevertDiagnostic {
     /// Returns the effective target address whose code would be executed.
     /// For delegate calls, this is the `bytecode_address`. Otherwise, it's the `target_address`.
     fn code_target_address(&self, inputs: &mut CallInputs) -> Address {
-        if is_delegatecall(inputs.scheme) {
-            inputs.bytecode_address
-        } else {
-            inputs.target_address
-        }
+        if is_delegatecall(inputs.scheme) { inputs.bytecode_address } else { inputs.target_address }
     }
 
     /// Derives the revert reason based on the cached data. Should only be called after a revert.
@@ -127,25 +123,25 @@ impl RevertDiagnostic {
         CTX::Journal: JournalExt,
     {
         // REVERT (offset, size)
-        if let Ok(size) = interp.stack.peek(1) {
-            if size.is_zero() {
-                // Check empty revert with same depth as a non-contract call
-                if let Some((_, _, depth)) = self.non_contract_call {
-                    if ctx.journal_ref().depth() == depth {
-                        self.broadcast_diagnostic(interp);
-                    } else {
-                        self.non_contract_call = None;
-                    }
-                    return;
+        if let Ok(size) = interp.stack.peek(1)
+            && size.is_zero()
+        {
+            // Check empty revert with same depth as a non-contract call
+            if let Some((_, _, depth)) = self.non_contract_call {
+                if ctx.journal_ref().depth() == depth {
+                    self.broadcast_diagnostic(interp);
+                } else {
+                    self.non_contract_call = None;
                 }
+                return;
+            }
 
-                // Check empty revert with same depth as a non-contract size check
-                if let Some((_, depth)) = self.non_contract_size_check {
-                    if depth == ctx.journal_ref().depth() {
-                        self.broadcast_diagnostic(interp);
-                    } else {
-                        self.non_contract_size_check = None;
-                    }
+            // Check empty revert with same depth as a non-contract size check
+            if let Some((_, depth)) = self.non_contract_size_check {
+                if depth == ctx.journal_ref().depth() {
+                    self.broadcast_diagnostic(interp);
+                } else {
+                    self.non_contract_size_check = None;
                 }
             }
         }
@@ -178,10 +174,10 @@ impl RevertDiagnostic {
     /// Tracks `EXTCODESIZE` output. If the bytecode size is NOT 0, clears the cache.
     #[cold]
     fn handle_extcodesize_output(&mut self, interp: &mut Interpreter) {
-        if let Ok(size) = interp.stack.peek(0) {
-            if size != U256::ZERO {
-                self.non_contract_size_check = None;
-            }
+        if let Ok(size) = interp.stack.peek(0)
+            && size != U256::ZERO
+        {
+            self.non_contract_size_check = None;
         }
 
         self.is_extcodesize_step = false;
@@ -203,10 +199,11 @@ where
             return None;
         }
 
-        if let Ok(state) = ctx.journal().code(target) {
-            if state.is_empty() && !inputs.input.is_empty() {
-                self.non_contract_call = Some((target, inputs.scheme, ctx.journal_ref().depth()));
-            }
+        if let Ok(state) = ctx.journal().code(target)
+            && state.is_empty()
+            && !inputs.input.is_empty()
+        {
+            self.non_contract_call = Some((target, inputs.scheme, ctx.journal_ref().depth()));
         }
         None
     }

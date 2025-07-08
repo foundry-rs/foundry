@@ -1,11 +1,11 @@
 use crate::{
-    document::DocumentContent, helpers::merge_toml_table, AsDoc, BufWriter, Document, ParseItem,
-    ParseSource, Parser, Preprocessor,
+    AsDoc, BufWriter, Document, ParseItem, ParseSource, Parser, Preprocessor,
+    document::DocumentContent, helpers::merge_toml_table,
 };
 use alloy_primitives::map::HashMap;
 use forge_fmt::{FormatterConfig, Visitable};
 use foundry_compilers::{compilers::solc::SOLC_EXTENSIONS, utils::source_files_iter};
-use foundry_config::{filter::expand_globs, DocConfig};
+use foundry_config::{DocConfig, filter::expand_globs};
 use itertools::Itertools;
 use mdbook::MDBook;
 use rayon::prelude::*;
@@ -106,7 +106,7 @@ impl DocBuilder {
 
         if sources.is_empty() {
             sh_println!("No sources detected at {}", self.sources.display())?;
-            return Ok(())
+            return Ok(());
         }
 
         let library_sources = self
@@ -374,11 +374,7 @@ impl DocBuilder {
                 Some(self.config.book.clone())
             } else {
                 let book_path = self.config.book.join("book.toml");
-                if book_path.is_file() {
-                    Some(book_path)
-                } else {
-                    None
-                }
+                if book_path.is_file() { Some(book_path) } else { None }
             }
         };
 
@@ -398,7 +394,7 @@ impl DocBuilder {
         depth: usize,
     ) -> eyre::Result<()> {
         if files.is_empty() {
-            return Ok(())
+            return Ok(());
         }
 
         if let Some(path) = base_path {
@@ -463,12 +459,12 @@ impl DocBuilder {
                 self.write_summary_section(summary, &files, Some(&path), depth + 1)?;
             }
         }
-        if !readme.is_empty() {
-            if let Some(path) = base_path {
-                let path = self.out_dir().join(Self::SRC).join(path);
-                fs::create_dir_all(&path)?;
-                fs::write(path.join(Self::README), readme.finish())?;
-            }
+        if !readme.is_empty()
+            && let Some(path) = base_path
+        {
+            let path = self.out_dir().join(Self::SRC).join(path);
+            fs::create_dir_all(&path)?;
+            fs::write(path.join(Self::README), readme.finish())?;
         }
         Ok(())
     }

@@ -1,11 +1,15 @@
-use crate::linter::{EarlyLintPass, EarlyLintVisitor, Lint, LintContext, Linter};
-use foundry_compilers::{solc::SolcLanguage, ProjectPathsConfig};
+use crate::{
+    inline_config::{InlineConfig, InlineConfigItem},
+    linter::{EarlyLintPass, EarlyLintVisitor, Lint, LintContext, Linter},
+};
+use foundry_common::comments::Comments;
+use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
 use foundry_config::lint::Severity;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use solar_ast::{visit::Visit, Arena};
+use solar_ast::{Arena, SourceUnit, visit::Visit};
 use solar_interface::{
-    diagnostics::{self, DiagCtxt, JsonEmitter},
     Session, SourceMap,
+    diagnostics::{self, DiagCtxt, JsonEmitter},
 };
 use std::{
     path::{Path, PathBuf},
@@ -70,10 +74,18 @@ impl SolidityLinter {
         self
     }
 
-    fn process_file(&self, sess: &Session, file: &Path) {
+    fn process_file(&self, sess: &Session, path: &Path) {
         let arena = Arena::new();
 
         let _ = sess.enter(|| -> Result<(), diagnostics::ErrorGuaranteed> {
+            // Initialize the parser, get the AST, and process the inline-config
+            let mut parser = solar_parse::Parser::from_file(sess, &arena, path)?;
+            let file = sess
+                .source_map()
+                .load_file(path)
+                .map_err(|e| sess.dcx.err(e.to_string()).emit())?;
+            let ast = parser.parse_file().map_err(|e| e.emit())?;
+
             // Declare all available passes and lints
             let mut passes_and_lints = Vec::new();
             passes_and_lints.extend(high::create_lint_passes());
@@ -81,43 +93,46 @@ impl SolidityLinter {
             passes_and_lints.extend(info::create_lint_passes());
 
             // Do not apply gas-severity rules on tests and scripts
-            if !self.path_config.is_test_or_script(file) {
+            if !self.path_config.is_test_or_script(path) {
                 passes_and_lints.extend(gas::create_lint_passes());
             }
 
             // Filter based on linter config
-            let mut passes: Vec<Box<dyn EarlyLintPass<'_>>> = passes_and_lints
-                .into_iter()
-                .filter_map(|(pass, lint)| {
-                    let matches_severity = match self.severity {
-                        Some(ref target) => target.contains(&lint.severity()),
-                        None => true,
-                    };
-                    let matches_lints_inc = match self.lints_included {
-                        Some(ref target) => target.contains(&lint),
-                        None => true,
-                    };
-                    let matches_lints_exc = match self.lints_excluded {
-                        Some(ref target) => target.contains(&lint),
-                        None => false,
-                    };
+            let (lints, mut passes): (Vec<&str>, Vec<Box<dyn EarlyLintPass<'_>>>) =
+                passes_and_lints
+                    .into_iter()
+                    .filter_map(|(pass, lint)| {
+                        let matches_severity = match self.severity {
+                            Some(ref target) => target.contains(&lint.severity()),
+                            None => true,
+                        };
+                        let matches_lints_inc = match self.lints_included {
+                            Some(ref target) => target.contains(&lint),
+                            None => true,
+                        };
+                        let matches_lints_exc = match self.lints_excluded {
+                            Some(ref target) => target.contains(&lint),
+                            None => false,
+                        };
 
-                    if matches_severity && matches_lints_inc && !matches_lints_exc {
-                        Some(pass)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
+                        if matches_severity && matches_lints_inc && !matches_lints_exc {
+                            Some((lint.id(), pass))
+                        } else {
+                            None
+                        }
+                    })
+                    .unzip();
 
-            // Initialize the parser and get the AST
-            let mut parser = solar_parse::Parser::from_file(sess, &arena, file)?;
-            let ast = parser.parse_file().map_err(|e| e.emit())?;
+            // Process the inline-config
+            let source = file.src.as_str();
+            let comments = Comments::new(&file);
+            let inline_config = parse_inline_config(sess, &comments, &lints, &ast, source);
 
             // Initialize and run the visitor
-            let ctx = LintContext::new(sess, self.with_description);
+            let ctx = LintContext::new(sess, self.with_description, inline_config);
             let mut visitor = EarlyLintVisitor { ctx: &ctx, passes: &mut passes };
             _ = visitor.visit_source_unit(&ast);
+            visitor.post_source_unit(&ast);
 
             Ok(())
         });
@@ -154,6 +169,35 @@ impl Linter for SolidityLinter {
             });
         });
     }
+}
+
+fn parse_inline_config<'ast>(
+    sess: &Session,
+    comments: &Comments,
+    lints: &[&'static str],
+    ast: &'ast SourceUnit<'ast>,
+    src: &str,
+) -> InlineConfig {
+    let items = comments.iter().filter_map(|comment| {
+        let mut item = comment.lines.first()?.as_str();
+        if let Some(prefix) = comment.prefix() {
+            item = item.strip_prefix(prefix).unwrap_or(item);
+        }
+        if let Some(suffix) = comment.suffix() {
+            item = item.strip_suffix(suffix).unwrap_or(item);
+        }
+        let item = item.trim_start().strip_prefix("forge-lint:")?.trim();
+        let span = comment.span;
+        match InlineConfigItem::parse(item, lints) {
+            Ok(item) => Some((span, item)),
+            Err(e) => {
+                sess.dcx.warn(e.to_string()).span(span).emit();
+                None
+            }
+        }
+    });
+
+    InlineConfig::new(items, ast, src)
 }
 
 #[derive(Error, Debug)]

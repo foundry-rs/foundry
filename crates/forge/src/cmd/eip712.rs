@@ -1,14 +1,14 @@
-use alloy_primitives::{keccak256, B256};
+use alloy_primitives::{B256, keccak256};
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use foundry_cli::opts::{solar_pcx_from_build_opts, BuildOpts};
+use foundry_cli::opts::{BuildOpts, solar_pcx_from_build_opts};
 use serde::Serialize;
 use solar_parse::interface::Session;
 use solar_sema::{
+    GcxWrapper, Hir,
     hir::StructId,
     thread_local::ThreadLocal,
     ty::{Ty, TyKind},
-    GcxWrapper, Hir,
 };
 use std::{
     collections::BTreeMap,
@@ -37,14 +37,14 @@ pub struct Eip712Args {
 struct Eip712Output {
     path: String,
     #[serde(rename = "type")]
-    typ: String,
+    ty: String,
     hash: B256,
 }
 
 impl Display for Eip712Output {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         writeln!(f, "{}:", self.path)?;
-        writeln!(f, " - type: {}", self.typ)?;
+        writeln!(f, " - type: {}", self.ty)?;
         writeln!(f, " - hash: {}", self.hash)
     }
 }
@@ -73,7 +73,7 @@ impl Eip712Args {
                     Some(Eip712Output {
                         path: resolver.get_struct_path(id),
                         hash: keccak256(resolved.as_bytes()),
-                        typ: resolved,
+                        ty: resolved,
                     })
                 })
                 .collect::<Vec<_>>();
@@ -177,7 +177,7 @@ impl<'hir> Resolver<'hir> {
                 subtypes.iter().map(|(name, id)| (name.clone(), *id)).collect::<Vec<_>>()
             {
                 if subtype_id == id {
-                    continue
+                    continue;
                 }
                 let encoded_subtype =
                     self.resolve_eip712_inner(subtype_id, subtypes, false, Some(&subtype_name))?;

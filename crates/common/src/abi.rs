@@ -2,13 +2,13 @@
 
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Error, Event, Function, Param};
-use alloy_primitives::{hex, Address, LogData};
+use alloy_primitives::{Address, LogData, hex};
 use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::{
-    contract::ContractMetadata, errors::EtherscanError, Client, EtherscanApiVersion,
+    Client, EtherscanApiVersion, contract::ContractMetadata, errors::EtherscanError,
 };
 use foundry_config::Chain;
-use std::{future::Future, pin::Pin};
+use std::pin::Pin;
 
 pub fn encode_args<I, S>(inputs: &[Param], args: I) -> Result<Vec<DynSolValue>>
 where
@@ -101,8 +101,8 @@ pub fn get_indexed_event(mut event: Event, raw_log: &LogData) -> Event {
             if param.name.is_empty() {
                 param.name = format!("param{index}");
             }
-            if num_inputs == indexed_params ||
-                (num_address_params == indexed_params && param.ty == "address")
+            if num_inputs == indexed_params
+                || (num_address_params == indexed_params && param.ty == "address")
             {
                 param.indexed = true;
             }
@@ -131,7 +131,7 @@ pub async fn get_func_etherscan(
     for func in funcs {
         let res = encode_function_args(&func, args);
         if res.is_ok() {
-            return Ok(func)
+            return Ok(func);
         }
     }
 
