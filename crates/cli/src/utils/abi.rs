@@ -56,6 +56,7 @@ pub async fn parse_function_args<P: Provider<AnyNetwork>>(
     };
 
     if to.is_none() {
+        // if this is a CREATE call we must exclude the (constructor) function selector: https://github.com/foundry-rs/foundry/issues/10947
         Ok((encode_function_args_raw(&func, &args)?, Some(func)))
     } else {
         Ok((encode_function_args(&func, &args)?, Some(func)))
