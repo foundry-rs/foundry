@@ -1029,6 +1029,7 @@ impl DatabaseExt for Backend {
             &mut env.as_env_mut(),
             &mut self.inner.new_journaled_state(),
         )?;
+
         Ok(id)
     }
 
@@ -1244,7 +1245,13 @@ impl DatabaseExt for Backend {
         // roll the fork to the transaction's block or latest if it's pending
         self.roll_fork(Some(id), fork_block, env, journaled_state)?;
 
+        // we need to update the env to the block
         update_env_block(env, &block);
+
+        // after we forked at the fork block we need to properly update the block env to the block
+        // env of the tx's block
+        let _ =
+            self.forks.update_block_env(self.inner.ensure_fork_id(id).cloned()?, env.block.clone());
 
         let env = env.to_owned();
 
