@@ -2,8 +2,7 @@
 set -eo pipefail
 
 # NOTE: if you make modifications to this script, please increment the version number.
-# Major / minor: incremented for each stable release of Foundry.
-# Patch: incremented for each change between stable releases.
+# WARNING: the SemVer pattern: major.minor.patch must be followed as we use it to determine if the script is up to date.
 FOUNDRYUP_INSTALLER_VERSION="1.3.0"
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
@@ -446,10 +445,10 @@ update() {
   # Extract new version from downloaded file.
   new_version=$(grep -Eo 'FOUNDRYUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' "$tmp_file" | cut -d'"' -f2)
 
-  # If the new version could not be determined, skip the check.
-  # This is in case the new file is not available or does not contain the version.
+  # If the new version could not be determined, exit gracefully.
+  # This prevents from upgrading to an empty or invalid version.
   if [ -z "$new_version" ]; then
-    warn "Could not determine new foundryup version. Skipping version check."
+    warn "could not determine new foundryup version. Exiting."
     rm -f "$tmp_file"
     exit 0
   fi
