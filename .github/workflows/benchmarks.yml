@@ -18,11 +18,16 @@ on:
         description: "Comma-separated list of repos to benchmark (e.g., ithacaxyz/account:main,Vectorized/solady)"
         required: false
         type: string
-        default: "ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22"
+        default: "${{ env.DEFAULT_REPOS }}"
 
 permissions:
   contents: write
   pull-requests: write
+
+env:
+  ITHACAXYZ_ACCOUNT: "ithacaxyz/account:v0.3.2"
+  VECTORIZED_SOLADY: "Vectorized/solady:v0.1.22"
+  DEFAULT_REPOS: "ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22"
 
 jobs:
   setup:
@@ -67,36 +72,15 @@ jobs:
     needs: setup
     runs-on: foundry-runner
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Foundry
-        env:
-          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-        run: |
-          ./.github/scripts/setup-foundryup.sh
-          echo "${{ github.workspace }}/.foundry/bin" >> $GITHUB_PATH
-
-      - name: Install dependencies
-        run: |
-          ./.github/scripts/install-dependencies.sh
-          # Add nvm and node to PATH for subsequent steps
-          echo "$HOME/.nvm/versions/node/v24.3.0/bin" >> $GITHUB_PATH
-
-      - name: Download benchmark binary
-        uses: actions/download-artifact@v4
-        with:
-          name: foundry-bench
-
-      - name: Make binary executable
-        run: chmod +x foundry-bench
+      - name: Benchmark setup
+        uses: ./.github/actions/benchmark-setup.yml
 
       - name: Run forge test benchmarks
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
         run: |
           VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
-          REPOS="${{ github.event.inputs.repos || 'ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22' }}"
+          REPOS="${{ github.event.inputs.repos || env.DEFAULT_REPOS }}"
 
           ./foundry-bench --output-dir ./benches --force-install \
             --versions $VERSIONS \
@@ -115,36 +99,15 @@ jobs:
     needs: setup
     runs-on: foundry-runner
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Foundry
-        env:
-          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-        run: |
-          ./.github/scripts/setup-foundryup.sh
-          echo "${{ github.workspace }}/.foundry/bin" >> $GITHUB_PATH
-
-      - name: Install dependencies
-        run: |
-          ./.github/scripts/install-dependencies.sh
-          # Add nvm and node to PATH for subsequent steps
-          echo "$HOME/.nvm/versions/node/v24.3.0/bin" >> $GITHUB_PATH
-
-      - name: Download benchmark binary
-        uses: actions/download-artifact@v4
-        with:
-          name: foundry-bench
-
-      - name: Make binary executable
-        run: chmod +x foundry-bench
+      - name: Benchmark setup
+        uses: ./.github/actions/benchmark-setup.yml
 
       - name: Run forge build benchmarks
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
         run: |
           VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
-          REPOS="${{ github.event.inputs.repos || 'ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22' }}"
+          REPOS="${{ github.event.inputs.repos || env.DEFAULT_REPOS }}"
 
           ./foundry-bench --output-dir ./benches --force-install \
             --versions $VERSIONS \
@@ -163,29 +126,8 @@ jobs:
     needs: setup
     runs-on: foundry-runner
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Foundry
-        env:
-          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-        run: |
-          ./.github/scripts/setup-foundryup.sh
-          echo "${{ github.workspace }}/.foundry/bin" >> $GITHUB_PATH
-
-      - name: Install dependencies
-        run: |
-          ./.github/scripts/install-dependencies.sh
-          # Add nvm and node to PATH for subsequent steps
-          echo "$HOME/.nvm/versions/node/v24.3.0/bin" >> $GITHUB_PATH
-
-      - name: Download benchmark binary
-        uses: actions/download-artifact@v4
-        with:
-          name: foundry-bench
-
-      - name: Make binary executable
-        run: chmod +x foundry-bench
+      - name: Benchmark setup
+        uses: ./.github/actions/benchmark-setup.yml
 
       - name: Run forge coverage benchmarks
         env:
@@ -196,7 +138,7 @@ jobs:
 
           ./foundry-bench --output-dir ./benches --force-install \
             --versions $VERSIONS \
-            --repos ithacaxyz/account:v0.3.2 \
+            --repos ${{ env.ITHACAXYZ_ACCOUNT }} \
             --benchmarks forge_coverage \
             --output-file forge_coverage_bench.md
 

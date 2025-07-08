@@ -14,13 +14,8 @@ commit_results() {
     git config --local user.email "action@github.com"
     git config --local user.name "GitHub Action"
 
-    echo "Adding benchmark files..."
-    git add "$OUTPUT_DIR/LATEST.md" \
-            "$OUTPUT_DIR/forge_test_bench.md" \
-            "$OUTPUT_DIR/forge_build_bench.md" \
-            "$OUTPUT_DIR/forge_coverage_bench.md" || {
-        echo "Warning: Some benchmark files may not exist"
-    }
+    echo "Adding benchmark file..."
+    git add "$OUTPUT_DIR/LATEST.md"
 
     if git diff --staged --quiet; then
         echo "No changes to commit"
