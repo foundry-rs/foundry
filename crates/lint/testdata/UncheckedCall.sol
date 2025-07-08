@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 contract UncheckedCall {
+    event CallResult(bool, bytes);
 
     // SHOULD PASS: Properly checked low-level calls
     function checkedCallWithTuple(address target, bytes memory data) public {
