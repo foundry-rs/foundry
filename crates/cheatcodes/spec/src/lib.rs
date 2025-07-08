@@ -170,11 +170,11 @@ interface Vm {{
     /// Checks that the `file` has the specified `contents`. If that is not the
     /// case, updates the file and then fails the test.
     fn ensure_file_contents(file: &Path, contents: &str) {
-        if let Ok(old_contents) = fs::read_to_string(file) {
-            if normalize_newlines(&old_contents) == normalize_newlines(contents) {
-                // File is already up to date.
-                return
-            }
+        if let Ok(old_contents) = fs::read_to_string(file)
+            && normalize_newlines(&old_contents) == normalize_newlines(contents)
+        {
+            // File is already up to date.
+            return;
         }
 
         eprintln!("\n\x1b[31;1merror\x1b[0m: {} was not up-to-date, updating\n", file.display());

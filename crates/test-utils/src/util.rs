@@ -1,18 +1,18 @@
 use crate::init_tracing;
 use eyre::{Result, WrapErr};
 use foundry_compilers::{
+    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
     artifacts::Contract,
     cache::CompilerCache,
     compilers::multi::MultiCompiler,
     error::Result as SolcResult,
-    project_util::{copy_dir, TempProject},
+    project_util::{TempProject, copy_dir},
     solc::SolcSettings,
-    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
 };
 use foundry_config::Config;
 use parking_lot::Mutex;
 use regex::Regex;
-use snapbox::{assert_data_eq, cmd::OutputAssert, Data, IntoData};
+use snapbox::{Data, IntoData, assert_data_eq, cmd::OutputAssert};
 use std::{
     env,
     ffi::OsStr,
@@ -21,8 +21,8 @@ use std::{
     path::{Path, PathBuf},
     process::{ChildStdin, Command, Output, Stdio},
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc, LazyLock,
+        atomic::{AtomicUsize, Ordering},
     },
 };
 
@@ -1029,7 +1029,9 @@ fn test_redactions() -> snapbox::Redactions {
             ("[FILE]", r"Location(.|\n)*\.rs(.|\n)*Backtrace"),
             ("[COMPILING_FILES]", r"Compiling \d+ files?"),
             ("[TX_HASH]", r"Transaction hash: 0x[0-9A-Fa-f]{64}"),
-            ("[ADDRESS]", r"Address: 0x[0-9A-Fa-f]{40}"),
+            ("[ADDRESS]", r"Address: +0x[0-9A-Fa-f]{40}"),
+            ("[PUBLIC_KEY]", r"Public key: +0x[0-9A-Fa-f]{128}"),
+            ("[PRIVATE_KEY]", r"Private key: +0x[0-9A-Fa-f]{64}"),
             ("[UPDATING_DEPENDENCIES]", r"Updating dependencies in .*"),
             ("[SAVED_TRANSACTIONS]", r"Transactions saved to: .*\.json"),
             ("[SAVED_SENSITIVE_VALUES]", r"Sensitive values saved to: .*\.json"),

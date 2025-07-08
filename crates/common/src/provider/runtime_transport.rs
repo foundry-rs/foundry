@@ -80,6 +80,8 @@ pub struct RuntimeTransport {
     jwt: Option<String>,
     /// The timeout for requests.
     timeout: std::time::Duration,
+    /// Whether to accept invalid certificates.
+    accept_invalid_certs: bool,
 }
 
 /// A builder for [RuntimeTransport].
@@ -89,12 +91,19 @@ pub struct RuntimeTransportBuilder {
     headers: Vec<String>,
     jwt: Option<String>,
     timeout: std::time::Duration,
+    accept_invalid_certs: bool,
 }
 
 impl RuntimeTransportBuilder {
     /// Create a new builder with the given URL.
     pub fn new(url: Url) -> Self {
-        Self { url, headers: vec![], jwt: None, timeout: REQUEST_TIMEOUT }
+        Self {
+            url,
+            headers: vec![],
+            jwt: None,
+            timeout: REQUEST_TIMEOUT,
+            accept_invalid_certs: false,
+        }
     }
 
     /// Set the URL for the transport.
@@ -115,6 +124,12 @@ impl RuntimeTransportBuilder {
         self
     }
 
+    /// Set whether to accept invalid certificates.
+    pub fn accept_invalid_certs(mut self, accept_invalid_certs: bool) -> Self {
+        self.accept_invalid_certs = accept_invalid_certs;
+        self
+    }
+
     /// Builds the [RuntimeTransport] and returns it in a disconnected state.
     /// The runtime transport will then connect when the first request happens.
     pub fn build(self) -> RuntimeTransport {
@@ -124,6 +139,7 @@ impl RuntimeTransportBuilder {
             headers: self.headers,
             jwt: self.jwt,
             timeout: self.timeout,
+            accept_invalid_certs: self.accept_invalid_certs,
         }
     }
 }
@@ -149,7 +165,8 @@ impl RuntimeTransport {
     pub fn reqwest_client(&self) -> Result<reqwest::Client, RuntimeTransportError> {
         let mut client_builder = reqwest::Client::builder()
             .timeout(self.timeout)
-            .tls_built_in_root_certs(self.url.scheme() == "https");
+            .tls_built_in_root_certs(self.url.scheme() == "https")
+            .danger_accept_invalid_certs(self.accept_invalid_certs);
         let mut headers = reqwest::header::HeaderMap::new();
 
         // If there's a JWT, add it to the headers if we can decode it.

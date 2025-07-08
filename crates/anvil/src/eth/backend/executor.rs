@@ -1,4 +1,5 @@
 use crate::{
+    PrecompileFactory,
     eth::{
         backend::{
             db::Db, env::Env, mem::op_haltreason_to_instruction_result,
@@ -9,15 +10,14 @@ use crate::{
     },
     inject_precompiles,
     mem::inspector::AnvilInspector,
-    PrecompileFactory,
 };
 use alloy_consensus::{
-    constants::EMPTY_WITHDRAWALS, proofs::calculate_receipt_root, Receipt, ReceiptWithBloom,
+    Receipt, ReceiptWithBloom, constants::EMPTY_WITHDRAWALS, proofs::calculate_receipt_root,
 };
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, eip7840::BlobParams};
-use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap, EthEvm, Evm};
+use alloy_evm::{EthEvm, Evm, eth::EthEvmContext, precompiles::PrecompilesMap};
 use alloy_op_evm::OpEvm;
-use alloy_primitives::{Bloom, BloomInput, Log, B256};
+use alloy_primitives::{B256, Bloom, BloomInput, Log};
 use anvil_core::eth::{
     block::{Block, BlockInfo, PartialHeader},
     transaction::{
@@ -26,16 +26,16 @@ use anvil_core::eth::{
 };
 use foundry_evm::{backend::DatabaseError, traces::CallTraceNode};
 use foundry_evm_core::either_evm::EitherEvm;
-use op_revm::{precompiles::OpPrecompiles, L1BlockInfo, OpContext};
+use op_revm::{L1BlockInfo, OpContext, precompiles::OpPrecompiles};
 use revm::{
+    Database, DatabaseRef, Inspector, Journal,
     context::{Block as RevmBlock, BlockEnv, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext},
     context_interface::result::{EVMError, ExecutionResult, Output},
     database::WrapDatabaseRef,
-    handler::{instructions::EthInstructions, EthPrecompiles},
+    handler::{EthPrecompiles, instructions::EthInstructions},
     interpreter::InstructionResult,
-    precompile::{secp256r1::P256VERIFY, PrecompileSpecId, Precompiles},
+    precompile::{PrecompileSpecId, Precompiles, secp256r1::P256VERIFY},
     primitives::hardfork::SpecId,
-    Database, DatabaseRef, Inspector, Journal,
 };
 use std::sync::Arc;
 
@@ -135,6 +135,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
         let parent_hash = self.parent_hash;
         let block_number = self.block_env.number;
         let difficulty = self.block_env.difficulty;
+        let mix_hash = self.block_env.prevrandao;
         let beneficiary = self.block_env.beneficiary;
         let timestamp = self.block_env.timestamp;
         let base_fee = if self.cfg_env.spec.is_enabled_in(SpecId::LONDON) {
@@ -157,22 +158,22 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
                 }
                 TransactionExecutionOutcome::Exhausted(tx) => {
                     trace!(target: "backend",  tx_gas_limit = %tx.pending_transaction.transaction.gas_limit(), ?tx,  "block gas limit exhausting, skipping transaction");
-                    continue
+                    continue;
                 }
                 TransactionExecutionOutcome::BlobGasExhausted(tx) => {
                     trace!(target: "backend",  blob_gas = %tx.pending_transaction.transaction.blob_gas().unwrap_or_default(), ?tx,  "block blob gas limit exhausting, skipping transaction");
-                    continue
+                    continue;
                 }
                 TransactionExecutionOutcome::Invalid(tx, _) => {
                     trace!(target: "backend", ?tx,  "skipping invalid transaction");
                     invalid.push(tx);
-                    continue
+                    continue;
                 }
                 TransactionExecutionOutcome::DatabaseError(_, err) => {
                     // Note: this is only possible in forking mode, if for example a rpc request
                     // failed
                     trace!(target: "backend", ?err,  "Failed to execute transaction due to database error");
-                    continue
+                    continue;
                 }
             };
             if is_cancun {
@@ -233,7 +234,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             gas_used: cumulative_gas_used,
             timestamp,
             extra_data: Default::default(),
-            mix_hash: Default::default(),
+            mix_hash: mix_hash.unwrap_or_default(),
             nonce: Default::default(),
             base_fee,
             parent_beacon_block_root: is_cancun.then_some(Default::default()),
@@ -290,7 +291,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         let max_gas = self.gas_used.saturating_add(env.tx.base.gas_limit);
         if !env.evm_env.cfg_env.disable_block_gas_limit && max_gas > env.evm_env.block_env.gas_limit
         {
-            return Some(TransactionExecutionOutcome::Exhausted(transaction))
+            return Some(TransactionExecutionOutcome::Exhausted(transaction));
         }
 
         // check that we comply with the block's blob gas limit
@@ -298,7 +299,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             transaction.pending_transaction.transaction.transaction.blob_gas().unwrap_or(0),
         );
         if max_blob_gas > self.blob_params.max_blob_gas_per_block() {
-            return Some(TransactionExecutionOutcome::BlobGasExhausted(transaction))
+            return Some(TransactionExecutionOutcome::BlobGasExhausted(transaction));
         }
 
         // validate before executing
@@ -346,13 +347,13 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
                             return Some(TransactionExecutionOutcome::DatabaseError(
                                 transaction,
                                 err,
-                            ))
+                            ));
                         }
                         EVMError::Transaction(err) => {
                             return Some(TransactionExecutionOutcome::Invalid(
                                 transaction,
                                 err.into(),
-                            ))
+                            ));
                         }
                         // This will correspond to prevrandao not set, and it should never happen.
                         // If it does, it's a bug.

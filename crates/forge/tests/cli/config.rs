@@ -7,16 +7,16 @@ use foundry_compilers::{
     solc::Solc,
 };
 use foundry_config::{
+    CompilationRestrictions, Config, FsPermissions, FuzzConfig, InvariantConfig, SettingsOverrides,
+    SolcReq,
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     filter::GlobMatcher,
     fs_permissions::{FsAccessPermission, PathPermission},
-    CompilationRestrictions, Config, FsPermissions, FuzzConfig, InvariantConfig, SettingsOverrides,
-    SolcReq,
 };
 use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
-    foundry_compilers::artifacts::{remappings::Remapping, EvmVersion},
-    util::{pretty_err, OutputExt, TestCommand, OTHER_SOLC_VERSION},
+    foundry_compilers::artifacts::{EvmVersion, remappings::Remapping},
+    util::{OTHER_SOLC_VERSION, OutputExt, TestCommand, pretty_err},
 };
 use path_slash::PathBufExt;
 use semver::VersionReq;
@@ -116,6 +116,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         disable_block_gas_limit: false,
         memory_limit: 1 << 27,
         eth_rpc_url: Some("localhost".to_string()),
+        eth_rpc_accept_invalid_certs: false,
         eth_rpc_jwt: None,
         eth_rpc_timeout: None,
         eth_rpc_headers: None,
@@ -125,7 +126,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         verbosity: 4,
         remappings: vec![Remapping::from_str("forge-std/=lib/forge-std/").unwrap().into()],
         libraries: vec![
-            "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6".to_string()
+            "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6".to_string(),
         ],
         ignored_error_codes: vec![],
         ignored_file_paths: vec![],
@@ -344,11 +345,15 @@ forgetest_init!(can_get_evm_opts, |prj, _cmd| {
     assert_eq!(config.eth_rpc_url, Some(url.to_string()));
     assert!(config.ffi);
 
-    std::env::set_var("FOUNDRY_ETH_RPC_URL", url);
+    unsafe {
+        std::env::set_var("FOUNDRY_ETH_RPC_URL", url);
+    }
     let figment = Config::figment_with_root(prj.root()).merge(("debug", false));
     let evm_opts: EvmOpts = figment.extract().unwrap();
     assert_eq!(evm_opts.fork_url, Some(url.to_string()));
-    std::env::remove_var("FOUNDRY_ETH_RPC_URL");
+    unsafe {
+        std::env::remove_var("FOUNDRY_ETH_RPC_URL");
+    }
 });
 
 // checks that we can set various config values
@@ -993,6 +998,7 @@ offline = false
 optimizer = false
 optimizer_runs = 200
 verbosity = 0
+eth_rpc_accept_invalid_certs = false
 ignored_error_codes = [
     "license",
     "code-size",
@@ -1083,6 +1089,7 @@ ignore = []
 
 [fuzz]
 runs = 256
+fail_on_revert = true
 max_test_rejects = 65536
 dictionary_weight = 40
 include_storage = true
@@ -1166,6 +1173,7 @@ exclude = []
   "model_checker": null,
   "verbosity": 0,
   "eth_rpc_url": null,
+  "eth_rpc_accept_invalid_certs": false,
   "eth_rpc_jwt": null,
   "eth_rpc_timeout": null,
   "eth_rpc_headers": null,
@@ -1191,6 +1199,7 @@ exclude = []
   "show_progress": false,
   "fuzz": {
     "runs": 256,
+    "fail_on_revert": true,
     "max_test_rejects": 65536,
     "seed": null,
     "dictionary_weight": 40,
