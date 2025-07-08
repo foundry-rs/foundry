@@ -75,7 +75,7 @@ impl DocArgs {
 
         let mut doc_config = config.doc;
         if let Some(out) = self.out {
-            doc_config.out = out;
+            doc_config.out = out.strip_prefix("./").unwrap_or(&out).to_path_buf();
         }
         if doc_config.repository.is_none() {
             // Attempt to read repo from git
