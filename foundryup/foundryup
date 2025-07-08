@@ -451,10 +451,16 @@ update() {
   # This is in case the new file is not available or does not contain the version.
   if [ -z "$new_version" ]; then
     warn "Could not determine new foundryup version. Skipping version check."
-    return 0
+    rm -f "$tmp_file"
+    exit 0
   fi
 
-  # Overwrite existing foundryup
+  if ! version_gt "$new_version" "$current_version"; then
+    say "foundryup is already up to date (installed: $current_version, remote: $new_version)."
+    rm -f "$tmp_file"
+    exit 0
+  fi
+
   ensure mv "$tmp_file" "$FOUNDRY_BIN_PATH"
   ensure chmod +x "$FOUNDRY_BIN_PATH"
 
