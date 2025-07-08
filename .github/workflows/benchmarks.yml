@@ -73,7 +73,7 @@ jobs:
     runs-on: foundry-runner
     steps:
       - name: Benchmark setup
-        uses: ./.github/actions/benchmark-setup.yml
+        uses: ./.github/actions/benchmark-setup
 
       - name: Run forge test benchmarks
         env:
@@ -100,7 +100,7 @@ jobs:
     runs-on: foundry-runner
     steps:
       - name: Benchmark setup
-        uses: ./.github/actions/benchmark-setup.yml
+        uses: ./.github/actions/benchmark-setup
 
       - name: Run forge build benchmarks
         env:
@@ -127,7 +127,7 @@ jobs:
     runs-on: foundry-runner
     steps:
       - name: Benchmark setup
-        uses: ./.github/actions/benchmark-setup.yml
+        uses: ./.github/actions/benchmark-setup
 
       - name: Run forge coverage benchmarks
         env:
