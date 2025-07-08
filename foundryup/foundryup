@@ -444,7 +444,7 @@ update() {
   ensure download "$FOUNDRY_BIN_URL" "$tmp_file"
 
   # Extract new version from downloaded file.
-  new_version=$(extract_installer_version "$tmp_file")
+  new_version=$(grep -Eo 'FOUNDRYUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' "$tmp_file" | cut -d'"' -f2)
 
   # If the new version could not be determined, skip the check.
   # This is in case the new file is not available or does not contain the version.
@@ -560,11 +560,11 @@ check_cmd() {
 check_installer_up_to_date() {
   say "checking if foundryup is up to date..."
 
-  tmp_file="$(mktemp)"
-  ensure download "$FOUNDRY_BIN_URL" "$tmp_file"
-
-  remote_version=$(extract_installer_version "$tmp_file")
-  rm -f "$tmp_file"
+  if check_cmd curl; then
+    remote_version=$(curl -fsSL "$FOUNDRY_BIN_URL" | grep -Eo 'FOUNDRYUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' | cut -d'"' -f2)
+  else
+    remote_version=$(wget -qO- "$FOUNDRY_BIN_URL" | grep -Eo 'FOUNDRYUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' | cut -d'"' -f2)
+  fi
 
   if [ -z "$remote_version" ]; then
     warn "Could not determine remote foundryup version. Skipping version check."
@@ -618,10 +618,6 @@ EOF
   [ "$patch1" -lt "$patch2" ] && return 1
 
   return 1
-}
-
-extract_installer_version() {
-  grep -Eo 'FOUNDRYUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' "$1" | cut -d'"' -f2
 }
 
 check_bins_in_use() {
