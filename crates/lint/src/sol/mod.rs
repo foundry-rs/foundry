@@ -214,6 +214,7 @@ impl SolidityLinter {
 
             // Visit this specific source
             _ = late_visitor.visit_nested_source(source_id);
+            // TODO: ask dani if this should be done on its own, so that it has all sources
             late_visitor.post_hir();
 
             Ok(())

@@ -12,8 +12,7 @@ contract AsmKeccak256 {
 
         // lints fire before the disabled block
         bytes32 c = bytes32(0);
-        keccak256(abi.encode(a, b, c)); //~NOTE: inefficient hashing mechanism
-        keccak256(abi.encodePacked(a, b)); //~NOTE: inefficient hashing mechanism
+        bytes32 hash = keccak256(abi.encodePacked(a, b)); //~NOTE: inefficient hashing mechanism
         uint256 MixedCase_Variable = 1; //~NOTE: mutable variables should use mixedCase
 
         // forge-lint: disable-start(asm-keccak256) ------------------------------------
@@ -39,9 +38,10 @@ contract AsmKeccak256 {
         return keccak256(abi.encodePacked(a, b));
     }
 
-    function solidityHash(uint256 a, uint256 b) public view returns (bytes32) {
-        bytes32 hash = keccak256(a); //~NOTE: inefficient hashing mechanism
-        return keccak256(abi.encodePacked(a, b)); //~NOTE: inefficient hashing mechanism
+    function solidityHash(bytes calldata z, uint256 a, uint256 b, address c) public view returns (bytes32) {
+        bytes32 hash = keccak256(z);
+        bytes32 genericMsg = keccak256(abi.encodePacked(a, b, c));
+        return keccak256(abi.encode(a, b, c));
     }
 
     function assemblyHash(uint256 a, uint256 b) public view returns (bytes32){

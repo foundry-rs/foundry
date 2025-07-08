@@ -288,20 +288,104 @@ where
 /// Trait for lints that operate on the HIR (High-level Intermediate Representation).
 /// Its methods mirror `solar_ast::visit::Visit`, with the addition of `LintCotext`.
 pub trait LateLintPass<'hir>: Send + Sync {
-    fn check_nested_source(&mut self, _ctx: &LintContext<'_>, _id: hir::SourceId) {}
-    fn check_nested_item(&mut self, _ctx: &LintContext<'_>, _id: &'hir hir::ItemId) {}
-    fn check_nested_contract(&mut self, _ctx: &LintContext<'_>, _id: &'hir hir::ContractId) {}
-    fn check_nested_function(&mut self, _ctx: &LintContext<'_>, _id: &'hir hir::FunctionId) {}
-    fn check_nested_var(&mut self, _ctx: &LintContext<'_>, _id: &'hir hir::VariableId) {}
-    fn check_item(&mut self, _ctx: &LintContext<'_>, _item: hir::Item<'hir, 'hir>) {}
-    fn check_contract(&mut self, _ctx: &LintContext<'_>, _contract: &'hir hir::Contract<'hir>) {}
-    fn check_function(&mut self, _ctx: &LintContext<'_>, _func: &'hir hir::Function<'hir>) {}
-    fn check_modifier(&mut self, _ctx: &LintContext<'_>, _mod: &'hir hir::Modifier<'hir>) {}
-    fn check_var(&mut self, _ctx: &LintContext<'_>, _var: &'hir hir::Variable<'hir>) {}
-    fn check_expr(&mut self, _ctx: &LintContext<'_>, _expr: &'hir hir::Expr<'hir>) {}
-    fn check_call_args(&mut self, _ctx: &LintContext<'_>, _args: &'hir hir::CallArgs<'hir>) {}
-    fn check_stmt(&mut self, _ctx: &LintContext<'_>, _stmt: &'hir hir::Stmt<'hir>) {}
-    fn check_ty(&mut self, _ctx: &LintContext<'_>, _ty: &'hir hir::Type<'hir>) {}
+    fn check_nested_source(
+        &mut self,
+        _ctx: &LintContext<'_>,
+        _hir: &'hir hir::Hir<'hir>,
+        _id: hir::SourceId,
+    ) {
+    }
+    fn check_nested_item(
+        &mut self,
+        _ctx: &LintContext<'_>,
+        _hir: &'hir hir::Hir<'hir>,
+        _id: &'hir hir::ItemId,
+    ) {
+    }
+    fn check_nested_contract(
+        &mut self,
+        _ctx: &LintContext<'_>,
+        _hir: &'hir hir::Hir<'hir>,
+        _id: &'hir hir::ContractId,
+    ) {
+    }
+    fn check_nested_function(
+        &mut self,
+        _ctx: &LintContext<'_>,
+        _hir: &'hir hir::Hir<'hir>,
+        _id: &'hir hir::FunctionId,
+    ) {
+    }
+    fn check_nested_var(
+        &mut self,
+        _ctx: &LintContext<'_>,
+        _hir: &'hir hir::Hir<'hir>,
+        _id: &'hir hir::VariableId,
+    ) {
+    }
+    fn check_item(
+        &mut self,
+        _ctx: &LintContext<'_>,
+        _hir: &'hir hir::Hir<'hir>,
+        _item: hir::Item<'hir, 'hir>,
+    ) {
+    }
+    fn check_contract(
+        &mut self,
+        _ctx: &LintContext<'_>,
+        _hir: &'hir hir::Hir<'hir>,
+        _contract: &'hir hir::Contract<'hir>,
+    ) {
+    }
+    fn check_function(
+        &mut self,
+        _ctx: &LintContext<'_>,
+        _hir: &'hir hir::Hir<'hir>,
+        _func: &'hir hir::Function<'hir>,
+    ) {
+    }
+    fn check_modifier(
+        &mut self,
+        _ctx: &LintContext<'_>,
+        _hir: &'hir hir::Hir<'hir>,
+        _mod: &'hir hir::Modifier<'hir>,
+    ) {
+    }
+    fn check_var(
+        &mut self,
+        _ctx: &LintContext<'_>,
+        _hir: &'hir hir::Hir<'hir>,
+        _var: &'hir hir::Variable<'hir>,
+    ) {
+    }
+    fn check_expr(
+        &mut self,
+        _ctx: &LintContext<'_>,
+        _hir: &'hir hir::Hir<'hir>,
+        _expr: &'hir hir::Expr<'hir>,
+    ) {
+    }
+    fn check_call_args(
+        &mut self,
+        _ctx: &LintContext<'_>,
+        _hir: &'hir hir::Hir<'hir>,
+        _args: &'hir hir::CallArgs<'hir>,
+    ) {
+    }
+    fn check_stmt(
+        &mut self,
+        _ctx: &LintContext<'_>,
+        _hir: &'hir hir::Hir<'hir>,
+        _stmt: &'hir hir::Stmt<'hir>,
+    ) {
+    }
+    fn check_ty(
+        &mut self,
+        _ctx: &LintContext<'_>,
+        _hir: &'hir hir::Hir<'hir>,
+        _ty: &'hir hir::Type<'hir>,
+    ) {
+    }
 
     /// Called after the entire HIR has been visited. Enables lints that require
     /// knowledge of the complete semantic information.
@@ -312,7 +396,9 @@ pub trait LateLintPass<'hir>: Send + Sync {
 pub struct LateLintVisitor<'a, 's, 'hir> {
     ctx: &'a LintContext<'s>,
     passes: &'a mut [Box<dyn LateLintPass<'hir> + 's>],
-    hir: &'hir hir::Hir<'hir>,
+    // TODO: ask others if this is acceptable.
+    // Workaround for the macros to work. In practice, it will always be `Some()`.
+    hir: Option<&'hir hir::Hir<'hir>>,
 }
 
 impl<'a, 's, 'hir> LateLintVisitor<'a, 's, 'hir>
@@ -324,12 +410,12 @@ where
         passes: &'a mut [Box<dyn LateLintPass<'hir> + 's>],
         hir: &'hir hir::Hir<'hir>,
     ) -> Self {
-        Self { ctx, passes, hir }
+        Self { ctx, passes, hir: Some(hir) }
     }
 
     pub fn post_hir(&mut self) {
         for pass in self.passes.iter_mut() {
-            pass.check_post_hir(self.ctx, self.hir);
+            pass.check_post_hir(self.ctx, self.hir.unwrap());
         }
     }
 }
@@ -341,12 +427,12 @@ where
     type BreakValue = Never;
 
     fn hir(&self) -> &'hir hir::Hir<'hir> {
-        self.hir
+        self.hir.unwrap()
     }
 
     fn visit_nested_source(&mut self, id: hir::SourceId) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_nested_source(self.ctx, id);
+            pass.check_nested_source(self.ctx, self.hir.unwrap(), id);
         }
         self.walk_nested_source(id)
     }
@@ -356,46 +442,50 @@ where
         contract: &'hir hir::Contract<'hir>,
     ) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_contract(self.ctx, contract);
+            pass.check_contract(self.ctx, self.hir.unwrap(), contract);
         }
         self.walk_contract(contract)
     }
 
     fn visit_function(&mut self, func: &'hir hir::Function<'hir>) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_function(self.ctx, func);
+            pass.check_function(self.ctx, self.hir.unwrap(), func);
         }
         self.walk_function(func)
     }
 
     fn visit_item(&mut self, item: hir::Item<'hir, 'hir>) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_item(self.ctx, item);
+            pass.check_item(self.ctx, self.hir.unwrap(), item);
         }
         self.walk_item(item)
     }
 
     fn visit_var(&mut self, var: &'hir hir::Variable<'hir>) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_var(self.ctx, var);
+            pass.check_var(self.ctx, self.hir.unwrap(), var);
         }
         self.walk_var(var)
     }
 
     fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_expr(self.ctx, expr);
+            pass.check_expr(self.ctx, self.hir.unwrap(), expr);
         }
         self.walk_expr(expr)
     }
 
+    fn visit_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            pass.check_stmt(self.ctx, self.hir.unwrap(), stmt);
+        }
+        self.walk_stmt(stmt)
+    }
+
     fn visit_ty(&mut self, ty: &'hir hir::Type<'hir>) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_ty(self.ctx, ty);
+            pass.check_ty(self.ctx, self.hir.unwrap(), ty);
         }
         self.walk_ty(ty)
     }
-
-    // TODO: Add methods for each required HIR node type, mirroring `hir::visit::Visit` method sigs
-    // + adding `LintContext`
 }
