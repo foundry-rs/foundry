@@ -437,14 +437,13 @@ version() {
 update() {
   say "updating foundryup..."
 
-  # Current version is guaranteed
   current_version="$FOUNDRYUP_INSTALLER_VERSION"
 
-  # Download the new version
+  # Download the new version.
   tmp_file="$(mktemp)"
   ensure download "$FOUNDRY_BIN_URL" "$tmp_file"
 
-  # Extract new version from downloaded file
+  # Extract new version from downloaded file.
   new_version=$(extract_installer_version "$tmp_file")
 
   # If the new version could not be determined, skip the check.
@@ -455,12 +454,15 @@ update() {
     exit 0
   fi
 
+  # If the new version is not greater than the current version, skip the update.
+  # This is to prevent downgrades or unnecessary updates.
   if ! version_gt "$new_version" "$current_version"; then
     say "foundryup is already up to date (installed: $current_version, remote: $new_version)."
     rm -f "$tmp_file"
     exit 0
   fi
 
+  # Overwrite existing foundryup
   ensure mv "$tmp_file" "$FOUNDRY_BIN_PATH"
   ensure chmod +x "$FOUNDRY_BIN_PATH"
 
