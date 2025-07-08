@@ -79,9 +79,9 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get install -y nodejs npm
-          curl -L -o hyperfine_1.19.0_amd64.deb https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb
-          sudo dpkg -i hyperfine_1.19.0_amd64.deb || sudo apt-get install -f -y
+          ./.github/scripts/install-dependencies.sh
+          # Add nvm and node to PATH for subsequent steps
+          echo "$HOME/.nvm/versions/node/v24.3.0/bin" >> $GITHUB_PATH
 
       - name: Download benchmark binary
         uses: actions/download-artifact@v4
@@ -127,9 +127,9 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get install -y nodejs npm
-          curl -L -o hyperfine_1.19.0_amd64.deb https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb
-          sudo dpkg -i hyperfine_1.19.0_amd64.deb || sudo apt-get install -f -y
+          ./.github/scripts/install-dependencies.sh
+          # Add nvm and node to PATH for subsequent steps
+          echo "$HOME/.nvm/versions/node/v24.3.0/bin" >> $GITHUB_PATH
 
       - name: Download benchmark binary
         uses: actions/download-artifact@v4
@@ -175,9 +175,9 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get install -y nodejs npm
-          curl -L -o hyperfine_1.19.0_amd64.deb https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb
-          sudo dpkg -i hyperfine_1.19.0_amd64.deb || sudo apt-get install -f -y
+          ./.github/scripts/install-dependencies.sh
+          # Add nvm and node to PATH for subsequent steps
+          echo "$HOME/.nvm/versions/node/v24.3.0/bin" >> $GITHUB_PATH
 
       - name: Download benchmark binary
         uses: actions/download-artifact@v4
