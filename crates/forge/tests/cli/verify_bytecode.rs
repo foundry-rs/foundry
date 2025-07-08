@@ -160,7 +160,7 @@ forgetest_async!(can_verify_bytecode_no_metadata, |prj, cmd| {
             ..Default::default()
         },
         "etherscan",
-        "https://api.etherscan.io/api",
+        "https://api.etherscan.io/v2/api",
         ("partial", "partial"),
     );
 });
@@ -179,7 +179,7 @@ forgetest_async!(can_verify_bytecode_with_metadata, |prj, cmd| {
             ..Default::default()
         },
         "etherscan",
-        "https://api.etherscan.io/api",
+        "https://api.etherscan.io/v2/api",
         ("partial", "partial"),
     );
 });
@@ -246,7 +246,7 @@ forgetest_async!(can_verify_bytecode_with_constructor_args, |prj, cmd| {
             ..Default::default()
         },
         "etherscan",
-        "https://api.etherscan.io/api",
+        "https://api.etherscan.io/v2/api",
         ("partial", "partial"),
     );
 });
@@ -267,7 +267,7 @@ forgetest_async!(can_ignore_creation, |prj, cmd| {
             ..Default::default()
         },
         "etherscan",
-        "https://api.etherscan.io/api",
+        "https://api.etherscan.io/v2/api",
         ("ignored", "partial"),
         "creation",
         "1",
@@ -289,7 +289,7 @@ forgetest_async!(can_ignore_runtime, |prj, cmd| {
             ..Default::default()
         },
         "etherscan",
-        "https://api.etherscan.io/api",
+        "https://api.etherscan.io/v2/api",
         ("partial", "ignored"),
         "runtime",
         "1",
