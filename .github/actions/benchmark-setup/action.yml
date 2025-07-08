@@ -4,9 +4,6 @@ description: "Common setup steps for benchmark jobs"
 runs:
   using: "composite"
   steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
     - name: Setup Foundry
       shell: bash
       env:

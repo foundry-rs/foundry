@@ -72,6 +72,9 @@ jobs:
     needs: setup
     runs-on: foundry-runner
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Benchmark setup
         uses: ./.github/actions/benchmark-setup
 
@@ -99,6 +102,9 @@ jobs:
     needs: setup
     runs-on: foundry-runner
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Benchmark setup
         uses: ./.github/actions/benchmark-setup
 
@@ -126,6 +132,9 @@ jobs:
     needs: setup
     runs-on: foundry-runner
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Benchmark setup
         uses: ./.github/actions/benchmark-setup
 
