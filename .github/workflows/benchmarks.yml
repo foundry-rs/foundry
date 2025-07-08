@@ -18,7 +18,7 @@ on:
         description: "Comma-separated list of repos to benchmark (e.g., ithacaxyz/account:main,Vectorized/solady)"
         required: false
         type: string
-        default: "${{ env.DEFAULT_REPOS }}"
+        default: "ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22"
 
 permissions:
   contents: write
