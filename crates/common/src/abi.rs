@@ -21,13 +21,23 @@ where
 }
 
 /// Given a function and a vector of string arguments, it proceeds to convert the args to alloy
-/// [DynSolValue]s and then ABI encode them.
+/// [DynSolValue]s and then ABI encode them, prefixes the encoded data with the function selector.
 pub fn encode_function_args<I, S>(func: &Function, args: I) -> Result<Vec<u8>>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
     Ok(func.abi_encode_input(&encode_args(&func.inputs, args)?)?)
+}
+
+/// Given a function and a vector of string arguments, it proceeds to convert the args to alloy
+/// [DynSolValue]s and then ABI encode them. Doesn't prefix the function selector.
+pub fn encode_function_args_raw<I, S>(func: &Function, args: I) -> Result<Vec<u8>>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    Ok(func.abi_encode_input_raw(&encode_args(&func.inputs, args)?)?)
 }
 
 /// Given a function and a vector of string arguments, it proceeds to convert the args to alloy

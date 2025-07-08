@@ -3247,6 +3247,277 @@ casttest!(tx_raw_opstack_deposit, |_prj, cmd| {
 "#]]);
 });
 
+// Test that cast send --create works correctly with constructor arguments
+// <https://github.com/foundry-rs/foundry/issues/10947>
+forgetest_async!(cast_send_create_with_constructor_args, |prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    // Deploy a simple contract with constructor arguments
+    // Contract source that takes constructor args
+    prj.add_source(
+        "ConstructorContract",
+        r#"
+contract ConstructorContract {
+    uint256 public value;
+    string public name;
+    
+    constructor(uint256 _value, string memory _name) {
+        value = _value;
+        name = _name;
+    }
+    
+    function getValue() public view returns (uint256) {
+        return value;
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    // Compile to get bytecode
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    // Get the compiled bytecode
+    let bytecode_path = prj.root().join("out/ConstructorContract.sol/ConstructorContract.json");
+    let contract_json = std::fs::read_to_string(bytecode_path).unwrap();
+    let contract_data: serde_json::Value = serde_json::from_str(&contract_json).unwrap();
+    let bytecode = contract_data["bytecode"]["object"].as_str().unwrap();
+
+    // Use cast send --create with constructor arguments
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+            "--create",
+            bytecode,
+            "constructor(uint256,string)",
+            "42",
+            "TestContract",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Extract the deployed contract address from output
+    let lines: Vec<&str> = output.lines().collect();
+    let mut address = None;
+    for line in lines {
+        if line.contains("contractAddress") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            address = Some(parts[1]);
+            break;
+        }
+    }
+    let address = address.expect("Contract address not found in output");
+
+    // Verify the contract was deployed correctly by calling getValue()
+    let value_output = cmd
+        .cast_fuse()
+        .args(["call", address, "getValue()", "--rpc-url", &endpoint])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // The value should be 42 (0x2a in hex)
+    assert!(
+        value_output.contains("0x000000000000000000000000000000000000000000000000000000000000002a")
+    );
+});
+
+// Test that cast estimate --create works correctly with constructor arguments
+// <https://github.com/foundry-rs/foundry/issues/10947>
+casttest!(cast_estimate_create_with_constructor_args, |prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    // Add a simple contract with constructor arguments
+    prj.add_source(
+        "EstimateContract",
+        r#"
+contract EstimateContract {
+    uint256 public value;
+    string public name;
+    
+    constructor(uint256 _value, string memory _name) {
+        value = _value;
+        name = _name;
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    // Compile to get bytecode
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    // Get the compiled bytecode
+    let bytecode_path = prj.root().join("out/EstimateContract.sol/EstimateContract.json");
+    let contract_json = std::fs::read_to_string(bytecode_path).unwrap();
+    let contract_data: serde_json::Value = serde_json::from_str(&contract_json).unwrap();
+    let bytecode = contract_data["bytecode"]["object"].as_str().unwrap();
+
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "estimate",
+            "--rpc-url",
+            eth_rpc_url.as_str(),
+            "--create",
+            bytecode,
+            "constructor(uint256,string)",
+            "100",
+            "TestContract",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Parse the gas estimate
+    let gas_estimate = output.trim().parse::<u64>().expect("Failed to parse gas estimate");
+
+    // Gas estimate should be positive and reasonable for contract deployment
+    assert!(gas_estimate > 50000, "Gas estimate too low for contract deployment");
+    assert!(gas_estimate < 5000000, "Gas estimate unreasonably high");
+});
+
+// Test edge case: empty constructor arguments
+// <https://github.com/foundry-rs/foundry/issues/10947>
+forgetest_async!(cast_send_create_empty_constructor, |prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    // Simple contract with no constructor arguments
+    prj.add_source(
+        "SimpleContract",
+        r#"
+contract SimpleContract {
+    uint256 public constant VALUE = 42;
+}
+"#,
+    )
+    .unwrap();
+
+    // Compile
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    // Get bytecode
+    let bytecode_path = prj.root().join("out/SimpleContract.sol/SimpleContract.json");
+    let contract_json = std::fs::read_to_string(bytecode_path).unwrap();
+    let contract_data: serde_json::Value = serde_json::from_str(&contract_json).unwrap();
+    let bytecode = contract_data["bytecode"]["object"].as_str().unwrap();
+
+    // Deploy with empty constructor
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+            "--create",
+            bytecode,
+            "constructor()",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify deployment succeeded
+    assert!(output.contains("contractAddress"));
+});
+
+// Test complex constructor arguments (multiple types)
+// <https://github.com/foundry-rs/foundry/issues/10947>
+forgetest_async!(cast_send_create_complex_constructor, |prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    // Contract with complex constructor
+    prj.add_source(
+        "ComplexContract",
+        r#"
+contract ComplexContract {
+    address public owner;
+    uint256[] public values;
+    bool public active;
+    
+    constructor(address _owner, uint256[] memory _values, bool _active) {
+        owner = _owner;
+        values = _values;
+        active = _active;
+    }
+    
+    function getValuesLength() public view returns (uint256) {
+        return values.length;
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    // Compile
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    // Get bytecode
+    let bytecode_path = prj.root().join("out/ComplexContract.sol/ComplexContract.json");
+    let contract_json = std::fs::read_to_string(bytecode_path).unwrap();
+    let contract_data: serde_json::Value = serde_json::from_str(&contract_json).unwrap();
+    let bytecode = contract_data["bytecode"]["object"].as_str().unwrap();
+
+    // Deploy with complex arguments
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+            "--create",
+            bytecode,
+            "constructor(address,uint256[],bool)",
+            "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+            "[1,2,3,4,5]",
+            "true",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Extract deployed address
+    let lines: Vec<&str> = output.lines().collect();
+    let mut address = None;
+    for line in lines {
+        if line.contains("contractAddress") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                address = Some(parts[1]);
+                break;
+            }
+        }
+    }
+    let address = address.expect("Contract address not found in output");
+
+    // Verify the array length was set correctly
+    let length_output = cmd
+        .cast_fuse()
+        .args(["call", address, "getValuesLength()", "--rpc-url", &endpoint])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Should return 5 (0x5 in hex)
+    assert!(
+        length_output
+            .contains("0x0000000000000000000000000000000000000000000000000000000000000005")
+    );
+});
+
 casttest!(recover_authority, |_prj, cmd| {
     let auth = r#"{
         "chainId": "0x1",
