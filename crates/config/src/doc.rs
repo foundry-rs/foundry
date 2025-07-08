@@ -20,6 +20,8 @@ pub struct DocConfig {
     /// The repository url.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository: Option<String>,
+    /// The path to source code (e.g. `tree/main/packages/contracts`).
+    /// Useful for monorepos or for projects with source code located in specific directories.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     /// Globs to ignore
