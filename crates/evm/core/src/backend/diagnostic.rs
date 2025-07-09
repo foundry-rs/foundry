@@ -18,15 +18,6 @@ pub enum RevertDiagnostic {
     },
 }
 
-/// Contains fork-specific revert diagnostic information
-#[derive(Clone, Debug, Default)]
-pub struct ForkRevertDiagnostic {
-    /// The target address of the current call
-    pub current_call_target: Option<Address>,
-    /// The diagnostic information if available
-    pub diagnostic: Option<RevertDiagnostic>,
-}
-
 impl RevertDiagnostic {
     /// Converts the diagnostic to a readable error message
     pub fn to_error_msg(&self, labels: &AddressHashMap<String>) -> String {
