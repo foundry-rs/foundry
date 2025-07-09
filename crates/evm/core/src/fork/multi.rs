@@ -17,6 +17,7 @@ use futures::{
     stream::{Fuse, Stream},
     task::{Context, Poll},
 };
+use revm::context::BlockEnv;
 use std::{
     fmt::{self, Write},
     pin::Pin,
@@ -158,6 +159,18 @@ impl MultiFork {
             .map_err(|e| eyre::eyre!("{:?}", e))
     }
 
+    /// Updates the fork's entire env
+    ///
+    /// This is required for tx level forking where we need to fork off the `block - 1` state but
+    /// still need use env settings for `env`.
+    pub fn update_block_env(&self, fork: ForkId, env: BlockEnv) -> eyre::Result<()> {
+        trace!(?fork, ?env, "update fork block");
+        self.handler
+            .clone()
+            .try_send(Request::UpdateEnv(fork, env))
+            .map_err(|e| eyre::eyre!("{:?}", e))
+    }
+
     /// Returns the corresponding fork if it exists.
     ///
     /// Returns `None` if no matching fork backend is available.
@@ -201,6 +214,8 @@ enum Request {
     GetEnv(ForkId, GetEnvSender),
     /// Updates the block number and timestamp of the fork.
     UpdateBlock(ForkId, U256, U256),
+    /// Updates the block the entire block env,
+    UpdateEnv(ForkId, BlockEnv),
     /// Shutdowns the entire `MultiForkHandler`, see `ShutDownMultiFork`
     ShutDown(OneshotSender<()>),
     /// Returns the Fork Url for the `ForkId` if it exists.
@@ -300,6 +315,12 @@ impl MultiForkHandler {
         }
     }
 
+    /// Update the fork's block entire env
+    fn update_env(&mut self, fork_id: ForkId, env: BlockEnv) {
+        if let Some(fork) = self.forks.get_mut(&fork_id) {
+            fork.opts.env.evm_env.block_env = env;
+        }
+    }
     /// Update fork block number and timestamp. Used to preserve values set by `roll` and `warp`
     /// cheatcodes when new fork selected.
     fn update_block(&mut self, fork_id: ForkId, block_number: U256, block_timestamp: U256) {
@@ -331,6 +352,9 @@ impl MultiForkHandler {
             }
             Request::UpdateBlock(fork_id, block_number, block_timestamp) => {
                 self.update_block(fork_id, block_number, block_timestamp);
+            }
+            Request::UpdateEnv(fork_id, block_env) => {
+                self.update_env(fork_id, block_env);
             }
             Request::ShutDown(sender) => {
                 trace!(target: "fork::multi", "received shutdown signal");

@@ -138,6 +138,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
         let parent_hash = self.parent_hash;
         let block_number = self.block_env.number;
         let difficulty = self.block_env.difficulty;
+        let mix_hash = self.block_env.prevrandao;
         let beneficiary = self.block_env.beneficiary;
         let timestamp = self.block_env.timestamp;
         let base_fee = if self.cfg_env.spec.is_enabled_in(SpecId::LONDON) {
@@ -236,7 +237,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             gas_used: cumulative_gas_used,
             timestamp: timestamp.saturating_to(),
             extra_data: Default::default(),
-            mix_hash: Default::default(),
+            mix_hash: mix_hash.unwrap_or_default(),
             nonce: Default::default(),
             base_fee,
             parent_beacon_block_root: is_cancun.then_some(Default::default()),

@@ -330,7 +330,7 @@ impl CallArgs {
                 with_local_artifacts,
                 debug,
                 decode_internal,
-                Some(disable_labels),
+                disable_labels,
             )
             .await?;
 

@@ -1370,10 +1370,6 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_getTransactionReceipt`
     pub async fn transaction_receipt(&self, hash: B256) -> Result<Option<ReceiptResponse>> {
         node_info!("eth_getTransactionReceipt");
-        let tx = self.pool.get_transaction(hash);
-        if tx.is_some() {
-            return Ok(None);
-        }
         self.backend.transaction_receipt(hash).await
     }
 

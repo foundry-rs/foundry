@@ -56,6 +56,10 @@ pub struct RunArgs {
     #[arg(long)]
     quick: bool,
 
+    /// Disables the labels in the traces.
+    #[arg(long, default_value_t = false)]
+    disable_labels: bool,
+
     /// Label addresses in the trace.
     ///
     /// Example: 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045:vitalik.eth
@@ -286,7 +290,7 @@ impl RunArgs {
             self.with_local_artifacts,
             self.debug,
             self.decode_internal,
-            None,
+            self.disable_labels,
         )
         .await?;
 
