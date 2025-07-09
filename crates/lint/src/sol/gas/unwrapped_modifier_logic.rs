@@ -20,10 +20,7 @@ impl<'ast> EarlyLintPass<'ast> for UnwrappedModifierLogic {
         }
 
         // If modifier has no contents, skip.
-        let body = match &func.body {
-            Some(body) => body,
-            _ => return,
-        };
+        let Some(body) = &func.body else { return };
 
         // If body contains unwrapped logic, emit.
         if body.iter().any(|stmt| !is_valid_stmt(stmt))
@@ -47,21 +44,16 @@ fn is_valid_stmt(stmt: &Stmt<'_>) -> bool {
     }
 }
 
+// TODO: Support library member calls like `Lib.foo` (throws false positives).
 fn is_valid_expr(expr: &solar_ast::Expr<'_>) -> bool {
-    match &expr.kind {
-        // If the expression is a function call...
-        ExprKind::Call(func_expr, _) => match &func_expr.kind {
-            // If the expression is a built-in control flow function, emit.
-            ExprKind::Ident(ident) => !matches!(ident.name.as_str(), "require" | "assert"),
-
-            // If the expression is a member call, emit.
-            ExprKind::Member(_, _) => false, // TODO: enable library calls
-
-            // Disallow all other expressions.
-            _ => false,
-        },
-
-        // Disallow all other expressions.
-        _ => false,
+    // If the expression is a call, continue.
+    if let ExprKind::Call(func_expr, _) = &expr.kind
+        && let ExprKind::Ident(ident) = &func_expr.kind
+    {
+        // If the call is a built-in control flow function, emit.
+        return !matches!(ident.name.as_str(), "require" | "assert");
     }
+
+    // Disallow all other expressions.
+    false
 }
