@@ -1,9 +1,9 @@
-use super::ModifierLogic;
+use super::UnwrappedModifierLogic;
 use crate::{
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use solar_ast::{ExprKind, FunctionKind, ItemFunction, Stmt, StmtKind};
+use solar_ast::{ExprKind, ItemFunction, Stmt, StmtKind};
 
 declare_forge_lint!(
     UNWRAPPED_MODIFIER_LOGIC,
@@ -12,21 +12,21 @@ declare_forge_lint!(
     "modifier logic should be wrapped to avoid code duplication and reduce codesize"
 );
 
-impl<'ast> EarlyLintPass<'ast> for ModifierLogic {
+impl<'ast> EarlyLintPass<'ast> for UnwrappedModifierLogic {
     fn check_item_function(&mut self, ctx: &LintContext<'_>, func: &'ast ItemFunction<'ast>) {
-        // Only check modifiers
-        if func.kind != FunctionKind::Modifier {
+        // If not a modifier, skip.
+        if !func.kind.is_modifier() {
             return;
         }
 
-        // Skip if modifier has no body or the body is empty
+        // If modifier has no contents, skip.
         let body = match &func.body {
-            Some(body) if !body.is_empty() => body,
+            Some(body) => body,
             _ => return,
         };
 
-        // Emit lint if the modifier contains unwrapped logic
-        if contains_unwrapped_logic(body)
+        // If body contains unwrapped logic, emit.
+        if body.iter().any(|stmt| !is_valid_stmt(stmt))
             && let Some(name) = func.header.name
         {
             ctx.emit(&UNWRAPPED_MODIFIER_LOGIC, name.span);
@@ -34,44 +34,34 @@ impl<'ast> EarlyLintPass<'ast> for ModifierLogic {
     }
 }
 
-/// Returns true if the modifier body contains any logic other than:
-/// - The placeholder `_;`
-/// - Calls to internal/private/public functions via direct identifier
-fn contains_unwrapped_logic(stmts: &[Stmt<'_>]) -> bool {
-    stmts.iter().any(|stmt| !is_permitted_statement(stmt))
-}
-
-/// Returns true if the statement is allowed in a modifier without triggering the lint
-fn is_permitted_statement(stmt: &Stmt<'_>) -> bool {
+fn is_valid_stmt(stmt: &Stmt<'_>) -> bool {
     match &stmt.kind {
+        // If the statement is an expression, emit if not valid.
+        StmtKind::Expr(expr) => is_valid_expr(expr),
+
+        // If the statement is a placeholder, skip.
         StmtKind::Placeholder => true,
-        StmtKind::Expr(expr) => is_permitted_expression(expr),
+
+        // Disallow all other statements.
         _ => false,
     }
 }
 
-/// Returns true if the expression is a call to a function via direct identifier
-/// (i.e., not a built-in like require/assert/revert, and not a member/external call)
-fn is_permitted_expression(expr: &solar_ast::Expr<'_>) -> bool {
+fn is_valid_expr(expr: &solar_ast::Expr<'_>) -> bool {
     match &expr.kind {
-        // Only allow function calls.
+        // If the expression is a function call...
         ExprKind::Call(func_expr, _) => match &func_expr.kind {
-            // Allow direct calls to user-defined functions (by identifier)
-            ExprKind::Ident(ident) => {
-                // Disallow calls to built-in control flow functions like require/assert/revert
-                !matches!(ident.name.as_str(), "require" | "assert" | "revert")
-            }
+            // If the expression is a built-in control flow function, emit.
+            ExprKind::Ident(ident) => !matches!(ident.name.as_str(), "require" | "assert"),
 
-            // Disallow member calls (e.g., object.method()), which could be external or library
-            // calls
-            // TODO: enable library calls
-            ExprKind::Member(_, _) => false,
+            // If the expression is a member call, emit.
+            ExprKind::Member(_, _) => false, // TODO: enable library calls
 
-            // Disallow all other forms of function expressions (e.g., function pointers, etc.)
+            // Disallow all other expressions.
             _ => false,
         },
 
-        // Disallow all other expression types (not a function call)
+        // Disallow all other expressions.
         _ => false,
     }
 }

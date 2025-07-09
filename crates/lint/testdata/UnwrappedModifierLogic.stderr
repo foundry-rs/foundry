@@ -1,5 +1,5 @@
 note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
-  --> ROOT/testdata/ModifierLogic.sol:LL:CC
+  --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    |
 69 |     modifier onlyOwnerRequire() {
    |              ----------------
@@ -7,7 +7,7 @@ note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code d
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
 note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
-  --> ROOT/testdata/ModifierLogic.sol:LL:CC
+  --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    |
 75 |     modifier onlyOwnerRequireWithParam(address sender) {
    |              -------------------------
@@ -15,7 +15,7 @@ note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code d
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
 note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
-  --> ROOT/testdata/ModifierLogic.sol:LL:CC
+  --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    |
 81 |     modifier onlyOwnerAssert() {
    |              ---------------
@@ -23,7 +23,7 @@ note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code d
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
 note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
-  --> ROOT/testdata/ModifierLogic.sol:LL:CC
+  --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    |
 87 |     modifier onlyOwnerAssertWithParam(address sender) {
    |              ------------------------
@@ -31,7 +31,7 @@ note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code d
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
 note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
-  --> ROOT/testdata/ModifierLogic.sol:LL:CC
+  --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    |
 93 |     modifier onlyOwnerConditionalRevert() {
    |              --------------------------
@@ -39,7 +39,7 @@ note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code d
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
 note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
-   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
     |
 101 |     modifier onlyOwnerConditionalRevertWithParam(address sender) {
     |              -----------------------------------
@@ -47,7 +47,7 @@ note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code d
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
 note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
-   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
     |
 109 |     modifier setOwner(address sender) {
     |              --------
@@ -55,7 +55,7 @@ note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code d
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
 note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
-   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
     |
 115 |     modifier setOwnerWithParam(address sender) {
     |              -----------------
@@ -63,7 +63,7 @@ note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code d
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
 note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
-   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
     |
 121 |     modifier requireAndInternal(address sender) {
     |              ------------------
@@ -71,7 +71,7 @@ note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code d
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
 note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
-   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
     |
 128 |     modifier assignAndInternal(address sender) {
     |              -----------------
@@ -79,7 +79,7 @@ note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code d
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
 note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
-   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
     |
 135 |     modifier requireAndAssign(address sender) {
     |              ----------------
@@ -87,7 +87,7 @@ note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code d
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
 note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
-   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
     |
 142 |     modifier requireAndPublic(address sender) {
     |              ----------------
@@ -95,7 +95,7 @@ note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code d
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
 note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
-   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
     |
 149 |     modifier assignAndPublic(address sender) {
     |              ---------------
@@ -103,7 +103,7 @@ note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code d
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
 note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
-   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
     |
 156 |     modifier requireAssignInternal(address sender) {
     |              ---------------------
@@ -111,7 +111,7 @@ note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code d
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
 note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
-   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
     |
 164 |     modifier requireAssignPublic(address sender) {
     |              -------------------
@@ -119,7 +119,7 @@ note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code d
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
 note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
-   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
     |
 172 |     modifier withAssembly(address sender) {
     |              ------------
@@ -127,7 +127,7 @@ note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code d
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
 note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
-   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
     |
 182 |     modifier emitEvent(address sender) {
     |              ---------
@@ -135,7 +135,7 @@ note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code d
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
 note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
-   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
     |
 188 |     modifier inlineRevert(address sender) {
     |              ------------
@@ -143,7 +143,7 @@ note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code d
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
 note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
-   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
     |
 194 |     modifier eventRequireInternal(address sender) {
     |              --------------------
