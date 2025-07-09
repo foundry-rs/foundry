@@ -210,6 +210,8 @@ fn gen_asm_encoded_words(args: &[String], asm_ctx: AsmContext) -> String {
     else {
         _ = writeln!(res, "    let m := mload(0x40)");
         for (i, arg) in args.iter().enumerate() {
+            // assembly doesn't support type conversions. `bytes32(c)` -> `c`
+            let arg = peel_parentheses(&arg);
             if i == 0 {
                 _ = writeln!(res, "    mstore(m, {arg})");
             } else {
@@ -335,4 +337,15 @@ fn is_value_type<'hir>(kind: &hir::TypeKind<'hir>) -> bool {
         return ty.is_value_type();
     }
     false
+}
+
+fn peel_parentheses(mut s: &str) -> &str {
+    while let (Some(start), Some(end)) = (s.find('('), s.rfind(')')) {
+        if end > start {
+            s = &s[start + 1..end];
+        } else {
+            break;
+        }
+    }
+    s
 }

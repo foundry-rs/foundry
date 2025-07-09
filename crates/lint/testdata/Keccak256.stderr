@@ -52,7 +52,7 @@ note[asm-keccak256]: use of inefficient hashing mechanism
            +     let m := mload(0x40)
            +     mstore(m, a)
            +     mstore(add(m, 0x20), b)
-           +     mstore(add(m, 0x40), bytes32(c))
+           +     mstore(add(m, 0x40), c)
            +     hash := keccak256(m, 0x60)
            + }
            
