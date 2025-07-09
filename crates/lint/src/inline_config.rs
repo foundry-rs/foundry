@@ -149,11 +149,11 @@ impl InlineConfig {
             match item {
                 InlineConfigItem::DisableNextItem(lints) => {
                     let comment_end = sp.hi().to_usize();
-                    if let Some(next_item_span) = find_next_item(comment_end) {
+                    if let Some(next_item) = find_next_item(comment_end) {
                         for lint in lints {
                             disabled_ranges.entry(lint).or_default().push(DisabledRange {
-                                start: next_item_span.lo().to_usize(),
-                                end: next_item_span.hi().to_usize(),
+                                start: next_item.lo().to_usize(),
+                                end: next_item.hi().to_usize(),
                                 loose: false,
                             });
                         }

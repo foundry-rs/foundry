@@ -212,8 +212,9 @@ fn gen_asm_encoded_words(args: &[String], asm_ctx: AsmContext) -> String {
         for (i, arg) in args.iter().enumerate() {
             if i == 0 {
                 _ = writeln!(res, "    mstore(m, {arg})");
+            } else {
+                _ = writeln!(res, "    mstore(add(m, 0x{offset:02x}), {arg})", offset = i * 32);
             }
-            _ = writeln!(res, "    mstore(add(m, 0x{offset:02x}), {arg})", offset = i * 32);
         }
         _ = writeln!(res, "    {var} := keccak256(m, 0x{offset:02x})", offset = args.len() * 32);
     };

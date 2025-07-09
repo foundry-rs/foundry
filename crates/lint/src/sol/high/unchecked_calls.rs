@@ -24,6 +24,7 @@ declare_forge_lint!(
 // -- ERC20 UNCKECKED TRANSFERS -------------------------------------------------------------------
 
 /// WARN: can issue false positives. It does not check that the contract being called is an ERC20.
+/// TODO: re-implement using `LateLintPass` so that it can't issue false positives.
 impl<'ast> EarlyLintPass<'ast> for UncheckedTransferERC20 {
     fn check_item_function(&mut self, ctx: &LintContext<'_>, func: &'ast ItemFunction<'ast>) {
         if let Some(body) = &func.body {
@@ -157,91 +158,3 @@ fn is_unchecked_tuple_assignment(expr: &Expr<'_>) -> bool {
         false
     }
 }
-
-// TODO: Re-enable HIR-based late lint passes once the solar_sema API is stable
-/*
-// -- LATE LINT PASSES WITH HIR -------------------------------------------------------------------
-
-impl<'hir> LateLintPass<'hir> for UncheckedCallLate {
-    fn check_hir_stmt(&mut self, ctx: &LintContext<'_>, stmt: &'hir hir::Stmt<'hir>) {
-        match &stmt.kind {
-            // Check standalone expression statements
-            HirStmtKind::Expr(expr) => {
-                if is_low_level_call_hir(expr) {
-                    ctx.emit(&UNCHECKED_CALL, stmt.span);
-                }
-            }
-            // Check variable declarations with tuple destructuring
-            HirStmtKind::Let(pattern, _, Some(init), _) => {
-                if is_low_level_call_hir(init) && is_unchecked_pattern(pattern) {
-                    ctx.emit(&UNCHECKED_CALL, stmt.span);
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-impl<'hir> LateLintPass<'hir> for UncheckedTransferERC20Late {
-    fn check_hir_stmt(&mut self, ctx: &LintContext<'_>, stmt: &'hir hir::Stmt<'hir>) {
-        if let HirStmtKind::Expr(expr) = &stmt.kind {
-            if is_erc20_transfer_call_hir(expr) {
-                ctx.emit(&ERC20_UNCHECKED_TRANSFER, stmt.span);
-            }
-        }
-    }
-}
-
-/// Checks if an HIR expression is a low-level call using semantic information
-fn is_low_level_call_hir(expr: &hir::Expr<'_>) -> bool {
-    if let HirExprKind::Call(call_expr, _args) = &expr.kind {
-        // Check the callee expression, handling call options
-        let callee = match &call_expr.kind {
-            HirExprKind::CallOptions(inner_expr, _) => inner_expr,
-            _ => call_expr,
-        };
-
-        if let HirExprKind::Field(_, field) = &callee.kind {
-            // In HIR, we can check the resolved field
-            // Check if it's a low-level call method
-            let field_name = field.ident.as_str();
-            return field_name == "call" || field_name == "delegatecall" || field_name == "staticcall"
-        }
-    }
-    false
-}
-
-/// Checks if an HIR expression is an ERC20 transfer call with type information
-fn is_erc20_transfer_call_hir(expr: &hir::Expr<'_>) -> bool {
-    if let HirExprKind::Call(call_expr, args) = &expr.kind {
-        if let HirExprKind::Field(receiver, field) = &call_expr.kind {
-            // Check method name and argument count
-            // Check method name and argument count
-            let field_name = field.ident.as_str();
-            let is_transfer = args.len() == 2 && field_name == "transfer";
-            let is_transfer_from = args.len() == 3 && field_name == "transferFrom";
-
-            if is_transfer || is_transfer_from {
-                // With HIR, we could check if the receiver type implements ERC20
-                // For now, we'll use the same heuristic as the early pass
-                // but in the future, we could check:
-                // - If receiver.ty implements IERC20 interface
-                // - If the function signature matches ERC20 standard
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// Checks if a pattern doesn't capture the first element (success value)
-fn is_unchecked_pattern(pattern: &hir::Pattern<'_>) -> bool {
-    match &pattern.kind {
-        hir::PatternKind::Tuple(patterns) => {
-            // Check if first pattern is a wildcard or missing
-            patterns.first().map_or(true, |p| matches!(p.kind, hir::PatternKind::Wild))
-        }
-        _ => false,
-    }
-}
-*/

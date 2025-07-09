@@ -19,12 +19,6 @@ pub struct LintArgs {
     #[arg(value_hint = ValueHint::FilePath, value_name = "PATH", num_args(1..))]
     paths: Vec<PathBuf>,
 
-    // /// The project's root path.
-    // ///
-    // /// By default root of the Git repository, if in one,
-    // /// or the current working directory.
-    // #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
-    // root: Option<PathBuf>,
     /// Specifies which lints to run based on severity. Overrides the `severity` project config.
     ///
     /// Supported values: `high`, `med`, `low`, `info`, `gas`.

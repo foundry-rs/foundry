@@ -23,6 +23,7 @@ use crate::inline_config::InlineConfig;
 ///
 /// # Required Methods
 ///
+/// - `init`: Creates a new solar `Session` with the appropiate linter configuration.
 /// - `early_lint`: Scans the source files (using the AST) emitting a diagnostic for lints found.
 /// - `late_lint`: Scans the source files (using the HIR) emitting a daignostic for lints found.
 pub trait Linter: Send + Sync + Clone {

@@ -36,48 +36,6 @@ macro_rules! declare_forge_lint {
     };
 }
 
-// DEPRECATE, IN FAVOR OF A NEW MACRO THAT CAN HANDLE BOTH: EarlyLintPass and LateLintPass
-// /// Registers Solidity linter passes with their corresponding `SolLint`.
-// ///
-// /// # Parameters
-// ///
-// /// - `$pass_id`: Identitifier of the generated struct that will implement the pass trait.
-// /// - (`$lint`): tuple with `SolLint` constants that should be evaluated on every input that
-// pass. ///
-// /// # Outputs
-// ///
-// /// - Structs for each linting pass (which should manually implement `EarlyLintPass`)
-// /// - `const REGISTERED_LINTS` containing all registered lint objects
-// /// - `const LINT_PASSES` mapping each lint to its corresponding pass
-// #[macro_export]
-// macro_rules! register_early_lints {
-//     ( $( ($pass_id:ident, ($($lint:expr),+ $(,)?)) ),* $(,)? ) => {
-//         // Declare the structs that will implement the pass trait
-//         $(
-//             #[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
-//             pub struct $pass_id;
-
-//             impl $pass_id {
-//                 pub fn as_lint_pass<'a>() -> Box<dyn EarlyLintPass<'a>> {
-//                     Box::new(Self::default())
-//                 }
-//             }
-//         )*
-
-//         // Expose array constants
-//         pub const REGISTERED_LINTS: &[SolLint] = &[$( $($lint,) + )*];
-//         pub const LINT_PASSES: &[(SolLint, fn() -> Box<dyn EarlyLintPass<'static>>)] = &[
-//             $( $( ($lint, || Box::new($pass_id::default())), )+ )*
-//         ];
-
-//         // Helper function to create lint passes with the required lifetime
-//         pub fn create_lint_passes_early<'a>() -> Vec<(Box<dyn EarlyLintPass<'a>>, SolLint)>
-//         {
-//             vec![ $( $(($pass_id::as_lint_pass(), $lint), )+ )* ]
-//         }
-//     };
-// }
-
 /// Registers Solidity linter passes that can have both early and late variants.
 ///
 /// # Parameters
@@ -85,8 +43,7 @@ macro_rules! declare_forge_lint {
 /// Each pass is declared with:
 /// - `$pass_id`: Identifier of the generated struct that will implement the pass trait(s).
 /// - `$pass_type`: Either `early`, `late`, or `both` to indicate which traits to implement.
-/// - `$lints`: A parenthesized, comma-separated list of `SolLint` constants. e.g., `(LINT_1,
-///   LINT_2)`
+/// - `$lints`: A parenthesized, comma-separated list of `SolLint` constants.
 ///
 /// # Outputs
 ///

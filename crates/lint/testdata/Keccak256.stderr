@@ -51,7 +51,6 @@ note[asm-keccak256]: use of inefficient hashing mechanism
            + assembly("memory-safe") {
            +     let m := mload(0x40)
            +     mstore(m, a)
-           +     mstore(add(m, 0x00), a)
            +     mstore(add(m, 0x20), b)
            +     mstore(add(m, 0x40), bytes32(c))
            +     hash := keccak256(m, 0x60)
@@ -72,7 +71,6 @@ note[asm-keccak256]: use of inefficient hashing mechanism
            + assembly("memory-safe") {
            +     let m := mload(0x40)
            +     mstore(m, a)
-           +     mstore(add(m, 0x00), a)
            +     mstore(add(m, 0x20), b)
            +     mstore(add(m, 0x40), c)
            +     afterDisabledBlock := keccak256(m, 0x60)
@@ -162,7 +160,6 @@ note[asm-keccak256]: use of inefficient hashing mechanism
            + assembly("memory-safe") {
            +     let m := mload(0x40)
            +     mstore(m, a)
-           +     mstore(add(m, 0x00), a)
            +     mstore(add(m, 0x20), b)
            +     mstore(add(m, 0x40), c)
            +     res := keccak256(m, 0x60)
@@ -222,7 +219,6 @@ note[asm-keccak256]: use of inefficient hashing mechanism
            + assembly("memory-safe") {
            +     let m := mload(0x40)
            +     mstore(m, x)
-           +     mstore(add(m, 0x00), x)
            +     mstore(add(m, 0x20), y)
            +     mstore(add(m, 0x40), x)
            +     mstore(add(m, 0x60), y)
