@@ -1,0 +1,152 @@
+note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
+  --> ROOT/testdata/ModifierLogic.sol:LL:CC
+   |
+69 |     modifier onlyOwnerRequire() {
+   |              ----------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
+  --> ROOT/testdata/ModifierLogic.sol:LL:CC
+   |
+75 |     modifier onlyOwnerRequireWithParam(address sender) {
+   |              -------------------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
+  --> ROOT/testdata/ModifierLogic.sol:LL:CC
+   |
+81 |     modifier onlyOwnerAssert() {
+   |              ---------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
+  --> ROOT/testdata/ModifierLogic.sol:LL:CC
+   |
+87 |     modifier onlyOwnerAssertWithParam(address sender) {
+   |              ------------------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
+  --> ROOT/testdata/ModifierLogic.sol:LL:CC
+   |
+93 |     modifier onlyOwnerConditionalRevert() {
+   |              --------------------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
+   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+    |
+101 |     modifier onlyOwnerConditionalRevertWithParam(address sender) {
+    |              -----------------------------------
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
+   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+    |
+109 |     modifier setOwner(address sender) {
+    |              --------
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
+   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+    |
+115 |     modifier setOwnerWithParam(address sender) {
+    |              -----------------
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
+   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+    |
+121 |     modifier requireAndInternal(address sender) {
+    |              ------------------
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
+   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+    |
+128 |     modifier assignAndInternal(address sender) {
+    |              -----------------
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
+   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+    |
+135 |     modifier requireAndAssign(address sender) {
+    |              ----------------
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
+   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+    |
+142 |     modifier requireAndPublic(address sender) {
+    |              ----------------
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
+   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+    |
+149 |     modifier assignAndPublic(address sender) {
+    |              ---------------
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
+   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+    |
+156 |     modifier requireAssignInternal(address sender) {
+    |              ---------------------
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
+   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+    |
+164 |     modifier requireAssignPublic(address sender) {
+    |              -------------------
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
+   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+    |
+172 |     modifier withAssembly(address sender) {
+    |              ------------
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
+   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+    |
+182 |     modifier emitEvent(address sender) {
+    |              ---------
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
+   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+    |
+188 |     modifier inlineRevert(address sender) {
+    |              ------------
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: modifier logic should be wrapped to avoid code duplication and reduce codesize
+   --> ROOT/testdata/ModifierLogic.sol:LL:CC
+    |
+194 |     modifier eventRequireInternal(address sender) {
+    |              --------------------
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
