@@ -2,13 +2,13 @@
 pragma solidity ^0.8.0;
 
 /**
- * @title ModifierLogicTest
+ * @title UnwrappedModifierLogicTest
  * @notice Test cases for the unwrapped-modifier-logic lint
  * @dev This lint helps optimize gas by preventing modifier code duplication.
  *      Solidity inlines modifier code at each usage point instead of using jumps,
  *      so any logic in modifiers gets duplicated, increasing deployment costs.
  */
-contract ModifierLogicTest {
+contract UnwrappedModifierLogicTest {
     mapping(address => bool) public isOwner;
 
     // Good patterns: Only call internal/private/public methods
