@@ -214,11 +214,11 @@ fn get_benchmark_cell_content(
     repo_name: &str,
 ) -> String {
     // Check if we have data for this version
-    if let Some(repo_data) = version_data.get(version) {
-        // Check if we have data for this repository
-        if let Some(result) = repo_data.get(repo_name) {
-            return format_duration_seconds(result.mean);
-        }
+    if let Some(repo_data) = version_data.get(version) &&
+    // Check if we have data for this repository
+        let Some(result) = repo_data.get(repo_name)
+    {
+        return format_duration_seconds(result.mean);
     }
 
     "N/A".to_string()
