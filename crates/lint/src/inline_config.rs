@@ -315,7 +315,7 @@ impl<'hir> VisitHir<'hir> for NextItemFinderHir<'hir> {
     type BreakValue = Span;
 
     fn hir(&self) -> &'hir hir::Hir<'hir> {
-        &self.hir
+        self.hir
     }
 
     fn visit_item(&mut self, item: hir::Item<'hir, 'hir>) -> ControlFlow<Self::BreakValue> {

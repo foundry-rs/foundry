@@ -4,6 +4,7 @@ use crate::{
         EarlyLintPass, EarlyLintVisitor, LateLintPass, LateLintVisitor, Lint, LintContext, Linter,
     },
 };
+use eyre::Result;
 use foundry_common::comments::Comments;
 use foundry_compilers::{solc::SolcLanguage, ProjectPathsConfig};
 use foundry_config::lint::Severity;
@@ -90,7 +91,7 @@ impl SolidityLinter {
         self
     }
 
-    fn process_source_ast<'sess>(&self, sess: &'sess Session, path: &Path) {
+    fn process_source_ast(&self, sess: &Session, path: &Path) {
         let arena = ast::Arena::new();
 
         let _ = sess.enter(|| -> Result<(), diagnostics::ErrorGuaranteed> {
@@ -153,9 +154,9 @@ impl SolidityLinter {
         });
     }
 
-    fn process_source_hir<'sess, 'hir>(
+    fn process_source_hir<'hir>(
         &self,
-        sess: &'sess Session,
+        sess: &Session,
         gcx: &solar_sema::ty::Gcx<'hir>,
         source_id: hir::SourceId,
         file: &'hir SourceFile,
@@ -200,7 +201,7 @@ impl SolidityLinter {
 
             // Process the inline-config
             let source = file.src.as_str();
-            let comments = Comments::new(&file);
+            let comments = Comments::new(file);
             let inline_config = parse_inline_config(
                 sess,
                 &comments,
@@ -214,8 +215,6 @@ impl SolidityLinter {
 
             // Visit this specific source
             _ = late_visitor.visit_nested_source(source_id);
-            // TODO: ask dani if this should be done on its own, so that it has all sources
-            late_visitor.post_hir();
 
             Ok(())
         });
@@ -226,10 +225,9 @@ impl Linter for SolidityLinter {
     type Language = SolcLanguage;
     type Lint = SolLint;
 
+    /// Build solar session based on the linter config
     fn init(&self) -> Session {
         let mut builder = Session::builder();
-
-        // Build session based on the linter config
         if self.with_json_emitter {
             let map = Arc::<SourceMap>::default();
             let json_emitter = JsonEmitter::new(Box::new(std::io::stderr()), map.clone())
@@ -247,26 +245,26 @@ impl Linter for SolidityLinter {
         sess
     }
 
-    fn early_lint<'sess>(&self, input: &[PathBuf], sess: &'sess Session) {
-        // Process the files in parallel
+    /// Run AST-based lints
+    fn early_lint(&self, input: &[PathBuf], sess: &Session) -> Result<()> {
         sess.enter_parallel(|| {
             input.par_iter().for_each(|path| {
-                self.process_source_ast(&sess, path);
+                self.process_source_ast(sess, path);
             });
         });
+
+        eyre::ensure!(sess.dcx.has_errors().is_ok(), "errors occurred while running early lints");
+        Ok(())
     }
 
-    fn late_lint<'sess>(&self, input: &[PathBuf], mut pcx: ParsingContext<'sess>) {
+    /// Run HIR-based lints
+    fn late_lint<'sess>(&self, input: &[PathBuf], mut pcx: ParsingContext<'sess>) -> Result<()> {
         let sess = pcx.sess;
 
-        sess.enter_parallel(|| {
-            // TODO: handle errors properly
-            // Load all files into the ParsingContext
-            if pcx.load_files(input).is_err() {
-                return;
-            }
+        sess.enter_parallel(|| -> Result<()> {
+            // Load all files into the parsing ctx
+            pcx.load_files(input).map_err(|_| eyre::eyre!("error loading files"))?;
 
-            // TODO: idealy check if any late lints are enabled before
             // Parse and lower to HIR
             let hir_arena = solar_sema::thread_local::ThreadLocal::new();
             let hir_result = pcx.parse_and_lower(&hir_arena);
@@ -274,12 +272,17 @@ impl Linter for SolidityLinter {
             if let Ok(Some(gcx_wrapper)) = hir_result {
                 let gcx = gcx_wrapper.get();
 
-                // Process each source with HIR
+                // Process each source in parallel
                 gcx.hir.sources_enumerated().par_bridge().for_each(|(source_id, source)| {
                     self.process_source_hir(sess, &gcx, source_id, &source.file);
                 });
             }
-        });
+
+            Ok(())
+        })?;
+
+        eyre::ensure!(sess.dcx.has_errors().is_ok(), "errors occurred while running late lints");
+        Ok(())
     }
 }
 

@@ -24,11 +24,19 @@ impl<'hir> LateLintPass<'hir> for AsmKeccak256 {
         hir: &'hir hir::Hir<'hir>,
         stmt: &'hir hir::Stmt<'hir>,
     ) {
-        let check_expr_and_emit = |expr: &'hir Expr<'hir>, assign: Option<ast::Ident>| {
-            if let Some(hash_arg) = extract_keccak256_arg(expr) {
-                self.emit_lint(ctx, hir, stmt.span, expr, hash_arg, assign);
-            }
-        };
+        let check_expr_and_emit_lint =
+            |expr: &'hir Expr<'hir>, assign: Option<ast::Ident>, is_return: bool| {
+                if let Some(hash_arg) = extract_keccak256_arg(expr) {
+                    self.emit_lint(
+                        ctx,
+                        hir,
+                        stmt.span,
+                        expr,
+                        hash_arg,
+                        AsmContext { assign, is_return },
+                    );
+                }
+            };
 
         match stmt.kind {
             hir::StmtKind::DeclSingle(var_id) => {
@@ -36,7 +44,7 @@ impl<'hir> LateLintPass<'hir> for AsmKeccak256 {
                 if let Some(init) = var.initializer {
                     // Constants should be optimized by the compiler, so no gas savings apply.
                     if !matches!(var.mutability, Some(hir::VarMut::Constant)) {
-                        check_expr_and_emit(init, var.name);
+                        check_expr_and_emit_lint(init, var.name, false);
                     }
                 }
             }
@@ -44,9 +52,9 @@ impl<'hir> LateLintPass<'hir> for AsmKeccak256 {
             hir::StmtKind::Expr(expr) |
             hir::StmtKind::Emit(expr) |
             hir::StmtKind::Revert(expr) |
-            hir::StmtKind::Return(Some(expr)) |
             hir::StmtKind::DeclMulti(_, expr) |
-            hir::StmtKind::If(expr, ..) => check_expr_and_emit(expr, None),
+            hir::StmtKind::If(expr, ..) => check_expr_and_emit_lint(expr, None, false),
+            hir::StmtKind::Return(Some(expr)) => check_expr_and_emit_lint(expr, None, true),
             _ => (),
         }
     }
@@ -61,14 +69,14 @@ impl AsmKeccak256 {
         stmt_span: Span,
         call: &hir::Expr<'_>,
         hash: &hir::Expr<'_>,
-        assign: Option<ast::Ident>,
+        asm_ctx: AsmContext,
     ) {
-        let target_span = if assign.is_some() { stmt_span } else { call.span };
+        let target_span = asm_ctx.target_span(stmt_span, call.span);
 
-        if self.try_emit_fix_bytes_hash(ctx, hir, target_span, hash, assign) {
+        if self.try_emit_fix_bytes_hash(ctx, hir, target_span, hash, asm_ctx) {
             return;
         }
-        if self.try_emit_fix_abi_encoded(ctx, hir, target_span, hash, assign) {
+        if self.try_emit_fix_abi_encoded(ctx, hir, target_span, hash, asm_ctx) {
             return;
         }
 
@@ -84,14 +92,14 @@ impl AsmKeccak256 {
         hir: &hir::Hir<'_>,
         target_span: Span,
         expr: &hir::Expr<'_>,
-        assign: Option<ast::Ident>,
+        asm_ctx: AsmContext,
     ) -> bool {
         let Some(var) = get_var_from_expr(hir, expr) else { return false };
         if matches!(
             var.ty.kind,
             TypeKind::Elementary(hir::ElementaryType::Bytes | hir::ElementaryType::String)
         ) {
-            if let Some(good) = gen_bytes_asm(ctx, expr.span, var.data_location, assign) {
+            if let Some(good) = gen_bytes_asm(ctx, expr.span, var.data_location, asm_ctx) {
                 let snippet = match ctx.span_to_snippet(target_span) {
                     Some(bad) => Snippet::Diff { desc: SNIP_DESC, rmv: bad, add: good },
                     None => Snippet::Block { desc: SNIP_DESC, code: good },
@@ -110,7 +118,7 @@ impl AsmKeccak256 {
         hir: &hir::Hir<'_>,
         target_span: Span,
         expr: &hir::Expr<'_>,
-        assign: Option<ast::Ident>,
+        asm_ctx: AsmContext,
     ) -> bool {
         let Some((packed_args, encoding)) = get_abi_packed_args(expr) else { return false };
 
@@ -121,7 +129,7 @@ impl AsmKeccak256 {
                 packed_args.iter().map(|arg| ctx.span_to_snippet(arg.span)).collect();
 
             if let Some(args) = arg_snippets {
-                let good = gen_simple_asm(&args, assign);
+                let good = gen_encoded_words_asm(&args, asm_ctx);
                 let snippet = match ctx.span_to_snippet(target_span) {
                     Some(bad) => Snippet::Diff { desc: SNIP_DESC, rmv: bad, add: good },
                     None => Snippet::Block { desc: SNIP_DESC, code: good },
@@ -135,7 +143,92 @@ impl AsmKeccak256 {
     }
 }
 
-// -- HELPER FUNCTIONS ----------------------------------------------------------------------------
+// -- HELPER FUNCTIONS AND STRUCTS ----------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy)]
+struct AsmContext {
+    assign: Option<ast::Ident>,
+    is_return: bool,
+}
+
+impl AsmContext {
+    fn target_span(&self, stmt_span: Span, call_span: Span) -> Span {
+        if self.assign.is_some() || self.is_return {
+            stmt_span
+        } else {
+            call_span
+        }
+    }
+
+    fn get_assign_var_name(&self) -> String {
+        self.assign.map_or(String::from("res"), |ident| ident.to_string())
+    }
+}
+
+/// Generates the assembly code for hashing a single dynamic 'bytes' or 'string' variable.
+fn gen_bytes_asm<'sess>(
+    ctx: &LintContext<'sess>,
+    var_span: Span,
+    data_location: Option<ast::DataLocation>,
+    asm_ctx: AsmContext,
+) -> Option<String> {
+    let name = ctx.span_to_snippet(var_span)?;
+    let var = asm_ctx.get_assign_var_name();
+
+    let mut res = format!("bytes32 {var};\n");
+    _ = writeln!(res, r#"assembly("memory-safe") {{"#);
+    match data_location {
+        Some(ast::DataLocation::Calldata) => {
+            _ = writeln!(res, "    calldatacopy(mload(0x40), {name}.offset, {name}.length)");
+            _ = writeln!(res, "    {var} := keccak256(mload(0x40), {name}.length)");
+        }
+        Some(ast::DataLocation::Memory) => {
+            _ = writeln!(res, "    {var} := keccak256(add({name}, 0x20),\nmload({name}))");
+        }
+        _ => return None,
+    }
+
+    if asm_ctx.is_return {
+        _ = write!(res, "}}\nreturn {var};");
+    } else {
+        _ = write!(res, "}}");
+    }
+    Some(res)
+}
+
+/// Generates the assembly code for hashing a sequence of fixed-size (32-byte words) variables.
+fn gen_encoded_words_asm(args: &[String], asm_ctx: AsmContext) -> String {
+    let var = asm_ctx.get_assign_var_name();
+    let total_size = args.len() * 32;
+
+    let mut res = format!("bytes32 {var};\n");
+    _ = writeln!(res, r#"assembly("memory-safe") {{"#);
+    // If args fit the reserved memory region (scratch space), use it.
+    if args.len() <= 2 {
+        for (i, arg) in args.iter().enumerate() {
+            _ = writeln!(res, "    mstore(0x{offset:02x}, {arg})", offset = i * 32);
+        }
+        _ = writeln!(res, "    {var} := keccak256(0x00, 0x{total_size:x})");
+    }
+    // Otherwise, manually use the free memory pointer.
+    else {
+        _ = writeln!(res, "    let m := mload(0x40)");
+        for (i, arg) in args.iter().enumerate() {
+            if i == 0 {
+                _ = writeln!(res, "    mstore(m, {arg})");
+            }
+            _ = writeln!(res, "    mstore(add(m, 0x{offset:02x}), {arg})", offset = i * 32);
+        }
+        _ = writeln!(res, "    {var} := keccak256(m, 0x{offset:02x})", offset = args.len() * 32);
+    };
+
+    if asm_ctx.is_return {
+        _ = write!(res, "}}\nreturn {var};");
+    } else {
+        _ = write!(res, "}}");
+    }
+    res
+}
 
 /// If the expression is a call to `keccak256` with one argument, returns that argument.
 fn extract_keccak256_arg<'hir>(expr: &'hir hir::Expr<'hir>) -> Option<&'hir hir::Expr<'hir>> {
@@ -186,66 +279,12 @@ fn get_abi_packed_args<'hir>(
     None
 }
 
-/// Generates the assembly code for hashing a sequence of fixed-size (32-byte words) variables.
-fn gen_simple_asm(args: &[String], assign: Option<ast::Ident>) -> String {
-    let total_size = args.len() * 32;
-    let var = assign.map_or(String::from("res"), |ident| ident.to_string());
-
-    let mut res = format!(r#"bytes32 {var};\nassembly("memory-safe") {{\n"#);
-    // If args fit the reserved memory region (scratch space), use it.
-    if args.len() <= 2 {
-        for (i, arg) in args.iter().enumerate() {
-            _ = writeln!(res, "    mstore(0x{offset:02x}, {arg})", offset = i * 32);
-        }
-        _ = writeln!(res, "    {var} := keccak256(0x00, 0x{total_size:x})");
-    }
-    // Otherwise, manually use the free memory pointer.
-    else {
-        _ = writeln!(res, "    let m := mload(0x40)");
-        for (i, arg) in args.iter().enumerate() {
-            if i == 0 {
-                _ = writeln!(res, "    mstore(m, {arg})");
-            }
-            _ = writeln!(res, "    mstore(add(m, 0x{offset:02x}), {arg})", offset = i * 32);
-        }
-        _ = writeln!(res, "    {var} := keccak256(m, 0x{offset:02x})", offset = args.len() * 32);
-    };
-
-    _ = write!(res, "}}");
-    res
-}
-
-/// Generates the assembly code for hashing a single dynamic 'bytes' or 'string' variable.
-fn gen_bytes_asm<'sess>(
-    ctx: &LintContext<'sess>,
-    var_span: Span,
-    data_location: Option<ast::DataLocation>,
-    assign: Option<ast::Ident>,
-) -> Option<String> {
-    let name = ctx.span_to_snippet(var_span)?;
-    let var = assign.map_or(String::from("res"), |ident| ident.to_string());
-
-    let mut res = format!(r#"bytes32 {var};\nassembly("memory-safe") {{\n"#);
-    match data_location {
-        Some(ast::DataLocation::Calldata) => {
-            _ = writeln!(res, "    calldatacopy(mload(0x40), {name}.offset, {name}.length)");
-            _ = writeln!(res, "    {var} := keccak256(mload(0x40), {name}.length)");
-        }
-        Some(ast::DataLocation::Memory) => {
-            _ = writeln!(res, "    {var} := keccak256(add({name}, 0x20),\nmload({name}))");
-        }
-        _ => return None,
-    }
-    _ = write!(res, "}}");
-    Some(res)
-}
-
 fn get_var_from_expr<'hir>(
     hir: &'hir hir::Hir<'hir>,
     expr: &'hir hir::Expr<'hir>,
 ) -> Option<&'hir hir::Variable<'hir>> {
     if let ExprKind::Ident([Res::Item(hir::ItemId::Variable(var_id))]) = expr.kind {
-        Some(&hir.variable(*var_id))
+        Some(hir.variable(*var_id))
     } else {
         None
     }
@@ -262,15 +301,16 @@ fn all_exprs_check<'hir>(
 }
 
 fn is_32byte_type<'hir>(kind: &hir::TypeKind<'hir>) -> bool {
-    match kind {
-        hir::TypeKind::Elementary(ty) => match ty {
-            hir::ElementaryType::Int(size) |
-            hir::ElementaryType::UInt(size) |
-            hir::ElementaryType::FixedBytes(size) => size.bytes() == TypeSize::MAX,
-            _ => false,
-        },
-        _ => false,
+    if let hir::TypeKind::Elementary(
+        hir::ElementaryType::Int(size) |
+        hir::ElementaryType::UInt(size) |
+        hir::ElementaryType::FixedBytes(size),
+    ) = kind
+    {
+        return size.bytes() == TypeSize::MAX;
     }
+
+    false
 }
 
 fn is_value_type<'hir>(kind: &hir::TypeKind<'hir>) -> bool {

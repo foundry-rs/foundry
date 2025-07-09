@@ -29,7 +29,7 @@ pub fn solar_pcx_from_build_opts<'sess>(
         // If target files are provided, only process those sources
         Some(targets) => {
             let mut sources = Sources::new();
-            for t in targets.iter() {
+            for t in targets {
                 let path = dunce::canonicalize(t)?;
                 let source = Source::read(&path)?;
                 sources.insert(path, source);

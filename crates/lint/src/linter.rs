@@ -1,3 +1,4 @@
+use eyre::Result;
 use foundry_compilers::Language;
 use foundry_config::lint::Severity;
 use solar_ast::{self as ast, visit::Visit};
@@ -28,8 +29,8 @@ pub trait Linter: Send + Sync + Clone {
     type Lint: Lint;
 
     fn init(&self) -> Session;
-    fn early_lint<'sess>(&self, input: &[PathBuf], sess: &'sess Session);
-    fn late_lint<'sess>(&self, input: &[PathBuf], pcx: ParsingContext<'sess>);
+    fn early_lint(&self, input: &[PathBuf], sess: &Session) -> Result<()>;
+    fn late_lint<'sess>(&self, input: &[PathBuf], pcx: ParsingContext<'sess>) -> Result<()>;
 }
 
 pub trait Lint {
@@ -386,19 +387,13 @@ pub trait LateLintPass<'hir>: Send + Sync {
         _ty: &'hir hir::Type<'hir>,
     ) {
     }
-
-    /// Called after the entire HIR has been visited. Enables lints that require
-    /// knowledge of the complete semantic information.
-    fn check_post_hir(&mut self, _ctx: &LintContext<'_>, _hir: &'hir hir::Hir<'hir>) {}
 }
 
 /// Visitor struct for `LateLintPass`es
 pub struct LateLintVisitor<'a, 's, 'hir> {
     ctx: &'a LintContext<'s>,
     passes: &'a mut [Box<dyn LateLintPass<'hir> + 's>],
-    // TODO: ask others if this is acceptable.
-    // Workaround for the macros to work. In practice, it will always be `Some()`.
-    hir: Option<&'hir hir::Hir<'hir>>,
+    hir: &'hir hir::Hir<'hir>,
 }
 
 impl<'a, 's, 'hir> LateLintVisitor<'a, 's, 'hir>
@@ -410,13 +405,7 @@ where
         passes: &'a mut [Box<dyn LateLintPass<'hir> + 's>],
         hir: &'hir hir::Hir<'hir>,
     ) -> Self {
-        Self { ctx, passes, hir: Some(hir) }
-    }
-
-    pub fn post_hir(&mut self) {
-        for pass in self.passes.iter_mut() {
-            pass.check_post_hir(self.ctx, self.hir.unwrap());
-        }
+        Self { ctx, passes, hir }
     }
 }
 
@@ -427,12 +416,12 @@ where
     type BreakValue = Never;
 
     fn hir(&self) -> &'hir hir::Hir<'hir> {
-        self.hir.unwrap()
+        self.hir
     }
 
     fn visit_nested_source(&mut self, id: hir::SourceId) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_nested_source(self.ctx, self.hir.unwrap(), id);
+            pass.check_nested_source(self.ctx, self.hir, id);
         }
         self.walk_nested_source(id)
     }
@@ -442,49 +431,49 @@ where
         contract: &'hir hir::Contract<'hir>,
     ) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_contract(self.ctx, self.hir.unwrap(), contract);
+            pass.check_contract(self.ctx, self.hir, contract);
         }
         self.walk_contract(contract)
     }
 
     fn visit_function(&mut self, func: &'hir hir::Function<'hir>) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_function(self.ctx, self.hir.unwrap(), func);
+            pass.check_function(self.ctx, self.hir, func);
         }
         self.walk_function(func)
     }
 
     fn visit_item(&mut self, item: hir::Item<'hir, 'hir>) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_item(self.ctx, self.hir.unwrap(), item);
+            pass.check_item(self.ctx, self.hir, item);
         }
         self.walk_item(item)
     }
 
     fn visit_var(&mut self, var: &'hir hir::Variable<'hir>) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_var(self.ctx, self.hir.unwrap(), var);
+            pass.check_var(self.ctx, self.hir, var);
         }
         self.walk_var(var)
     }
 
     fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_expr(self.ctx, self.hir.unwrap(), expr);
+            pass.check_expr(self.ctx, self.hir, expr);
         }
         self.walk_expr(expr)
     }
 
     fn visit_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_stmt(self.ctx, self.hir.unwrap(), stmt);
+            pass.check_stmt(self.ctx, self.hir, stmt);
         }
         self.walk_stmt(stmt)
     }
 
     fn visit_ty(&mut self, ty: &'hir hir::Type<'hir>) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_ty(self.ctx, self.hir.unwrap(), ty);
+            pass.check_ty(self.ctx, self.hir, ty);
         }
         self.walk_ty(ty)
     }

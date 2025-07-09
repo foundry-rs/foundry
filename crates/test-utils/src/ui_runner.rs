@@ -1,8 +1,5 @@
-use std::{
-    ffi::OsString,
-    path::{Path, PathBuf},
-};
-use ui_test::{spanned::Spanned, Config};
+use std::{ffi::OsString, path::Path};
+use ui_test::spanned::Spanned;
 
 /// Test runner based on `ui_test`. Adapted from `https://github.com/paradigmxyz/solar/blob/main/tools/tester/src/lib.rs`.
 pub fn run_tests<'a>(cmd: &str, cmd_path: &'a Path, testdata: &'a Path) -> eyre::Result<()> {
