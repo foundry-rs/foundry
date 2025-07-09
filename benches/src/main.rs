@@ -1,9 +1,10 @@
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_bench::{
-    get_forge_version, get_forge_version_details,
+    BENCHMARK_REPOS, FOUNDRY_VERSIONS, RUNS, RepoConfig, get_forge_version,
+    get_forge_version_details,
     results::{BenchmarkResults, HyperfineResult},
-    switch_foundry_version, RepoConfig, BENCHMARK_REPOS, FOUNDRY_VERSIONS, RUNS,
+    switch_foundry_version,
 };
 use foundry_common::sh_println;
 use once_cell::sync::Lazy;
@@ -68,7 +69,9 @@ fn main() -> Result<()> {
     // Check if hyperfine is installed
     let hyperfine_check = Command::new("hyperfine").arg("--version").output();
     if hyperfine_check.is_err() || !hyperfine_check.unwrap().status.success() {
-        eyre::bail!("hyperfine is not installed. Please install it first: https://github.com/sharkdp/hyperfine");
+        eyre::bail!(
+            "hyperfine is not installed. Please install it first: https://github.com/sharkdp/hyperfine"
+        );
     }
 
     // Determine versions to test
