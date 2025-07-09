@@ -1,4 +1,3 @@
-use eyre::Result;
 use foundry_compilers::Language;
 use foundry_config::lint::Severity;
 use solar_ast::{self as ast, visit::Visit};
@@ -31,8 +30,8 @@ pub trait Linter: Send + Sync + Clone {
     type Lint: Lint;
 
     fn init(&self) -> Session;
-    fn early_lint(&self, input: &[PathBuf], sess: &Session) -> Result<()>;
-    fn late_lint<'sess>(&self, input: &[PathBuf], pcx: ParsingContext<'sess>) -> Result<()>;
+    fn early_lint(&self, input: &[PathBuf], sess: &Session);
+    fn late_lint<'sess>(&self, input: &[PathBuf], pcx: ParsingContext<'sess>);
 }
 
 pub trait Lint {

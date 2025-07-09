@@ -8,13 +8,13 @@ use foundry_cli::{
 };
 use foundry_common::{compile::ProjectCompiler, shell};
 use foundry_compilers::{
-    Project, ProjectCompileOutput,
+    FileFilter, Project, ProjectCompileOutput,
     compilers::{Language, multi::MultiCompilerLanguage},
     solc::SolcLanguage,
     utils::source_files_iter,
 };
 use foundry_config::{
-    Config,
+    Config, SkipBuildFilters,
     figment::{
         self, Metadata, Profile, Provider,
         error::Kind::InvalidType,
@@ -103,8 +103,6 @@ impl BuildArgs {
             .ignore_eip_3860(self.ignore_eip_3860)
             .bail(!format_json);
 
-        // Runs the SolidityLinter before compilation.
-        self.lint(&project, &config)?;
         let output = compiler.compile(&project)?;
 
         // Cache project selectors.
@@ -112,6 +110,11 @@ impl BuildArgs {
 
         if format_json && !self.names && !self.sizes {
             sh_println!("{}", serde_json::to_string_pretty(&output.output())?)?;
+        }
+
+        // Only run the `SolidityLinter` if there are no compilation errors
+        if output.output().errors.is_empty() {
+            self.lint(&project, &config)?;
         }
 
         Ok(output)
@@ -147,20 +150,24 @@ impl BuildArgs {
                 .flat_map(foundry_common::fs::canonicalize_path)
                 .collect::<Vec<_>>();
 
+            let skip = SkipBuildFilters::new(config.skip.clone(), config.root.clone());
             let curr_dir = std::env::current_dir()?;
             let input_files = config
                 .project_paths::<SolcLanguage>()
                 .input_files_iter()
-                .filter(|p| !(ignored.contains(p) || ignored.contains(&curr_dir.join(p))))
+                .filter(|p| {
+                    skip.is_match(p)
+                        && !(ignored.contains(p) || ignored.contains(&curr_dir.join(p)))
+                })
                 .collect::<Vec<_>>();
 
             if !input_files.is_empty() {
                 let sess = linter.init();
-                linter.early_lint(&input_files, &sess)?;
+                linter.early_lint(&input_files, &sess);
 
                 let parsing_context =
                     solar_pcx_from_build_opts(&sess, self.build.clone(), Some(&input_files))?;
-                linter.late_lint(&input_files, parsing_context)?;
+                linter.late_lint(&input_files, parsing_context);
             }
         }
 

@@ -4,7 +4,6 @@ use crate::{
         EarlyLintPass, EarlyLintVisitor, LateLintPass, LateLintVisitor, Lint, LintContext, Linter,
     },
 };
-use eyre::Result;
 use foundry_common::comments::Comments;
 use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
 use foundry_config::lint::Severity;
@@ -246,24 +245,21 @@ impl Linter for SolidityLinter {
     }
 
     /// Run AST-based lints
-    fn early_lint(&self, input: &[PathBuf], sess: &Session) -> Result<()> {
+    fn early_lint(&self, input: &[PathBuf], sess: &Session) {
         sess.enter_parallel(|| {
             input.par_iter().for_each(|path| {
                 self.process_source_ast(sess, path);
             });
         });
-
-        eyre::ensure!(sess.dcx.has_errors().is_ok(), "errors occurred while running early lints");
-        Ok(())
     }
 
     /// Run HIR-based lints
-    fn late_lint<'sess>(&self, input: &[PathBuf], mut pcx: ParsingContext<'sess>) -> Result<()> {
+    fn late_lint<'sess>(&self, input: &[PathBuf], mut pcx: ParsingContext<'sess>) {
         let sess = pcx.sess;
 
-        sess.enter_parallel(|| -> Result<()> {
+        _ = sess.enter_parallel(|| -> Result<(), diagnostics::ErrorGuaranteed> {
             // Load all files into the parsing ctx
-            pcx.load_files(input).map_err(|_| eyre::eyre!("error loading files"))?;
+            pcx.load_files(input)?;
 
             // Parse and lower to HIR
             let hir_arena = solar_sema::thread_local::ThreadLocal::new();
@@ -279,10 +275,7 @@ impl Linter for SolidityLinter {
             }
 
             Ok(())
-        })?;
-
-        eyre::ensure!(sess.dcx.has_errors().is_ok(), "errors occurred while running late lints");
-        Ok(())
+        });
     }
 }
 
