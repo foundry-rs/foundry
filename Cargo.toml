@@ -363,6 +363,8 @@ idna_adapter = "=1.1.0"
 zip-extract = "=0.2.1"
 
 [patch.crates-io]
+# https://github.com/bluealloy/revm/pull/2697 - `call_end` not being called fix.
+revm = { git = "https://github.com/bluealloy/revm.git", rev = "56def7e" }
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
 # alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }
