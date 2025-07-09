@@ -1,7 +1,6 @@
 //! Contains various tests for checking forge's commands
 
 use crate::constants::*;
-use foundry_common::sh_println;
 use foundry_compilers::artifacts::{ConfigurableContractArtifact, Metadata, remappings::Remapping};
 use foundry_config::{
     BasicConfig, Chain, Config, FuzzConfig, InvariantConfig, SolidityErrorCode, parse_with_profile,
