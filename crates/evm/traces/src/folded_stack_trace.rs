@@ -1,7 +1,7 @@
 use alloy_primitives::hex::ToHexExt;
 use revm_inspectors::tracing::{
-    types::{CallTraceNode, CallTraceStep, DecodedTraceStep, TraceMemberOrder},
     CallTraceArena,
+    types::{CallTraceNode, CallTraceStep, DecodedTraceStep, TraceMemberOrder},
 };
 
 /// Builds a folded stack trace from a call trace arena.

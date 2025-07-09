@@ -1,5 +1,5 @@
 use crate::{CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::{hex, I256, U256, U512};
+use alloy_primitives::{I256, U256, U512, hex};
 use foundry_evm_core::{
     abi::console::{format_units_int, format_units_uint},
     backend::GLOBAL_FAIL_SLOT,
@@ -453,19 +453,11 @@ impl_assertions! {
 }
 
 fn assert_true(condition: bool) -> Result<Vec<u8>, SimpleAssertionError> {
-    if condition {
-        Ok(Default::default())
-    } else {
-        Err(SimpleAssertionError)
-    }
+    if condition { Ok(Default::default()) } else { Err(SimpleAssertionError) }
 }
 
 fn assert_false(condition: bool) -> Result<Vec<u8>, SimpleAssertionError> {
-    if !condition {
-        Ok(Default::default())
-    } else {
-        Err(SimpleAssertionError)
-    }
+    if !condition { Ok(Default::default()) } else { Err(SimpleAssertionError) }
 }
 
 fn assert_eq<'a, T: PartialEq>(left: &'a T, right: &'a T) -> ComparisonResult<'a, T> {
@@ -489,11 +481,7 @@ fn get_delta_int(left: I256, right: I256) -> U256 {
     let (right_sign, right_abs) = right.into_sign_and_abs();
 
     if left_sign == right_sign {
-        if left_abs > right_abs {
-            left_abs - right_abs
-        } else {
-            right_abs - left_abs
-        }
+        if left_abs > right_abs { left_abs - right_abs } else { right_abs - left_abs }
     } else {
         left_abs + right_abs
     }
@@ -503,8 +491,8 @@ fn get_delta_int(left: I256, right: I256) -> U256 {
 ///
 /// Avoids overflow in the multiplication by using [`U512`] to hold the intermediary result.
 fn calc_delta_full<T>(abs_diff: U256, right: U256) -> Result<U256, EqRelAssertionError<T>> {
-    let delta = U512::from(abs_diff) * U512::from(10).pow(U512::from(EQ_REL_DELTA_RESOLUTION)) /
-        U512::from(right);
+    let delta = U512::from(abs_diff) * U512::from(10).pow(U512::from(EQ_REL_DELTA_RESOLUTION))
+        / U512::from(right);
     U256::checked_from_limbs_slice(delta.as_limbs()).ok_or(EqRelAssertionError::Overflow)
 }
 
@@ -543,14 +531,14 @@ fn uint_assert_approx_eq_rel(
 ) -> Result<Vec<u8>, EqRelAssertionError<U256>> {
     if right.is_zero() {
         if left.is_zero() {
-            return Ok(Default::default())
+            return Ok(Default::default());
         } else {
             return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
                 left,
                 right,
                 max_delta,
                 real_delta: EqRelDelta::Undefined,
-            })))
+            })));
         };
     }
 
@@ -575,14 +563,14 @@ fn int_assert_approx_eq_rel(
 ) -> Result<Vec<u8>, EqRelAssertionError<I256>> {
     if right.is_zero() {
         if left.is_zero() {
-            return Ok(Default::default())
+            return Ok(Default::default());
         } else {
             return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
                 left,
                 right,
                 max_delta,
                 real_delta: EqRelDelta::Undefined,
-            })))
+            })));
         }
     }
 

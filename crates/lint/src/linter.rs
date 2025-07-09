@@ -3,11 +3,11 @@ use foundry_compilers::Language;
 use foundry_config::lint::Severity;
 use solar_ast::{self as ast, visit::Visit};
 use solar_interface::{
+    Session, Span,
     data_structures::Never,
     diagnostics::{DiagBuilder, DiagId, DiagMsg, MultiSpan, Style},
-    Session, Span,
 };
-use solar_sema::{hir, ParsingContext};
+use solar_sema::{ParsingContext, hir};
 use std::{ops::ControlFlow, path::PathBuf};
 
 use crate::inline_config::InlineConfig;
@@ -23,7 +23,8 @@ use crate::inline_config::InlineConfig;
 ///
 /// # Required Methods
 ///
-/// - `lint`: Scans the provided source files emitting a daignostic for lints found.
+/// - `early_lint`: Scans the source files (using the AST) emitting a diagnostic for lints found.
+/// - `late_lint`: Scans the source files (using the HIR) emitting a daignostic for lints found.
 pub trait Linter: Send + Sync + Clone {
     type Language: Language;
     type Lint: Lint;

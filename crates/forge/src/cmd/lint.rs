@@ -1,11 +1,11 @@
 use clap::{Parser, ValueHint};
-use eyre::{eyre, Result};
+use eyre::{Result, eyre};
 use forge_lint::{
     linter::Linter,
     sol::{SolLint, SolLintError, SolidityLinter},
 };
 use foundry_cli::{
-    opts::{solar_pcx_from_build_opts, BuildOpts},
+    opts::{BuildOpts, solar_pcx_from_build_opts},
     utils::{FoundryPathExt, LoadConfig},
 };
 use foundry_compilers::{solc::SolcLanguage, utils::SOLC_EXTENSIONS};
@@ -62,12 +62,11 @@ impl LintArgs {
         let input = match &self.paths[..] {
             [] => {
                 // Retrieve the project paths, and filter out the ignored ones.
-                let project_paths = config
+                config
                     .project_paths::<SolcLanguage>()
                     .input_files_iter()
                     .filter(|p| !(ignored.contains(p) || ignored.contains(&cwd.join(p))))
-                    .collect();
-                project_paths
+                    .collect()
             }
             paths => {
                 // Override default excluded paths and only lint the input files.

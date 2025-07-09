@@ -6,18 +6,18 @@ use crate::{
 };
 use eyre::Result;
 use foundry_common::comments::Comments;
-use foundry_compilers::{solc::SolcLanguage, ProjectPathsConfig};
+use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
 use foundry_config::lint::Severity;
 use rayon::iter::{IntoParallelRefIterator, ParallelBridge, ParallelIterator};
 use solar_ast::{self as ast, visit::Visit as VisitAST};
 use solar_interface::{
+    Session, SourceMap,
     diagnostics::{self, DiagCtxt, JsonEmitter},
     source_map::{FileName, SourceFile},
-    Session, SourceMap,
 };
 use solar_sema::{
-    hir::{self, Visit as VisitHIR},
     ParsingContext,
+    hir::{self, Visit as VisitHIR},
 };
 use std::{
     path::{Path, PathBuf},

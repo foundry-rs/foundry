@@ -96,7 +96,7 @@ impl TestsProgressState {
     }
 }
 
-/// Clonable wrapper around [TestsProgressState].
+/// Cloneable wrapper around [TestsProgressState].
 #[derive(Debug, Clone)]
 pub struct TestsProgress {
     pub inner: Arc<Mutex<TestsProgressState>>,

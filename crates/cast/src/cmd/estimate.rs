@@ -7,7 +7,7 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
-    utils::{self, parse_ether_value, LoadConfig},
+    utils::{self, LoadConfig, parse_ether_value},
 };
 use std::str::FromStr;
 

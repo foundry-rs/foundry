@@ -49,11 +49,11 @@ impl<'hir> LateLintPass<'hir> for AsmKeccak256 {
                 }
             }
             // Expressions that don't (directly) assign to a variable
-            hir::StmtKind::Expr(expr) |
-            hir::StmtKind::Emit(expr) |
-            hir::StmtKind::Revert(expr) |
-            hir::StmtKind::DeclMulti(_, expr) |
-            hir::StmtKind::If(expr, ..) => check_expr_and_emit_lint(expr, None, false),
+            hir::StmtKind::Expr(expr)
+            | hir::StmtKind::Emit(expr)
+            | hir::StmtKind::Revert(expr)
+            | hir::StmtKind::DeclMulti(_, expr)
+            | hir::StmtKind::If(expr, ..) => check_expr_and_emit_lint(expr, None, false),
             hir::StmtKind::Return(Some(expr)) => check_expr_and_emit_lint(expr, None, true),
             _ => (),
         }
@@ -122,8 +122,8 @@ impl AsmKeccak256 {
     ) -> bool {
         let Some((packed_args, encoding)) = get_abi_packed_args(expr) else { return false };
 
-        if all_exprs_check(hir, packed_args, is_32byte_type) ||
-            (encoding == "encode" && all_exprs_check(hir, packed_args, is_value_type))
+        if all_exprs_check(hir, packed_args, is_32byte_type)
+            || (encoding == "encode" && all_exprs_check(hir, packed_args, is_value_type))
         {
             let arg_snippets: Option<Vec<String>> =
                 packed_args.iter().map(|arg| ctx.span_to_snippet(arg.span)).collect();
@@ -153,11 +153,7 @@ struct AsmContext {
 
 impl AsmContext {
     fn target_span(&self, stmt_span: Span, call_span: Span) -> Span {
-        if self.assign.is_some() || self.is_return {
-            stmt_span
-        } else {
-            call_span
-        }
+        if self.assign.is_some() || self.is_return { stmt_span } else { call_span }
     }
 
     fn get_assign_var_name(&self) -> String {
@@ -247,11 +243,7 @@ fn extract_keccak256_arg<'hir>(expr: &'hir hir::Expr<'hir>) -> Option<&'hir hir:
         return None;
     };
 
-    if is_keccak && args.len() == 1 {
-        Some(&args[0])
-    } else {
-        None
-    }
+    if is_keccak && args.len() == 1 { Some(&args[0]) } else { None }
 }
 
 /// Helper function to extract `abi.encode` and `abi.encodePacked` expressions and the encoding.
@@ -302,9 +294,9 @@ fn all_exprs_check<'hir>(
 
 fn is_32byte_type<'hir>(kind: &hir::TypeKind<'hir>) -> bool {
     if let hir::TypeKind::Elementary(
-        hir::ElementaryType::Int(size) |
-        hir::ElementaryType::UInt(size) |
-        hir::ElementaryType::FixedBytes(size),
+        hir::ElementaryType::Int(size)
+        | hir::ElementaryType::UInt(size)
+        | hir::ElementaryType::FixedBytes(size),
     ) = kind
     {
         return size.bytes() == TypeSize::MAX;
@@ -315,7 +307,7 @@ fn is_32byte_type<'hir>(kind: &hir::TypeKind<'hir>) -> bool {
 
 fn is_value_type<'hir>(kind: &hir::TypeKind<'hir>) -> bool {
     if let hir::TypeKind::Elementary(ty) = kind {
-        return ty.is_value_type()
+        return ty.is_value_type();
     }
     false
 }
