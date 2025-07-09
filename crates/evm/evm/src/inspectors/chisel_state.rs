@@ -1,12 +1,12 @@
 use alloy_primitives::U256;
 use foundry_evm_core::backend::DatabaseError;
 use revm::{
+    Database, Inspector,
     context::ContextTr,
     inspector::JournalExt,
     interpreter::{
-        interpreter::EthInterpreter, interpreter_types::Jumps, InstructionResult, Interpreter,
+        InstructionResult, Interpreter, interpreter::EthInterpreter, interpreter_types::Jumps,
     },
-    Database, Inspector,
 };
 
 /// An inspector for Chisel

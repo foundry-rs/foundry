@@ -1,13 +1,13 @@
 use super::fork::environment;
 use crate::{
-    constants::DEFAULT_CREATE2_DEPLOYER,
-    fork::{configure_env, CreateFork},
     EvmEnv,
+    constants::DEFAULT_CREATE2_DEPLOYER,
+    fork::{CreateFork, configure_env},
 };
 use alloy_primitives::{Address, B256, U256};
-use alloy_provider::{network::AnyRpcBlock, Provider};
+use alloy_provider::{Provider, network::AnyRpcBlock};
 use eyre::WrapErr;
-use foundry_common::{provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS};
+use foundry_common::{ALCHEMY_FREE_TIER_CUPS, provider::ProviderBuilder};
 use foundry_config::{Chain, Config, GasLimit};
 use revm::context::{BlockEnv, TxEnv};
 use serde::{Deserialize, Serialize};
@@ -136,10 +136,10 @@ impl EvmOpts {
         .await
         .wrap_err_with(|| {
             let mut msg = "could not instantiate forked environment".to_string();
-            if let Ok(url) = Url::parse(fork_url) {
-                if let Some(provider) = url.host() {
-                    write!(msg, " with provider {provider}").unwrap();
-                }
+            if let Ok(url) = Url::parse(fork_url)
+                && let Some(provider) = url.host()
+            {
+                write!(msg, " with provider {provider}").unwrap();
             }
             msg
         })

@@ -1,6 +1,6 @@
 //! Debugger implementation.
 
-use crate::{tui::TUI, DebugNode, DebuggerBuilder, ExitReason};
+use crate::{DebugNode, DebuggerBuilder, ExitReason, tui::TUI};
 use alloy_primitives::map::AddressHashMap;
 use eyre::Result;
 use foundry_common::evm::Breakpoints;
