@@ -11,190 +11,112 @@ pragma solidity ^0.8.0;
 contract UnwrappedModifierLogicTest {
     mapping(address => bool) public isOwner;
 
-    // Good patterns: Only call internal/private/public methods
+    // Helpers
+
+    function checkPublic(address sender) public {
+        require(isOwner[sender], "Not owner");
+    }
+
+    function checkPrivate(address sender) private {
+        require(isOwner[sender], "Not owner");
+    }
+
+    function checkInternal(address sender) internal {
+        require(isOwner[sender], "Not owner");
+    }
+
+    // Good patterns
 
     modifier empty() {
         _;
     }
 
-    modifier onlyOwnerPublic() {
-        checkOwnerPublic(msg.sender);
+    modifier publicFn() {
+        checkPublic(msg.sender);
         _;
     }
 
-    modifier onlyOwnerPrivate() {
-        checkOwnerPrivate(msg.sender);
+    modifier privateFn() {
+        checkPrivate(msg.sender);
         _;
     }
 
-    modifier onlyOwnerInternal() {
-        checkOwnerInternal(msg.sender);
+    modifier internalFn() {
+        checkInternal(msg.sender);
         _;
     }
 
-    modifier ownerOwnerPublicPrivateInternal(address owner0, address owner1, address owner2) {
-        checkOwnerPublic(owner0);
-        checkOwnerPrivate(owner1);
-        checkOwnerInternal(owner2);
+    modifier publicPrivateInternal(address owner0, address owner1, address owner2) {
+        checkPublic(owner0);
+        checkPrivate(owner1);
+        checkInternal(owner2);
         _;
     }
 
-    modifier singleInternalWithParam(address sender) {
-        checkOwnerInternal(sender);
-        _;
-    }
+    // Bad patterns
 
-    modifier multipleInternalWithParam(address owner0, address owner1, address owner2) {
-        checkOwnerPublic(owner0);
-        checkOwnerPrivate(owner1);
-        checkOwnerInternal(owner2);
-        _;
-    }
-
-    function checkOwnerPublic(address sender) public view {
-        require(isOwner[sender], "Not owner");
-    }
-
-    function checkOwnerPrivate(address sender) private view {
-        require(isOwner[sender], "Not owner");
-    }
-
-    function checkOwnerInternal(address sender) internal view {
-        require(isOwner[sender], "Not owner");
-    }
-
-    // Bad patterns: Any logic that is not just a call to an internal/private/public method
-
-    // 1. require
-    modifier onlyOwnerRequire() { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
+    modifier requireBuiltIn() { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
+        checkPublic(msg.sender);
         require(isOwner[msg.sender], "Not owner");
+        checkPrivate(msg.sender);
         _;
+        checkInternal(msg.sender);
     }
 
-    // 2. require with param
-    modifier onlyOwnerRequireWithParam(address sender) { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
-        require(isOwner[sender], "Not owner");
-        _;
-    }
-
-    // 3. assert
-    modifier onlyOwnerAssert() { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
+    modifier assertBuiltIn() { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
+        checkPublic(msg.sender);
         assert(isOwner[msg.sender]);
+        checkPrivate(msg.sender);
         _;
+        checkInternal(msg.sender);
     }
 
-    // 4. assert with param
-    modifier onlyOwnerAssertWithParam(address sender) { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
-        assert(isOwner[sender]);
-        _;
-    }
-
-    // 5. conditional revert
-    modifier onlyOwnerConditionalRevert() { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
+    modifier conditionalRevert() { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
+        checkPublic(msg.sender);
         if (!isOwner[msg.sender]) {
             revert("Not owner");
         }
+        checkPrivate(msg.sender);
         _;
+        checkInternal(msg.sender);
     }
 
-    // 6. conditional revert with param
-    modifier onlyOwnerConditionalRevertWithParam(address sender) { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
-        if (!isOwner[sender]) {
-            revert("Not owner");
-        }
+    modifier assign(address sender) { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
+        checkPublic(sender);
+        bool _isOwner = true;
+        checkPrivate(sender);
+        isOwner[sender] = _isOwner;
         _;
+        checkInternal(sender);
     }
 
-    // 7. assignment
-    modifier setOwner(address sender) { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
-        isOwner[sender] = true;
-        _;
-    }
-
-    // 8. assignment with param
-    modifier setOwnerWithParam(address sender) { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
-        isOwner[sender] = true;
-        _;
-    }
-
-    // 9. combination: require + internal call
-    modifier requireAndInternal(address sender) { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
-        require(isOwner[sender], "Not owner");
-        checkOwnerInternal(sender);
-        _;
-    }
-
-    // 10. combination: assignment + internal call
-    modifier assignAndInternal(address sender) { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
-        isOwner[sender] = true;
-        checkOwnerInternal(sender);
-        _;
-    }
-
-    // 11. combination: require + assignment
-    modifier requireAndAssign(address sender) { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
-        require(isOwner[sender], "Not owner");
-        isOwner[sender] = false;
-        _;
-    }
-
-    // 12. combination: require + public call
-    modifier requireAndPublic(address sender) { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
-        require(isOwner[sender], "Not owner");
-        checkOwnerPublic(sender);
-        _;
-    }
-
-    // 13. combination: assignment + public call
-    modifier assignAndPublic(address sender) { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
-        isOwner[sender] = true;
-        checkOwnerPublic(sender);
-        _;
-    }
-
-    // 14. combination: require + assignment + internal call
-    modifier requireAssignInternal(address sender) { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
-        require(isOwner[sender], "Not owner");
-        isOwner[sender] = false;
-        checkOwnerInternal(sender);
-        _;
-    }
-
-    // 15. combination: require + assignment + public call
-    modifier requireAssignPublic(address sender) { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
-        require(isOwner[sender], "Not owner");
-        isOwner[sender] = false;
-        checkOwnerPublic(sender);
-        _;
-    }
-
-    // 16. inline assembly
-    modifier withAssembly(address sender) { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
+    modifier assemblyBlock(address sender) { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
+        checkPublic(sender);
         assembly {
             let x := sender
         }
+        checkPrivate(sender);
         _;
+        checkInternal(sender);
     }
 
-    // 17. event emission
+    modifier uncheckedBlock(address sender) { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
+        checkPublic(sender);
+        unchecked {
+            sender;
+        }
+        checkPrivate(sender);
+        _;
+        checkInternal(sender);
+    }
+
     event DidSomething(address who);
 
     modifier emitEvent(address sender) { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
+        checkPublic(sender);
         emit DidSomething(sender);
+        checkPrivate(sender);
         _;
-    }
-
-    // 18. inline revert string
-    modifier inlineRevert(address sender) { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
-        if (sender == address(0)) revert("Zero address");
-        _;
-    }
-
-    // 19. combination: event + require + internal call
-    modifier eventRequireInternal(address sender) { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
-        emit DidSomething(sender);
-        require(isOwner[sender], "Not owner");
-        checkOwnerInternal(sender);
-        _;
+        checkInternal(sender);
     }
 }
