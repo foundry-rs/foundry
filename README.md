@@ -17,6 +17,7 @@
 | [Docs][foundry-docs]
 | [Developer Guidelines](./docs/dev/README.md)
 | [Contributing](./CONTRIBUTING.md)
+| [Crate Docs](https://foundry-rs.github.io/foundry)
 
 </div>
 
