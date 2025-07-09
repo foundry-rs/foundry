@@ -98,15 +98,14 @@ impl AsmKeccak256 {
         if matches!(
             ty,
             TypeKind::Elementary(hir::ElementaryType::Bytes | hir::ElementaryType::String)
-        ) {
-            if let Some(good) = gen_asm_bytes(ctx, expr.span, data_loc, asm_ctx) {
-                let snippet = match ctx.span_to_snippet(target_span) {
-                    Some(bad) => Snippet::Diff { desc: SNIP_DESC, rmv: bad, add: good },
-                    None => Snippet::Block { desc: SNIP_DESC, code: good },
-                };
-                ctx.emit_with_fix(&ASM_KECCAK256, target_span, snippet);
-                return true;
-            }
+        ) && let Some(good) = gen_asm_bytes(ctx, expr.span, data_loc, asm_ctx)
+        {
+            let snippet = match ctx.span_to_snippet(target_span) {
+                Some(bad) => Snippet::Diff { desc: SNIP_DESC, rmv: bad, add: good },
+                None => Snippet::Block { desc: SNIP_DESC, code: good },
+            };
+            ctx.emit_with_fix(&ASM_KECCAK256, target_span, snippet);
+            return true;
         }
         false
     }
@@ -211,7 +210,7 @@ fn gen_asm_encoded_words(args: &[String], asm_ctx: AsmContext) -> String {
         _ = writeln!(res, "    let m := mload(0x40)");
         for (i, arg) in args.iter().enumerate() {
             // assembly doesn't support type conversions. `bytes32(c)` -> `c`
-            let arg = peel_parentheses(&arg);
+            let arg = peel_parentheses(arg);
             if i == 0 {
                 _ = writeln!(res, "    mstore(m, {arg})");
             } else {
@@ -253,22 +252,20 @@ fn extract_keccak256_arg<'hir>(expr: &'hir hir::Expr<'hir>) -> Option<&'hir hir:
 fn get_abi_packed_args<'hir>(
     expr: &'hir hir::Expr<'hir>,
 ) -> Option<(&'hir [hir::Expr<'hir>], &'hir str)> {
-    if let hir::ExprKind::Call(callee, args, ..) = &expr.kind {
-        if let hir::ExprKind::Member(obj, member) = &callee.kind {
-            if let hir::ExprKind::Ident([hir::Res::Builtin(builtin)]) = &obj.kind {
-                if builtin.name() == sym::abi {
-                    let encoding = if member.name == sym::encode {
-                        "encode"
-                    } else if member.name == sym::encodePacked {
-                        "encodePacked"
-                    } else {
-                        return None;
-                    };
-                    if let hir::CallArgsKind::Unnamed(exprs) = &args.kind {
-                        return Some((exprs, encoding));
-                    }
-                }
-            }
+    if let hir::ExprKind::Call(callee, args, ..) = &expr.kind
+        && let hir::ExprKind::Member(obj, member) = &callee.kind
+        && let hir::ExprKind::Ident([hir::Res::Builtin(builtin)]) = &obj.kind
+        && builtin.name() == sym::abi
+    {
+        let encoding = if member.name == sym::encode {
+            "encode"
+        } else if member.name == sym::encodePacked {
+            "encodePacked"
+        } else {
+            return None;
+        };
+        if let hir::CallArgsKind::Unnamed(exprs) = &args.kind {
+            return Some((exprs, encoding));
         }
     }
     None
@@ -316,7 +313,7 @@ fn all_exprs_check<'hir>(
     exprs: &'hir [hir::Expr<'hir>],
     check: impl Fn(&'hir hir::TypeKind<'hir>) -> bool,
 ) -> bool {
-    exprs.iter().all(|expr| get_var_type(hir, expr).map(|ty| check(&ty)).unwrap_or(false))
+    exprs.iter().all(|expr| get_var_type(hir, expr).map(&check).unwrap_or(false))
 }
 
 fn is_32byte_type<'hir>(kind: &hir::TypeKind<'hir>) -> bool {

@@ -169,10 +169,10 @@ impl SolidityLinter {
             passes_and_lints.extend(info::create_late_lint_passes());
 
             // Do not apply gas-severity rules on tests and scripts
-            if let FileName::Real(ref path) = file.name {
-                if !self.path_config.is_test_or_script(path) {
-                    passes_and_lints.extend(gas::create_late_lint_passes());
-                }
+            if let FileName::Real(ref path) = file.name
+                && !self.path_config.is_test_or_script(path)
+            {
+                passes_and_lints.extend(gas::create_late_lint_passes());
             }
 
             // Filter passes based on config
