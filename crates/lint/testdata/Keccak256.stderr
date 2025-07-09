@@ -1,7 +1,7 @@
 note[mixed-case-variable]: mutable variables should use mixedCase
   --> ROOT/testdata/Keccak256.sol:LL:CC
    |
-17 |         uint256 MixedCase_Variable = 1;
+16 |         uint256 MixedCase_Variable = 1;
    |                 ------------------
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
@@ -9,7 +9,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 note[mixed-case-variable]: mutable variables should use mixedCase
   --> ROOT/testdata/Keccak256.sol:LL:CC
    |
-23 |         uint256 Another_MixedCase = 2;
+22 |         uint256 Another_MixedCase = 2;
    |                 -----------------
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
@@ -17,7 +17,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 note[mixed-case-variable]: mutable variables should use mixedCase
   --> ROOT/testdata/Keccak256.sol:LL:CC
    |
-33 |         uint256 YetAnother_MixedCase = 3;
+32 |         uint256 YetAnother_MixedCase = 3;
    |                 --------------------
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
@@ -25,7 +25,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 note[mixed-case-variable]: mutable variables should use mixedCase
   --> ROOT/testdata/Keccak256.sol:LL:CC
    |
-59 |     uint256 Enabled_MixedCase_Variable;
+61 |     uint256 Enabled_MixedCase_Variable;
    |             --------------------------
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
@@ -33,41 +33,93 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 note[mixed-case-variable]: mutable variables should use mixedCase
   --> ROOT/testdata/Keccak256.sol:LL:CC
    |
-77 |         uint256 Enabled_MixedCase_Variable = 1;
+81 |         uint256 Enabled_MixedCase_Variable = 1;
    |                 --------------------------
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
 
 note[asm-keccak256]: use of inefficient hashing mechanism
- --> ROOT/testdata/Keccak256.sol:LL:CC
-  |
-9 |         keccak256(abi.encodePacked(a, b));
-  |                   ----------------------
-  |
-  = note: consider using inline assembly to reduce gas usage:
-          
-          - abi.encodePacked(a, b)
-          + assembly {
-          +     mstore(0x0, a)
-          +     mstore(0x20, b)
-          +     let hash := keccak256(0x00, 0x40)
-          + }
-          
-  = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+  --> ROOT/testdata/Keccak256.sol:LL:CC
+   |
+15 |         bytes32 hash = keccak256(abi.encodePacked(a, b, bytes32(c)));
+   |         -------------------------------------------------------------
+   |
+   = note: consider using inline assembly to reduce gas usage:
+           
+           - bytes32 hash = keccak256(abi.encodePacked(a, b, bytes32(c)));
+           + bytes32 hash;
+           + assembly("memory-safe") {
+           +     let m := mload(0x40)
+           +     mstore(m, a)
+           +     mstore(add(m, 0x00), a)
+           +     mstore(add(m, 0x20), b)
+           +     mstore(add(m, 0x40), bytes32(c))
+           +     hash := keccak256(m, 0x60)
+           + }
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
 
 note[asm-keccak256]: use of inefficient hashing mechanism
   --> ROOT/testdata/Keccak256.sol:LL:CC
    |
-11 |         keccak256(abi.encodePacked(a, b)); // forge-lint: disable-line(asm-keccak256)
-   |                   ----------------------
+31 |         bytes32 afterDisabledBlock = keccak256(abi.encode(a, b, c));
+   |         ------------------------------------------------------------
    |
    = note: consider using inline assembly to reduce gas usage:
            
-           - abi.encodePacked(a, b)
-           + assembly {
-           +     mstore(0x0, a)
+           - bytes32 afterDisabledBlock = keccak256(abi.encode(a, b, c));
+           + bytes32 afterDisabledBlock;
+           + assembly("memory-safe") {
+           +     let m := mload(0x40)
+           +     mstore(m, a)
+           +     mstore(add(m, 0x00), a)
+           +     mstore(add(m, 0x20), b)
+           +     mstore(add(m, 0x40), c)
+           +     afterDisabledBlock := keccak256(m, 0x60)
+           + }
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+
+note[asm-keccak256]: use of inefficient hashing mechanism
+  --> ROOT/testdata/Keccak256.sol:LL:CC
+   |
+37 |         bytes32 hash = keccak256(a);
+   |                        ------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+
+note[asm-keccak256]: use of inefficient hashing mechanism
+  --> ROOT/testdata/Keccak256.sol:LL:CC
+   |
+38 |         return keccak256(abi.encodePacked(a, b));
+   |         -----------------------------------------
+   |
+   = note: consider using inline assembly to reduce gas usage:
+           
+           - return keccak256(abi.encodePacked(a, b));
+           + bytes32 res;
+           + assembly("memory-safe") {
+           +     mstore(0x00, a)
            +     mstore(0x20, b)
-           +     let hash := keccak256(0x00, 0x40)
+           +     res := keccak256(0x00, 0x40)
+           + }
+           + return res;
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+
+note[asm-keccak256]: use of inefficient hashing mechanism
+  --> ROOT/testdata/Keccak256.sol:LL:CC
+   |
+42 |         bytes32 loadsFromCalldata = keccak256(z);
+   |         -----------------------------------------
+   |
+   = note: consider using inline assembly to reduce gas usage:
+           
+           - bytes32 loadsFromCalldata = keccak256(z);
+           + bytes32 loadsFromCalldata;
+           + assembly("memory-safe") {
+           +     calldatacopy(mload(0x40), z.offset, z.length)
+           +     loadsFromCalldata := keccak256(mload(0x40), z.length)
            + }
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
@@ -75,34 +127,108 @@ note[asm-keccak256]: use of inefficient hashing mechanism
 note[asm-keccak256]: use of inefficient hashing mechanism
   --> ROOT/testdata/Keccak256.sol:LL:CC
    |
-15 |         keccak256(abi.encode(a, b, c));
-   |                   -------------------
+44 |         bytes32 loadsFromMemory = keccak256(y);
+   |         ---------------------------------------
    |
    = note: consider using inline assembly to reduce gas usage:
            
-           - abi.encode(a, b, c)
-           + assembly {
-           +     mstore(0x0, a)
+           - bytes32 loadsFromMemory = keccak256(y);
+           + bytes32 loadsFromMemory;
+           + assembly("memory-safe") {
+           +     loadsFromMemory := keccak256(add(y, 0x20),
+           + mload(y))
+           + }
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+
+note[asm-keccak256]: use of inefficient hashing mechanism
+  --> ROOT/testdata/Keccak256.sol:LL:CC
+   |
+45 |         bytes32 lintWithoutFix = keccak256(abi.encodePacked(a, b, c));
+   |                                  ------------------------------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+
+note[asm-keccak256]: use of inefficient hashing mechanism
+  --> ROOT/testdata/Keccak256.sol:LL:CC
+   |
+46 |         return keccak256(abi.encode(a, b, c));
+   |         --------------------------------------
+   |
+   = note: consider using inline assembly to reduce gas usage:
+           
+           - return keccak256(abi.encode(a, b, c));
+           + bytes32 res;
+           + assembly("memory-safe") {
+           +     let m := mload(0x40)
+           +     mstore(m, a)
+           +     mstore(add(m, 0x00), a)
+           +     mstore(add(m, 0x20), b)
+           +     mstore(add(m, 0x40), c)
+           +     res := keccak256(m, 0x60)
+           + }
+           + return res;
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+
+note[asm-keccak256]: use of inefficient hashing mechanism
+  --> ROOT/testdata/Keccak256.sol:LL:CC
+   |
+64 |         return keccak256(abi.encode(a, b));
+   |         -----------------------------------
+   |
+   = note: consider using inline assembly to reduce gas usage:
+           
+           - return keccak256(abi.encode(a, b));
+           + bytes32 res;
+           + assembly("memory-safe") {
+           +     mstore(0x00, a)
            +     mstore(0x20, b)
-           +     mstore(0x40, c)
-           +     let hash := keccak256(0x00, 0x60)
+           +     res := keccak256(0x00, 0x40)
            + }
+           + return res;
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
 
 note[asm-keccak256]: use of inefficient hashing mechanism
   --> ROOT/testdata/Keccak256.sol:LL:CC
    |
-16 |         keccak256(abi.encodePacked(a, b));
-   |                   ----------------------
+68 |         return keccak256(abi.encodePacked(a, b));
+   |         -----------------------------------------
    |
    = note: consider using inline assembly to reduce gas usage:
            
-           - abi.encodePacked(a, b)
-           + assembly {
-           +     mstore(0x0, a)
+           - return keccak256(abi.encodePacked(a, b));
+           + bytes32 res;
+           + assembly("memory-safe") {
+           +     mstore(0x00, a)
            +     mstore(0x20, b)
-           +     let hash := keccak256(0x00, 0x40)
+           +     res := keccak256(0x00, 0x40)
+           + }
+           + return res;
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+
+note[asm-keccak256]: use of inefficient hashing mechanism
+  --> ROOT/testdata/Keccak256.sol:LL:CC
+   |
+74 |         bytes32 doesNotUseScratchSpace = keccak256(abi.encode(x, y, x, y, x, y));
+   |         -------------------------------------------------------------------------
+   |
+   = note: consider using inline assembly to reduce gas usage:
+           
+           - bytes32 doesNotUseScratchSpace = keccak256(abi.encode(x, y, x, y, x, y));
+           + bytes32 doesNotUseScratchSpace;
+           + assembly("memory-safe") {
+           +     let m := mload(0x40)
+           +     mstore(m, x)
+           +     mstore(add(m, 0x00), x)
+           +     mstore(add(m, 0x20), y)
+           +     mstore(add(m, 0x40), x)
+           +     mstore(add(m, 0x60), y)
+           +     mstore(add(m, 0x80), x)
+           +     mstore(add(m, 0xa0), y)
+           +     doesNotUseScratchSpace := keccak256(m, 0xc0)
            + }
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
@@ -110,187 +236,55 @@ note[asm-keccak256]: use of inefficient hashing mechanism
 note[asm-keccak256]: use of inefficient hashing mechanism
   --> ROOT/testdata/Keccak256.sol:LL:CC
    |
-20 |         keccak256(abi.encodePacked(a, b)); //                                           |
-   |                   ----------------------
+75 |         bytes32 doesUseScratchSpace = keccak256(abi.encode(x));
+   |         -------------------------------------------------------
    |
    = note: consider using inline assembly to reduce gas usage:
            
-           - abi.encodePacked(a, b)
-           + assembly {
-           +     mstore(0x0, a)
+           - bytes32 doesUseScratchSpace = keccak256(abi.encode(x));
+           + bytes32 doesUseScratchSpace;
+           + assembly("memory-safe") {
+           +     mstore(0x00, x)
+           +     doesUseScratchSpace := keccak256(0x00, 0x20)
+           + }
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+
+note[asm-keccak256]: use of inefficient hashing mechanism
+  --> ROOT/testdata/Keccak256.sol:LL:CC
+   |
+76 |         return keccak256(abi.encode(doesUseScratchSpace, doesNotUseScratchSpace));
+   |         --------------------------------------------------------------------------
+   |
+   = note: consider using inline assembly to reduce gas usage:
+           
+           - return keccak256(abi.encode(doesUseScratchSpace, doesNotUseScratchSpace));
+           + bytes32 res;
+           + assembly("memory-safe") {
+           +     mstore(0x00, doesUseScratchSpace)
+           +     mstore(0x20, doesNotUseScratchSpace)
+           +     res := keccak256(0x00, 0x40)
+           + }
+           + return res;
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+
+note[asm-keccak256]: use of inefficient hashing mechanism
+  --> ROOT/testdata/Keccak256.sol:LL:CC
+   |
+82 |         return keccak256(abi.encodePacked(a, b));
+   |         -----------------------------------------
+   |
+   = note: consider using inline assembly to reduce gas usage:
+           
+           - return keccak256(abi.encodePacked(a, b));
+           + bytes32 res;
+           + assembly("memory-safe") {
+           +     mstore(0x00, a)
            +     mstore(0x20, b)
-           +     let hash := keccak256(0x00, 0x40)
+           +     res := keccak256(0x00, 0x40)
            + }
-           
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
-
-note[asm-keccak256]: use of inefficient hashing mechanism
-  --> ROOT/testdata/Keccak256.sol:LL:CC
-   |
-26 |         keccak256(abi.encodePacked(a, b)); //          |                                |
-   |                   ----------------------
-   |
-   = note: consider using inline assembly to reduce gas usage:
-           
-           - abi.encodePacked(a, b)
-           + assembly {
-           +     mstore(0x0, a)
-           +     mstore(0x20, b)
-           +     let hash := keccak256(0x00, 0x40)
-           + }
-           
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
-
-note[asm-keccak256]: use of inefficient hashing mechanism
-  --> ROOT/testdata/Keccak256.sol:LL:CC
-   |
-32 |         keccak256(abi.encodePacked(a, b)); // after disabled block
-   |                   ----------------------
-   |
-   = note: consider using inline assembly to reduce gas usage:
-           
-           - abi.encodePacked(a, b)
-           + assembly {
-           +     mstore(0x0, a)
-           +     mstore(0x20, b)
-           +     let hash := keccak256(0x00, 0x40)
-           + }
-           
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
-
-note[asm-keccak256]: use of inefficient hashing mechanism
-  --> ROOT/testdata/Keccak256.sol:LL:CC
-   |
-38 |         bytes32 hash = keccak256(a);
-   |                                  -
-   |
-   = note: consider using inline assembly to reduce gas usage:
-           
-           - a
-           + assembly {
-           +     // get pointer to data and its length, then hash
-           +     let hash := keccak256(add(a, 0x20),
-           + mload(a))
-           + }
-           
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
-
-note[asm-keccak256]: use of inefficient hashing mechanism
-  --> ROOT/testdata/Keccak256.sol:LL:CC
-   |
-39 |         return keccak256(abi.encodePacked(a, b));
-   |                          ----------------------
-   |
-   = note: consider using inline assembly to reduce gas usage:
-           
-           - abi.encodePacked(a, b)
-           + assembly {
-           +     mstore(0x0, a)
-           +     mstore(0x20, b)
-           +     let hash := keccak256(0x00, 0x40)
-           + }
-           
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
-
-note[asm-keccak256]: use of inefficient hashing mechanism
-  --> ROOT/testdata/Keccak256.sol:LL:CC
-   |
-43 |         bytes32 hash = keccak256(a);
-   |                                  -
-   |
-   = note: consider using inline assembly to reduce gas usage:
-           
-           - a
-           + assembly {
-           +     // get pointer to data and its length, then hash
-           +     let hash := keccak256(add(a, 0x20),
-           + mload(a))
-           + }
-           
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
-
-note[asm-keccak256]: use of inefficient hashing mechanism
-  --> ROOT/testdata/Keccak256.sol:LL:CC
-   |
-44 |         return keccak256(abi.encodePacked(a, b));
-   |                          ----------------------
-   |
-   = note: consider using inline assembly to reduce gas usage:
-           
-           - abi.encodePacked(a, b)
-           + assembly {
-           +     mstore(0x0, a)
-           +     mstore(0x20, b)
-           +     let hash := keccak256(0x00, 0x40)
-           + }
-           
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
-
-note[asm-keccak256]: use of inefficient hashing mechanism
-  --> ROOT/testdata/Keccak256.sol:LL:CC
-   |
-62 |         return keccak256(abi.encodePacked(a, b));
-   |                          ----------------------
-   |
-   = note: consider using inline assembly to reduce gas usage:
-           
-           - abi.encodePacked(a, b)
-           + assembly {
-           +     mstore(0x0, a)
-           +     mstore(0x20, b)
-           +     let hash := keccak256(0x00, 0x40)
-           + }
-           
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
-
-note[asm-keccak256]: use of inefficient hashing mechanism
-  --> ROOT/testdata/Keccak256.sol:LL:CC
-   |
-66 |         return keccak256(abi.encodePacked(a, b));
-   |                          ----------------------
-   |
-   = note: consider using inline assembly to reduce gas usage:
-           
-           - abi.encodePacked(a, b)
-           + assembly {
-           +     mstore(0x0, a)
-           +     mstore(0x20, b)
-           +     let hash := keccak256(0x00, 0x40)
-           + }
-           
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
-
-note[asm-keccak256]: use of inefficient hashing mechanism
-  --> ROOT/testdata/Keccak256.sol:LL:CC
-   |
-72 |         return keccak256(abi.encodePacked(a, b));
-   |                          ----------------------
-   |
-   = note: consider using inline assembly to reduce gas usage:
-           
-           - abi.encodePacked(a, b)
-           + assembly {
-           +     mstore(0x0, a)
-           +     mstore(0x20, b)
-           +     let hash := keccak256(0x00, 0x40)
-           + }
-           
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
-
-note[asm-keccak256]: use of inefficient hashing mechanism
-  --> ROOT/testdata/Keccak256.sol:LL:CC
-   |
-78 |         return keccak256(abi.encodePacked(a, b));
-   |                          ----------------------
-   |
-   = note: consider using inline assembly to reduce gas usage:
-           
-           - abi.encodePacked(a, b)
-           + assembly {
-           +     mstore(0x0, a)
-           +     mstore(0x20, b)
-           +     let hash := keccak256(0x00, 0x40)
-           + }
+           + return res;
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
 

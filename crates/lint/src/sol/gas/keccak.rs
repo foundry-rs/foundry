@@ -94,12 +94,12 @@ impl AsmKeccak256 {
         expr: &hir::Expr<'_>,
         asm_ctx: AsmContext,
     ) -> bool {
-        let Some(var) = get_var_from_expr(hir, expr) else { return false };
+        let (Some(ty), data_loc) = get_var_type_and_loc(hir, expr) else { return false };
         if matches!(
-            var.ty.kind,
+            ty,
             TypeKind::Elementary(hir::ElementaryType::Bytes | hir::ElementaryType::String)
         ) {
-            if let Some(good) = gen_bytes_asm(ctx, expr.span, var.data_location, asm_ctx) {
+            if let Some(good) = gen_asm_bytes(ctx, expr.span, data_loc, asm_ctx) {
                 let snippet = match ctx.span_to_snippet(target_span) {
                     Some(bad) => Snippet::Diff { desc: SNIP_DESC, rmv: bad, add: good },
                     None => Snippet::Block { desc: SNIP_DESC, code: good },
@@ -129,7 +129,7 @@ impl AsmKeccak256 {
                 packed_args.iter().map(|arg| ctx.span_to_snippet(arg.span)).collect();
 
             if let Some(args) = arg_snippets {
-                let good = gen_encoded_words_asm(&args, asm_ctx);
+                let good = gen_asm_encoded_words(&args, asm_ctx);
                 let snippet = match ctx.span_to_snippet(target_span) {
                     Some(bad) => Snippet::Diff { desc: SNIP_DESC, rmv: bad, add: good },
                     None => Snippet::Block { desc: SNIP_DESC, code: good },
@@ -162,7 +162,7 @@ impl AsmContext {
 }
 
 /// Generates the assembly code for hashing a single dynamic 'bytes' or 'string' variable.
-fn gen_bytes_asm<'sess>(
+fn gen_asm_bytes<'sess>(
     ctx: &LintContext<'sess>,
     var_span: Span,
     data_location: Option<ast::DataLocation>,
@@ -193,7 +193,7 @@ fn gen_bytes_asm<'sess>(
 }
 
 /// Generates the assembly code for hashing a sequence of fixed-size (32-byte words) variables.
-fn gen_encoded_words_asm(args: &[String], asm_ctx: AsmContext) -> String {
+fn gen_asm_encoded_words(args: &[String], asm_ctx: AsmContext) -> String {
     let var = asm_ctx.get_assign_var_name();
     let total_size = args.len() * 32;
 
@@ -271,14 +271,40 @@ fn get_abi_packed_args<'hir>(
     None
 }
 
-fn get_var_from_expr<'hir>(
+fn get_var_type<'hir>(
     hir: &'hir hir::Hir<'hir>,
     expr: &'hir hir::Expr<'hir>,
-) -> Option<&'hir hir::Variable<'hir>> {
-    if let ExprKind::Ident([Res::Item(hir::ItemId::Variable(var_id))]) = expr.kind {
-        Some(hir.variable(*var_id))
-    } else {
-        None
+) -> Option<&'hir hir::TypeKind<'hir>> {
+    match &expr.kind {
+        // Expression is directly a variable
+        hir::ExprKind::Ident([hir::Res::Item(hir::ItemId::Variable(var_id))]) => {
+            let var = hir.variable(*var_id);
+            Some(&var.ty.kind)
+        }
+        // Expression is a type conversion call
+        hir::ExprKind::Call(hir::Expr { kind: hir::ExprKind::Type(ty), .. }, ..) => Some(&ty.kind),
+
+        // Other expressions are complex and not supported
+        _ => None,
+    }
+}
+
+fn get_var_type_and_loc<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    expr: &'hir hir::Expr<'hir>,
+) -> (Option<&'hir hir::TypeKind<'hir>>, Option<hir::DataLocation>) {
+    match &expr.kind {
+        // Expression is directly a variable
+        hir::ExprKind::Ident([hir::Res::Item(hir::ItemId::Variable(var_id))]) => {
+            let var = hir.variable(*var_id);
+            (Some(&var.ty.kind), var.data_location)
+        }
+        // Expression is a type conversion call
+        hir::ExprKind::Call(hir::Expr { kind: hir::ExprKind::Type(ty), .. }, ..) => {
+            (Some(&ty.kind), None)
+        }
+        // Other expressions are complex and not supported
+        _ => (None, None),
     }
 }
 
@@ -287,9 +313,7 @@ fn all_exprs_check<'hir>(
     exprs: &'hir [hir::Expr<'hir>],
     check: impl Fn(&'hir hir::TypeKind<'hir>) -> bool,
 ) -> bool {
-    exprs
-        .iter()
-        .all(|expr| get_var_from_expr(hir, expr).map(|var| check(&var.ty.kind)).unwrap_or(false))
+    exprs.iter().all(|expr| get_var_type(hir, expr).map(|ty| check(&ty)).unwrap_or(false))
 }
 
 fn is_32byte_type<'hir>(kind: &hir::TypeKind<'hir>) -> bool {

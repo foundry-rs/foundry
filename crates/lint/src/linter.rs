@@ -72,8 +72,11 @@ impl<'s> LintContext<'s> {
 
     /// Emit a diagnostic with a code fix proposal.
     pub fn emit_with_fix<L: Lint>(&self, lint: &'static L, span: Span, snippet: Snippet) {
-        let desc = if self.with_description { lint.description() } else { "" };
+        if self.inline_config.is_disabled(span, lint.id()) {
+            return;
+        }
 
+        let desc = if self.with_description { lint.description() } else { "" };
         let diag: DiagBuilder<'_, ()> = self
             .sess
             .dcx
