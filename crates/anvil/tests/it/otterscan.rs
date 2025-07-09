@@ -270,7 +270,7 @@ async fn test_call_ots_trace_transaction() {
             depth: 2,
             from: contract_address,
             to: contract_address,
-            value: Some(U256::from(1337)),
+            value: Some(U256::ZERO),
             input: Contract::do_delegatecallCall::SELECTOR.into(),
             output: Bytes::new(),
         },
