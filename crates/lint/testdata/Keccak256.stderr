@@ -133,8 +133,7 @@ note[asm-keccak256]: use of inefficient hashing mechanism
            - bytes32 loadsFromMemory = keccak256(y);
            + bytes32 loadsFromMemory;
            + assembly("memory-safe") {
-           +     loadsFromMemory := keccak256(add(y, 0x20),
-           + mload(y))
+           +     loadsFromMemory := keccak256(add(y, 0x20), mload(y))
            + }
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
