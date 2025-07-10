@@ -1,11 +1,11 @@
 //! forge install and update tests
 
-use forge::{DepIdentifier, Lockfile, FOUNDRY_LOCK};
+use forge::{DepIdentifier, FOUNDRY_LOCK, Lockfile};
 use foundry_cli::utils::{Git, Submodules};
 use foundry_compilers::artifacts::Remapping;
 use foundry_config::Config;
 use foundry_test_utils::util::{
-    pretty_err, read_string, ExtTester, TestCommand, FORGE_STD_REVISION,
+    ExtTester, FORGE_STD_REVISION, TestCommand, pretty_err, read_string,
 };
 use semver::Version;
 use std::{

@@ -1,4 +1,4 @@
-use crate::{DepIdentifier, Lockfile, FOUNDRY_LOCK};
+use crate::{DepIdentifier, FOUNDRY_LOCK, Lockfile};
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use foundry_cli::{
@@ -184,8 +184,8 @@ impl DependencyInstallOpts {
                 if let Some(tag_or_branch) = &installed_tag {
                     // First, check if this tag has a branch
                     dep_id = Some(DepIdentifier::resolve_type(&git, &path, tag_or_branch)?);
-                    if git.has_branch(tag_or_branch, &path)? &&
-                        dep_id.as_ref().is_some_and(|id| id.is_branch())
+                    if git.has_branch(tag_or_branch, &path)?
+                        && dep_id.as_ref().is_some_and(|id| id.is_branch())
                     {
                         // always work with relative paths when directly modifying submodules
                         git.cmd()
@@ -216,9 +216,9 @@ impl DependencyInstallOpts {
                     }
                 }
 
-                if new_insertion ||
-                    out_of_sync_deps.as_ref().is_some_and(|o| !o.is_empty()) ||
-                    !lockfile.exists()
+                if new_insertion
+                    || out_of_sync_deps.as_ref().is_some_and(|o| !o.is_empty())
+                    || !lockfile.exists()
                 {
                     lockfile.write()?;
                 }

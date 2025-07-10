@@ -104,7 +104,7 @@ impl UpdateArgs {
                 .iter_mut()
                 .filter_map(|(path, dep_id)| {
                     if dep_id.is_branch() && dep_id.overridden() {
-                        return Some((path, dep_id))
+                        return Some((path, dep_id));
                     }
                     None
                 })
@@ -145,8 +145,8 @@ impl UpdateArgs {
             git.checkout_at(dep_id.checkout_id(), &root.join(path))?;
         }
 
-        if out_of_sync_deps.is_some_and(|o| !o.is_empty()) ||
-            foundry_lock.iter().any(|(_, dep_id)| dep_id.overridden())
+        if out_of_sync_deps.is_some_and(|o| !o.is_empty())
+            || foundry_lock.iter().any(|(_, dep_id)| dep_id.overridden())
         {
             foundry_lock.write()?;
         }
