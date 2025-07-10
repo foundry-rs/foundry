@@ -126,10 +126,10 @@ impl<W> FormatBuffer<W> {
     }
 
     /// Get the char used for indent
-    pub fn indent_char(&self) -> &'static str {
+    pub fn indent_char(&self) -> char {
         match self.style {
-            IndentStyle::Space => " ",
-            IndentStyle::Tab => "\t",
+            IndentStyle::Space => ' ',
+            IndentStyle::Tab => '\t',
         }
     }
 
@@ -231,7 +231,7 @@ impl<W: Write> Write for FormatBuffer<W> {
             return Ok(());
         }
 
-        let mut indent = self.indent_char().repeat(self.current_indent_len());
+        let mut indent = self.indent_char().to_string().repeat(self.current_indent_len());
 
         loop {
             match self.state {
@@ -254,12 +254,13 @@ impl<W: Write> Write for FormatBuffer<W> {
                             self.w.write_str(head)?;
                             self.w.write_str(&indent)?;
                             self.current_line_len = 0;
-                            self.last_char = Some(' ');
+                            self.last_char = Some(self.indent_char());
                             // a newline has been inserted
                             if len > 0 {
                                 if self.last_indent_group_skipped() {
                                     indent = self
                                         .indent_char()
+                                        .to_string()
                                         .repeat(self.get_indent_len(self.level() + 1));
                                     self.set_last_indent_group_skipped(false);
                                 }
@@ -469,11 +470,11 @@ mod tests {
     fn test_indent_char() -> std::fmt::Result {
         assert_eq!(
             FormatBuffer::new(String::new(), TAB_WIDTH, IndentStyle::Space).indent_char(),
-            " "
+            ' '
         );
         assert_eq!(
             FormatBuffer::new(String::new(), TAB_WIDTH, IndentStyle::Tab).indent_char(),
-            "\t"
+            '\t'
         );
         Ok(())
     }
