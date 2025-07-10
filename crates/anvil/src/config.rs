@@ -6,7 +6,7 @@ use crate::{
             env::Env,
             fork::{ClientFork, ClientForkConfig},
             genesis::GenesisConfig,
-            mem::{fork_db::ForkedDatabase, get_blob_base_fee_update_fraction},
+            mem::fork_db::ForkedDatabase,
             time::duration_since_unix_epoch,
         },
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
@@ -39,7 +39,7 @@ use foundry_config::Config;
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
-    utils::apply_chain_and_block_specific_env_changes,
+    utils::{apply_chain_and_block_specific_env_changes, get_blob_base_fee_update_fraction},
 };
 use foundry_evm_core::AsEnvMut;
 use itertools::Itertools;

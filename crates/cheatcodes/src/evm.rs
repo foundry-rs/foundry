@@ -15,6 +15,7 @@ use foundry_evm_core::{
     ContextExt,
     backend::{DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
+    utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
 use foundry_evm_traces::StackSnapshotType;
 use itertools::Itertools;
@@ -22,11 +23,7 @@ use rand::Rng;
 use revm::{
     bytecode::Bytecode,
     context::{Block, JournalTr},
-    primitives::{
-        KECCAK_EMPTY,
-        eip4844::{BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
-        hardfork::SpecId,
-    },
+    primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::Account,
 };
 use std::{
@@ -504,15 +501,10 @@ impl Cheatcode for blobBaseFeeCall {
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
 
-        let blob_base_fee_update_fraction = if ccx.ecx.cfg.spec >= SpecId::PRAGUE {
-            BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
-        } else {
-            BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN
-        };
-
-        ccx.ecx
-            .block
-            .set_blob_excess_gas_and_price((*newBlobBaseFee).to(), blob_base_fee_update_fraction);
+        ccx.ecx.block.set_blob_excess_gas_and_price(
+            (*newBlobBaseFee).to(),
+            get_blob_base_fee_update_fraction_by_spec_id(ccx.ecx.cfg.spec),
+        );
         Ok(Default::default())
     }
 }

@@ -4460,10 +4460,12 @@ dependencies = [
 name = "foundry-evm-core"
 version = "1.2.3"
 dependencies = [
+ "alloy-chains",
  "alloy-consensus",
  "alloy-dyn-abi",
  "alloy-evm",
  "alloy-genesis",
+ "alloy-hardforks",
  "alloy-json-abi",
  "alloy-network",
  "alloy-op-evm",
