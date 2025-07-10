@@ -2085,7 +2085,11 @@ mod tests {
         }
         drop(backend);
 
-        let meta = BlockchainDbMeta { block_env: env.evm_env.block_env, hosts: Default::default() };
+        let meta = BlockchainDbMeta {
+            chain: None,
+            block_env: env.evm_env.block_env,
+            hosts: Default::default(),
+        };
 
         let db = BlockchainDb::new(
             meta,
