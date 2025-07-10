@@ -2,7 +2,7 @@ use crate::{
     VerifierArgs,
     provider::{VerificationContext, VerificationProvider},
     retry::RETRY_CHECK_ON_VERIFY,
-    verify::{VerifyArgs, VerifyCheckArgs},
+    verify::{ContractLanguage, VerifyArgs, VerifyCheckArgs},
 };
 use alloy_json_abi::Function;
 use alloy_primitives::hex;
@@ -321,14 +321,20 @@ impl EtherscanVerificationProvider {
         let (source, contract_name, code_format) =
             self.source_provider(args).source(args, context)?;
 
+        let lang = args.detect_language(context);
+
         let mut compiler_version = context.compiler_version.clone();
         compiler_version.build = match RE_BUILD_COMMIT.captures(compiler_version.build.as_str()) {
             Some(cap) => BuildMetadata::new(cap.name("commit").unwrap().as_str())?,
             _ => BuildMetadata::EMPTY,
         };
 
-        let compiler_version =
-            format!("v{}", ensure_solc_build_metadata(context.compiler_version.clone()).await?);
+        let compiler_version = if matches!(lang, ContractLanguage::Vyper) {
+            format!("vyper:{}", compiler_version.to_string().split('+').next().unwrap_or("0.0.0"))
+        } else {
+            format!("v{}", ensure_solc_build_metadata(context.compiler_version.clone()).await?)
+        };
+
         let constructor_args = self.constructor_args(args, context).await?;
         let mut verify_args =
             VerifyContract::new(args.address, contract_name, source, compiler_version)
@@ -353,6 +359,15 @@ impl EtherscanVerificationProvider {
             } else {
                 verify_args.not_optimized()
             };
+        }
+
+        if code_format == CodeFormat::VyperJson {
+            verify_args =
+                if args.num_of_optimizations.is_some() || context.config.optimizer == Some(true) {
+                    verify_args.optimized().runs(1)
+                } else {
+                    verify_args.not_optimized().runs(0)
+                }
         }
 
         Ok(verify_args)

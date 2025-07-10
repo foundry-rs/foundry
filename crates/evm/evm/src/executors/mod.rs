@@ -847,6 +847,7 @@ pub struct RawCallResult {
     pub out: Option<Output>,
     /// The chisel state
     pub chisel_state: Option<(Vec<U256>, Vec<u8>, InstructionResult)>,
+    pub reverter: Option<Address>,
 }
 
 impl Default for RawCallResult {
@@ -870,6 +871,7 @@ impl Default for RawCallResult {
             cheatcodes: Default::default(),
             out: None,
             chisel_state: None,
+            reverter: None,
         }
     }
 }
@@ -1036,6 +1038,7 @@ fn convert_executed_result(
         edge_coverage,
         cheatcodes,
         chisel_state,
+        reverter,
     } = inspector.collect();
 
     if logs.is_empty() {
@@ -1066,6 +1069,7 @@ fn convert_executed_result(
         cheatcodes,
         out,
         chisel_state,
+        reverter,
     })
 }
 

@@ -89,6 +89,13 @@ impl CallTraceDecoderBuilder {
         self
     }
 
+    /// Sets the signature identifier for events and functions.
+    #[inline]
+    pub fn with_label_disabled(mut self, disable_alias: bool) -> Self {
+        self.decoder.disable_labels = disable_alias;
+        self
+    }
+
     /// Sets the debug identifier for the decoder.
     #[inline]
     pub fn with_debug_identifier(mut self, identifier: DebugTraceIdentifier) -> Self {
@@ -143,6 +150,9 @@ pub struct CallTraceDecoder {
 
     /// Optional identifier of individual trace steps.
     pub debug_identifier: Option<DebugTraceIdentifier>,
+
+    /// Disable showing of labels.
+    pub disable_labels: bool,
 }
 
 impl CallTraceDecoder {
@@ -198,6 +208,8 @@ impl CallTraceDecoder {
             verbosity: 0,
 
             debug_identifier: None,
+
+            disable_labels: false,
         }
     }
 
@@ -261,6 +273,10 @@ impl CallTraceDecoder {
     /// Adds a single error to the decoder.
     pub fn push_error(&mut self, error: Error) {
         self.revert_decoder.push_error(error);
+    }
+
+    pub fn without_label(&mut self, disable: bool) {
+        self.disable_labels = disable;
     }
 
     fn collect_identified_addresses(&mut self, mut addrs: Vec<IdentifiedAddress<'_>>) {
@@ -338,7 +354,8 @@ impl CallTraceDecoder {
 
     /// Decodes a call trace.
     pub async fn decode_function(&self, trace: &CallTrace) -> DecodedCallTrace {
-        let label = self.labels.get(&trace.address).cloned();
+        let label =
+            if self.disable_labels { None } else { self.labels.get(&trace.address).cloned() };
 
         if trace.kind.is_any_create() {
             return DecodedCallTrace { label, ..Default::default() };

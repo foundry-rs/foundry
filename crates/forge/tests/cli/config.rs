@@ -1089,6 +1089,7 @@ ignore = []
 
 [fuzz]
 runs = 256
+fail_on_revert = true
 max_test_rejects = 65536
 dictionary_weight = 40
 include_storage = true
@@ -1198,6 +1199,7 @@ exclude = []
   "show_progress": false,
   "fuzz": {
     "runs": 256,
+    "fail_on_revert": true,
     "max_test_rejects": 65536,
     "seed": null,
     "dictionary_weight": 40,

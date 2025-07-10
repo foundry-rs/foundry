@@ -500,14 +500,15 @@ impl ChiselDispatcher {
                 }
             }
             ChiselCommand::Fetch => {
-                if args.len() != 2 {
+                if args.len() != 2 && args.len() != 3 {
                     return DispatchResult::CommandFailed(Self::make_error(
-                        "Incorrect number of arguments supplied. Expected: <address> <name>",
+                        "Incorrect number of arguments supplied. Expected: <address> <name> <chainId> (optional, defaults to 1 if not provided).",
                     ));
                 }
 
                 let request_url = format!(
-                    "https://api.etherscan.io/api?module=contract&action=getabi&address={}{}",
+                    "https://api.etherscan.io/v2/api?chainId={}&module=contract&action=getabi&address={}{}",
+                    args.get(2).unwrap_or(&"1"),
                     args[0],
                     if let Some(api_key) =
                         self.source().config.foundry_config.etherscan_api_key.as_ref()
