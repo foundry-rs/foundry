@@ -1,4 +1,4 @@
-use solar_ast::{visit::Visit, Item, SourceUnit};
+use solar_ast::{Item, SourceUnit, visit::Visit};
 use solar_parse::ast::Span;
 use std::{collections::HashMap, fmt, marker::PhantomData, ops::ControlFlow};
 

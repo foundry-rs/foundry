@@ -1,6 +1,6 @@
 //! Uncategorised utilities.
 
-use alloy_primitives::{hex, keccak256, Bytes, B256, U256};
+use alloy_primitives::{B256, Bytes, U256, hex, keccak256};
 use foundry_compilers::artifacts::BytecodeObject;
 use regex::Regex;
 use std::sync::LazyLock;
@@ -55,11 +55,7 @@ pub fn ignore_metadata_hash(bytecode: &[u8]) -> &[u8] {
         return bytecode;
     }
     let (rest, metadata) = rest.split_at(rest.len() - metadata_len);
-    if ciborium::from_reader::<ciborium::Value, _>(metadata).is_ok() {
-        rest
-    } else {
-        bytecode
-    }
+    if ciborium::from_reader::<ciborium::Value, _>(metadata).is_ok() { rest } else { bytecode }
 }
 
 /// Strips all __$xxx$__ placeholders from the bytecode if it's an unlinked bytecode.

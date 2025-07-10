@@ -3,15 +3,15 @@
 use crate::{compile::PathOrContractInfo, strip_bytecode_placeholders};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Event, Function, JsonAbi};
-use alloy_primitives::{hex, Address, Bytes, Selector, B256};
+use alloy_primitives::{Address, B256, Bytes, Selector, hex};
 use eyre::{OptionExt, Result};
 use foundry_compilers::{
+    ArtifactId, Project, ProjectCompileOutput,
     artifacts::{
         BytecodeObject, CompactBytecode, CompactContractBytecode, CompactDeployedBytecode,
         ConfigurableContractArtifact, ContractBytecodeSome, Offsets,
     },
     utils::canonicalized,
-    ArtifactId, Project, ProjectCompileOutput,
 };
 use std::{
     collections::BTreeMap,
@@ -194,8 +194,8 @@ impl ContractsByArtifact {
             };
 
             let len = match deployed_code {
-                BytecodeObject::Bytecode(ref bytes) => bytes.len(),
-                BytecodeObject::Unlinked(ref bytes) => bytes.len() / 2,
+                BytecodeObject::Bytecode(bytes) => bytes.len(),
+                BytecodeObject::Unlinked(bytes) => bytes.len() / 2,
             };
 
             if len != code.len() {
@@ -216,10 +216,10 @@ impl ContractsByArtifact {
             // See https://docs.soliditylang.org/en/latest/contracts.html#call-protection-for-libraries and
             // https://github.com/NomicFoundation/hardhat/blob/af7807cf38842a4f56e7f4b966b806e39631568a/packages/hardhat-verify/src/internal/solc/bytecode.ts#L172
             let has_call_protection = match deployed_code {
-                BytecodeObject::Bytecode(ref bytes) => {
+                BytecodeObject::Bytecode(bytes) => {
                     bytes.starts_with(&CALL_PROTECTION_BYTECODE_PREFIX)
                 }
-                BytecodeObject::Unlinked(ref bytes) => {
+                BytecodeObject::Unlinked(bytes) => {
                     if let Ok(bytes) =
                         Bytes::from_str(&bytes[..CALL_PROTECTION_BYTECODE_PREFIX.len() * 2])
                     {
@@ -241,8 +241,8 @@ impl ContractsByArtifact {
                 let right = offset.start as usize;
 
                 let matched = match deployed_code {
-                    BytecodeObject::Bytecode(ref bytes) => bytes[left..right] == code[left..right],
-                    BytecodeObject::Unlinked(ref bytes) => {
+                    BytecodeObject::Bytecode(bytes) => bytes[left..right] == code[left..right],
+                    BytecodeObject::Unlinked(bytes) => {
                         if let Ok(bytes) = Bytes::from_str(&bytes[left * 2..right * 2]) {
                             bytes == code[left..right]
                         } else {
@@ -260,8 +260,8 @@ impl ContractsByArtifact {
 
             if left < code.len() {
                 match deployed_code {
-                    BytecodeObject::Bytecode(ref bytes) => bytes[left..] == code[left..],
-                    BytecodeObject::Unlinked(ref bytes) => {
+                    BytecodeObject::Bytecode(bytes) => bytes[left..] == code[left..],
+                    BytecodeObject::Unlinked(bytes) => {
                         if let Ok(bytes) = Bytes::from_str(&bytes[left * 2..]) {
                             bytes == code[left..]
                         } else {
@@ -482,7 +482,7 @@ pub fn find_target_path(project: &Project, identifier: &PathOrContractInfo) -> R
                             path.strip_prefix(project.root()).unwrap().display()
                         )
                     })?;
-                return Ok(contract_path)
+                return Ok(contract_path);
             }
             // If ContractInfo.path hasn't been provided we try to find the contract using the name.
             // This will fail if projects have multiple contracts with the same name. In that case,
@@ -510,7 +510,9 @@ pub fn find_matching_contract_artifact(
             .collect::<Vec<_>>();
 
         if possible_targets.is_empty() {
-            eyre::bail!("Could not find artifact linked to source `{target_path:?}` in the compiled artifacts");
+            eyre::bail!(
+                "Could not find artifact linked to source `{target_path:?}` in the compiled artifacts"
+            );
         }
 
         let (target_id, target_artifact) = possible_targets[0].clone();
@@ -521,10 +523,12 @@ pub fn find_matching_contract_artifact(
         // If all artifact_ids in `possible_targets` have the same name (without ".", indicates
         // additional compiler profiles), it means that there are multiple contracts in the
         // same file.
-        if !target_id.name.contains(".") &&
-            possible_targets.iter().any(|(id, _)| id.name != target_id.name)
+        if !target_id.name.contains(".")
+            && possible_targets.iter().any(|(id, _)| id.name != target_id.name)
         {
-            eyre::bail!("Multiple contracts found in the same file, please specify the target <path>:<contract> or <contract>");
+            eyre::bail!(
+                "Multiple contracts found in the same file, please specify the target <path>:<contract> or <contract>"
+            );
         }
 
         // Otherwise, we're dealing with additional compiler profiles wherein `id.source` is the

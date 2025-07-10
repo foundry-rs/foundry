@@ -3,7 +3,7 @@ mod comment;
 use comment::{Comment, CommentStyle};
 use solar_parse::{
     ast::{CommentKind, Span},
-    interface::{source_map::SourceFile, BytePos, CharPos, SourceMap},
+    interface::{BytePos, CharPos, SourceMap, source_map::SourceFile},
     lexer::token::RawTokenKind as TokenKind,
 };
 use std::fmt;

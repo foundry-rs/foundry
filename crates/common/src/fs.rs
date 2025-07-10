@@ -1,8 +1,8 @@
 //! Contains various `std::fs` wrapper functions that also contain the target path in their errors.
 
 use crate::errors::FsPathError;
-use flate2::{read::GzDecoder, write::GzEncoder, Compression};
-use serde::{de::DeserializeOwned, Serialize};
+use flate2::{Compression, read::GzDecoder, write::GzEncoder};
+use serde::{Serialize, de::DeserializeOwned};
 use std::{
     fs::{self, File},
     io::{BufReader, BufWriter, Write},

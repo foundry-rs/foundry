@@ -9,17 +9,16 @@ use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
 use alloy_network::{AnyNetwork, AnyRpcTransaction};
 use alloy_primitives::{
-    hex,
-    utils::{keccak256, ParseUnits, Unit},
-    Address, Keccak256, Selector, TxHash, TxKind, B256, I256, U256, U64,
+    Address, B256, I256, Keccak256, Selector, TxHash, TxKind, U64, U256, hex,
+    utils::{ParseUnits, Unit, keccak256},
 };
 use alloy_provider::{
-    network::eip2718::{Decodable2718, Encodable2718},
     PendingTransactionBuilder, Provider,
+    network::eip2718::{Decodable2718, Encodable2718},
 };
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{
-    state::StateOverride, BlockId, BlockNumberOrTag, BlockOverrides, Filter, TransactionRequest,
+    BlockId, BlockNumberOrTag, BlockOverrides, Filter, TransactionRequest, state::StateOverride,
 };
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
@@ -28,15 +27,16 @@ use chrono::DateTime;
 use eyre::{Context, ContextCompat, OptionExt, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
+    TransactionReceiptWithRevertReason,
     abi::{encode_function_args, get_func},
     compile::etherscan_project,
     fmt::*,
-    fs, get_pretty_tx_receipt_attr, shell, TransactionReceiptWithRevertReason,
+    fs, get_pretty_tx_receipt_attr, shell,
 };
 use foundry_compilers::flatten::Flattener;
 use foundry_config::Chain;
 use foundry_evm_core::ic::decode_instructions;
-use futures::{future::Either, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, future::Either};
 use op_alloy_consensus::OpTxEnvelope;
 use rayon::prelude::*;
 use std::{
@@ -90,7 +90,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// # Example
     ///
     /// ```
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {
@@ -178,10 +178,9 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
                                 .get_code_at(addr)
                                 .block_id(block.unwrap_or_default())
                                 .await
+                                && code.is_empty()
                             {
-                                if code.is_empty() {
-                                    eyre::bail!("contract {addr:?} does not have any code")
-                                }
+                                eyre::bail!("contract {addr:?} does not have any code")
                             }
                         } else if Some(TxKind::Create) == req.to {
                             eyre::bail!("tx req is a contract deployment");
@@ -317,7 +316,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// # Example
     ///
     /// ```
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {
@@ -346,7 +345,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// # Example
     ///
     /// ```
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {
@@ -365,10 +364,11 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         field: Option<String>,
     ) -> Result<String> {
         let block = block.into();
-        if let Some(ref field) = field {
-            if field == "transactions" && !full {
-                eyre::bail!("use --full to view transactions")
-            }
+        if let Some(ref field) = field
+            && field == "transactions"
+            && !full
+        {
+            eyre::bail!("use --full to view transactions")
         }
 
         let block = self
@@ -501,7 +501,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::Address;
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     /// use std::str::FromStr;
     ///
@@ -589,7 +589,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::Address;
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     /// use std::str::FromStr;
     ///
@@ -638,7 +638,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::Address;
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     /// use std::str::FromStr;
     ///
@@ -668,7 +668,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::{Address, U256};
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     /// use std::str::FromStr;
     ///
@@ -691,7 +691,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::Address;
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     /// use std::str::FromStr;
     ///
@@ -727,7 +727,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::Address;
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     /// use std::str::FromStr;
     ///
@@ -750,7 +750,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// # Example
     ///
     /// ```
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {
@@ -814,7 +814,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// # Example
     ///
     /// ```
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {
@@ -875,7 +875,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// # Example
     ///
     /// ```
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     ///
     /// # async fn foo() -> eyre::Result<()> {
@@ -906,7 +906,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::{Address, B256};
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
     /// use std::str::FromStr;
     ///
@@ -967,7 +967,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::fixed_bytes;
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use alloy_rpc_types::{BlockId, BlockNumberOrTag};
     /// use cast::Cast;
     /// use std::{convert::TryFrom, str::FromStr};
@@ -1014,7 +1014,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///
     /// ```
     /// use alloy_primitives::Address;
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
+    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use alloy_rpc_types::Filter;
     /// use alloy_transport::BoxTransport;
     /// use cast::Cast;
@@ -1061,11 +1061,10 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
                 } else {
                     Either::Right(futures::future::pending())
                 } => {
-                    if let (Some(block), Some(to_block)) = (block, to_block_number) {
-                        if block.number  > to_block {
+                    if let (Some(block), Some(to_block)) = (block, to_block_number)
+                        && block.number  > to_block {
                             break;
                         }
-                    }
                 },
                 // Process incoming log
                 log = subscription.next() => {
@@ -1423,6 +1422,7 @@ impl SimpleCast {
     /// assert_eq!(Cast::parse_units("2.5", 6)?, "2500000");
     /// assert_eq!(Cast::parse_units("1.0", 12)?, "1000000000000"); // 12 decimals
     /// assert_eq!(Cast::parse_units("1.23", 3)?, "1230"); // 3 decimals
+    ///
     /// # Ok(())
     /// # }
     /// ```
@@ -1444,6 +1444,7 @@ impl SimpleCast {
     /// assert_eq!(Cast::format_units("2500000", 6)?, "2.500000");
     /// assert_eq!(Cast::format_units("1000000000000", 12)?, "1"); // 12 decimals
     /// assert_eq!(Cast::format_units("1230", 3)?, "1.230"); // 3 decimals
+    ///
     /// # Ok(())
     /// # }
     /// ```
@@ -1761,7 +1762,10 @@ impl SimpleCast {
         let func = get_func(sig)?;
         match encode_function_args(&func, args) {
             Ok(res) => Ok(hex::encode_prefixed(&res[4..])),
-            Err(e) => eyre::bail!("Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}", e),
+            Err(e) => eyre::bail!(
+                "Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}",
+                e
+            ),
         }
     }
 
@@ -1791,7 +1795,10 @@ impl SimpleCast {
         let func = get_func(sig.as_str())?;
         let encoded = match encode_function_args_packed(&func, args) {
             Ok(res) => hex::encode(res),
-            Err(e) => eyre::bail!("Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}", e),
+            Err(e) => eyre::bail!(
+                "Could not ABI encode the function and arguments. Did you pass in the right types?\nError\n{}",
+                e
+            ),
         };
         Ok(format!("0x{encoded}"))
     }
@@ -1854,20 +1861,20 @@ impl SimpleCast {
         match k_ty {
             // For value types, `h` pads the value to 32 bytes in the same way as when storing the
             // value in memory.
-            DynSolType::Bool |
-            DynSolType::Int(_) |
-            DynSolType::Uint(_) |
-            DynSolType::FixedBytes(_) |
-            DynSolType::Address |
-            DynSolType::Function => hasher.update(k.as_word().unwrap()),
+            DynSolType::Bool
+            | DynSolType::Int(_)
+            | DynSolType::Uint(_)
+            | DynSolType::FixedBytes(_)
+            | DynSolType::Address
+            | DynSolType::Function => hasher.update(k.as_word().unwrap()),
 
             // For strings and byte arrays, `h(k)` is just the unpadded data.
             DynSolType::String | DynSolType::Bytes => hasher.update(k.as_packed_seq().unwrap()),
 
-            DynSolType::Array(..) |
-            DynSolType::FixedArray(..) |
-            DynSolType::Tuple(..) |
-            DynSolType::CustomStruct { .. } => {
+            DynSolType::Array(..)
+            | DynSolType::FixedArray(..)
+            | DynSolType::Tuple(..)
+            | DynSolType::CustomStruct { .. } => {
                 eyre::bail!("Type `{k_ty}` is not supported as a mapping key")
             }
         }

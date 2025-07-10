@@ -3,7 +3,6 @@
 use crate::shutdown::Shutdown;
 use futures::{FutureExt, Stream, StreamExt};
 use std::{
-    future::Future,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -38,7 +37,7 @@ where
         let pin = self.get_mut();
 
         if pin.on_shutdown.poll_unpin(cx).is_ready() {
-            return Poll::Ready(())
+            return Poll::Ready(());
         }
 
         let mut block = None;
@@ -46,7 +45,7 @@ where
         while let Poll::Ready(maybe_block) = pin.stream.poll_next_unpin(cx) {
             if maybe_block.is_none() {
                 // stream complete
-                return Poll::Ready(())
+                return Poll::Ready(());
             }
             block = maybe_block;
         }
@@ -55,10 +54,10 @@ where
             pin.task = Some(Box::pin((pin.task_factory)(block)));
         }
 
-        if let Some(mut task) = pin.task.take() {
-            if task.poll_unpin(cx).is_pending() {
-                pin.task = Some(task);
-            }
+        if let Some(mut task) = pin.task.take()
+            && task.poll_unpin(cx).is_pending()
+        {
+            pin.task = Some(task);
         }
         Poll::Pending
     }

@@ -1,13 +1,13 @@
 //! Support for multiple Etherscan keys.
 
 use crate::{
-    resolve::{interpolate, UnresolvedEnvVarError, RE_PLACEHOLDER},
     Chain, Config, NamedChain,
+    resolve::{RE_PLACEHOLDER, UnresolvedEnvVarError, interpolate},
 };
 use figment::{
+    Error, Metadata, Profile, Provider,
     providers::Env,
     value::{Dict, Map},
-    Error, Metadata, Profile, Provider,
 };
 use foundry_block_explorers::EtherscanApiVersion;
 use heck::ToKebabCase;
@@ -37,10 +37,10 @@ impl Provider for EtherscanEnvProvider {
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut dict = Dict::default();
         let env_provider = Env::raw().only(&["ETHERSCAN_API_KEY"]);
-        if let Some((key, value)) = env_provider.iter().next() {
-            if !value.trim().is_empty() {
-                dict.insert(key.as_str().to_string(), value.into());
-            }
+        if let Some((key, value)) = env_provider.iter().next()
+            && !value.trim().is_empty()
+        {
+            dict.insert(key.as_str().to_string(), value.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
@@ -509,7 +509,9 @@ mod tests {
         let config = resolved.remove("mainnet").unwrap();
         assert!(config.is_err());
 
-        std::env::set_var(env, "ABCDEFG");
+        unsafe {
+            std::env::set_var(env, "ABCDEFG");
+        }
 
         let mut resolved = configs.resolved(EtherscanApiVersion::V2);
         let config = resolved.remove("mainnet").unwrap().unwrap();
@@ -517,7 +519,9 @@ mod tests {
         let client = config.into_client().unwrap();
         assert_eq!(*client.etherscan_api_version(), EtherscanApiVersion::V2);
 
-        std::env::remove_var(env);
+        unsafe {
+            std::env::remove_var(env);
+        }
     }
 
     #[test]

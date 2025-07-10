@@ -77,9 +77,9 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 [FAIL: call reverted when it was expected not to revert] testShouldFailNoRevert() ([GAS])
 [FAIL: expected 0 reverts with reason: revert, but got one] testShouldFailNoRevertSpecific() ([GAS])
-[FAIL: Error != expected error: second-revert != revert] testShouldFailReverCountSpecifc() ([GAS])
 [FAIL: next call did not revert as expected] testShouldFailRevertCountAny() ([GAS])
 [FAIL: Error != expected error: wrong revert != called a function and then reverted] testShouldFailRevertCountCallsThenReverts() ([GAS])
+[FAIL: Error != expected error: second-revert != revert] testShouldFailRevertCountSpecific() ([GAS])
 Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
 ...
 "#,

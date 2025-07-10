@@ -1,11 +1,13 @@
 //! Cheatcode EVM inspector.
 
 use crate::{
+    CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result,
+    Vm::{self, AccountAccess},
     evm::{
+        DealRecord, GasRecord, RecordAccess,
         mapping::{self, MappingSlots},
         mock::{MockCallDataContext, MockCallReturnData},
         prank::Prank,
-        DealRecord, GasRecord, RecordAccess,
     },
     inspector::utils::CommonCreateInput,
     script::{Broadcast, Wallets},
@@ -18,29 +20,26 @@ use crate::{
         revert_handlers,
     },
     utils::IgnoredTraces,
-    CheatsConfig, CheatsCtxt, DynCheatcode, Error, Result,
-    Vm::{self, AccountAccess},
 };
 use alloy_consensus::BlobTransactionSidecar;
 use alloy_evm::eth::EthEvmContext;
 use alloy_network::TransactionBuilder4844;
 use alloy_primitives::{
-    hex,
+    Address, B256, Bytes, Log, TxKind, U256, hex,
     map::{AddressHashMap, HashMap, HashSet},
-    Address, Bytes, Log, TxKind, B256, U256,
 };
 use alloy_rpc_types::{
-    request::{TransactionInput, TransactionRequest},
     AccessList,
+    request::{TransactionInput, TransactionRequest},
 };
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
-use foundry_common::{evm::Breakpoints, TransactionMaybeSigned, SELECTOR_LEN};
+use foundry_common::{SELECTOR_LEN, TransactionMaybeSigned, evm::Breakpoints};
 use foundry_evm_core::{
+    InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
     backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
-    evm::{new_evm_with_existing_context, FoundryEvm},
-    InspectorExt,
+    evm::{FoundryEvm, new_evm_with_existing_context},
 };
 use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
 use foundry_wallets::multi_wallet::MultiWallet;
@@ -48,17 +47,17 @@ use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
 use revm::{
+    Inspector, Journal,
     bytecode::opcode as op,
-    context::{result::EVMError, BlockEnv, JournalTr, LocalContext, TransactionType},
-    context_interface::{transaction::SignedAuthorization, CreateScheme},
+    context::{BlockEnv, JournalTr, LocalContext, TransactionType, result::EVMError},
+    context_interface::{CreateScheme, transaction::SignedAuthorization},
     handler::FrameResult,
     interpreter::{
-        interpreter_types::{Jumps, MemoryTr},
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas, Host,
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
+        interpreter_types::{Jumps, MemoryTr},
     },
     state::EvmStorageSlot,
-    Inspector, Journal,
 };
 use serde_json::Value;
 use std::{
@@ -612,8 +611,8 @@ impl Cheatcodes {
     /// There may be cheatcodes in the constructor of the new contract, in order to allow them
     /// automatically we need to determine the new address.
     fn allow_cheatcodes_on_create(&self, ecx: Ecx, caller: Address, created_address: Address) {
-        if ecx.journaled_state.depth <= 1 ||
-            ecx.journaled_state.database.has_cheatcode_access(&caller)
+        if ecx.journaled_state.depth <= 1
+            || ecx.journaled_state.database.has_cheatcode_access(&caller)
         {
             ecx.journaled_state.database.allow_cheatcode_access(created_address);
         }
@@ -685,7 +684,7 @@ impl Cheatcodes {
                             gas,
                         },
                         memory_offset: call.return_memory_offset.clone(),
-                    })
+                    });
                 }
             };
             let prev = account.info.nonce;
@@ -751,49 +750,44 @@ impl Cheatcodes {
                 value: call.transfer_value(),
             };
 
-            if let Some(return_data_queue) =
-                match mocks.get_mut(&ctx) {
-                    Some(queue) => Some(queue),
-                    None => mocks
-                        .iter_mut()
-                        .find(|(mock, _)| {
-                            call.input.bytes(ecx).get(..mock.calldata.len()) ==
-                                Some(&mock.calldata[..]) &&
-                                mock.value
-                                    .is_none_or(|value| Some(value) == call.transfer_value())
-                        })
-                        .map(|(_, v)| v),
-                }
-            {
-                if let Some(return_data) = if return_data_queue.len() == 1 {
-                    // If the mocked calls stack has a single element in it, don't empty it
-                    return_data_queue.front().map(|x| x.to_owned())
-                } else {
-                    // Else, we pop the front element
-                    return_data_queue.pop_front()
-                } {
-                    return Some(CallOutcome {
-                        result: InterpreterResult {
-                            result: return_data.ret_type,
-                            output: return_data.data,
-                            gas,
-                        },
-                        memory_offset: call.return_memory_offset.clone(),
-                    });
-                }
+            if let Some(return_data_queue) = match mocks.get_mut(&ctx) {
+                Some(queue) => Some(queue),
+                None => mocks
+                    .iter_mut()
+                    .find(|(mock, _)| {
+                        call.input.bytes(ecx).get(..mock.calldata.len()) == Some(&mock.calldata[..])
+                            && mock.value.is_none_or(|value| Some(value) == call.transfer_value())
+                    })
+                    .map(|(_, v)| v),
+            } && let Some(return_data) = if return_data_queue.len() == 1 {
+                // If the mocked calls stack has a single element in it, don't empty it
+                return_data_queue.front().map(|x| x.to_owned())
+            } else {
+                // Else, we pop the front element
+                return_data_queue.pop_front()
+            } {
+                return Some(CallOutcome {
+                    result: InterpreterResult {
+                        result: return_data.ret_type,
+                        output: return_data.data,
+                        gas,
+                    },
+                    memory_offset: call.return_memory_offset.clone(),
+                });
             }
         }
 
         // Apply our prank
         if let Some(prank) = &self.get_prank(curr_depth) {
             // Apply delegate call, `call.caller`` will not equal `prank.prank_caller`
-            if prank.delegate_call && curr_depth == prank.depth {
-                if let CallScheme::DelegateCall | CallScheme::ExtDelegateCall = call.scheme {
-                    call.target_address = prank.new_caller;
-                    call.caller = prank.new_caller;
-                    if let Some(new_origin) = prank.new_origin {
-                        ecx.tx.caller = new_origin;
-                    }
+            if prank.delegate_call
+                && curr_depth == prank.depth
+                && let CallScheme::DelegateCall | CallScheme::ExtDelegateCall = call.scheme
+            {
+                call.target_address = prank.new_caller;
+                call.caller = prank.new_caller;
+                if let Some(new_origin) = prank.new_origin {
+                    ecx.tx.caller = new_origin;
                 }
             }
 
@@ -813,10 +807,8 @@ impl Cheatcodes {
                 }
 
                 // If prank applied for first time, then update
-                if prank_applied {
-                    if let Some(applied_prank) = prank.first_time_applied() {
-                        self.pranks.insert(curr_depth, applied_prank);
-                    }
+                if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
+                    self.pranks.insert(curr_depth, applied_prank);
                 }
             }
         }
@@ -917,8 +909,7 @@ impl Cheatcodes {
                         debug!(target: "cheatcodes", address=%broadcast.new_origin, nonce=prev+1, prev, "incremented nonce");
                     }
                 } else if broadcast.single_call {
-                    let msg =
-                    "`staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead";
+                    let msg = "`staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead";
                     return Some(CallOutcome {
                         result: InterpreterResult {
                             result: InstructionResult::Revert,
@@ -1030,8 +1021,8 @@ impl Cheatcodes {
     ) -> bool {
         match &self.arbitrary_storage {
             Some(storage) => {
-                storage.overwrites.contains(address) &&
-                    storage
+                storage.overwrites.contains(address)
+                    && storage
                         .values
                         .get(address)
                         .and_then(|arbitrary_values| arbitrary_values.get(&storage_slot))
@@ -1152,8 +1143,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
     }
 
     fn call_end(&mut self, ecx: Ecx, call: &CallInputs, outcome: &mut CallOutcome) {
-        let cheatcode_call = call.target_address == CHEATCODE_ADDRESS ||
-            call.target_address == HARDHAT_CONSOLE_ADDRESS;
+        let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
+            || call.target_address == HARDHAT_CONSOLE_ADDRESS;
 
         // Clean up pranks/broadcasts if it's not a cheatcode call end. We shouldn't do
         // it for cheatcode calls because they are not applied for cheatcodes in the `call` hook.
@@ -1161,26 +1152,26 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         if !cheatcode_call {
             // Clean up pranks
             let curr_depth = ecx.journaled_state.depth();
-            if let Some(prank) = &self.get_prank(curr_depth) {
-                if curr_depth == prank.depth {
-                    ecx.tx.caller = prank.prank_origin;
+            if let Some(prank) = &self.get_prank(curr_depth)
+                && curr_depth == prank.depth
+            {
+                ecx.tx.caller = prank.prank_origin;
 
-                    // Clean single-call prank once we have returned to the original depth
-                    if prank.single_call {
-                        self.pranks.remove(&curr_depth);
-                    }
+                // Clean single-call prank once we have returned to the original depth
+                if prank.single_call {
+                    self.pranks.remove(&curr_depth);
                 }
             }
 
             // Clean up broadcast
-            if let Some(broadcast) = &self.broadcast {
-                if curr_depth == broadcast.depth {
-                    ecx.tx.caller = broadcast.original_origin;
+            if let Some(broadcast) = &self.broadcast
+                && curr_depth == broadcast.depth
+            {
+                ecx.tx.caller = broadcast.original_origin;
 
-                    // Clean single-call broadcast once we have returned to the original depth
-                    if broadcast.single_call {
-                        let _ = self.broadcast.take();
-                    }
+                // Clean single-call broadcast once we have returned to the original depth
+                if broadcast.single_call {
+                    let _ = self.broadcast.take();
                 }
             }
         }
@@ -1218,7 +1209,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                             outcome.result.result = InstructionResult::Revert;
                             outcome.result.output = error.abi_encode().into();
                         }
-                    }
+                    };
                 } else {
                     // Call didn't revert, reset `assume_no_revert` state.
                     self.assume_no_revert = None;
@@ -1234,8 +1225,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                 // Record current reverter address if expect revert is set with expected reverter
                 // address and no actual reverter was set yet or if we're expecting more than one
                 // revert.
-                if expected_revert.reverter.is_some() &&
-                    (expected_revert.reverted_by.is_none() || expected_revert.count > 1)
+                if expected_revert.reverter.is_some()
+                    && (expected_revert.reverted_by.is_none() || expected_revert.count > 1)
                 {
                     expected_revert.reverted_by = Some(call.target_address);
                 }
@@ -1310,41 +1301,41 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         // previous call depth's recorded accesses, if any
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // The root call cannot be recorded.
-            if ecx.journaled_state.depth() > 0 {
-                if let Some(last_recorded_depth) = &mut recorded_account_diffs_stack.pop() {
-                    // Update the reverted status of all deeper calls if this call reverted, in
-                    // accordance with EVM behavior
-                    if outcome.result.is_revert() {
-                        last_recorded_depth.iter_mut().for_each(|element| {
-                            element.reverted = true;
-                            element
-                                .storageAccesses
-                                .iter_mut()
-                                .for_each(|storage_access| storage_access.reverted = true);
-                        })
-                    }
+            if ecx.journaled_state.depth() > 0
+                && let Some(last_recorded_depth) = &mut recorded_account_diffs_stack.pop()
+            {
+                // Update the reverted status of all deeper calls if this call reverted, in
+                // accordance with EVM behavior
+                if outcome.result.is_revert() {
+                    last_recorded_depth.iter_mut().for_each(|element| {
+                        element.reverted = true;
+                        element
+                            .storageAccesses
+                            .iter_mut()
+                            .for_each(|storage_access| storage_access.reverted = true);
+                    })
+                }
 
-                    if let Some(call_access) = last_recorded_depth.first_mut() {
-                        // Assert that we're at the correct depth before recording post-call state
-                        // changes. Depending on the depth the cheat was
-                        // called at, there may not be any pending
-                        // calls to update if execution has percolated up to a higher depth.
-                        let curr_depth = ecx.journaled_state.depth();
-                        if call_access.depth == curr_depth as u64 {
-                            if let Ok(acc) = ecx.journaled_state.load_account(call.target_address) {
-                                debug_assert!(access_is_call(call_access.kind));
-                                call_access.newBalance = acc.info.balance;
-                            }
-                        }
-                        // Merge the last depth's AccountAccesses into the AccountAccesses at the
-                        // current depth, or push them back onto the pending
-                        // vector if higher depths were not recorded. This
-                        // preserves ordering of accesses.
-                        if let Some(last) = recorded_account_diffs_stack.last_mut() {
-                            last.append(last_recorded_depth);
-                        } else {
-                            recorded_account_diffs_stack.push(last_recorded_depth.clone());
-                        }
+                if let Some(call_access) = last_recorded_depth.first_mut() {
+                    // Assert that we're at the correct depth before recording post-call state
+                    // changes. Depending on the depth the cheat was
+                    // called at, there may not be any pending
+                    // calls to update if execution has percolated up to a higher depth.
+                    let curr_depth = ecx.journaled_state.depth();
+                    if call_access.depth == curr_depth as u64
+                        && let Ok(acc) = ecx.journaled_state.load_account(call.target_address)
+                    {
+                        debug_assert!(access_is_call(call_access.kind));
+                        call_access.newBalance = acc.info.balance;
+                    }
+                    // Merge the last depth's AccountAccesses into the AccountAccesses at the
+                    // current depth, or push them back onto the pending
+                    // vector if higher depths were not recorded. This
+                    // preserves ordering of accesses.
+                    if let Some(last) = recorded_account_diffs_stack.last_mut() {
+                        last.append(last_recorded_depth);
+                    } else {
+                        recorded_account_diffs_stack.push(last_recorded_depth.clone());
                     }
                 }
             }
@@ -1390,11 +1381,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                         },
                     };
 
-                    if count != expected.count {
-                        Some((expected, count))
-                    } else {
-                        None
-                    }
+                    if count != expected.count { Some((expected, count)) } else { None }
                 })
                 .collect::<Vec<_>>();
 
@@ -1433,11 +1420,11 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
         // if there's a revert and a previous call was diagnosed as fork related revert then we can
         // return a better error here
-        if outcome.result.is_revert() {
-            if let Some(err) = diag {
-                outcome.result.output = Error::encode(err.to_error_msg(&self.labels));
-                return;
-            }
+        if outcome.result.is_revert()
+            && let Some(err) = diag
+        {
+            outcome.result.output = Error::encode(err.to_error_msg(&self.labels));
+            return;
         }
 
         // try to diagnose reverts in multi-fork mode where a call is made to an address that does
@@ -1445,9 +1432,9 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         if let TxKind::Call(test_contract) = ecx.tx.kind {
             // if a call to a different contract than the original test contract returned with
             // `Stop` we check if the contract actually exists on the active fork
-            if ecx.journaled_state.db().is_forked_mode() &&
-                outcome.result.result == InstructionResult::Stop &&
-                call.target_address != test_contract
+            if ecx.journaled_state.db().is_forked_mode()
+                && outcome.result.result == InstructionResult::Stop
+                && call.target_address != test_contract
             {
                 let journaled_state = ecx.journaled_state.clone();
                 self.fork_revert_diagnostic =
@@ -1571,28 +1558,27 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         let curr_depth = ecx.journaled_state.depth();
 
         // Apply our prank
-        if let Some(prank) = &self.get_prank(curr_depth) {
-            if curr_depth >= prank.depth && input.caller() == prank.prank_caller {
-                let mut prank_applied = false;
+        if let Some(prank) = &self.get_prank(curr_depth)
+            && curr_depth >= prank.depth
+            && input.caller() == prank.prank_caller
+        {
+            let mut prank_applied = false;
 
-                // At the target depth we set `msg.sender`
-                if curr_depth == prank.depth {
-                    input.set_caller(prank.new_caller);
-                    prank_applied = true;
-                }
+            // At the target depth we set `msg.sender`
+            if curr_depth == prank.depth {
+                input.set_caller(prank.new_caller);
+                prank_applied = true;
+            }
 
-                // At the target depth, or deeper, we set `tx.origin`
-                if let Some(new_origin) = prank.new_origin {
-                    ecx.tx.caller = new_origin;
-                    prank_applied = true;
-                }
+            // At the target depth, or deeper, we set `tx.origin`
+            if let Some(new_origin) = prank.new_origin {
+                ecx.tx.caller = new_origin;
+                prank_applied = true;
+            }
 
-                // If prank applied for first time, then update
-                if prank_applied {
-                    if let Some(applied_prank) = prank.first_time_applied() {
-                        self.pranks.insert(curr_depth, applied_prank);
-                    }
-                }
+            // If prank applied for first time, then update
+            if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
+                self.pranks.insert(curr_depth, applied_prank);
             }
         }
 
@@ -1600,42 +1586,43 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         self.apply_accesslist(ecx);
 
         // Apply our broadcast
-        if let Some(broadcast) = &self.broadcast {
-            if curr_depth >= broadcast.depth && input.caller() == broadcast.original_caller {
-                if let Err(err) = ecx.journaled_state.load_account(broadcast.new_origin) {
-                    return Some(CreateOutcome {
-                        result: InterpreterResult {
-                            result: InstructionResult::Revert,
-                            output: Error::encode(err),
-                            gas,
-                        },
-                        address: None,
-                    });
-                }
+        if let Some(broadcast) = &self.broadcast
+            && curr_depth >= broadcast.depth
+            && input.caller() == broadcast.original_caller
+        {
+            if let Err(err) = ecx.journaled_state.load_account(broadcast.new_origin) {
+                return Some(CreateOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: Error::encode(err),
+                        gas,
+                    },
+                    address: None,
+                });
+            }
 
-                ecx.tx.caller = broadcast.new_origin;
+            ecx.tx.caller = broadcast.new_origin;
 
-                if curr_depth == broadcast.depth {
-                    input.set_caller(broadcast.new_origin);
-                    let is_fixed_gas_limit = check_if_fixed_gas_limit(&ecx, input.gas_limit());
+            if curr_depth == broadcast.depth {
+                input.set_caller(broadcast.new_origin);
+                let is_fixed_gas_limit = check_if_fixed_gas_limit(&ecx, input.gas_limit());
 
-                    let account = &ecx.journaled_state.inner.state()[&broadcast.new_origin];
-                    self.broadcastable_transactions.push_back(BroadcastableTransaction {
-                        rpc: ecx.journaled_state.database.active_fork_url(),
-                        transaction: TransactionRequest {
-                            from: Some(broadcast.new_origin),
-                            to: None,
-                            value: Some(input.value()),
-                            input: TransactionInput::new(input.init_code()),
-                            nonce: Some(account.info.nonce),
-                            gas: if is_fixed_gas_limit { Some(input.gas_limit()) } else { None },
-                            ..Default::default()
-                        }
-                        .into(),
-                    });
+                let account = &ecx.journaled_state.inner.state()[&broadcast.new_origin];
+                self.broadcastable_transactions.push_back(BroadcastableTransaction {
+                    rpc: ecx.journaled_state.database.active_fork_url(),
+                    transaction: TransactionRequest {
+                        from: Some(broadcast.new_origin),
+                        to: None,
+                        value: Some(input.value()),
+                        input: TransactionInput::new(input.init_code()),
+                        nonce: Some(account.info.nonce),
+                        gas: if is_fixed_gas_limit { Some(input.gas_limit()) } else { None },
+                        ..Default::default()
+                    }
+                    .into(),
+                });
 
-                    input.log_debug(self, &input.scheme().unwrap_or(CreateScheme::Create));
-                }
+                input.log_debug(self, &input.scheme().unwrap_or(CreateScheme::Create));
             }
         }
 
@@ -1672,133 +1659,126 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         let curr_depth = ecx.journaled_state.depth();
 
         // Clean up pranks
-        if let Some(prank) = &self.get_prank(curr_depth) {
-            if curr_depth == prank.depth {
-                ecx.tx.caller = prank.prank_origin;
+        if let Some(prank) = &self.get_prank(curr_depth)
+            && curr_depth == prank.depth
+        {
+            ecx.tx.caller = prank.prank_origin;
 
-                // Clean single-call prank once we have returned to the original depth
-                if prank.single_call {
-                    std::mem::take(&mut self.pranks);
-                }
+            // Clean single-call prank once we have returned to the original depth
+            if prank.single_call {
+                std::mem::take(&mut self.pranks);
             }
         }
 
         // Clean up broadcasts
-        if let Some(broadcast) = &self.broadcast {
-            if curr_depth == broadcast.depth {
-                ecx.tx.caller = broadcast.original_origin;
+        if let Some(broadcast) = &self.broadcast
+            && curr_depth == broadcast.depth
+        {
+            ecx.tx.caller = broadcast.original_origin;
 
-                // Clean single-call broadcast once we have returned to the original depth
-                if broadcast.single_call {
-                    std::mem::take(&mut self.broadcast);
-                }
+            // Clean single-call broadcast once we have returned to the original depth
+            if broadcast.single_call {
+                std::mem::take(&mut self.broadcast);
             }
         }
 
         // Handle expected reverts
-        if let Some(expected_revert) = &self.expected_revert {
-            if curr_depth <= expected_revert.depth &&
-                matches!(expected_revert.kind, ExpectedRevertKind::Default)
-            {
-                let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                return match revert_handlers::handle_expect_revert(
-                    false,
-                    true,
-                    self.config.internal_expect_revert,
-                    &expected_revert,
-                    outcome.result.result,
-                    outcome.result.output.clone(),
-                    &self.config.available_artifacts,
-                ) {
-                    Ok((address, retdata)) => {
-                        expected_revert.actual_count += 1;
-                        if expected_revert.actual_count < expected_revert.count {
-                            self.expected_revert = Some(expected_revert.clone());
-                        }
+        if let Some(expected_revert) = &self.expected_revert
+            && curr_depth <= expected_revert.depth
+            && matches!(expected_revert.kind, ExpectedRevertKind::Default)
+        {
+            let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+            return match revert_handlers::handle_expect_revert(
+                false,
+                true,
+                self.config.internal_expect_revert,
+                &expected_revert,
+                outcome.result.result,
+                outcome.result.output.clone(),
+                &self.config.available_artifacts,
+            ) {
+                Ok((address, retdata)) => {
+                    expected_revert.actual_count += 1;
+                    if expected_revert.actual_count < expected_revert.count {
+                        self.expected_revert = Some(expected_revert.clone());
+                    }
 
-                        outcome.result.result = InstructionResult::Return;
-                        outcome.result.output = retdata;
-                        outcome.address = address;
-                    }
-                    Err(err) => {
-                        outcome.result.result = InstructionResult::Revert;
-                        outcome.result.output = err.abi_encode().into();
-                    }
-                };
-            }
+                    outcome.result.result = InstructionResult::Return;
+                    outcome.result.output = retdata;
+                    outcome.address = address;
+                }
+                Err(err) => {
+                    outcome.result.result = InstructionResult::Revert;
+                    outcome.result.output = err.abi_encode().into();
+                }
+            };
         }
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
         // previous call depth's recorded accesses, if any
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // The root call cannot be recorded.
-            if curr_depth > 0 {
-                if let Some(last_depth) = &mut recorded_account_diffs_stack.pop() {
-                    // Update the reverted status of all deeper calls if this call reverted, in
-                    // accordance with EVM behavior
-                    if outcome.result.is_revert() {
-                        last_depth.iter_mut().for_each(|element| {
-                            element.reverted = true;
-                            element
-                                .storageAccesses
-                                .iter_mut()
-                                .for_each(|storage_access| storage_access.reverted = true);
-                        })
-                    }
+            if curr_depth > 0
+                && let Some(last_depth) = &mut recorded_account_diffs_stack.pop()
+            {
+                // Update the reverted status of all deeper calls if this call reverted, in
+                // accordance with EVM behavior
+                if outcome.result.is_revert() {
+                    last_depth.iter_mut().for_each(|element| {
+                        element.reverted = true;
+                        element
+                            .storageAccesses
+                            .iter_mut()
+                            .for_each(|storage_access| storage_access.reverted = true);
+                    })
+                }
 
-                    if let Some(create_access) = last_depth.first_mut() {
-                        // Assert that we're at the correct depth before recording post-create state
-                        // changes. Depending on what depth the cheat was called at, there
-                        // may not be any pending calls to update if execution has
-                        // percolated up to a higher depth.
-                        let depth = ecx.journaled_state.depth();
-                        if create_access.depth == depth as u64 {
-                            debug_assert_eq!(
-                                create_access.kind as u8,
-                                crate::Vm::AccountAccessKind::Create as u8
-                            );
-                            if let Some(address) = outcome.address {
-                                if let Ok(created_acc) = ecx.journaled_state.load_account(address) {
-                                    create_access.newBalance = created_acc.info.balance;
-                                    create_access.deployedCode = created_acc
-                                        .info
-                                        .code
-                                        .clone()
-                                        .unwrap_or_default()
-                                        .original_bytes();
-                                }
-                            }
+                if let Some(create_access) = last_depth.first_mut() {
+                    // Assert that we're at the correct depth before recording post-create state
+                    // changes. Depending on what depth the cheat was called at, there
+                    // may not be any pending calls to update if execution has
+                    // percolated up to a higher depth.
+                    let depth = ecx.journaled_state.depth();
+                    if create_access.depth == depth as u64 {
+                        debug_assert_eq!(
+                            create_access.kind as u8,
+                            crate::Vm::AccountAccessKind::Create as u8
+                        );
+                        if let Some(address) = outcome.address
+                            && let Ok(created_acc) = ecx.journaled_state.load_account(address)
+                        {
+                            create_access.newBalance = created_acc.info.balance;
+                            create_access.deployedCode =
+                                created_acc.info.code.clone().unwrap_or_default().original_bytes();
                         }
-                        // Merge the last depth's AccountAccesses into the AccountAccesses at the
-                        // current depth, or push them back onto the pending
-                        // vector if higher depths were not recorded. This
-                        // preserves ordering of accesses.
-                        if let Some(last) = recorded_account_diffs_stack.last_mut() {
-                            last.append(last_depth);
-                        } else {
-                            recorded_account_diffs_stack.push(last_depth.clone());
-                        }
+                    }
+                    // Merge the last depth's AccountAccesses into the AccountAccesses at the
+                    // current depth, or push them back onto the pending
+                    // vector if higher depths were not recorded. This
+                    // preserves ordering of accesses.
+                    if let Some(last) = recorded_account_diffs_stack.last_mut() {
+                        last.append(last_depth);
+                    } else {
+                        recorded_account_diffs_stack.push(last_depth.clone());
                     }
                 }
             }
         }
 
         // Match the create against expected_creates
-        if !self.expected_creates.is_empty() {
-            if let (Some(address), Some(call)) = (outcome.address, call) {
-                if let Ok(created_acc) = ecx.journaled_state.load_account(address) {
-                    let bytecode =
-                        created_acc.info.code.clone().unwrap_or_default().original_bytes();
-                    if let Some((index, _)) =
-                        self.expected_creates.iter().find_position(|expected_create| {
-                            expected_create.deployer == call.caller &&
-                                expected_create.create_scheme.eq(call.scheme.into()) &&
-                                expected_create.bytecode == bytecode
-                        })
-                    {
-                        self.expected_creates.swap_remove(index);
-                    }
-                }
+        if !self.expected_creates.is_empty()
+            && let (Some(address), Some(call)) = (outcome.address, call)
+            && let Ok(created_acc) = ecx.journaled_state.load_account(address)
+        {
+            let bytecode = created_acc.info.code.clone().unwrap_or_default().original_bytes();
+            if let Some((index, _)) =
+                self.expected_creates.iter().find_position(|expected_create| {
+                    expected_create.deployer == call.caller
+                        && expected_create.create_scheme.eq(call.scheme.into())
+                        && expected_create.bytecode == bytecode
+                })
+            {
+                self.expected_creates.swap_remove(index);
             }
         }
     }
@@ -1816,8 +1796,8 @@ impl InspectorExt for Cheatcodes {
                 1
             };
 
-            depth == target_depth &&
-                (self.broadcast.is_some() || self.config.always_use_create_2_factory)
+            depth == target_depth
+                && (self.broadcast.is_some() || self.config.always_use_create_2_factory)
         } else {
             false
         }
@@ -1889,8 +1869,8 @@ impl Cheatcodes {
             // Reset gas if spent is less than refunded.
             // This can happen if gas was paused / resumed or reset.
             // https://github.com/foundry-rs/foundry/issues/4370
-            if interpreter.control.gas.spent() <
-                u64::try_from(interpreter.control.gas.refunded()).unwrap_or_default()
+            if interpreter.control.gas.spent()
+                < u64::try_from(interpreter.control.gas.refunded()).unwrap_or_default()
             {
                 interpreter.control.gas = Gas::new(interpreter.control.gas.limit());
             }
@@ -1909,15 +1889,15 @@ impl Cheatcodes {
         let (key, target_address) = if interpreter.bytecode.opcode() == op::SLOAD {
             (try_or_return!(interpreter.stack.peek(0)), interpreter.input.target_address)
         } else {
-            return
+            return;
         };
 
         let Some(value) = ecx.sload(target_address, key) else {
             return;
         };
 
-        if (value.is_cold && value.data.is_zero()) ||
-            self.should_overwrite_arbitrary_storage(&target_address, key)
+        if (value.is_cold && value.data.is_zero())
+            || self.should_overwrite_arbitrary_storage(&target_address, key)
         {
             if self.has_arbitrary_storage(&target_address) {
                 let arbitrary_value = self.rng().random();
@@ -2014,10 +1994,10 @@ impl Cheatcodes {
                 // it's not set (zero value)
                 let mut present_value = U256::ZERO;
                 // Try to load the account and the slot's present value
-                if ecx.journaled_state.load_account(address).is_ok() {
-                    if let Some(previous) = ecx.sload(address, key) {
-                        present_value = previous.data;
-                    }
+                if ecx.journaled_state.load_account(address).is_ok()
+                    && let Some(previous) = ecx.sload(address, key)
+                {
+                    present_value = previous.data;
                 }
                 let access = crate::Vm::StorageAccess {
                     account: interpreter.input.target_address,
@@ -2043,10 +2023,10 @@ impl Cheatcodes {
                 // Try to load the account and the slot's previous value, otherwise, assume it's
                 // not set (zero value)
                 let mut previous_value = U256::ZERO;
-                if ecx.journaled_state.load_account(address).is_ok() {
-                    if let Some(previous) = ecx.sload(address, key) {
-                        previous_value = previous.data;
-                    }
+                if ecx.journaled_state.load_account(address).is_ok()
+                    && let Some(previous) = ecx.sload(address, key)
+                {
+                    previous_value = previous.data;
                 }
 
                 let access = crate::Vm::StorageAccess {
@@ -2340,10 +2320,10 @@ fn check_if_fixed_gas_limit(ecx: &Ecx, call_gas_limit: u64) -> bool {
 fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
     matches!(
         kind,
-        crate::Vm::AccountAccessKind::Call |
-            crate::Vm::AccountAccessKind::StaticCall |
-            crate::Vm::AccountAccessKind::CallCode |
-            crate::Vm::AccountAccessKind::DelegateCall
+        crate::Vm::AccountAccessKind::Call
+            | crate::Vm::AccountAccessKind::StaticCall
+            | crate::Vm::AccountAccessKind::CallCode
+            | crate::Vm::AccountAccessKind::DelegateCall
     )
 }
 
@@ -2412,15 +2392,15 @@ fn apply_dispatch(
     let mut result = cheat.dyn_apply(ccx, executor);
 
     // Format the error message to include the cheatcode name.
-    if let Err(e) = &mut result {
-        if e.is_str() {
-            let name = cheat.name();
-            // Skip showing the cheatcode name for:
-            // - assertions: too verbose, and can already be inferred from the error message
-            // - `rpcUrl`: forge-std relies on it in `getChainWithUpdatedRpcUrl`
-            if !name.contains("assert") && name != "rpcUrl" {
-                *e = fmt_err!("vm.{name}: {e}");
-            }
+    if let Err(e) = &mut result
+        && e.is_str()
+    {
+        let name = cheat.name();
+        // Skip showing the cheatcode name for:
+        // - assertions: too verbose, and can already be inferred from the error message
+        // - `rpcUrl`: forge-std relies on it in `getChainWithUpdatedRpcUrl`
+        if !name.contains("assert") && name != "rpcUrl" {
+            *e = fmt_err!("vm.{name}: {e}");
         }
     }
 
