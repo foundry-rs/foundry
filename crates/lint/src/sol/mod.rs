@@ -215,8 +215,10 @@ impl Linter for SolidityLinter {
     fn early_lint(&self, input: &[PathBuf], sess: &Session) {
         sess.enter_parallel(|| {
             input.into_par_iter().for_each(|path| {
-                let arena = ast::Arena::new();
-                _ = self.process_source_ast(sess, arena, path);
+                if input.contains(path) {
+                    let arena = ast::Arena::new();
+                    _ = self.process_source_ast(sess, arena, path);
+                }
             });
         });
     }
