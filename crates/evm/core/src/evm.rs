@@ -266,6 +266,8 @@ impl<I: InspectorExt> Default for FoundryHandler<'_, I> {
     }
 }
 
+// Blanket Handler implementation for FoundryHandler, needed for implementing the InspectorHandler
+// trait.
 impl<'db, I: InspectorExt> Handler for FoundryHandler<'db, I> {
     type Evm = RevmEvm<
         EthEvmContext<&'db mut dyn DatabaseExt>,
@@ -276,66 +278,93 @@ impl<'db, I: InspectorExt> Handler for FoundryHandler<'db, I> {
     >;
     type Error = EVMError<DatabaseError>;
     type HaltReason = HaltReason;
+}
 
-    fn run_exec_loop(
+impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
+    /// Handles CREATE2 frame initialization, potentially transforming it to use the CREATE2
+    /// factory.
+    fn handle_create_frame(
         &mut self,
-        evm: &mut Self::Evm,
-        first_frame_input: <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameInit,
-    ) -> Result<FrameResult, Self::Error> {
-        let res = evm.frame_init(first_frame_input)?;
+        evm: &mut <Self as Handler>::Evm,
+        init: &mut FrameInit,
+    ) -> Result<Option<FrameResult>, <Self as Handler>::Error> {
+        if let FrameInput::Create(inputs) = &init.frame_input
+            && let CreateScheme::Create2 { salt } = inputs.scheme
+        {
+            let (ctx, inspector) = evm.ctx_inspector();
 
-        if let ItemOrResult::Result(frame_result) = res {
-            return Ok(frame_result);
-        }
+            if inspector.should_use_create2_factory(ctx, inputs) {
+                let gas_limit = inputs.gas_limit;
 
-        loop {
-            let call_or_result = evm.frame_run()?;
+                // Get CREATE2 deployer.
+                let create2_deployer = evm.inspector().create2_deployer();
 
-            let result = match call_or_result {
-                ItemOrResult::Item(init) => {
-                    match evm.frame_init(init)? {
-                        ItemOrResult::Item(_) => {
-                            continue;
-                        }
-                        // Do not pop the frame since no new frame was created
-                        ItemOrResult::Result(result) => result,
-                    }
+                // Generate call inputs for CREATE2 factory.
+                let call_inputs = get_create2_factory_call_inputs(salt, inputs, create2_deployer);
+
+                // Push data about current override to the stack.
+                self.create2_overrides.push((evm.journal().depth(), call_inputs.clone()));
+
+                // Sanity check that CREATE2 deployer exists.
+                let code_hash = evm.journal_mut().load_account(create2_deployer)?.info.code_hash;
+                if code_hash == KECCAK_EMPTY {
+                    return Ok(Some(FrameResult::Call(CallOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Revert,
+                            output: Bytes::copy_from_slice(
+                                format!("missing CREATE2 deployer: {create2_deployer}").as_bytes(),
+                            ),
+                            gas: Gas::new(gas_limit),
+                        },
+                        memory_offset: 0..0,
+                    })));
+                } else if code_hash != DEFAULT_CREATE2_DEPLOYER_CODEHASH {
+                    return Ok(Some(FrameResult::Call(CallOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Revert,
+                            output: "invalid CREATE2 deployer bytecode".into(),
+                            gas: Gas::new(gas_limit),
+                        },
+                        memory_offset: 0..0,
+                    })));
                 }
-                ItemOrResult::Result(result) => result,
-            };
 
-            let result = if self
-                .create2_overrides
-                .last()
-                .is_some_and(|(depth, _)| *depth == evm.journal().depth())
-            {
-                let (_, call_inputs) = self.create2_overrides.pop().unwrap();
-                let FrameResult::Call(mut call) = result else {
-                    unreachable!("create2 override should be a call frame");
-                };
-
-                // Decode address from output.
-                let address = match call.instruction_result() {
-                    return_ok!() => Address::try_from(call.output().as_ref())
-                        .map_err(|_| {
-                            call.result = InterpreterResult {
-                                result: InstructionResult::Revert,
-                                output: "invalid CREATE2 factory output".into(),
-                                gas: Gas::new(call_inputs.gas_limit),
-                            };
-                        })
-                        .ok(),
-                    _ => None,
-                };
-
-                FrameResult::Create(CreateOutcome { result: call.result, address })
-            } else {
-                result
-            };
-
-            if let Some(result) = evm.frame_return_result(result)? {
-                return Ok(result);
+                // Rewrite the frame init
+                init.frame_input = FrameInput::Call(Box::new(call_inputs));
             }
+        }
+        Ok(None)
+    }
+
+    /// Transforms CREATE2 factory call results back into CREATE outcomes.
+    fn handle_create2_override(
+        &mut self,
+        evm: &mut <Self as Handler>::Evm,
+        result: FrameResult,
+    ) -> FrameResult {
+        if self.create2_overrides.last().is_some_and(|(depth, _)| *depth == evm.journal().depth()) {
+            let (_, call_inputs) = self.create2_overrides.pop().unwrap();
+            let FrameResult::Call(mut call) = result else {
+                unreachable!("create2 override should be a call frame");
+            };
+
+            // Decode address from output.
+            let address = match call.instruction_result() {
+                return_ok!() => Address::try_from(call.output().as_ref())
+                    .map_err(|_| {
+                        call.result = InterpreterResult {
+                            result: InstructionResult::Revert,
+                            output: "invalid CREATE2 factory output".into(),
+                            gas: Gas::new(call_inputs.gas_limit),
+                        };
+                    })
+                    .ok(),
+                _ => None,
+            };
+
+            FrameResult::Create(CreateOutcome { result: call.result, address })
+        } else {
+            result
         }
     }
 }
@@ -359,55 +388,9 @@ impl<I: InspectorExt> InspectorHandler for FoundryHandler<'_, I> {
 
             let result = match call_or_result {
                 ItemOrResult::Item(mut init) => {
-                    // Correctly match on FrameInit::Create
-                    if let FrameInput::Create(inputs) = &init.frame_input
-                        && let CreateScheme::Create2 { salt } = inputs.scheme
-                    {
-                        let (ctx, inspector) = evm.ctx_inspector();
-
-                        if inspector.should_use_create2_factory(ctx, inputs) {
-                            let gas_limit = inputs.gas_limit;
-
-                            // Get CREATE2 deployer.
-                            let create2_deployer = evm.inspector().create2_deployer();
-
-                            // Generate call inputs for CREATE2 factory.
-                            let call_inputs =
-                                get_create2_factory_call_inputs(salt, inputs, create2_deployer);
-
-                            // Push data about current override to the stack.
-                            self.create2_overrides
-                                .push((evm.journal().depth(), call_inputs.clone()));
-
-                            // Sanity check that CREATE2 deployer exists.
-                            let code_hash =
-                                evm.journal_mut().load_account(create2_deployer)?.info.code_hash;
-                            if code_hash == KECCAK_EMPTY {
-                                return Ok(FrameResult::Call(CallOutcome {
-                                    result: InterpreterResult {
-                                        result: InstructionResult::Revert,
-                                        output: Bytes::copy_from_slice(
-                                            format!("missing CREATE2 deployer: {create2_deployer}")
-                                                .as_bytes(),
-                                        ),
-                                        gas: Gas::new(gas_limit),
-                                    },
-                                    memory_offset: 0..0,
-                                }));
-                            } else if code_hash != DEFAULT_CREATE2_DEPLOYER_CODEHASH {
-                                return Ok(FrameResult::Call(CallOutcome {
-                                    result: InterpreterResult {
-                                        result: InstructionResult::Revert,
-                                        output: "invalid CREATE2 deployer bytecode".into(),
-                                        gas: Gas::new(gas_limit),
-                                    },
-                                    memory_offset: 0..0,
-                                }));
-                            }
-
-                            // Rewrite the frame init
-                            init.frame_input = FrameInput::Call(Box::new(call_inputs));
-                        }
+                    // Handle CREATE/CREATE2 frame initialization
+                    if let Some(frame_result) = self.handle_create_frame(evm, &mut init)? {
+                        return Ok(frame_result);
                     }
 
                     match evm.inspect_frame_init(init)? {
@@ -419,34 +402,7 @@ impl<I: InspectorExt> InspectorHandler for FoundryHandler<'_, I> {
             };
 
             // Handle CREATE2 override transformation if needed
-            let result = if self
-                .create2_overrides
-                .last()
-                .is_some_and(|(depth, _)| *depth == evm.journal().depth())
-            {
-                let (_, call_inputs) = self.create2_overrides.pop().unwrap();
-                let FrameResult::Call(mut call) = result else {
-                    unreachable!("create2 override should be a call frame");
-                };
-
-                // Decode address from output.
-                let address = match call.instruction_result() {
-                    return_ok!() => Address::try_from(call.output().as_ref())
-                        .map_err(|_| {
-                            call.result = InterpreterResult {
-                                result: InstructionResult::Revert,
-                                output: "invalid CREATE2 factory output".into(),
-                                gas: Gas::new(call_inputs.gas_limit),
-                            };
-                        })
-                        .ok(),
-                    _ => None,
-                };
-
-                FrameResult::Create(CreateOutcome { result: call.result, address })
-            } else {
-                result
-            };
+            let result = self.handle_create2_override(evm, result);
 
             if let Some(result) = evm.frame_return_result(result)? {
                 return Ok(result);
