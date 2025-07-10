@@ -150,10 +150,12 @@ struct AsmContext {
 }
 
 impl AsmContext {
+    /// Returns the appropriate span for the lint based on the context.
     fn target_span(&self, stmt_span: Span, call_span: Span) -> Span {
         if self.assign.is_some() || self.is_return { stmt_span } else { call_span }
     }
 
+    /// Returns the variable name for assignment, defaulting to "res" if none.
     fn get_assign_var_name(&self) -> String {
         self.assign.map_or(String::from("res"), |ident| ident.to_string())
     }
@@ -270,6 +272,7 @@ fn get_abi_packed_args<'hir>(
     None
 }
 
+/// Returns the type of a variable or type conversion expression.
 fn get_var_type<'hir>(
     hir: &'hir hir::Hir<'hir>,
     expr: &'hir hir::Expr<'hir>,
@@ -288,6 +291,7 @@ fn get_var_type<'hir>(
     }
 }
 
+/// Returns the type and data location of a variable or type conversion expression.
 fn get_var_type_and_loc<'hir>(
     hir: &'hir hir::Hir<'hir>,
     expr: &'hir hir::Expr<'hir>,
@@ -307,6 +311,7 @@ fn get_var_type_and_loc<'hir>(
     }
 }
 
+/// Checks if all expressions in a slice satisfy the given type predicate.
 fn all_exprs_check(
     hir: &hir::Hir<'_>,
     exprs: &[hir::Expr<'_>],
@@ -315,6 +320,7 @@ fn all_exprs_check(
     exprs.iter().all(|expr| get_var_type(hir, expr).map(&check).unwrap_or(false))
 }
 
+/// Checks if a type is exactly 32 bytes (256 bits) in size.
 fn is_32byte_type(kind: &hir::TypeKind<'_>) -> bool {
     if let hir::TypeKind::Elementary(
         hir::ElementaryType::Int(size)
@@ -328,6 +334,7 @@ fn is_32byte_type(kind: &hir::TypeKind<'_>) -> bool {
     false
 }
 
+/// Checks if a type is a Solidity value type (passed by value, not reference).
 fn is_value_type(kind: &hir::TypeKind<'_>) -> bool {
     if let hir::TypeKind::Elementary(ty) = kind {
         return ty.is_value_type();
@@ -335,6 +342,7 @@ fn is_value_type(kind: &hir::TypeKind<'_>) -> bool {
     false
 }
 
+/// Removes outer parentheses from a string recursively.
 fn peel_parentheses(mut s: &str) -> &str {
     while let (Some(start), Some(end)) = (s.find('('), s.rfind(')')) {
         if end > start {
