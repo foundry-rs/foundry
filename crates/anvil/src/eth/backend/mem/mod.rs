@@ -47,7 +47,7 @@ use alloy_network::{
     EthereumWallet, UnknownTxEnvelope, UnknownTypedTransaction,
 };
 use alloy_primitives::{
-    Address, B256, Bytes, TxHash, TxKind, U64, U256, address, hex, keccak256, logs_bloom,
+    Address, B256, Bytes, ChainId, TxHash, TxKind, U64, U256, address, hex, keccak256, logs_bloom,
     map::HashMap, utils::Unit,
 };
 use alloy_rpc_types::{
@@ -1100,21 +1100,12 @@ impl Backend {
             // update next base fee
             self.fees.set_base_fee(next_block_base_fee);
 
-            let hardfork = EthereumHardfork::from_chain_and_timestamp(
-                Chain::from_id(self.env.read().evm_env.cfg_env.chain_id),
-                header.timestamp,
-            )
-            .unwrap_or_default();
-
-            let blob_base_fee_update_fraction = if hardfork >= EthereumHardfork::Prague {
-                BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
-            } else {
-                BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN
-            };
-
             self.fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
                 next_block_excess_blob_gas,
-                blob_base_fee_update_fraction,
+                get_blob_base_fee_update_fraction(
+                    self.env.read().evm_env.cfg_env.chain_id,
+                    header.timestamp,
+                ),
             ));
         }
 
@@ -1459,6 +1450,8 @@ impl Backend {
         // update next base fee
         self.fees.set_base_fee(next_block_base_fee);
 
+        // derive the blob base fee update fraction based on the spec set
+        // this prevents having to derive it again via a reverse lookup
         let blob_base_fee_update_fraction = if self.env.read().evm_env.spec_id() >= &SpecId::PRAGUE
         {
             BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
@@ -3105,7 +3098,20 @@ impl Backend {
     }
 }
 
-/// Get max nonce from transaction pool by address
+/// Derive the blob base fee update fraction based on the chain and timestamp by checking the
+/// hardfork.
+pub fn get_blob_base_fee_update_fraction(chain_id: ChainId, timestamp: u64) -> u64 {
+    let hardfork = EthereumHardfork::from_chain_and_timestamp(Chain::from_id(chain_id), timestamp)
+        .unwrap_or_default();
+
+    if hardfork >= EthereumHardfork::Prague {
+        BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
+    } else {
+        BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN
+    }
+}
+
+/// Get max nonce from transaction pool by address.
 fn get_pool_transactions_nonce(
     pool_transactions: &[Arc<PoolTransaction>],
     address: Address,

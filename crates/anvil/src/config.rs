@@ -6,7 +6,7 @@ use crate::{
             env::Env,
             fork::{ClientFork, ClientForkConfig},
             genesis::GenesisConfig,
-            mem::fork_db::ForkedDatabase,
+            mem::{fork_db::ForkedDatabase, get_blob_base_fee_update_fraction},
             time::duration_since_unix_epoch,
         },
         fees::{INITIAL_BASE_FEE, INITIAL_GAS_PRICE},
@@ -49,10 +49,7 @@ use rand_08::thread_rng;
 use revm::{
     context::{BlockEnv, CfgEnv, TxEnv},
     context_interface::block::BlobExcessGasAndPrice,
-    primitives::{
-        eip4844::{BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
-        hardfork::SpecId,
-    },
+    primitives::hardfork::SpecId,
 };
 use serde_json::{Value, json};
 use std::{
@@ -517,24 +514,18 @@ impl NodeConfig {
     }
 
     pub fn get_blob_excess_gas_and_price(&self) -> BlobExcessGasAndPrice {
-        let hardfork = EthereumHardfork::from_chain_and_timestamp(
-            Chain::from_id(self.chain_id.unwrap_or(Chain::mainnet().id())),
-            self.get_genesis_timestamp(),
-        )
-        .unwrap_or_default();
-
-        let blob_base_fee_update_fraction = if hardfork >= EthereumHardfork::Prague {
-            BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
-        } else {
-            BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN
-        };
-
         if let Some(value) = self.blob_excess_gas_and_price {
             value
         } else {
             let excess_blob_gas =
                 self.genesis.as_ref().and_then(|g| g.excess_blob_gas).unwrap_or(0);
-            BlobExcessGasAndPrice::new(excess_blob_gas, blob_base_fee_update_fraction)
+            BlobExcessGasAndPrice::new(
+                excess_blob_gas,
+                get_blob_base_fee_update_fraction(
+                    self.chain_id.unwrap_or(Chain::mainnet().id()),
+                    self.get_genesis_timestamp(),
+                ),
+            )
         }
     }
 
@@ -1282,21 +1273,12 @@ latest block number: {latest_block}"
             if let (Some(blob_excess_gas), Some(blob_gas_used)) =
                 (block.header.excess_blob_gas, block.header.blob_gas_used)
             {
-                let hardfork = EthereumHardfork::from_chain_and_timestamp(
-                    Chain::from_id(
-                        fork_chain_id
-                            .unwrap_or_else(|| U256::from(Chain::mainnet().id()))
-                            .saturating_to(),
-                    ),
+                let blob_base_fee_update_fraction = get_blob_base_fee_update_fraction(
+                    fork_chain_id
+                        .unwrap_or_else(|| U256::from(Chain::mainnet().id()))
+                        .saturating_to(),
                     block.header.timestamp,
-                )
-                .unwrap_or_default();
-
-                let blob_base_fee_update_fraction = if hardfork >= EthereumHardfork::Prague {
-                    BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
-                } else {
-                    BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN
-                };
+                );
 
                 env.evm_env.block_env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(
                     blob_excess_gas,
