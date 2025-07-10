@@ -1,6 +1,6 @@
 use crate::tx::{self, CastTxBuilder};
 use alloy_ens::NameOrAddress;
-use alloy_network::{eip2718::Encodable2718, EthereumWallet, TransactionBuilder};
+use alloy_network::{EthereumWallet, TransactionBuilder, eip2718::Encodable2718};
 use alloy_primitives::hex;
 use alloy_provider::Provider;
 use alloy_signer::Signer;
@@ -8,7 +8,7 @@ use clap::Parser;
 use eyre::{OptionExt, Result};
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
-    utils::{get_provider, LoadConfig},
+    utils::{LoadConfig, get_provider},
 };
 use std::{path::PathBuf, str::FromStr};
 

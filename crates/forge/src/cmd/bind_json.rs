@@ -2,15 +2,15 @@ use super::eip712::Resolver;
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::{
-    opts::{solar_pcx_from_solc_project, BuildOpts},
+    opts::{BuildOpts, solar_pcx_from_solc_project},
     utils::LoadConfig,
 };
-use foundry_common::{fs, TYPE_BINDING_PREFIX};
+use foundry_common::{TYPE_BINDING_PREFIX, fs};
 use foundry_compilers::{
+    CompilerInput, Graph, Project,
     artifacts::{Source, Sources},
     multi::{MultiCompilerLanguage, MultiCompilerParsedSource},
     solc::{SolcLanguage, SolcVersionedInput},
-    CompilerInput, Graph, Project,
 };
 use foundry_config::Config;
 use itertools::Itertools;
@@ -18,9 +18,9 @@ use path_slash::PathExt;
 use rayon::prelude::*;
 use semver::Version;
 use solar_parse::{
-    ast::{self, interface::source_map::FileName, visit::Visit, Arena, FunctionKind, Span, VarMut},
-    interface::Session,
     Parser as SolarParser,
+    ast::{self, Arena, FunctionKind, Span, VarMut, interface::source_map::FileName, visit::Visit},
+    interface::Session,
 };
 use solar_sema::thread_local::ThreadLocal;
 use std::{
@@ -433,15 +433,15 @@ impl<'ast> Visit<'ast> for PreprocessorVisitor {
         func: &'ast ast::ItemFunction<'ast>,
     ) -> ControlFlow<Self::BreakValue> {
         // Replace function bodies with a noop statement.
-        if let Some(block) = &func.body {
-            if !block.is_empty() {
-                let span = block.first().unwrap().span.to(block.last().unwrap().span);
-                let new_body = match func.kind {
-                    FunctionKind::Modifier => "_;",
-                    _ => "revert();",
-                };
-                self.updates.push((span, new_body));
-            }
+        if let Some(block) = &func.body
+            && !block.is_empty()
+        {
+            let span = block.first().unwrap().span.to(block.last().unwrap().span);
+            let new_body = match func.kind {
+                FunctionKind::Modifier => "_;",
+                _ => "revert();",
+            };
+            self.updates.push((span, new_body));
         }
 
         self.walk_item_function(func)
@@ -492,7 +492,7 @@ impl StructToWrite {
     }
 
     /// Path which can be used to reference this struct in input/output parameters. Either
-    /// StructName or ParantName.StructName
+    /// StructName or ParentName.StructName
     fn full_path(&self) -> String {
         if self.contract_name.is_some() {
             format!("{}.{}", self.struct_or_contract_name_with_alias(), self.name)

@@ -12,7 +12,6 @@ use regex::Regex;
 use serde::de::DeserializeOwned;
 use std::{
     ffi::OsStr,
-    future::Future,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
     str::FromStr,

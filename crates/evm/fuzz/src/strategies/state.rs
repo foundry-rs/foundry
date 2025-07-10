@@ -2,13 +2,13 @@ use crate::invariant::{BasicTxDetails, FuzzRunIdentifiedContracts};
 use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt, FunctionExt};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{
+    Address, B256, Bytes, Log, U256,
     map::{AddressIndexSet, B256IndexSet, HashMap},
-    Address, Bytes, Log, B256, U256,
 };
 use foundry_common::ignore_metadata_hash;
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::utils::StateChangeset;
-use parking_lot::{lock_api::RwLockReadGuard, RawRwLock, RwLock};
+use parking_lot::{RawRwLock, RwLock, lock_api::RwLockReadGuard};
 use revm::{
     bytecode::opcode,
     database::{CacheDB, DatabaseRef, DbAccount},
@@ -176,12 +176,12 @@ impl FuzzDictionary {
         result: &Bytes,
         run_depth: u32,
     ) {
-        if let Some(function) = function {
-            if !function.outputs.is_empty() {
-                // Decode result and collect samples to be used in subsequent fuzz runs.
-                if let Ok(decoded_result) = function.abi_decode_output(result) {
-                    self.insert_sample_values(decoded_result, run_depth);
-                }
+        if let Some(function) = function
+            && !function.outputs.is_empty()
+        {
+            // Decode result and collect samples to be used in subsequent fuzz runs.
+            if let Ok(decoded_result) = function.abi_decode_output(result) {
+                self.insert_sample_values(decoded_result, run_depth);
             }
         }
     }

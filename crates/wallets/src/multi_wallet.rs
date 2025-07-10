@@ -2,7 +2,7 @@ use crate::{
     utils,
     wallet_signer::{PendingSigner, WalletSigner},
 };
-use alloy_primitives::{map::AddressHashMap, Address};
+use alloy_primitives::{Address, map::AddressHashMap};
 use alloy_signer::Signer;
 use clap::Parser;
 use derive_builder::Builder;
@@ -89,7 +89,12 @@ macro_rules! create_hw_wallets {
 #[derive(Builder, Clone, Debug, Default, Serialize, Parser)]
 #[command(next_help_heading = "Wallet options", about = None, long_about = None)]
 pub struct MultiWalletOpts {
-    /// The sender accounts.
+    /// The sender accounts for transactions when using local signers (private keys, keystores,
+    /// hardware wallets, etc.).
+    ///
+    /// These addresses are derived from the provided private keys/signers and specify which
+    /// accounts to use for signing transactions locally. This is different from --unlocked
+    /// which uses eth_sendTransaction with pre-unlocked accounts on the RPC.
     #[arg(
         long,
         short = 'a',
@@ -455,11 +460,15 @@ mod tests {
             MultiWalletOpts::parse_from(["foundry-cli", "--keystores", "my/keystore/path"]);
         assert_eq!(args.keystore_paths, Some(vec!["my/keystore/path".to_string()]));
 
-        std::env::set_var("ETH_KEYSTORE", "MY_KEYSTORE");
+        unsafe {
+            std::env::set_var("ETH_KEYSTORE", "MY_KEYSTORE");
+        }
         let args: MultiWalletOpts = MultiWalletOpts::parse_from(["foundry-cli"]);
         assert_eq!(args.keystore_paths, Some(vec!["MY_KEYSTORE".to_string()]));
 
-        std::env::remove_var("ETH_KEYSTORE");
+        unsafe {
+            std::env::remove_var("ETH_KEYSTORE");
+        }
     }
 
     #[test]

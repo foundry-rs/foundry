@@ -1,10 +1,10 @@
 //! Contains various tests for `forge test`.
 
 use alloy_primitives::U256;
-use anvil::{spawn, NodeConfig};
+use anvil::{NodeConfig, spawn};
 use foundry_test_utils::{
     rpc, str,
-    util::{OutputExt, OTHER_SOLC_VERSION, SOLC_VERSION},
+    util::{OTHER_SOLC_VERSION, OutputExt, SOLC_VERSION},
 };
 use similar_asserts::assert_eq;
 use std::{path::PathBuf, str::FromStr};
@@ -2725,7 +2725,7 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
         contract GetBroadcastTest is DSTest {
             Vm constant vm = Vm(HEVM_ADDRESS);
 
-            function test_getLatestBroacast() external {
+            function test_getLatestBroadcast() external {
                 // Gets the latest create
                 Vm.BroadcastTxSummary memory broadcast = vm.getBroadcast(
                     "Counter",

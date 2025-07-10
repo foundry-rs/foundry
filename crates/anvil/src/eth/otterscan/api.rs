@@ -1,15 +1,16 @@
 use crate::eth::{
+    EthApi,
     error::{BlockchainError, Result},
     macros::node_info,
-    EthApi,
 };
 use alloy_consensus::Transaction as TransactionTrait;
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, BlockResponse,
     TransactionResponse,
 };
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types::{
+    Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
     trace::{
         otterscan::{
             BlockDetails, ContractCreator, InternalOperation, OtsBlock, OtsBlockTransactions,
@@ -17,7 +18,6 @@ use alloy_rpc_types::{
         },
         parity::{Action, CreateAction, CreateOutput, TraceOutput},
     },
-    Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
 };
 use futures::future::join_all;
 use itertools::Itertools;
@@ -84,10 +84,10 @@ impl EthApi {
     pub async fn ots_get_transaction_error(&self, hash: B256) -> Result<Bytes> {
         node_info!("ots_getTransactionError");
 
-        if let Some(receipt) = self.backend.mined_transaction_receipt(hash) {
-            if !receipt.inner.inner.as_receipt_with_bloom().receipt.status.coerce_status() {
-                return Ok(receipt.out.map(|b| b.0.into()).unwrap_or(Bytes::default()));
-            }
+        if let Some(receipt) = self.backend.mined_transaction_receipt(hash)
+            && !receipt.inner.inner.as_receipt_with_bloom().receipt.status.coerce_status()
+        {
+            return Ok(receipt.out.map(|b| b.0.into()).unwrap_or(Bytes::default()));
         }
 
         Ok(Bytes::default())
