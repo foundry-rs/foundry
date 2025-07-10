@@ -30,7 +30,7 @@ pub trait Linter: Send + Sync + Clone {
     type Lint: Lint;
 
     fn init(&self) -> Session;
-    fn early_lint(&self, input: &[PathBuf], sess: &Session);
+    fn early_lint<'sess>(&self, input: &[PathBuf], pcx: ParsingContext<'sess>);
     fn late_lint<'sess>(&self, input: &[PathBuf], pcx: ParsingContext<'sess>);
 }
 

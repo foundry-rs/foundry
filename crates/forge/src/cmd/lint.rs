@@ -112,11 +112,12 @@ impl LintArgs {
             .with_severity(if severity.is_empty() { None } else { Some(severity) });
 
         let sess = linter.init();
-        linter.early_lint(&input, &sess);
 
-        let parsing_context =
-            solar_pcx_from_build_opts(&sess, &self.build, Some(&project), Some(&input))?;
-        linter.late_lint(&input, parsing_context);
+        let pcx = solar_pcx_from_build_opts(&sess, &self.build, Some(&project), Some(&input))?;
+        linter.early_lint(&input, pcx);
+
+        let pcx = solar_pcx_from_build_opts(&sess, &self.build, Some(&project), Some(&input))?;
+        linter.late_lint(&input, pcx);
 
         Ok(())
     }

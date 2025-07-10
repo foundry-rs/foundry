@@ -7,7 +7,7 @@ use crate::{
 use foundry_common::comments::Comments;
 use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
 use foundry_config::lint::Severity;
-use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
+use rayon::iter::{ParallelBridge, ParallelIterator};
 use solar_ast::{self as ast, visit::Visit as VisitAST};
 use solar_interface::{
     Session, SourceMap,
@@ -96,19 +96,14 @@ impl SolidityLinter {
             && !self.lints_excluded.as_ref().is_some_and(|excl| excl.contains(&lint))
     }
 
-    fn process_source_ast(
+    fn process_source_ast<'ast>(
         &self,
-        sess: &Session,
-        arena: ast::Arena,
+        sess: &'ast Session,
+        ast: &'ast ast::SourceUnit<'ast>,
+        file: &SourceFile,
         path: &Path,
     ) -> Result<(), diagnostics::ErrorGuaranteed> {
-        // Parse the file
-        let file =
-            sess.source_map().load_file(path).map_err(|e| sess.dcx.err(e.to_string()).emit())?;
-        let mut parser = solar_parse::Parser::from_source_file(sess, &arena, file.as_ref());
-        let ast = parser.parse_file().map_err(|e| e.emit())?;
-
-        // Declare all available early passes and lints
+        // Declare all available passes and lints
         let mut passes_and_lints = Vec::new();
         passes_and_lints.extend(high::create_early_lint_passes());
         passes_and_lints.extend(med::create_early_lint_passes());
@@ -127,15 +122,15 @@ impl SolidityLinter {
 
         // Process the inline-config
         let source = file.src.as_str();
-        let comments = Comments::new(&file);
+        let comments = Comments::new(file);
         let inline_config =
-            parse_inline_config(sess, &comments, InlineConfigSource::Ast(&ast), source);
+            parse_inline_config(sess, &comments, InlineConfigSource::Ast(ast), source);
 
         // Initialize and run the early lint visitor
         let ctx = LintContext::new(sess, self.with_description, inline_config);
         let mut early_visitor = EarlyLintVisitor::new(&ctx, &mut passes);
-        _ = early_visitor.visit_source_unit(&ast);
-        early_visitor.post_source_unit(&ast);
+        _ = early_visitor.visit_source_unit(ast);
+        early_visitor.post_source_unit(ast);
 
         Ok(())
     }
@@ -147,7 +142,7 @@ impl SolidityLinter {
         source_id: hir::SourceId,
         file: &'hir SourceFile,
     ) -> Result<(), diagnostics::ErrorGuaranteed> {
-        // Get late lint passes
+        // Declare all available passes and lints
         let mut passes_and_lints = Vec::new();
         passes_and_lints.extend(high::create_late_lint_passes());
         passes_and_lints.extend(med::create_late_lint_passes());
@@ -212,14 +207,26 @@ impl Linter for SolidityLinter {
     }
 
     /// Run AST-based lints
-    fn early_lint(&self, input: &[PathBuf], sess: &Session) {
-        sess.enter_parallel(|| {
-            input.into_par_iter().for_each(|path| {
-                if input.contains(path) {
-                    let arena = ast::Arena::new();
-                    _ = self.process_source_ast(sess, arena, path);
+    fn early_lint<'sess>(&self, input: &[PathBuf], mut pcx: ParsingContext<'sess>) {
+        let sess = pcx.sess;
+        _ = sess.enter_parallel(|| -> Result<(), diagnostics::ErrorGuaranteed> {
+            // Load all files into the parsing ctx
+            pcx.load_files(input)?;
+
+            // Parse the sources
+            let ast_arena = solar_sema::thread_local::ThreadLocal::new();
+            let ast_result = pcx.parse(&ast_arena);
+
+            // Process each source in parallel
+            ast_result.sources.iter().par_bridge().for_each(|source| {
+                if let (FileName::Real(path), Some(ast)) = (&source.file.name, &source.ast)
+                    && input.contains(path)
+                {
+                    _ = self.process_source_ast(sess, ast, &source.file, path)
                 }
             });
+
+            Ok(())
         });
     }
 

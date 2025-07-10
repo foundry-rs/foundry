@@ -163,15 +163,22 @@ impl BuildArgs {
 
             if !input_files.is_empty() {
                 let sess = linter.init();
-                linter.early_lint(&input_files, &sess);
 
-                let parsing_context = solar_pcx_from_build_opts(
+                let pcx = solar_pcx_from_build_opts(
                     &sess,
                     &self.build,
                     Some(project),
                     Some(&input_files),
                 )?;
-                linter.late_lint(&input_files, parsing_context);
+                linter.early_lint(&input_files, pcx);
+
+                let pcx = solar_pcx_from_build_opts(
+                    &sess,
+                    &self.build,
+                    Some(project),
+                    Some(&input_files),
+                )?;
+                linter.late_lint(&input_files, pcx);
             }
         }
 
