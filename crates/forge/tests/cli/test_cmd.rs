@@ -2843,10 +2843,13 @@ forgetest_async!(can_get_broadcast_txs, |prj, cmd| {
 });
 
 // See <https://github.com/foundry-rs/foundry/issues/9297>
-forgetest_init!(test_roll_scroll_fork_with_cancun, |prj, cmd| {
-    prj.add_test(
-        "ScrollForkTest.t.sol",
-        r#"
+forgetest_init!(
+    #[ignore = "RPC Service Unavailable"]
+    test_roll_scroll_fork_with_cancun,
+    |prj, cmd| {
+        prj.add_test(
+            "ScrollForkTest.t.sol",
+            r#"
 
 import {Test} from "forge-std/Test.sol";
 
@@ -2858,12 +2861,13 @@ contract ScrollForkTest is Test {
     }
 }
    "#,
-    )
-    .unwrap();
+        )
+        .unwrap();
 
-    cmd.args(["test", "--mt", "test_roll_scroll_fork_to_tx", "--evm-version", "cancun"])
-        .assert_success();
-});
+        cmd.args(["test", "--mt", "test_roll_scroll_fork_to_tx", "--evm-version", "cancun"])
+            .assert_success();
+    }
+);
 
 // Test that only provider is included in failed fork error.
 forgetest_init!(test_display_provider_on_error, |prj, cmd| {
