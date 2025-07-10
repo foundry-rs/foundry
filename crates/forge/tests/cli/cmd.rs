@@ -9,7 +9,7 @@ use foundry_test_utils::{
     foundry_compilers::PathStyle,
     rpc::next_etherscan_api_key,
     snapbox::IntoData,
-    util::{OutputExt, TestCommand, pretty_err, read_string},
+    util::{OutputExt, TestCommand, read_string},
 };
 use semver::Version;
 use std::{
