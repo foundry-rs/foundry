@@ -422,7 +422,7 @@ OPTIONS:
     -r, --repo      Build and install from a remote GitHub repo (uses default branch if no other options are set)
     -p, --path      Build and install a local repository
     -j, --jobs      Number of CPUs to use for building Foundry (default: all CPUs)
-    -f, --force     Skip SHA verification for downloaded binaries
+    -f, --force     Skip SHA verification for downloaded binaries (INSECURE - use with caution)
     --arch          Install a specific architecture (supports amd64 and arm64)
     --platform      Install a specific platform (supports win32, linux, darwin and alpine)
 EOF
