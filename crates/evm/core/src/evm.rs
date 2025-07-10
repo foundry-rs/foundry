@@ -281,7 +281,8 @@ impl<'db, I: InspectorExt> Handler for FoundryHandler<'db, I> {
 }
 
 impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
-    /// Handles CREATE2 frame initialization, potentially transforming it to use the CREATE2 factory.
+    /// Handles CREATE2 frame initialization, potentially transforming it to use the CREATE2
+    /// factory.
     fn handle_create_frame(
         &mut self,
         evm: &mut <Self as Handler>::Evm,
@@ -299,23 +300,19 @@ impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
                 let create2_deployer = evm.inspector().create2_deployer();
 
                 // Generate call inputs for CREATE2 factory.
-                let call_inputs =
-                    get_create2_factory_call_inputs(salt, inputs, create2_deployer);
+                let call_inputs = get_create2_factory_call_inputs(salt, inputs, create2_deployer);
 
                 // Push data about current override to the stack.
-                self.create2_overrides
-                    .push((evm.journal().depth(), call_inputs.clone()));
+                self.create2_overrides.push((evm.journal().depth(), call_inputs.clone()));
 
                 // Sanity check that CREATE2 deployer exists.
-                let code_hash =
-                    evm.journal_mut().load_account(create2_deployer)?.info.code_hash;
+                let code_hash = evm.journal_mut().load_account(create2_deployer)?.info.code_hash;
                 if code_hash == KECCAK_EMPTY {
                     return Ok(Some(FrameResult::Call(CallOutcome {
                         result: InterpreterResult {
                             result: InstructionResult::Revert,
                             output: Bytes::copy_from_slice(
-                                format!("missing CREATE2 deployer: {create2_deployer}")
-                                    .as_bytes(),
+                                format!("missing CREATE2 deployer: {create2_deployer}").as_bytes(),
                             ),
                             gas: Gas::new(gas_limit),
                         },
@@ -345,11 +342,7 @@ impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
         evm: &mut <Self as Handler>::Evm,
         result: FrameResult,
     ) -> FrameResult {
-        if self
-            .create2_overrides
-            .last()
-            .is_some_and(|(depth, _)| *depth == evm.journal().depth())
-        {
+        if self.create2_overrides.last().is_some_and(|(depth, _)| *depth == evm.journal().depth()) {
             let (_, call_inputs) = self.create2_overrides.pop().unwrap();
             let FrameResult::Call(mut call) = result else {
                 unreachable!("create2 override should be a call frame");
