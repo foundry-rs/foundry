@@ -96,20 +96,6 @@ impl SolidityLinter {
             && !self.lints_excluded.as_ref().is_some_and(|excl| excl.contains(&lint))
     }
 
-    // TODO(rusowsky): move to foundry-compilers if it works fine
-    /// Returns true if the given path is belongs to the 'forge-std' lib.
-    fn is_forge_std_file(&self, config: &ProjectPathsConfig, file: &Path) -> bool {
-        if let Some(lib_ancestor) = config.find_library_ancestor(file) {
-            lib_ancestor
-                .file_name()
-                .and_then(|name| name.to_str())
-                .map(|name| name == "forge-std")
-                .unwrap_or(false)
-        } else {
-            false
-        }
-    }
-
     fn process_source_ast(
         &self,
         sess: &Session,
@@ -129,9 +115,7 @@ impl SolidityLinter {
         passes_and_lints.extend(info::create_early_lint_passes());
 
         // Do not apply gas-severity rules on tests and scripts
-        if !self.path_config.is_test_or_script(path)
-            && !self.is_forge_std_file(&self.path_config, path)
-        {
+        if !self.path_config.is_test_or_script(path) {
             passes_and_lints.extend(gas::create_early_lint_passes());
         }
 
@@ -172,7 +156,6 @@ impl SolidityLinter {
         // Do not apply gas-severity rules on tests and scripts
         if let FileName::Real(ref path) = file.name
             && !self.path_config.is_test_or_script(path)
-            && !self.is_forge_std_file(&self.path_config, path)
         {
             passes_and_lints.extend(gas::create_late_lint_passes());
         }

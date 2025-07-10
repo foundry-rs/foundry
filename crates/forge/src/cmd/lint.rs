@@ -59,7 +59,13 @@ impl LintArgs {
                 config
                     .project_paths::<SolcLanguage>()
                     .input_files_iter()
-                    .filter(|p| !(ignored.contains(p) || ignored.contains(&cwd.join(p))))
+                    .filter(|p| {
+                        let cwd_p = &cwd.join(p);
+                        !(ignored.contains(p)
+                            || ignored.contains(cwd_p)
+                            || project.paths.has_library_ancestor(p)
+                            || project.paths.has_library_ancestor(cwd_p))
+                    })
                     .collect()
             }
             paths => {
