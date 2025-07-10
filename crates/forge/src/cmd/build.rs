@@ -156,12 +156,8 @@ impl BuildArgs {
                 .project_paths::<SolcLanguage>()
                 .input_files_iter()
                 .filter(|p| {
-                    let curr_dir_p = &curr_dir.join(p);
                     skip.is_match(p)
-                        && !(ignored.contains(p)
-                            || ignored.contains(curr_dir_p)
-                            || project.paths.has_library_ancestor(p)
-                            || project.paths.has_library_ancestor(curr_dir_p))
+                        && !(ignored.contains(p) || ignored.contains(&curr_dir.join(p)))
                 })
                 .collect::<Vec<_>>();
 

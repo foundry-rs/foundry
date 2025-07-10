@@ -182,24 +182,6 @@ warning[incorrect-shift]: the order of args in a shift operation is incorrect
     ]]);
 });
 
-forgetest!(ignores_libs, |prj, cmd| {
-    prj.add_source("ContractWithLints.sol", OTHER_CONTRACT).unwrap();
-    prj.add_lib("SomeLibWithGasLints.sol", CONTRACT).unwrap();
-
-    // Check config for `severity` and `exclude`
-    prj.update_config(|config| {
-        config.lint = LinterConfig {
-            severity: vec![LintSeverity::Gas],
-            exclude_lints: vec![],
-            ignore: vec![],
-            lint_on_build: true,
-        };
-    });
-
-    cmd.arg("lint").assert_success().stderr_eq("");
-    cmd.arg("build").assert_success().stderr_eq("");
-});
-
 forgetest!(build_runs_linter_by_default, |prj, cmd| {
     prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT).unwrap();
