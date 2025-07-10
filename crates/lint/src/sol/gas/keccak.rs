@@ -272,25 +272,6 @@ fn get_abi_packed_args<'hir>(
     None
 }
 
-/// Returns the type of a variable or type conversion expression.
-fn get_var_type<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    expr: &'hir hir::Expr<'hir>,
-) -> Option<&'hir hir::TypeKind<'hir>> {
-    match &expr.kind {
-        // Expression is directly a variable
-        hir::ExprKind::Ident([hir::Res::Item(hir::ItemId::Variable(var_id))]) => {
-            let var = hir.variable(*var_id);
-            Some(&var.ty.kind)
-        }
-        // Expression is a type conversion call
-        hir::ExprKind::Call(hir::Expr { kind: hir::ExprKind::Type(ty), .. }, ..) => Some(&ty.kind),
-
-        // Other expressions are complex and not supported
-        _ => None,
-    }
-}
-
 /// Returns the type and data location of a variable or type conversion expression.
 fn get_var_type_and_loc<'hir>(
     hir: &'hir hir::Hir<'hir>,
@@ -317,7 +298,10 @@ fn all_exprs_check(
     exprs: &[hir::Expr<'_>],
     check: impl Fn(&hir::TypeKind<'_>) -> bool,
 ) -> bool {
-    exprs.iter().all(|expr| get_var_type(hir, expr).map(&check).unwrap_or(false))
+    exprs.iter().all(|expr| {
+        let (ty, _) = get_var_type_and_loc(hir, expr);
+        ty.map(&check).unwrap_or(false)
+    })
 }
 
 /// Checks if a type is exactly 32 bytes (256 bits) in size.
