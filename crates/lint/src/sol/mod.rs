@@ -7,7 +7,7 @@ use crate::{
 use foundry_common::comments::Comments;
 use foundry_compilers::{ProjectPathsConfig, solc::SolcLanguage};
 use foundry_config::lint::Severity;
-use rayon::iter::{IntoParallelRefIterator, ParallelBridge, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use solar_ast::{self as ast, visit::Visit as VisitAST};
 use solar_interface::{
     Session, SourceMap,
@@ -90,67 +90,54 @@ impl SolidityLinter {
         self
     }
 
-    fn process_source_ast(&self, sess: &Session, path: &Path) {
-        let arena = ast::Arena::new();
+    fn include_lint(&self, lint: SolLint) -> bool {
+        self.severity.as_ref().is_none_or(|sev| sev.contains(&lint.severity()))
+            && self.lints_included.as_ref().is_none_or(|incl| incl.contains(&lint))
+            && !self.lints_excluded.as_ref().is_some_and(|excl| excl.contains(&lint))
+    }
 
-        let _ = sess.enter(|| -> Result<(), diagnostics::ErrorGuaranteed> {
-            // Parse the file
-            let mut parser = solar_parse::Parser::from_file(sess, &arena, path)?;
-            let file = sess
-                .source_map()
-                .load_file(path)
-                .map_err(|e| sess.dcx.err(e.to_string()).emit())?;
-            let ast = parser.parse_file().map_err(|e| e.emit())?;
+    fn process_source_ast(
+        &self,
+        sess: &Session,
+        arena: ast::Arena,
+        path: &Path,
+    ) -> Result<(), diagnostics::ErrorGuaranteed> {
+        // Parse the file
+        let file =
+            sess.source_map().load_file(path).map_err(|e| sess.dcx.err(e.to_string()).emit())?;
+        let mut parser = solar_parse::Parser::from_source_file(sess, &arena, file.as_ref());
+        let ast = parser.parse_file().map_err(|e| e.emit())?;
 
-            // Declare all available early passes and lints
-            let mut passes_and_lints = Vec::new();
-            passes_and_lints.extend(high::create_early_lint_passes());
-            passes_and_lints.extend(med::create_early_lint_passes());
-            passes_and_lints.extend(info::create_early_lint_passes());
+        // Declare all available early passes and lints
+        let mut passes_and_lints = Vec::new();
+        passes_and_lints.extend(high::create_early_lint_passes());
+        passes_and_lints.extend(med::create_early_lint_passes());
+        passes_and_lints.extend(info::create_early_lint_passes());
 
-            // Do not apply gas-severity rules on tests and scripts
-            if !self.path_config.is_test_or_script(path) {
-                passes_and_lints.extend(gas::create_early_lint_passes());
-            }
+        // Do not apply gas-severity rules on tests and scripts
+        if !self.path_config.is_test_or_script(path) {
+            passes_and_lints.extend(gas::create_early_lint_passes());
+        }
 
-            // Filter passes based on linter config
-            let mut passes: Vec<Box<dyn EarlyLintPass<'_>>> = passes_and_lints
-                .into_iter()
-                .filter_map(|(pass, lint)| {
-                    let matches_severity = match self.severity {
-                        Some(ref target) => target.contains(&lint.severity()),
-                        None => true,
-                    };
-                    let matches_lints_inc = match self.lints_included {
-                        Some(ref target) => target.contains(&lint),
-                        None => true,
-                    };
-                    let matches_lints_exc = match self.lints_excluded {
-                        Some(ref target) => target.contains(&lint),
-                        None => false,
-                    };
-                    if matches_severity && matches_lints_inc && !matches_lints_exc {
-                        Some(pass)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
+        // Filter passes based on linter config
+        let mut passes: Vec<Box<dyn EarlyLintPass<'_>>> = passes_and_lints
+            .into_iter()
+            .filter_map(|(pass, lint)| if self.include_lint(lint) { Some(pass) } else { None })
+            .collect();
 
-            // Process the inline-config
-            let source = file.src.as_str();
-            let comments = Comments::new(&file);
-            let inline_config =
-                parse_inline_config(sess, &comments, InlineConfigSource::Ast(&ast), source);
+        // Process the inline-config
+        let source = file.src.as_str();
+        let comments = Comments::new(&file);
+        let inline_config =
+            parse_inline_config(sess, &comments, InlineConfigSource::Ast(&ast), source);
 
-            // Initialize and run the early lint visitor
-            let ctx = LintContext::new(sess, self.with_description, inline_config);
-            let mut early_visitor = EarlyLintVisitor::new(&ctx, &mut passes);
-            _ = early_visitor.visit_source_unit(&ast);
-            early_visitor.post_source_unit(&ast);
+        // Initialize and run the early lint visitor
+        let ctx = LintContext::new(sess, self.with_description, inline_config);
+        let mut early_visitor = EarlyLintVisitor::new(&ctx, &mut passes);
+        _ = early_visitor.visit_source_unit(&ast);
+        early_visitor.post_source_unit(&ast);
 
-            Ok(())
-        });
+        Ok(())
     }
 
     fn process_source_hir<'hir>(
@@ -159,64 +146,44 @@ impl SolidityLinter {
         gcx: &solar_sema::ty::Gcx<'hir>,
         source_id: hir::SourceId,
         file: &'hir SourceFile,
-    ) {
-        let _ = sess.enter(|| -> Result<(), diagnostics::ErrorGuaranteed> {
-            // Get late lint passes
-            let mut passes_and_lints = Vec::new();
-            passes_and_lints.extend(high::create_late_lint_passes());
-            passes_and_lints.extend(med::create_late_lint_passes());
-            passes_and_lints.extend(info::create_late_lint_passes());
+    ) -> Result<(), diagnostics::ErrorGuaranteed> {
+        // Get late lint passes
+        let mut passes_and_lints = Vec::new();
+        passes_and_lints.extend(high::create_late_lint_passes());
+        passes_and_lints.extend(med::create_late_lint_passes());
+        passes_and_lints.extend(info::create_late_lint_passes());
 
-            // Do not apply gas-severity rules on tests and scripts
-            if let FileName::Real(ref path) = file.name
-                && !self.path_config.is_test_or_script(path)
-            {
-                passes_and_lints.extend(gas::create_late_lint_passes());
-            }
+        // Do not apply gas-severity rules on tests and scripts
+        if let FileName::Real(ref path) = file.name
+            && !self.path_config.is_test_or_script(path)
+        {
+            passes_and_lints.extend(gas::create_late_lint_passes());
+        }
 
-            // Filter passes based on config
-            let mut passes: Vec<Box<dyn LateLintPass<'_>>> = passes_and_lints
-                .into_iter()
-                .filter_map(|(pass, lint)| {
-                    let matches_severity = match self.severity {
-                        Some(ref target) => target.contains(&lint.severity()),
-                        None => true,
-                    };
-                    let matches_lints_inc = match self.lints_included {
-                        Some(ref target) => target.contains(&lint),
-                        None => true,
-                    };
-                    let matches_lints_exc = match self.lints_excluded {
-                        Some(ref target) => target.contains(&lint),
-                        None => false,
-                    };
-                    if matches_severity && matches_lints_inc && !matches_lints_exc {
-                        Some(pass)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
+        // Filter passes based on config
+        let mut passes: Vec<Box<dyn LateLintPass<'_>>> = passes_and_lints
+            .into_iter()
+            .filter_map(|(pass, lint)| if self.include_lint(lint) { Some(pass) } else { None })
+            .collect();
 
-            // Process the inline-config
-            let source = file.src.as_str();
-            let comments = Comments::new(file);
-            let inline_config = parse_inline_config(
-                sess,
-                &comments,
-                InlineConfigSource::Hir((&gcx.hir, source_id)),
-                source,
-            );
+        // Process the inline-config
+        let source = file.src.as_str();
+        let comments = Comments::new(file);
+        let inline_config = parse_inline_config(
+            sess,
+            &comments,
+            InlineConfigSource::Hir((&gcx.hir, source_id)),
+            source,
+        );
 
-            // Run late lint visitor
-            let ctx = LintContext::new(sess, self.with_description, inline_config);
-            let mut late_visitor = LateLintVisitor::new(&ctx, &mut passes, &gcx.hir);
+        // Run late lint visitor
+        let ctx = LintContext::new(sess, self.with_description, inline_config);
+        let mut late_visitor = LateLintVisitor::new(&ctx, &mut passes, &gcx.hir);
 
-            // Visit this specific source
-            _ = late_visitor.visit_nested_source(source_id);
+        // Visit this specific source
+        _ = late_visitor.visit_nested_source(source_id);
 
-            Ok(())
-        });
+        Ok(())
     }
 }
 
@@ -247,8 +214,9 @@ impl Linter for SolidityLinter {
     /// Run AST-based lints
     fn early_lint(&self, input: &[PathBuf], sess: &Session) {
         sess.enter_parallel(|| {
-            input.par_iter().for_each(|path| {
-                self.process_source_ast(sess, path);
+            input.into_par_iter().for_each(|path| {
+                let arena = ast::Arena::new();
+                _ = self.process_source_ast(sess, arena, path);
             });
         });
     }
@@ -256,7 +224,6 @@ impl Linter for SolidityLinter {
     /// Run HIR-based lints
     fn late_lint<'sess>(&self, input: &[PathBuf], mut pcx: ParsingContext<'sess>) {
         let sess = pcx.sess;
-
         _ = sess.enter_parallel(|| -> Result<(), diagnostics::ErrorGuaranteed> {
             // Load all files into the parsing ctx
             pcx.load_files(input)?;
@@ -270,7 +237,7 @@ impl Linter for SolidityLinter {
 
                 // Process each source in parallel
                 gcx.hir.sources_enumerated().par_bridge().for_each(|(source_id, source)| {
-                    self.process_source_hir(sess, &gcx, source_id, &source.file);
+                    _ = self.process_source_hir(sess, &gcx, source_id, &source.file);
                 });
             }
 

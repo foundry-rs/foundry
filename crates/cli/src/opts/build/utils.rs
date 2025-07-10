@@ -49,7 +49,7 @@ pub fn solar_pcx_from_build_opts<'sess>(
     let graph = Graph::<MultiCompilerParsedSource>::resolve_sources(&project.paths, sources)?;
     let (version, sources, _) = graph
         // resolve graph into mapping language -> version -> sources
-        .into_sources_by_version(&project)?
+        .into_sources_by_version(project)?
         .sources
         .into_iter()
         // only interested in Solidity sources
@@ -68,7 +68,7 @@ pub fn solar_pcx_from_build_opts<'sess>(
         version,
     );
 
-    Ok(solar_pcx_from_solc_project(sess, &project, &solc, true))
+    Ok(solar_pcx_from_solc_project(sess, project, &solc, true))
 }
 
 /// Builds a Solar [`solar_sema::ParsingContext`] from a  [`foundry_compilers::Project`] and a

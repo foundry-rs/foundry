@@ -73,15 +73,12 @@ impl AsmKeccak256 {
     ) {
         let target_span = asm_ctx.target_span(stmt_span, call.span);
 
-        if self.try_emit_fix_bytes_hash(ctx, hir, target_span, hash, asm_ctx) {
-            return;
+        if !self.try_emit_fix_bytes_hash(ctx, hir, target_span, hash, asm_ctx)
+            && !self.try_emit_fix_abi_encoded(ctx, hir, target_span, hash, asm_ctx)
+        {
+            // Fallback to lint without fix suggestions
+            ctx.emit(&ASM_KECCAK256, call.span);
         }
-        if self.try_emit_fix_abi_encoded(ctx, hir, target_span, hash, asm_ctx) {
-            return;
-        }
-
-        // Fallback to lint without fix suggestions
-        ctx.emit(&ASM_KECCAK256, call.span);
     }
 
     /// Emits a lint (with fix) for direct `bytes` or `string` hashing, regardless of the data
@@ -100,11 +97,7 @@ impl AsmKeccak256 {
             TypeKind::Elementary(hir::ElementaryType::Bytes | hir::ElementaryType::String)
         ) && let Some(good) = gen_asm_bytes(ctx, expr.span, data_loc, asm_ctx)
         {
-            let snippet = match ctx.span_to_snippet(target_span) {
-                Some(bad) => Snippet::Diff { desc: SNIP_DESC, rmv: bad, add: good },
-                None => Snippet::Block { desc: SNIP_DESC, code: good },
-            };
-            ctx.emit_with_fix(&ASM_KECCAK256, target_span, snippet);
+            self.emit_lint_with_fix(ctx, target_span, good);
             return true;
         }
         false
@@ -129,16 +122,22 @@ impl AsmKeccak256 {
 
             if let Some(args) = arg_snippets {
                 let good = gen_asm_encoded_words(&args, asm_ctx);
-                let snippet = match ctx.span_to_snippet(target_span) {
-                    Some(bad) => Snippet::Diff { desc: SNIP_DESC, rmv: bad, add: good },
-                    None => Snippet::Block { desc: SNIP_DESC, code: good },
-                };
-                ctx.emit_with_fix(&ASM_KECCAK256, target_span, snippet);
+                self.emit_lint_with_fix(ctx, target_span, good);
                 return true;
             }
         }
 
         false
+    }
+
+    /// Emits a lint with a fix.
+    /// If can get a snippet from the given span, returns a diff. Otherwise, falls back to a block.
+    fn emit_lint_with_fix(&self, ctx: &LintContext<'_>, span: Span, good: String) {
+        let snippet = match ctx.span_to_snippet(span) {
+            Some(bad) => Snippet::Diff { desc: SNIP_DESC, rmv: bad, add: good },
+            None => Snippet::Block { desc: SNIP_DESC, code: good },
+        };
+        ctx.emit_with_fix(&ASM_KECCAK256, span, snippet);
     }
 }
 
@@ -161,8 +160,8 @@ impl AsmContext {
 }
 
 /// Generates the assembly code for hashing a single dynamic 'bytes' or 'string' variable.
-fn gen_asm_bytes<'sess>(
-    ctx: &LintContext<'sess>,
+fn gen_asm_bytes(
+    ctx: &LintContext<'_>,
     var_span: Span,
     data_location: Option<ast::DataLocation>,
     asm_ctx: AsmContext,
@@ -178,7 +177,7 @@ fn gen_asm_bytes<'sess>(
             _ = writeln!(res, "    {var} := keccak256(mload(0x40), {name}.length)");
         }
         Some(ast::DataLocation::Memory) => {
-            _ = writeln!(res, "    {var} := keccak256(add({name}, 0x20),\nmload({name}))");
+            _ = writeln!(res, "    {var} := keccak256(add({name}, 0x20), mload({name}))");
         }
         _ => return None,
     }
@@ -308,15 +307,15 @@ fn get_var_type_and_loc<'hir>(
     }
 }
 
-fn all_exprs_check<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    exprs: &'hir [hir::Expr<'hir>],
-    check: impl Fn(&'hir hir::TypeKind<'hir>) -> bool,
+fn all_exprs_check(
+    hir: &hir::Hir<'_>,
+    exprs: &[hir::Expr<'_>],
+    check: impl Fn(&hir::TypeKind<'_>) -> bool,
 ) -> bool {
     exprs.iter().all(|expr| get_var_type(hir, expr).map(&check).unwrap_or(false))
 }
 
-fn is_32byte_type<'hir>(kind: &hir::TypeKind<'hir>) -> bool {
+fn is_32byte_type(kind: &hir::TypeKind<'_>) -> bool {
     if let hir::TypeKind::Elementary(
         hir::ElementaryType::Int(size)
         | hir::ElementaryType::UInt(size)
@@ -329,7 +328,7 @@ fn is_32byte_type<'hir>(kind: &hir::TypeKind<'hir>) -> bool {
     false
 }
 
-fn is_value_type<'hir>(kind: &hir::TypeKind<'hir>) -> bool {
+fn is_value_type(kind: &hir::TypeKind<'_>) -> bool {
     if let hir::TypeKind::Elementary(ty) = kind {
         return ty.is_value_type();
     }
