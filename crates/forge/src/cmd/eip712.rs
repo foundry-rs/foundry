@@ -58,7 +58,8 @@ impl Eip712Args {
             // Set up the parsing context with the project paths and sources.
             let parsing_context = solar_pcx_from_build_opts(
                 &sess,
-                self.build,
+                &self.build,
+                None,
                 Some(vec![self.target_path].as_ref()),
             )?;
 

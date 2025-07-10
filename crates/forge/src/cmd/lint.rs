@@ -114,7 +114,8 @@ impl LintArgs {
         let sess = linter.init();
         linter.early_lint(&input, &sess);
 
-        let parsing_context = solar_pcx_from_build_opts(&sess, self.build, Some(&input))?;
+        let parsing_context =
+            solar_pcx_from_build_opts(&sess, &self.build, Some(&project), Some(&input))?;
         linter.late_lint(&input, parsing_context);
 
         Ok(())

@@ -8,7 +8,7 @@ use foundry_cli::{
 };
 use foundry_common::{compile::ProjectCompiler, shell};
 use foundry_compilers::{
-    FileFilter, Project, ProjectCompileOutput,
+    CompilationError, FileFilter, Project, ProjectCompileOutput,
     compilers::{Language, multi::MultiCompilerLanguage},
     solc::SolcLanguage,
     utils::source_files_iter,
@@ -113,7 +113,7 @@ impl BuildArgs {
         }
 
         // Only run the `SolidityLinter` if there are no compilation errors
-        if output.output().errors.is_empty() {
+        if output.output().errors.iter().all(|e| !e.is_error()) {
             self.lint(&project, &config)?;
         }
 
@@ -165,8 +165,12 @@ impl BuildArgs {
                 let sess = linter.init();
                 linter.early_lint(&input_files, &sess);
 
-                let parsing_context =
-                    solar_pcx_from_build_opts(&sess, self.build.clone(), Some(&input_files))?;
+                let parsing_context = solar_pcx_from_build_opts(
+                    &sess,
+                    &self.build,
+                    Some(project),
+                    Some(&input_files),
+                )?;
                 linter.late_lint(&input_files, parsing_context);
             }
         }
