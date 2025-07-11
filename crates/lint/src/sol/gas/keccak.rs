@@ -95,9 +95,13 @@ impl AsmKeccak256 {
         if matches!(
             ty,
             TypeKind::Elementary(hir::ElementaryType::Bytes | hir::ElementaryType::String)
-        ) && let Some(good) = gen_asm_bytes(ctx, expr.span, data_loc, asm_ctx)
+        ) && let Some(fix) = gen_asm_bytes(ctx, expr.span, data_loc, asm_ctx)
         {
-            self.emit_lint_with_fix(ctx, target_span, good);
+            ctx.emit_with_fix(
+                &ASM_KECCAK256,
+                target_span,
+                Snippet::Diff { desc: SNIP_DESC, span: None, add: fix },
+            );
             return true;
         }
         false
@@ -121,23 +125,20 @@ impl AsmKeccak256 {
                 packed_args.iter().map(|arg| ctx.span_to_snippet(arg.span)).collect();
 
             if let Some(args) = arg_snippets {
-                let good = gen_asm_encoded_words(&args, asm_ctx);
-                self.emit_lint_with_fix(ctx, target_span, good);
+                ctx.emit_with_fix(
+                    &ASM_KECCAK256,
+                    target_span,
+                    Snippet::Diff {
+                        desc: SNIP_DESC,
+                        span: None,
+                        add: gen_asm_encoded_words(&args, asm_ctx),
+                    },
+                );
                 return true;
             }
         }
 
         false
-    }
-
-    /// Emits a lint with a fix.
-    /// If can get a snippet from the given span, returns a diff. Otherwise, falls back to a block.
-    fn emit_lint_with_fix(&self, ctx: &LintContext<'_>, span: Span, good: String) {
-        let snippet = match ctx.span_to_snippet(span) {
-            Some(bad) => Snippet::Diff { desc: SNIP_DESC, rmv: bad, add: good },
-            None => Snippet::Block { desc: SNIP_DESC, code: good },
-        };
-        ctx.emit_with_fix(&ASM_KECCAK256, span, snippet);
     }
 }
 

@@ -71,10 +71,31 @@ impl<'s> LintContext<'s> {
     }
 
     /// Emit a diagnostic with a code fix proposal.
+    ///
+    /// For Diff snippets, if no span is provided, it will use the lint's span.
+    /// If unable to get code from the span, it will fall back to a Block snippet.
     pub fn emit_with_fix<L: Lint>(&self, lint: &'static L, span: Span, snippet: Snippet) {
         if self.inline_config.is_disabled(span, lint.id()) {
             return;
         }
+
+        // Convert the snippet to ensure we have the appropriate type
+        let snippet = match snippet {
+            Snippet::Diff { desc, span: diff_span, add } => {
+                // Use the provided span or fall back to the lint span
+                let target_span = diff_span.unwrap_or(span);
+
+                // Check if we can get the original code
+                if self.span_to_snippet(target_span).is_some() {
+                    Snippet::Diff { desc, span: Some(target_span), add }
+                } else {
+                    // Fall back to Block if we can't get the original code
+                    Snippet::Block { desc, code: add }
+                }
+            }
+            // Block snippets remain unchanged
+            block => block,
+        };
 
         let desc = if self.with_description { lint.description() } else { "" };
         let diag: DiagBuilder<'_, ()> = self
@@ -83,7 +104,7 @@ impl<'s> LintContext<'s> {
             .diag(lint.severity().into(), desc)
             .code(DiagId::new_str(lint.id()))
             .span(MultiSpan::from_span(span))
-            .highlighted_note(snippet.to_note())
+            .highlighted_note(snippet.to_note(self))
             .help(lint.help());
 
         diag.emit();
@@ -98,13 +119,12 @@ impl<'s> LintContext<'s> {
 pub enum Snippet {
     /// Represents a code block. Can have an optional description.
     Block { desc: Option<&'static str>, code: String },
-    /// Represents a code diff.
-    /// Includes an optional description, the code to remove, and a replacement proposal.
-    Diff { desc: Option<&'static str>, rmv: String, add: String },
+    /// Represents a code diff. Can have an optional description and a span for the code to remove.
+    Diff { desc: Option<&'static str>, span: Option<Span>, add: String },
 }
 
 impl Snippet {
-    pub fn to_note(self) -> Vec<(DiagMsg, Style)> {
+    pub fn to_note(self, ctx: &LintContext<'_>) -> Vec<(DiagMsg, Style)> {
         let mut output = Vec::new();
         match self.desc() {
             Some(desc) => {
@@ -114,9 +134,14 @@ impl Snippet {
             None => output.push((DiagMsg::from(" \n"), Style::NoStyle)),
         }
         match self {
-            Self::Diff { rmv, add, .. } => {
-                for line in rmv.lines() {
-                    output.push((DiagMsg::from(format!("- {line}\n")), Style::Removal));
+            Self::Diff { span, add, .. } => {
+                // Get the original code from the span if provided
+                if let Some(span) = span {
+                    if let Some(rmv) = ctx.span_to_snippet(span) {
+                        for line in rmv.lines() {
+                            output.push((DiagMsg::from(format!("- {line}\n")), Style::Removal));
+                        }
+                    }
                 }
                 for line in add.lines() {
                     output.push((DiagMsg::from(format!("+ {line}\n")), Style::Addition));
@@ -132,7 +157,7 @@ impl Snippet {
         output
     }
 
-    fn desc(&self) -> Option<&'static str> {
+    pub fn desc(&self) -> Option<&'static str> {
         match self {
             Self::Diff { desc, .. } => *desc,
             Self::Block { desc, .. } => *desc,

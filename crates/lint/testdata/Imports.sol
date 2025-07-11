@@ -1,5 +1,3 @@
-// deps: ImportsFile.sol, ImportsConstants.sol, ImportsTypes.sol, ImportsSomeFile.sol, ImportsSomeFile2.sol, ImportsAnotherFile.sol, ImportsAnotherFile2.sol, ImportsUtils.sol, ImportsUtils2.sol
-
 import {
     symbol0 as mySymbol,
     symbol1 as myOtherSymbol,
@@ -10,27 +8,27 @@ import {
     symbolNotUsed, //~NOTE: unused imports should be removed
     IContract,
     IContractNotUsed //~NOTE: unused imports should be removed
-} from "ImportsFile.sol";
+} from "./auxiliary/ImportsFile.sol";
 
 import {
     CONSTANT_0,
     CONSTANT_1 //~NOTE: unused imports should be removed
-} from "ImportsConstants.sol";
+} from "./auxiliary/ImportsConstants.sol";
 
 import {
     MyType,
     MyOtherType,
     YetAnotherType //~NOTE: unused imports should be removed
-} from "ImportsTypes.sol";
+} from "./auxiliary/ImportsTypes.sol";
 
-import "ImportsSomeFile.sol"; //~NOTE: use named imports '{A, B}' or alias 'import ".." as X'
-import "ImportsAnotherFile.sol"; //~NOTE: use named imports '{A, B}' or alias 'import ".." as X'
+import "./auxiliary/ImportsSomeFile.sol"; //~NOTE: use named imports '{A, B}' or alias 'import ".." as X'
+import "./auxiliary/ImportsAnotherFile.sol"; //~NOTE: use named imports '{A, B}' or alias 'import ".." as X'
 
-import "ImportsSomeFile2.sol" as SomeFile2;
-import "ImportsAnotherFile2.sol" as AnotherFile2; //~NOTE: unused imports should be removed
+import "./auxiliary/ImportsSomeFile2.sol" as SomeFile2;
+import "./auxiliary/ImportsAnotherFile2.sol" as AnotherFile2; //~NOTE: unused imports should be removed
 
-import * as Utils from "ImportsUtils.sol";
-import * as OtherUtils from "ImportsUtils2.sol"; //~NOTE: unused imports should be removed
+import * as Utils from "./auxiliary/ImportsUtils.sol";
+import * as OtherUtils from "./auxiliary/ImportsUtils2.sol"; //~NOTE: unused imports should be removed
 
 
 contract UnusedImport is IContract {

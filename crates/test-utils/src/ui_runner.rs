@@ -1,4 +1,4 @@
-use std::{ffi::OsString, path::Path};
+use std::path::Path;
 use ui_test::spanned::Spanned;
 
 /// Test runner based on `ui_test`. Adapted from `https://github.com/paradigmxyz/solar/blob/main/tools/tester/src/lib.rs`.
@@ -133,17 +133,6 @@ fn per_file_config(config: &mut ui_test::Config, file: &Spanned<Vec<u8>>) {
     let Ok(src) = std::str::from_utf8(&file.content) else {
         return;
     };
-
-    // If the first line of a file starts with `// deps:`, adds the files to the config.
-    let first_line = src.lines().next().unwrap_or("");
-    if let Some(deps_str) = first_line.strip_prefix("// deps:") {
-        let deps = deps_str
-            .split(',')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|dep| OsString::from(&config.root_dir.join(dep)));
-        config.program.args.extend(deps);
-    }
 
     assert_eq!(config.comment_start, "//");
     let has_annotations = src.contains("//~");
