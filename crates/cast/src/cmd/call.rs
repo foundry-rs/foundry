@@ -270,7 +270,7 @@ impl CallArgs {
                     env.evm_env.block_env.number = number.to();
                 }
                 if let Some(time) = block_overrides.time {
-                    env.evm_env.block_env.timestamp = time;
+                    env.evm_env.block_env.timestamp = U256::from(time);
                 }
             }
 

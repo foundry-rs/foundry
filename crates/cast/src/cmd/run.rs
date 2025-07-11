@@ -1,7 +1,7 @@
 use alloy_consensus::Transaction;
 use alloy_network::{AnyNetwork, TransactionResponse};
 use alloy_primitives::{
-    Address, Bytes,
+    Address, Bytes, U256,
     map::{HashMap, HashSet},
 };
 use alloy_provider::{Provider, RootProvider};
@@ -12,7 +12,7 @@ use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::{TraceResult, handle_traces, init_progress},
 };
-use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender, shell};
+use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_impersonated_tx, is_known_system_sender, shell};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
     Config,
@@ -157,10 +157,10 @@ impl RunArgs {
         let mut evm_version = self.evm_version;
 
         env.evm_env.cfg_env.disable_block_gas_limit = self.disable_block_gas_limit;
-        env.evm_env.block_env.number = tx_block_number;
+        env.evm_env.block_env.number = U256::from(tx_block_number);
 
         if let Some(block) = &block {
-            env.evm_env.block_env.timestamp = block.header.timestamp;
+            env.evm_env.block_env.timestamp = U256::from(block.header.timestamp);
             env.evm_env.block_env.beneficiary = block.header.beneficiary;
             env.evm_env.block_env.difficulty = block.header.difficulty;
             env.evm_env.block_env.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
@@ -232,6 +232,8 @@ impl RunArgs {
 
                     configure_tx_env(&mut env.as_env_mut(), &tx.inner);
 
+                    env.evm_env.cfg_env.disable_balance_check = true;
+
                     if let Some(to) = Transaction::to(tx) {
                         trace!(tx=?tx.tx_hash(),?to, "executing previous call transaction");
                         executor.transact_with_env(env.clone()).wrap_err_with(|| {
@@ -270,6 +272,9 @@ impl RunArgs {
             executor.set_trace_printer(self.trace_printer);
 
             configure_tx_env(&mut env.as_env_mut(), &tx.inner);
+            if is_impersonated_tx(tx.inner.inner.inner()) {
+                env.evm_env.cfg_env.disable_balance_check = true;
+            }
 
             if let Some(to) = Transaction::to(&tx) {
                 trace!(tx=?tx.tx_hash(), to=?to, "executing call transaction");

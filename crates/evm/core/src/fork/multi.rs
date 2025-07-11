@@ -6,7 +6,7 @@
 use super::CreateFork;
 use crate::Env;
 use alloy_consensus::BlockHeader;
-use alloy_primitives::map::HashMap;
+use alloy_primitives::{U256, map::HashMap};
 use alloy_provider::network::BlockResponse;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use foundry_config::Config;
@@ -151,7 +151,7 @@ impl MultiFork {
     }
 
     /// Updates block number and timestamp of given fork with new values.
-    pub fn update_block(&self, fork: ForkId, number: u64, timestamp: u64) -> eyre::Result<()> {
+    pub fn update_block(&self, fork: ForkId, number: U256, timestamp: U256) -> eyre::Result<()> {
         trace!(?fork, ?number, ?timestamp, "update fork block");
         self.handler
             .clone()
@@ -213,7 +213,7 @@ enum Request {
     /// Returns the environment of the fork.
     GetEnv(ForkId, GetEnvSender),
     /// Updates the block number and timestamp of the fork.
-    UpdateBlock(ForkId, u64, u64),
+    UpdateBlock(ForkId, U256, U256),
     /// Updates the block the entire block env,
     UpdateEnv(ForkId, BlockEnv),
     /// Shutdowns the entire `MultiForkHandler`, see `ShutDownMultiFork`
@@ -323,7 +323,7 @@ impl MultiForkHandler {
     }
     /// Update fork block number and timestamp. Used to preserve values set by `roll` and `warp`
     /// cheatcodes when new fork selected.
-    fn update_block(&mut self, fork_id: ForkId, block_number: u64, block_timestamp: u64) {
+    fn update_block(&mut self, fork_id: ForkId, block_number: U256, block_timestamp: U256) {
         if let Some(fork) = self.forks.get_mut(&fork_id) {
             fork.opts.env.evm_env.block_env.number = block_number;
             fork.opts.env.evm_env.block_env.timestamp = block_timestamp;
@@ -559,7 +559,7 @@ async fn create_fork(mut fork: CreateFork) -> eyre::Result<(ForkId, CreatedFork,
     let db = BlockchainDb::new(meta, cache_path);
     let (backend, handler) = SharedBackend::new(provider, db, Some(number.into()));
     let fork = CreatedFork::new(fork, backend);
-    let fork_id = ForkId::new(&fork.opts.url, number.into());
+    let fork_id = ForkId::new(&fork.opts.url, Some(number));
 
     Ok((fork_id, fork, handler))
 }

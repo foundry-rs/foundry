@@ -101,7 +101,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),
         tx_origin: "00a329c0648769A73afAc7F9F81E08FB43dBEA72".parse().unwrap(),
         initial_balance: U256::from(0xffffffffffffffffffffffffu128),
-        block_number: 10,
+        block_number: U256::from(10),
         fork_block_number: Some(200),
         chain: Some(9999.into()),
         gas_limit: 99_000_000u64.into(),
@@ -109,7 +109,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         gas_price: Some(999),
         block_base_fee_per_gas: 10,
         block_coinbase: Address::random(),
-        block_timestamp: 10,
+        block_timestamp: U256::from(10),
         block_difficulty: 10,
         block_prevrandao: B256::random(),
         block_gas_limit: Some(100u64.into()),
@@ -1016,11 +1016,11 @@ prompt_timeout = 120
 sender = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
 tx_origin = "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38"
 initial_balance = "0xffffffffffffffffffffffff"
-block_number = 1
+block_number = "0x1"
 gas_limit = 1073741824
 block_base_fee_per_gas = 0
 block_coinbase = "0x0000000000000000000000000000000000000000"
-block_timestamp = 1
+block_timestamp = "0x1"
 block_difficulty = 0
 block_prevrandao = "0x0000000000000000000000000000000000000000000000000000000000000000"
 memory_limit = 134217728
@@ -1242,7 +1242,7 @@ exclude = []
   "sender": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
   "tx_origin": "0x1804c8ab1f12e6bbf3894d4083f33e07309d1f38",
   "initial_balance": "0xffffffffffffffffffffffff",
-  "block_number": 1,
+  "block_number": "0x1",
   "fork_block_number": null,
   "chain_id": null,
   "gas_limit": 1073741824,
@@ -1250,7 +1250,7 @@ exclude = []
   "gas_price": null,
   "block_base_fee_per_gas": 0,
   "block_coinbase": "0x0000000000000000000000000000000000000000",
-  "block_timestamp": 1,
+  "block_timestamp": "0x1",
   "block_difficulty": 0,
   "block_prevrandao": "0x0000000000000000000000000000000000000000000000000000000000000000",
   "block_gas_limit": null,
