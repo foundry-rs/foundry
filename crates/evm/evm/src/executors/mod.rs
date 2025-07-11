@@ -910,8 +910,8 @@ impl RawCallResult {
 
     /// Returns an `EvmError` if the call failed, otherwise returns `self`.
     pub fn into_result(self, rd: Option<&RevertDecoder>) -> Result<Self, EvmError> {
-        if let Some(reason) = self.exit_reason {
-            if reason.is_ok() { Ok(self) } else { Err(self.into_evm_error(rd)) }
+        if let Some(reason) = self.exit_reason && reason.is_ok() {
+            Ok(self)
         } else {
             Err(self.into_evm_error(rd))
         }
