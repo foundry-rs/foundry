@@ -1,6 +1,6 @@
 # 📊 Foundry Benchmark Results
 
-**Generated at**: 2025-07-11 10:28:32 UTC
+**Generated at**: 2025-07-11 10:49:57 UTC
 
 ## Forge Test
 
@@ -15,8 +15,15 @@
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 7.46 s | 6.13 s |
-| solady | 7.84 s | 6.55 s |
+| ithacaxyz-account | 7.21 s | 5.94 s |
+| solady | 7.88 s | 6.57 s |
+
+## Forge Fuzz Test
+
+| Repository | stable | nightly |
+|------------|----------|----------|
+| ithacaxyz-account | 7.47 s | 6.13 s |
+| solady | 7.84 s | 6.84 s |
 
 ## Forge Build
 
@@ -33,15 +40,15 @@
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 2.61 s | 2.58 s |
-| solady | 4.06 s | 3.99 s |
+| ithacaxyz-account | 2.60 s | 2.66 s |
+| solady | 3.93 s | 4.01 s |
 
 ### With Cache
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 2.63 s | 2.63 s |
-| solady | 4.02 s | 4.09 s |
+| ithacaxyz-account | 2.62 s | 2.57 s |
+| solady | 4.04 s | 4.00 s |
 
 ## Forge Coverage
 
@@ -55,5 +62,11 @@
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 21.52 s | 21.63 s |
+| ithacaxyz-account | 21.42 s | 21.46 s |
 
+## System Information
+
+
+- **OS**: linux
+- **CPU**: 8
+- **Rustc**: unknown
