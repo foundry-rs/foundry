@@ -139,6 +139,14 @@ impl<'ast> Visit<'ast> for UnusedChecker {
         self.walk_expr(expr)
     }
 
+    fn visit_path(&mut self, path: &'ast ast::PathSlice) -> ControlFlow<Self::BreakValue> {
+        for id in path.segments() {
+            self.mark_symbol_used(id.name);
+        }
+
+        self.walk_path(path)
+    }
+
     fn visit_ty(&mut self, ty: &'ast ast::Type<'ast>) -> ControlFlow<Self::BreakValue> {
         if let ast::TypeKind::Custom(path) = &ty.kind {
             self.mark_symbol_used(path.first().name);
