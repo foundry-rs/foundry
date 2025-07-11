@@ -7,7 +7,6 @@ use foundry_bench::{
     switch_foundry_version,
 };
 use foundry_common::sh_println;
-use once_cell::sync::Lazy;
 use rayon::prelude::*;
 use std::{fs, path::PathBuf, process::Command, sync::Mutex};
 
@@ -55,7 +54,7 @@ struct Cli {
 }
 
 /// Mutex to prevent concurrent foundryup calls
-static FOUNDRY_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+static FOUNDRY_LOCK: Mutex<()> = Mutex::new(());
 fn switch_version_safe(version: &str) -> Result<()> {
     let _lock = FOUNDRY_LOCK.lock().unwrap();
     switch_foundry_version(version)
@@ -83,10 +82,7 @@ fn main() -> Result<()> {
 
     // Get repo configurations
     let repos = if let Some(repo_specs) = cli.repos.clone() {
-        repo_specs
-            .iter()
-            .map(|spec| RepoConfig::try_from(spec.as_str()))
-            .collect::<Result<Vec<_>>>()?
+        repo_specs.iter().map(|spec| spec.parse::<RepoConfig>()).collect::<Result<Vec<_>>>()?
     } else {
         BENCHMARK_REPOS.clone()
     };

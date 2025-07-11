@@ -9,6 +9,7 @@ use std::{
     env,
     path::{Path, PathBuf},
     process::Command,
+    str::FromStr,
 };
 
 pub mod results;
@@ -25,10 +26,10 @@ pub struct RepoConfig {
     pub rev: String,
 }
 
-impl TryFrom<&str> for RepoConfig {
-    type Error = eyre::Error;
+impl FromStr for RepoConfig {
+    type Err = eyre::Error;
 
-    fn try_from(spec: &str) -> Result<Self> {
+    fn from_str(spec: &str) -> Result<Self> {
         // Split by ':' first to separate repo path from optional rev
         let parts: Vec<&str> = spec.splitn(2, ':').collect();
         let repo_path = parts[0];
@@ -478,7 +479,7 @@ pub fn setup_benchmark_repos() -> Vec<(RepoConfig, BenchmarkProject)> {
             .split(',')
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
-            .map(RepoConfig::try_from)
+            .map(|s| s.parse::<RepoConfig>())
             .collect::<Result<Vec<_>>>()
             .expect("Failed to parse FOUNDRY_BENCH_REPOS")
     } else {
