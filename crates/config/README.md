@@ -79,7 +79,7 @@ allow_paths = []
 # additional solc include paths
 include_paths = []
 force = false
-evm_version = 'shanghai'
+evm_version = 'prague'
 gas_reports = ['*']
 gas_reports_ignore = []
 ## Sets the concrete solc version to use, this overrides the `auto_detect_solc` value

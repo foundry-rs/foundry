@@ -123,7 +123,8 @@ impl FmtArgs {
             solang_parser::parse(&output, 0).map_err(|diags| {
                 eyre::eyre!(
                     "Failed to construct valid Solidity code for {name}. Leaving source unchanged.\n\
-                     Debug info: {diags:?}"
+                     Debug info: {diags:?}\n\
+                     Formatted output:\n\n{output}"
                 )
             })?;
 

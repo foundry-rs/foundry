@@ -4,7 +4,7 @@ use crate::{debugger::DebuggerContext, DebugNode, ExitReason};
 use alloy_primitives::{hex, Address};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use foundry_evm_core::buffer::BufferKind;
-use revm::interpreter::OpCode;
+use revm::bytecode::opcode::OpCode;
 use revm_inspectors::tracing::types::{CallKind, CallTraceStep};
 use std::ops::ControlFlow;
 
@@ -330,25 +330,11 @@ fn pretty_opcode(step: &CallTraceStep) -> String {
 }
 
 fn is_jump(step: &CallTraceStep, prev: &CallTraceStep) -> bool {
-    if !matches!(
-        prev.op,
-        OpCode::JUMP |
-            OpCode::JUMPI |
-            OpCode::JUMPF |
-            OpCode::RJUMP |
-            OpCode::RJUMPI |
-            OpCode::RJUMPV |
-            OpCode::CALLF |
-            OpCode::RETF
-    ) {
+    if !matches!(prev.op, OpCode::JUMP | OpCode::JUMPI) {
         return false
     }
 
     let immediate_len = prev.immediate_bytes.as_ref().map_or(0, |b| b.len());
 
-    if step.pc != prev.pc + 1 + immediate_len {
-        true
-    } else {
-        step.code_section_idx != prev.code_section_idx
-    }
+    step.pc != prev.pc + 1 + immediate_len
 }

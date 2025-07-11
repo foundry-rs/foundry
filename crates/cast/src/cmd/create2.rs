@@ -184,7 +184,7 @@ impl Create2Args {
         if !no_random {
             let mut rng = match seed {
                 Some(seed) => StdRng::from_seed(seed.0),
-                None => StdRng::from_entropy(),
+                None => StdRng::from_os_rng(),
             };
             rng.fill_bytes(remaining);
         }

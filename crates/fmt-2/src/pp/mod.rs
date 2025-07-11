@@ -70,7 +70,7 @@ enum PrintFrame {
     Broken(usize, Breaks),
 }
 
-const SIZE_INFINITY: isize = 0xffff;
+pub(crate) const SIZE_INFINITY: isize = 0xffff;
 
 #[derive(Debug)]
 pub struct Printer {
@@ -127,6 +127,10 @@ impl Printer {
 
             margin,
         }
+    }
+
+    pub(crate) fn space_left(&self) -> isize {
+        self.space
     }
 
     pub(crate) fn last_token(&self) -> Option<&Token> {

@@ -9,7 +9,7 @@ use std::fmt::Debug;
 #[derive(Clone, Debug)]
 pub struct AssumeNoRevert {
     /// The call depth at which the cheatcode was added.
-    pub depth: u64,
+    pub depth: usize,
     /// Acceptable revert parameters for the next call, to be thrown out if they are encountered;
     /// reverts with parameters not specified here will count as normal reverts and not rejects
     /// towards the counter.
@@ -56,7 +56,7 @@ impl Cheatcode for assumeCall {
 
 impl Cheatcode for assumeNoRevert_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
-        assume_no_revert(ccx.state, ccx.ecx.journaled_state.depth(), vec![])
+        assume_no_revert(ccx.state, ccx.ecx.journaled_state.depth, vec![])
     }
 }
 
@@ -65,7 +65,7 @@ impl Cheatcode for assumeNoRevert_1Call {
         let Self { potentialRevert } = self;
         assume_no_revert(
             ccx.state,
-            ccx.ecx.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth,
             vec![AcceptableRevertParameters::from(potentialRevert)],
         )
     }
@@ -76,7 +76,7 @@ impl Cheatcode for assumeNoRevert_2Call {
         let Self { potentialReverts } = self;
         assume_no_revert(
             ccx.state,
-            ccx.ecx.journaled_state.depth(),
+            ccx.ecx.journaled_state.depth,
             potentialReverts.iter().map(AcceptableRevertParameters::from).collect(),
         )
     }
@@ -84,7 +84,7 @@ impl Cheatcode for assumeNoRevert_2Call {
 
 fn assume_no_revert(
     state: &mut Cheatcodes,
-    depth: u64,
+    depth: usize,
     parameters: Vec<AcceptableRevertParameters>,
 ) -> Result {
     ensure!(

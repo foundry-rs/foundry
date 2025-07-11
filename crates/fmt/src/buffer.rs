@@ -181,7 +181,7 @@ impl<W: Write> FormatBuffer<W> {
                 .take(self.base_indent_len)
                 .take_while(|(_, _, ch)| ch.is_whitespace())
                 .last()
-                .map(|(state, idx, _)| (state, idx + 1))
+                .map(|(state, idx, ch)| (state, idx + ch.len_utf8()))
                 .unwrap_or((comment_state, 0));
             comment_state = new_comment_state;
             let trimmed_line = &line[line_start..];

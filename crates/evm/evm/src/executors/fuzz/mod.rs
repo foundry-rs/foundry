@@ -207,7 +207,7 @@ impl FuzzedExecutor {
                 } else {
                     result.reason = (!reason.is_empty()).then_some(reason);
                     let args = if let Some(data) = calldata.get(4..) {
-                        func.abi_decode_input(data, false).unwrap_or_default()
+                        func.abi_decode_input(data).unwrap_or_default()
                     } else {
                         vec![]
                     };
