@@ -110,7 +110,8 @@ extract_benchmark_table() {
 # Function to extract system information
 extract_system_info() {
     local file=$1
-    awk '/^## System Information/,/^$/ { if (!/^## System Information/ && !/^$/) print }' "$file"
+    # Extract from System Information to end of file (EOF)
+    awk '/^## System Information/ { found=1; next } found { print }' "$file"
 }
 
 # Start building LATEST.md
@@ -150,8 +151,19 @@ for bench_file in "forge_test_bench.md" "forge_build_bench.md" "forge_coverage_b
         extract_summary_info "$OUTPUT_DIR/$bench_file" >> "$OUTPUT_DIR/LATEST.md"
         echo >> "$OUTPUT_DIR/LATEST.md"
         
-        # For build benchmarks, add both sub-sections
-        if [[ "$bench_file" == "forge_build_bench.md" ]]; then
+        # Handle different benchmark types
+        if [[ "$bench_file" == "forge_test_bench.md" ]]; then
+            # Extract both Forge Test and Forge Fuzz Test tables
+            extract_benchmark_table "$OUTPUT_DIR/$bench_file" "Forge Test" >> "$OUTPUT_DIR/LATEST.md"
+            
+            # Check if Forge Fuzz Test section exists
+            if grep -q "^## Forge Fuzz Test" "$OUTPUT_DIR/$bench_file"; then
+                echo >> "$OUTPUT_DIR/LATEST.md"
+                echo "## Forge Fuzz Test" >> "$OUTPUT_DIR/LATEST.md"
+                echo >> "$OUTPUT_DIR/LATEST.md"
+                extract_benchmark_table "$OUTPUT_DIR/$bench_file" "Forge Fuzz Test" >> "$OUTPUT_DIR/LATEST.md"
+            fi
+        elif [[ "$bench_file" == "forge_build_bench.md" ]]; then
             # Extract No Cache table
             echo "### No Cache" >> "$OUTPUT_DIR/LATEST.md"
             echo >> "$OUTPUT_DIR/LATEST.md"
