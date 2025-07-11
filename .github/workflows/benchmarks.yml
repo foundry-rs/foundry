@@ -177,6 +177,8 @@ jobs:
 
       - name: Commit and read benchmark results
         id: benchmark_results
+        env:
+          GITHUB_HEAD_REF: ${{ github.head_ref }}
         run: ./.github/scripts/commit-and-read-benchmarks.sh benches "${{ github.event_name }}" "${{ github.repository }}"
 
       - name: Push branch for manual runs

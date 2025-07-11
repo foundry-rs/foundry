@@ -8,6 +8,9 @@ OUTPUT_DIR="${1:-benches}"
 GITHUB_EVENT_NAME="${2:-pull_request}"
 GITHUB_REPOSITORY="${3:-}"
 
+# Global variable for branch name
+BRANCH_NAME=""
+
 # Function to commit benchmark results
 commit_results() {
     echo "Configuring git..."
@@ -28,7 +31,25 @@ commit_results() {
 Co-Authored-By: github-actions <github-actions@github.com>"
         
         echo "Pushing to repository..."
-        git push
+        if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            # For manual runs, we're on a new branch
+            git push origin "$BRANCH_NAME"
+        elif [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            # For PR runs, we need to push to the PR branch
+            # GitHub Actions provides the branch name in GITHUB_HEAD_REF
+            if [ -n "${GITHUB_HEAD_REF:-}" ]; then
+                echo "Pushing to PR branch: $GITHUB_HEAD_REF"
+                git push origin "HEAD:refs/heads/$GITHUB_HEAD_REF"
+            else
+                echo "Error: GITHUB_HEAD_REF not set for pull_request event"
+                exit 1
+            fi
+        else
+            # This workflow should only run on workflow_dispatch or pull_request
+            echo "Error: Unexpected event type: $GITHUB_EVENT_NAME"
+            echo "This workflow only supports 'workflow_dispatch' and 'pull_request' events"
+            exit 1
+        fi
         echo "Successfully pushed benchmark results"
     fi
 }
