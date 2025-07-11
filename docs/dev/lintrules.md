@@ -99,10 +99,7 @@ cx.emit_with_fix(
 
 3. Add comprehensive tests in `lint/testdata/`:
    - Create `MyNewLint.sol` with various examples (triggering and non-triggering cases, edge cases).
-   - If your test requires imports, add a deps comment on the first line:
-     ```solidity
-     // deps: ImportedContract.sol, AnotherFile.sol
-     ```
+   - If your test requires imports, add those files under `lint/testdata/auxiliary/` so that the ui runner doesn't lint them.
    - Generate the corresponding blessed file with the expected output.
 
 ### Testing a lint rule

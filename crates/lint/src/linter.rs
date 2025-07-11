@@ -136,11 +136,11 @@ impl Snippet {
         match self {
             Self::Diff { span, add, .. } => {
                 // Get the original code from the span if provided
-                if let Some(span) = span {
-                    if let Some(rmv) = ctx.span_to_snippet(span) {
-                        for line in rmv.lines() {
-                            output.push((DiagMsg::from(format!("- {line}\n")), Style::Removal));
-                        }
+                if let Some(span) = span
+                    && let Some(rmv) = ctx.span_to_snippet(span)
+                {
+                    for line in rmv.lines() {
+                        output.push((DiagMsg::from(format!("- {line}\n")), Style::Removal));
                     }
                 }
                 for line in add.lines() {
