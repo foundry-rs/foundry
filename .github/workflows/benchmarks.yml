@@ -1,8 +1,6 @@
 name: Foundry Benchmarks
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -194,7 +192,7 @@ jobs:
           script: |
             const branchName = '${{ steps.benchmark_results.outputs.branch_name }}';
             const prComment = `${{ steps.benchmark_results.outputs.pr_comment }}`;
-            
+
             // Create the pull request
             const { data: pr } = await github.rest.pulls.create({
               owner: context.repo.owner,
