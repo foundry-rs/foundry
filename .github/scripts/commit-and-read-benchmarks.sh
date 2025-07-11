@@ -66,13 +66,20 @@ read_results() {
 # Main execution
 echo "Starting benchmark results processing..."
 
-# Only commit if not a pull request
-if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
-    echo "Event is not a pull request, proceeding with commit..."
-    commit_results
-else
-    echo "Event is a pull request, skipping commit"
+# Create new branch for manual runs
+if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+    echo "Manual workflow run detected, creating new branch..."
+    BRANCH_NAME="benchmarks/results-$(date +%Y%m%d-%H%M%S)"
+    git checkout -b "$BRANCH_NAME"
+    echo "Created branch: $BRANCH_NAME"
+    
+    # Output branch name for later use
+    echo "branch_name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
 fi
+
+# Always commit benchmark results
+echo "Committing benchmark results..."
+commit_results
 
 # Always read results for output
 read_results
