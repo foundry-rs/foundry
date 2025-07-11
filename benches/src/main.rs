@@ -217,7 +217,7 @@ fn install_foundry_versions(versions: &[String]) -> Result<()> {
         sh_println!("Installing {version}...");
 
         let status = Command::new("foundryup")
-            .args(["--install", version])
+            .args(["--install", version, "--force"])
             .status()
             .wrap_err("Failed to run foundryup")?;
 
