@@ -330,7 +330,7 @@ impl CallArgs {
                 with_local_artifacts,
                 debug,
                 decode_internal,
-                Some(disable_labels),
+                disable_labels,
             )
             .await?;
 
@@ -362,6 +362,7 @@ impl CallArgs {
             self.nonce_overrides.as_ref(),
             self.code_overrides.as_ref(),
             self.state_overrides.as_ref(),
+            self.state_diff_overrides.as_ref(),
         ]
         .iter()
         .all(Option::is_none)
