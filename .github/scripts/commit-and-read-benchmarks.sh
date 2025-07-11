@@ -38,26 +38,27 @@ read_results() {
     if [ -f "$OUTPUT_DIR/LATEST.md" ]; then
         echo "Reading benchmark results..."
         
-        # Extract Forge Test results summary
-        echo "Extracting Forge Test summary..."
-        {
-            echo 'forge_test_summary<<EOF'
-            # Extract the Forge Test section from the markdown
-            # Look for "## Forge Test" and extract until the next "## " section
-            awk '/^## Forge Test$/,/^## /' "$OUTPUT_DIR/LATEST.md" | head -n -1
-            echo 'EOF'
-        } >> "$GITHUB_OUTPUT"
-        
         # Output full results
         {
             echo 'results<<EOF'
             cat "$OUTPUT_DIR/LATEST.md"
             echo 'EOF'
         } >> "$GITHUB_OUTPUT"
-        echo "Successfully read benchmark results"
+        
+        # Format results for PR comment
+        echo "Formatting results for PR comment..."
+        FORMATTED_COMMENT=$("$(dirname "$0")/format-pr-comment.sh" "$OUTPUT_DIR/LATEST.md")
+        
+        {
+            echo 'pr_comment<<EOF'
+            echo "$FORMATTED_COMMENT"
+            echo 'EOF'
+        } >> "$GITHUB_OUTPUT"
+        
+        echo "Successfully read and formatted benchmark results"
     else
         echo 'results=No benchmark results found.' >> "$GITHUB_OUTPUT"
-        echo 'forge_test_summary=No Forge Test results found.' >> "$GITHUB_OUTPUT"
+        echo 'pr_comment=No benchmark results found.' >> "$GITHUB_OUTPUT"
         echo "Warning: No benchmark results found at $OUTPUT_DIR/LATEST.md"
     fi
 }

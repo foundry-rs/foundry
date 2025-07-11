@@ -185,19 +185,9 @@ jobs:
         with:
           script: |
             const prNumber = ${{ github.event.inputs.pr_number || github.event.pull_request.number }};
-            const forgeTestSummary = `${{ steps.benchmark_results.outputs.forge_test_summary }}`;
-            const benchmarkResults = `${{ steps.benchmark_results.outputs.results }}`;
+            const prComment = `${{ steps.benchmark_results.outputs.pr_comment }}`;
 
-            const comment = `## 📊 Foundry Benchmark Results
-
-            ${forgeTestSummary}
-
-            <details>
-            <summary>📈 View all benchmark results</summary>
-
-            ${benchmarkResults}
-
-            </details>
+            const comment = `${prComment}
 
             ---
 
