@@ -220,7 +220,7 @@ impl Linter for SolidityLinter {
             // Process each source in parallel
             ast_result.sources.iter().par_bridge().for_each(|source| {
                 if let (FileName::Real(path), Some(ast)) = (&source.file.name, &source.ast)
-                    && input.contains(path)
+                    && input.iter().any(|input_path| path.ends_with(input_path))
                 {
                     _ = self.process_source_ast(sess, ast, &source.file, path)
                 }
@@ -247,7 +247,7 @@ impl Linter for SolidityLinter {
                 // Process each source in parallel
                 gcx.hir.sources_enumerated().par_bridge().for_each(|(source_id, source)| {
                     if let FileName::Real(ref path) = source.file.name
-                        && input.contains(path)
+                        && input.iter().any(|input_path| path.ends_with(input_path))
                     {
                         _ = self.process_source_hir(sess, &gcx, source_id, &source.file);
                     }
