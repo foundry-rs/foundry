@@ -17,6 +17,13 @@ commit_results() {
     git config --local user.email "action@github.com"
     git config --local user.name "GitHub Action"
 
+    # For PR runs, fetch and checkout the PR branch to ensure we're up to date
+    if [ "$GITHUB_EVENT_NAME" = "pull_request" ] && [ -n "${GITHUB_HEAD_REF:-}" ]; then
+        echo "Fetching latest changes for PR branch: $GITHUB_HEAD_REF"
+        git fetch origin "$GITHUB_HEAD_REF"
+        git checkout -B "$GITHUB_HEAD_REF" "origin/$GITHUB_HEAD_REF"
+    fi
+
     echo "Adding benchmark file..."
     git add "$OUTPUT_DIR/LATEST.md"
 
@@ -35,11 +42,10 @@ Co-Authored-By: github-actions <github-actions@github.com>"
             # For manual runs, we're on a new branch
             git push origin "$BRANCH_NAME"
         elif [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            # For PR runs, we need to push to the PR branch
-            # GitHub Actions provides the branch name in GITHUB_HEAD_REF
+            # For PR runs, push to the PR branch
             if [ -n "${GITHUB_HEAD_REF:-}" ]; then
                 echo "Pushing to PR branch: $GITHUB_HEAD_REF"
-                git push origin "HEAD:refs/heads/$GITHUB_HEAD_REF"
+                git push origin "$GITHUB_HEAD_REF"
             else
                 echo "Error: GITHUB_HEAD_REF not set for pull_request event"
                 exit 1
