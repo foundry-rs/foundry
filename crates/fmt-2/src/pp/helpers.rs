@@ -7,7 +7,7 @@ impl Printer {
         self.space();
     }
 
-    /// Adds a new hardbrak if not at the beginning of the line.
+    /// Adds a new hardbreak if not at the beginning of the line.
     /// If there was a buffered break token, replaces it (ensures hardbreak) keeping the offset.
     pub fn hardbreak_if_not_bol(&mut self) {
         if !self.is_bol_or_only_ind() {

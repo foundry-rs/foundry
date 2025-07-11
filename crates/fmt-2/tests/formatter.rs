@@ -173,7 +173,7 @@ fmt_tests! {
     FunctionDefinitionWithFunctionReturns, // OK
     FunctionType, // OK? is it acceptable?
     HexUnderscore, // OK
-    IfStatement, // TODO: figure out correct comment placements + condition parenthesis wrapping + support config line wrapping
+    IfStatement, // Ok
     IfStatement2, // OK
     ImportDirective, // OK
     InlineDisable, // FIX: invalid output

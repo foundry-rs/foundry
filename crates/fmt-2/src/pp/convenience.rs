@@ -62,6 +62,13 @@ impl Printer {
         false
     }
 
+    pub fn last_token_is_break(&self) -> bool {
+        if let Some(token) = self.last_token() {
+            return matches!(token, Token::Break(_));
+        }
+        false
+    }
+
     pub fn last_token_is_hardbreak(&self) -> bool {
         if let Some(token) = self.last_token() {
             return token.is_hardbreak();
@@ -167,6 +174,14 @@ impl Printer {
 
     pub fn neverbreak(&mut self) {
         self.scan_break(BreakToken { never_break: true, ..BreakToken::default() });
+    }
+
+    pub fn last_brace_is_closed(&self, kw: &str) -> bool {
+        self.out.rsplit_once(kw).map_or(true, |(_, relevant)| {
+            let open = relevant.chars().filter(|c| *c == '{').count();
+            let close = relevant.chars().filter(|c| *c == '}').count();
+            open == close
+        })
     }
 }
 
