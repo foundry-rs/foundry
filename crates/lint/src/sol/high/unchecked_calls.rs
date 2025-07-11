@@ -24,6 +24,7 @@ declare_forge_lint!(
 // -- ERC20 UNCKECKED TRANSFERS -------------------------------------------------------------------
 
 /// WARN: can issue false positives. It does not check that the contract being called is an ERC20.
+/// TODO: re-implement using `LateLintPass` so that it can't issue false positives.
 impl<'ast> EarlyLintPass<'ast> for UncheckedTransferERC20 {
     fn check_item_function(&mut self, ctx: &LintContext<'_>, func: &'ast ItemFunction<'ast>) {
         if let Some(body) = &func.body {

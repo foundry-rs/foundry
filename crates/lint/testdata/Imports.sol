@@ -8,27 +8,27 @@ import {
     symbolNotUsed, //~NOTE: unused imports should be removed
     IContract,
     IContractNotUsed //~NOTE: unused imports should be removed
-} from "File.sol";
+} from "./auxiliary/ImportsFile.sol";
 
 import {
     CONSTANT_0,
     CONSTANT_1 //~NOTE: unused imports should be removed
-} from "Constants.sol";
+} from "./auxiliary/ImportsConstants.sol";
 
 import {
-    MyTpe,
+    MyType,
     MyOtherType,
     YetAnotherType //~NOTE: unused imports should be removed
-} from "Types.sol";
+} from "./auxiliary/ImportsTypes.sol";
 
-import "SomeFile.sol"; //~NOTE: use named imports '{A, B}' or alias 'import ".." as X'
-import "AnotherFile.sol"; //~NOTE: use named imports '{A, B}' or alias 'import ".." as X'
+import "./auxiliary/ImportsSomeFile.sol"; //~NOTE: use named imports '{A, B}' or alias 'import ".." as X'
+import "./auxiliary/ImportsAnotherFile.sol"; //~NOTE: use named imports '{A, B}' or alias 'import ".." as X'
 
-import "some_file_2.sol" as SomeFile2;
-import "another_file_2.sol" as AnotherFile2; //~NOTE: unused imports should be removed
+import "./auxiliary/ImportsSomeFile2.sol" as SomeFile2;
+import "./auxiliary/ImportsAnotherFile2.sol" as AnotherFile2; //~NOTE: unused imports should be removed
 
-import * as Utils from "utils.sol";
-import * as OtherUtils from "utils2.sol"; //~NOTE: unused imports should be removed
+import * as Utils from "./auxiliary/ImportsUtils.sol";
+import * as OtherUtils from "./auxiliary/ImportsUtils2.sol"; //~NOTE: unused imports should be removed
 
 
 contract UnusedImport is IContract {
@@ -51,7 +51,7 @@ contract UnusedImport is IContract {
     }
 
     function convert(address addr) public pure returns (MyOtherType) {
-        MyType a = MyTpe.wrap(123);
+        MyType a = MyType.wrap(123);
         return MyOtherType.wrap(a);
     }
 }

@@ -46,7 +46,7 @@ contract Dummy {
     .unwrap();
 
     // set up command
-    cmd.args(["compile", "--format-json"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["compile", "--format-json"]).assert_success().stderr_eq("").stdout_eq(str![[r#"
 {
   "errors": [
     {

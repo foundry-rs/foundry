@@ -14,22 +14,27 @@ use std::path::PathBuf;
 ///
 /// * Configures include paths, remappings and registers all in-memory sources so that solar can
 ///   operate without touching disk.
+/// * If no `project` is provided, it will spin up a new ephemeral project.
 /// * If no `target_paths` are provided, all project files are processed.
 /// * Only processes the subset of sources with the most up-to-date Solitidy version.
 pub fn solar_pcx_from_build_opts<'sess>(
     sess: &'sess Session,
-    build: BuildOpts,
-    target_paths: Option<Vec<PathBuf>>,
+    build: &BuildOpts,
+    project: Option<&Project>,
+    target_paths: Option<&[PathBuf]>,
 ) -> Result<ParsingContext<'sess>> {
     // Process build options
     let config = build.load_config()?;
-    let project = config.ephemeral_project()?;
+    let project = match project {
+        Some(project) => project,
+        None => &config.ephemeral_project()?,
+    };
 
     let sources = match target_paths {
         // If target files are provided, only process those sources
         Some(targets) => {
             let mut sources = Sources::new();
-            for t in targets.into_iter() {
+            for t in targets {
                 let path = dunce::canonicalize(t)?;
                 let source = Source::read(&path)?;
                 sources.insert(path, source);
@@ -44,7 +49,7 @@ pub fn solar_pcx_from_build_opts<'sess>(
     let graph = Graph::<MultiCompilerParsedSource>::resolve_sources(&project.paths, sources)?;
     let (version, sources, _) = graph
         // resolve graph into mapping language -> version -> sources
-        .into_sources_by_version(&project)?
+        .into_sources_by_version(project)?
         .sources
         .into_iter()
         // only interested in Solidity sources
@@ -63,7 +68,7 @@ pub fn solar_pcx_from_build_opts<'sess>(
         version,
     );
 
-    Ok(solar_pcx_from_solc_project(sess, &project, &solc, true))
+    Ok(solar_pcx_from_solc_project(sess, project, &solc, true))
 }
 
 /// Builds a Solar [`solar_sema::ParsingContext`] from a  [`foundry_compilers::Project`] and a

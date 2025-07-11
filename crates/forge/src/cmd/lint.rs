@@ -4,9 +4,12 @@ use forge_lint::{
     linter::Linter,
     sol::{SolLint, SolLintError, SolidityLinter},
 };
-use foundry_cli::utils::{FoundryPathExt, LoadConfig};
+use foundry_cli::{
+    opts::{BuildOpts, solar_pcx_from_build_opts},
+    utils::{FoundryPathExt, LoadConfig},
+};
 use foundry_compilers::{solc::SolcLanguage, utils::SOLC_EXTENSIONS};
-use foundry_config::{filter::expand_globs, impl_figment_convert_basic, lint::Severity};
+use foundry_config::{filter::expand_globs, lint::Severity};
 use std::path::PathBuf;
 
 /// CLI arguments for `forge lint`.
@@ -15,13 +18,6 @@ pub struct LintArgs {
     /// Path to the file to be checked. Overrides the `ignore` project config.
     #[arg(value_hint = ValueHint::FilePath, value_name = "PATH", num_args(1..))]
     paths: Vec<PathBuf>,
-
-    /// The project's root path.
-    ///
-    /// By default root of the Git repository, if in one,
-    /// or the current working directory.
-    #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
-    root: Option<PathBuf>,
 
     /// Specifies which lints to run based on severity. Overrides the `severity` project config.
     ///
@@ -37,9 +33,12 @@ pub struct LintArgs {
     /// Activates the linter's JSON formatter (rustc-compatible).
     #[arg(long)]
     json: bool,
+
+    #[command(flatten)]
+    build: BuildOpts,
 }
 
-impl_figment_convert_basic!(LintArgs);
+foundry_config::impl_figment_convert!(LintArgs, build);
 
 impl LintArgs {
     pub fn run(self) -> Result<()> {
@@ -112,7 +111,13 @@ impl LintArgs {
             .without_lints(exclude)
             .with_severity(if severity.is_empty() { None } else { Some(severity) });
 
-        linter.lint(&input);
+        let sess = linter.init();
+
+        let pcx = solar_pcx_from_build_opts(&sess, &self.build, Some(&project), Some(&input))?;
+        linter.early_lint(&input, pcx);
+
+        let pcx = solar_pcx_from_build_opts(&sess, &self.build, Some(&project), Some(&input))?;
+        linter.late_lint(&input, pcx);
 
         Ok(())
     }
