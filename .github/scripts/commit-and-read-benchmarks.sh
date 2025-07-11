@@ -43,7 +43,8 @@ read_results() {
         {
             echo 'forge_test_summary<<EOF'
             # Extract the Forge Test section from the markdown
-            awk '/^## Forge Test Results/,/^## Forge Build.*Results/' "$OUTPUT_DIR/LATEST.md" | head -n -1
+            # Look for "## Forge Test" and extract until the next "## " section
+            awk '/^## Forge Test$/,/^## /' "$OUTPUT_DIR/LATEST.md" | head -n -1
             echo 'EOF'
         } >> "$GITHUB_OUTPUT"
         
