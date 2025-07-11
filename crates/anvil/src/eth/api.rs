@@ -1330,14 +1330,14 @@ impl EthApi {
                 for tx in block.into_transactions_iter() {
                     let typed_tx = TypedTransaction::try_from(tx).unwrap();
 
-                    if let TypedTransaction::EIP4844(signed) = typed_tx {
-                        if let Ok(sidecar_tx) = signed.tx().clone().try_into_4844_with_sidecar() {
-                            for item in sidecar_tx.sidecar.clone() {
-                                let versioned_hash = B256::from(item.to_kzg_versioned_hash());
+                    if let TypedTransaction::EIP4844(signed) = typed_tx
+                        && let Ok(sidecar_tx) = signed.tx().clone().try_into_4844_with_sidecar()
+                    {
+                        for item in sidecar_tx.sidecar.clone() {
+                            let versioned_hash = B256::from(item.to_kzg_versioned_hash());
 
-                                if versioned_hash == hash {
-                                    return Ok(Some(sidecar_tx));
-                                }
+                            if versioned_hash == hash {
+                                return Ok(Some(sidecar_tx));
                             }
                         }
                     }
@@ -1361,11 +1361,10 @@ impl EthApi {
                     let typed_tx = TypedTransaction::try_from(tx).unwrap();
 
                     if let TypedTransaction::EIP4844(signed) = typed_tx {
-                        if *signed.hash() == hash {
-                            if let Ok(sidecar_tx) = signed.tx().clone().try_into_4844_with_sidecar()
-                            {
-                                return Ok(Some(sidecar_tx));
-                            }
+                        if *signed.hash() == hash
+                            && let Ok(sidecar_tx) = signed.tx().clone().try_into_4844_with_sidecar()
+                        {
+                            return Ok(Some(sidecar_tx));
                         }
                     }
                 }
