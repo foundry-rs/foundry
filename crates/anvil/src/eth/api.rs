@@ -1360,12 +1360,11 @@ impl EthApi {
                 for tx in block.into_transactions_iter() {
                     let typed_tx = TypedTransaction::try_from(tx).unwrap();
 
-                    if let TypedTransaction::EIP4844(signed) = typed_tx {
-                        if *signed.hash() == hash
-                            && let Ok(sidecar_tx) = signed.tx().clone().try_into_4844_with_sidecar()
-                        {
-                            return Ok(Some(sidecar_tx));
-                        }
+                    if let TypedTransaction::EIP4844(signed) = typed_tx
+                        && *signed.hash() == hash
+                        && let Ok(sidecar_tx) = signed.tx().clone().try_into_4844_with_sidecar()
+                    {
+                        return Ok(Some(sidecar_tx));
                     }
                 }
             }
