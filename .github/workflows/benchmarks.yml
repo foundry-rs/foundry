@@ -185,12 +185,15 @@ jobs:
         with:
           script: |
             const prNumber = ${{ github.event.inputs.pr_number || github.event.pull_request.number }};
+            const forgeTestSummary = `${{ steps.benchmark_results.outputs.forge_test_summary }}`;
             const benchmarkResults = `${{ steps.benchmark_results.outputs.results }}`;
 
             const comment = `## 📊 Foundry Benchmark Results
 
+            ${forgeTestSummary}
+
             <details>
-            <summary>Click to view detailed benchmark results</summary>
+            <summary>📈 View all benchmark results</summary>
 
             ${benchmarkResults}
 

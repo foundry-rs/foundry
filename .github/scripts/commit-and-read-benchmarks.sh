@@ -37,6 +37,17 @@ Co-Authored-By: github-actions <github-actions@github.com>"
 read_results() {
     if [ -f "$OUTPUT_DIR/LATEST.md" ]; then
         echo "Reading benchmark results..."
+        
+        # Extract Forge Test results summary
+        echo "Extracting Forge Test summary..."
+        {
+            echo 'forge_test_summary<<EOF'
+            # Extract the Forge Test section from the markdown
+            awk '/^## Forge Test Results/,/^## Forge Build.*Results/' "$OUTPUT_DIR/LATEST.md" | head -n -1
+            echo 'EOF'
+        } >> "$GITHUB_OUTPUT"
+        
+        # Output full results
         {
             echo 'results<<EOF'
             cat "$OUTPUT_DIR/LATEST.md"
@@ -45,6 +56,7 @@ read_results() {
         echo "Successfully read benchmark results"
     else
         echo 'results=No benchmark results found.' >> "$GITHUB_OUTPUT"
+        echo 'forge_test_summary=No Forge Test results found.' >> "$GITHUB_OUTPUT"
         echo "Warning: No benchmark results found at $OUTPUT_DIR/LATEST.md"
     fi
 }
