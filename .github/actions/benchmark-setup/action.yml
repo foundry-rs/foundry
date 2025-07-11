@@ -1,0 +1,34 @@
+name: "Benchmark Setup"
+description: "Common setup steps for benchmark jobs"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Foundry
+      shell: bash
+      env:
+        FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+      run: |
+        ./.github/scripts/setup-foundryup.sh
+        echo "${{ github.workspace }}/.foundry/bin" >> $GITHUB_PATH
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: "24"
+
+    - name: Install hyperfine
+      shell: bash
+      run: |
+        curl -L https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine-v1.19.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+        sudo mv hyperfine-v1.19.0-x86_64-unknown-linux-gnu/hyperfine /usr/local/bin/
+        rm -rf hyperfine-v1.19.0-x86_64-unknown-linux-gnu
+
+    - name: Download benchmark binary
+      uses: actions/download-artifact@v4
+      with:
+        name: foundry-bench
+
+    - name: Make binary executable
+      shell: bash
+      run: chmod +x foundry-bench
