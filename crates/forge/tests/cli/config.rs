@@ -1061,6 +1061,7 @@ path = "out"
 [fmt]
 line_length = 120
 tab_width = 4
+style = "space"
 bracket_spacing = false
 int_types = "long"
 multiline_func_header = "attributes_first"
@@ -1277,6 +1278,7 @@ exclude = []
   "fmt": {
     "line_length": 120,
     "tab_width": 4,
+    "style": "space",
     "bracket_spacing": false,
     "int_types": "long",
     "multiline_func_header": "attributes_first",
