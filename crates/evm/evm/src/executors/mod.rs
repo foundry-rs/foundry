@@ -937,8 +937,9 @@ impl RawCallResult {
 
     /// Update provided history map with edge coverage info collected during this call.
     /// Uses AFL binning algo <https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L57-L85>
-    pub fn merge_edge_coverage(&mut self, history_map: &mut [u8]) -> bool {
+    pub fn merge_edge_coverage(&mut self, history_map: &mut [u8]) -> (bool, bool) {
         let mut new_coverage = false;
+        let mut is_edge = false;
         if let Some(x) = &mut self.edge_coverage {
             // Iterate over the current map and the history map together and update
             // the history map, if we discover some new coverage, report true
@@ -960,6 +961,10 @@ impl RawCallResult {
 
                     // If the old record for this edge pair is lower, update
                     if *hist < bucket {
+                        if *hist == 0 {
+                            // Counts as an edge the first time we see it, otherwise it's a feature.
+                            is_edge = true;
+                        }
                         *hist = bucket;
                         new_coverage = true;
                     }
@@ -969,7 +974,7 @@ impl RawCallResult {
                 }
             }
         }
-        new_coverage
+        (new_coverage, is_edge)
     }
 }
 
