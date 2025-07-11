@@ -280,7 +280,10 @@ impl EthApi {
                 self.raw_transaction(hash).await.to_rpc_result()
             }
             EthRequest::GetBlobByHash(hash) => {
-                self.anvil_get_blob_by_hash(hash).await.to_rpc_result()
+                self.anvil_get_blob_by_versioned_hash(hash).await.to_rpc_result()
+            }
+            EthRequest::GetBlobByTransactionHash(hash) => {
+                self.anvil_get_blob_by_tx_hash(hash).await.to_rpc_result()
             }
             EthRequest::EthGetRawTransactionByBlockHashAndIndex(hash, index) => {
                 self.raw_transaction_by_block_hash_and_index(hash, index).await.to_rpc_result()
@@ -1316,32 +1319,52 @@ impl EthApi {
     }
 
     /// Handler for RPC call: `anvil_getBlobByHash`
-    pub async fn anvil_get_blob_by_hash(
+    pub async fn anvil_get_blob_by_versioned_hash(
         &self,
         hash: B256,
     ) -> Result<Option<alloy_consensus::TxEip4844WithSidecar>> {
         node_info!("anvil_getBlobByHash");
         let latest_block = self.backend.best_number();
-        println!("Searching for blob with hash: {hash} in blocks 0..={latest_block}");
         for i in 0..=latest_block {
-            if let Ok(Some(block)) = self.backend.block_by_number(i.into()).await {
-                // println!("BLOCK #{i}: {:#?}", block);
-                println!("Transactions in block {i}: {:?}", block.transactions());
-
+            if let Some(block) = self.backend.get_full_block(i) {
                 for tx in block.into_transactions_iter() {
-                    println!("Tx: {:?}", tx);
-                    println!("Rpc Transaction got in block {:?}", i);
                     let typed_tx = TypedTransaction::try_from(tx).unwrap();
-                    println!("Typed Transaction got in block {:?}", i);
+
                     if let TypedTransaction::EIP4844(signed) = typed_tx {
-                        println!("Got Signed tx");
                         if let Ok(sidecar_tx) = signed.tx().clone().try_into_4844_with_sidecar() {
                             for item in sidecar_tx.sidecar.clone() {
                                 let versioned_hash = B256::from(item.to_kzg_versioned_hash());
-                                println!("Versioned Hash: {:?}", versioned_hash);
+
                                 if versioned_hash == hash {
                                     return Ok(Some(sidecar_tx));
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Handler for RPC call: `anvil_getBlobByTransactionHash`
+    pub async fn anvil_get_blob_by_tx_hash(
+        &self,
+        hash: B256,
+    ) -> Result<Option<alloy_consensus::TxEip4844WithSidecar>> {
+        node_info!("anvil_getBlobByTransactionHash");
+        let latest_block = self.backend.best_number();
+        for i in 0..=latest_block {
+            if let Some(block) = self.backend.get_full_block(i) {
+                for tx in block.into_transactions_iter() {
+                    let typed_tx = TypedTransaction::try_from(tx).unwrap();
+
+                    if let TypedTransaction::EIP4844(signed) = typed_tx {
+                        if *signed.hash() == hash {
+                            if let Ok(sidecar_tx) = signed.tx().clone().try_into_4844_with_sidecar()
+                            {
+                                return Ok(Some(sidecar_tx));
                             }
                         }
                     }
