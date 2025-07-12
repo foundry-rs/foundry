@@ -2919,23 +2919,17 @@ impl Backend {
     }
 
     pub fn get_blob_by_tx_hash(&self, hash: B256) -> Result<Option<TxEip4844WithSidecar>> {
-        let storage = self.blockchain.storage.read();
-        for (_, block) in &storage.blocks {
-            for tx in &block.transactions {
-                let typed_tx = tx.as_ref();
-                if *typed_tx.hash() == hash {
-                    if let Some(sidecar) = typed_tx.sidecar() {
-                        return Ok(Some(sidecar.clone()));
-                    }
-                }
-            }
+        let tx = self.mined_transaction_by_hash(hash).unwrap();
+        let typed_tx = TypedTransaction::try_from(tx).unwrap();
+        if let Some(sidecar) = typed_tx.sidecar() {
+            return Ok(Some(sidecar.clone()));
         }
         Ok(None)
     }
 
     pub fn get_blob_by_versioned_hash(&self, hash: B256) -> Result<Option<TxEip4844WithSidecar>> {
         let storage = self.blockchain.storage.read();
-        for (_, block) in &storage.blocks {
+        for block in storage.blocks.values() {
             for tx in &block.transactions {
                 let typed_tx = tx.as_ref();
                 if let Some(sidecar) = typed_tx.sidecar() {
