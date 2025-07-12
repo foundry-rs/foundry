@@ -289,7 +289,7 @@ fn validate_private_key<C: ecdsa::PrimeCurve>(private_key: &U256) -> Result<()> 
     ensure!(*private_key != U256::ZERO, "private key cannot be 0");
     let order = U256::from_be_slice(&C::ORDER.to_be_byte_array());
     ensure!(
-        *private_key < U256::from_be_slice(&C::ORDER.to_be_byte_array()),
+        *private_key < order,
         "private key must be less than the {curve:?} curve order ({order})",
         curve = C::default(),
     );
