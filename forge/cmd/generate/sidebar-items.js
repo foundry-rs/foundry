@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["GenerateSubcommands"],"fn":["format_identifier"],"struct":["GenerateArgs","GenerateTestArgs"]};

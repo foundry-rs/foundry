@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["new_allocator","new_allocator_wrapper"],"type":["Allocator","AllocatorInner","AllocatorWrapper"]};
