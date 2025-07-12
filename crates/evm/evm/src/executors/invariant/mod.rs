@@ -32,6 +32,7 @@ use std::{
     cell::RefCell,
     collections::{HashMap as Map, btree_map::Entry},
     sync::Arc,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 mod error;
@@ -343,6 +344,8 @@ impl<'a> InvariantExecutor<'a> {
         // Start timer for this invariant test.
         let mut runs = 0;
         let timer = FuzzTestTimer::new(self.config.timeout);
+        const DURATION_BETWEEN_METRICS_REPORT: Duration = Duration::from_secs(5);
+        let mut last_metrics_report = Instant::now();
         let continue_campaign = |runs: u32| {
             // If timeout is configured, then perform invariant runs until expires.
             if self.config.timeout.is_some() {
@@ -404,10 +407,17 @@ impl<'a> InvariantExecutor<'a> {
                 invariant_test.merge_coverage(call_result.line_coverage.clone());
                 // If coverage guided fuzzing is enabled then merge edge count with current history
                 // map and set new coverage in current run.
-                if self.config.corpus_dir.is_some()
-                    && call_result.merge_edge_coverage(&mut self.history_map)
-                {
-                    current_run.new_coverage = true;
+                if self.config.corpus_dir.is_some() {
+                    let (new_coverage, is_edge) =
+                        call_result.merge_edge_coverage(&mut self.history_map);
+                    if new_coverage {
+                        current_run.new_coverage = true;
+                        if is_edge {
+                            corpus_manager.cumulative_edges_seen += 1;
+                        } else {
+                            corpus_manager.cumulative_features_seen += 1;
+                        }
+                    }
                 }
 
                 if discarded {
@@ -513,6 +523,23 @@ impl<'a> InvariantExecutor<'a> {
             }
 
             runs += 1;
+
+            if last_metrics_report.elapsed() > DURATION_BETWEEN_METRICS_REPORT {
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                let corpus_count = corpus_manager.corpus_count;
+                let cumulative_edges_seen = corpus_manager.cumulative_edges_seen;
+                let cumulative_features_seen = corpus_manager.cumulative_features_seen;
+                let favored_items = corpus_manager.favored_items;
+                println!(
+                    "{{\"timestamp\":{},\"cumulative_edges_seen\":{},\"cumulative_features_seen\":{},\"corpus_count\":{},\"favored_items\":{}}}",
+                    now,
+                    cumulative_edges_seen,
+                    cumulative_features_seen,
+                    corpus_count,
+                    favored_items
+                );
+                last_metrics_report = Instant::now();
+            }
         }
 
         trace!(?fuzz_fixtures);
