@@ -178,10 +178,12 @@ pub enum EthRequest {
     #[serde(rename = "eth_getTransactionByHash", with = "sequence")]
     EthGetTransactionByHash(TxHash),
 
+    /// Returns the blob for a given blob versioned hash.
     #[serde(rename = "anvil_getBlobByHash", with = "sequence")]
-    GetBlobByHash(TxHash),
+    GetBlobByHash(B256),
 
-    #[serde(rename = "anvil_getBlobByTransactionHash", with = "sequence")]
+    /// Returns the blobs for a given transaction hash.
+    #[serde(rename = "anvil_getBlobsByTransactionHash", with = "sequence")]
     GetBlobByTransactionHash(TxHash),
 
     #[serde(rename = "eth_getTransactionByBlockHashAndIndex")]

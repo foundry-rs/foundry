@@ -35,7 +35,7 @@ use crate::{
 use alloy_chains::NamedChain;
 use alloy_consensus::{
     Account, BlockHeader, EnvKzgSettings, Header, Receipt, ReceiptWithBloom, Signed,
-    Transaction as TransactionTrait, TxEnvelope,
+    Transaction as TransactionTrait, TxEip4844WithSidecar, TxEnvelope,
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
 };
@@ -2916,6 +2916,39 @@ impl Backend {
             Some(info),
             block.header.base_fee_per_gas,
         ))
+    }
+
+    pub fn get_blob_by_tx_hash(&self, hash: B256) -> Result<Option<TxEip4844WithSidecar>> {
+        let storage = self.blockchain.storage.read();
+        for (_, block) in &storage.blocks {
+            for tx in &block.transactions {
+                let typed_tx = tx.as_ref();
+                if *typed_tx.hash() == hash {
+                    if let Some(sidecar) = typed_tx.sidecar() {
+                        return Ok(Some(sidecar.clone()));
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn get_blob_by_versioned_hash(&self, hash: B256) -> Result<Option<TxEip4844WithSidecar>> {
+        let storage = self.blockchain.storage.read();
+        for (_, block) in &storage.blocks {
+            for tx in &block.transactions {
+                let typed_tx = tx.as_ref();
+                if let Some(sidecar) = typed_tx.sidecar() {
+                    for blob in sidecar.sidecar.clone() {
+                        let versioned_hash = B256::from(blob.to_kzg_versioned_hash());
+                        if versioned_hash == hash {
+                            return Ok(Some(sidecar.clone()));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(None)
     }
 
     /// Prove an account's existence or nonexistence in the state trie.
