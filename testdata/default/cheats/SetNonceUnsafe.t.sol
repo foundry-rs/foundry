@@ -11,7 +11,7 @@ contract Foo {
 }
 
 contract SetNonceTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
     Foo public foo;
 
     function setUp() public {
@@ -19,16 +19,16 @@ contract SetNonceTest is DSTest {
     }
 
     function testSetNonceUnsafe() public {
-        vm.setNonceUnsafe(address(foo), 10);
+        VM.setNonceUnsafe(address(foo), 10);
         // makes sure working correctly after mutating nonce.
         foo.f();
-        assertEq(vm.getNonce(address(foo)), 10);
+        assertEq(VM.getNonce(address(foo)), 10);
         foo.f();
     }
 
     function testDoesNotFailDecreasingNonce() public {
-        vm.setNonce(address(foo), 10);
-        vm.setNonceUnsafe(address(foo), 5);
-        assertEq(vm.getNonce(address(foo)), 5);
+        VM.setNonce(address(foo), 10);
+        VM.setNonceUnsafe(address(foo), 5);
+        assertEq(VM.getNonce(address(foo)), 5);
     }
 }

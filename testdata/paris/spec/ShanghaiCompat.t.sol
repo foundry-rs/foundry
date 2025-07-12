@@ -5,7 +5,7 @@ import "ds-test/test.sol";
 import "cheats/Vm.sol";
 
 contract ShanghaiCompat is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
     function testPush0() public {
         address target = address(uint160(uint256(0xc4f3)));
@@ -20,7 +20,7 @@ contract ShanghaiCompat is DSTest {
         // 5F PUSH0
         // F3 RETURN -> returns mem[0..calldatasize]
 
-        vm.etch(target, bytecode);
+        VM.etch(target, bytecode);
 
         (bool success, bytes memory result) = target.call(bytes("hello PUSH0"));
         assertTrue(success);

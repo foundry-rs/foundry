@@ -5,7 +5,7 @@ import "ds-test/test.sol";
 import "cheats/Vm.sol";
 
 contract AccessListIsolatedTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
     function test_access_list() public {
         Write anotherWrite = new Write();
@@ -19,7 +19,7 @@ contract AccessListIsolatedTest is DSTest {
         Vm.AccessListItem[] memory accessList = new Vm.AccessListItem[](1);
         bytes32[] memory readKeys = new bytes32[](0);
         accessList[0] = Vm.AccessListItem(address(anotherWrite), readKeys);
-        vm.accessList(accessList);
+        VM.accessList(accessList);
 
         uint256 initial1 = gasleft();
         write.setNumber(2);
@@ -30,7 +30,7 @@ contract AccessListIsolatedTest is DSTest {
         assertEq(initial2 - gasleft(), 29162);
 
         // reset access list, should take same gas as before setting
-        vm.noAccessList();
+        VM.noAccessList();
         uint256 initial4 = gasleft();
         write.setNumber(4);
         assertEq(initial4 - gasleft(), 26762);
@@ -39,7 +39,7 @@ contract AccessListIsolatedTest is DSTest {
         write.setNumber(5);
         assertEq(initial5 - gasleft(), 26762);
 
-        vm.accessList(accessList);
+        VM.accessList(accessList);
         uint256 initial6 = gasleft();
         write.setNumber(6);
         assertEq(initial6 - gasleft(), 29162);

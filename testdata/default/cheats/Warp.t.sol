@@ -5,22 +5,22 @@ import "ds-test/test.sol";
 import "cheats/Vm.sol";
 
 contract WarpTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
     function testWarp() public {
-        vm.warp(10);
+        VM.warp(10);
         assertEq(block.timestamp, 10, "warp failed");
     }
 
     function testWarpFuzzed(uint32 jump) public {
         uint256 pre = block.timestamp;
-        vm.warp(block.timestamp + jump);
+        VM.warp(block.timestamp + jump);
         assertEq(block.timestamp, pre + jump, "warp failed");
     }
 
     function testWarp2() public {
         assertEq(block.timestamp, 1);
-        vm.warp(100);
+        VM.warp(100);
         assertEq(block.timestamp, 100);
     }
 }
