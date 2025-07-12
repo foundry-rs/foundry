@@ -33,7 +33,7 @@ use crate::{
     mem::transaction_build,
 };
 use alloy_consensus::{
-    Account,
+    Account, Blob,
     transaction::{Recovered, eip4844::TxEip4844Variant},
 };
 use alloy_dyn_abi::TypedData;
@@ -1327,12 +1327,9 @@ impl EthApi {
         Ok(self.backend.get_blob_by_versioned_hash(hash)?)
     }
 
-    /// Handler for RPC call: `anvil_getBlobByTransactionHash`
-    pub fn anvil_get_blob_by_tx_hash(
-        &self,
-        hash: B256,
-    ) -> Result<Option<alloy_consensus::TxEip4844WithSidecar>> {
-        node_info!("anvil_getBlobByTransactionHash");
+    /// Handler for RPC call: `anvil_getBlobsByTransactionHash`
+    pub fn anvil_get_blob_by_tx_hash(&self, hash: B256) -> Result<Option<Vec<Blob>>> {
+        node_info!("anvil_getBlobsByTransactionHash");
         Ok(self.backend.get_blob_by_tx_hash(hash)?)
     }
 

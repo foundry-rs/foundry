@@ -2918,11 +2918,14 @@ impl Backend {
         ))
     }
 
-    pub fn get_blob_by_tx_hash(&self, hash: B256) -> Result<Option<TxEip4844WithSidecar>> {
-        let tx = self.mined_transaction_by_hash(hash).unwrap();
-        let typed_tx = TypedTransaction::try_from(tx).unwrap();
-        if let Some(sidecar) = typed_tx.sidecar() {
-            return Ok(Some(sidecar.clone()));
+    pub fn get_blob_by_tx_hash(&self, hash: B256) -> Result<Option<Vec<alloy_consensus::Blob>>> {
+        // Try to get the mined transaction by hash
+        if let Some(tx) = self.mined_transaction_by_hash(hash) {
+            if let Ok(typed_tx) = TypedTransaction::try_from(tx) {
+                if let Some(sidecar) = typed_tx.sidecar() {
+                    return Ok(Some(sidecar.sidecar.blobs.clone()));
+                }
+            }
         }
         Ok(None)
     }

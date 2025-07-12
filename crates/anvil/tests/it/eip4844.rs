@@ -418,6 +418,6 @@ async fn can_get_blobs_by_tx_hash() {
     let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
     let hash = receipt.transaction_hash;
     api.anvil_set_auto_mine(true).await.unwrap();
-    let blob = api.anvil_get_blob_by_tx_hash(hash).unwrap().unwrap();
-    assert_eq!(blob.sidecar, sidecar);
+    let blobs = api.anvil_get_blob_by_tx_hash(hash).unwrap().unwrap();
+    assert_eq!(blobs, sidecar.blobs);
 }
