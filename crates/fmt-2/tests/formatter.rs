@@ -183,7 +183,7 @@ fmt_tests! {
     ModifierDefinition, // OK
     NamedFunctionCallExpression, // FIX: idempotency (comment-related)
     NumberLiteralUnderscore, // OK
-    OperatorExpressions, // OKish: TODO: improve nested conditional expressions
+    OperatorExpressions, // OKish: FIX: empty line after trailing cmnt inside if
     PragmaDirective, // OK
     Repros, // TODO: check boxes, panics
     ReturnStatement, // FIX: idempotency (comment-related)
