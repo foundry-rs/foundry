@@ -79,7 +79,7 @@ impl ChiselRunner {
     ///
     /// ### Returns
     ///
-    /// Optionally, a tuple containing the deployed address of the bytecode as well as a
+    /// A tuple containing the deployed address of the bytecode as well as a
     /// [ChiselResult] containing information about the result of the call to the deployed REPL
     /// contract.
     pub fn run(&mut self, bytecode: Bytes) -> Result<(Address, ChiselResult)> {
@@ -173,7 +173,7 @@ impl ChiselRunner {
                     }
                 }
             }
-            // reset gas limit in the
+            // reset gas limit in the executor environment to its original value
             self.executor.env_mut().tx.gas_limit = init_gas_limit;
         }
 

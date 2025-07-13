@@ -5,6 +5,7 @@ import {
     symbol3,
     symbol4,
     symbol5,
+    eventSymbol,
     symbolNotUsed, //~NOTE: unused imports should be removed
     IContract,
     IContractNotUsed //~NOTE: unused imports should be removed
@@ -46,6 +47,7 @@ contract UnusedImport is IContract {
     symbol4 public myVar;
 
     function foo(uint256 a, symbol5 b) public view returns (uint256) {
+        emit eventSymbol.foo(c);
         uint256 c = Utils.calculate(a, b);
         return c;
     }

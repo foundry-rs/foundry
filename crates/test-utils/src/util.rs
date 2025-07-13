@@ -29,7 +29,7 @@ use std::{
 static CURRENT_DIR_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// The commit of forge-std to use.
-const FORGE_STD_REVISION: &str = include_str!("../../../testdata/forge-std-rev");
+pub const FORGE_STD_REVISION: &str = include_str!("../../../testdata/forge-std-rev");
 
 /// Stores whether `stdout` is a tty / terminal.
 pub static IS_TTY: LazyLock<bool> = LazyLock::new(|| std::io::stdout().is_terminal());
@@ -138,14 +138,7 @@ impl ExtTester {
         self
     }
 
-    /// Runs the test.
-    pub fn run(&self) {
-        // Skip fork tests if the RPC url is not set.
-        if self.fork_block.is_some() && std::env::var_os("ETH_RPC_URL").is_none() {
-            eprintln!("ETH_RPC_URL is not set; skipping");
-            return;
-        }
-
+    pub fn setup_forge_prj(&self) -> (TestProject, TestCommand) {
         let (prj, mut test_cmd) = setup_forge(self.name, self.style.clone());
 
         // Export vyper and forge in test command - workaround for snekmate venom tests.
@@ -192,7 +185,10 @@ impl ExtTester {
             }
         }
 
-        // Run installation command.
+        (prj, test_cmd)
+    }
+
+    pub fn run_install_commands(&self, root: &str) {
         for install_command in &self.install_commands {
             let mut install_cmd = Command::new(&install_command[0]);
             install_cmd.args(&install_command[1..]).current_dir(root);
@@ -209,6 +205,20 @@ impl ExtTester {
                 }
             }
         }
+    }
+
+    /// Runs the test.
+    pub fn run(&self) {
+        // Skip fork tests if the RPC url is not set.
+        if self.fork_block.is_some() && std::env::var_os("ETH_RPC_URL").is_none() {
+            eprintln!("ETH_RPC_URL is not set; skipping");
+            return;
+        }
+
+        let (prj, mut test_cmd) = self.setup_forge_prj();
+
+        // Run installation command.
+        self.run_install_commands(prj.root().to_str().unwrap());
 
         // Run the tests.
         test_cmd.arg("test");
@@ -316,7 +326,7 @@ pub fn initialize(target: &Path) {
 /// Clones a remote repository into the specified directory. Panics if the command fails.
 pub fn clone_remote(repo_url: &str, target_dir: &str) {
     let mut cmd = Command::new("git");
-    cmd.args(["clone", "--no-tags", "--recursive", "--shallow-submodules"]);
+    cmd.args(["clone", "--recursive", "--shallow-submodules"]);
     cmd.args([repo_url, target_dir]);
     println!("{cmd:?}");
     let status = cmd.status().unwrap();
@@ -898,6 +908,14 @@ impl TestCommand {
         cmd.arg("init").current_dir(self.project.root());
         let output = OutputAssert::new(cmd.output().unwrap());
         output.success();
+    }
+
+    /// Runs `git submodule status` inside the project's dir
+    #[track_caller]
+    pub fn git_submodule_status(&self) -> Output {
+        let mut cmd = Command::new("git");
+        cmd.arg("submodule").arg("status").current_dir(self.project.root());
+        cmd.output().unwrap()
     }
 
     /// Runs `git add .` inside the project's dir
