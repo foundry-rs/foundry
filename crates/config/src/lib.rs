@@ -346,7 +346,10 @@ pub struct Config {
     /// the initial balance of each deployed test contract
     pub initial_balance: U256,
     /// the block.number value during EVM execution
-    #[serde(deserialize_with = "crate::deser_u64_to_u256")]
+    #[serde(
+        deserialize_with = "deserialize_u64_to_u256",
+        serialize_with = "serialize_u64_or_u256"
+    )]
     pub block_number: U256,
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
@@ -367,7 +370,10 @@ pub struct Config {
     /// The `block.coinbase` value during EVM execution.
     pub block_coinbase: Address,
     /// The `block.timestamp` value during EVM execution.
-    #[serde(deserialize_with = "crate::deser_u64_to_u256")]
+    #[serde(
+        deserialize_with = "deserialize_u64_to_u256",
+        serialize_with = "serialize_u64_or_u256"
+    )]
     pub block_timestamp: U256,
     /// The `block.difficulty` value during EVM execution.
     pub block_difficulty: u64,

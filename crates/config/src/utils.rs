@@ -8,7 +8,7 @@ use foundry_compilers::artifacts::{
     remappings::{Remapping, RemappingError},
 };
 use revm::primitives::hardfork::SpecId;
-use serde::{Deserialize, Deserializer, de::Error};
+use serde::{Deserialize, Deserializer, Serializer, de::Error};
 use std::{
     io,
     path::{Path, PathBuf},
@@ -214,7 +214,7 @@ where
 }
 
 /// Deserialize into `U256` from either a `u64` or a `U256` hex string.
-pub fn deser_u64_to_u256<'de, D>(deserializer: D) -> Result<U256, D::Error>
+pub fn deserialize_u64_to_u256<'de, D>(deserializer: D) -> Result<U256, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -228,6 +228,18 @@ where
     match NumericValue::deserialize(deserializer)? {
         NumericValue::U64(n) => Ok(U256::from(n)),
         NumericValue::U256(n) => Ok(n),
+    }
+}
+
+pub fn serialize_u64_or_u256<S>(n: &U256, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    // If the number fits into a u64, serialize it as u64, otherwise serialize it as hex string.
+    if let Ok(n) = u64::try_from(*n) {
+        serializer.serialize_u64(n)
+    } else {
+        serializer.serialize_str(&format!("{n:#x}"))
     }
 }
 

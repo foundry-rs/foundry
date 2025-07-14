@@ -8,7 +8,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{Provider, network::AnyRpcBlock};
 use eyre::WrapErr;
 use foundry_common::{ALCHEMY_FREE_TIER_CUPS, provider::ProviderBuilder};
-use foundry_config::{Chain, Config, GasLimit};
+use foundry_config::{Chain, Config, GasLimit, deserialize_u64_to_u256, serialize_u64_or_u256};
 use revm::context::{BlockEnv, TxEnv};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
@@ -278,11 +278,17 @@ pub struct Env {
     pub block_coinbase: Address,
 
     /// the block.timestamp value during EVM execution
-    #[serde(deserialize_with = "foundry_config::deser_u64_to_u256")]
+    #[serde(
+        deserialize_with = "deserialize_u64_to_u256",
+        serialize_with = "serialize_u64_or_u256"
+    )]
     pub block_timestamp: U256,
 
     /// the block.number value during EVM execution"
-    #[serde(deserialize_with = "foundry_config::deser_u64_to_u256")]
+    #[serde(
+        deserialize_with = "deserialize_u64_to_u256",
+        serialize_with = "serialize_u64_or_u256"
+    )]
     pub block_number: U256,
 
     /// the block.difficulty value during EVM execution
