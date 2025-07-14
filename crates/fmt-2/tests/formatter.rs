@@ -167,7 +167,7 @@ fmt_tests! {
     ErrorDefinition, // OK
     EventDefinition, // OK
     ForStatement, // OK? TODO: try to improve nested conditional expressions
-    FunctionCall, // OK: TODO: enhance PP so that trailing comments aren't accounted for when breaking lines after a simcolon.
+    FunctionCall, // OK: TODO: enhance PP so that trailing comments aren't accounted for when breaking lines after a simcolon?
     FunctionCallArgsStatement, // OK? Is it acceptable?
     FunctionDefinition, // OK? Is it acceptable?
     FunctionDefinitionWithFunctionReturns, // OK
@@ -183,7 +183,7 @@ fmt_tests! {
     ModifierDefinition, // OK
     NamedFunctionCallExpression, // FIX: idempotency (comment-related)
     NumberLiteralUnderscore, // OK
-    OperatorExpressions, // OKish: FIX: empty line after trailing cmnt inside if
+    OperatorExpressions, // OK
     PragmaDirective, // OK
     Repros, // TODO: check boxes, panics
     ReturnStatement, // FIX: idempotency (comment-related)

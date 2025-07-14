@@ -53,7 +53,7 @@ impl SolidityHelper {
             errored: false,
             do_paint: yansi::is_enabled(),
             sess: Session::builder().with_silent_emitter(None).build(),
-            globals: SessionGlobals::new(),
+            globals: SessionGlobals::default(),
         }
     }
 

@@ -12,7 +12,7 @@ use solar_parse::{
     interface::{BytePos, SourceMap},
     Cursor,
 };
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::HashMap, fmt::Debug};
 
 pub(super) struct State<'sess, 'ast> {
     pub(crate) s: pp::Printer,
@@ -23,10 +23,8 @@ pub(super) struct State<'sess, 'ast> {
     config: FormatterConfig,
     inline_config: InlineConfig,
 
-    // cache information for proper formatting
     contract: Option<&'ast ast::ItemContract<'ast>>,
     single_line_stmt: Option<bool>,
-    assign_expr: bool,
 }
 
 impl std::ops::Deref for State<'_, '_> {
@@ -62,7 +60,6 @@ impl<'sess> State<'sess, '_> {
             config,
             contract: None,
             single_line_stmt: None,
-            assign_expr: false,
         }
     }
 
@@ -109,7 +106,8 @@ impl<'sess> State<'sess, '_> {
                     }
                     None => (),
                 }
-            } else {
+            // Never print blank lines after docs comments
+            } else if !cmnt.is_doc {
                 all_blank = false;
             }
             last_style = Some(cmnt.style);
@@ -276,15 +274,25 @@ impl<'sess> State<'sess, '_> {
         }
     }
 
-    fn break_offset_if_not_bol(&mut self, n: usize, off: isize) {
-        if !self.is_beginning_of_line() {
+    fn break_offset_if_not_bol(&mut self, n: usize, off: isize, search: bool) {
+        // If the break token is expected to be inside a closed box, so we will traverse the
+        // buffer and evaluate the first non-end token.
+        if search {
+            // We do something pretty sketchy here: tuck the nonzero offset-adjustment we
+            // were going to deposit along with the break into the previous hardbreak.
+            self.find_and_replace_last_token_still_buffered(
+                pp::Printer::hardbreak_tok_offset(off),
+                |token| token.is_hardbreak(),
+            );
+        }
+        // Otherwise, the break token is expected to be the last token.
+        else if !self.is_beginning_of_line() {
             self.break_offset(n, off)
         } else if off != 0 {
             if let Some(last_token) = self.last_token_still_buffered() {
                 if last_token.is_hardbreak() {
-                    // We do something pretty sketchy here: tuck the nonzero
-                    // offset-adjustment we were going to deposit along with the
-                    // break into the previous hardbreak.
+                    // We do something pretty sketchy here: tuck the nonzero offset-adjustment we
+                    // were going to deposit along with the break into the previous hardbreak.
                     self.replace_last_token_still_buffered(pp::Printer::hardbreak_tok_offset(off));
                 }
             }
@@ -327,7 +335,7 @@ impl<'sess> State<'sess, '_> {
                 if !self.print_trailing_comment(span.hi(), None) && skip_break {
                     self.neverbreak();
                 } else {
-                    self.break_offset_if_not_bol(0, -self.ind);
+                    self.break_offset_if_not_bol(0, -self.ind, false);
                 }
                 self.end();
             } else {
@@ -379,8 +387,15 @@ impl<'sess> State<'sess, '_> {
             return;
         }
 
-        let is_single_without_cmnts =
-            !is_binary_expr && values.len() == 1 && self.peek_comment_before(pos_hi).is_none();
+        let (is_single_without_cmnts, is_single_ends_with_trailing) = if values.len() == 1 {
+            let value_pos = get_span(&values[0]).map(Span::lo).unwrap_or(pos_hi);
+            (
+                !is_binary_expr && self.peek_comment_before(pos_hi).is_none(),
+                self.peek_trailing_comment(value_pos, None).is_some(),
+            )
+        } else {
+            (false, false)
+        };
 
         self.s.cbox(self.ind);
         let mut skip_first_break = is_single_without_cmnts;
@@ -428,10 +443,16 @@ impl<'sess> State<'sess, '_> {
                 self.hardbreak(); // trailing and isolated comments already hardbreak
             }
             self.print_cmnts_with_space_skip_ws(next_pos);
-            if is_last && self.is_bol_or_only_ind() {
+
+            if is_single_ends_with_trailing {
+                // the value prints a trailing comment inside its box, we have to manually adjust
+                // the offset to avoid having a double break.
+                self.break_offset_if_not_bol(0, -self.ind, true);
+                skip_last_break = true;
+            } else if is_last && self.is_bol_or_only_ind() {
                 // if a trailing comment is printed at the very end, we have to manually adjust
                 // the offset to avoid having a double break.
-                self.break_offset_if_not_bol(0, -self.ind);
+                self.break_offset_if_not_bol(0, -self.ind, false);
                 skip_last_break = true;
             }
             if !is_last && !self.is_bol_or_only_ind() {
@@ -837,7 +858,7 @@ impl<'ast> State<'_, 'ast> {
         // Print fn body
         if let Some(body) = body {
             if self.peek_comment_before(body_span.lo()).map_or(true, |cmnt| cmnt.style.is_mixed()) {
-                if attributes.len() == 1 && empty_returns {
+                if attributes.len() == 1 && empty_returns && override_.is_none() {
                     self.nbsp();
                     self.zerobreak();
                 } else {
@@ -1322,7 +1343,6 @@ impl<'ast> State<'_, 'ast> {
                 self.print_array(exprs, expr.span, |this, e| this.print_expr(e), get_span!())
             }
             ast::ExprKind::Assign(lhs, None, rhs) => {
-                self.hardbreak();
                 self.ibox(0);
                 self.print_expr(lhs);
                 self.word(" = ");
@@ -1423,15 +1443,15 @@ impl<'ast> State<'_, 'ast> {
 
                         // Manually revert indentation if there is `expr1` and/or comments.
                         if skip_break && expr1.is_some() {
-                            self.break_offset_if_not_bol(0, -2 * self.ind);
+                            self.break_offset_if_not_bol(0, -2 * self.ind, false);
                             self.end();
                             // if a trailing comment is printed at the very end, we have to manually
                             // adjust the offset to avoid having a double break.
                             if !is_trailing {
-                                self.break_offset_if_not_bol(0, -self.ind);
+                                self.break_offset_if_not_bol(0, -self.ind, false);
                             }
                         } else if skip_break {
-                            self.break_offset_if_not_bol(0, -self.ind);
+                            self.break_offset_if_not_bol(0, -self.ind, false);
                         } else if expr1.is_some() {
                             self.end();
                         }
@@ -1456,7 +1476,7 @@ impl<'ast> State<'_, 'ast> {
                 if self.print_trailing_comment(expr.span.hi(), Some(ident.span.lo())) {
                     // if a trailing comment is printed at the very end, we have to manually adjust
                     // the offset to avoid having a double break.
-                    self.break_offset_if_not_bol(0, self.ind);
+                    self.break_offset_if_not_bol(0, self.ind, false);
                 }
                 self.word(".");
                 self.print_ident(ident);
@@ -1702,7 +1722,7 @@ impl<'ast> State<'_, 'ast> {
                 } else {
                     self.zerobreak();
                 }
-                self.break_offset_if_not_bol(0, -self.ind);
+                self.break_offset_if_not_bol(0, -self.ind, false);
                 self.end();
                 self.word(") ");
                 self.neverbreak();
@@ -1792,7 +1812,7 @@ impl<'ast> State<'_, 'ast> {
                     {
                         // if a trailing comment is printed at the very end, we have to manually
                         // adjust the offset to avoid having a double break.
-                        self.break_offset_if_not_bol(0, self.ind);
+                        self.break_offset_if_not_bol(0, self.ind, false);
                         skip_ind = true;
                     };
                     self.end();
@@ -1946,7 +1966,7 @@ impl<'ast> State<'_, 'ast> {
         );
     }
 
-    fn print_block_inner<T>(
+    fn print_block_inner<T: Debug>(
         &mut self,
         block: &'ast [T],
         block_format: BlockFormat,
@@ -2004,18 +2024,16 @@ impl<'ast> State<'_, 'ast> {
                     self.s.cbox(self.ind);
                 }
                 self.print_cmnts_with_space_skip_ws(span.hi());
-                if block_format.with_braces() {
-                    // manually adjust offset to ensure that the closing brace is properly indented.
-                    // if the last cmnt was breaking, we replace offset to avoid e a double break.
-                    if self.is_bol_or_only_ind() {
-                        self.break_offset_if_not_bol(0, -self.ind);
-                    } else {
-                        self.s.break_offset(0, -self.ind);
-                    }
-                    self.end();
-                    self.word("}");
+                // manually adjust offset to ensure that the closing brace is properly indented.
+                // if the last cmnt was breaking, we replace offset to avoid e a double break.
+                if self.is_bol_or_only_ind() {
+                    self.break_offset_if_not_bol(0, -self.ind, false);
                 } else {
-                    self.end();
+                    self.s.break_offset(0, -self.ind);
+                }
+                self.end();
+                if block_format.with_braces() {
+                    self.word("}");
                 }
             }
             return;
@@ -2026,15 +2044,15 @@ impl<'ast> State<'_, 'ast> {
                 self.print_comments_skip_ws(get_block_span(&block[0]).lo());
                 self.s.cbox(0);
             }
-            BlockFormat::NoBraces(offset) => {
+            BlockFormat::NoBraces(Some(offset)) => {
                 if self.peek_comment_before(get_block_span(&block[0]).lo()).is_some() {
                     self.hardbreak();
-                    self.break_offset_if_not_bol(0, offset.unwrap());
+                    self.break_offset_if_not_bol(0, offset, false);
                     self.print_comments_skip_ws(get_block_span(&block[0]).lo());
                 } else {
                     self.zerobreak();
                 }
-                self.s.offset(offset.unwrap());
+                self.s.offset(offset);
                 self.s.cbox(self.ind);
             }
             _ => {
