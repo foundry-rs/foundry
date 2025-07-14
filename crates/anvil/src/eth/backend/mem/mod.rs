@@ -2920,13 +2920,13 @@ impl Backend {
 
     pub fn get_blob_by_tx_hash(&self, hash: B256) -> Result<Option<Vec<alloy_consensus::Blob>>> {
         // Try to get the mined transaction by hash
-        if let Some(tx) = self.mined_transaction_by_hash(hash) {
-            if let Ok(typed_tx) = TypedTransaction::try_from(tx) {
-                if let Some(sidecar) = typed_tx.sidecar() {
-                    return Ok(Some(sidecar.sidecar.blobs.clone()));
-                }
-            }
+        if let Some(tx) = self.mined_transaction_by_hash(hash)
+            && let Ok(typed_tx) = TypedTransaction::try_from(tx)
+            && let Some(sidecar) = typed_tx.sidecar()
+        {
+            return Ok(Some(sidecar.sidecar.blobs.clone()));
         }
+
         Ok(None)
     }
 
@@ -2937,16 +2937,14 @@ impl Backend {
                 let typed_tx = tx.as_ref();
                 if let Some(sidecar) = typed_tx.sidecar() {
                     for versioned_hash in sidecar.sidecar.versioned_hashes() {
-                        if versioned_hash == hash {
-                            if let Some(index) =
+                        if versioned_hash == hash
+                            && let Some(index) =
                                 sidecar.sidecar.commitments.iter().position(|commitment| {
                                     kzg_to_versioned_hash(commitment.as_slice()) == *hash
                                 })
-                            {
-                                if let Some(blob) = sidecar.sidecar.blobs.get(index) {
-                                    return Ok(Some(blob.clone()));
-                                }
-                            }
+                            && let Some(blob) = sidecar.sidecar.blobs.get(index)
+                        {
+                            return Ok(Some(*blob));
                         }
                     }
                 }
