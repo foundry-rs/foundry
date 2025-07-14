@@ -590,7 +590,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-serde",
  "alloy-sol-types",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "serde",
  "serde_json",
  "thiserror 2.0.12",
@@ -1491,9 +1491,9 @@ dependencies = [
 
 [[package]]
 name = "async-compression"
-version = "0.4.25"
+version = "0.4.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40f6024f3f856663b45fd0c9b6f2024034a702f453549449e0d84a305900dad4"
+checksum = "ddb939d66e4ae03cee6091612804ba446b12878410cfa17f785f4dd67d4014e8"
 dependencies = [
  "flate2",
  "futures-core",
@@ -2234,6 +2234,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "boxcar"
+version = "0.2.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26c4925bc979b677330a8c7fe7a8c94af2dbb4a2d37b4a20a80d884400f46baa"
+
+[[package]]
 name = "bs58"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2970,9 +2976,9 @@ checksum = "19d374276b40fb8bbdee95aef7c7fa6b5316ec764510eb64b8dd0e2ed0d7e7f5"
 
 [[package]]
 name = "crc32fast"
-version = "1.4.2"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a97769d94ddab943e4510d138150169a2758b5ef3eb191a9ee688de3e23ef7b3"
+checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
 dependencies = [
  "cfg-if",
 ]
@@ -4071,9 +4077,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-block-explorers"
-version = "0.19.1"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4955628c39a4f0571b25b71da149fedbde13a3501cd522018f242522ae26fd51"
+checksum = "fc107bbc3b4480995fdf337ca0ddedc631728175f418d3136ead9df8f4dc465e"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -4274,9 +4280,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers"
-version = "0.17.4"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97aa785b2e4888720a07579d1b947286ab22ba8f774f7919bb4b9b332aabc073"
+checksum = "f163b01cdad921f139776084391db2f1f5fb206ce2395f1847f0c1e992a89a4f"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4289,7 +4295,7 @@ dependencies = [
  "fs_extra",
  "futures-util",
  "home",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "path-slash",
  "rand 0.8.5",
  "rayon",
@@ -4311,9 +4317,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts"
-version = "0.17.4"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c752b33d827730886038741dae810aaf068cabb92d5caab706ea3e9ef25c8910"
+checksum = "c2676d70082ed23680fe2d08c0b750d5f7f2438c6d946f1cb140a76c5e5e0392"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -4321,9 +4327,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-solc"
-version = "0.17.4"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53f7e0d4402323dce4f74bab71159bc5a9af3d6fbf74ba547f5305a2b0821299"
+checksum = "a3ada94dc5946334bb08df574855ba345ab03ba8c6f233560c72c8d61fa9db80"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4344,9 +4350,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
-version = "0.17.4"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "802908ff50171b7b6dc014cbc391d27fe11aff59405e74b3dc41859364dbf44b"
+checksum = "372052af72652e375a6e7eed22179bd8935114e25e1c5a8cca7f00e8f20bd94c"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -4359,9 +4365,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-compilers-core"
-version = "0.17.4"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "495c8b7739f7807921e8538182b2fc7335c8a49bd71bd7f3e7982d14ba8594dc"
+checksum = "bf0962c46855979300f6526ed57f987ccf6a025c2b92ce574b281d9cb2ef666b"
 dependencies = [
  "alloy-primitives",
  "cfg-if",
@@ -5024,10 +5030,6 @@ name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
-dependencies = [
- "ahash",
- "allocator-api2",
-]
 
 [[package]]
 name = "hashbrown"
@@ -5504,6 +5506,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "inturn"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62f17d4bce58d4380de6432e6b1a0ebb561dfbbe21fc123204870b7006189677"
+dependencies = [
+ "boxcar",
+ "bumpalo",
+ "dashmap",
+ "hashbrown 0.14.5",
+ "thread_local",
+]
+
+[[package]]
 name = "io-uring"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5759,16 +5774,6 @@ checksum = "b5baa5e9ff84f1aefd264e6869907646538a52147a755d494517a8007fb48733"
 dependencies = [
  "regex-automata 0.4.9",
  "rustversion",
-]
-
-[[package]]
-name = "lasso"
-version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e14eda50a3494b3bf7b9ce51c52434a761e383d7238ce1dd5dcec2fbc13e9fb"
-dependencies = [
- "dashmap",
- "hashbrown 0.14.5",
 ]
 
 [[package]]
@@ -6593,9 +6598,9 @@ dependencies = [
 
 [[package]]
 name = "op-revm"
-version = "8.0.2"
+version = "8.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf1273c005f27528400dae0e2489a41378cfc29f0e42ea17f21b7d9679aef679"
+checksum = "ee9ba9cab294a5ed02afd1a1060220762b3c52911acab635db33822e93f7276d"
 dependencies = [
  "auto_impl",
  "once_cell",
@@ -7227,7 +7232,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.104",
@@ -7663,8 +7668,9 @@ dependencies = [
 
 [[package]]
 name = "revm"
-version = "27.0.2"
-source = "git+https://github.com/bluealloy/revm.git?rev=56def7e#56def7efcf0ab4c7b46a62a163ca060556c62923"
+version = "27.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70a84455f03d3480d4ed2e7271c15f2ec95b758e86d57cb8d258a8ff1c22e9a4"
 dependencies = [
  "revm-bytecode",
  "revm-context",
@@ -7682,7 +7688,8 @@ dependencies = [
 [[package]]
 name = "revm-bytecode"
 version = "6.0.1"
-source = "git+https://github.com/bluealloy/revm.git?rev=56def7e#56def7efcf0ab4c7b46a62a163ca060556c62923"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a685758a4f375ae9392b571014b9779cfa63f0d8eb91afb4626ddd958b23615"
 dependencies = [
  "bitvec",
  "once_cell",
@@ -7693,8 +7700,9 @@ dependencies = [
 
 [[package]]
 name = "revm-context"
-version = "8.0.2"
-source = "git+https://github.com/bluealloy/revm.git?rev=56def7e#56def7efcf0ab4c7b46a62a163ca060556c62923"
+version = "8.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a990abf66b47895ca3e915d5f3652bb7c6a4cff6e5351fdf0fc2795171fd411c"
 dependencies = [
  "cfg-if",
  "derive-where",
@@ -7709,7 +7717,8 @@ dependencies = [
 [[package]]
 name = "revm-context-interface"
 version = "8.0.1"
-source = "git+https://github.com/bluealloy/revm.git?rev=56def7e#56def7efcf0ab4c7b46a62a163ca060556c62923"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a303a93102fceccec628265efd550ce49f2817b38ac3a492c53f7d524f18a1ca"
 dependencies = [
  "alloy-eip2930",
  "alloy-eip7702",
@@ -7724,7 +7733,8 @@ dependencies = [
 [[package]]
 name = "revm-database"
 version = "7.0.1"
-source = "git+https://github.com/bluealloy/revm.git?rev=56def7e#56def7efcf0ab4c7b46a62a163ca060556c62923"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7db360729b61cc347f9c2f12adb9b5e14413aea58778cf9a3b7676c6a4afa115"
 dependencies = [
  "alloy-eips",
  "revm-bytecode",
@@ -7737,7 +7747,8 @@ dependencies = [
 [[package]]
 name = "revm-database-interface"
 version = "7.0.1"
-source = "git+https://github.com/bluealloy/revm.git?rev=56def7e#56def7efcf0ab4c7b46a62a163ca060556c62923"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8500194cad0b9b1f0567d72370795fd1a5e0de9ec719b1607fa1566a23f039a"
 dependencies = [
  "auto_impl",
  "either",
@@ -7748,8 +7759,9 @@ dependencies = [
 
 [[package]]
 name = "revm-handler"
-version = "8.0.2"
-source = "git+https://github.com/bluealloy/revm.git?rev=56def7e#56def7efcf0ab4c7b46a62a163ca060556c62923"
+version = "8.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03c35a17a38203976f97109e20eccf6732447ce6c9c42973bae42732b2e957ff"
 dependencies = [
  "auto_impl",
  "derive-where",
@@ -7766,8 +7778,9 @@ dependencies = [
 
 [[package]]
 name = "revm-inspector"
-version = "8.0.2"
-source = "git+https://github.com/bluealloy/revm.git?rev=56def7e#56def7efcf0ab4c7b46a62a163ca060556c62923"
+version = "8.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e69abf6a076741bd5cd87b7d6c1b48be2821acc58932f284572323e81a8d4179"
 dependencies = [
  "auto_impl",
  "either",
@@ -7801,8 +7814,9 @@ dependencies = [
 
 [[package]]
 name = "revm-interpreter"
-version = "23.0.1"
-source = "git+https://github.com/bluealloy/revm.git?rev=56def7e#56def7efcf0ab4c7b46a62a163ca060556c62923"
+version = "23.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d95c4a9a1662d10b689b66b536ddc2eb1e89f5debfcabc1a2d7b8417a2fa47cd"
 dependencies = [
  "revm-bytecode",
  "revm-context-interface",
@@ -7812,8 +7826,9 @@ dependencies = [
 
 [[package]]
 name = "revm-precompile"
-version = "24.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=56def7e#56def7efcf0ab4c7b46a62a163ca060556c62923"
+version = "24.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b68d54a4733ac36bd29ee645c3c2e5e782fb63f199088d49e2c48c64a9fedc15"
 dependencies = [
  "ark-bls12-381",
  "ark-bn254",
@@ -7839,7 +7854,8 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "20.0.0"
-source = "git+https://github.com/bluealloy/revm.git?rev=56def7e#56def7efcf0ab4c7b46a62a163ca060556c62923"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52cdf897b3418f2ee05bcade64985e5faed2dbaa349b2b5f27d3d6bfd10fff2a"
 dependencies = [
  "alloy-primitives",
  "num_enum",
@@ -7849,7 +7865,8 @@ dependencies = [
 [[package]]
 name = "revm-state"
 version = "7.0.1"
-source = "git+https://github.com/bluealloy/revm.git?rev=56def7e#56def7efcf0ab4c7b46a62a163ca060556c62923"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "106fec5c634420118c7d07a6c37110186ae7f23025ceac3a5dbe182eea548363"
 dependencies = [
  "bitflags 2.9.1",
  "revm-bytecode",
@@ -7869,9 +7886,9 @@ dependencies = [
 
 [[package]]
 name = "rgb"
-version = "0.8.51"
+version = "0.8.52"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a457e416a0f90d246a4c3288bd7a25b2304ca727f253f95be383dd17af56be8f"
+checksum = "0c6a884d2998352bb4daf0183589aec883f16a6da1f4dde84d8e2e9a5409a1ce"
 dependencies = [
  "bytemuck",
 ]
@@ -8743,9 +8760,9 @@ dependencies = [
 
 [[package]]
 name = "solar-ast"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "acb0d9abd88c1325e5c0f9bb153ebfb02ed40bc9639067d0ad120f5d29ee8777"
+checksum = "1f7f30449c304fd09db4637209dc73bde7ec203e6e5c691fc9eed26b68cd105a"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -8762,18 +8779,18 @@ dependencies = [
 
 [[package]]
 name = "solar-config"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "908d455bb7c04acd783bd157b63791bf010cf6a495a845e48f7aee334aad319f"
+checksum = "643ddf85ab917f5643ec47eb79ee6db6c6158cfaf7415e39840e154eecf7176f"
 dependencies = [
  "strum 0.27.1",
 ]
 
 [[package]]
 name = "solar-data-structures"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8b5a697cab81241c4623b4546c69e57182202847a75d7c0047c0dd10b923d8c"
+checksum = "3cc21b4df6061e1c825c16faf8e1f16c2341f4c46a2b2a60e03069c4453fc5ac"
 dependencies = [
  "bumpalo",
  "index_vec",
@@ -8786,20 +8803,19 @@ dependencies = [
 
 [[package]]
 name = "solar-interface"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33e49e5a714ec80d7f9c8942584e5e86add1c5e824aa175d0681e9ac7a10e5cc"
+checksum = "bb2571bfb2f54c5a24688afe6876682117e96f6fd35393398dbac43e5f6f7144"
 dependencies = [
  "annotate-snippets",
  "anstream",
  "anstyle",
  "const-hex",
- "derive_builder",
  "derive_more 2.0.1",
  "dunce",
- "itertools 0.13.0",
+ "inturn",
+ "itertools 0.14.0",
  "itoa",
- "lasso",
  "match_cfg",
  "normalize-path",
  "rayon",
@@ -8816,9 +8832,9 @@ dependencies = [
 
 [[package]]
 name = "solar-macros"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e17f8b99f28f358b41acb6efe4d7b8f326541b3c58a15dd1931d6fe581feefef"
+checksum = "4ca57257a3b6ef16bd7995d23da3e661e89cebdae6fb9e42e4331ba0f033bd1d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8827,14 +8843,14 @@ dependencies = [
 
 [[package]]
 name = "solar-parse"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6982ef2ecfb1338c774c743ab7166ce8c3dcc92089ab77fad58eeb632b201e9"
+checksum = "081b4d9e2ddd3c7bb90079b3eb253b957ef9eb5c860ed6d6a4068884ec3a8b85"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.9.1",
  "bumpalo",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -8848,9 +8864,9 @@ dependencies = [
 
 [[package]]
 name = "solar-sema"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe8e0a3a6dfc7f4987bfb93f9b56079150407ef55c459964a1541c669554b74d"
+checksum = "93b017d4017ee8324e669c6e5e6fe9a282ed07eb6171e5384ddd17b8a854766f"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
