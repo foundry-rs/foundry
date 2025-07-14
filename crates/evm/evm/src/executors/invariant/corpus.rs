@@ -18,6 +18,7 @@ use proptest::{
 };
 use serde::Serialize;
 use std::{
+    fmt,
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -84,6 +85,29 @@ impl CorpusEntry {
     }
 }
 
+#[derive(Serialize, Default)]
+pub(crate) struct CorpusMetrics {
+    // Number of edges seen during the invariant run.
+    cumulative_edges_seen: usize,
+    // Number of features (new hitcount bin of previously hit edge) seen during the invariant run.
+    cumulative_features_seen: usize,
+    // Number of corpus entries.
+    corpus_count: usize,
+    // Number of corpus entries that are favored.
+    favored_items: usize,
+}
+
+impl fmt::Display for CorpusMetrics {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f)?;
+        writeln!(f, "        - cumulative edges seen: {}", self.cumulative_edges_seen)?;
+        writeln!(f, "        - cumulative features seen: {}", self.cumulative_features_seen)?;
+        writeln!(f, "        - corpus count: {}", self.corpus_count)?;
+        write!(f, "        - favored items: {}", self.favored_items)?;
+        Ok(())
+    }
+}
+
 /// Invariant corpus manager.
 pub struct TxCorpusManager {
     // Fuzzed calls generator.
@@ -106,14 +130,8 @@ pub struct TxCorpusManager {
     current_mutated: Option<Uuid>,
     // Number of failed replays from persisted corpus.
     failed_replays: usize,
-    // Number of edges seen during the invariant run.
-    pub(crate) cumulative_edges_seen: usize,
-    // Number of features (new hitcount bin of previously hit edge) seen during the invariant run.
-    pub(crate) cumulative_features_seen: usize,
-    // Nnumber of corpus entries.
-    pub(crate) corpus_count: usize,
-    // Number of corpus entries that are favored.
-    pub(crate) favored_items: usize,
+    // Corpus metrics.
+    pub(crate) metrics: CorpusMetrics,
 }
 
 impl TxCorpusManager {
@@ -152,10 +170,7 @@ impl TxCorpusManager {
                 in_memory_corpus,
                 current_mutated: None,
                 failed_replays,
-                cumulative_edges_seen: 0,
-                cumulative_features_seen: 0,
-                corpus_count: 0,
-                favored_items: 0,
+                metrics: CorpusMetrics::default(),
             });
         };
 
@@ -244,10 +259,12 @@ impl TxCorpusManager {
             in_memory_corpus,
             current_mutated: None,
             failed_replays,
-            cumulative_edges_seen,
-            cumulative_features_seen,
-            favored_items: 0,
-            corpus_count,
+            metrics: CorpusMetrics {
+                cumulative_edges_seen,
+                cumulative_features_seen,
+                favored_items: 0,
+                corpus_count,
+            },
         })
     }
 
@@ -271,9 +288,9 @@ impl TxCorpusManager {
                 let is_favored = (corpus.new_finds_produced as f64 / corpus.total_mutations as f64)
                     < FAVORABILITY_THRESHOLD;
                 if is_favored && !corpus.is_favored {
-                    self.favored_items += 1;
+                    self.metrics.favored_items += 1;
                 } else if !is_favored && corpus.is_favored {
-                    self.favored_items -= 1;
+                    self.metrics.favored_items -= 1;
                 }
                 corpus.is_favored = is_favored;
 
@@ -320,7 +337,7 @@ impl TxCorpusManager {
 
         // This includes reverting txs in the corpus and `can_continue` removes
         // them. We want this as it is new coverage and may help reach the other branch.
-        self.corpus_count += 1;
+        self.metrics.corpus_count += 1;
         self.in_memory_corpus.push(corpus);
     }
 
@@ -341,30 +358,28 @@ impl TxCorpusManager {
             // Flush oldest corpus mutated more than configured max mutations unless they are
             // favored.
             let should_evict = self.in_memory_corpus.len() > self.corpus_min_size.max(1);
-            if should_evict {
-                if let Some(index) = self.in_memory_corpus.iter().position(|corpus| {
+            if should_evict
+                && let Some(index) = self.in_memory_corpus.iter().position(|corpus| {
                     corpus.total_mutations > self.corpus_min_mutations && !corpus.is_favored
-                }) {
-                    let corpus = self.in_memory_corpus.get(index).unwrap();
+                })
+            {
+                let corpus = self.in_memory_corpus.get(index).unwrap();
 
-                    let uuid = corpus.uuid;
-                    debug!(target: "corpus", "evict corpus {uuid}");
+                let uuid = corpus.uuid;
+                debug!(target: "corpus", "evict corpus {uuid}");
 
-                    // Flush to disk the seed metadata at the time of eviction.
-                    let eviction_time = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .expect("Time went backwards")
-                        .as_secs();
-                    foundry_common::fs::write_json_file(
-                        corpus_dir
-                            .join(format!("{uuid}-{eviction_time}-{METADATA_SUFFIX}"))
-                            .as_path(),
-                        &corpus,
-                    )?;
+                // Flush to disk the seed metadata at the time of eviction.
+                let eviction_time = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_secs();
+                foundry_common::fs::write_json_file(
+                    corpus_dir.join(format!("{uuid}-{eviction_time}-{METADATA_SUFFIX}")).as_path(),
+                    &corpus,
+                )?;
 
-                    // Remove corpus from memory.
-                    self.in_memory_corpus.remove(index);
-                }
+                // Remove corpus from memory.
+                self.in_memory_corpus.remove(index);
             }
 
             let mutation_type = self
@@ -558,5 +573,13 @@ impl TxCorpusManager {
 
     pub fn failed_replays(self) -> usize {
         self.failed_replays
+    }
+
+    pub fn update_metrics(&mut self, is_edge: bool) {
+        if is_edge {
+            self.metrics.cumulative_edges_seen += 1;
+        } else {
+            self.metrics.cumulative_features_seen += 1;
+        }
     }
 }
