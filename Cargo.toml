@@ -268,8 +268,8 @@ revm-inspectors = { version = "0.26.5", features = ["serde"] }
 op-revm = { version = "8.0.3", default-features = false }
 
 ## alloy-evm
-alloy-evm = "0.13.0"
-alloy-op-evm = "0.13.0"
+alloy-evm = "0.14.0"
+alloy-op-evm = "0.14.0"
 
 ## cli
 anstream = "0.6"
