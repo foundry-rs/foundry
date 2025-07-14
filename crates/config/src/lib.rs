@@ -347,8 +347,8 @@ pub struct Config {
     pub initial_balance: U256,
     /// the block.number value during EVM execution
     #[serde(
-        deserialize_with = "deserialize_u64_to_u256",
-        serialize_with = "serialize_u64_or_u256"
+        deserialize_with = "crate::deserialize_u64_to_u256",
+        serialize_with = "crate::serialize_u64_or_u256"
     )]
     pub block_number: U256,
     /// pins the block number for the state fork
@@ -371,8 +371,8 @@ pub struct Config {
     pub block_coinbase: Address,
     /// The `block.timestamp` value during EVM execution.
     #[serde(
-        deserialize_with = "deserialize_u64_to_u256",
-        serialize_with = "serialize_u64_or_u256"
+        deserialize_with = "crate::deserialize_u64_to_u256",
+        serialize_with = "crate::serialize_u64_or_u256"
     )]
     pub block_timestamp: U256,
     /// The `block.difficulty` value during EVM execution.
@@ -3743,8 +3743,8 @@ mod tests {
                 block_coinbase = '0x0000000000000000000000000000000000000000'
                 block_difficulty = 0
                 block_prevrandao = '0x0000000000000000000000000000000000000000000000000000000000000000'
-                block_number = "0x1"
-                block_timestamp = "0x1"
+                block_number = 1
+                block_timestamp = 1
                 use_literal_content = false
                 bytecode_hash = 'ipfs'
                 cbor_metadata = true

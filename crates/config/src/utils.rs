@@ -231,6 +231,7 @@ where
     }
 }
 
+/// Serialize `U256` as `u64` if it fits, otherwise as a hex string.
 pub fn serialize_u64_or_u256<S>(n: &U256, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
