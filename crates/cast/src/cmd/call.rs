@@ -362,6 +362,7 @@ impl CallArgs {
             self.nonce_overrides.as_ref(),
             self.code_overrides.as_ref(),
             self.state_overrides.as_ref(),
+            self.state_diff_overrides.as_ref(),
         ]
         .iter()
         .all(Option::is_none)
