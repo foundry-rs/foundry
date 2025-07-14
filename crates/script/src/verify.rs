@@ -1,16 +1,16 @@
 use crate::{
-    build::LinkedBuildData,
-    sequence::{get_commit_hash, ScriptSequenceKind},
     ScriptArgs, ScriptConfig,
+    build::LinkedBuildData,
+    sequence::{ScriptSequenceKind, get_commit_hash},
 };
 use alloy_network::EthereumWallet;
 use alloy_primitives::{hex, Address};
 use eyre::{eyre, Result};
 use forge_script_sequence::{AdditionalContract, ScriptSequence};
-use forge_verify::{provider::VerificationProviderType, RetryArgs, VerifierArgs, VerifyArgs};
+use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs, provider::VerificationProviderType};
 use foundry_cli::opts::{EtherscanOpts, ProjectPathOpts};
 use foundry_common::ContractsByArtifact;
-use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo, Project};
+use foundry_compilers::{Project, artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Chain, Config};
 use semver::Version;
 
@@ -201,9 +201,10 @@ impl VerifyBundle {
                     show_standard_json_input: false,
                     guess_constructor_args: false,
                     compilation_profile: Some(artifact.profile.to_string()),
+                    language: None,
                 };
 
-                return Some(verify)
+                return Some(verify);
             }
         }
         None
@@ -288,7 +289,9 @@ async fn verify_contracts(
         }
 
         if num_of_successful_verifications < num_verifications {
-            return Err(eyre!("Not all ({num_of_successful_verifications} / {num_verifications}) contracts were verified!"))
+            return Err(eyre!(
+                "Not all ({num_of_successful_verifications} / {num_verifications}) contracts were verified!"
+            ));
         }
 
         sh_println!("All ({num_verifications}) contracts were verified!")?;

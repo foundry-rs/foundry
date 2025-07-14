@@ -390,3 +390,10 @@ async fn ensure_lint_rule_docs() {
         panic!("{msg}");
     }
 }
+
+#[test]
+fn ensure_no_privileged_lint_id() {
+    for lint in REGISTERED_LINTS {
+        assert_ne!(lint.id(), "all", "lint-id 'all' is reserved. Please use a different id");
+    }
+}

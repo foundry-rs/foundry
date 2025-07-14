@@ -1,12 +1,13 @@
 use crate::{
+    Cast, SimpleCast,
     opts::{Cast as CastArgs, CastSubcommand, ToBaseArgs},
     traces::identifier::SignaturesIdentifier,
-    Cast, SimpleCast,
 };
 use alloy_consensus::transaction::{Recovered, SignerRecoverable};
 use alloy_dyn_abi::{DynSolValue, ErrorExt, EventExt};
-use alloy_ens::{namehash, ProviderEnsExt};
-use alloy_primitives::{eip191_hash_message, hex, keccak256, Address, B256};
+use alloy_eips::eip7702::SignedAuthorization;
+use alloy_ens::{ProviderEnsExt, namehash};
+use alloy_primitives::{Address, B256, eip191_hash_message, hex, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
 use clap::{CommandFactory, Parser};
@@ -18,9 +19,9 @@ use foundry_common::{
     fmt::{format_tokens, format_tokens_raw, format_uint_exp},
     fs,
     selectors::{
-        decode_calldata, decode_event_topic, decode_function_selector, decode_selectors,
-        import_selectors, parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
-        SelectorKind,
+        ParsedSignatures, SelectorImportData, SelectorKind, decode_calldata, decode_event_topic,
+        decode_function_selector, decode_selectors, import_selectors, parse_signatures,
+        pretty_calldata,
     },
     shell, stdin,
 };
@@ -409,7 +410,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             {
                 if resolve {
                     let resolved = &resolve_results[pos];
-                    sh_println!("{selector}\t{arguments:max_args_len$}\t{state_mutability:max_mutability_len$}\t{resolved}")?
+                    sh_println!(
+                        "{selector}\t{arguments:max_args_len$}\t{state_mutability:max_mutability_len$}\t{resolved}"
+                    )?
                 } else {
                     sh_println!("{selector}\t{arguments:max_args_len$}\t{state_mutability}")?
                 }
@@ -722,6 +725,10 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             } else {
                 sh_println!("{}", serde_json::to_string_pretty(&tx)?)?;
             }
+        }
+        CastSubcommand::RecoverAuthority { auth } => {
+            let auth: SignedAuthorization = serde_json::from_str(&auth).unwrap();
+            sh_println!("{}", auth.recover_authority()?)?;
         }
         CastSubcommand::TxPool { command } => command.run().await?,
         CastSubcommand::DAEstimate(cmd) => {

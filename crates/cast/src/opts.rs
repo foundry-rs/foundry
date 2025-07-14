@@ -6,7 +6,7 @@ use crate::cmd::{
     send::SendTxArgs, storage::StorageArgs, txpool::TxPoolSubcommands, wallet::WalletSubcommands,
 };
 use alloy_ens::NameOrAddress;
-use alloy_primitives::{Address, Selector, B256, U256};
+use alloy_primitives::{Address, B256, Selector, U256};
 use alloy_rpc_types::BlockId;
 use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
@@ -20,7 +20,7 @@ use std::{path::PathBuf, str::FromStr};
     name = "cast",
     version = SHORT_VERSION,
     long_version = LONG_VERSION,
-    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html",
+    after_help = "Find more information in the book: https://getfoundry.sh/cast/overview",
     next_display_order = None,
 )]
 pub struct Cast {
@@ -1069,6 +1069,10 @@ pub enum CastSubcommand {
     /// Decodes a raw signed EIP 2718 typed transaction
     #[command(visible_aliases = &["dt", "decode-tx"])]
     DecodeTransaction { tx: Option<String> },
+
+    /// Recovery an EIP-7702 authority from a Authorization JSON string.
+    #[command(visible_aliases = &["decode-auth"])]
+    RecoverAuthority { auth: String },
 
     /// Extracts function selectors and arguments from bytecode
     #[command(visible_alias = "sel")]

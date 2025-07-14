@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{Address, B256, Bytes};
 use foundry_common::TransactionMaybeSigned;
 use revm_inspectors::tracing::types::CallKind;
 use serde::{Deserialize, Serialize};

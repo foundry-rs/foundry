@@ -73,7 +73,7 @@ pub fn flatten_call_trace(arena: CallTraceArena, out: &mut Vec<DebugNode>) {
 
         // Skip nodes with empty steps as there's nothing to display for them.
         if steps.is_empty() {
-            continue
+            continue;
         }
 
         let call = &arena_nodes[pending.node_idx].trace;
