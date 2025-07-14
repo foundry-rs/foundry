@@ -34,12 +34,12 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    Account, BlockHeader, EnvKzgSettings, Header, Receipt, ReceiptWithBloom, Signed,
-    Transaction as TransactionTrait, TxEip4844WithSidecar, TxEnvelope,
+    Account, Blob, BlockHeader, EnvKzgSettings, Header, Receipt, ReceiptWithBloom, Signed,
+    Transaction as TransactionTrait, TxEnvelope,
     proofs::{calculate_receipt_root, calculate_transaction_root},
     transaction::Recovered,
 };
-use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
+use alloy_eips::{eip1559::BaseFeeParams, eip4844::kzg_to_versioned_hash, eip7840::BlobParams};
 use alloy_evm::{Database, Evm, eth::EthEvmContext, precompiles::PrecompilesMap};
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
@@ -2930,16 +2930,23 @@ impl Backend {
         Ok(None)
     }
 
-    pub fn get_blob_by_versioned_hash(&self, hash: B256) -> Result<Option<TxEip4844WithSidecar>> {
+    pub fn get_blob_by_versioned_hash(&self, hash: B256) -> Result<Option<Blob>> {
         let storage = self.blockchain.storage.read();
         for block in storage.blocks.values() {
             for tx in &block.transactions {
                 let typed_tx = tx.as_ref();
                 if let Some(sidecar) = typed_tx.sidecar() {
-                    for blob in sidecar.sidecar.clone() {
-                        let versioned_hash = B256::from(blob.to_kzg_versioned_hash());
+                    for versioned_hash in sidecar.sidecar.versioned_hashes() {
                         if versioned_hash == hash {
-                            return Ok(Some(sidecar.clone()));
+                            if let Some(index) =
+                                sidecar.sidecar.commitments.iter().position(|commitment| {
+                                    kzg_to_versioned_hash(commitment.as_slice()) == *hash
+                                })
+                            {
+                                if let Some(blob) = sidecar.sidecar.blobs.get(index) {
+                                    return Ok(Some(blob.clone()));
+                                }
+                            }
                         }
                     }
                 }

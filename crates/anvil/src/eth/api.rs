@@ -1322,7 +1322,7 @@ impl EthApi {
     pub fn anvil_get_blob_by_versioned_hash(
         &self,
         hash: B256,
-    ) -> Result<Option<alloy_consensus::TxEip4844WithSidecar>> {
+    ) -> Result<Option<alloy_consensus::Blob>> {
         node_info!("anvil_getBlobByHash");
         Ok(self.backend.get_blob_by_versioned_hash(hash)?)
     }
