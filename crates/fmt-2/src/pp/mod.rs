@@ -78,7 +78,7 @@ pub struct Printer {
     /// Number of spaces left on line
     space: isize,
     /// Ring-buffer of tokens and calculated sizes
-    pub buf: RingBuffer<BufEntry>,
+    buf: RingBuffer<BufEntry>,
     /// Running size of stream "...left"
     left_total: isize,
     /// Running size of stream "...right"
@@ -106,7 +106,7 @@ pub struct Printer {
 
 #[derive(Debug)]
 pub struct BufEntry {
-    pub token: Token,
+    token: Token,
     size: isize,
 }
 
