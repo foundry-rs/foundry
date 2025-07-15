@@ -90,6 +90,7 @@ use foundry_evm::{
     decode::RevertDecoder,
     inspectors::AccessListInspector,
     traces::TracingInspectorConfig,
+    utils::{get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id},
 };
 use foundry_evm_core::either_evm::EitherEvm;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
@@ -105,15 +106,16 @@ use revm::{
         block::BlobExcessGasAndPrice,
         result::{ExecutionResult, Output, ResultAndState},
     },
-    database::{CacheDB, DatabaseRef, WrapDatabaseRef},
+    database::{CacheDB, WrapDatabaseRef},
     interpreter::InstructionResult,
-    precompile::secp256r1::P256VERIFY,
+    precompile::secp256r1::{P256VERIFY, P256VERIFY_BASE_GAS_FEE},
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::AccountInfo,
 };
 use revm_inspectors::transfer::TransferInspector;
 use std::{
     collections::BTreeMap,
+    fmt::Debug,
     io::{Read, Write},
     ops::Not,
     path::PathBuf,
@@ -131,6 +133,13 @@ pub mod in_memory_db;
 pub mod inspector;
 pub mod state;
 pub mod storage;
+
+/// Helper trait that combines DatabaseRef with Debug.
+/// This is needed because alloy-evm requires Debug on Database implementations.
+/// Specific implementation for dyn Db since trait object upcasting is not stable.
+pub trait DatabaseRef: revm::DatabaseRef<Error = DatabaseError> + Debug {}
+impl<T> DatabaseRef for T where T: revm::DatabaseRef<Error = DatabaseError> + Debug {}
+impl DatabaseRef for dyn crate::eth::backend::db::Db {}
 
 // Gas per transaction not creating a contract.
 pub const MIN_TRANSACTION_GAS: u128 = 21000;
@@ -172,7 +181,7 @@ impl BlockRequest {
 }
 
 /// Gives access to the [revm::Database]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Backend {
     /// Access to [`revm::Database`] abstraction.
     ///
@@ -571,8 +580,8 @@ impl Backend {
 
                     env.evm_env.cfg_env.chain_id = fork.chain_id();
                     env.evm_env.block_env = BlockEnv {
-                        number: fork_block_number,
-                        timestamp: fork_block.header.timestamp,
+                        number: U256::from(fork_block_number),
+                        timestamp: U256::from(fork_block.header.timestamp),
                         gas_limit,
                         difficulty: fork_block.header.difficulty,
                         prevrandao: Some(fork_block.header.mix_hash.unwrap_or_default()),
@@ -632,8 +641,8 @@ impl Backend {
         // Reset environment to genesis state
         {
             let mut env = self.env.write();
-            env.evm_env.block_env.number = genesis_number;
-            env.evm_env.block_env.timestamp = genesis_timestamp;
+            env.evm_env.block_env.number = U256::from(genesis_number);
+            env.evm_env.block_env.timestamp = U256::from(genesis_timestamp);
             // Reset other block env fields to their defaults
             env.evm_env.block_env.basefee = self.fees.base_fee();
             env.evm_env.block_env.prevrandao = Some(B256::ZERO);
@@ -726,7 +735,7 @@ impl Backend {
     /// Sets the block number
     pub fn set_block_number(&self, number: u64) {
         let mut env = self.env.write();
-        env.evm_env.block_env.number = number;
+        env.evm_env.block_env.number = U256::from(number);
     }
 
     /// Returns the client coinbase address.
@@ -961,8 +970,8 @@ impl Backend {
 
             let mut env = self.env.write();
             env.evm_env.block_env = BlockEnv {
-                number: num,
-                timestamp: block.header.timestamp,
+                number: U256::from(num),
+                timestamp: U256::from(block.header.timestamp),
                 difficulty: block.header.difficulty,
                 // ensures prevrandao is set
                 prevrandao: Some(block.header.mix_hash.unwrap_or_default()),
@@ -1034,7 +1043,7 @@ impl Backend {
             // Defaults to block number for compatibility with existing state files.
             let fork_num_and_hash = self.get_fork().map(|f| (f.block_number(), f.block_hash()));
 
-            let best_number = state.best_block_number.unwrap_or(block.number);
+            let best_number = state.best_block_number.unwrap_or(block.number.saturating_to());
             if let Some((number, hash)) = fork_num_and_hash {
                 trace!(target: "backend", state_block_number=?best_number, fork_block_number=?number);
                 // If the state.block_number is greater than the fork block number, set best number
@@ -1086,9 +1095,13 @@ impl Backend {
 
             // update next base fee
             self.fees.set_base_fee(next_block_base_fee);
+
             self.fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
                 next_block_excess_blob_gas,
-                false,
+                get_blob_base_fee_update_fraction(
+                    self.env.read().evm_env.cfg_env.chain_id,
+                    header.timestamp,
+                ),
             ));
         }
 
@@ -1129,33 +1142,29 @@ impl Backend {
     fn next_env(&self) -> Env {
         let mut env = self.env.read().clone();
         // increase block number for this block
-        env.evm_env.block_env.number = env.evm_env.block_env.number.saturating_add(1);
+        env.evm_env.block_env.number = env.evm_env.block_env.number.saturating_add(U256::from(1));
         env.evm_env.block_env.basefee = self.base_fee();
-        env.evm_env.block_env.timestamp = self.time.current_call_timestamp();
+        env.evm_env.block_env.timestamp = U256::from(self.time.current_call_timestamp());
         env
     }
 
     /// Creates an EVM instance with optionally injected precompiles.
-    fn new_evm_with_inspector_ref<'db, I>(
+    fn new_evm_with_inspector_ref<'db, I, DB>(
         &self,
-        db: &'db dyn DatabaseRef<Error = DatabaseError>,
+        db: &'db DB,
         env: &Env,
         inspector: &'db mut I,
-    ) -> EitherEvm<
-        WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>,
-        &'db mut I,
-        PrecompilesMap,
-    >
+    ) -> EitherEvm<WrapDatabaseRef<&'db DB>, &'db mut I, PrecompilesMap>
     where
-        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>>>
-            + Inspector<OpContext<WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>>>,
-        WrapDatabaseRef<&'db dyn DatabaseRef<Error = DatabaseError>>:
-            Database<Error = DatabaseError>,
+        DB: DatabaseRef + ?Sized,
+        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>
+            + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>,
+        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
         let mut evm = new_evm_with_inspector_ref(db, env, inspector);
 
         if self.odyssey {
-            inject_precompiles(&mut evm, vec![P256VERIFY]);
+            inject_precompiles(&mut evm, vec![(P256VERIFY, P256VERIFY_BASE_GAS_FEE)]);
         }
 
         if let Some(factory) = &self.precompile_factory {
@@ -1183,7 +1192,7 @@ impl Backend {
 
         let db = self.db.read().await;
         let mut inspector = self.build_inspector();
-        let mut evm = self.new_evm_with_inspector_ref(db.as_dyn(), &env, &mut inspector);
+        let mut evm = self.new_evm_with_inspector_ref(&**db, &env, &mut inspector);
         let ResultAndState { result, state } = evm.transact(env.tx)?;
         let (exit_reason, gas_used, out, logs) = match result {
             ExecutionResult::Success { reason, gas_used, logs, output, .. } => {
@@ -1291,9 +1300,10 @@ impl Backend {
             // increase block number for this block
             if is_arbitrum(env.evm_env.cfg_env.chain_id) {
                 // Temporary set `env.block.number` to `block_number` for Arbitrum chains.
-                env.evm_env.block_env.number = block_number;
+                env.evm_env.block_env.number = U256::from(block_number);
             } else {
-                env.evm_env.block_env.number = env.evm_env.block_env.number.saturating_add(1);
+                env.evm_env.block_env.number =
+                    env.evm_env.block_env.number.saturating_add(U256::from(1));
             }
 
             env.evm_env.block_env.basefee = current_base_fee;
@@ -1316,7 +1326,7 @@ impl Backend {
                 // finally set the next block timestamp, this is done just before execution, because
                 // there can be concurrent requests that can delay acquiring the db lock and we want
                 // to ensure the timestamp is as close as possible to the actual execution.
-                env.evm_env.block_env.timestamp = self.time.next_timestamp();
+                env.evm_env.block_env.timestamp = U256::from(self.time.next_timestamp());
 
                 let executor = TransactionExecutor {
                     db: &mut **db,
@@ -1435,9 +1445,10 @@ impl Backend {
 
         // update next base fee
         self.fees.set_base_fee(next_block_base_fee);
+
         self.fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
             next_block_excess_blob_gas,
-            false,
+            get_blob_base_fee_update_fraction_by_spec_id(*self.env.read().evm_env.spec_id()),
         ));
 
         // notify all listeners
@@ -1468,7 +1479,7 @@ impl Backend {
                 if let Some(block_overrides) = overrides.block {
                     state::apply_block_overrides(*block_overrides, &mut cache_db, &mut block);
                 }
-                self.call_with_state(cache_db.as_dyn(), request, fee_details, block)
+                self.call_with_state(&cache_db as &dyn DatabaseRef, request, fee_details, block)
             }?;
             trace!(target: "backend", "call return {:?} out: {:?} gas {} on block {}", exit, out, gas, block_number);
             Ok((exit, out, gas, state))
@@ -1678,7 +1689,7 @@ impl Backend {
                         // recorded and included in logs
                         let mut inspector = TransferInspector::new(false).with_logs(true);
                         let mut evm= self.new_evm_with_inspector_ref(
-                            cache_db.as_dyn(),
+                            &cache_db as &dyn DatabaseRef,
                             &env,
                             &mut inspector,
                         );
@@ -1688,7 +1699,7 @@ impl Backend {
                     } else {
                         let mut inspector = self.build_inspector();
                         let mut evm = self.new_evm_with_inspector_ref(
-                            cache_db.as_dyn(),
+                            &cache_db as &dyn DatabaseRef,
                             &env,
                             &mut inspector,
                         );
@@ -1737,8 +1748,8 @@ impl Backend {
                             .enumerate()
                             .map(|(idx, log)| Log {
                                 inner: log,
-                                block_number: Some(block_env.number),
-                                block_timestamp: Some(block_env.timestamp),
+                                block_number: Some(block_env.number.saturating_to()),
+                                block_timestamp: Some(block_env.timestamp.saturating_to()),
                                 transaction_index: Some(req_idx as u64),
                                 log_index: Some((idx + log_index) as u64),
                                 removed: false,
@@ -1765,10 +1776,10 @@ impl Backend {
                     beneficiary: block_env.beneficiary,
                     state_root: Default::default(),
                     difficulty: Default::default(),
-                    number: block_env.number,
+                    number: block_env.number.saturating_to(),
                     gas_limit: block_env.gas_limit,
                     gas_used,
-                    timestamp: block_env.timestamp,
+                    timestamp: block_env.timestamp.saturating_to(),
                     extra_data: Default::default(),
                     mix_hash: Default::default(),
                     nonce: Default::default(),
@@ -1808,8 +1819,8 @@ impl Backend {
                 };
 
                 // update block env
-                block_env.number += 1;
-                block_env.timestamp += 12;
+                block_env.number += U256::from(1);
+                block_env.timestamp += U256::from(12);
                 block_env.basefee = simulated_block
                     .inner
                     .header
@@ -1826,7 +1837,7 @@ impl Backend {
 
     pub fn call_with_state(
         &self,
-        state: &dyn DatabaseRef<Error = DatabaseError>,
+        state: &dyn DatabaseRef,
         request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_env: BlockEnv,
@@ -1893,7 +1904,7 @@ impl Backend {
 
                             let env = self.build_call_env(request, fee_details, block);
                             let mut evm = self.new_evm_with_inspector_ref(
-                                cache_db.as_dyn(),
+                                &cache_db as &dyn DatabaseRef,
                                 &env,
                                 &mut inspector,
                             );
@@ -1928,7 +1939,11 @@ impl Backend {
                 .with_tracing_config(TracingInspectorConfig::from_geth_config(&config));
 
             let env = self.build_call_env(request, fee_details, block);
-            let mut evm = self.new_evm_with_inspector_ref(cache_db.as_dyn(), &env, &mut inspector);
+            let mut evm = self.new_evm_with_inspector_ref(
+                &cache_db as &dyn DatabaseRef,
+                &env,
+                &mut inspector,
+            );
             let ResultAndState { result, state: _ } = evm.transact(env.tx)?;
 
             let (exit_reason, gas_used, out) = match result {
@@ -1961,7 +1976,7 @@ impl Backend {
 
     pub fn build_access_list_with_state(
         &self,
-        state: &dyn DatabaseRef<Error = DatabaseError>,
+        state: &dyn DatabaseRef,
         request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_env: BlockEnv,
@@ -2357,9 +2372,9 @@ impl Backend {
                     .with_pending_block(pool_transactions, |state, block| {
                         let block = block.block;
                         let block = BlockEnv {
-                            number: block.header.number,
+                            number: U256::from(block.header.number),
                             beneficiary: block.header.beneficiary,
-                            timestamp: block.header.timestamp,
+                            timestamp: U256::from(block.header.timestamp),
                             difficulty: block.header.difficulty,
                             prevrandao: Some(block.header.mix_hash),
                             basefee: block.header.base_fee_per_gas.unwrap_or_default(),
@@ -2376,7 +2391,7 @@ impl Backend {
         };
         let block_number = self.convert_block_number(block_number);
 
-        if block_number < self.env.read().evm_env.block_env.number {
+        if block_number < self.env.read().evm_env.block_env.number.saturating_to() {
             if let Some((block_hash, block)) = self
                 .block_by_number(BlockNumber::Number(block_number))
                 .await?
@@ -2384,9 +2399,9 @@ impl Backend {
                 && let Some(state) = self.states.write().get(&block_hash)
             {
                 let block = BlockEnv {
-                    number: block_number,
+                    number: U256::from(block_number),
                     beneficiary: block.header.beneficiary,
-                    timestamp: block.header.timestamp,
+                    timestamp: U256::from(block.header.timestamp),
                     difficulty: block.header.difficulty,
                     prevrandao: block.header.mix_hash,
                     basefee: block.header.base_fee_per_gas.unwrap_or_default(),
@@ -2398,7 +2413,7 @@ impl Backend {
 
             warn!(target: "backend", "Not historic state found for block={}", block_number);
             return Err(BlockchainError::BlockOutOfRange(
-                self.env.read().evm_env.block_env.number,
+                self.env.read().evm_env.block_env.number.saturating_to(),
                 block_number,
             ));
         }
@@ -3093,19 +3108,19 @@ impl Backend {
 
             // Set environment back to common block
             let mut env = self.env.write();
-            env.evm_env.block_env.number = common_block.header.number;
-            env.evm_env.block_env.timestamp = common_block.header.timestamp;
+            env.evm_env.block_env.number = U256::from(common_block.header.number);
+            env.evm_env.block_env.timestamp = U256::from(common_block.header.timestamp);
             env.evm_env.block_env.gas_limit = common_block.header.gas_limit;
             env.evm_env.block_env.difficulty = common_block.header.difficulty;
             env.evm_env.block_env.prevrandao = Some(common_block.header.mix_hash);
 
-            self.time.reset(env.evm_env.block_env.timestamp);
+            self.time.reset(env.evm_env.block_env.timestamp.saturating_to());
         }
         Ok(())
     }
 }
 
-/// Get max nonce from transaction pool by address
+/// Get max nonce from transaction pool by address.
 fn get_pool_transactions_nonce(
     pool_transactions: &[Arc<PoolTransaction>],
     address: Address,

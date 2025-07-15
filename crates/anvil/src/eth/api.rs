@@ -1,8 +1,5 @@
 use super::{
-    backend::{
-        db::MaybeFullDatabase,
-        mem::{BlockRequest, State, state},
-    },
+    backend::mem::{BlockRequest, DatabaseRef, State, state},
     sign::build_typed_transaction,
 };
 use crate::{
@@ -83,7 +80,7 @@ use anvil_core::{
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use foundry_common::provider::ProviderBuilder;
-use foundry_evm::{backend::DatabaseError, decode::RevertDecoder};
+use foundry_evm::decode::RevertDecoder;
 use futures::{
     StreamExt,
     channel::{mpsc::Receiver, oneshot},
@@ -93,7 +90,7 @@ use revm::{
     bytecode::Bytecode,
     context::BlockEnv,
     context_interface::{block::BlobExcessGasAndPrice, result::Output},
-    database::{CacheDB, DatabaseRef},
+    database::CacheDB,
     interpreter::{InstructionResult, return_ok, return_revert},
     primitives::eip7702::PER_EMPTY_ACCOUNT_COST,
 };
@@ -2213,7 +2210,7 @@ impl EthApi {
 
         Ok(NodeInfo {
             current_block_number: self.backend.best_number(),
-            current_block_timestamp: env.evm_env.block_env.timestamp,
+            current_block_timestamp: env.evm_env.block_env.timestamp.saturating_to(),
             current_block_hash: self.backend.best_hash(),
             hard_fork: hard_fork.to_string(),
             transaction_order: match *tx_order {
@@ -2955,7 +2952,7 @@ impl EthApi {
                     if let Some(block_overrides) = overrides.block {
                         state::apply_block_overrides(*block_overrides, &mut cache_db, &mut block);
                     }
-                    this.do_estimate_gas_with_state(request, cache_db.as_dyn(), block)
+                    this.do_estimate_gas_with_state(request, &cache_db as &dyn DatabaseRef, block)
                 })
                 .await?
         })
@@ -2968,7 +2965,7 @@ impl EthApi {
     fn do_estimate_gas_with_state(
         &self,
         mut request: WithOtherFields<TransactionRequest>,
-        state: &dyn DatabaseRef<Error = DatabaseError>,
+        state: &dyn DatabaseRef,
         block_env: BlockEnv,
     ) -> Result<u128> {
         // If the request is a simple native token transfer we can optimize
@@ -3490,7 +3487,7 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
             }
             Err(err) => Err(err),
             Ok((exit, output, gas, _)) => match exit {
-                return_ok!() | InstructionResult::CallOrCreate => Ok(Self::Success(gas)),
+                return_ok!() => Ok(Self::Success(gas)),
 
                 // Revert opcodes:
                 InstructionResult::Revert => Ok(Self::Revert(output.map(|o| o.into_data()))),
@@ -3525,13 +3522,7 @@ impl TryFrom<Result<(InstructionResult, Option<Output>, u128, State)>> for GasEs
                 | InstructionResult::CreateContractSizeLimit
                 | InstructionResult::CreateContractStartingWithEF
                 | InstructionResult::CreateInitCodeSizeLimit
-                | InstructionResult::FatalExternalError
-                | InstructionResult::ReturnContractInNotInitEOF
-                | InstructionResult::EOFOpcodeDisabledInLegacy
-                | InstructionResult::SubRoutineStackOverflow
-                | InstructionResult::EofAuxDataOverflow
-                | InstructionResult::EofAuxDataTooSmall
-                | InstructionResult::InvalidEXTCALLTarget => Ok(Self::EvmError(exit)),
+                | InstructionResult::FatalExternalError => Ok(Self::EvmError(exit)),
             },
         }
     }
