@@ -1,3 +1,6 @@
+// TODO(rusowsky): remove once assembly generation activated (after Vectorized's validation)
+#![allow(dead_code)]
+
 use super::AsmKeccak256;
 use crate::{
     linter::{LateLintPass, LintContext, Snippet},
@@ -65,20 +68,23 @@ impl AsmKeccak256 {
     fn emit_lint(
         &self,
         ctx: &LintContext<'_>,
-        hir: &hir::Hir<'_>,
-        stmt_span: Span,
+        _hir: &hir::Hir<'_>,
+        _stmt_span: Span,
         call: &hir::Expr<'_>,
-        hash: &hir::Expr<'_>,
-        asm_ctx: AsmContext,
+        _hash: &hir::Expr<'_>,
+        _asm_ctx: AsmContext,
     ) {
-        let target_span = asm_ctx.target_span(stmt_span, call.span);
+        // TODO(rusowsky): enable once assembly generation is validated by Vectorized
+        // let target_span = asm_ctx.target_span(stmt_span, call.span);
+        //
+        // if !self.try_emit_fix_bytes_hash(ctx, hir, target_span, hash, asm_ctx)
+        //     && !self.try_emit_fix_abi_encoded(ctx, hir, target_span, hash, asm_ctx)
+        // {
+        //     // Fallback to lint without fix suggestions
+        //     ctx.emit(&ASM_KECCAK256, call.span);
+        // }
 
-        if !self.try_emit_fix_bytes_hash(ctx, hir, target_span, hash, asm_ctx)
-            && !self.try_emit_fix_abi_encoded(ctx, hir, target_span, hash, asm_ctx)
-        {
-            // Fallback to lint without fix suggestions
-            ctx.emit(&ASM_KECCAK256, call.span);
-        }
+        ctx.emit(&ASM_KECCAK256, call.span);
     }
 
     /// Emits a lint (with fix) for direct `bytes` or `string` hashing, regardless of the data
@@ -255,7 +261,7 @@ fn gen_asm_cleaned_arg(ty: &hir::TypeKind<'_>, arg: &str) -> Option<String> {
         // Right-aligned as a uint160. Higher-order bytes must be padded with leading zeros.
         hir::TypeKind::Elementary(hir::ElementaryType::Address(_)) => {
             let mask = format!("0x{}", "ff".repeat(20));
-            return Some(format!("and({arg}, {mask})"));
+            Some(format!("and({arg}, {mask})"))
         }
         // Unsigned integers: `uintN`
         // Right-aligned. Higher-order bytes must be padded with leading zeros.
@@ -265,7 +271,7 @@ fn gen_asm_cleaned_arg(ty: &hir::TypeKind<'_>, arg: &str) -> Option<String> {
                 return Some(arg.to_string());
             }
             let mask = format!("0x{}", "ff".repeat(size as usize));
-            return Some(format!("and({arg}, {mask})"));
+            Some(format!("and({arg}, {mask})"))
         }
         // Signed integers: `intN`
         // Right-aligned. Higher-order bytes must be padded by extending the sign bit.
@@ -275,7 +281,7 @@ fn gen_asm_cleaned_arg(ty: &hir::TypeKind<'_>, arg: &str) -> Option<String> {
                 return Some(arg.to_string());
             }
             // First argument to signextend is the byte index `k = (N/8) - 1`.
-            return Some(format!("signextend({k}, {arg})", k = size - 1));
+            Some(format!("signextend({k}, {arg})", k = size - 1))
         }
         // Fixed-size bytes: `bytesN`
         // Left-aligned. Lower-order bytes must be padded with trailing zeros.
@@ -287,7 +293,7 @@ fn gen_asm_cleaned_arg(ty: &hir::TypeKind<'_>, arg: &str) -> Option<String> {
             let mut mask = "0x".to_string();
             mask.push_str(&"ff".repeat(size as usize));
             mask.push_str(&"00".repeat((32 - size) as usize));
-            return Some(format!("and({arg}, {mask})"));
+            Some(format!("and({arg}, {mask})"))
         }
         // Otherwise, return `None` so that assembly is not generated.
         _ => None,
