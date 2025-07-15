@@ -1,6 +1,3 @@
-// TODO(rusowsky): remove once assembly generation activated (after Vectorized's validation)
-#![allow(dead_code)]
-
 use super::AsmKeccak256;
 use crate::{
     linter::{LateLintPass, LintContext, Snippet},
@@ -68,23 +65,20 @@ impl AsmKeccak256 {
     fn emit_lint(
         &self,
         ctx: &LintContext<'_>,
-        _hir: &hir::Hir<'_>,
-        _stmt_span: Span,
+        hir: &hir::Hir<'_>,
+        stmt_span: Span,
         call: &hir::Expr<'_>,
-        _hash: &hir::Expr<'_>,
-        _asm_ctx: AsmContext,
+        hash: &hir::Expr<'_>,
+        asm_ctx: AsmContext,
     ) {
-        // TODO(rusowsky): enable once assembly generation is validated by Vectorized
-        // let target_span = asm_ctx.target_span(stmt_span, call.span);
-        //
-        // if !self.try_emit_fix_bytes_hash(ctx, hir, target_span, hash, asm_ctx)
-        //     && !self.try_emit_fix_abi_encoded(ctx, hir, target_span, hash, asm_ctx)
-        // {
-        //     // Fallback to lint without fix suggestions
-        //     ctx.emit(&ASM_KECCAK256, call.span);
-        // }
+        let target_span = asm_ctx.target_span(stmt_span, call.span);
 
-        ctx.emit(&ASM_KECCAK256, call.span);
+        if !self.try_emit_fix_bytes_hash(ctx, hir, target_span, hash, asm_ctx)
+            && !self.try_emit_fix_abi_encoded(ctx, hir, target_span, hash, asm_ctx)
+        {
+            // Fallback to lint without fix suggestions
+            ctx.emit(&ASM_KECCAK256, call.span);
+        }
     }
 
     /// Emits a lint (with fix) for direct `bytes` or `string` hashing, regardless of the data
