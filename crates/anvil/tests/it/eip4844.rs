@@ -346,3 +346,78 @@ async fn can_bypass_sidecar_requirement() {
 
     assert_eq!(tx.inner.ty(), 3);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_blobs_by_versioned_hash() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(node_config).await;
+
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let from = wallets[0].address();
+    let to = wallets[1].address();
+    let provider = http_provider(&handle.http_endpoint());
+
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+
+    let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"Hello World");
+
+    let sidecar = sidecar.build().unwrap();
+    let tx = TransactionRequest::default()
+        .with_from(from)
+        .with_to(to)
+        .with_nonce(0)
+        .with_max_fee_per_blob_gas(gas_price + 1)
+        .with_max_fee_per_gas(eip1559_est.max_fee_per_gas)
+        .with_max_priority_fee_per_gas(eip1559_est.max_priority_fee_per_gas)
+        .with_blob_sidecar(sidecar.clone())
+        .value(U256::from(5));
+
+    let mut tx = WithOtherFields::new(tx);
+
+    tx.populate_blob_hashes();
+
+    let _receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    let hash = sidecar.versioned_hash_for_blob(0).unwrap();
+    // api.anvil_set_auto_mine(true).await.unwrap();
+    let blob = api.anvil_get_blob_by_versioned_hash(hash).unwrap().unwrap();
+    assert_eq!(blob, sidecar.blobs[0]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_blobs_by_tx_hash() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(node_config).await;
+
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let from = wallets[0].address();
+    let to = wallets[1].address();
+    let provider = http_provider(&handle.http_endpoint());
+
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+
+    let sidecar: SidecarBuilder<SimpleCoder> = SidecarBuilder::from_slice(b"Hello World");
+
+    let sidecar = sidecar.build().unwrap();
+    let tx = TransactionRequest::default()
+        .with_from(from)
+        .with_to(to)
+        .with_nonce(0)
+        .with_max_fee_per_blob_gas(gas_price + 1)
+        .with_max_fee_per_gas(eip1559_est.max_fee_per_gas)
+        .with_max_priority_fee_per_gas(eip1559_est.max_priority_fee_per_gas)
+        .with_blob_sidecar(sidecar.clone())
+        .value(U256::from(5));
+
+    let mut tx = WithOtherFields::new(tx);
+
+    tx.populate_blob_hashes();
+
+    let receipt = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    let hash = receipt.transaction_hash;
+    api.anvil_set_auto_mine(true).await.unwrap();
+    let blobs = api.anvil_get_blob_by_tx_hash(hash).unwrap().unwrap();
+    assert_eq!(blobs, sidecar.blobs);
+}

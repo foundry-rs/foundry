@@ -270,7 +270,7 @@ impl CallArgs {
                     env.evm_env.block_env.number = number.to();
                 }
                 if let Some(time) = block_overrides.time {
-                    env.evm_env.block_env.timestamp = time;
+                    env.evm_env.block_env.timestamp = U256::from(time);
                 }
             }
 
@@ -362,6 +362,7 @@ impl CallArgs {
             self.nonce_overrides.as_ref(),
             self.code_overrides.as_ref(),
             self.state_overrides.as_ref(),
+            self.state_diff_overrides.as_ref(),
         ]
         .iter()
         .all(Option::is_none)

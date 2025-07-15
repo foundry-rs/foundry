@@ -52,7 +52,11 @@ impl<'s> LintContext<'s> {
         Self { sess, with_description, inline_config: config }
     }
 
-    /// Helper method to emit diagnostics easily from passes.
+    pub fn session(&self) -> &'s Session {
+        self.sess
+    }
+
+    /// Helper method to emit diagnostics easily from passes
     pub fn emit<L: Lint>(&self, lint: &'static L, span: Span) {
         if self.inline_config.is_disabled(span, lint.id()) {
             return;
@@ -166,7 +170,7 @@ impl Snippet {
 }
 
 /// Trait for lints that operate directly on the AST.
-/// Its methods mirror `solar_ast::visit::Visit`, with the addition of `LintCotext`.
+/// Its methods mirror `ast::visit::Visit`, with the addition of `LintCotext`.
 pub trait EarlyLintPass<'ast>: Send + Sync {
     fn check_expr(&mut self, _ctx: &LintContext<'_>, _expr: &'ast ast::Expr<'ast>) {}
     fn check_item_struct(&mut self, _ctx: &LintContext<'_>, _struct: &'ast ast::ItemStruct<'ast>) {}
@@ -200,13 +204,14 @@ pub trait EarlyLintPass<'ast>: Send + Sync {
         _contract: &'ast ast::ItemContract<'ast>,
     ) {
     }
+    fn check_doc_comment(&mut self, _ctx: &LintContext<'_>, _cmnt: &'ast ast::DocComment) {}
     // TODO: Add methods for each required AST node type
 
     /// Should be called after the source unit has been visited. Enables lints that require
     /// knowledge of the entire AST to perform their analysis.
     fn check_full_source_unit(
         &mut self,
-        _ctx: &LintContext<'_>,
+        _ctx: &LintContext<'ast>,
         _ast: &'ast ast::SourceUnit<'ast>,
     ) {
     }
@@ -243,6 +248,13 @@ where
     's: 'ast,
 {
     type BreakValue = Never;
+
+    fn visit_doc_comment(&mut self, cmnt: &'ast ast::DocComment) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            pass.check_doc_comment(self.ctx, cmnt)
+        }
+        self.walk_doc_comment(cmnt)
+    }
 
     fn visit_expr(&mut self, expr: &'ast ast::Expr<'ast>) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
@@ -316,7 +328,7 @@ where
 }
 
 /// Trait for lints that operate on the HIR (High-level Intermediate Representation).
-/// Its methods mirror `solar_ast::visit::Visit`, with the addition of `LintCotext`.
+/// Its methods mirror `hir::visit::Visit`, with the addition of `LintCotext`.
 pub trait LateLintPass<'hir>: Send + Sync {
     fn check_nested_source(
         &mut self,

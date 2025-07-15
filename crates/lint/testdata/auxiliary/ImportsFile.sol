@@ -19,3 +19,11 @@ interface IContract {
 interface IContractNotUsed {
     function doSomething() external;
 }
+
+interface docSymbol {}
+interface docSymbol2 {}
+interface docSymbolWrongTag {}
+
+interface eventSymbol {
+    event foo(uint256 bar);
+}

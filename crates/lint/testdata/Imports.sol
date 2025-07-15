@@ -5,6 +5,10 @@ import {
     symbol3,
     symbol4,
     symbol5,
+    docSymbol,
+    docSymbol2,
+    docSymbolWrongTag, //~NOTE: unused imports should be removed
+    eventSymbol,
     symbolNotUsed, //~NOTE: unused imports should be removed
     IContract,
     IContractNotUsed //~NOTE: unused imports should be removed
@@ -34,19 +38,25 @@ import * as OtherUtils from "./auxiliary/ImportsUtils2.sol"; //~NOTE: unused imp
 contract UnusedImport is IContract {
     using mySymbol for address;
 
+    /// @inheritdoc docSymbol
     uint256 constant MY_CONSTANT = CONSTANT_0;
 
+    /**
+     * @inheritdoc docSymbol2
+     */
     struct FooBar {
         symbol3 foo;
         myOtherSymbol bar;
     }
 
+    /// @wrong docSymbolWrongTag
     SomeFile.Baz public myStruct;
     SomeFile2.Baz public myStruct2;
     symbol4 public myVar;
 
     function foo(uint256 a, symbol5 b) public view returns (uint256) {
         uint256 c = Utils.calculate(a, b);
+        emit eventSymbol.foo(c);
         return c;
     }
 

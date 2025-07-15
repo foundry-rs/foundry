@@ -3591,3 +3591,36 @@ casttest!(can_disassemble_contract_code, |_prj, cmd| {
 ...
 "#]]);
 });
+
+// tests that cast call properly applies state diff override
+// <https://github.com/foundry-rs/foundry/issues/10930>
+casttest!(cast_call_can_override_state_diff, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Sepolia);
+    cmd.args([
+        "call",
+        "--rpc-url",
+        rpc.as_str(),
+        "--data",
+        "0x",
+        "0x1EA77b250eF79e917A5A637D5BB82D0980653F1B",
+        "--override-state-diff",
+        "0x1EA77b250eF79e917A5A637D5BB82D0980653F1B:1:1",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x1337
+
+"#]]);
+    cmd.args(["--trace"]).assert_success().stdout_eq(str![[r#"
+Traces:
+  [7281] 0x1EA77b250eF79e917A5A637D5BB82D0980653F1B::fallback()
+    ├─ [2275] 0xe537cb8a46Bd179c0C36aB7E3Fdecd759C8B80fc::fallback() [delegatecall]
+    │   └─ ← [Return] 0x1337
+    └─ ← [Return] 0x1337
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
