@@ -99,7 +99,19 @@ impl InlineConfig {
                 InlineConfigItem::DisableLine => {
                     let mut prev_newline =
                         src[..loc.start()].char_indices().rev().skip_while(|(_, ch)| *ch != '\n');
-                    let start = prev_newline.next().map(|(idx, _)| idx).unwrap_or_default();
+                    let start = prev_newline
+                        .next()
+                        .map(|(idx, _)| {
+                            if let Some((idx, ch)) = prev_newline.next() {
+                                match ch {
+                                    '\r' => idx,
+                                    _ => idx + 1,
+                                }
+                            } else {
+                                idx
+                            }
+                        })
+                        .unwrap_or_default();
 
                     let end_offset = loc.end();
                     let mut next_newline =
