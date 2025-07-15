@@ -1,32 +1,33 @@
 use std::fmt::Debug;
 
 use alloy_evm::{
-    eth::EthEvmContext,
-    precompiles::{DynPrecompile, PrecompilesMap},
     Database, Evm,
+    eth::EthEvmContext,
+    precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap},
 };
 use foundry_evm_core::either_evm::EitherEvm;
 use op_revm::OpContext;
-use revm::{precompile::PrecompileWithAddress, Inspector};
+use revm::{Inspector, precompile::PrecompileWithAddress};
 
 /// Object-safe trait that enables injecting extra precompiles when using
 /// `anvil` as a library.
 pub trait PrecompileFactory: Send + Sync + Unpin + Debug {
     /// Returns a set of precompiles to extend the EVM with.
-    fn precompiles(&self) -> Vec<PrecompileWithAddress>;
+    fn precompiles(&self) -> Vec<(PrecompileWithAddress, u64)>;
 }
 
 /// Inject precompiles into the EVM dynamically.
 pub fn inject_precompiles<DB, I>(
     evm: &mut EitherEvm<DB, I, PrecompilesMap>,
-    precompiles: Vec<PrecompileWithAddress>,
+    precompiles: Vec<(PrecompileWithAddress, u64)>,
 ) where
     DB: Database,
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
 {
-    for p in precompiles {
-        evm.precompiles_mut()
-            .apply_precompile(p.address(), |_| Some(DynPrecompile::from(*p.precompile())));
+    for (PrecompileWithAddress(addr, func), gas) in precompiles {
+        evm.precompiles_mut().apply_precompile(&addr, move |_| {
+            Some(DynPrecompile::from(move |input: PrecompileInput<'_>| func(input.data, gas)))
+        });
     }
 }
 
@@ -34,16 +35,17 @@ pub fn inject_precompiles<DB, I>(
 mod tests {
     use std::convert::Infallible;
 
-    use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap, EthEvm, Evm, EvmEnv};
+    use alloy_evm::{EthEvm, Evm, EvmEnv, eth::EthEvmContext, precompiles::PrecompilesMap};
     use alloy_op_evm::OpEvm;
-    use alloy_primitives::{address, Address, Bytes, TxKind, U256};
+    use alloy_primitives::{Address, Bytes, TxKind, U256, address};
     use foundry_evm_core::either_evm::EitherEvm;
     use itertools::Itertools;
-    use op_revm::{precompiles::OpPrecompiles, L1BlockInfo, OpContext, OpSpecId, OpTransaction};
+    use op_revm::{L1BlockInfo, OpContext, OpSpecId, OpTransaction, precompiles::OpPrecompiles};
     use revm::{
+        Journal,
         context::{CfgEnv, Evm as RevmEvm, JournalTr, LocalContext, TxEnv},
         database::{EmptyDB, EmptyDBTyped},
-        handler::{instructions::EthInstructions, EthPrecompiles},
+        handler::{EthPrecompiles, instructions::EthInstructions},
         inspector::NoOpInspector,
         interpreter::interpreter::EthInterpreter,
         precompile::{
@@ -51,10 +53,9 @@ mod tests {
             Precompiles,
         },
         primitives::hardfork::SpecId,
-        Journal,
     };
 
-    use crate::{inject_precompiles, PrecompileFactory};
+    use crate::{PrecompileFactory, inject_precompiles};
 
     // A precompile activated in the `Prague` spec.
     const ETH_PRAGUE_PRECOMPILE: Address = address!("0x0000000000000000000000000000000000000011");
@@ -70,11 +71,14 @@ mod tests {
     struct CustomPrecompileFactory;
 
     impl PrecompileFactory for CustomPrecompileFactory {
-        fn precompiles(&self) -> Vec<PrecompileWithAddress> {
-            vec![PrecompileWithAddress::from((
-                PRECOMPILE_ADDR,
-                custom_echo_precompile as fn(&[u8], u64) -> PrecompileResult,
-            ))]
+        fn precompiles(&self) -> Vec<(PrecompileWithAddress, u64)> {
+            vec![(
+                PrecompileWithAddress::from((
+                    PRECOMPILE_ADDR,
+                    custom_echo_precompile as fn(&[u8], u64) -> PrecompileResult,
+                )),
+                1000,
+            )]
         }
     }
 

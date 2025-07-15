@@ -14,10 +14,11 @@ use crate::eth::{
 use alloy_consensus::constants::EMPTY_WITHDRAWALS;
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{
+    B256, Bytes, U256,
     map::{B256HashMap, HashMap},
-    Bytes, B256, U256,
 };
 use alloy_rpc_types::{
+    BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo,
     trace::{
         geth::{
             FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
@@ -26,7 +27,6 @@ use alloy_rpc_types::{
         otterscan::{InternalOperation, OperationType},
         parity::LocalizedTransactionTrace,
     },
-    BlockId, BlockNumberOrTag, TransactionInfo as RethTransactionInfo,
 };
 use anvil_core::eth::{
     block::{Block, PartialHeader},
@@ -176,11 +176,11 @@ impl InMemoryBlockStates {
     /// Returns the state for the given `hash` if present
     pub fn get(&mut self, hash: &B256) -> Option<&StateDb> {
         self.states.get(hash).or_else(|| {
-            if let Some(state) = self.on_disk_states.get_mut(hash) {
-                if let Some(cached) = self.disk_cache.read(*hash) {
-                    state.init_from_state_snapshot(cached);
-                    return Some(state);
-                }
+            if let Some(state) = self.on_disk_states.get_mut(hash)
+                && let Some(cached) = self.disk_cache.read(*hash)
+            {
+                state.init_from_state_snapshot(cached);
+                return Some(state);
             }
             None
         })
@@ -250,7 +250,7 @@ impl Default for InMemoryBlockStates {
 }
 
 /// Stores the blockchain data (blocks, transactions)
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BlockchainStorage {
     /// all stored blocks (block hash -> block)
     pub blocks: B256HashMap<Block>,
@@ -340,10 +340,10 @@ impl BlockchainStorage {
     pub fn unwind_to(&mut self, block_number: u64, block_hash: B256) {
         let best_num: u64 = self.best_number;
         for i in (block_number + 1)..=best_num {
-            if let Some(hash) = self.hashes.remove(&i) {
-                if let Some(block) = self.blocks.remove(&hash) {
-                    self.remove_block_transactions_by_number(block.header.number);
-                }
+            if let Some(hash) = self.hashes.remove(&i)
+                && let Some(block) = self.blocks.remove(&hash)
+            {
+                self.remove_block_transactions_by_number(block.header.number);
             }
         }
         self.best_hash = block_hash;
@@ -435,7 +435,7 @@ impl BlockchainStorage {
 }
 
 /// A simple in-memory blockchain
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Blockchain {
     /// underlying storage that supports concurrent reads
     pub storage: Arc<RwLock<BlockchainStorage>>,
@@ -574,10 +574,10 @@ impl MinedTransaction {
                             Err(e) => Err(RpcError::invalid_params(e.to_string()).into()),
                         };
                     }
-                    GethDebugBuiltInTracerType::PreStateTracer |
-                    GethDebugBuiltInTracerType::NoopTracer |
-                    GethDebugBuiltInTracerType::MuxTracer |
-                    GethDebugBuiltInTracerType::FlatCallTracer => {}
+                    GethDebugBuiltInTracerType::PreStateTracer
+                    | GethDebugBuiltInTracerType::NoopTracer
+                    | GethDebugBuiltInTracerType::MuxTracer
+                    | GethDebugBuiltInTracerType::FlatCallTracer => {}
                 },
                 GethDebugTracerType::JsTracer(_code) => {}
             }
@@ -609,7 +609,7 @@ pub struct MinedTransactionReceipt {
 mod tests {
     use super::*;
     use crate::eth::backend::db::Db;
-    use alloy_primitives::{hex, Address};
+    use alloy_primitives::{Address, hex};
     use alloy_rlp::Decodable;
     use anvil_core::eth::transaction::TypedTransaction;
     use revm::{database::DatabaseRef, state::AccountInfo};

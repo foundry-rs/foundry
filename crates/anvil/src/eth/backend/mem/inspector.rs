@@ -9,17 +9,17 @@ use foundry_evm::{
     decode::decode_console_logs,
     inspectors::{LogCollector, TracingInspector},
     traces::{
-        render_trace_arena_inner, CallTraceDecoder, SparsedTraceArena, TracingInspectorConfig,
+        CallTraceDecoder, SparsedTraceArena, TracingInspectorConfig, render_trace_arena_inner,
     },
 };
 use revm::{
+    Database, Inspector,
     context::ContextTr,
     inspector::JournalExt,
     interpreter::{
-        interpreter::EthInterpreter, CallInputs, CallOutcome, CreateInputs, CreateOutcome,
-        Interpreter,
+        CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter,
+        interpreter::EthInterpreter,
     },
-    Database, Inspector,
 };
 
 /// The [`revm::Inspector`] used when transacting in the evm
@@ -155,10 +155,10 @@ where
     }
 
     fn create(&mut self, ecx: &mut CTX, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
-        if let Some(tracer) = &mut self.tracer {
-            if let Some(out) = tracer.create(ecx, inputs) {
-                return Some(out);
-            }
+        if let Some(tracer) = &mut self.tracer
+            && let Some(out) = tracer.create(ecx, inputs)
+        {
+            return Some(out);
         }
         None
     }

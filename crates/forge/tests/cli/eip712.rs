@@ -638,7 +638,7 @@ contract Eip712HashStructTest is DSTest {
         assertEq(cheatStructHash, userStructHash, "permit struct hash mismatch");
     }
 
-    function testHashPermitSingle_withTypeDefinion() public {
+    function testHashPermitSingle_withTypeDefinition() public {
         PermitDetails memory details = PermitDetails({
             token: 0x1111111111111111111111111111111111111111,
             amount: 1000 ether,
@@ -722,7 +722,7 @@ contract Eip712HashStructTest is DSTest {
         .assert_success()
         .stdout_eq(str![[r#"
 ...
-[PASS] testHashPermitSingle_withTypeDefinion() ([GAS])
+[PASS] testHashPermitSingle_withTypeDefinition() ([GAS])
 Logs:
   PermitSingle struct hash from cheatcode:
   0x3ed744fdcea02b6b9ad45a9db6e648bf6f18c221909f9ee425191f2a02f9e4a8

@@ -1,9 +1,9 @@
 use crate::{Error, Result};
-use alloy_primitives::{address, hex, Address, Bytes};
+use alloy_primitives::{Address, Bytes, address, hex};
 use alloy_sol_types::{SolError, SolValue};
 use foundry_common::ContractsByArtifact;
 use foundry_evm_core::decode::RevertDecoder;
-use revm::interpreter::{return_ok, InstructionResult};
+use revm::interpreter::{InstructionResult, return_ok};
 use spec::Vm;
 
 use super::{
@@ -64,14 +64,13 @@ fn handle_revert(
 ) -> Result<(), Error> {
     // If expected reverter address is set then check it matches the actual reverter.
     if let (Some(expected_reverter), Some(&actual_reverter)) = (revert_params.reverter(), reverter)
+        && expected_reverter != actual_reverter
     {
-        if expected_reverter != actual_reverter {
-            return Err(fmt_err!(
-                "Reverter != expected reverter: {} != {}",
-                actual_reverter,
-                expected_reverter
-            ));
-        }
+        return Err(fmt_err!(
+            "Reverter != expected reverter: {} != {}",
+            actual_reverter,
+            expected_reverter
+        ));
     }
 
     let expected_reason = revert_params.reason();
@@ -94,8 +93,8 @@ fn handle_revert(
     // Try decoding as known errors.
     actual_revert = decode_revert(actual_revert);
 
-    if actual_revert == expected_reason ||
-        (is_cheatcode && memchr::memmem::find(&actual_revert, expected_reason).is_some())
+    if actual_revert == expected_reason
+        || (is_cheatcode && memchr::memmem::find(&actual_revert, expected_reason).is_some())
     {
         Ok(())
     } else {
@@ -282,10 +281,9 @@ fn decode_revert(revert: Vec<u8>) -> Vec<u8> {
     if matches!(
         revert.get(..4).map(|s| s.try_into().unwrap()),
         Some(Vm::CheatcodeError::SELECTOR | alloy_sol_types::Revert::SELECTOR)
-    ) {
-        if let Ok(decoded) = Vec::<u8>::abi_decode(&revert[4..]) {
-            return decoded;
-        }
+    ) && let Ok(decoded) = Vec::<u8>::abi_decode(&revert[4..])
+    {
+        return decoded;
     }
     revert
 }

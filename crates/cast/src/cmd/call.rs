@@ -1,30 +1,29 @@
 use crate::{
+    Cast,
     traces::TraceKind,
     tx::{CastTxBuilder, SenderKind},
-    Cast,
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
-    state::{StateOverride, StateOverridesBuilder},
     BlockId, BlockNumberOrTag, BlockOverrides,
+    state::{StateOverride, StateOverridesBuilder},
 };
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
-    utils::{self, handle_traces, parse_ether_value, TraceResult},
+    utils::{self, TraceResult, handle_traces, parse_ether_value},
 };
 use foundry_common::shell;
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
-    figment::{
-        self,
-        value::{Dict, Map},
-        Figment, Metadata, Profile,
-    },
     Config,
+    figment::{
+        self, Figment, Metadata, Profile,
+        value::{Dict, Map},
+    },
 };
 use foundry_evm::{
     executors::TracingExecutor,
@@ -85,6 +84,11 @@ pub struct CallArgs {
     /// Forks the remote rpc, executes the transaction locally and prints a trace
     #[arg(long, default_value_t = false)]
     trace: bool,
+
+    /// Disables the labels in the traces.
+    /// Can only be set with `--trace`.
+    #[arg(long, default_value_t = false, requires = "trace")]
+    disable_labels: bool,
 
     /// Opens an interactive debugger.
     /// Can only be used with `--trace`.
@@ -208,6 +212,7 @@ impl CallArgs {
             labels,
             data,
             with_local_artifacts,
+            disable_labels,
             ..
         } = self;
 
@@ -265,7 +270,7 @@ impl CallArgs {
                     env.evm_env.block_env.number = number.to();
                 }
                 if let Some(time) = block_overrides.time {
-                    env.evm_env.block_env.timestamp = time;
+                    env.evm_env.block_env.timestamp = U256::from(time);
                 }
             }
 
@@ -325,6 +330,7 @@ impl CallArgs {
                 with_local_artifacts,
                 debug,
                 decode_internal,
+                disable_labels,
             )
             .await?;
 
@@ -335,12 +341,12 @@ impl CallArgs {
             .call(&tx, func.as_ref(), block, state_overrides, block_overrides)
             .await?;
 
-        if response == "0x" {
-            if let Some(contract_address) = tx.to.and_then(|tx_kind| tx_kind.into_to()) {
-                let code = provider.get_code_at(contract_address).await?;
-                if code.is_empty() {
-                    sh_warn!("Contract code is empty")?;
-                }
+        if response == "0x"
+            && let Some(contract_address) = tx.to.and_then(|tx_kind| tx_kind.into_to())
+        {
+            let code = provider.get_code_at(contract_address).await?;
+            if code.is_empty() {
+                sh_warn!("Contract code is empty")?;
             }
         }
         sh_println!("{}", response)?;
@@ -356,6 +362,7 @@ impl CallArgs {
             self.nonce_overrides.as_ref(),
             self.code_overrides.as_ref(),
             self.state_overrides.as_ref(),
+            self.state_diff_overrides.as_ref(),
         ]
         .iter()
         .all(Option::is_none)
@@ -412,11 +419,7 @@ impl CallArgs {
         if let Some(time) = self.block_time {
             overrides = overrides.with_time(time);
         }
-        if overrides.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(overrides))
-        }
+        if overrides.is_empty() { Ok(None) } else { Ok(Some(overrides)) }
     }
 }
 
@@ -492,25 +495,25 @@ mod tests {
             if let Some(code) = &account_override.code {
                 assert_eq!(*code, Bytes::from([0x04]));
             }
-            if let Some(state) = &account_override.state {
-                if let Some(value) = state.get(&b256!(
+            if let Some(state) = &account_override.state
+                && let Some(value) = state.get(&b256!(
                     "0x0000000000000000000000000000000000000000000000000000000000000005"
-                )) {
-                    assert_eq!(
-                        *value,
-                        b256!("0x0000000000000000000000000000000000000000000000000000000000000006")
-                    );
-                }
+                ))
+            {
+                assert_eq!(
+                    *value,
+                    b256!("0x0000000000000000000000000000000000000000000000000000000000000006")
+                );
             }
-            if let Some(state_diff) = &account_override.state_diff {
-                if let Some(value) = state_diff.get(&b256!(
+            if let Some(state_diff) = &account_override.state_diff
+                && let Some(value) = state_diff.get(&b256!(
                     "0x0000000000000000000000000000000000000000000000000000000000000007"
-                )) {
-                    assert_eq!(
-                        *value,
-                        b256!("0x0000000000000000000000000000000000000000000000000000000000000008")
-                    );
-                }
+                ))
+            {
+                assert_eq!(
+                    *value,
+                    b256!("0x0000000000000000000000000000000000000000000000000000000000000008")
+                );
             }
         }
     }
