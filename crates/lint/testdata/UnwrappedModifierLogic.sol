@@ -55,7 +55,7 @@ contract UnwrappedModifierLogicTest {
 
     // Bad patterns
 
-    modifier requireBuiltIn() { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
+    modifier requireBuiltIn() { //~NOTE: wrap modifier logic to reduce code size
         checkPublic(msg.sender);
         require(isOwner[msg.sender], "Not owner");
         checkPrivate(msg.sender);
@@ -63,7 +63,7 @@ contract UnwrappedModifierLogicTest {
         checkInternal(msg.sender);
     }
 
-    modifier assertBuiltIn() { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
+    modifier assertBuiltIn() { //~NOTE: wrap modifier logic to reduce code size
         checkPublic(msg.sender);
         assert(isOwner[msg.sender]);
         checkPrivate(msg.sender);
@@ -71,7 +71,7 @@ contract UnwrappedModifierLogicTest {
         checkInternal(msg.sender);
     }
 
-    modifier conditionalRevert() { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
+    modifier conditionalRevert() { //~NOTE: wrap modifier logic to reduce code size
         checkPublic(msg.sender);
         if (!isOwner[msg.sender]) {
             revert("Not owner");
@@ -81,7 +81,7 @@ contract UnwrappedModifierLogicTest {
         checkInternal(msg.sender);
     }
 
-    modifier assign(address sender) { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
+    modifier assign(address sender) { //~NOTE: wrap modifier logic to reduce code size
         checkPublic(sender);
         bool _isOwner = true;
         checkPrivate(sender);
@@ -90,7 +90,7 @@ contract UnwrappedModifierLogicTest {
         checkInternal(sender);
     }
 
-    modifier assemblyBlock(address sender) { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
+    modifier assemblyBlock(address sender) { //~NOTE: wrap modifier logic to reduce code size
         checkPublic(sender);
         assembly {
             let x := sender
@@ -100,7 +100,7 @@ contract UnwrappedModifierLogicTest {
         checkInternal(sender);
     }
 
-    modifier uncheckedBlock(address sender) { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
+    modifier uncheckedBlock(address sender) { //~NOTE: wrap modifier logic to reduce code size
         checkPublic(sender);
         unchecked {
             sender;
@@ -112,7 +112,7 @@ contract UnwrappedModifierLogicTest {
 
     event DidSomething(address who);
 
-    modifier emitEvent(address sender) { //~NOTE: modifier logic should be wrapped to avoid code duplication and reduce codesize
+    modifier emitEvent(address sender) { //~NOTE: wrap modifier logic to reduce code size
         checkPublic(sender);
         emit DidSomething(sender);
         checkPrivate(sender);

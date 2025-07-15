@@ -9,7 +9,7 @@ declare_forge_lint!(
     UNWRAPPED_MODIFIER_LOGIC,
     Severity::Gas,
     "unwrapped-modifier-logic",
-    "modifier logic should be wrapped to avoid code duplication and reduce codesize"
+    "wrap modifier logic to reduce code size"
 );
 
 impl<'ast> EarlyLintPass<'ast> for UnwrappedModifierLogic {
