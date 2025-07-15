@@ -41,7 +41,7 @@ exclude = ["benches/", "tests/", "test-data/", "testdata/"]
 
 [workspace.lints.clippy]
 borrow_as_ptr = "warn"
-branches_sharing_code = "warn"
+branches_sharing_code = "allow"
 clear_with_drain = "warn"
 cloned_instead_of_copied = "warn"
 collection_is_never_read = "warn"
