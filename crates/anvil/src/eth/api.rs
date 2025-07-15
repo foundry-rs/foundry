@@ -30,7 +30,7 @@ use crate::{
     mem::transaction_build,
 };
 use alloy_consensus::{
-    Account,
+    Account, Blob,
     transaction::{Recovered, eip4844::TxEip4844Variant},
 };
 use alloy_dyn_abi::TypedData;
@@ -275,6 +275,12 @@ impl EthApi {
                 .to_rpc_result(),
             EthRequest::EthGetRawTransactionByHash(hash) => {
                 self.raw_transaction(hash).await.to_rpc_result()
+            }
+            EthRequest::GetBlobByHash(hash) => {
+                self.anvil_get_blob_by_versioned_hash(hash).to_rpc_result()
+            }
+            EthRequest::GetBlobByTransactionHash(hash) => {
+                self.anvil_get_blob_by_tx_hash(hash).to_rpc_result()
             }
             EthRequest::EthGetRawTransactionByBlockHashAndIndex(hash, index) => {
                 self.raw_transaction_by_block_hash_and_index(hash, index).await.to_rpc_result()
@@ -1307,6 +1313,21 @@ impl EthApi {
         )
         .await
         .map(U256::from)
+    }
+
+    /// Handler for RPC call: `anvil_getBlobByHash`
+    pub fn anvil_get_blob_by_versioned_hash(
+        &self,
+        hash: B256,
+    ) -> Result<Option<alloy_consensus::Blob>> {
+        node_info!("anvil_getBlobByHash");
+        Ok(self.backend.get_blob_by_versioned_hash(hash)?)
+    }
+
+    /// Handler for RPC call: `anvil_getBlobsByTransactionHash`
+    pub fn anvil_get_blob_by_tx_hash(&self, hash: B256) -> Result<Option<Vec<Blob>>> {
+        node_info!("anvil_getBlobsByTransactionHash");
+        Ok(self.backend.get_blob_by_tx_hash(hash)?)
     }
 
     /// Get transaction by its hash.
