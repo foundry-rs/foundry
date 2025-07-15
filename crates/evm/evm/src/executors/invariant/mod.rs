@@ -414,7 +414,7 @@ impl<'a> InvariantExecutor<'a> {
                         call_result.merge_edge_coverage(&mut self.history_map);
                     if new_coverage {
                         current_run.new_coverage = true;
-                        corpus_manager.update_metrics(is_edge);
+                        corpus_manager.update_seen_metrics(is_edge);
                     }
                 }
 

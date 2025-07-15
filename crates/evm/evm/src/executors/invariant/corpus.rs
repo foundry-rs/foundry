@@ -108,6 +108,26 @@ impl fmt::Display for CorpusMetrics {
     }
 }
 
+impl CorpusMetrics {
+    /// Records number of new edges or features explored during the campaign.
+    pub fn update_seen(&mut self, is_edge: bool) {
+        if is_edge {
+            self.cumulative_edges_seen += 1;
+        } else {
+            self.cumulative_features_seen += 1;
+        }
+    }
+
+    /// Updates campaign favored items.
+    pub fn update_favored(&mut self, is_favored: bool, corpus_favored: bool) {
+        if is_favored && !corpus_favored {
+            self.favored_items += 1;
+        } else if !is_favored && corpus_favored {
+            self.favored_items -= 1;
+        }
+    }
+}
+
 /// Invariant corpus manager.
 pub struct TxCorpusManager {
     // Fuzzed calls generator.
@@ -181,10 +201,7 @@ impl TxCorpusManager {
         }
 
         let fuzzed_contracts = fuzzed_contracts.targets.lock();
-
-        let mut cumulative_edges_seen = 0;
-        let mut cumulative_features_seen = 0;
-        let mut corpus_count = 0;
+        let mut metrics = CorpusMetrics::default();
 
         for entry in std::fs::read_dir(&corpus_dir)? {
             let path = entry?.path();
@@ -196,7 +213,7 @@ impl TxCorpusManager {
                     continue;
                 }
             }
-            corpus_count += 1;
+            metrics.corpus_count += 1;
 
             let read_corpus_result = match path.extension().and_then(|ext| ext.to_str()) {
                 Some("gz") => foundry_common::fs::read_json_gzip_file::<Vec<BasicTxDetails>>(&path),
@@ -224,11 +241,7 @@ impl TxCorpusManager {
                     if fuzzed_contracts.can_replay(tx) {
                         let (new_coverage, is_edge) = call_result.merge_edge_coverage(history_map);
                         if new_coverage {
-                            if is_edge {
-                                cumulative_edges_seen += 1;
-                            } else {
-                                cumulative_features_seen += 1;
-                            }
+                            metrics.update_seen(is_edge);
                         }
 
                         executor.commit(&mut call_result);
@@ -259,12 +272,7 @@ impl TxCorpusManager {
             in_memory_corpus,
             current_mutated: None,
             failed_replays,
-            metrics: CorpusMetrics {
-                cumulative_edges_seen,
-                cumulative_features_seen,
-                favored_items: 0,
-                corpus_count,
-            },
+            metrics,
         })
     }
 
@@ -287,11 +295,7 @@ impl TxCorpusManager {
                 }
                 let is_favored = (corpus.new_finds_produced as f64 / corpus.total_mutations as f64)
                     < FAVORABILITY_THRESHOLD;
-                if is_favored && !corpus.is_favored {
-                    self.metrics.favored_items += 1;
-                } else if !is_favored && corpus.is_favored {
-                    self.metrics.favored_items -= 1;
-                }
+                self.metrics.update_favored(is_favored, corpus.is_favored);
                 corpus.is_favored = is_favored;
 
                 trace!(
@@ -571,15 +575,13 @@ impl TxCorpusManager {
             .current())
     }
 
+    /// Returns campaign failed replays.
     pub fn failed_replays(self) -> usize {
         self.failed_replays
     }
 
-    pub fn update_metrics(&mut self, is_edge: bool) {
-        if is_edge {
-            self.metrics.cumulative_edges_seen += 1;
-        } else {
-            self.metrics.cumulative_features_seen += 1;
-        }
+    /// Updates seen edges or features metrics.
+    pub fn update_seen_metrics(&mut self, is_edge: bool) {
+        self.metrics.update_seen(is_edge);
     }
 }
