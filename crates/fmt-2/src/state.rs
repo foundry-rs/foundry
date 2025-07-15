@@ -25,6 +25,7 @@ pub(super) struct State<'sess, 'ast> {
 
     contract: Option<&'ast ast::ItemContract<'ast>>,
     single_line_stmt: Option<bool>,
+    binary_expr: bool,
 }
 
 impl std::ops::Deref for State<'_, '_> {
@@ -60,6 +61,7 @@ impl<'sess> State<'sess, '_> {
             config,
             contract: None,
             single_line_stmt: None,
+            binary_expr: false,
         }
     }
 
@@ -275,8 +277,8 @@ impl<'sess> State<'sess, '_> {
     }
 
     fn break_offset_if_not_bol(&mut self, n: usize, off: isize, search: bool) {
-        // If the break token is expected to be inside a closed box, so we will traverse the
-        // buffer and evaluate the first non-end token.
+        // When searching, the break token is expected to be inside a closed box. Thus, we will
+        // traverse the buffer and evaluate the first non-end token.
         if search {
             // We do something pretty sketchy here: tuck the nonzero offset-adjustment we
             // were going to deposit along with the break into the previous hardbreak.
@@ -284,9 +286,11 @@ impl<'sess> State<'sess, '_> {
                 pp::Printer::hardbreak_tok_offset(off),
                 |token| token.is_hardbreak(),
             );
+            return;
         }
-        // Otherwise, the break token is expected to be the last token.
-        else if !self.is_beginning_of_line() {
+
+        // When not explicitly searching, the break token is expected to be the last token.
+        if !self.is_beginning_of_line() {
             self.break_offset(n, off)
         } else if off != 0 {
             if let Some(last_token) = self.last_token_still_buffered() {
@@ -387,11 +391,11 @@ impl<'sess> State<'sess, '_> {
             return;
         }
 
-        let (is_single_without_cmnts, is_single_ends_with_trailing) = if values.len() == 1 {
+        let (is_single_without_cmnts, is_binary_with_trailing) = if values.len() == 1 {
             let value_pos = get_span(&values[0]).map(Span::lo).unwrap_or(pos_hi);
             (
                 !is_binary_expr && self.peek_comment_before(pos_hi).is_none(),
-                self.peek_trailing_comment(value_pos, None).is_some(),
+                is_binary_expr && self.peek_trailing_comment(value_pos, None).is_some(),
             )
         } else {
             (false, false)
@@ -444,10 +448,10 @@ impl<'sess> State<'sess, '_> {
             }
             self.print_cmnts_with_space_skip_ws(next_pos);
 
-            if is_single_ends_with_trailing {
-                // the value prints a trailing comment inside its box, we have to manually adjust
-                // the offset to avoid having a double break.
-                self.break_offset_if_not_bol(0, -self.ind, true);
+            if is_binary_with_trailing {
+                // binary expressions prints trailing comment inside its boxes, we have to manually
+                // adjust the offset to avoid having a double break.
+                self.break_offset_if_not_bol(0, -2 * self.ind, true);
                 skip_last_break = true;
             } else if is_last && self.is_bol_or_only_ind() {
                 // if a trailing comment is printed at the very end, we have to manually adjust
@@ -1354,9 +1358,12 @@ impl<'ast> State<'_, 'ast> {
             ast::ExprKind::Binary(lhs, bin_op, rhs) => {
                 let is_parent = matches!(lhs.kind, ast::ExprKind::Binary(..)) ||
                     matches!(rhs.kind, ast::ExprKind::Binary(..));
-                if is_parent {
+                let is_child = self.binary_expr;
+                if !is_child && is_parent {
+                    // top-level expression of the chain -> set cache
+                    self.binary_expr = true;
                     self.s.ibox(self.ind);
-                } else {
+                } else if !is_child || !is_parent {
                     self.ibox(0);
                 }
 
@@ -1370,11 +1377,13 @@ impl<'ast> State<'_, 'ast> {
                 } else if !self.is_bol_or_only_ind() {
                     self.nbsp();
                 }
-                if is_parent {
-                    if has_complex_ancestor(&rhs.kind, false) {
-                        self.s.ibox(0);
-                    } else {
+
+                // box expressions with complex sucessors to accomodate their own indentation
+                if !is_child && is_parent {
+                    if has_complex_succesor(&rhs.kind, true) {
                         self.s.ibox(-self.ind);
+                    } else if has_complex_succesor(&rhs.kind, false) {
+                        self.s.ibox(0);
                     }
                 }
                 self.word(bin_op.kind.to_str());
@@ -1385,10 +1394,19 @@ impl<'ast> State<'_, 'ast> {
                 self.print_expr(rhs);
                 self.print_trailing_comment(rhs.span.hi(), None);
 
-                if is_parent {
+                if (has_complex_succesor(&rhs.kind, false) || has_complex_succesor(&rhs.kind, true)) &&
+                    (!is_child && is_parent)
+                {
                     self.end();
                 }
-                self.end();
+
+                if !is_child {
+                    // top-level expression of the chain -> clear cache
+                    self.binary_expr = false;
+                    self.end();
+                } else if !is_parent {
+                    self.end();
+                }
             }
             ast::ExprKind::Call(expr, call_args) => {
                 self.print_expr(expr);
@@ -2655,7 +2673,7 @@ impl<'ast> AttributeCommentMapper<'ast> {
     }
 }
 
-fn stmt_needs_semi<'ast>(stmt: &'ast ast::StmtKind<'ast>) -> bool {
+fn stmt_needs_semi(stmt: &ast::StmtKind<'_>) -> bool {
     match stmt {
         ast::StmtKind::Assembly { .. } |
         ast::StmtKind::Block { .. } |
@@ -2688,19 +2706,20 @@ pub struct Decision {
     is_cached: bool,
 }
 
-fn is_binary_expr<'ast>(expr_kind: &'ast ast::ExprKind<'ast>) -> bool {
+fn is_binary_expr(expr_kind: &ast::ExprKind<'_>) -> bool {
     matches!(expr_kind, ast::ExprKind::Binary(..))
 }
 
-fn has_complex_ancestor<'ast>(expr_kind: &'ast ast::ExprKind<'ast>, left: bool) -> bool {
+fn has_complex_succesor(expr_kind: &ast::ExprKind<'_>, left: bool) -> bool {
     match expr_kind {
         ast::ExprKind::Binary(lhs, _, rhs) => {
             if left {
-                has_complex_ancestor(&lhs.kind, left)
+                has_complex_succesor(&lhs.kind, left)
             } else {
-                has_complex_ancestor(&rhs.kind, left)
+                has_complex_succesor(&rhs.kind, left)
             }
         }
+        ast::ExprKind::Unary(_, expr) => has_complex_succesor(&expr.kind, left),
         ast::ExprKind::Lit(..) | ast::ExprKind::Ident(_) => false,
         _ => true,
     }

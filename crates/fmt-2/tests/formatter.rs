@@ -160,13 +160,13 @@ fmt_tests! {
     ConstructorModifierStyle, // OK
     ContractDefinition, // OK? Is it acceptable?
     DocComments, // OK (basics). TODO: wrapp comments
-    DoWhileStatement, // OK? TODO: try to improve nested conditional expressions
+    DoWhileStatement, // OK
     EmitStatement, // OK
     EnumDefinition, // OK
     EnumVariants, // OK
     ErrorDefinition, // OK
     EventDefinition, // OK
-    ForStatement, // OK? TODO: try to improve nested conditional expressions
+    ForStatement, // OKish (works if we use one less digit).
     FunctionCall, // OK: TODO: enhance PP so that trailing comments aren't accounted for when breaking lines after a simcolon?
     FunctionCallArgsStatement, // OK? Is it acceptable?
     FunctionDefinition, // OK? Is it acceptable?
@@ -201,7 +201,7 @@ fmt_tests! {
     UsingDirective, // OK
     VariableAssignment, // FIX: variable assignment
     VariableDefinition, // FIX: variable assignment + declaration
-    WhileStatement,  // OKish: TODO: improve nested conditional expressions
+    WhileStatement,  // OK
     Yul, // FIX: idemptency (comment-related)
     YulStrings, // OK
 }
