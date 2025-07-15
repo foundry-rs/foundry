@@ -3614,7 +3614,6 @@ impl<W: Write> Visitor for Formatter<'_, W> {
             let chunk = list_chunks.pop().unwrap();
             if self.will_chunk_fit(&format!("{{}} {simulated_for_def};"), &chunk)? {
                 self.write_chunk(&chunk)?;
-                write_for_def(self)?;
             } else {
                 self.write_whitespace_separator(true)?;
                 self.grouped(|fmt| {
@@ -3622,7 +3621,6 @@ impl<W: Write> Visitor for Formatter<'_, W> {
                     Ok(())
                 })?;
                 self.write_whitespace_separator(true)?;
-                write_for_def(self)?;
             }
         } else {
             self.surrounded(
@@ -3642,8 +3640,8 @@ impl<W: Write> Visitor for Formatter<'_, W> {
                     Ok(())
                 },
             )?;
-            write_for_def(self)?;
         }
+        write_for_def(self)?;
 
         self.write_semicolon()?;
 

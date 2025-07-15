@@ -1,8 +1,8 @@
 use foundry_compilers::Language;
 use foundry_config::lint::Severity;
 use solar_ast::{
-    Expr, ImportDirective, ItemContract, ItemFunction, ItemStruct, SourceUnit, UsingDirective,
-    VariableDefinition, visit::Visit,
+    self as ast, Expr, ImportDirective, ItemContract, ItemFunction, ItemStruct, SourceUnit,
+    UsingDirective, VariableDefinition, visit::Visit,
 };
 use solar_interface::{
     Session, Span,
@@ -50,6 +50,10 @@ impl<'s> LintContext<'s> {
         Self { sess, with_description, inline_config: config }
     }
 
+    pub fn session(&self) -> &'s Session {
+        self.sess
+    }
+
     /// Helper method to emit diagnostics easily from passes
     pub fn emit<L: Lint>(&self, lint: &'static L, span: Span) {
         if self.inline_config.is_disabled(span, lint.id()) {
@@ -70,7 +74,7 @@ impl<'s> LintContext<'s> {
 }
 
 /// Trait for lints that operate directly on the AST.
-/// Its methods mirror `solar_ast::visit::Visit`, with the addition of `LintCotext`.
+/// Its methods mirror `ast::visit::Visit`, with the addition of `LintCotext`.
 pub trait EarlyLintPass<'ast>: Send + Sync {
     fn check_expr(&mut self, _ctx: &LintContext<'_>, _expr: &'ast Expr<'ast>) {}
     fn check_item_struct(&mut self, _ctx: &LintContext<'_>, _struct: &'ast ItemStruct<'ast>) {}
@@ -95,11 +99,12 @@ pub trait EarlyLintPass<'ast>: Send + Sync {
     }
     fn check_item_contract(&mut self, _ctx: &LintContext<'_>, _contract: &'ast ItemContract<'ast>) {
     }
+    fn check_doc_comment(&mut self, _ctx: &LintContext<'_>, _cmnt: &'ast ast::DocComment) {}
     // TODO: Add methods for each required AST node type
 
     /// Should be called after the source unit has been visited. Enables lints that require
     /// knowledge of the entire AST to perform their analysis.
-    fn check_full_source_unit(&mut self, _ctx: &LintContext<'_>, _ast: &'ast SourceUnit<'ast>) {}
+    fn check_full_source_unit(&mut self, _ctx: &LintContext<'ast>, _ast: &'ast SourceUnit<'ast>) {}
 }
 
 /// Visitor struct for `EarlyLintPass`es
@@ -125,6 +130,13 @@ where
     's: 'ast,
 {
     type BreakValue = Never;
+
+    fn visit_doc_comment(&mut self, cmnt: &'ast ast::DocComment) -> ControlFlow<Self::BreakValue> {
+        for pass in self.passes.iter_mut() {
+            pass.check_doc_comment(self.ctx, cmnt)
+        }
+        self.walk_doc_comment(cmnt)
+    }
 
     fn visit_expr(&mut self, expr: &'ast Expr<'ast>) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {

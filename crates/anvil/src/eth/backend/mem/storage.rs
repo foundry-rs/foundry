@@ -250,7 +250,7 @@ impl Default for InMemoryBlockStates {
 }
 
 /// Stores the blockchain data (blocks, transactions)
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BlockchainStorage {
     /// all stored blocks (block hash -> block)
     pub blocks: B256HashMap<Block>,
@@ -435,7 +435,7 @@ impl BlockchainStorage {
 }
 
 /// A simple in-memory blockchain
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Blockchain {
     /// underlying storage that supports concurrent reads
     pub storage: Arc<RwLock<BlockchainStorage>>,
