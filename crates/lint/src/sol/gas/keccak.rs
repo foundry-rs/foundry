@@ -6,7 +6,7 @@ use crate::{
 use solar_ast::{self as ast, Span, TypeSize};
 use solar_interface::{kw, sym};
 use solar_sema::hir::{self, Expr, ExprKind, Res, TypeKind};
-use std::fmt::Write;
+use std::fmt::{self, Write};
 
 declare_forge_lint!(
     ASM_KECCAK256,
@@ -119,22 +119,24 @@ impl AsmKeccak256 {
         let Some((packed_args, encoding)) = get_abi_packed_args(expr) else { return false };
 
         if all_exprs_check(hir, packed_args, is_32byte_type)
-            || (encoding == "encode" && all_exprs_check(hir, packed_args, is_value_type))
+            || (!encoding.is_packed() && all_exprs_check(hir, packed_args, is_value_type))
         {
-            let arg_snippets: Option<Vec<String>> =
-                packed_args.iter().map(|arg| ctx.span_to_snippet(arg.span)).collect();
+            let processed_args: Vec<(String, &'_ hir::TypeKind<'_>)> = packed_args
+                .iter()
+                .filter_map(|arg| {
+                    Some((ctx.span_to_snippet(arg.span)?, get_var_type_and_loc(hir, arg).0?))
+                })
+                .collect();
 
-            if let Some(args) = arg_snippets {
-                ctx.emit_with_fix(
-                    &ASM_KECCAK256,
-                    target_span,
-                    Snippet::Diff {
-                        desc: SNIP_DESC,
-                        span: None,
-                        add: gen_asm_encoded_words(&args, asm_ctx),
-                    },
-                );
-                return true;
+            if processed_args.len() == packed_args.len() {
+                if let Some(fix) = gen_asm_encoded_words(&processed_args, asm_ctx) {
+                    ctx.emit_with_fix(
+                        &ASM_KECCAK256,
+                        target_span,
+                        Snippet::Diff { desc: SNIP_DESC, span: None, add: fix },
+                    );
+                    return true;
+                }
             }
         }
 
@@ -194,7 +196,10 @@ fn gen_asm_bytes(
 }
 
 /// Generates the assembly code for hashing a sequence of fixed-size (32-byte words) variables.
-fn gen_asm_encoded_words(args: &[String], asm_ctx: AsmContext) -> String {
+fn gen_asm_encoded_words(
+    args: &[(String, &hir::TypeKind<'_>)],
+    asm_ctx: AsmContext,
+) -> Option<String> {
     let var = asm_ctx.get_assign_var_name();
     let total_size = args.len() * 32;
 
@@ -202,7 +207,8 @@ fn gen_asm_encoded_words(args: &[String], asm_ctx: AsmContext) -> String {
     _ = writeln!(res, r#"assembly("memory-safe") {{"#);
     // If args fit the reserved memory region (scratch space), use it.
     if args.len() <= 2 {
-        for (i, arg) in args.iter().enumerate() {
+        for (i, (arg, ty)) in args.iter().enumerate() {
+            let arg = gen_asm_cleaned_arg(ty, arg)?;
             _ = writeln!(res, "    mstore(0x{offset:02x}, {arg})", offset = i * 32);
         }
         _ = writeln!(res, "    {var} := keccak256(0x00, 0x{total_size:x})");
@@ -210,9 +216,8 @@ fn gen_asm_encoded_words(args: &[String], asm_ctx: AsmContext) -> String {
     // Otherwise, manually use the free memory pointer.
     else {
         _ = writeln!(res, "    let m := mload(0x40)");
-        for (i, arg) in args.iter().enumerate() {
-            // assembly doesn't support type conversions. `bytes32(c)` -> `c`
-            let arg = peel_parentheses(arg);
+        for (i, (arg, ty)) in args.iter().enumerate() {
+            let arg = gen_asm_cleaned_arg(ty, arg)?;
             if i == 0 {
                 _ = writeln!(res, "    mstore(m, {arg})");
             } else {
@@ -227,7 +232,66 @@ fn gen_asm_encoded_words(args: &[String], asm_ctx: AsmContext) -> String {
     } else {
         _ = write!(res, "}}");
     }
-    res
+    Some(res)
+}
+
+/// Generates an assembly expression that formats a static variable into a single,
+/// 32-byte ABI-encoded word. This operation performs both byte cleaning (removing garbage data)
+/// and padding in a single step, making it ready for hashing or encoding.
+///
+/// # Reference docs
+/// * <https://docs.soliditylang.org/en/latest/internals/variable_cleanup.html>
+/// * <https://docs.soliditylang.org/en/latest/abi-spec.html#formal-encoding-of-types>
+fn gen_asm_cleaned_arg(ty: &hir::TypeKind<'_>, arg: &str) -> Option<String> {
+    // assembly doesn't support type conversions. `bytes32(c)` -> `c`
+    let arg = peel_parentheses(arg);
+    match ty {
+        // Boolean: `bool`
+        // Right-aligned and padded with leading zeros. Must be normalized to a clean 0 or 1.
+        hir::TypeKind::Elementary(hir::ElementaryType::Bool) => {
+            Some(format!("iszero(iszero({arg}))"))
+        }
+        // Address: `address`
+        // Right-aligned as a uint160. Higher-order bytes must be padded with leading zeros.
+        hir::TypeKind::Elementary(hir::ElementaryType::Address(_)) => {
+            let mask = format!("0x{}", "ff".repeat(20));
+            return Some(format!("and({arg}, {mask})"));
+        }
+        // Unsigned integers: `uintN`
+        // Right-aligned. Higher-order bytes must be padded with leading zeros.
+        hir::TypeKind::Elementary(hir::ElementaryType::UInt(size)) => {
+            let size = size.bytes();
+            if size == TypeSize::MAX {
+                return Some(arg.to_string());
+            }
+            let mask = format!("0x{}", "ff".repeat(size as usize));
+            return Some(format!("and({arg}, {mask})"));
+        }
+        // Signed integers: `intN`
+        // Right-aligned. Higher-order bytes must be padded by extending the sign bit.
+        hir::TypeKind::Elementary(hir::ElementaryType::Int(size)) => {
+            let size = size.bytes();
+            if size == TypeSize::MAX {
+                return Some(arg.to_string());
+            }
+            // First argument to signextend is the byte index `k = (N/8) - 1`.
+            return Some(format!("signextend({k}, {arg})", k = size - 1));
+        }
+        // Fixed-size bytes: `bytesN`
+        // Left-aligned. Lower-order bytes must be padded with trailing zeros.
+        hir::TypeKind::Elementary(hir::ElementaryType::FixedBytes(size)) => {
+            let size = size.bytes();
+            if size == TypeSize::MAX {
+                return Some(arg.to_string());
+            }
+            let mut mask = "0x".to_string();
+            mask.push_str(&"ff".repeat(size as usize));
+            mask.push_str(&"00".repeat((32 - size) as usize));
+            return Some(format!("and({arg}, {mask})"));
+        }
+        // Otherwise, return `None` so that assembly is not generated.
+        _ => None,
+    }
 }
 
 /// If the expression is a call to `keccak256` with one argument, returns that argument.
@@ -253,16 +317,16 @@ fn extract_keccak256_arg<'hir>(expr: &'hir hir::Expr<'hir>) -> Option<&'hir hir:
 /// Helper function to extract `abi.encode` and `abi.encodePacked` expressions and the encoding.
 fn get_abi_packed_args<'hir>(
     expr: &'hir hir::Expr<'hir>,
-) -> Option<(&'hir [hir::Expr<'hir>], &'hir str)> {
+) -> Option<(&'hir [hir::Expr<'hir>], Encoding)> {
     if let hir::ExprKind::Call(callee, args, ..) = &expr.kind
         && let hir::ExprKind::Member(obj, member) = &callee.kind
         && let hir::ExprKind::Ident([hir::Res::Builtin(builtin)]) = &obj.kind
         && builtin.name() == sym::abi
     {
         let encoding = if member.name == sym::encode {
-            "encode"
+            Encoding::Regular
         } else if member.name == sym::encodePacked {
-            "encodePacked"
+            Encoding::Packed
         } else {
             return None;
         };
@@ -337,4 +401,24 @@ fn peel_parentheses(mut s: &str) -> &str {
         }
     }
     s
+}
+
+enum Encoding {
+    Regular,
+    Packed,
+}
+
+impl fmt::Display for Encoding {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Regular => write!(f, "encode"),
+            Self::Packed => write!(f, "encodePacked"),
+        }
+    }
+}
+
+impl Encoding {
+    fn is_packed(&self) -> bool {
+        matches!(self, Self::Packed)
+    }
 }
