@@ -149,3 +149,4 @@ note[asm-keccak256]: use of inefficient hashing mechanism
    |                ---------------------------------
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+
