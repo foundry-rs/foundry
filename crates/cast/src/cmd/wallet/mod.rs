@@ -329,10 +329,6 @@ impl WalletSubcommands {
                             }
                         }
                     }
-
-                    if let Some(json) = json_values.as_ref() {
-                        sh_println!("{}", serde_json::to_string_pretty(json)?)?;
-                    }
                 } else {
                     for _ in 0..number {
                         let wallet = PrivateKeySigner::random_with(&mut rng);
@@ -362,10 +358,9 @@ impl WalletSubcommands {
                             )?;
                         }
                     }
-
-                    if let Some(json) = json_values.as_ref() {
-                        sh_println!("{}", serde_json::to_string_pretty(json)?)?;
-                    }
+                }
+                if let Some(json) = json_values.as_ref() {
+                    sh_println!("{}", serde_json::to_string_pretty(json)?)?;
                 }
             }
             Self::NewMnemonic { words, accounts, entropy } => {
