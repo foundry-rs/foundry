@@ -245,11 +245,6 @@ pub(crate) fn handle_expect_revert(
                             expected_revert.reverted_by.unwrap_or_default(),
                             expected_revert.reverter.unwrap()
                         ))
-                    } else if expected_revert.reason.is_some() {
-                        Err(fmt_err!(
-                            "call reverted with '{}' when it was expected not to revert",
-                            &stringify(&decoded_revert)
-                        ))
                     } else {
                         Err(fmt_err!(
                             "call reverted with '{}' when it was expected not to revert",
