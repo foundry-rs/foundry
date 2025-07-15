@@ -193,10 +193,9 @@ pub(crate) fn handle_expect_revert(
             // Reverter check
             if let (Some(expected_reverter), Some(actual_reverter)) =
                 (expected_revert.reverter, expected_revert.reverted_by)
+                && expected_reverter == actual_reverter
             {
-                if expected_reverter == actual_reverter {
-                    reverter_match = Some(true);
-                }
+                reverter_match = Some(true);
             }
 
             // Reason check
