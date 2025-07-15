@@ -134,15 +134,15 @@ impl AsmKeccak256 {
                 })
                 .collect();
 
-            if processed_args.len() == packed_args.len() {
-                if let Some(fix) = gen_asm_encoded_words(&processed_args, asm_ctx) {
-                    ctx.emit_with_fix(
-                        &ASM_KECCAK256,
-                        target_span,
-                        Snippet::Diff { desc: SNIP_DESC, span: None, add: fix },
-                    );
-                    return true;
-                }
+            if processed_args.len() == packed_args.len()
+                && let Some(fix) = gen_asm_encoded_words(&processed_args, asm_ctx)
+            {
+                ctx.emit_with_fix(
+                    &ASM_KECCAK256,
+                    target_span,
+                    Snippet::Diff { desc: SNIP_DESC, span: None, add: fix },
+                );
+                return true;
             }
         }
 
