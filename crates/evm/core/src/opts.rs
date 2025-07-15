@@ -278,11 +278,17 @@ pub struct Env {
     pub block_coinbase: Address,
 
     /// the block.timestamp value during EVM execution
-    #[serde(deserialize_with = "foundry_config::deser_u64_to_u256")]
+    #[serde(
+        deserialize_with = "foundry_config::deserialize_u64_to_u256",
+        serialize_with = "foundry_config::serialize_u64_or_u256"
+    )]
     pub block_timestamp: U256,
 
     /// the block.number value during EVM execution"
-    #[serde(deserialize_with = "foundry_config::deser_u64_to_u256")]
+    #[serde(
+        deserialize_with = "foundry_config::deserialize_u64_to_u256",
+        serialize_with = "foundry_config::serialize_u64_or_u256"
+    )]
     pub block_number: U256,
 
     /// the block.difficulty value during EVM execution
