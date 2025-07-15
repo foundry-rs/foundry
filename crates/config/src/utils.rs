@@ -232,13 +232,20 @@ where
 }
 
 /// Serialize `U256` as `u64` if it fits, otherwise as a hex string.
+/// If the number fits into a i64, serialize it as number without quotation marks.
+/// If the number fits into a u64, serialize it as a stringified number with quotation marks.
+/// Otherwise, serialize it as a hex string with quotation marks.
 pub fn serialize_u64_or_u256<S>(n: &U256, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    // If the number fits into a u64, serialize it as u64, otherwise serialize it as hex string.
-    if let Ok(n) = u64::try_from(*n) {
-        serializer.serialize_u64(n)
+    // The TOML specification handles integers as i64 so the number representation is limited to
+    // i64. If the number is larger than `i64::MAX` and up to `u64::MAX`, we serialize it as a
+    // string to avoid losing precision.
+    if let Ok(n_i64) = i64::try_from(*n) {
+        serializer.serialize_i64(n_i64)
+    } else if let Ok(n_u64) = u64::try_from(*n) {
+        serializer.serialize_str(&n_u64.to_string())
     } else {
         serializer.serialize_str(&format!("{n:#x}"))
     }
