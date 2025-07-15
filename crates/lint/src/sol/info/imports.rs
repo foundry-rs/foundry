@@ -163,7 +163,7 @@ impl<'ast> Visit<'ast> for UnusedChecker<'ast> {
     ) -> ControlFlow<Self::BreakValue> {
         if let Ok(snip) = self.source_map.span_to_snippet(cmnt.span) {
             for line in snip.lines() {
-                if let Some((_, relevant)) = line.split_once("/// @inheritdoc ") {
+                if let Some((_, relevant)) = line.split_once("@inheritdoc") {
                     self.mark_symbol_used(Symbol::intern(relevant.trim()));
                 }
             }

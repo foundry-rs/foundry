@@ -6,6 +6,7 @@ import {
     symbol4,
     symbol5,
     docSymbol,
+    docSymbol2,
     docSymbolWrongTag, //~NOTE: unused imports should be removed
     eventSymbol,
     symbolNotUsed, //~NOTE: unused imports should be removed
@@ -37,9 +38,12 @@ import * as OtherUtils from "utils2.sol"; //~NOTE: unused imports should be remo
 contract UnusedImport is IContract {
     using mySymbol for address;
 
+    /// @inheritdoc docSymbol
     uint256 constant MY_CONSTANT = CONSTANT_0;
 
-    /// @inheritdoc docSymbol
+    /**
+     * @inheritdoc docSymbol2
+     */
     struct FooBar {
         symbol3 foo;
         myOtherSymbol bar;
