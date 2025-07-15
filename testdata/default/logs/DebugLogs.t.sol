@@ -4,7 +4,7 @@ import "ds-test/test.sol";
 import "cheats/Vm.sol";
 
 contract DebugLogsTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
     constructor() {
         emit log_uint(0);
@@ -25,14 +25,14 @@ contract DebugLogsTest is DSTest {
     function testRevertIfWithRevert() public {
         Fails fails = new Fails();
         emit log_uint(4);
-        vm.expectRevert();
+        VM.expectRevert();
         fails.failure();
     }
 
     /// forge-config: default.allow_internal_expect_revert = true
     function testRevertIfWithRequire() public {
         emit log_uint(5);
-        vm.expectRevert();
+        VM.expectRevert();
         require(false);
     }
 

@@ -5,16 +5,16 @@ import "ds-test/test.sol";
 import "cheats/Vm.sol";
 
 contract MockCallsTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
     function testMockCallsLastShouldPersist() public {
-        address mockUser = vm.addr(vm.randomUint());
-        address mockErc20 = vm.addr(vm.randomUint());
+        address mockUser = VM.addr(VM.randomUint());
+        address mockErc20 = VM.addr(VM.randomUint());
         bytes memory data = abi.encodeWithSignature("balanceOf(address)", mockUser);
         bytes[] memory mocks = new bytes[](2);
         mocks[0] = abi.encode(2 ether);
         mocks[1] = abi.encode(7.219 ether);
-        vm.mockCalls(mockErc20, data, mocks);
+        VM.mockCalls(mockErc20, data, mocks);
         (, bytes memory ret1) = mockErc20.call(data);
         assertEq(abi.decode(ret1, (uint256)), 2 ether);
         (, bytes memory ret2) = mockErc20.call(data);
@@ -24,14 +24,14 @@ contract MockCallsTest is DSTest {
     }
 
     function testMockCallsWithValue() public {
-        address mockUser = vm.addr(vm.randomUint());
-        address mockErc20 = vm.addr(vm.randomUint());
+        address mockUser = VM.addr(VM.randomUint());
+        address mockErc20 = VM.addr(VM.randomUint());
         bytes memory data = abi.encodeWithSignature("balanceOf(address)", mockUser);
         bytes[] memory mocks = new bytes[](3);
         mocks[0] = abi.encode(2 ether);
         mocks[1] = abi.encode(1 ether);
         mocks[2] = abi.encode(6.423 ether);
-        vm.mockCalls(mockErc20, 1 ether, data, mocks);
+        VM.mockCalls(mockErc20, 1 ether, data, mocks);
         (, bytes memory ret1) = mockErc20.call{value: 1 ether}(data);
         assertEq(abi.decode(ret1, (uint256)), 2 ether);
         (, bytes memory ret2) = mockErc20.call{value: 1 ether}(data);
@@ -41,14 +41,14 @@ contract MockCallsTest is DSTest {
     }
 
     function testMockCalls() public {
-        address mockUser = vm.addr(vm.randomUint());
-        address mockErc20 = vm.addr(vm.randomUint());
+        address mockUser = VM.addr(VM.randomUint());
+        address mockErc20 = VM.addr(VM.randomUint());
         bytes memory data = abi.encodeWithSignature("balanceOf(address)", mockUser);
         bytes[] memory mocks = new bytes[](3);
         mocks[0] = abi.encode(2 ether);
         mocks[1] = abi.encode(1 ether);
         mocks[2] = abi.encode(6.423 ether);
-        vm.mockCalls(mockErc20, data, mocks);
+        VM.mockCalls(mockErc20, data, mocks);
         (, bytes memory ret1) = mockErc20.call(data);
         assertEq(abi.decode(ret1, (uint256)), 2 ether);
         (, bytes memory ret2) = mockErc20.call(data);

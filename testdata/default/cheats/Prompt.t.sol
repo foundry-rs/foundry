@@ -17,16 +17,16 @@ contract PromptTest is DSTest {
         vm.promptSecret("test");
 
         vm._expectCheatcodeRevert();
-        uint256 test = vm.promptSecretUint("test");
+        vm.promptSecretUint("test");
     }
 
     function testPrompt_Address() public {
         vm._expectCheatcodeRevert();
-        address test = vm.promptAddress("test");
+        vm.promptAddress("test");
     }
 
     function testPrompt_Uint() public {
         vm._expectCheatcodeRevert();
-        uint256 test = vm.promptUint("test");
+        vm.promptUint("test");
     }
 }

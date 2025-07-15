@@ -5,7 +5,7 @@ import "ds-test/test.sol";
 import "cheats/Vm.sol";
 
 contract SleepTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
     function testSleep() public {
         uint256 milliseconds = 1234;
@@ -15,13 +15,13 @@ contract SleepTest is DSTest {
         // OS X does not support precision more than 1 second
         inputs[1] = "+%s000";
 
-        bytes memory res = vm.ffi(inputs);
-        uint256 start = vm.parseUint(string(res));
+        bytes memory res = VM.ffi(inputs);
+        uint256 start = VM.parseUint(string(res));
 
-        vm.sleep(milliseconds);
+        VM.sleep(milliseconds);
 
-        res = vm.ffi(inputs);
-        uint256 end = vm.parseUint(string(res));
+        res = VM.ffi(inputs);
+        uint256 end = VM.parseUint(string(res));
 
         // Limit precision to 1000 ms
         assertGe(end - start, milliseconds / 1000 * 1000, "sleep failed");
@@ -37,13 +37,13 @@ contract SleepTest is DSTest {
         // OS X does not support precision more than 1 second
         inputs[1] = "+%s000";
 
-        bytes memory res = vm.ffi(inputs);
-        uint256 start = vm.parseUint(string(res));
+        bytes memory res = VM.ffi(inputs);
+        uint256 start = VM.parseUint(string(res));
 
-        vm.sleep(milliseconds);
+        VM.sleep(milliseconds);
 
-        res = vm.ffi(inputs);
-        uint256 end = vm.parseUint(string(res));
+        res = VM.ffi(inputs);
+        uint256 end = VM.parseUint(string(res));
 
         // Limit precision to 1000 ms
         assertGe(end - start, milliseconds / 1000 * 1000, "sleep failed");

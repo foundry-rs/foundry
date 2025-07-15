@@ -11,69 +11,69 @@ contract B {
 }
 
 contract GasMeteringTest is DSTest {
-    Vm constant vm = Vm(HEVM_ADDRESS);
+    Vm constant VM = Vm(HEVM_ADDRESS);
 
     function testGasMetering() public {
-        uint256 gas_start = gasleft();
+        uint256 gasStart = gasleft();
 
         consumeGas();
 
-        uint256 gas_end_normal = gas_start - gasleft();
+        uint256 gasEndNormal = gasStart - gasleft();
 
-        vm.pauseGasMetering();
-        uint256 gas_start_not_metered = gasleft();
-
-        consumeGas();
-
-        uint256 gas_end_not_metered = gas_start_not_metered - gasleft();
-        vm.resumeGasMetering();
-
-        uint256 gas_start_metered = gasleft();
+        VM.pauseGasMetering();
+        uint256 gasStartNotMetered = gasleft();
 
         consumeGas();
 
-        uint256 gas_end_resume_metered = gas_start_metered - gasleft();
+        uint256 gasEndNotMetered = gasStartNotMetered - gasleft();
+        VM.resumeGasMetering();
 
-        assertEq(gas_end_normal, gas_end_resume_metered);
-        assertEq(gas_end_not_metered, 0);
+        uint256 gasStartMetered = gasleft();
+
+        consumeGas();
+
+        uint256 gasEndResumeMetered = gasStartMetered - gasleft();
+
+        assertEq(gasEndNormal, gasEndResumeMetered);
+        assertEq(gasEndNotMetered, 0);
     }
 
     function testGasMeteringExternal() public {
         B b = new B();
-        uint256 gas_start = gasleft();
+        uint256 gasStart = gasleft();
 
         b.a();
 
-        uint256 gas_end_normal = gas_start - gasleft();
+        uint256 gasEndNormal = gasStart - gasleft();
 
-        vm.pauseGasMetering();
-        uint256 gas_start_not_metered = gasleft();
-
-        b.a();
-
-        uint256 gas_end_not_metered = gas_start_not_metered - gasleft();
-        vm.resumeGasMetering();
-
-        uint256 gas_start_metered = gasleft();
+        VM.pauseGasMetering();
+        uint256 gasStartNotMetered = gasleft();
 
         b.a();
 
-        uint256 gas_end_resume_metered = gas_start_metered - gasleft();
+        uint256 gasEndNotMetered = gasStartNotMetered - gasleft();
+        VM.resumeGasMetering();
 
-        assertEq(gas_end_normal, gas_end_resume_metered);
-        assertEq(gas_end_not_metered, 0);
+        uint256 gasStartMetered = gasleft();
+
+        b.a();
+
+        uint256 gasEndResumeMetered = gasStartMetered - gasleft();
+
+        assertEq(gasEndNormal, gasEndResumeMetered);
+        assertEq(gasEndNotMetered, 0);
     }
 
     function testGasMeteringContractCreate() public {
-        vm.pauseGasMetering();
-        uint256 gas_start_not_metered = gasleft();
+        VM.pauseGasMetering();
+        uint256 gasStartNotMetered = gasleft();
 
         B b = new B();
 
-        uint256 gas_end_not_metered = gas_start_not_metered - gasleft();
-        vm.resumeGasMetering();
+        uint256 gasEndNotMetered = gasStartNotMetered - gasleft();
+        VM.resumeGasMetering();
 
-        assertEq(gas_end_not_metered, 0);
+        assertEq(gasEndNotMetered, 0);
     }
 
     function consumeGas() internal returns (uint256 x) {
