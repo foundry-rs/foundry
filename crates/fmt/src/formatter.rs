@@ -3636,7 +3636,6 @@ impl<W: Write> Visitor for Formatter<'_, W> {
         }
         write_for_def(self)?;
 
-        write_for_def(self)?;
         self.write_semicolon()?;
 
         Ok(())
