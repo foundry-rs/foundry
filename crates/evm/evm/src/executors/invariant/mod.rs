@@ -861,34 +861,34 @@ impl<'a> InvariantExecutor<'a> {
             }
         }
 
-        let mut add_test_selectors = true;
+        let mut target_test_selectors = vec![];
+        let mut excluded_test_selectors = vec![];
 
         // Collect contract functions marked as target for fuzzing campaign.
         let selectors =
             self.executor.call_sol_default(address, &IInvariantTest::targetSelectorsCall {});
         for IInvariantTest::FuzzSelector { addr, selectors } in selectors {
             if addr == address {
-                add_test_selectors = false;
+                target_test_selectors = selectors.clone();
             }
             self.add_address_with_functions(addr, &selectors, false, targeted_contracts)?;
         }
-
-        let mut excluded_test_selectors = vec![];
 
         // Collect contract functions excluded from fuzzing campaign.
         let excluded_selectors =
             self.executor.call_sol_default(address, &IInvariantTest::excludeSelectorsCall {});
         for IInvariantTest::FuzzSelector { addr, selectors } in excluded_selectors {
             if addr == address {
-                // If fuzz selector address is the test contract, then just record selectors to be
-                // later excluded.
-                excluded_test_selectors = selectors;
-            } else {
-                self.add_address_with_functions(addr, &selectors, true, targeted_contracts)?;
+                // If fuzz selector address is the test contract, then record selectors to be
+                // later excluded if needed.
+                excluded_test_selectors = selectors.clone();
             }
+            self.add_address_with_functions(addr, &selectors, true, targeted_contracts)?;
         }
 
-        if add_test_selectors && let Some(target) = targeted_contracts.get(&address) {
+        if target_test_selectors.is_empty()
+            && let Some(target) = targeted_contracts.get(&address)
+        {
             // If test contract is marked as a target and no target selector explicitly set, then
             // include only state-changing functions that are not reserved and selectors that are
             // not explicitly excluded.
