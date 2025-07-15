@@ -272,7 +272,6 @@ mod tests {
     use super::*;
     use crate::backend::BlockchainDbMeta;
     use foundry_common::provider::get_http_provider;
-    use std::collections::BTreeSet;
 
     /// Demonstrates that `Database::basic` for `ForkedDatabase` will always return the
     /// `AccountInfo`
@@ -280,7 +279,8 @@ mod tests {
     async fn fork_db_insert_basic_default() {
         let rpc = foundry_test_utils::rpc::next_http_rpc_endpoint();
         let provider = get_http_provider(rpc.clone());
-        let meta = BlockchainDbMeta { block_env: Default::default(), hosts: BTreeSet::from([rpc]) };
+        let meta = BlockchainDbMeta::new(Default::default(), rpc);
+
         let db = BlockchainDb::new(meta, None);
 
         let backend = SharedBackend::spawn_backend(Arc::new(provider), db.clone(), None).await;

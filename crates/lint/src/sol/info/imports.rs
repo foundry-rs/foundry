@@ -1,5 +1,6 @@
 use solar_ast::{self as ast, SourceUnit, Span, Symbol, visit::Visit};
 use solar_data_structures::map::FxIndexSet;
+use solar_interface::SourceMap;
 use std::ops::ControlFlow;
 
 use super::Imports;
@@ -36,8 +37,8 @@ impl<'ast> EarlyLintPass<'ast> for Imports {
         }
     }
 
-    fn check_full_source_unit(&mut self, ctx: &LintContext<'_>, ast: &'ast SourceUnit<'ast>) {
-        let mut checker = UnusedChecker::new();
+    fn check_full_source_unit(&mut self, ctx: &LintContext<'ast>, ast: &'ast SourceUnit<'ast>) {
+        let mut checker = UnusedChecker::new(ctx.session().source_map());
         let _ = checker.visit_source_unit(ast);
         checker.check_unused_imports(ast, ctx);
         checker.clear();
@@ -45,13 +46,14 @@ impl<'ast> EarlyLintPass<'ast> for Imports {
 }
 
 /// Visitor that collects all used symbols in a source unit.
-struct UnusedChecker {
+struct UnusedChecker<'ast> {
     used_symbols: FxIndexSet<Symbol>,
+    source_map: &'ast SourceMap,
 }
 
-impl UnusedChecker {
-    fn new() -> Self {
-        Self { used_symbols: Default::default() }
+impl<'ast> UnusedChecker<'ast> {
+    fn new(source_map: &'ast SourceMap) -> Self {
+        Self { source_map, used_symbols: Default::default() }
     }
 
     fn clear(&mut self) {
@@ -93,7 +95,7 @@ impl UnusedChecker {
     }
 }
 
-impl<'ast> Visit<'ast> for UnusedChecker {
+impl<'ast> Visit<'ast> for UnusedChecker<'ast> {
     type BreakValue = solar_data_structures::Never;
 
     fn visit_item(&mut self, item: &'ast ast::Item<'ast>) -> ControlFlow<Self::BreakValue> {
@@ -139,11 +141,33 @@ impl<'ast> Visit<'ast> for UnusedChecker {
         self.walk_expr(expr)
     }
 
+    fn visit_path(&mut self, path: &'ast ast::PathSlice) -> ControlFlow<Self::BreakValue> {
+        for id in path.segments() {
+            self.mark_symbol_used(id.name);
+        }
+
+        self.walk_path(path)
+    }
+
     fn visit_ty(&mut self, ty: &'ast ast::Type<'ast>) -> ControlFlow<Self::BreakValue> {
         if let ast::TypeKind::Custom(path) = &ty.kind {
             self.mark_symbol_used(path.first().name);
         }
 
         self.walk_ty(ty)
+    }
+
+    fn visit_doc_comment(
+        &mut self,
+        cmnt: &'ast solar_ast::DocComment,
+    ) -> ControlFlow<Self::BreakValue> {
+        if let Ok(snip) = self.source_map.span_to_snippet(cmnt.span) {
+            for line in snip.lines() {
+                if let Some((_, relevant)) = line.split_once("@inheritdoc") {
+                    self.mark_symbol_used(Symbol::intern(relevant.trim()));
+                }
+            }
+        }
+        ControlFlow::Continue(())
     }
 }

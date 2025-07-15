@@ -723,6 +723,16 @@ impl TypedTransaction {
         }
     }
 
+    pub fn sidecar(&self) -> Option<&TxEip4844WithSidecar> {
+        match self {
+            Self::EIP4844(signed_variant) => match signed_variant.tx() {
+                TxEip4844Variant::TxEip4844WithSidecar(with_sidecar) => Some(with_sidecar),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     pub fn max_fee_per_blob_gas(&self) -> Option<u128> {
         match self {
             Self::EIP4844(tx) => Some(tx.tx().tx().max_fee_per_blob_gas),
