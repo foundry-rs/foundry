@@ -166,7 +166,7 @@ fmt_tests! {
     EnumVariants, // OK
     ErrorDefinition, // OK
     EventDefinition, // OK
-    ForStatement, // OKish (works if we use one less digit).
+    ForStatement, // OK (works if we use one less digit + breaks as it should)
     FunctionCall, // OK: TODO: enhance PP so that trailing comments aren't accounted for when breaking lines after a simcolon?
     FunctionCallArgsStatement, // OK? Is it acceptable?
     FunctionDefinition, // OK? Is it acceptable?
@@ -178,7 +178,7 @@ fmt_tests! {
     ImportDirective, // OK
     InlineDisable, // FIX: invalid output
     IntTypes, // OK
-    LiteralExpression, // FIX: idempotency (comment-related)
+    LiteralExpression, // Ok? is it acceptable?
     MappingType, // TODO: comments
     ModifierDefinition, // OK
     NamedFunctionCallExpression, // FIX: idempotency (comment-related)

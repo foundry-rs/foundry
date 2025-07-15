@@ -1060,16 +1060,19 @@ impl<'ast> State<'_, 'ast> {
             ast::LitKind::Str(kind, ..) => {
                 self.cbox(0);
                 for (pos, (span, symbol)) in lit.literals().delimited() {
+                    self.ibox(0);
                     if !self.handle_span(span) {
                         let quote_pos = span.lo() + kind.prefix().len() as u32;
                         self.print_str_lit(kind, quote_pos, symbol.as_str());
                     }
                     if !pos.is_last {
-                        self.space_if_not_bol();
-                        self.print_trailing_comment(span.hi(), None);
+                        if !self.print_trailing_comment(span.hi(), None) {
+                            self.space_if_not_bol();
+                        }
                     } else {
                         self.neverbreak();
                     }
+                    self.end();
                 }
                 self.end();
             }
@@ -1080,6 +1083,7 @@ impl<'ast> State<'_, 'ast> {
             ast::LitKind::Bool(value) => self.word(if value { "true" } else { "false" }),
             ast::LitKind::Err(_) => self.word(symbol.to_string()),
         }
+        // self.print_trailing_comment(lit.span.hi(), None);
     }
 
     fn print_num_literal(&mut self, source: &str) {
