@@ -9,114 +9,128 @@ pragma solidity ^0.8.0;
  *      so any logic in modifiers gets duplicated, increasing deployment costs.
  */
 contract UnwrappedModifierLogicTest {
-    mapping(address => bool) public isOwner;
-
     // Helpers
 
-    function checkPublic(address sender) public {
-        require(isOwner[sender], "Not owner");
-    }
+    event DidSomething(address who);
+    mapping(address => bool) isOwner;
+    mapping(address => mapping(bytes32 => bool)) hasRole;
 
-    function checkPrivate(address sender) private {
-        require(isOwner[sender], "Not owner");
-    }
+    /// -----------------------------------------------------------------------
+    /// Good patterns (only 1 valid statement before or after placeholder)
+    /// -----------------------------------------------------------------------
 
-    function checkInternal(address sender) internal {
-        require(isOwner[sender], "Not owner");
-    }
+    function checkPublic(address sender) public {}
+    function checkPrivate(address sender) private {}
+    function checkInternal(address sender) internal {}
 
-    // Good patterns
-
-    modifier empty() {
-        _;
-    }
-
-    modifier publicFn() {
+    modifier onlyOwnerPublic() {
         checkPublic(msg.sender);
         _;
     }
 
-    modifier privateFn() {
+    modifier onlyOwnerPrivate() {
         checkPrivate(msg.sender);
         _;
     }
 
-    modifier internalFn() {
+    modifier onlyOwnerInternal() {
         checkInternal(msg.sender);
         _;
     }
 
-    modifier publicPrivateInternal(address owner0, address owner1, address owner2) {
-        checkPublic(owner0);
-        checkPrivate(owner1);
-        checkInternal(owner2);
-        _;
-    }
-
-    // Bad patterns
-
-    modifier requireBuiltIn() { //~NOTE: wrap modifier logic to reduce code size
+    modifier onlyOwnerBeforeAfter() {
         checkPublic(msg.sender);
-        require(isOwner[msg.sender], "Not owner");
-        checkPrivate(msg.sender);
         _;
+        checkPrivate(msg.sender);
+    }
+
+    /// -----------------------------------------------------------------------
+    /// Bad patterns (multiple valid statements before or after placeholder)
+    /// -----------------------------------------------------------------------
+
+    // Bad because there are multiple valid function calls before the placeholder
+    modifier multipleBeforePlaceholder() { //~NOTE: wrap modifier logic to reduce code size  
+        checkPublic(msg.sender); // These should become _multipleBeforePlaceholder()
+        checkPrivate(msg.sender);
+        checkInternal(msg.sender);
+        _;
+    }
+
+    // Bad because there are multiple valid function calls after the placeholder
+    modifier multipleAfterPlaceholder() { //~NOTE: wrap modifier logic to reduce code size
+        _;
+        checkPublic(msg.sender); // These should become _multipleAfterPlaceholder()
+        checkPrivate(msg.sender);
         checkInternal(msg.sender);
     }
 
-    modifier assertBuiltIn() { //~NOTE: wrap modifier logic to reduce code size
-        checkPublic(msg.sender);
-        assert(isOwner[msg.sender]);
-        checkPrivate(msg.sender);
-        _;
-        checkInternal(msg.sender);
-    }
-
-    modifier conditionalRevert() { //~NOTE: wrap modifier logic to reduce code size
-        checkPublic(msg.sender);
-        if (!isOwner[msg.sender]) {
-            revert("Not owner");
-        }
-        checkPrivate(msg.sender);
-        _;
-        checkInternal(msg.sender);
-    }
-
-    modifier assign(address sender) { //~NOTE: wrap modifier logic to reduce code size
-        checkPublic(sender);
-        bool _isOwner = true;
+    // Bad because there are multiple valid statements both before and after
+    modifier multipleBeforeAfterPlaceholder(address sender) { //~NOTE: wrap modifier logic to reduce code size
+        checkPublic(sender); // These should become _multipleBeforeAfterPlaceholderBefore(sender)
         checkPrivate(sender);
+        _;
+        checkInternal(sender); // These should become _multipleBeforeAfterPlaceholderAfter(sender)
+        checkPublic(sender);
+    }
+
+    /// -----------------------------------------------------------------------
+    /// Bad patterns (uses built-in control flow)
+    /// -----------------------------------------------------------------------
+
+    // Bad because `require` built-in is used.
+    modifier onlyOwner() { //~NOTE: wrap modifier logic to reduce code size
+        require(isOwner[msg.sender], "Not owner"); // _onlyOwner();
+        _;
+    }
+
+    // Bad because `if/revert` is used.
+    modifier onlyRole(bytes32 role) { //~NOTE: wrap modifier logic to reduce code size
+        if(!hasRole[msg.sender][role]) revert("Not authorized"); // _onlyRole(role);
+        _;
+    }
+
+    // Bad because `assert` built-in is used.
+    modifier onlyRoleOrOpenRole(bytes32 role) { //~NOTE: wrap modifier logic to reduce code size
+        assert(hasRole[msg.sender][role] || hasRole[address(0)][role]); // _onlyRoleOrOpenRole(role);
+        _;
+    }
+
+    // Bad because `assert` built-in is used (ensures we can parse multiple params).
+    modifier onlyRoleOrAdmin(bytes32 role, address admin) { //~NOTE: wrap modifier logic to reduce code size
+        assert(hasRole[msg.sender][role] || msg.sender == admin); // _onlyRoleOrAdmin(role, admin);
+        _;
+    }
+
+    /// -----------------------------------------------------------------------
+    /// Bad patterns (other invalid expressions and statements)
+    /// -----------------------------------------------------------------------
+
+    // Only call expressions are allowed (public/private/internal functions).
+    modifier assign(address sender) { //~NOTE: wrap modifier logic to reduce code size
+        bool _isOwner = true;
         isOwner[sender] = _isOwner;
         _;
-        checkInternal(sender);
     }
 
+    // Only call expressions are allowed (public/private/internal functions).
     modifier assemblyBlock(address sender) { //~NOTE: wrap modifier logic to reduce code size
-        checkPublic(sender);
         assembly {
             let x := sender
         }
-        checkPrivate(sender);
         _;
-        checkInternal(sender);
     }
 
+    // Only call expressions are allowed (public/private/internal functions).
     modifier uncheckedBlock(address sender) { //~NOTE: wrap modifier logic to reduce code size
-        checkPublic(sender);
         unchecked {
             sender;
         }
-        checkPrivate(sender);
         _;
-        checkInternal(sender);
     }
 
-    event DidSomething(address who);
-
+    // Only call expressions are allowed (public/private/internal functions).
     modifier emitEvent(address sender) { //~NOTE: wrap modifier logic to reduce code size
-        checkPublic(sender);
         emit DidSomething(sender);
-        checkPrivate(sender);
         _;
-        checkInternal(sender);
     }
 }
