@@ -14,6 +14,7 @@ use std::{
     collections::BTreeMap,
     fmt::{Display, Formatter, Result as FmtResult, Write},
     path::{Path, PathBuf},
+    slice,
 };
 
 foundry_config::impl_figment_convert!(Eip712Args, build);
@@ -60,7 +61,7 @@ impl Eip712Args {
                 &sess,
                 &self.build,
                 None,
-                Some(vec![self.target_path].as_ref()),
+                Some(slice::from_ref(&self.target_path)),
             )?;
 
             // Parse and resolve
