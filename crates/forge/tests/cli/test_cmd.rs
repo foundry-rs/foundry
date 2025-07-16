@@ -3876,9 +3876,7 @@ MyUniqueEventWithinLocalProject(uint256,address)
 forgetest_init!(revm_27_prank_bug_fix, |prj, cmd| {
     prj.add_test(
         "PrankBug.t.sol",
-        r#"// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.13;
-
+        r#"
 import {Test} from "forge-std/Test.sol";
 import {Counter} from "../src/Counter.sol";
 
