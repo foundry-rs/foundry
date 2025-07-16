@@ -352,7 +352,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// let provider =
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
-    /// let block = cast.block(5, true, None).await?;
+    /// let block = cast.block(5, true, None, false).await?;
     /// println!("{}", block);
     /// # Ok(())
     /// # }
