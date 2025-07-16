@@ -14,6 +14,7 @@ use std::{
     collections::BTreeMap,
     fmt::{Display, Formatter, Result as FmtResult, Write},
     path::{Path, PathBuf},
+    slice,
 };
 
 foundry_config::impl_figment_convert!(Eip712Args, build);
@@ -56,8 +57,12 @@ impl Eip712Args {
 
         sess.enter_parallel(|| -> Result<()> {
             // Set up the parsing context with the project paths and sources.
-            let parsing_context =
-                solar_pcx_from_build_opts(&sess, self.build, Some(vec![self.target_path]))?;
+            let parsing_context = solar_pcx_from_build_opts(
+                &sess,
+                &self.build,
+                None,
+                Some(slice::from_ref(&self.target_path)),
+            )?;
 
             // Parse and resolve
             let hir_arena = ThreadLocal::new();

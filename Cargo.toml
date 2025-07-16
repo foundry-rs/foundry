@@ -204,15 +204,15 @@ foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.19.1", default-features = false }
-foundry-compilers = { version = "0.17.4", default-features = false }
+foundry-block-explorers = { version = "0.20.0", default-features = false }
+foundry-compilers = { version = "0.18.0", default-features = false }
 foundry-fork-db = "0.16"
 solang-parser = { version = "=0.3.9", package = "foundry-solang-parser" }
-solar-ast = { version = "=0.1.4", default-features = false }
-solar-parse = { version = "=0.1.4", default-features = false }
-solar-interface = { version = "=0.1.4", default-features = false }
-solar-sema = { version = "=0.1.4", default-features = false }
-solar-data-structures = { version = "=0.1.4", default-features = false }
+solar-ast = { version = "=0.1.5", default-features = false }
+solar-parse = { version = "=0.1.5", default-features = false }
+solar-interface = { version = "=0.1.5", default-features = false }
+solar-sema = { version = "=0.1.5", default-features = false }
+solar-data-structures = { version = "=0.1.5", default-features = false }
 
 ## alloy
 alloy-consensus = { version = "1.0.22", default-features = false }
