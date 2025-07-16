@@ -124,6 +124,9 @@ fn prank(
     single_call: bool,
     delegate_call: bool,
 ) -> Result {
+    // Ensure that we load the account of the pranked address and mark it as touched.
+    // This is necessary to ensure that account state changes (such as the account's `nonce`) are
+    // properly applied.
     let account = journaled_account(ccx.ecx, *new_caller)?;
 
     // Ensure that code exists at `msg.sender` if delegate calling.
