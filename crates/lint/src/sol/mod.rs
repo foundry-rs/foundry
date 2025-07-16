@@ -121,10 +121,8 @@ impl SolidityLinter {
             .collect();
 
         // Process the inline-config
-        let source = file.src.as_str();
         let comments = Comments::new(file);
-        let inline_config =
-            parse_inline_config(sess, &comments, InlineConfigSource::Ast(ast), source);
+        let inline_config = parse_inline_config(sess, &comments, InlineConfigSource::Ast(ast));
 
         // Initialize and run the early lint visitor
         let ctx = LintContext::new(sess, self.with_description, inline_config);
@@ -162,14 +160,9 @@ impl SolidityLinter {
             .collect();
 
         // Process the inline-config
-        let source = file.src.as_str();
         let comments = Comments::new(file);
-        let inline_config = parse_inline_config(
-            sess,
-            &comments,
-            InlineConfigSource::Hir((&gcx.hir, source_id)),
-            source,
-        );
+        let inline_config =
+            parse_inline_config(sess, &comments, InlineConfigSource::Hir((&gcx.hir, source_id)));
 
         // Run late lint visitor
         let ctx = LintContext::new(sess, self.with_description, inline_config);
@@ -268,7 +261,6 @@ fn parse_inline_config<'ast, 'hir>(
     sess: &Session,
     comments: &Comments,
     source: InlineConfigSource<'ast, 'hir>,
-    src: &str,
 ) -> InlineConfig {
     let items = comments.iter().filter_map(|comment| {
         let mut item = comment.lines.first()?.as_str();
@@ -290,8 +282,10 @@ fn parse_inline_config<'ast, 'hir>(
     });
 
     match source {
-        InlineConfigSource::Ast(ast) => InlineConfig::from_ast(items, ast, src),
-        InlineConfigSource::Hir((hir, id)) => InlineConfig::from_hir(items, hir, id, src),
+        InlineConfigSource::Ast(ast) => InlineConfig::from_ast(items, ast, sess.source_map()),
+        InlineConfigSource::Hir((hir, id)) => {
+            InlineConfig::from_hir(items, hir, id, sess.source_map())
+        }
     }
 }
 

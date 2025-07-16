@@ -10,7 +10,10 @@ type symbol4 is uint256;
 type symbol5 is uint256;
 type symbol2 is bool;
 type symbolNotUsed is address;
+type symbolNotUsed2 is address;
+type symbolNotUsed3 is address;
 
+contract BaseContract {}
 interface IContract {
     function foo(uint256 a, uint256 b) external view returns (uint256);
     function convert(address addr) external pure returns (uint256);
