@@ -124,9 +124,8 @@ impl SolidityLinter {
                     .unzip();
 
             // Process the inline-config
-            let source = file.src.as_str();
             let comments = Comments::new(&file);
-            let inline_config = parse_inline_config(sess, &comments, &lints, &ast, source);
+            let inline_config = parse_inline_config(sess, &comments, &lints, &ast);
 
             // Initialize and run the visitor
             let ctx = LintContext::new(sess, self.with_description, inline_config);
@@ -176,7 +175,6 @@ fn parse_inline_config<'ast>(
     comments: &Comments,
     lints: &[&'static str],
     ast: &'ast SourceUnit<'ast>,
-    src: &str,
 ) -> InlineConfig {
     let items = comments.iter().filter_map(|comment| {
         let mut item = comment.lines.first()?.as_str();
@@ -197,7 +195,7 @@ fn parse_inline_config<'ast>(
         }
     });
 
-    InlineConfig::new(items, ast, src)
+    InlineConfig::new(items, ast, sess.source_map())
 }
 
 #[derive(Error, Debug)]

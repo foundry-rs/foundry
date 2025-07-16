@@ -29,7 +29,10 @@ const OTHER_CONTRACT: &str = r#"
     // SPDX-License-Identifier: MIT
     pragma solidity ^0.8.0;
 
-    contract ContractWithLints {
+    // forge-lint: disable-next-line
+    import { ContractWithLints } from "ContractWithLints.sol";
+
+    contract OtherContractWithLints {
         uint256 VARIABLE_MIXED_CASE_INFO;
     }
         "#;
@@ -77,9 +80,9 @@ forgetest!(can_use_config_ignore, |prj, cmd| {
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
 note[mixed-case-variable]: mutable variables should use mixedCase
- [FILE]:6:17
+ [FILE]:9:17
   |
-6 |         uint256 VARIABLE_MIXED_CASE_INFO;
+9 |         uint256 VARIABLE_MIXED_CASE_INFO;
   |                 ------------------------
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
@@ -115,9 +118,9 @@ forgetest!(can_override_config_severity, |prj, cmd| {
     });
     cmd.arg("lint").args(["--severity", "info"]).assert_success().stderr_eq(str![[r#"
 note[mixed-case-variable]: mutable variables should use mixedCase
- [FILE]:6:17
+ [FILE]:9:17
   |
-6 |         uint256 VARIABLE_MIXED_CASE_INFO;
+9 |         uint256 VARIABLE_MIXED_CASE_INFO;
   |                 ------------------------
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
@@ -342,6 +345,18 @@ Warning (2018): Function state mutability can be restricted to pure
 
 
 "#]]);
+});
+
+forgetest!(can_process_inline_config_regardless_of_input_order, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source("ContractWithLints", CONTRACT).unwrap();
+    prj.add_source("OtherContractWithLints", OTHER_CONTRACT).unwrap();
+    cmd.arg("lint").assert_success();
+
+    prj.wipe_contracts();
+    prj.add_source("OtherContractWithLints", OTHER_CONTRACT).unwrap();
+    prj.add_source("ContractWithLints", CONTRACT).unwrap();
+    cmd.arg("lint").assert_success();
 });
 
 #[tokio::test]
