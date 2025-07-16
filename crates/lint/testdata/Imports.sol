@@ -14,6 +14,17 @@ import {
     IContractNotUsed //~NOTE: unused imports should be removed
 } from "File.sol";
 
+// forge-lint: disable-next-item
+import {
+    symbolNotUsed2
+} from "File.sol";
+
+// in this case, disabling the following line doesn't do anything
+// forge-lint: disable-next-line
+import {
+    symbolNotUsed3 //~NOTE: unused imports should be removed
+} from "File.sol";
+
 import {
     CONSTANT_0,
     CONSTANT_1 //~NOTE: unused imports should be removed
