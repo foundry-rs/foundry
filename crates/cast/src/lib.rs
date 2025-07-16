@@ -380,8 +380,8 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
 
         Ok(if raw {
-            let block = block.try_into_consensus::<TxEnvelope, Header>()?;
-            format!("0x{}", hex::encode(alloy_rlp::encode(block.header)))
+            let header: Header = block.into_inner().header.inner.try_into_header()?;
+            format!("0x{}", hex::encode(alloy_rlp::encode(&header)))
         } else if let Some(ref field) = field {
             get_pretty_block_attr(&block, field)
                 .unwrap_or_else(|| format!("{field} is not a valid block field"))
