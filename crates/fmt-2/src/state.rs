@@ -1492,7 +1492,7 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::ExprKind::CallOptions(expr, named_args) => {
                 self.print_expr(expr);
-                self.print_named_args(named_args);
+                self.print_named_args(named_args, span.hi());
             }
             ast::ExprKind::Delete(expr) => {
                 self.word("delete ");
@@ -1708,46 +1708,48 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::CallArgsKind::Named(named_args) => {
                 self.word("(");
-                self.print_named_args(named_args);
+                self.print_named_args(named_args, span.hi());
                 self.word(")");
             }
         }
     }
 
-    fn print_named_args(&mut self, args: &'ast [ast::NamedArg<'ast>]) {
+    fn print_named_args(&mut self, args: &'ast [ast::NamedArg<'ast>], pos_hi: BytePos) {
         self.word("{");
-        self.s.ibox(self.ind);
-        let (should_print, pos) = match (args.first(), self.peek_comment()) {
-            (Some(arg), Some(cmnt)) => (cmnt.pos() < arg.name.span.lo(), arg.name.span.lo()),
-            _ => (false, BytePos::from_u32(0)),
-        };
-        if should_print {
-            self.space();
-            self.print_comments(pos, CommentConfig::skip_ws());
-        } else {
-            self.braces_break();
-        }
-        self.cbox(0);
 
-        for (i, ast::NamedArg { name, value }) in args.iter().enumerate() {
-            self.print_ident(name);
-            self.word(": ");
-            self.print_expr(value);
-            if i == args.len() - 1 {
-                self.braces_break();
-            } else {
-                self.word(",");
-                if self
-                    .print_comments(args[i + 1].name.span.lo(), CommentConfig::skip_ws())
-                    .is_none()
-                {
-                    self.space();
+        // Use the start position of the first argument's name for comment processing.
+        let list_lo = args.first().map_or(pos_hi, |arg| arg.name.span.lo());
+        let ind = self.ind;
+
+        self.commasep(
+            args,
+            list_lo,
+            pos_hi,
+            // Closure to print a single named argument (`name: value`)
+            |s, arg| {
+                s.cbox(ind);
+                s.print_ident(&arg.name);
+                // Use a non-breaking space after the colon to keep `name: value` together.
+                s.word(":");
+                if !s.print_trailing_comment(arg.name.span.hi(), None) {
+                    s.nbsp();
                 }
-            }
-        }
-        self.s.offset(-self.ind);
-        self.end();
-        self.end();
+                s.print_comments(
+                    arg.value.span.lo(),
+                    CommentConfig::skip_ws().mixed_no_break().mixed_post_nbsp(),
+                );
+                s.print_expr(&arg.value);
+                s.end();
+            },
+            // Closure to provide the full span of a single named argument.
+            // This is crucial for `commasep` to handle comments around each argument correctly.
+            |arg| Some(ast::Span::new(arg.name.span.lo(), arg.value.span.hi())),
+            // Use Compact format: it tries to fit everything on one line,
+            // and breaks consistently if it doesn't fit or if comments interfere.
+            ListFormat::Consistent(true),
+            false,
+        );
+
         self.word("}");
     }
 
