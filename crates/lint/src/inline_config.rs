@@ -124,10 +124,7 @@ impl InlineConfig {
                 prev_sp = sp;
             }
 
-            let (file, comment_range) = match source_map.span_to_source(sp) {
-                Ok(res) => res,
-                Err(_) => continue,
-            };
+            let Ok((file, comment_range)) = source_map.span_to_source(sp) else { continue };
             let src = file.src.as_str();
             last_file = (src.len(), file.start_pos);
             match item {
