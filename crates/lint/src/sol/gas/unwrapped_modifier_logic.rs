@@ -96,17 +96,16 @@ impl UnwrappedModifierLogic {
             // If both sections need wrapping, wrap both appending `Before` and `After` to the
             // modifier name.
             (true, true) => format!(
-                "_{}Before{};\n_;\n_{}After{};",
-                modifier_name, param_list, modifier_name, param_list
+                "_{modifier_name}Before{param_list};\n_;\n_{modifier_name}After{param_list};"
             ),
 
             // If only one before section needs wrapping, wrap that section.
             (true, false) => {
-                format!("_{}{};\n_;", modifier_name, param_list)
+                format!("_{modifier_name}{param_list};\n_;")
             }
 
             // If only one after section needs wrapping, wrap that section.
-            (false, true) => format!("_;\n_{}{};", modifier_name, param_list),
+            (false, true) => format!("_;\n_{modifier_name}{param_list};"),
 
             // If no sections need wrapping, return None.
             (false, false) => return None,
