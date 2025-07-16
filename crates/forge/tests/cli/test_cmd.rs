@@ -3198,6 +3198,78 @@ contract CounterTestA is Test {
     cmd.args(["t", "--mt", "test_something"]).assert_failure();
 });
 
+forgetest_init!(should_not_apply_create2_when_pranked, |prj, cmd| {
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Target {}
+
+contract CounterTest is Test {
+    function setUp() public {
+        vm.startPrank(address(0x123));
+        Target t = new Target();
+    }
+
+    function test_createPranked() public {
+        vm.startPrank(address(0x123));
+        Target t = new Target();
+    }
+}
+        "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "test_createPranked", "-vvvv"]).assert_failure().stdout_eq(str![[
+        r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (2072): Unused local variable.
+  [FILE]:11:9:
+   |
+11 |         Target t = new Target();
+   |         ^^^^^^^^
+
+Warning (2072): Unused local variable.
+  [FILE]:16:9:
+   |
+16 |         Target t = new Target();
+   |         ^^^^^^^^
+
+
+Ran 1 test for test/Counter.t.sol:CounterTest
+[FAIL: EvmError: Revert] test_createPranked() ([GAS])
+Traces:
+  [47797] CounterTest::setUp()
+    ├─ [0] VM::startPrank(0x0000000000000000000000000000000000000123)
+    │   └─ ← [Return]
+    ├─ [12464] → new Target@0x6cdBd1b486b8FBD4140e8cd6daAED05bE13eD914
+    │   └─ ← [Return] 62 bytes of code
+    └─ ← [Stop]
+
+  [1056944463] CounterTest::test_createPranked()
+    ├─ [0] VM::startPrank(0x0000000000000000000000000000000000000123)
+    │   └─ ← [Return]
+    ├─ [0] → new <unknown>@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [CreateCollision]
+    └─ ← [Revert] EvmError: Revert
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/Counter.t.sol:CounterTest
+[FAIL: EvmError: Revert] test_createPranked() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+"#
+    ]]);
+});
+
 // <https://github.com/foundry-rs/foundry/issues/5521>
 forgetest_init!(should_apply_pranks_per_recorded_depth, |prj, cmd| {
     prj.add_test(
