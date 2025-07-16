@@ -171,6 +171,7 @@ pub(crate) fn handle_expect_revert(
     }
 
     if expected_revert.count == 0 {
+        // If no specific reason or reverter is expected, we just check if it reverted
         if expected_revert.reverter.is_none() && expected_revert.reason.is_none() {
             ensure!(
                 matches!(status, return_ok!()),
@@ -183,40 +184,77 @@ pub(crate) fn handle_expect_revert(
         let mut reason_match = expected_revert.reason.as_ref().map(|_| false);
         let mut reverter_match = expected_revert.reverter.as_ref().map(|_| false);
 
-        // Reverter check
-        if let (Some(expected_reverter), Some(actual_reverter)) =
-            (expected_revert.reverter, expected_revert.reverted_by)
-            && expected_reverter == actual_reverter
-        {
-            reverter_match = Some(true);
-        }
+        // If we expect no reverts with a specific reason/reverter, but got a revert,
+        // we need to check if it matches our criteria
+        if !matches!(status, return_ok!()) {
+            // We got a revert, but we expected 0 reverts
+            // We need to check if this revert matches our expected criteria
 
-        // Reason check
-        let expected_reason = expected_revert.reason.as_deref();
-        if let Some(expected_reason) = expected_reason {
-            let mut actual_revert: Vec<u8> = retdata.into();
-            actual_revert = decode_revert(actual_revert);
-
-            if actual_revert == expected_reason {
-                reason_match = Some(true);
+            // Reverter check
+            if let (Some(expected_reverter), Some(actual_reverter)) =
+                (expected_revert.reverter, expected_revert.reverted_by)
+                && expected_reverter == actual_reverter
+            {
+                reverter_match = Some(true);
             }
-        };
 
-        match (reason_match, reverter_match) {
-            (Some(true), Some(true)) => Err(fmt_err!(
-                "expected 0 reverts with reason: {}, from address: {}, but got one",
-                &stringify(expected_reason.unwrap_or_default()),
-                expected_revert.reverter.unwrap()
-            )),
-            (Some(true), None) => Err(fmt_err!(
-                "expected 0 reverts with reason: {}, but got one",
-                &stringify(expected_reason.unwrap_or_default())
-            )),
-            (None, Some(true)) => Err(fmt_err!(
-                "expected 0 reverts from address: {}, but got one",
-                expected_revert.reverter.unwrap()
-            )),
-            _ => Ok(success_return()),
+            // Reason check
+            let expected_reason = expected_revert.reason.as_deref();
+            if let Some(expected_reason) = expected_reason {
+                let mut actual_revert: Vec<u8> = retdata.to_vec();
+                actual_revert = decode_revert(actual_revert);
+
+                if actual_revert == expected_reason {
+                    reason_match = Some(true);
+                }
+            }
+
+            match (reason_match, reverter_match) {
+                (Some(true), Some(true)) => Err(fmt_err!(
+                    "expected 0 reverts with reason: {}, from address: {}, but got one",
+                    &stringify(expected_reason.unwrap_or_default()),
+                    expected_revert.reverter.unwrap()
+                )),
+                (Some(true), None) => Err(fmt_err!(
+                    "expected 0 reverts with reason: {}, but got one",
+                    &stringify(expected_reason.unwrap_or_default())
+                )),
+                (None, Some(true)) => Err(fmt_err!(
+                    "expected 0 reverts from address: {}, but got one",
+                    expected_revert.reverter.unwrap()
+                )),
+                _ => {
+                    // The revert doesn't match our criteria, which means it's a different revert
+                    // For expectRevert with count=0, any revert should fail the test
+                    let decoded_revert = decode_revert(retdata.to_vec());
+
+                    // Provide more specific error messages based on what was expected
+                    if expected_revert.reverter.is_some() && expected_revert.reason.is_some() {
+                        Err(fmt_err!(
+                            "call reverted with '{}' from {}, but expected 0 reverts with reason '{}' from {}",
+                            &stringify(&decoded_revert),
+                            expected_revert.reverted_by.unwrap_or_default(),
+                            &stringify(expected_reason.unwrap_or_default()),
+                            expected_revert.reverter.unwrap()
+                        ))
+                    } else if expected_revert.reverter.is_some() {
+                        Err(fmt_err!(
+                            "call reverted with '{}' from {}, but expected 0 reverts from {}",
+                            &stringify(&decoded_revert),
+                            expected_revert.reverted_by.unwrap_or_default(),
+                            expected_revert.reverter.unwrap()
+                        ))
+                    } else {
+                        Err(fmt_err!(
+                            "call reverted with '{}' when it was expected not to revert",
+                            &stringify(&decoded_revert)
+                        ))
+                    }
+                }
+            }
+        } else {
+            // No revert occurred, which is what we expected
+            Ok(success_return())
         }
     } else {
         ensure!(!matches!(status, return_ok!()), "next call did not revert as expected");

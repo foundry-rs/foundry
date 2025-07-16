@@ -63,7 +63,7 @@ fn config<'a>(
         program: ui_test::CommandBuilder {
             program: cmd_path.into(),
             args: {
-                let args = vec![cmd, "--json"];
+                let args = vec![cmd, "--json", "--root", testdata.to_str().expect("invalid root")];
                 args.into_iter().map(Into::into).collect()
             },
             out_dir_flag: None,

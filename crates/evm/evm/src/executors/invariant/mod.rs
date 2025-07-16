@@ -32,6 +32,7 @@ use std::{
     cell::RefCell,
     collections::{HashMap as Map, btree_map::Entry},
     sync::Arc,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 mod error;
@@ -42,9 +43,10 @@ mod replay;
 pub use replay::{replay_error, replay_run};
 
 mod result;
-use foundry_common::TestFunctionExt;
+use foundry_common::{TestFunctionExt, sh_println};
 pub use result::InvariantFuzzTestResult;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 mod corpus;
 
@@ -105,6 +107,8 @@ sol! {
         function targetInterfaces() public view returns (FuzzInterface[] memory targetedInterfaces);
     }
 }
+
+const DURATION_BETWEEN_METRICS_REPORT: Duration = Duration::from_secs(5);
 
 /// Contains invariant metrics for a single fuzzed selector.
 #[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -343,6 +347,7 @@ impl<'a> InvariantExecutor<'a> {
         // Start timer for this invariant test.
         let mut runs = 0;
         let timer = FuzzTestTimer::new(self.config.timeout);
+        let mut last_metrics_report = Instant::now();
         let continue_campaign = |runs: u32| {
             // If timeout is configured, then perform invariant runs until expires.
             if self.config.timeout.is_some() {
@@ -404,10 +409,13 @@ impl<'a> InvariantExecutor<'a> {
                 invariant_test.merge_coverage(call_result.line_coverage.clone());
                 // If coverage guided fuzzing is enabled then merge edge count with current history
                 // map and set new coverage in current run.
-                if self.config.corpus_dir.is_some()
-                    && call_result.merge_edge_coverage(&mut self.history_map)
-                {
-                    current_run.new_coverage = true;
+                if self.config.corpus_dir.is_some() {
+                    let (new_coverage, is_edge) =
+                        call_result.merge_edge_coverage(&mut self.history_map);
+                    if new_coverage {
+                        current_run.new_coverage = true;
+                        corpus_manager.update_seen_metrics(is_edge);
+                    }
                 }
 
                 if discarded {
@@ -507,9 +515,26 @@ impl<'a> InvariantExecutor<'a> {
             // End current invariant test run.
             invariant_test.end_run(current_run, self.config.gas_report_samples as usize);
 
-            // If running with progress then increment completed runs.
             if let Some(progress) = progress {
+                // If running with progress then increment completed runs.
                 progress.inc(1);
+                // Display metrics in progress bar.
+                if self.config.corpus_dir.is_some() {
+                    progress.set_message(format!("{}", &corpus_manager.metrics));
+                }
+            } else if self.config.corpus_dir.is_some()
+                && last_metrics_report.elapsed() > DURATION_BETWEEN_METRICS_REPORT
+            {
+                // Display metrics inline if corpus dir set.
+                let metrics = json!({
+                    "timestamp": SystemTime::now()
+                        .duration_since(UNIX_EPOCH)?
+                        .as_secs(),
+                    "invariant": invariant_contract.invariant_function.name,
+                    "metrics": &corpus_manager.metrics,
+                });
+                let _ = sh_println!("{}", serde_json::to_string(&metrics)?);
+                last_metrics_report = Instant::now();
             }
 
             runs += 1;
@@ -830,9 +855,43 @@ impl<'a> InvariantExecutor<'a> {
         address: Address,
         targeted_contracts: &mut TargetedContracts,
     ) -> Result<()> {
-        if let Some(target) = targeted_contracts.get(&address) {
-            // If test contract is a target, then include only state-changing functions
-            // that are not reserved.
+        for (address, (identifier, _)) in self.setup_contracts {
+            if let Some(selectors) = self.artifact_filters.targeted.get(identifier) {
+                self.add_address_with_functions(*address, selectors, false, targeted_contracts)?;
+            }
+        }
+
+        let mut target_test_selectors = vec![];
+        let mut excluded_test_selectors = vec![];
+
+        // Collect contract functions marked as target for fuzzing campaign.
+        let selectors =
+            self.executor.call_sol_default(address, &IInvariantTest::targetSelectorsCall {});
+        for IInvariantTest::FuzzSelector { addr, selectors } in selectors {
+            if addr == address {
+                target_test_selectors = selectors.clone();
+            }
+            self.add_address_with_functions(addr, &selectors, false, targeted_contracts)?;
+        }
+
+        // Collect contract functions excluded from fuzzing campaign.
+        let excluded_selectors =
+            self.executor.call_sol_default(address, &IInvariantTest::excludeSelectorsCall {});
+        for IInvariantTest::FuzzSelector { addr, selectors } in excluded_selectors {
+            if addr == address {
+                // If fuzz selector address is the test contract, then record selectors to be
+                // later excluded if needed.
+                excluded_test_selectors = selectors.clone();
+            }
+            self.add_address_with_functions(addr, &selectors, true, targeted_contracts)?;
+        }
+
+        if target_test_selectors.is_empty()
+            && let Some(target) = targeted_contracts.get(&address)
+        {
+            // If test contract is marked as a target and no target selector explicitly set, then
+            // include only state-changing functions that are not reserved and selectors that are
+            // not explicitly excluded.
             let selectors: Vec<_> = target
                 .abi
                 .functions()
@@ -842,6 +901,7 @@ impl<'a> InvariantExecutor<'a> {
                         alloy_json_abi::StateMutability::Pure
                             | alloy_json_abi::StateMutability::View
                     ) || func.is_reserved()
+                        || excluded_test_selectors.contains(&func.selector())
                     {
                         None
                     } else {
@@ -850,26 +910,6 @@ impl<'a> InvariantExecutor<'a> {
                 })
                 .collect();
             self.add_address_with_functions(address, &selectors, false, targeted_contracts)?;
-        }
-
-        for (address, (identifier, _)) in self.setup_contracts {
-            if let Some(selectors) = self.artifact_filters.targeted.get(identifier) {
-                self.add_address_with_functions(*address, selectors, false, targeted_contracts)?;
-            }
-        }
-
-        // Collect contract functions marked as target for fuzzing campaign.
-        let selectors =
-            self.executor.call_sol_default(address, &IInvariantTest::targetSelectorsCall {});
-        for IInvariantTest::FuzzSelector { addr, selectors } in selectors {
-            self.add_address_with_functions(addr, &selectors, false, targeted_contracts)?;
-        }
-
-        // Collect contract functions excluded from fuzzing campaign.
-        let excluded_selectors =
-            self.executor.call_sol_default(address, &IInvariantTest::excludeSelectorsCall {});
-        for IInvariantTest::FuzzSelector { addr, selectors } in excluded_selectors {
-            self.add_address_with_functions(addr, &selectors, true, targeted_contracts)?;
         }
 
         Ok(())

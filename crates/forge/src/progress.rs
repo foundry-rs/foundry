@@ -76,9 +76,9 @@ impl TestsProgressState {
                 let ends_at = (Utc::now() + chrono::Duration::seconds(timeout.into()))
                     .format("%H:%M:%S %Y-%m-%d")
                     .to_string();
-                format!("    ↪ {{prefix:.bold.dim}}: [{{pos}}]{{msg}} Runs, ends at {ends_at} UTC")
+                format!("    ↪ {{prefix:.bold.dim}}: [{{pos}}] Runs, ends at {ends_at} UTC {{msg}}")
             } else {
-                "    ↪ {prefix:.bold.dim}: [{pos}/{len}]{msg} Runs".to_string()
+                "    ↪ {prefix:.bold.dim}: [{pos}/{len}] Runs {msg}".to_string()
             };
             fuzz_progress.set_style(
                 indicatif::ProgressStyle::with_template(&template).unwrap().tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
