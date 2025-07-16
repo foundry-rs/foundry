@@ -120,7 +120,7 @@ forgetest!(can_override_config_severity, |prj, cmd| {
 note[mixed-case-variable]: mutable variables should use mixedCase
  [FILE]:6:17
   |
-6 |         uint256 VARIABLE_MIXED_CASE_INFO;
+9 |         uint256 VARIABLE_MIXED_CASE_INFO;
   |                 ------------------------
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
