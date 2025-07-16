@@ -80,9 +80,9 @@ forgetest!(can_use_config_ignore, |prj, cmd| {
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
 note[mixed-case-variable]: mutable variables should use mixedCase
- [FILE]:6:17
+ [FILE]:9:17
   |
-6 |         uint256 VARIABLE_MIXED_CASE_INFO;
+9 |         uint256 VARIABLE_MIXED_CASE_INFO;
   |                 ------------------------
   |
   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
