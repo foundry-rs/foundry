@@ -114,8 +114,7 @@ impl InlineConfig {
         source_map: &SourceMap,
     ) -> Self {
         let mut disabled_ranges: HashMap<String, Vec<DisabledRange>> = HashMap::new();
-        let mut disabled_blocks: HashMap<String, (usize, usize)> = HashMap::new();
-        let mut last_file: (usize, BytePos) = (0, BytePos(0));
+        let mut disabled_blocks: HashMap<String, (usize, usize, usize)> = HashMap::new();
 
         let mut prev_sp = Span::DUMMY;
         for (sp, item) in items {
@@ -126,7 +125,6 @@ impl InlineConfig {
 
             let Ok((file, comment_range)) = source_map.span_to_source(sp) else { continue };
             let src = file.src.as_str();
-            last_file = (src.len(), file.start_pos);
             match item {
                 InlineConfigItem::DisableNextItem(lints) => {
                     if let Some(next_item) = NextItemFinder::new(sp.hi().to_usize()).find(ast) {
@@ -172,13 +170,18 @@ impl InlineConfig {
                     for lint in lints {
                         disabled_blocks
                             .entry(lint)
-                            .and_modify(|(_, depth)| *depth += 1)
-                            .or_insert((sp.hi().to_usize(), 1));
+                            .and_modify(|(_, depth, _)| *depth += 1)
+                            .or_insert((
+                                sp.hi().to_usize(),
+                                1,
+                                // Use file end as fallback for unclosed blocks
+                                file.start_pos.to_usize() + src.len(),
+                            ));
                     }
                 }
                 InlineConfigItem::DisableEnd(lints) => {
                     for lint in lints {
-                        if let Some((start, depth)) = disabled_blocks.get_mut(&lint) {
+                        if let Some((start, depth, _)) = disabled_blocks.get_mut(&lint) {
                             *depth = depth.saturating_sub(1);
 
                             if *depth == 0 {
@@ -197,10 +200,10 @@ impl InlineConfig {
             }
         }
 
-        for (lint, (start, _)) in disabled_blocks {
+        for (lint, (start, _, file_end)) in disabled_blocks {
             disabled_ranges.entry(lint).or_default().push(DisabledRange {
                 start,
-                end: last_file.0 + last_file.1.to_usize(),
+                end: file_end,
                 loose: false,
             });
         }
