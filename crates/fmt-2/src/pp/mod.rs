@@ -10,7 +10,7 @@ mod helpers;
 mod ring;
 
 // Every line is allowed at least this much space, even if highly indented.
-const MIN_SPACE: isize = 60;
+const MIN_SPACE: isize = 40;
 
 /// How to break. Described in more detail in the module docs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

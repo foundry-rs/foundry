@@ -2,7 +2,7 @@ use crate::{
     comment::{Comment, CommentStyle},
     comments::Comments,
     iter::{IterDelimited, IteratorPosition},
-    pp::{self, BreakToken, Token},
+    pp::{self, BreakToken, Token, SIZE_INFINITY},
     FormatterConfig, InlineConfig,
 };
 use foundry_config::fmt as config;
@@ -69,29 +69,8 @@ impl<'sess> State<'sess, '_> {
     ///
     /// Returns `Some` with the style of the last comment printed, or `None` if no comment was
     /// printed.
-    fn print_comments(&mut self, pos: BytePos) -> Option<CommentStyle> {
-        self.print_comments_inner(pos, None, false)
-    }
-
-    fn print_comments_skip_ws(&mut self, pos: BytePos) -> Option<CommentStyle> {
-        self.print_comments_inner(pos, Some(Skip::All), false)
-    }
-
-    fn print_comments_skip_ws_inner(&mut self, pos: BytePos, skip: Skip) -> Option<CommentStyle> {
-        self.print_comments_inner(pos, Some(skip), false)
-    }
-
-    fn print_cmnts_with_space_skip_ws(&mut self, pos: BytePos) -> Option<CommentStyle> {
-        self.print_comments_inner(pos, Some(Skip::All), true)
-    }
-
-    fn print_comments_inner(
-        &mut self,
-        pos: BytePos,
-        skip_ws: Option<Skip>,
-        mixed_with_space: bool,
-    ) -> Option<CommentStyle> {
-        let mut last_style = None;
+    fn print_comments(&mut self, pos: BytePos, mut config: CommentConfig) -> Option<CommentStyle> {
+        let mut last_style: Option<CommentStyle> = None;
         let mut all_blank = true;
         while let Some(cmnt) = self.peek_comment() {
             if cmnt.pos() >= pos {
@@ -99,7 +78,7 @@ impl<'sess> State<'sess, '_> {
             }
             let cmnt = self.next_comment().unwrap();
             if cmnt.style.is_blank() {
-                match skip_ws {
+                match config.skip_blanks {
                     Some(Skip::All) => continue,
                     Some(Skip::First) => {
                         if all_blank {
@@ -112,13 +91,21 @@ impl<'sess> State<'sess, '_> {
             } else if !cmnt.is_doc {
                 all_blank = false;
             }
+            // Ensure consecutive mixed comments don't have a double-space
+            if let Some(style) = last_style {
+                if (style.is_mixed() && cmnt.style.is_mixed()) &&
+                    (config.mixed_post_nbsp || !config.mixed_no_break)
+                {
+                    config.mixed_prev_space = false;
+                }
+            }
             last_style = Some(cmnt.style);
-            self.print_comment(cmnt, mixed_with_space);
+            self.print_comment(cmnt, config);
         }
         last_style
     }
 
-    fn print_comment(&mut self, mut cmnt: Comment, with_space: bool) {
+    fn print_comment(&mut self, mut cmnt: Comment, config: CommentConfig) {
         // // DEBUG
         // if !cmnt.style.is_blank() {
         //     println!("{cmnt:?}");
@@ -127,12 +114,13 @@ impl<'sess> State<'sess, '_> {
         match cmnt.style {
             CommentStyle::Mixed => {
                 let never_break = self.last_token_is_neverbreak();
-                if !never_break && !self.is_bol_or_only_ind() {
-                    if with_space {
-                        self.space()
-                    } else {
-                        self.zerobreak();
-                    }
+                if !self.is_bol_or_only_ind() {
+                    match (never_break || config.mixed_no_break, config.mixed_prev_space) {
+                        (false, true) => self.space(),
+                        (false, false) => self.zerobreak(),
+                        (true, true) => self.nbsp(),
+                        (true, false) => (),
+                    };
                 }
                 if let Some(last) = cmnt.lines.pop() {
                     self.ibox(0);
@@ -141,11 +129,12 @@ impl<'sess> State<'sess, '_> {
                         self.hardbreak();
                     }
                     self.word(last);
-                    self.space();
+                    if config.mixed_post_nbsp || never_break {
+                        self.nbsp();
+                    } else if !config.mixed_no_break {
+                        self.space();
+                    }
                     self.end();
-                }
-                if never_break {
-                    self.neverbreak();
                 }
             }
             CommentStyle::Isolated => {
@@ -233,7 +222,7 @@ impl<'sess> State<'sess, '_> {
 
     fn print_trailing_comment(&mut self, span_pos: BytePos, next_pos: Option<BytePos>) -> bool {
         if let Some(cmnt) = self.comments.trailing_comment(self.sm, span_pos, next_pos) {
-            self.print_comment(cmnt, false);
+            self.print_comment(cmnt, CommentConfig::default());
             return true;
         }
 
@@ -272,7 +261,7 @@ impl<'sess> State<'sess, '_> {
             self.hardbreak();
         }
         while let Some(cmnt) = self.next_comment() {
-            self.print_comment(cmnt, false);
+            self.print_comment(cmnt, CommentConfig::default());
         }
     }
 
@@ -334,7 +323,7 @@ impl<'sess> State<'sess, '_> {
                     self.hardbreak();
                     skip_break = false;
                 }
-                self.print_cmnts_with_space_skip_ws(span.lo());
+                self.print_comments(span.lo(), CommentConfig::skip_ws().mixed_prev_space());
                 print(self, &values[0]);
                 if !self.print_trailing_comment(span.hi(), None) && skip_break {
                     self.neverbreak();
@@ -426,7 +415,7 @@ impl<'sess> State<'sess, '_> {
             let span = get_span(value);
             if let Some(span) = span {
                 if self
-                    .print_cmnts_with_space_skip_ws(span.lo())
+                    .print_comments(span.lo(), CommentConfig::skip_ws().mixed_prev_space())
                     .map_or(false, |cmnt| cmnt.is_mixed()) &&
                     format.breaks_comments()
                 {
@@ -446,7 +435,10 @@ impl<'sess> State<'sess, '_> {
             {
                 self.hardbreak(); // trailing and isolated comments already hardbreak
             }
-            self.print_cmnts_with_space_skip_ws(next_pos);
+            self.print_comments(
+                next_pos,
+                CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
+            );
 
             if is_binary_with_trailing {
                 // binary expressions prints trailing comment inside its boxes, we have to manually
@@ -485,7 +477,7 @@ impl State<'_, '_> {
     /// Returns `true` if the span is disabled and has been printed as-is.
     #[must_use]
     fn handle_span(&mut self, span: Span) -> bool {
-        self.print_comments(span.lo());
+        self.print_comments(span.lo(), CommentConfig::default());
         self.print_span_if_disabled(span)
     }
 
@@ -539,9 +531,9 @@ impl<'ast> State<'_, 'ast> {
         let ast::Item { ref docs, span, ref kind } = *item;
         self.print_docs(docs);
         let add_zero_break = if skip_ws {
-            self.print_cmnts_with_space_skip_ws(span.lo())
+            self.print_comments(span.lo(), CommentConfig::skip_ws().mixed_prev_space())
         } else {
-            self.print_comments(span.lo())
+            self.print_comments(span.lo(), CommentConfig::default())
         }
         .is_some_and(|cmnt| cmnt.is_mixed());
         if add_zero_break {
@@ -561,7 +553,7 @@ impl<'ast> State<'_, 'ast> {
             ast::ItemKind::Error(err) => self.print_error(err),
             ast::ItemKind::Event(event) => self.print_event(event),
         }
-        self.print_comments(span.hi());
+        self.print_comments(span.hi(), CommentConfig::default());
         self.print_trailing_comment(span.hi(), None);
         self.hardbreak_if_not_bol();
     }
@@ -699,12 +691,12 @@ impl<'ast> State<'_, 'ast> {
                 self.hardbreak();
             }
             if self.peek_comment_before(body[0].span.lo()).is_some() {
-                self.print_comments_skip_ws_inner(body[0].span.lo(), Skip::First);
+                self.print_comments(body[0].span.lo(), CommentConfig::skip_first_ws());
             }
             for (pos, item) in body.iter().delimited() {
                 self.print_item(item, pos.is_first);
             }
-            if let Some(cmnt) = self.print_comments_skip_ws(span.hi()) {
+            if let Some(cmnt) = self.print_comments(span.hi(), CommentConfig::skip_ws()) {
                 if self.config.contract_new_lines && !cmnt.is_blank() {
                     self.hardbreak();
                 }
@@ -715,7 +707,7 @@ impl<'ast> State<'_, 'ast> {
                 self.hardbreak_if_nonempty();
             }
         } else {
-            if self.print_comments_skip_ws(span.hi()).is_some() {
+            if self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some() {
                 self.zerobreak();
             } else if self.config.bracket_spacing {
                 self.nbsp();
@@ -739,7 +731,7 @@ impl<'ast> State<'_, 'ast> {
             self.print_trailing_comment(var.span.hi(), None);
             self.hardbreak_if_not_bol();
         }
-        self.print_comments_skip_ws(span.hi());
+        self.print_comments(span.hi(), CommentConfig::skip_ws());
         self.s.offset(-self.ind);
         self.end();
         self.word("}");
@@ -763,7 +755,7 @@ impl<'ast> State<'_, 'ast> {
                 self.hardbreak();
             }
         }
-        self.print_comments_skip_ws(span.hi());
+        self.print_comments(span.hi(), CommentConfig::skip_ws());
         self.s.offset(-self.ind);
         self.end();
         self.word("}");
@@ -869,11 +861,11 @@ impl<'ast> State<'_, 'ast> {
                     self.space();
                 }
                 self.s.offset(-self.ind);
-                self.print_comments_skip_ws(body_span.lo());
+                self.print_comments(body_span.lo(), CommentConfig::skip_ws());
             } else {
                 self.zerobreak();
                 self.s.offset(-self.ind);
-                self.print_comments_skip_ws(body_span.lo());
+                self.print_comments(body_span.lo(), CommentConfig::skip_ws());
                 self.s.offset(-self.ind);
             }
             self.word("{");
@@ -882,7 +874,7 @@ impl<'ast> State<'_, 'ast> {
             self.print_block_without_braces(body, body_span, Some(self.ind));
             self.word("}");
         } else {
-            self.print_cmnts_with_space_skip_ws(body_span.lo());
+            self.print_comments(body_span.lo(), CommentConfig::skip_ws().mixed_prev_space());
             self.end();
             self.end();
             self.neverbreak();
@@ -961,7 +953,7 @@ impl<'ast> State<'_, 'ast> {
             return;
         }
 
-        self.cbox(0);
+        self.ibox(0);
         self.print_ty(ty);
         if let Some(visibility) = visibility {
             self.nbsp();
@@ -972,7 +964,7 @@ impl<'ast> State<'_, 'ast> {
             self.word(mutability.to_str());
         }
         if let Some(data_location) = data_location {
-            // TODO: make `Spanned` and print comments up to the span
+            // TODO(rusowsky): make `Spanned` and print comments up to the span
             self.nbsp();
             self.word(data_location.to_str());
         }
@@ -1033,7 +1025,7 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn print_ident(&mut self, ident: &ast::Ident) {
-        self.print_comments_skip_ws(ident.span.lo());
+        self.print_comments(ident.span.lo(), CommentConfig::skip_ws());
         self.word(ident.to_string());
     }
 
@@ -1083,7 +1075,6 @@ impl<'ast> State<'_, 'ast> {
             ast::LitKind::Bool(value) => self.word(if value { "true" } else { "false" }),
             ast::LitKind::Err(_) => self.word(symbol.to_string()),
         }
-        // self.print_trailing_comment(lit.span.hi(), None);
     }
 
     fn print_num_literal(&mut self, source: &str) {
@@ -1178,7 +1169,7 @@ impl<'ast> State<'_, 'ast> {
 
     /// `s` should be the *unescaped contents of the string literal*.
     fn print_str_lit(&mut self, kind: ast::StrKind, quote_pos: BytePos, s: &str) {
-        self.print_comments(quote_pos);
+        self.print_comments(quote_pos, CommentConfig::default());
         let s = self.str_lit_to_string(kind, quote_pos, s);
         self.word(s);
     }
@@ -1299,17 +1290,100 @@ impl<'ast> State<'_, 'ast> {
             }
             ast::TypeKind::Mapping(ast::TypeMapping { key, key_name, value, value_name }) => {
                 self.word("mapping(");
+                self.s.cbox(self.ind);
+                if let Some(cmnt) = self.peek_comment_before(key.span.lo()) {
+                    let is_mixed = cmnt.style.is_mixed();
+                    if is_mixed {
+                        self.print_comments(
+                            key.span.lo(),
+                            CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
+                        );
+                        self.break_offset_if_not_bol(SIZE_INFINITY as usize, 0, false);
+                    } else {
+                        self.print_comments(key.span.lo(), CommentConfig::skip_ws());
+                    }
+                }
+                // Fitting a mapping in one line takes, at least, 16 chars (one-char var name):
+                // 'mapping(' + {key} + ' => ' {value} ') ' + {name} + ';'
+                // To be more conservative, we use 18 to decide whether to force a break or not.
+                else if (18 +
+                    self.estimate_size(key.span) as isize +
+                    key_name.map(|k| self.estimate_size(k.span)).unwrap_or(0) as isize +
+                    self.estimate_size(value.span) as isize +
+                    value_name.map(|v| self.estimate_size(v.span)).unwrap_or(0) as isize) >=
+                    self.space_left()
+                {
+                    self.hardbreak();
+                } else {
+                    self.zerobreak();
+                }
+                self.s.cbox(0);
                 self.print_ty(key);
                 if let Some(ident) = key_name {
-                    self.nbsp();
+                    if self
+                        .print_comments(
+                            ident.span.lo(),
+                            CommentConfig::skip_ws()
+                                .mixed_no_break()
+                                .mixed_prev_space()
+                                .mixed_post_nbsp(),
+                        )
+                        .is_none()
+                    {
+                        self.nbsp();
+                    }
                     self.print_ident(ident);
                 }
-                self.word(" => ");
+                // NOTE(rusowsky): unless we add more spans to solar, using `value.span.lo()`
+                // consumes "comment6" of which should be printed after the `=>`
+                self.print_comments(
+                    value.span.lo(),
+                    CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
+                );
+                self.space();
+                self.s.offset(self.ind);
+                self.word("=> ");
+                self.s.ibox(self.ind);
                 self.print_ty(value);
                 if let Some(ident) = value_name {
-                    self.nbsp();
+                    self.neverbreak();
+                    if self
+                        .print_comments(
+                            ident.span.lo(),
+                            CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
+                        )
+                        .is_none()
+                    {
+                        self.nbsp();
+                    }
                     self.print_ident(ident);
+                    if self
+                        .peek_comment_before(ty.span.hi())
+                        .is_some_and(|cmnt| cmnt.style.is_mixed())
+                    {
+                        self.neverbreak();
+                        self.print_comments(
+                            value.span.lo(),
+                            CommentConfig::skip_ws().mixed_no_break(),
+                        );
+                    }
                 }
+                self.end();
+                self.end();
+                if self
+                    .print_comments(
+                        ty.span.hi(),
+                        CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
+                    )
+                    .is_some_and(|cmnt| !cmnt.is_mixed())
+                {
+                    self.break_offset_if_not_bol(0, -self.ind, false);
+                } else {
+                    self.zerobreak();
+                    self.s.offset(-self.ind);
+                }
+                self.end();
+                self.zerobreak();
                 self.word(")");
             }
             ast::TypeKind::Custom(path) => self.print_path(path),
@@ -1440,7 +1514,10 @@ impl<'ast> State<'_, 'ast> {
                     }
                     ast::IndexKind::Range(expr0, expr1) => {
                         if let Some(expr0) = expr0 {
-                            if self.print_comments(expr0.span.lo()).map_or(true, |s| s.is_mixed()) {
+                            if self
+                                .print_comments(expr0.span.lo(), CommentConfig::skip_ws())
+                                .map_or(true, |s| s.is_mixed())
+                            {
                                 self.zerobreak();
                             }
                             self.print_expr(expr0);
@@ -1453,12 +1530,21 @@ impl<'ast> State<'_, 'ast> {
                             if expr0.is_some() {
                                 self.zerobreak();
                             }
-                            self.print_cmnts_with_space_skip_ws(expr1.span.lo());
+                            self.print_comments(
+                                expr1.span.lo(),
+                                CommentConfig::skip_ws()
+                                    .mixed_prev_space()
+                                    .mixed_no_break()
+                                    .mixed_post_nbsp(),
+                            );
                             self.print_expr(expr1);
                         }
 
                         let mut is_trailing = false;
-                        if let Some(style) = self.print_cmnts_with_space_skip_ws(span.hi()) {
+                        if let Some(style) = self.print_comments(
+                            span.hi(),
+                            CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
+                        ) {
                             skip_break = true;
                             is_trailing = style.is_trailing();
                         }
@@ -1515,13 +1601,13 @@ impl<'ast> State<'_, 'ast> {
                 self.s.cbox(self.ind);
                 // conditional expression
                 self.s.ibox(0);
-                self.print_comments_skip_ws(cond.span.lo());
+                self.print_comments(cond.span.lo(), CommentConfig::skip_ws());
                 self.print_expr(cond);
                 let cmnt = self.peek_comment_before(then.span.lo());
                 if cmnt.is_some() {
                     self.space();
                 }
-                self.print_comments_skip_ws(then.span.lo());
+                self.print_comments(then.span.lo(), CommentConfig::skip_ws());
                 self.end();
                 if !self.is_bol_or_only_ind() {
                     self.space();
@@ -1534,7 +1620,7 @@ impl<'ast> State<'_, 'ast> {
                 if cmnt.is_some() {
                     self.space();
                 }
-                self.print_comments_skip_ws(els.span.lo());
+                self.print_comments(els.span.lo(), CommentConfig::skip_ws());
                 self.end();
                 if !self.is_bol_or_only_ind() {
                     self.space();
@@ -1637,7 +1723,7 @@ impl<'ast> State<'_, 'ast> {
         };
         if should_print {
             self.space();
-            self.print_comments_skip_ws(pos);
+            self.print_comments(pos, CommentConfig::skip_ws());
         } else {
             self.braces_break();
         }
@@ -1651,7 +1737,10 @@ impl<'ast> State<'_, 'ast> {
                 self.braces_break();
             } else {
                 self.word(",");
-                if self.print_comments_skip_ws(args[i + 1].name.span.lo()).is_none() {
+                if self
+                    .print_comments(args[i + 1].name.span.lo(), CommentConfig::skip_ws())
+                    .is_none()
+                {
                     self.space();
                 }
             }
@@ -1767,7 +1856,7 @@ impl<'ast> State<'_, 'ast> {
                 let mut els_opt = els_opt.as_deref();
                 while let Some(els) = els_opt {
                     if self.ends_with('}') {
-                        match self.print_comments_skip_ws(els.span.lo()) {
+                        match self.print_comments(els.span.lo(), CommentConfig::skip_ws()) {
                             Some(cmnt) => {
                                 if cmnt.is_mixed() {
                                     self.hardbreak()
@@ -1777,7 +1866,7 @@ impl<'ast> State<'_, 'ast> {
                         }
                     } else {
                         self.hardbreak_if_not_bol();
-                        self.print_comments_skip_ws(els.span.lo());
+                        self.print_comments(els.span.lo(), CommentConfig::skip_ws());
                     }
                     self.ibox(0);
                     self.word("else ");
@@ -1813,10 +1902,11 @@ impl<'ast> State<'_, 'ast> {
                     let ast::TryCatchClause { args, block, span: try_span, .. } = first;
                     self.ibox(0);
                     self.word("try ");
-                    self.print_comments_skip_ws(expr.span.lo());
+                    self.print_comments(expr.span.lo(), CommentConfig::skip_ws());
                     self.print_expr(expr);
-                    self.print_comments_skip_ws(
+                    self.print_comments(
                         args.first().map(|p| p.span.lo()).unwrap_or_else(|| expr.span.lo()),
+                        CommentConfig::skip_ws(),
                     );
                     if !self.is_beginning_of_line() {
                         self.nbsp();
@@ -1849,11 +1939,14 @@ impl<'ast> State<'_, 'ast> {
                         }
                         self.s.cbox(self.ind);
                         self.neverbreak();
-                        self.print_comments_skip_ws(catch_span.lo());
+                        self.print_comments(catch_span.lo(), CommentConfig::skip_ws());
                         self.word("catch ");
                         self.neverbreak();
                         if !args.is_empty() {
-                            self.print_cmnts_with_space_skip_ws(args[0].span.lo());
+                            self.print_comments(
+                                args[0].span.lo(),
+                                CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
+                            );
                             if let Some(name) = name {
                                 self.print_ident(name);
                             }
@@ -1894,7 +1987,7 @@ impl<'ast> State<'_, 'ast> {
         if stmt_needs_semi(kind) {
             self.word(";");
         }
-        self.print_comments_skip_ws(stmt.span.hi());
+        self.print_comments(stmt.span.hi(), CommentConfig::skip_ws());
     }
 
     fn print_if_no_else(
@@ -1903,7 +1996,7 @@ impl<'ast> State<'_, 'ast> {
         then: &'ast ast::Stmt<'ast>,
         inline: bool,
     ) {
-        // NOTE(rusowsky): unless we add bracket spans to solar, using `the.span.lo()` consumes
+        // NOTE(rusowsky): unless we add bracket spans to solar, using `then.span.lo()` consumes
         // "cmnt12" of the IfStatement test inside the preceeding clause
         // self.print_if_cond("if", cond, cond.span.hi());
         self.print_if_cond("if", cond, then.span.lo());
@@ -2006,7 +2099,7 @@ impl<'ast> State<'_, 'ast> {
                 self.space();
             }
             print(self, &block[0]);
-            self.print_comments_skip_ws(get_block_span(&block[0]).hi());
+            self.print_comments(get_block_span(&block[0]).hi(), CommentConfig::skip_ws());
             if matches!(block_format, BlockFormat::Compact(true)) {
                 self.s.scan_break(BreakToken { post_break: Some('}'), ..Default::default() });
                 self.s.offset(-self.ind);
@@ -2032,7 +2125,7 @@ impl<'ast> State<'_, 'ast> {
                 } else if block_format.with_braces() {
                     self.word("{}");
                 }
-                self.print_comments_skip_ws(span.hi());
+                self.print_comments(span.hi(), CommentConfig::skip_ws());
             }
             // Other comments are printed inside the block
             else {
@@ -2045,7 +2138,10 @@ impl<'ast> State<'_, 'ast> {
                     self.word("{");
                     self.s.cbox(self.ind);
                 }
-                self.print_cmnts_with_space_skip_ws(span.hi());
+                self.print_comments(
+                    span.hi(),
+                    CommentConfig::skip_ws().mixed_no_break().mixed_prev_space().mixed_post_nbsp(),
+                );
                 // manually adjust offset to ensure that the closing brace is properly indented.
                 // if the last cmnt was breaking, we replace offset to avoid e a double break.
                 if self.is_bol_or_only_ind() {
@@ -2063,14 +2159,14 @@ impl<'ast> State<'_, 'ast> {
 
         match block_format {
             BlockFormat::NoBraces(None) => {
-                self.print_comments_skip_ws(get_block_span(&block[0]).lo());
+                self.print_comments(get_block_span(&block[0]).lo(), CommentConfig::skip_ws());
                 self.s.cbox(0);
             }
             BlockFormat::NoBraces(Some(offset)) => {
                 if self.peek_comment_before(get_block_span(&block[0]).lo()).is_some() {
                     self.hardbreak();
                     self.break_offset_if_not_bol(0, offset, false);
-                    self.print_comments_skip_ws(get_block_span(&block[0]).lo());
+                    self.print_comments(get_block_span(&block[0]).lo(), CommentConfig::skip_ws());
                 } else {
                     self.zerobreak();
                 }
@@ -2081,7 +2177,7 @@ impl<'ast> State<'_, 'ast> {
                 self.word("{");
                 self.s.cbox(self.ind);
                 if self
-                    .print_comments_skip_ws(get_block_span(&block[0]).lo())
+                    .print_comments(get_block_span(&block[0]).lo(), CommentConfig::skip_ws())
                     .map_or(true, |cmnt| cmnt.is_mixed())
                 {
                     self.hardbreak_if_nonempty();
@@ -2096,8 +2192,9 @@ impl<'ast> State<'_, 'ast> {
                 self.hardbreak_if_not_bol();
             }
         }
-        self.print_cmnts_with_space_skip_ws(
+        self.print_comments(
             block.last().map_or(span.hi(), |b| get_block_span(b).hi()),
+            CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
         );
         if !block_format.breaks() {
             if !self.last_token_is_break() {
@@ -2375,7 +2472,7 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
         }
-        self.print_comments(span.hi());
+        self.print_comments(span.hi(), CommentConfig::default());
         self.print_trailing_comment(span.hi(), None);
         self.hardbreak_if_not_bol();
     }
@@ -2449,7 +2546,7 @@ impl<'ast> State<'_, 'ast> {
         match map.remove(&span.lo()) {
             Some((pre_comments, post_comments)) => {
                 for cmnt in pre_comments {
-                    self.print_comment(cmnt, false);
+                    self.print_comment(cmnt, CommentConfig::default());
                 }
                 if !self.is_bol_or_only_ind() {
                     self.space();
@@ -2457,7 +2554,7 @@ impl<'ast> State<'_, 'ast> {
                 self.ibox(0);
                 print_fn(self);
                 for cmnt in post_comments {
-                    self.print_comment(cmnt, true);
+                    self.print_comment(cmnt, CommentConfig::default().mixed_prev_space());
                 }
                 self.end();
             }
@@ -2700,6 +2797,7 @@ fn stmt_needs_semi(stmt: &ast::StmtKind<'_>) -> bool {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum Skip {
     First,
     All,
@@ -2726,5 +2824,38 @@ fn has_complex_succesor(expr_kind: &ast::ExprKind<'_>, left: bool) -> bool {
         ast::ExprKind::Unary(_, expr) => has_complex_succesor(&expr.kind, left),
         ast::ExprKind::Lit(..) | ast::ExprKind::Ident(_) => false,
         _ => true,
+    }
+}
+
+#[derive(Default, Clone, Copy)]
+struct CommentConfig {
+    skip_blanks: Option<Skip>,
+    mixed_prev_space: bool,
+    mixed_post_nbsp: bool,
+    mixed_no_break: bool,
+}
+
+impl CommentConfig {
+    fn skip_ws() -> Self {
+        Self { skip_blanks: Some(Skip::All), ..Default::default() }
+    }
+
+    fn skip_first_ws() -> Self {
+        Self { skip_blanks: Some(Skip::First), ..Default::default() }
+    }
+
+    fn mixed_no_break(mut self) -> Self {
+        self.mixed_no_break = true;
+        self
+    }
+
+    fn mixed_prev_space(mut self) -> Self {
+        self.mixed_prev_space = true;
+        self
+    }
+
+    fn mixed_post_nbsp(mut self) -> Self {
+        self.mixed_post_nbsp = true;
+        self
     }
 }

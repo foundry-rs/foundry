@@ -178,8 +178,8 @@ fmt_tests! {
     ImportDirective, // OK
     InlineDisable, // FIX: invalid output
     IntTypes, // OK
-    LiteralExpression, // Ok? is it acceptable?
-    MappingType, // TODO: comments
+    LiteralExpression, // OK? is it acceptable?
+    MappingType, // OK? is it acceptable?
     ModifierDefinition, // OK
     NamedFunctionCallExpression, // FIX: idempotency (comment-related)
     NumberLiteralUnderscore, // OK
