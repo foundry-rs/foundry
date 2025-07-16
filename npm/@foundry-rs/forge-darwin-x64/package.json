@@ -1,6 +1,6 @@
 {
   "name": "@unfoundry/forge-darwin-x64",
-  "version": "0.0.2",
+  "version": "1.2.3",
   "type": "module",
   "homepage": "https://getfoundry.sh",
   "description": "Fast and flexible Ethereum testing framework (macOS x64)",
@@ -12,6 +12,9 @@
   ],
   "cpu": [
     "x64"
+  ],
+  "files": [
+    "bin"
   ],
   "engines": {
     "node": ">=20"

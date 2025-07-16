@@ -36,6 +36,9 @@
       "#*": [
         "./src/*"
       ],
+      // "#Cargo.toml": [
+      //   "../Cargo.toml"
+      // ],
       "#package.json": [
         "./package.json"
       ]

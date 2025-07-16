@@ -274,9 +274,9 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           BUN_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         with:
-          scope: '@foundry-rs'
-          bun-version: 'latest'
-          registry-url: 'https://registry.npmjs.org'
+          scope: "@foundry-rs"
+          bun-version: "latest"
+          registry-url: "https://registry.npmjs.org"
 
       - name: Install dependencies
         working-directory: ./npm
@@ -296,7 +296,7 @@ jobs:
           bun run ./scripts/prepublish.ts \
             --arch=${{ env.ARCH }} \
             --forge-bin-path=${{ env.FORGE_BIN_PATH }}
-      
+
       - name: Publish npm package
         shell: bash
         working-directory: ./npm
@@ -309,7 +309,7 @@ jobs:
         run: |-
           bun run ./scripts/publis.ts ./@foundry-rs/forge-${{ env.PLATFORM }}-${{ env.ARCH }}
 
-        # bump version, bump version of each item in `optionalDependencies`
+        # bump version of each item in `optionalDependencies`
       - name: Finally, publish @foundry-rs/forge
         shell: bash
         working-directory: ./npm
@@ -322,7 +322,7 @@ jobs:
           BUMP_VERSION: "TODO: Find this"
         run: |-
           cd @foundr-rs/forge
-          
+
           export NPM_TOKEN=${{ secrets.NPM_TOKEN }}
           export BUN_AUTH_TOKEN=${{ secrets.NPM_TOKEN }}
           export NPM_CONFIG_TOKEN=${{ secrets.NPM_TOKEN }}
@@ -335,7 +335,7 @@ jobs:
               --git-tag-version=false \
               --commit-hook=false \
               --allow-same-version
-          
+
           bun pm pack
 
           bun publish \
