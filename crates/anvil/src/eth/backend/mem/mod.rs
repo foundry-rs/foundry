@@ -112,7 +112,7 @@ use revm::{
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::AccountInfo,
 };
-use revm_inspectors::transfer::TransferInspector;
+use revm_inspectors::{tracing::js::JsInspector, transfer::TransferInspector};
 use std::{
     collections::BTreeMap,
     fmt::Debug,
@@ -1927,7 +1927,11 @@ impl Backend {
                         }
                     },
 
-                    GethDebugTracerType::JsTracer(_code) => {
+                    GethDebugTracerType::JsTracer(code) => {
+                        let config = tracer_config.into_json();
+                        let _inspector = JsInspector::new(code, config).unwrap();
+
+                        let _env = self.build_call_env(request, fee_details, block);
                         Err(RpcError::invalid_params("unsupported tracer type").into())
                     }
                 };
