@@ -3,7 +3,7 @@
 use alloy_chains::NamedChain;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{TransactionBuilder, TransactionResponse};
-use alloy_primitives::{B256, Bytes, address, b256};
+use alloy_primitives::{B256, Bytes, address, b256, hex};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{BlockNumberOrTag, Index, TransactionRequest};
 use anvil::NodeConfig;
@@ -140,6 +140,28 @@ transactions:        [
 0x950091817a57e22b6c1f3b951a15f52d41ac89b299cc8f9c89bb6d185f80c415
 
 "#]]);
+});
+
+casttest!(block_raw, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    let output = cmd
+        .args(["block", "22934900", "--rpc-url", eth_rpc_url.as_str(), "--raw"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string();
+
+    // Hash the output with keccak256
+    let hash = alloy_primitives::keccak256(hex::decode(output).unwrap());
+
+    // Verify the Mainnet's block #22934900 header hash equals the expected value
+    // obtained with go-ethereum's `block.Header().Hash()` method
+    assert_eq!(
+        hash.to_string(),
+        "0x49fd7f3b9ba5d67fa60197027f09454d4cac945e8f271edcc84c3fd5872446d3"
+    );
 });
 
 // tests that the `cast find-block` command works correctly
