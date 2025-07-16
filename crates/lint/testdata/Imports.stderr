@@ -1,7 +1,7 @@
 note[unaliased-plain-import]: use named imports '{A, B}' or alias 'import ".." as X'
   --> ROOT/testdata/Imports.sol:LL:CC
    |
-39 | import "SomeFile.sol";
+40 | import "SomeFile.sol";
    |        --------------
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unaliased-plain-import
@@ -9,7 +9,7 @@ note[unaliased-plain-import]: use named imports '{A, B}' or alias 'import ".." a
 note[unaliased-plain-import]: use named imports '{A, B}' or alias 'import ".." as X'
   --> ROOT/testdata/Imports.sol:LL:CC
    |
-40 | import "AnotherFile.sol";
+41 | import "AnotherFile.sol";
    |        -----------------
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unaliased-plain-import
@@ -33,7 +33,7 @@ note[unused-import]: unused imports should be removed
 note[unused-import]: unused imports should be removed
   --> ROOT/testdata/Imports.sol:LL:CC
    |
-12 |     symbolNotUsed,
+13 |     symbolNotUsed,
    |     -------------
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
@@ -41,7 +41,7 @@ note[unused-import]: unused imports should be removed
 note[unused-import]: unused imports should be removed
   --> ROOT/testdata/Imports.sol:LL:CC
    |
-14 |     IContractNotUsed
+15 |     IContractNotUsed
    |     ----------------
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
@@ -49,7 +49,7 @@ note[unused-import]: unused imports should be removed
 note[unused-import]: unused imports should be removed
   --> ROOT/testdata/Imports.sol:LL:CC
    |
-25 |     symbolNotUsed3
+26 |     symbolNotUsed3
    |     --------------
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
@@ -57,7 +57,7 @@ note[unused-import]: unused imports should be removed
 note[unused-import]: unused imports should be removed
   --> ROOT/testdata/Imports.sol:LL:CC
    |
-30 |     CONSTANT_1
+31 |     CONSTANT_1
    |     ----------
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
@@ -65,7 +65,7 @@ note[unused-import]: unused imports should be removed
 note[unused-import]: unused imports should be removed
   --> ROOT/testdata/Imports.sol:LL:CC
    |
-36 |     YetAnotherType
+37 |     YetAnotherType
    |     --------------
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
@@ -73,7 +73,7 @@ note[unused-import]: unused imports should be removed
 note[unused-import]: unused imports should be removed
   --> ROOT/testdata/Imports.sol:LL:CC
    |
-43 | import "another_file_2.sol" as AnotherFile2;
+44 | import "another_file_2.sol" as AnotherFile2;
    | --------------------------------------------
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
@@ -81,7 +81,7 @@ note[unused-import]: unused imports should be removed
 note[unused-import]: unused imports should be removed
   --> ROOT/testdata/Imports.sol:LL:CC
    |
-46 | import * as OtherUtils from "utils2.sol";
+47 | import * as OtherUtils from "utils2.sol";
    | -----------------------------------------
    |
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
