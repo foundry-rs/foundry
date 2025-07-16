@@ -10,7 +10,6 @@ use solar_ast::{Arena, SourceUnit, visit::Visit};
 use solar_interface::{
     Session, SourceMap,
     diagnostics::{self, DiagCtxt, JsonEmitter},
-    source_map::SourceFile,
 };
 use std::{
     path::{Path, PathBuf},
@@ -126,7 +125,7 @@ impl SolidityLinter {
 
             // Process the inline-config
             let comments = Comments::new(&file);
-            let inline_config = parse_inline_config(sess, &comments, &lints, &ast, file);
+            let inline_config = parse_inline_config(sess, &comments, &lints, &ast);
 
             // Initialize and run the visitor
             let ctx = LintContext::new(sess, self.with_description, inline_config);
@@ -176,7 +175,6 @@ fn parse_inline_config<'ast>(
     comments: &Comments,
     lints: &[&'static str],
     ast: &'ast SourceUnit<'ast>,
-    file: Arc<SourceFile>,
 ) -> InlineConfig {
     let items = comments.iter().filter_map(|comment| {
         let mut item = comment.lines.first()?.as_str();
@@ -197,7 +195,7 @@ fn parse_inline_config<'ast>(
         }
     });
 
-    InlineConfig::new(items, ast, file)
+    InlineConfig::new(items, ast, sess.source_map())
 }
 
 #[derive(Error, Debug)]

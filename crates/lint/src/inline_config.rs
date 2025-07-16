@@ -1,7 +1,7 @@
 use solar_ast::{Item, SourceUnit, visit::Visit};
-use solar_interface::source_map::SourceFile;
+use solar_interface::{BytePos, SourceMap};
 use solar_parse::ast::Span;
-use std::{collections::HashMap, fmt, marker::PhantomData, ops::ControlFlow, sync::Arc};
+use std::{collections::HashMap, fmt, marker::PhantomData, ops::ControlFlow};
 
 /// An inline config item
 #[derive(Clone, Debug)]
@@ -111,11 +111,11 @@ impl InlineConfig {
     pub fn new<'ast>(
         items: impl IntoIterator<Item = (Span, InlineConfigItem)>,
         ast: &'ast SourceUnit<'ast>,
-        file: Arc<SourceFile>,
+        source_map: &SourceMap,
     ) -> Self {
-        let src = file.src.as_str();
         let mut disabled_ranges: HashMap<String, Vec<DisabledRange>> = HashMap::new();
         let mut disabled_blocks: HashMap<String, (usize, usize)> = HashMap::new();
+        let mut last_file: (usize, BytePos) = (0, BytePos(0));
 
         let mut prev_sp = Span::DUMMY;
         for (sp, item) in items {
@@ -124,11 +124,15 @@ impl InlineConfig {
                 prev_sp = sp;
             }
 
+            let (file, comment_range) = match source_map.span_to_source(sp) {
+                Ok(res) => res,
+                Err(_) => continue,
+            };
+            let src = file.src.as_str();
+            last_file = (src.len(), file.start_pos);
             match item {
                 InlineConfigItem::DisableNextItem(lints) => {
-                    let comment_end = sp.hi().to_usize();
-
-                    if let Some(next_item) = NextItemFinder::new(comment_end).find(ast) {
+                    if let Some(next_item) = NextItemFinder::new(sp.hi().to_usize()).find(ast) {
                         for lint in lints {
                             disabled_ranges.entry(lint).or_default().push(DisabledRange {
                                 start: next_item.lo().to_usize(),
@@ -139,17 +143,11 @@ impl InlineConfig {
                     };
                 }
                 InlineConfigItem::DisableLine(lints) => {
-                    let mut prev_newline = src[..(sp.lo() - file.start_pos).to_usize()]
-                        .char_indices()
-                        .rev()
-                        .skip_while(|(_, ch)| *ch != '\n');
-                    let start = prev_newline.next().map(|(idx, _)| idx).unwrap_or_default();
+                    let start = src[..comment_range.start].rfind('\n').map_or(0, |i| i);
+                    let end = src[comment_range.end..]
+                        .find('\n')
+                        .map_or(src.len(), |i| comment_range.end + i);
 
-                    let end_offset = (sp.hi() - file.start_pos).to_usize();
-                    let mut next_newline =
-                        src[end_offset..].char_indices().skip_while(|(_, ch)| *ch != '\n');
-                    let end =
-                        end_offset + next_newline.next().map(|(idx, _)| idx).unwrap_or_default();
                     for lint in lints {
                         disabled_ranges.entry(lint).or_default().push(DisabledRange {
                             start: start + file.start_pos.to_usize(),
@@ -159,21 +157,17 @@ impl InlineConfig {
                     }
                 }
                 InlineConfigItem::DisableNextLine(lints) => {
-                    let offset = (sp.hi() - file.start_pos).to_usize();
-                    let mut char_indices =
-                        src[offset..].char_indices().skip_while(|(_, ch)| *ch != '\n').skip(1);
-                    if let Some((mut start, _)) = char_indices.next() {
-                        start += offset;
-                        let end = char_indices
-                            .find(|(_, ch)| *ch == '\n')
-                            .map(|(idx, _)| offset + idx + 1)
-                            .unwrap_or(src.len());
-                        for lint in lints {
-                            disabled_ranges.entry(lint).or_default().push(DisabledRange {
-                                start: start + file.start_pos.to_usize(),
-                                end: end + file.start_pos.to_usize(),
-                                loose: false,
-                            })
+                    if let Some(offset) = src[comment_range.end..].find('\n') {
+                        let start = comment_range.end + offset + 1;
+                        if start < src.len() {
+                            let end = src[start..].find('\n').map_or(src.len(), |i| start + i);
+                            for lint in lints {
+                                disabled_ranges.entry(lint).or_default().push(DisabledRange {
+                                    start: start + file.start_pos.to_usize(),
+                                    end: end + file.start_pos.to_usize(),
+                                    loose: false,
+                                })
+                            }
                         }
                     }
                 }
@@ -209,7 +203,7 @@ impl InlineConfig {
         for (lint, (start, _)) in disabled_blocks {
             disabled_ranges.entry(lint).or_default().push(DisabledRange {
                 start,
-                end: src.len(),
+                end: last_file.0 + last_file.1.to_usize(),
                 loose: false,
             });
         }
