@@ -1,6 +1,7 @@
 use solar_ast::{Item, SourceUnit, visit::Visit};
+use solar_interface::source_map::SourceFile;
 use solar_parse::ast::Span;
-use std::{collections::HashMap, fmt, marker::PhantomData, ops::ControlFlow};
+use std::{collections::HashMap, fmt, marker::PhantomData, ops::ControlFlow, sync::Arc};
 
 /// An inline config item
 #[derive(Clone, Debug)]
@@ -110,8 +111,9 @@ impl InlineConfig {
     pub fn new<'ast>(
         items: impl IntoIterator<Item = (Span, InlineConfigItem)>,
         ast: &'ast SourceUnit<'ast>,
-        src: &str,
+        file: Arc<SourceFile>,
     ) -> Self {
+        let src = file.src.as_str();
         let mut disabled_ranges: HashMap<String, Vec<DisabledRange>> = HashMap::new();
         let mut disabled_blocks: HashMap<String, (usize, usize)> = HashMap::new();
 
@@ -137,13 +139,13 @@ impl InlineConfig {
                     };
                 }
                 InlineConfigItem::DisableLine(lints) => {
-                    let mut prev_newline = src[..sp.lo().to_usize()]
+                    let mut prev_newline = src[..(sp.lo() - file.start_pos).to_usize()]
                         .char_indices()
                         .rev()
                         .skip_while(|(_, ch)| *ch != '\n');
                     let start = prev_newline.next().map(|(idx, _)| idx).unwrap_or_default();
 
-                    let end_offset = sp.hi().to_usize();
+                    let end_offset = (sp.hi() - file.start_pos).to_usize();
                     let mut next_newline =
                         src[end_offset..].char_indices().skip_while(|(_, ch)| *ch != '\n');
                     let end =
@@ -157,7 +159,7 @@ impl InlineConfig {
                     }
                 }
                 InlineConfigItem::DisableNextLine(lints) => {
-                    let offset = sp.hi().to_usize();
+                    let offset = (sp.hi() - file.start_pos).to_usize();
                     let mut char_indices =
                         src[offset..].char_indices().skip_while(|(_, ch)| *ch != '\n').skip(1);
                     if let Some((mut start, _)) = char_indices.next() {
