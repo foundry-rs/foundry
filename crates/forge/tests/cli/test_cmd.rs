@@ -2475,6 +2475,7 @@ interface Vm {
     function assumeNoRevert(PotentialRevert calldata revertData) external pure;
     function assumeNoRevert(PotentialRevert[] calldata revertData) external pure;
     function expectRevert(bytes4 revertData, uint64 count) external;
+    function assume(bool condition) external pure;
 }
 
 contract ReverterB {
@@ -2581,6 +2582,7 @@ contract ReverterTest is Test {
 
     /// @dev Test that `assumeNoRevert` assumptions are cleared after the first non-cheatcode external call
     function testMultipleAssumesClearAfterCall_fails(uint256 x) public view {
+        _vm.assume(x != 3);
         Vm.PotentialRevert[] memory revertData = new Vm.PotentialRevert[](2);
         revertData[0] = Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.MyRevert.selector), partialMatch: false, reverter: address(0)});
         revertData[1] = Vm.PotentialRevert({revertData: abi.encodeWithSelector(Reverter.RevertWithData.selector, 4), partialMatch: false, reverter: address(reverter)});

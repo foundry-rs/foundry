@@ -855,9 +855,43 @@ impl<'a> InvariantExecutor<'a> {
         address: Address,
         targeted_contracts: &mut TargetedContracts,
     ) -> Result<()> {
-        if let Some(target) = targeted_contracts.get(&address) {
-            // If test contract is a target, then include only state-changing functions
-            // that are not reserved.
+        for (address, (identifier, _)) in self.setup_contracts {
+            if let Some(selectors) = self.artifact_filters.targeted.get(identifier) {
+                self.add_address_with_functions(*address, selectors, false, targeted_contracts)?;
+            }
+        }
+
+        let mut target_test_selectors = vec![];
+        let mut excluded_test_selectors = vec![];
+
+        // Collect contract functions marked as target for fuzzing campaign.
+        let selectors =
+            self.executor.call_sol_default(address, &IInvariantTest::targetSelectorsCall {});
+        for IInvariantTest::FuzzSelector { addr, selectors } in selectors {
+            if addr == address {
+                target_test_selectors = selectors.clone();
+            }
+            self.add_address_with_functions(addr, &selectors, false, targeted_contracts)?;
+        }
+
+        // Collect contract functions excluded from fuzzing campaign.
+        let excluded_selectors =
+            self.executor.call_sol_default(address, &IInvariantTest::excludeSelectorsCall {});
+        for IInvariantTest::FuzzSelector { addr, selectors } in excluded_selectors {
+            if addr == address {
+                // If fuzz selector address is the test contract, then record selectors to be
+                // later excluded if needed.
+                excluded_test_selectors = selectors.clone();
+            }
+            self.add_address_with_functions(addr, &selectors, true, targeted_contracts)?;
+        }
+
+        if target_test_selectors.is_empty()
+            && let Some(target) = targeted_contracts.get(&address)
+        {
+            // If test contract is marked as a target and no target selector explicitly set, then
+            // include only state-changing functions that are not reserved and selectors that are
+            // not explicitly excluded.
             let selectors: Vec<_> = target
                 .abi
                 .functions()
@@ -867,6 +901,7 @@ impl<'a> InvariantExecutor<'a> {
                         alloy_json_abi::StateMutability::Pure
                             | alloy_json_abi::StateMutability::View
                     ) || func.is_reserved()
+                        || excluded_test_selectors.contains(&func.selector())
                     {
                         None
                     } else {
@@ -875,26 +910,6 @@ impl<'a> InvariantExecutor<'a> {
                 })
                 .collect();
             self.add_address_with_functions(address, &selectors, false, targeted_contracts)?;
-        }
-
-        for (address, (identifier, _)) in self.setup_contracts {
-            if let Some(selectors) = self.artifact_filters.targeted.get(identifier) {
-                self.add_address_with_functions(*address, selectors, false, targeted_contracts)?;
-            }
-        }
-
-        // Collect contract functions marked as target for fuzzing campaign.
-        let selectors =
-            self.executor.call_sol_default(address, &IInvariantTest::targetSelectorsCall {});
-        for IInvariantTest::FuzzSelector { addr, selectors } in selectors {
-            self.add_address_with_functions(addr, &selectors, false, targeted_contracts)?;
-        }
-
-        // Collect contract functions excluded from fuzzing campaign.
-        let excluded_selectors =
-            self.executor.call_sol_default(address, &IInvariantTest::excludeSelectorsCall {});
-        for IInvariantTest::FuzzSelector { addr, selectors } in excluded_selectors {
-            self.add_address_with_functions(addr, &selectors, true, targeted_contracts)?;
         }
 
         Ok(())
