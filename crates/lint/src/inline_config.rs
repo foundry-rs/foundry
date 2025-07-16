@@ -152,8 +152,8 @@ impl InlineConfig {
                         end_offset + next_newline.next().map(|(idx, _)| idx).unwrap_or_default();
                     for lint in lints {
                         disabled_ranges.entry(lint).or_default().push(DisabledRange {
-                            start,
-                            end,
+                            start: start + file.start_pos.to_usize(),
+                            end: end + file.start_pos.to_usize(),
                             loose: false,
                         })
                     }
@@ -170,8 +170,8 @@ impl InlineConfig {
                             .unwrap_or(src.len());
                         for lint in lints {
                             disabled_ranges.entry(lint).or_default().push(DisabledRange {
-                                start,
-                                end,
+                                start: start + file.start_pos.to_usize(),
+                                end: end + file.start_pos.to_usize(),
                                 loose: false,
                             })
                         }
