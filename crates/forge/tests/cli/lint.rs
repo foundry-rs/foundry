@@ -30,7 +30,7 @@ const OTHER_CONTRACT: &str = r#"
     pragma solidity ^0.8.0;
 
     // forge-lint: disable-next-line
-    import { ContractWithLints } from "ContractWithLints.sol";
+    import { ContractWithLints } from "./ContractWithLints.sol";
 
     contract OtherContractWithLints {
         uint256 VARIABLE_MIXED_CASE_INFO;
