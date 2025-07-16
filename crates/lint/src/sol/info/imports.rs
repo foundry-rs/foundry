@@ -138,15 +138,6 @@ impl<'ast> Visit<'ast> for UnusedChecker<'ast> {
         self.walk_function_header(header)
     }
 
-    fn visit_modifier(
-        &mut self,
-        modifier: &'ast ast::Modifier<'ast>,
-    ) -> ControlFlow<Self::BreakValue> {
-        self.mark_symbol_used(modifier.name.first().name);
-
-        self.walk_modifier(modifier)
-    }
-
     fn visit_expr(&mut self, expr: &'ast ast::Expr<'ast>) -> ControlFlow<Self::BreakValue> {
         if let ast::ExprKind::Ident(id) = expr.kind {
             self.mark_symbol_used(id.name);
