@@ -1563,8 +1563,26 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
             // At the target depth we set `msg.sender`
             if curr_depth == prank.depth {
+                // Load the pranked account to ensure its state is properly tracked
+                // This ensures the account exists in the journal and its nonce is tracked
+                if let Err(err) = ecx.journaled_state.load_account(prank.new_caller) {
+                    // This will only err out on a database issue.
+                    return Some(CreateOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Revert,
+                            output: Error::encode(err),
+                            gas,
+                        },
+                        address: None,
+                    });
+                }
+
                 input.set_caller(prank.new_caller);
                 prank_applied = true;
+
+                // IMPORTANT: Ensure the pranked account's state is committed to the journal
+                // This ensures nonce increments persist even after stopPrank is called
+                ecx.journaled_state.touch(prank.new_caller);
             }
 
             // At the target depth, or deeper, we set `tx.origin`

@@ -3871,3 +3871,78 @@ MyUniqueEventWithinLocalProject(uint256,address)
 
 "#]]);
 });
+
+// <https://github.com/foundry-rs/foundry/issues/11021>
+forgetest_init!(revm_27_prank_bug_fix, |prj, cmd| {
+    prj.add_test(
+        "PrankBug.t.sol",
+        r#"// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract PrankTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        vm.startPrank(address(0x123));
+        counter = new Counter();
+        vm.stopPrank();
+    }
+
+    function test_Increment() public {
+        vm.startPrank(address(0x123));
+        counter = new Counter();
+        vm.stopPrank();
+
+        counter.increment();
+        assertEq(counter.number(), 1);
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mc", "PrankTest", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/PrankBug.t.sol:PrankTest
+[PASS] test_Increment() ([GAS])
+Traces:
+  [137218] PrankTest::setUp()
+    ├─ [0] VM::startPrank(0x0000000000000000000000000000000000000123)
+    │   └─ ← [Return]
+    ├─ [96345] → new Counter@0x6cdBd1b486b8FBD4140e8cd6daAED05bE13eD914
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [0] VM::stopPrank()
+    │   └─ ← [Return]
+    └─ ← [Stop]
+
+  [161909] PrankTest::test_Increment()
+    ├─ [0] VM::startPrank(0x0000000000000000000000000000000000000123)
+    │   └─ ← [Return]
+    ├─ [96345] → new Counter@0xc4B957Cd61beB9b9afD76204b30683EDAaaB51Ec
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [0] VM::stopPrank()
+    │   └─ ← [Return]
+    ├─ [22418] Counter::increment()
+    │   ├─  storage changes:
+    │   │   @ 0: 0 → 1
+    │   └─ ← [Stop]
+    ├─ [424] Counter::number() [staticcall]
+    │   └─ ← [Return] 1
+    ├─ [0] VM::assertEq(1, 1) [staticcall]
+    │   └─ ← [Return]
+    ├─  storage changes:
+    │   @ 31: 0x00000000000000000000006cdbd1b486b8fbd4140e8cd6daaed05be13ed91401 → 0x0000000000000000000000c4b957cd61beb9b9afd76204b30683edaaab51ec01
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
