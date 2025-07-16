@@ -142,12 +142,11 @@ transactions:        [
 "#]]);
 });
 
-casttest!(block_raw, async |_prj, cmd| {
-    let (_, _) = anvil::spawn(NodeConfig::test()).await;
+casttest!(block_raw, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
 
-    // Call `cast block 0 --raw` to get the RLP-encoded block header
     let output = cmd
-        .args(["block", "0", "--raw"])
+        .args(["block", "22934900", "--rpc-url", eth_rpc_url.as_str(), "--raw"])
         .assert_success()
         .get_output()
         .stdout_lossy()
@@ -157,11 +156,11 @@ casttest!(block_raw, async |_prj, cmd| {
     // Hash the output with keccak256
     let hash = alloy_primitives::keccak256(hex::decode(output).unwrap());
 
-    // Verify the Anvil's Block #0 header hash equals the expected value
+    // Verify the Mainnet's block #22934900 header hash equals the expected value
     // obtained with go-ethereum's `block.Header().Hash()` method
     assert_eq!(
         hash.to_string(),
-        "0x691fc66d7f7e2da20efee95ff6c591db5ef40f867d1c603b31ca69e203b89560"
+        "0x49fd7f3b9ba5d67fa60197027f09454d4cac945e8f271edcc84c3fd5872446d3"
     );
 });
 
