@@ -118,7 +118,7 @@ forgetest!(can_override_config_severity, |prj, cmd| {
     });
     cmd.arg("lint").args(["--severity", "info"]).assert_success().stderr_eq(str![[r#"
 note[mixed-case-variable]: mutable variables should use mixedCase
- [FILE]:6:17
+ [FILE]:9:17
   |
 9 |         uint256 VARIABLE_MIXED_CASE_INFO;
   |                 ------------------------
