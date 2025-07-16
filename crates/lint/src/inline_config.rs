@@ -1,5 +1,5 @@
 use solar_ast::{Item, SourceUnit, visit::Visit};
-use solar_interface::{BytePos, SourceMap};
+use solar_interface::SourceMap;
 use solar_parse::ast::Span;
 use std::{collections::HashMap, fmt, marker::PhantomData, ops::ControlFlow};
 
