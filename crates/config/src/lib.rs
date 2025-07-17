@@ -2597,6 +2597,7 @@ mod tests {
         cache::{CachedChains, CachedEndpoints},
         endpoints::RpcEndpointType,
         etherscan::ResolvedEtherscanConfigs,
+        fmt::IndentStyle,
     };
     use NamedChain::Moonbeam;
     use endpoints::{RpcAuth, RpcEndpointConfig};
@@ -4510,12 +4511,13 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r"
+                r#"
                 [fmt]
                 line_length = 100
                 tab_width = 2
                 bracket_spacing = true
-            ",
+                style = "space"
+            "#,
             )?;
             let loaded = Config::load().unwrap().sanitized();
             assert_eq!(
@@ -4524,6 +4526,7 @@ mod tests {
                     line_length: 100,
                     tab_width: 2,
                     bracket_spacing: true,
+                    style: IndentStyle::Space,
                     ..Default::default()
                 }
             );
