@@ -34,10 +34,13 @@ use revm::{
     database::WrapDatabaseRef,
     handler::{EthPrecompiles, instructions::EthInstructions},
     interpreter::InstructionResult,
-    precompile::{PrecompileSpecId, Precompiles, secp256r1::P256VERIFY},
+    precompile::{
+        PrecompileSpecId, Precompiles,
+        secp256r1::{P256VERIFY, P256VERIFY_BASE_GAS_FEE},
+    },
     primitives::hardfork::SpecId,
 };
-use std::sync::Arc;
+use std::{fmt::Debug, sync::Arc};
 
 /// Represents an executed transaction (transacted on the DB)
 #[derive(Debug)]
@@ -229,10 +232,10 @@ impl<DB: Db + ?Sized, V: TransactionValidator> TransactionExecutor<'_, DB, V> {
             receipts_root,
             logs_bloom: bloom,
             difficulty,
-            number: block_number,
+            number: block_number.saturating_to(),
             gas_limit,
             gas_used: cumulative_gas_used,
-            timestamp,
+            timestamp: timestamp.saturating_to(),
             extra_data: Default::default(),
             mix_hash: mix_hash.unwrap_or_default(),
             nonce: Default::default(),
@@ -329,7 +332,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
             let mut evm = new_evm_with_inspector(&mut *self.db, &env, &mut inspector);
 
             if self.odyssey {
-                inject_precompiles(&mut evm, vec![P256VERIFY]);
+                inject_precompiles(&mut evm, vec![(P256VERIFY, P256VERIFY_BASE_GAS_FEE)]);
             }
 
             if let Some(factory) = &self.precompile_factory {
@@ -428,7 +431,7 @@ pub fn new_evm_with_inspector<DB, I>(
     inspector: I,
 ) -> EitherEvm<DB, I, PrecompilesMap>
 where
-    DB: Database<Error = DatabaseError>,
+    DB: Database<Error = DatabaseError> + Debug,
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
 {
     if env.is_optimism {
@@ -500,7 +503,7 @@ pub fn new_evm_with_inspector_ref<'db, DB, I>(
     inspector: &'db mut I,
 ) -> EitherEvm<WrapDatabaseRef<&'db DB>, &'db mut I, PrecompilesMap>
 where
-    DB: DatabaseRef<Error = DatabaseError> + 'db + ?Sized,
+    DB: DatabaseRef<Error = DatabaseError> + Debug + 'db + ?Sized,
     I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>
         + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>,
     WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,

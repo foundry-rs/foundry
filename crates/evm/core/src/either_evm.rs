@@ -6,7 +6,7 @@ use revm::{
     DatabaseCommit, Inspector,
     context::{
         BlockEnv, TxEnv,
-        result::{EVMError, ExecutionResult, HaltReason, ResultAndState},
+        result::{EVMError, ExecResultAndState, ExecutionResult, ResultAndState},
     },
     handler::PrecompileProvider,
     interpreter::InterpreterResult,
@@ -54,13 +54,13 @@ where
     /// Converts the [`EthEvm::transact`] result to [`EitherEvmResult`].
     fn map_eth_result(
         &self,
-        result: Result<ResultAndState<HaltReason>, EVMError<DB::Error>>,
+        result: Result<ExecResultAndState<ExecutionResult>, EVMError<DB::Error>>,
     ) -> EitherEvmResult<DB::Error, OpHaltReason, OpTransactionError> {
         match result {
-            Ok(result) => {
-                // Map the halt reason
-                Ok(result.map_haltreason(OpHaltReason::Base))
-            }
+            Ok(result) => Ok(ResultAndState {
+                result: result.result.map_haltreason(OpHaltReason::Base),
+                state: result.state,
+            }),
             Err(e) => Err(self.map_eth_err(e)),
         }
     }

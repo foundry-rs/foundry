@@ -1,6 +1,6 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
-use alloy_primitives::{Address, Bytes, TxKind};
+use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_provider::{Provider, network::AnyRpcBlock};
 use alloy_rpc_types::BlockId;
 use clap::ValueEnum;
@@ -328,7 +328,7 @@ pub async fn get_tracing_executor(
 }
 
 pub fn configure_env_block(env: &mut EnvMut<'_>, block: &AnyRpcBlock) {
-    env.block.timestamp = block.header.timestamp;
+    env.block.timestamp = U256::from(block.header.timestamp);
     env.block.beneficiary = block.header.beneficiary;
     env.block.difficulty = block.header.difficulty;
     env.block.prevrandao = Some(block.header.mix_hash.unwrap_or_default());

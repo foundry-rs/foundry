@@ -1,5 +1,7 @@
-use solar_ast::{Item, SourceUnit, visit::Visit};
+use solar_ast::{Item, SourceUnit, visit::Visit as VisitAst};
+use solar_interface::SourceMap;
 use solar_parse::ast::Span;
+use solar_sema::hir::{self, Visit as VisitHir};
 use std::{collections::HashMap, fmt, marker::PhantomData, ops::ControlFlow};
 
 /// An inline config item
@@ -19,7 +21,7 @@ pub enum InlineConfigItem {
 
 impl InlineConfigItem {
     /// Parse an inline config item from a string. Validates lint IDs against available lints.
-    pub fn parse(s: &str, available_lints: &[&str]) -> Result<Self, InvalidInlineConfigItem> {
+    pub fn parse(s: &str, lint_ids: &[&str]) -> Result<Self, InvalidInlineConfigItem> {
         let (disable, relevant) = s.split_once('(').unwrap_or((s, ""));
         let lints = if relevant.is_empty() || relevant == "all)" {
             vec!["all".to_string()]
@@ -36,7 +38,7 @@ impl InlineConfigItem {
             if id == "all" {
                 continue;
             }
-            for lint in available_lints {
+            for lint in lint_ids {
                 if *lint == id {
                     continue 'ids;
                 }
@@ -107,13 +109,36 @@ impl InlineConfig {
     /// # Panics
     ///
     /// Panics if `items` is not sorted in ascending order of [`Span`]s.
-    pub fn new<'ast>(
+    pub fn from_ast<'ast>(
         items: impl IntoIterator<Item = (Span, InlineConfigItem)>,
         ast: &'ast SourceUnit<'ast>,
-        src: &str,
+        source_map: &SourceMap,
+    ) -> Self {
+        Self::build(items, source_map, |offset| NextItemFinderAst::new(offset).find(ast))
+    }
+
+    /// Build a new inline config with an iterator of inline config items and their locations in a
+    /// source file.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `items` is not sorted in ascending order of [`Span`]s.
+    pub fn from_hir<'hir>(
+        items: impl IntoIterator<Item = (Span, InlineConfigItem)>,
+        hir: &'hir hir::Hir<'hir>,
+        source_id: hir::SourceId,
+        source_map: &SourceMap,
+    ) -> Self {
+        Self::build(items, source_map, |offset| NextItemFinderHir::new(offset, hir).find(source_id))
+    }
+
+    fn build(
+        items: impl IntoIterator<Item = (Span, InlineConfigItem)>,
+        source_map: &SourceMap,
+        mut find_next_item: impl FnMut(usize) -> Option<Span>,
     ) -> Self {
         let mut disabled_ranges: HashMap<String, Vec<DisabledRange>> = HashMap::new();
-        let mut disabled_blocks: HashMap<String, (usize, usize)> = HashMap::new();
+        let mut disabled_blocks: HashMap<String, (usize, usize, usize)> = HashMap::new();
 
         let mut prev_sp = Span::DUMMY;
         for (sp, item) in items {
@@ -122,11 +147,11 @@ impl InlineConfig {
                 prev_sp = sp;
             }
 
+            let Ok((file, comment_range)) = source_map.span_to_source(sp) else { continue };
+            let src = file.src.as_str();
             match item {
                 InlineConfigItem::DisableNextItem(lints) => {
-                    let comment_end = sp.hi().to_usize();
-
-                    if let Some(next_item) = NextItemFinder::new(comment_end).find(ast) {
+                    if let Some(next_item) = find_next_item(sp.hi().to_usize()) {
                         for lint in lints {
                             disabled_ranges.entry(lint).or_default().push(DisabledRange {
                                 start: next_item.lo().to_usize(),
@@ -134,44 +159,34 @@ impl InlineConfig {
                                 loose: false,
                             });
                         }
-                    };
+                    }
                 }
                 InlineConfigItem::DisableLine(lints) => {
-                    let mut prev_newline = src[..sp.lo().to_usize()]
-                        .char_indices()
-                        .rev()
-                        .skip_while(|(_, ch)| *ch != '\n');
-                    let start = prev_newline.next().map(|(idx, _)| idx).unwrap_or_default();
+                    let start = src[..comment_range.start].rfind('\n').map_or(0, |i| i);
+                    let end = src[comment_range.end..]
+                        .find('\n')
+                        .map_or(src.len(), |i| comment_range.end + i);
 
-                    let end_offset = sp.hi().to_usize();
-                    let mut next_newline =
-                        src[end_offset..].char_indices().skip_while(|(_, ch)| *ch != '\n');
-                    let end =
-                        end_offset + next_newline.next().map(|(idx, _)| idx).unwrap_or_default();
                     for lint in lints {
                         disabled_ranges.entry(lint).or_default().push(DisabledRange {
-                            start,
-                            end,
+                            start: start + file.start_pos.to_usize(),
+                            end: end + file.start_pos.to_usize(),
                             loose: false,
                         })
                     }
                 }
                 InlineConfigItem::DisableNextLine(lints) => {
-                    let offset = sp.hi().to_usize();
-                    let mut char_indices =
-                        src[offset..].char_indices().skip_while(|(_, ch)| *ch != '\n').skip(1);
-                    if let Some((mut start, _)) = char_indices.next() {
-                        start += offset;
-                        let end = char_indices
-                            .find(|(_, ch)| *ch == '\n')
-                            .map(|(idx, _)| offset + idx + 1)
-                            .unwrap_or(src.len());
-                        for lint in lints {
-                            disabled_ranges.entry(lint).or_default().push(DisabledRange {
-                                start,
-                                end,
-                                loose: false,
-                            })
+                    if let Some(offset) = src[comment_range.end..].find('\n') {
+                        let start = comment_range.end + offset + 1;
+                        if start < src.len() {
+                            let end = src[start..].find('\n').map_or(src.len(), |i| start + i);
+                            for lint in lints {
+                                disabled_ranges.entry(lint).or_default().push(DisabledRange {
+                                    start: start + file.start_pos.to_usize(),
+                                    end: end + file.start_pos.to_usize(),
+                                    loose: false,
+                                })
+                            }
                         }
                     }
                 }
@@ -179,13 +194,18 @@ impl InlineConfig {
                     for lint in lints {
                         disabled_blocks
                             .entry(lint)
-                            .and_modify(|(_, depth)| *depth += 1)
-                            .or_insert((sp.hi().to_usize(), 1));
+                            .and_modify(|(_, depth, _)| *depth += 1)
+                            .or_insert((
+                                sp.hi().to_usize(),
+                                1,
+                                // Use file end as fallback for unclosed blocks
+                                file.start_pos.to_usize() + src.len(),
+                            ));
                     }
                 }
                 InlineConfigItem::DisableEnd(lints) => {
                     for lint in lints {
-                        if let Some((start, depth)) = disabled_blocks.get_mut(&lint) {
+                        if let Some((start, depth, _)) = disabled_blocks.get_mut(&lint) {
                             *depth = depth.saturating_sub(1);
 
                             if *depth == 0 {
@@ -204,10 +224,10 @@ impl InlineConfig {
             }
         }
 
-        for (lint, (start, _)) in disabled_blocks {
+        for (lint, (start, _, file_end)) in disabled_blocks {
             disabled_ranges.entry(lint).or_default().push(DisabledRange {
                 start,
-                end: src.len(),
+                end: file_end,
                 loose: false,
             });
         }
@@ -232,13 +252,13 @@ impl InlineConfig {
 
 /// An AST visitor that finds the first `Item` that starts after a given offset.
 #[derive(Debug, Default)]
-struct NextItemFinder<'ast> {
+struct NextItemFinderAst<'ast> {
     /// The offset to search after.
     offset: usize,
     _pd: PhantomData<&'ast ()>,
 }
 
-impl<'ast> NextItemFinder<'ast> {
+impl<'ast> NextItemFinderAst<'ast> {
     fn new(offset: usize) -> Self {
         Self { offset, _pd: PhantomData }
     }
@@ -252,13 +272,58 @@ impl<'ast> NextItemFinder<'ast> {
     }
 }
 
-impl<'ast> Visit<'ast> for NextItemFinder<'ast> {
+impl<'ast> VisitAst<'ast> for NextItemFinderAst<'ast> {
     type BreakValue = Span;
 
     fn visit_item(&mut self, item: &'ast Item<'ast>) -> ControlFlow<Self::BreakValue> {
         // Check if this item starts after the offset.
         if item.span.lo().to_usize() > self.offset {
             return ControlFlow::Break(item.span);
+        }
+
+        // Otherwise, continue traversing inside this item.
+        self.walk_item(item)
+    }
+}
+
+/// A HIR visitor that finds the first `Item` that starts after a given offset.
+#[derive(Debug)]
+struct NextItemFinderHir<'hir> {
+    hir: &'hir hir::Hir<'hir>,
+    /// The offset to search after.
+    offset: usize,
+}
+
+impl<'hir> NextItemFinderHir<'hir> {
+    fn new(offset: usize, hir: &'hir hir::Hir<'hir>) -> Self {
+        Self { offset, hir }
+    }
+
+    /// Finds the next HIR item which a span that begins after the `offset`.
+    fn find(&mut self, id: hir::SourceId) -> Option<Span> {
+        match self.visit_nested_source(id) {
+            ControlFlow::Break(span) => Some(span),
+            ControlFlow::Continue(()) => None,
+        }
+    }
+}
+
+impl<'hir> VisitHir<'hir> for NextItemFinderHir<'hir> {
+    type BreakValue = Span;
+
+    fn hir(&self) -> &'hir hir::Hir<'hir> {
+        self.hir
+    }
+
+    fn visit_item(&mut self, item: hir::Item<'hir, 'hir>) -> ControlFlow<Self::BreakValue> {
+        // Check if this item starts after the offset.
+        if item.span().lo().to_usize() > self.offset {
+            return ControlFlow::Break(item.span());
+        }
+
+        // If the item is before the offset, skip traverse.
+        if item.span().hi().to_usize() < self.offset {
+            return ControlFlow::Continue(());
         }
 
         // Otherwise, continue traversing inside this item.

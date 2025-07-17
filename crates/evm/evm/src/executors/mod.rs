@@ -809,7 +809,7 @@ impl From<DeployResult> for RawCallResult {
 #[derive(Debug)]
 pub struct RawCallResult {
     /// The status of the call
-    pub exit_reason: InstructionResult,
+    pub exit_reason: Option<InstructionResult>,
     /// Whether the call reverted or not
     pub reverted: bool,
     /// Whether the call includes a snapshot failure
@@ -846,14 +846,14 @@ pub struct RawCallResult {
     /// The raw output of the execution
     pub out: Option<Output>,
     /// The chisel state
-    pub chisel_state: Option<(Vec<U256>, Vec<u8>, InstructionResult)>,
+    pub chisel_state: Option<(Vec<U256>, Vec<u8>, Option<InstructionResult>)>,
     pub reverter: Option<Address>,
 }
 
 impl Default for RawCallResult {
     fn default() -> Self {
         Self {
-            exit_reason: InstructionResult::Continue,
+            exit_reason: None,
             reverted: false,
             has_state_snapshot_failure: false,
             result: Bytes::new(),
@@ -899,7 +899,7 @@ impl RawCallResult {
         if let Some(reason) = SkipReason::decode(&self.result) {
             return EvmError::Skip(reason);
         }
-        let reason = rd.unwrap_or_default().decode(&self.result, Some(self.exit_reason));
+        let reason = rd.unwrap_or_default().decode(&self.result, self.exit_reason);
         EvmError::Execution(Box::new(self.into_execution_error(reason)))
     }
 
@@ -910,7 +910,13 @@ impl RawCallResult {
 
     /// Returns an `EvmError` if the call failed, otherwise returns `self`.
     pub fn into_result(self, rd: Option<&RevertDecoder>) -> Result<Self, EvmError> {
-        if self.exit_reason.is_ok() { Ok(self) } else { Err(self.into_evm_error(rd)) }
+        if let Some(reason) = self.exit_reason
+            && reason.is_ok()
+        {
+            Ok(self)
+        } else {
+            Err(self.into_evm_error(rd))
+        }
     }
 
     /// Decodes the result of the call with the given function.
@@ -937,8 +943,9 @@ impl RawCallResult {
 
     /// Update provided history map with edge coverage info collected during this call.
     /// Uses AFL binning algo <https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L57-L85>
-    pub fn merge_edge_coverage(&mut self, history_map: &mut [u8]) -> bool {
+    pub fn merge_edge_coverage(&mut self, history_map: &mut [u8]) -> (bool, bool) {
         let mut new_coverage = false;
+        let mut is_edge = false;
         if let Some(x) = &mut self.edge_coverage {
             // Iterate over the current map and the history map together and update
             // the history map, if we discover some new coverage, report true
@@ -960,6 +967,10 @@ impl RawCallResult {
 
                     // If the old record for this edge pair is lower, update
                     if *hist < bucket {
+                        if *hist == 0 {
+                            // Counts as an edge the first time we see it, otherwise it's a feature.
+                            is_edge = true;
+                        }
                         *hist = bucket;
                         new_coverage = true;
                     }
@@ -969,7 +980,7 @@ impl RawCallResult {
                 }
             }
         }
-        new_coverage
+        (new_coverage, is_edge)
     }
 }
 
@@ -1051,7 +1062,7 @@ fn convert_executed_result(
         .filter(|txs| !txs.is_empty());
 
     Ok(RawCallResult {
-        exit_reason,
+        exit_reason: Some(exit_reason),
         reverted: !matches!(exit_reason, return_ok!()),
         has_state_snapshot_failure,
         result,

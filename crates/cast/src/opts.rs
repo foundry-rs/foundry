@@ -360,6 +360,10 @@ pub enum CastSubcommand {
         #[arg(long, short)]
         field: Option<String>,
 
+        /// Print the raw RLP encoded block header.
+        #[arg(long, conflicts_with = "field")]
+        raw: bool,
+
         #[arg(long, env = "CAST_FULL_BLOCK")]
         full: bool,
 

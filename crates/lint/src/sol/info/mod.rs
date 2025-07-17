@@ -1,4 +1,4 @@
-use crate::sol::{EarlyLintPass, SolLint};
+use crate::sol::{EarlyLintPass, LateLintPass, SolLint};
 
 mod mixed_case;
 use mixed_case::{MIXED_CASE_FUNCTION, MIXED_CASE_VARIABLE};
@@ -13,9 +13,9 @@ mod imports;
 use imports::{UNALIASED_PLAIN_IMPORT, UNUSED_IMPORT};
 
 register_lints!(
-    (PascalCaseStruct, (PASCAL_CASE_STRUCT)),
-    (MixedCaseVariable, (MIXED_CASE_VARIABLE)),
-    (MixedCaseFunction, (MIXED_CASE_FUNCTION)),
-    (ScreamingSnakeCase, (SCREAMING_SNAKE_CASE_CONSTANT, SCREAMING_SNAKE_CASE_IMMUTABLE)),
-    (Imports, (UNALIASED_PLAIN_IMPORT, UNUSED_IMPORT))
+    (PascalCaseStruct, early, (PASCAL_CASE_STRUCT)),
+    (MixedCaseVariable, early, (MIXED_CASE_VARIABLE)),
+    (MixedCaseFunction, early, (MIXED_CASE_FUNCTION)),
+    (ScreamingSnakeCase, early, (SCREAMING_SNAKE_CASE_CONSTANT, SCREAMING_SNAKE_CASE_IMMUTABLE)),
+    (Imports, early, (UNALIASED_PLAIN_IMPORT, UNUSED_IMPORT))
 );

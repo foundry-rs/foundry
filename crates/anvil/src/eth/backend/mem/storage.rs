@@ -250,7 +250,7 @@ impl Default for InMemoryBlockStates {
 }
 
 /// Stores the blockchain data (blocks, transactions)
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BlockchainStorage {
     /// all stored blocks (block hash -> block)
     pub blocks: B256HashMap<Block>,
@@ -337,17 +337,20 @@ impl BlockchainStorage {
     ///
     /// The block identified by `block_number` and `block_hash` is __non-inclusive__, i.e. it will
     /// remain in the state.
-    pub fn unwind_to(&mut self, block_number: u64, block_hash: B256) {
+    pub fn unwind_to(&mut self, block_number: u64, block_hash: B256) -> Vec<Block> {
+        let mut removed = vec![];
         let best_num: u64 = self.best_number;
         for i in (block_number + 1)..=best_num {
             if let Some(hash) = self.hashes.remove(&i)
                 && let Some(block) = self.blocks.remove(&hash)
             {
                 self.remove_block_transactions_by_number(block.header.number);
+                removed.push(block);
             }
         }
         self.best_hash = block_hash;
         self.best_number = block_number;
+        removed
     }
 
     pub fn empty() -> Self {
@@ -435,7 +438,7 @@ impl BlockchainStorage {
 }
 
 /// A simple in-memory blockchain
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Blockchain {
     /// underlying storage that supports concurrent reads
     pub storage: Arc<RwLock<BlockchainStorage>>,

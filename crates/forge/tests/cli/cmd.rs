@@ -3022,9 +3022,9 @@ forgetest_init!(can_use_absolute_imports, |prj, cmd| {
     prj.add_lib(
         "myDependency/src/Config.sol",
         r#"
-        import "src/interfaces/IConfig.sol";
+        import {IConfig} from "myDependency/src/interfaces/IConfig.sol";
 
-    contract Config {}
+    contract Config is IConfig {}
    "#,
     )
     .unwrap();
@@ -3032,9 +3032,11 @@ forgetest_init!(can_use_absolute_imports, |prj, cmd| {
     prj.add_source(
         "Greeter",
         r#"
-        import "myDependency/src/Config.sol";
+        import {Config} from "myDependency/src/Config.sol";
 
-    contract Greeter {}
+    contract Greeter {
+        Config config;
+    }
    "#,
     )
     .unwrap();
