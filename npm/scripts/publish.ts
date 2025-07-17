@@ -4,6 +4,8 @@ import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
 import { colors } from '../src/utilities.ts'
 
+// TODO: bump version of each item in `optionalDependencies`
+
 main().catch(error => {
   console.error(error)
   process.exit(1)

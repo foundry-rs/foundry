@@ -268,64 +268,32 @@ jobs:
             ${{ steps.artifacts.outputs.file_name }}
             ${{ steps.man.outputs.foundry_man }}
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@main
+      - name: Setup Bun (npm)
+        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          BUN_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         with:
-          scope: "@foundry-rs"
           bun-version: "latest"
+          scope: "@foundry-rs"
           registry-url: "https://registry.npmjs.org"
 
       - name: Install dependencies
         working-directory: ./npm
         run: bun install --frozen-lockfile
 
-      - name: Build ./npm scripts
-        working-directory: ./npm
-        run: bun x tsdown --config tsdown.config.ts
-
-      - name: Prepublish npm package
-        working-directory: ./npm
-        shell: bash
-        env:
-          ARCH: ${{ matrix.arch }}
-          FORGE_BIN_PATH: ${{ steps.binaries.outputs.FORGE_BIN_PATH }}
-        run: |-
-          bun run ./scripts/prepublish.ts \
-            --arch=${{ env.ARCH }} \
-            --forge-bin-path=${{ env.FORGE_BIN_PATH }}
-
-      - name: Publish npm package
-        shell: bash
-        working-directory: ./npm
-        env:
-          ARCH: ${{ matrix.arch }}
-          PLATFORM: ${{ matrix.platform }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          BUN_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |-
-          bun run ./scripts/publis.ts ./@foundry-rs/forge-${{ env.PLATFORM }}-${{ env.ARCH }}
-
         # bump version of each item in `optionalDependencies`
-      - name: Finally, publish @foundry-rs/forge
+      - name: Publish @foundry-rs/forge (npm)
         shell: bash
         working-directory: ./npm
         env:
           ARCH: ${{ matrix.arch }}
           PLATFORM: ${{ matrix.platform }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          BUN_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
           BUMP_VERSION: "TODO: Find this"
         run: |-
           cd @foundr-rs/forge
 
           export NPM_TOKEN=${{ secrets.NPM_TOKEN }}
-          export BUN_AUTH_TOKEN=${{ secrets.NPM_TOKEN }}
-          export NPM_CONFIG_TOKEN=${{ secrets.NPM_TOKEN }}
 
           npm version ${{ env.BUMP_VERSION }} \
               --message 'new forge release' \
@@ -335,15 +303,23 @@ jobs:
               --git-tag-version=false \
               --commit-hook=false \
               --allow-same-version
-
           bun pm pack
-
           bun publish \
               --access='public' \
               --production \
               --verbose \
               --registry='https://registry.npmjs.org' \
               ./foundry-rs-forge-${{ env.BUMP_VERSION }}.tgz
+
+      - name: Publish Package (npm)
+        shell: bash
+        working-directory: ./npm
+        env:
+          ARCH: ${{ matrix.arch }}
+          PLATFORM: ${{ matrix.platform }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |-
+          bun run ./scripts/publis.ts ./@foundry-rs/forge-${{ env.PLATFORM }}-${{ env.ARCH }}
 
   cleanup:
     name: Release cleanup

@@ -5,7 +5,8 @@
     "#package.json": "./package.json"
   },
   "scripts": {
-    "build": "tsdown --config='tsdown.config.ts'"
+    "build": "tsdown --config='tsdown.config.ts'",
+    "prepublishOnly": "bun build && bun run ./scripts/prepublish.ts"
   },
   "dependencies": {
     "tsdown": "^0.12.9",

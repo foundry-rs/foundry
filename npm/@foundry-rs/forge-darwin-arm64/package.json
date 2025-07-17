@@ -1,11 +1,11 @@
 {
-  "name": "@unfoundry/forge-darwin-arm64",
-  "version": "1.2.3",
+  "name": "@foundry-rs/forge-darwin-arm64",
+  "version": "0.0.5",
   "type": "module",
   "homepage": "https://getfoundry.sh",
   "description": "Fast and flexible Ethereum testing framework (macOS arm64)",
   "bin": {
-    "forge": "./bin/forge.mjs"
+    "forge": "./bin/forge"
   },
   "os": [
     "darwin"

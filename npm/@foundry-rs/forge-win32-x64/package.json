@@ -1,11 +1,11 @@
 {
-  "name": "@unfoundry/forge-win32-x64",
+  "name": "@foundry-rs/forge-win32-x64",
   "version": "1.2.3",
   "type": "module",
   "homepage": "https://getfoundry.sh",
   "description": "Fast and flexible Ethereum testing framework (Windows x64)",
   "bin": {
-    "forge": "./bin/forge.mjs"
+    "forge": "./bin/forge"
   },
   "os": [
     "win32"

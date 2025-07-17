@@ -35,7 +35,7 @@ export const BINARY_DISTRIBUTION_PACKAGES = {
     reference: referenceMap['darwin-x64'],
     path: 'forge-darwin-x64',
     get name() {
-      return `@unfoundry/${this.path}`
+      return `@foundry-rs/${this.path}`
     },
     get version() {
       return JSON.parse(
@@ -56,7 +56,7 @@ export const BINARY_DISTRIBUTION_PACKAGES = {
     reference: referenceMap['darwin-arm64'],
     path: 'forge-darwin-arm64',
     get name() {
-      return `@unfoundry/${this.path}`
+      return `@foundry-rs/${this.path}`
     },
     get version() {
       return JSON.parse(
@@ -77,7 +77,7 @@ export const BINARY_DISTRIBUTION_PACKAGES = {
     reference: referenceMap['linux-x64'],
     path: 'forge-linux-x64',
     get name() {
-      return `@unfoundry/${this.path}`
+      return `@foundry-rs/${this.path}`
     },
     get version() {
       return JSON.parse(
@@ -98,7 +98,7 @@ export const BINARY_DISTRIBUTION_PACKAGES = {
     reference: referenceMap['linux-arm64'],
     path: 'forge-linux-arm64',
     get name() {
-      return `@unfoundry/${this.path}`
+      return `@foundry-rs/${this.path}`
     },
     get version() {
       return JSON.parse(
@@ -119,7 +119,7 @@ export const BINARY_DISTRIBUTION_PACKAGES = {
     reference: referenceMap['win32-x64'],
     path: 'forge-win32-x64',
     get name() {
-      return `@unfoundry/${this.path}`
+      return `@foundry-rs/${this.path}`
     },
     get version() {
       return JSON.parse(
