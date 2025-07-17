@@ -6,12 +6,12 @@ note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
    |
    = note: wrap modifier logic to reduce code size
            
-           - checkPublic(msg.sender); // These should become _multipleBeforePlaceholder()
+           -         checkPublic(msg.sender); // These should become _multipleBeforePlaceholder()
            -         checkPrivate(msg.sender);
            -         checkInternal(msg.sender);
            -         _;
-           + _multipleBeforePlaceholder();
-           + _;
+           +         _multipleBeforePlaceholder();
+           +         _;
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
@@ -23,12 +23,12 @@ note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
    |
    = note: wrap modifier logic to reduce code size
            
-           - _;
+           -         _;
            -         checkPublic(msg.sender); // These should become _multipleAfterPlaceholder()
            -         checkPrivate(msg.sender);
            -         checkInternal(msg.sender);
-           + _;
-           + _multipleAfterPlaceholder();
+           +         _;
+           +         _multipleAfterPlaceholder();
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
@@ -40,14 +40,14 @@ note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
    |
    = note: wrap modifier logic to reduce code size
            
-           - checkPublic(sender); // These should become _multipleBeforeAfterPlaceholderBefore(sender)
+           -         checkPublic(sender); // These should become _multipleBeforeAfterPlaceholderBefore(sender)
            -         checkPrivate(sender);
            -         _;
            -         checkInternal(sender); // These should become _multipleBeforeAfterPlaceholderAfter(sender)
            -         checkPublic(sender);
-           + _multipleBeforeAfterPlaceholderBefore(sender);
-           + _;
-           + _multipleBeforeAfterPlaceholderAfter(sender);
+           +         _multipleBeforeAfterPlaceholderBefore(sender);
+           +         _;
+           +         _multipleBeforeAfterPlaceholderAfter(sender);
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
@@ -59,10 +59,10 @@ note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
    |
    = note: wrap modifier logic to reduce code size
            
-           - require(isOwner[msg.sender], "Not owner"); // _onlyOwner();
+           -         require(isOwner[msg.sender], "Not owner"); // _onlyOwner();
            -         _;
-           + _onlyOwner();
-           + _;
+           +         _onlyOwner();
+           +         _;
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
@@ -74,10 +74,10 @@ note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
    |
    = note: wrap modifier logic to reduce code size
            
-           - if(!hasRole[msg.sender][role]) revert("Not authorized"); // _onlyRole(role);
+           -         if(!hasRole[msg.sender][role]) revert("Not authorized"); // _onlyRole(role);
            -         _;
-           + _onlyRole(role);
-           + _;
+           +         _onlyRole(role);
+           +         _;
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
@@ -89,10 +89,10 @@ note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
    |
    = note: wrap modifier logic to reduce code size
            
-           - assert(hasRole[msg.sender][role] || hasRole[address(0)][role]); // _onlyRoleOrOpenRole(role);
+           -         assert(hasRole[msg.sender][role] || hasRole[address(0)][role]); // _onlyRoleOrOpenRole(role);
            -         _;
-           + _onlyRoleOrOpenRole(role);
-           + _;
+           +         _onlyRoleOrOpenRole(role);
+           +         _;
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
@@ -104,10 +104,10 @@ note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
    |
    = note: wrap modifier logic to reduce code size
            
-           - assert(hasRole[msg.sender][role] || msg.sender == admin); // _onlyRoleOrAdmin(role, admin);
+           -         assert(hasRole[msg.sender][role] || msg.sender == admin); // _onlyRoleOrAdmin(role, admin);
            -         _;
-           + _onlyRoleOrAdmin(role, admin);
-           + _;
+           +         _onlyRoleOrAdmin(role, admin);
+           +         _;
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
@@ -119,11 +119,11 @@ note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
     |
     = note: wrap modifier logic to reduce code size
             
-            - bool _isOwner = true;
+            -         bool _isOwner = true;
             -         isOwner[sender] = _isOwner;
             -         _;
-            + _assign(sender);
-            + _;
+            +         _assign(sender);
+            +         _;
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
@@ -135,12 +135,12 @@ note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
     |
     = note: wrap modifier logic to reduce code size
             
-            - assembly {
+            -         assembly {
             -             let x := sender
             -         }
             -         _;
-            + _assemblyBlock(sender);
-            + _;
+            +         _assemblyBlock(sender);
+            +         _;
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
@@ -152,12 +152,12 @@ note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
     |
     = note: wrap modifier logic to reduce code size
             
-            - unchecked {
+            -         unchecked {
             -             sender;
             -         }
             -         _;
-            + _uncheckedBlock(sender);
-            + _;
+            +         _uncheckedBlock(sender);
+            +         _;
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
@@ -169,10 +169,10 @@ note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
     |
     = note: wrap modifier logic to reduce code size
             
-            - emit DidSomething(sender);
+            -         emit DidSomething(sender);
             -         _;
-            + _emitEvent(sender);
-            + _;
+            +         _emitEvent(sender);
+            +         _;
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
