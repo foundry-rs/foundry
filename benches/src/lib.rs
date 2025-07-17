@@ -307,8 +307,8 @@ impl BenchmarkProject {
             version,
             "forge build",
             runs,
-            Some("forge build"),
             None,
+            Some("forge build"),
             None,
             verbose,
         )
@@ -327,9 +327,9 @@ impl BenchmarkProject {
             version,
             "forge build",
             runs,
-            None,
             Some("forge clean"),
             None,
+            Some("forge clean"),
             verbose,
         )
     }
