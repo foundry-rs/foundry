@@ -12,7 +12,7 @@ use dialoguer::{Input, Password};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
-use revm::interpreter::CreateInputs;
+use revm::{context::CreateScheme, interpreter::CreateInputs};
 use revm_inspectors::tracing::types::CallKind;
 use semver::Version;
 use std::{
@@ -97,7 +97,7 @@ impl Cheatcode for closeFileCall {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
-        state.context.opened_read_files.remove(&path);
+        state.test_context.opened_read_files.remove(&path);
 
         Ok(Default::default())
     }
@@ -167,7 +167,7 @@ impl Cheatcode for readLineCall {
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
         // Get reader for previously opened file to continue reading OR initialize new reader
-        let reader = match state.context.opened_read_files.entry(path.clone()) {
+        let reader = match state.test_context.opened_read_files.entry(path.clone()) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => entry.insert(BufReader::new(fs::open(path)?)),
         };
@@ -212,7 +212,7 @@ impl Cheatcode for removeFileCall {
         state.config.ensure_not_foundry_toml(&path)?;
 
         // also remove from the set if opened previously
-        state.context.opened_read_files.remove(&path);
+        state.test_context.opened_read_files.remove(&path);
 
         if state.fs_commit {
             fs::remove_file(&path)?;
@@ -365,11 +365,8 @@ fn deploy_code(
         bytecode.extend_from_slice(args);
     }
 
-    let scheme = if let Some(salt) = salt {
-        revm::primitives::CreateScheme::Create2 { salt }
-    } else {
-        revm::primitives::CreateScheme::Create
-    };
+    let scheme =
+        if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create };
 
     let outcome = executor.exec_create(
         CreateInputs {
@@ -753,7 +750,7 @@ impl Cheatcode for getBroadcasts_1Call {
 impl Cheatcode for getDeployment_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { contractName } = self;
-        let chain_id = ccx.ecx.env.cfg.chain_id;
+        let chain_id = ccx.ecx.cfg.chain_id;
 
         let latest_broadcast = latest_broadcast(
             contractName,

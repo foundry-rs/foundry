@@ -19,9 +19,11 @@ foundry-compilers = { workspace = true, features = ["svm-solc"] }
 
 alloy-chains = { workspace = true, features = ["serde"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
-revm-primitives.workspace = true
+
+revm.workspace = true
 
 solar-parse.workspace = true
+solar-interface.workspace = true
 
 dirs.workspace = true
 dunce.workspace = true
@@ -29,7 +31,7 @@ eyre.workspace = true
 figment = { workspace = true, features = ["toml", "env"] }
 glob = "0.3"
 globset = "0.4"
-heck = "0.5"
+heck.workspace = true
 itertools.workspace = true
 mesc.workspace = true
 number_prefix = "0.4"
@@ -45,6 +47,7 @@ toml_edit = "0.22"
 tracing.workspace = true
 walkdir.workspace = true
 yansi.workspace = true
+clap = { version = "4", features = ["derive"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 path-slash = "0.2"

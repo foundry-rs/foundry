@@ -10,7 +10,7 @@ mod helpers;
 mod ring;
 
 // Every line is allowed at least this much space, even if highly indented.
-const MIN_SPACE: isize = 60;
+const MIN_SPACE: isize = 40;
 
 /// How to break. Described in more detail in the module docs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,7 +70,7 @@ enum PrintFrame {
     Broken(usize, Breaks),
 }
 
-const SIZE_INFINITY: isize = 0xffff;
+pub(crate) const SIZE_INFINITY: isize = 0xffff;
 
 #[derive(Debug)]
 pub struct Printer {
@@ -105,7 +105,7 @@ pub struct Printer {
 }
 
 #[derive(Debug)]
-struct BufEntry {
+pub struct BufEntry {
     token: Token,
     size: isize,
 }
@@ -129,6 +129,10 @@ impl Printer {
         }
     }
 
+    pub(crate) fn space_left(&self) -> isize {
+        self.space
+    }
+
     pub(crate) fn last_token(&self) -> Option<&Token> {
         self.last_token_still_buffered().or(self.last_printed.as_ref())
     }
@@ -143,6 +147,44 @@ impl Printer {
     /// Be very careful with this!
     pub(crate) fn replace_last_token_still_buffered(&mut self, token: Token) {
         self.buf.last_mut().token = token;
+    }
+
+    /// WARNING: Be very careful with this!
+    ///
+    /// Searches backwards through the buffer to find and replace the last token
+    /// that satisfies a predicate. This is a specialized and sensitive operation.
+    ///
+    /// This function's traversal logic is specifically designed to handle cases
+    /// where formatting boxes have been closed (e.g., after a multi-line
+    /// comment). It will automatically skip over any trailing `Token::End`
+    /// tokens to find the substantive token before them.
+    ///
+    /// The search stops as soon as it encounters any token other than `End`
+    /// (i.e., a `String`, `Break`, or `Begin`). The provided predicate is then
+    /// called on that token. If the predicate returns `true`, the token is
+    /// replaced.
+    ///
+    /// This function will only ever evaluate the predicate on **one** token.
+    pub(crate) fn find_and_replace_last_token_still_buffered<F>(
+        &mut self,
+        new_token: Token,
+        predicate: F,
+    ) where
+        F: FnOnce(&Token) -> bool,
+    {
+        for i in self.buf.index_range().rev() {
+            let token = &self.buf[i].token;
+            if let Token::End = token {
+                // It's safe to skip the end of a box.
+                continue;
+            }
+
+            // Apply the predicate and return after the first non-end token.
+            if predicate(token) {
+                self.buf[i].token = new_token;
+            }
+            break;
+        }
     }
 
     fn scan_eof(&mut self) {

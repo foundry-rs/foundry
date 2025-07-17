@@ -54,10 +54,77 @@ impl Printer {
         self.spaces(SIZE_INFINITY as usize);
     }
 
+    pub fn last_token_is_neverbreak(&self) -> bool {
+        if let Some(token) = self.last_token() {
+            return token.is_neverbreak();
+        }
+
+        false
+    }
+
+    pub fn last_token_is_break(&self) -> bool {
+        if let Some(token) = self.last_token() {
+            return matches!(token, Token::Break(_));
+        }
+        false
+    }
+
+    pub fn last_token_is_hardbreak(&self) -> bool {
+        if let Some(token) = self.last_token() {
+            return token.is_hardbreak();
+        }
+        false
+    }
+
+    pub fn last_token_is_space(&self) -> bool {
+        if let Some(token) = self.last_token() {
+            if token.is_space() {
+                return true;
+            }
+        }
+        let res = self.out.ends_with(" ");
+        res
+    }
+
     pub fn is_beginning_of_line(&self) -> bool {
         match self.last_token() {
             Some(last_token) => last_token.is_hardbreak(),
             None => self.out.is_empty() || self.out.ends_with('\n'),
+        }
+    }
+
+    /// Identifies whether the current position is:
+    ///   1. the beginning of a line (empty)
+    ///   2. a line with only indendation (just whitespaces)
+    pub fn is_bol_or_only_ind(&self) -> bool {
+        for i in self.buf.index_range().rev() {
+            let token = &self.buf[i].token;
+            if token.is_hardbreak() {
+                return true;
+            }
+            if Self::token_has_non_whitespace_content(token) {
+                return false;
+            }
+        }
+
+        let last_line =
+            if let Some(pos) = self.out.rfind('\n') { &self.out[pos + 1..] } else { &self.out[..] };
+
+        last_line.trim().is_empty()
+    }
+
+    fn token_has_non_whitespace_content(token: &Token) -> bool {
+        match token {
+            Token::String(s) => !s.trim().is_empty(),
+            Token::Break(bt) => {
+                if let Some(char) = bt.pre_break {
+                    !char.is_whitespace()
+                } else {
+                    false
+                }
+            }
+            Token::Begin(_) => false,
+            Token::End => false,
         }
     }
 
@@ -108,22 +175,38 @@ impl Printer {
     pub fn neverbreak(&mut self) {
         self.scan_break(BreakToken { never_break: true, ..BreakToken::default() });
     }
+
+    pub fn last_brace_is_closed(&self, kw: &str) -> bool {
+        self.out.rsplit_once(kw).map_or(true, |(_, relevant)| {
+            let open = relevant.chars().filter(|c| *c == '{').count();
+            let close = relevant.chars().filter(|c| *c == '}').count();
+            open == close
+        })
+    }
 }
 
 impl Token {
+    pub(crate) fn is_neverbreak(&self) -> bool {
+        if let Self::Break(BreakToken { never_break, .. }) = *self {
+            return never_break;
+        }
+        false
+    }
+
     pub(crate) fn is_hardbreak(&self) -> bool {
-        if let Self::Break(BreakToken {
-            offset,
-            blank_space,
-            pre_break: _,
-            post_break: _,
-            if_nonempty: _,
-            never_break,
-        }) = *self
-        {
-            offset == 0 && blank_space == SIZE_INFINITY as usize && !never_break
-        } else {
-            false
+        if let Self::Break(BreakToken { blank_space, never_break, .. }) = *self {
+            return blank_space == SIZE_INFINITY as usize && !never_break;
+        }
+        false
+    }
+
+    pub(crate) fn is_space(&self) -> bool {
+        match self {
+            Self::Break(BreakToken { offset, blank_space, .. }) => {
+                *offset == 0 && *blank_space == 1
+            }
+            Self::String(s) => s.ends_with(' '),
+            _ => false,
         }
     }
 }

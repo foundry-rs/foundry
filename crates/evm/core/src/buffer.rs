@@ -1,5 +1,5 @@
 use alloy_primitives::U256;
-use revm::interpreter::opcode;
+use revm::bytecode::opcode;
 
 /// Used to keep track of which buffer is currently active to be drawn by the debugger.
 #[derive(Debug, PartialEq)]
@@ -75,13 +75,6 @@ pub fn get_buffer_accesses(op: u8, stack: &[U256]) -> Option<BufferAccesses> {
         opcode::CALL | opcode::CALLCODE => (Some((BufferKind::Memory, 4, 5)), None),
         opcode::DELEGATECALL | opcode::STATICCALL => (Some((BufferKind::Memory, 3, 4)), None),
         opcode::MCOPY => (Some((BufferKind::Memory, 2, 3)), Some((1, 3))),
-        opcode::RETURNDATALOAD => (Some((BufferKind::Returndata, 1, -1)), None),
-        opcode::EOFCREATE => (Some((BufferKind::Memory, 3, 4)), None),
-        opcode::RETURNCONTRACT => (Some((BufferKind::Memory, 1, 2)), None),
-        opcode::DATACOPY => (None, Some((1, 3))),
-        opcode::EXTCALL | opcode::EXTSTATICCALL | opcode::EXTDELEGATECALL => {
-            (Some((BufferKind::Memory, 2, 3)), None)
-        }
         _ => Default::default(),
     };
 

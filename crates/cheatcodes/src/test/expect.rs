@@ -8,7 +8,10 @@ use alloy_primitives::{
     map::{hash_map::Entry, AddressHashMap, HashMap},
     Address, Bytes, LogData as RawLog, U256,
 };
-use revm::interpreter::{InstructionResult, Interpreter, InterpreterAction, InterpreterResult};
+use revm::{
+    context::JournalTr,
+    interpreter::{InstructionResult, Interpreter, InterpreterAction, InterpreterResult},
+};
 
 use super::revert_handlers::RevertParameters;
 /// Tracks the expected calls per address.
@@ -66,7 +69,7 @@ pub struct ExpectedRevert {
     /// The expected data returned by the revert, None being any.
     pub reason: Option<Vec<u8>>,
     /// The depth at which the revert is expected.
-    pub depth: u64,
+    pub depth: usize,
     /// The type of expected revert.
     pub kind: ExpectedRevertKind,
     /// If true then only the first 4 bytes of expected data returned by the revert are checked.
@@ -76,7 +79,7 @@ pub struct ExpectedRevert {
     /// Address that reverted the call.
     pub reverted_by: Option<Address>,
     /// Max call depth reached during next call execution.
-    pub max_depth: u64,
+    pub max_depth: usize,
     /// Number of times this revert is expected.
     pub count: u64,
     /// Actual number of times this revert has been seen.
@@ -86,7 +89,7 @@ pub struct ExpectedRevert {
 #[derive(Clone, Debug)]
 pub struct ExpectedEmit {
     /// The depth at which we expect this emit to have occurred
-    pub depth: u64,
+    pub depth: usize,
     /// The log we expect
     pub log: Option<RawLog>,
     /// The checks to perform:
@@ -132,12 +135,21 @@ impl Display for CreateScheme {
     }
 }
 
+impl From<revm::context_interface::CreateScheme> for CreateScheme {
+    fn from(scheme: revm::context_interface::CreateScheme) -> Self {
+        match scheme {
+            revm::context_interface::CreateScheme::Create => Self::Create,
+            revm::context_interface::CreateScheme::Create2 { .. } => Self::Create2,
+            _ => unimplemented!("Unsupported create scheme"),
+        }
+    }
+}
+
 impl CreateScheme {
-    pub fn eq(&self, create_scheme: revm::primitives::CreateScheme) -> bool {
+    pub fn eq(&self, create_scheme: Self) -> bool {
         matches!(
             (self, create_scheme),
-            (Self::Create, revm::primitives::CreateScheme::Create) |
-                (Self::Create2, revm::primitives::CreateScheme::Create2 { .. })
+            (Self::Create, Self::Create) | (Self::Create2, Self::Create2 { .. })
         )
     }
 }
@@ -623,14 +635,14 @@ impl Cheatcode for _expectCheatcodeRevert_2Call {
 impl Cheatcode for expectSafeMemoryCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { min, max } = *self;
-        expect_safe_memory(ccx.state, min, max, ccx.ecx.journaled_state.depth())
+        expect_safe_memory(ccx.state, min, max, ccx.ecx.journaled_state.depth().try_into()?)
     }
 }
 
 impl Cheatcode for stopExpectSafeMemoryCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
-        ccx.state.allowed_mem_writes.remove(&ccx.ecx.journaled_state.depth());
+        ccx.state.allowed_mem_writes.remove(&ccx.ecx.journaled_state.depth().try_into()?);
         Ok(Default::default())
     }
 }
@@ -638,7 +650,7 @@ impl Cheatcode for stopExpectSafeMemoryCall {
 impl Cheatcode for expectSafeMemoryCallCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { min, max } = *self;
-        expect_safe_memory(ccx.state, min, max, ccx.ecx.journaled_state.depth() + 1)
+        expect_safe_memory(ccx.state, min, max, (ccx.ecx.journaled_state.depth() + 1).try_into()?)
     }
 }
 
@@ -742,7 +754,7 @@ fn expect_call(
 
 fn expect_emit(
     state: &mut Cheatcodes,
-    depth: u64,
+    depth: usize,
     checks: [bool; 5],
     address: Option<Address>,
     anonymous: bool,
@@ -812,11 +824,11 @@ pub(crate) fn handle_expect_emit(
                 .expected_emits
                 .insert(index_to_fill_or_check, (event_to_fill_or_check, count_map));
         } else {
-            interpreter.instruction_result = InstructionResult::Revert;
-            interpreter.next_action = InterpreterAction::Return {
+            interpreter.control.instruction_result = InstructionResult::Revert;
+            interpreter.control.next_action = InterpreterAction::Return {
                 result: InterpreterResult {
                     output: Error::encode("use vm.expectEmitAnonymous to match anonymous events"),
-                    gas: interpreter.gas,
+                    gas: interpreter.control.gas,
                     result: InstructionResult::Revert,
                 },
             };
@@ -956,7 +968,7 @@ fn expect_create(
 fn expect_revert(
     state: &mut Cheatcodes,
     reason: Option<&[u8]>,
-    depth: u64,
+    depth: usize,
     cheatcode: bool,
     partial_match: bool,
     reverter: Option<Address>,
