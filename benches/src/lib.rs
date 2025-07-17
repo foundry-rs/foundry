@@ -195,12 +195,14 @@ impl BenchmarkProject {
     /// * `command` - The command to benchmark
     /// * `runs` - Number of runs to perform
     /// * `setup` - Optional setup command to run before the benchmark series (e.g., "forge build")
+    /// * `prepare` - Optional prepare command to run before each timing run (e.g., "forge clean")
     /// * `conclude` - Optional conclude command to run after each timing run (e.g., cleanup)
     /// * `verbose` - Whether to show command output
     ///
     /// # Hyperfine flags used:
     /// * `--runs` - Number of timing runs
     /// * `--setup` - Execute before the benchmark series (not before each run)
+    /// * `--prepare` - Execute before each timing run
     /// * `--conclude` - Execute after each timing run
     /// * `--export-json` - Export results to JSON for parsing
     /// * `--shell=bash` - Use bash for shell command execution
@@ -213,6 +215,7 @@ impl BenchmarkProject {
         command: &str,
         runs: u32,
         setup: Option<&str>,
+        prepare: Option<&str>,
         conclude: Option<&str>,
         verbose: bool,
     ) -> Result<HyperfineResult> {
@@ -238,6 +241,11 @@ impl BenchmarkProject {
         // Add optional setup command
         if let Some(setup_cmd) = setup {
             hyperfine_cmd.arg("--setup").arg(setup_cmd);
+        }
+
+        // Add optional prepare command
+        if let Some(prepare_cmd) = prepare {
+            hyperfine_cmd.arg("--prepare").arg(prepare_cmd);
         }
 
         // Add optional conclude command
@@ -282,6 +290,7 @@ impl BenchmarkProject {
             runs,
             Some("forge build"),
             None,
+            None,
             verbose,
         )
     }
@@ -293,8 +302,16 @@ impl BenchmarkProject {
         runs: u32,
         verbose: bool,
     ) -> Result<HyperfineResult> {
-        // No setup needed, uses existing cache
-        self.hyperfine("forge_build_with_cache", version, "forge build", runs, None, None, verbose)
+        self.hyperfine(
+            "forge_build_with_cache",
+            version,
+            "forge build",
+            runs,
+            Some("forge build"),
+            None,
+            None,
+            verbose,
+        )
     }
 
     /// Benchmark forge build without cache
@@ -304,12 +321,13 @@ impl BenchmarkProject {
         runs: u32,
         verbose: bool,
     ) -> Result<HyperfineResult> {
-        // Clean before the benchmark series
+        // Clean before each timing run
         self.hyperfine(
             "forge_build_no_cache",
             version,
             "forge build",
             runs,
+            None,
             Some("forge clean"),
             None,
             verbose,
@@ -331,6 +349,7 @@ impl BenchmarkProject {
             runs,
             Some("forge build"),
             None,
+            None,
             verbose,
         )
     }
@@ -349,6 +368,7 @@ impl BenchmarkProject {
             version,
             "forge coverage --ir-minimum",
             runs,
+            None,
             None,
             None,
             verbose,
