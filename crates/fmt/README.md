@@ -9,7 +9,7 @@ is tested on the [Prettier Solidity Plugin](https://github.com/prettier-solidity
 The formatter works in two steps:
 
 1. Parse Solidity source code with [solang](https://github.com/hyperledger-labs/solang) into the PT (Parse Tree)
-   (not the same as Abstract Syntax Tree, [see difference](https://stackoverflow.com/a/9864571)).
+   (not the same as Abstract Syntax Tree, [see difference](https://stackoverflow.com/a/9864571).
 2. Walk the PT and output new source code that's compliant with provided config and rule set.
 
 The technique for walking the tree is based on [Visitor Pattern](https://en.wikipedia.org/wiki/Visitor_pattern)
