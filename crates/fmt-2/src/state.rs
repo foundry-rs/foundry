@@ -72,6 +72,7 @@ impl<'sess> State<'sess, '_> {
     fn print_comments(&mut self, pos: BytePos, mut config: CommentConfig) -> Option<CommentStyle> {
         let mut last_style: Option<CommentStyle> = None;
         let mut all_blank = true;
+        let config_cache = config;
         while let Some(cmnt) = self.peek_comment() {
             if cmnt.pos() >= pos {
                 break;
@@ -91,16 +92,25 @@ impl<'sess> State<'sess, '_> {
             } else if !cmnt.is_doc {
                 all_blank = false;
             }
-            // Ensure consecutive mixed comments don't have a double-space
-            if let Some(style) = last_style {
-                if (style.is_mixed() && cmnt.style.is_mixed()) &&
-                    (config.mixed_post_nbsp || !config.mixed_no_break)
-                {
-                    config.mixed_prev_space = false;
+
+            // Handle mixed with follow-up comment
+            if cmnt.style.is_mixed() {
+                if let Some(cmnt) = self.peek_comment_before(pos) {
+                    config.mixed_no_break = true;
+                    config.mixed_post_nbsp = cmnt.style.is_mixed();
+                }
+
+                // Ensure consecutive mixed comments don't have a double-space
+                if let Some(style) = last_style {
+                    if style.is_mixed() && (config.mixed_post_nbsp || !config.mixed_no_break) {
+                        config.mixed_prev_space = false;
+                    }
                 }
             }
+
             last_style = Some(cmnt.style);
             self.print_comment(cmnt, config);
+            config = config_cache;
         }
         last_style
     }
@@ -521,10 +531,25 @@ macro_rules! get_span {
 /// Language-specific pretty printing.
 impl<'ast> State<'_, 'ast> {
     pub fn print_source_unit(&mut self, source_unit: &'ast ast::SourceUnit<'ast>) {
-        for item in source_unit.items.iter() {
-            self.print_item(item, false);
+        let mut items = source_unit.items.iter().peekable();
+        let mut is_first = true;
+        while let Some(item) = items.next() {
+            self.print_item(item, is_first);
+            is_first = false;
+
+            if let Some(next_item) = items.peek() {
+                self.separate_items(next_item);
+            }
         }
         self.print_remaining_comments();
+    }
+
+    fn separate_items(&mut self, next_item: &'ast ast::Item<'ast>) {
+        if item_needs_iso(&next_item.kind) &&
+            !self.comments.iter().any(|c| c.pos() < next_item.span.lo())
+        {
+            self.hardbreak();
+        }
     }
 
     fn print_item(&mut self, item: &'ast ast::Item<'ast>, skip_ws: bool) {
@@ -693,9 +718,17 @@ impl<'ast> State<'_, 'ast> {
             if self.peek_comment_before(body[0].span.lo()).is_some() {
                 self.print_comments(body[0].span.lo(), CommentConfig::skip_first_ws());
             }
-            for (pos, item) in body.iter().delimited() {
-                self.print_item(item, pos.is_first);
+
+            let mut items = body.iter().peekable();
+            let mut is_first = true;
+            while let Some(item) = items.next() {
+                self.print_item(item, is_first);
+                is_first = false;
+                if let Some(next_item) = items.peek() {
+                    self.separate_items(next_item);
+                }
             }
+
             if let Some(cmnt) = self.print_comments(span.hi(), CommentConfig::skip_ws()) {
                 if self.config.contract_new_lines && !cmnt.is_blank() {
                     self.hardbreak();
@@ -1383,7 +1416,6 @@ impl<'ast> State<'_, 'ast> {
                     self.s.offset(-self.ind);
                 }
                 self.end();
-                self.zerobreak();
                 self.word(")");
             }
             ast::TypeKind::Custom(path) => self.print_path(path),
@@ -2796,6 +2828,21 @@ fn stmt_needs_semi(stmt: &ast::StmtKind<'_>) -> bool {
         ast::StmtKind::Return { .. } |
         ast::StmtKind::Revert { .. } |
         ast::StmtKind::Placeholder { .. } => true,
+    }
+}
+
+fn item_needs_iso(item: &ast::ItemKind<'_>) -> bool {
+    match item {
+        ast::ItemKind::Contract(..) | ast::ItemKind::Struct(..) | ast::ItemKind::Enum(..) => true,
+
+        ast::ItemKind::Pragma(..) |
+        ast::ItemKind::Function(..) |
+        ast::ItemKind::Import(..) |
+        ast::ItemKind::Using(..) |
+        ast::ItemKind::Variable(..) |
+        ast::ItemKind::Udvt(..) |
+        ast::ItemKind::Error(..) |
+        ast::ItemKind::Event(..) => false,
     }
 }
 
