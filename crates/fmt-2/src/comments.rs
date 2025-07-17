@@ -238,6 +238,7 @@ impl Comments {
     pub fn iter(&self) -> impl Iterator<Item = &Comment> {
         self.comments.as_slice().iter()
     }
+
     pub fn peek_trailing_comment(
         &self,
         sm: &SourceMap,
@@ -245,7 +246,7 @@ impl Comments {
         next_pos: Option<BytePos>,
     ) -> Option<&Comment> {
         if let Some(cmnt) = self.peek() {
-            if cmnt.style != CommentStyle::Trailing {
+            if !cmnt.style.is_trailing() {
                 return None;
             }
             let span_line = sm.lookup_char_pos(span_pos);

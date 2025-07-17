@@ -156,7 +156,7 @@ fmt_tests! {
     BlockComments, // OK
     BlockCommentsFunction, // OK
     ConditionalOperatorExpression, // OK
-    ConstructorDefinition, // OK
+    ConstructorDefinition, // OK? is it acceptable to force no line before pragma?
     ConstructorModifierStyle, // OK
     ContractDefinition, // OK? Is it acceptable?
     DocComments, // OK (basics). TODO: wrapp comments
@@ -181,12 +181,12 @@ fmt_tests! {
     LiteralExpression, // OK? is it acceptable?
     MappingType, // OK? is it acceptable?
     ModifierDefinition, // OK
-    NamedFunctionCallExpression, // FIX: idempotency (comment-related)
+    NamedFunctionCallExpression, // OK? is it acceptable?
     NumberLiteralUnderscore, // OK
     OperatorExpressions, // OK
     PragmaDirective, // OK
     Repros, // TODO: check boxes, panics
-    ReturnStatement, // FIX: idempotency (comment-related)
+    ReturnStatement, // OK? is it acceptable? (inline block logic is incosisten with 'if stmt' unit test)
     RevertNamedArgsStatement, // TODO: comments
     RevertStatement, // FIX: idempotency (comment-related)
     SimpleComments, // FIX: idempotency (comment-related)
