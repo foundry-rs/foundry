@@ -1,6 +1,8 @@
 name: Foundry Benchmarks
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
       pr_number:
