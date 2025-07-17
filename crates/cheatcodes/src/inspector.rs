@@ -1532,6 +1532,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
     }
 
     fn create(&mut self, ecx: Ecx, mut input: &mut CreateInputs) -> Option<CreateOutcome> {
+        let gas = Gas::new(input.gas_limit());
         // Check if we should intercept this create
         if self.intercept_next_create_call {
             // Reset the flag
@@ -1542,16 +1543,11 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
 
             // Return a revert with the initcode as error data
             return Some(CreateOutcome {
-                result: InterpreterResult {
-                    result: InstructionResult::Revert,
-                    output,
-                    gas: Gas::new(input.gas_limit()),
-                },
+                result: InterpreterResult { result: InstructionResult::Revert, output, gas },
                 address: None,
             });
         }
 
-        let gas = Gas::new(input.gas_limit());
         let curr_depth = ecx.journaled_state.depth();
 
         // Apply our prank

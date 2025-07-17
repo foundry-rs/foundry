@@ -316,13 +316,17 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 Cast::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?
             )?
         }
-        CastSubcommand::Block { block, full, field, rpc } => {
+        CastSubcommand::Block { block, full, field, raw, rpc } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
+
+            // Can use either --raw or specify raw as a field
+            let raw = raw || field.as_ref().is_some_and(|f| f == "raw");
+
             sh_println!(
                 "{}",
                 Cast::new(provider)
-                    .block(block.unwrap_or(BlockId::Number(Latest)), full, field)
+                    .block(block.unwrap_or(BlockId::Number(Latest)), full, field, raw)
                     .await?
             )?
         }
