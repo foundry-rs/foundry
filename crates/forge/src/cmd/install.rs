@@ -142,9 +142,8 @@ impl DependencyInstallOpts {
                     git.submodule_update(false, false, false, true, Some(&libs))?;
                     lockfile.write()?;
                 }
-
                 Err(err) => {
-                    warn!(?err, "Failed to check for submodules");
+                    sh_err!("Failed to check for submodules: {err}")?;
                 }
                 _ => {
                     // no submodules, nothing to do
