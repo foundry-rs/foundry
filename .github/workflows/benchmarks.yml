@@ -61,6 +61,17 @@ jobs:
       - name: Build benchmark binary
         run: cargo build --release --bin foundry-bench
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install hyperfine
+        run: |
+          curl -L https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine-v1.19.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+          sudo mv hyperfine-v1.19.0-x86_64-unknown-linux-gnu/hyperfine /usr/local/bin/
+          rm -rf hyperfine-v1.19.0-x86_64-unknown-linux-gnu
+
       - name: Run forge test benchmarks
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
