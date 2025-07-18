@@ -15,6 +15,18 @@ ratatui = "ratatui"
 Caf = "Caf"
 froms = "froms"
 strat = "strat"
-ba = "ba"  # Used in hexadecimal values and git commit hashes
-abd = "abd"  # Used in function signatures
-nd = "nd"  # Used in function names like "2nd"
+ba = "ba"  # Command alias for basefee
+
+[default]
+extend-ignore-identifiers-re = [
+    # Ignore hex literals and hex strings
+    "(?i)^0x[0-9a-f]+$",
+    "[0-9a-f]{8}",  # 8-char hex strings (function selectors)
+    "[0-9a-f]{40}",  # 40-char hex strings (addresses)
+    "[0-9a-f]{64}",  # 64-char hex strings (hashes)
+    # Allow ordinal numbers in identifiers
+    ".*1st.*",
+    ".*2nd.*",
+    ".*3rd.*",
+    ".*[0-9]+th.*",
+]
