@@ -360,6 +360,7 @@ impl TestRunnerConfig {
                     .cheatcodes(cheats_config)
                     .trace_mode(self.trace_mode())
                     .line_coverage(self.line_coverage)
+                    .edge_coverage(self.config.invariant.corpus_dir.is_some())
                     .enable_isolation(self.isolation)
                     .odyssey(self.odyssey)
                     .create2_deployer(self.evm_opts.create2_deployer)
