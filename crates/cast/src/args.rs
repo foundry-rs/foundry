@@ -109,9 +109,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             };
             sh_println!("0x{output}")?
         }
-        CastSubcommand::ToCheckSumAddress { address } => {
+        CastSubcommand::ToCheckSumAddress { address, chain_id } => {
             let value = stdin::unwrap_line(address)?;
-            sh_println!("{}", value.to_checksum(None))?
+            sh_println!("{}", value.to_checksum(chain_id))?
         }
         CastSubcommand::ToUint256 { value } => {
             let value = stdin::unwrap_line(value)?;
