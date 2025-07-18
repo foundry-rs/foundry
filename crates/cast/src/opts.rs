@@ -115,6 +115,7 @@ pub enum CastSubcommand {
     ToCheckSumAddress {
         /// The address to convert.
         address: Option<Address>,
+        chain_id: Option<u64>,
     },
 
     /// Convert hex data to an ASCII string.
