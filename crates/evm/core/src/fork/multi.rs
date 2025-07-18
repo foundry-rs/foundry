@@ -81,22 +81,33 @@ impl MultiFork {
         trace!(target: "fork::multi", "spawning multifork");
 
         let (fork, mut handler) = Self::new();
+
         // Spawn a light-weight thread just for sending and receiving data from the remote
         // client(s).
-        let rt = tokio::runtime::Handle::current();
-        std::thread::Builder::new()
-            .name("multi-fork-backend".into())
-            .spawn(move || {
-                rt.block_on(async move {
-                    // Flush cache every 60s, this ensures that long-running fork tests get their
-                    // cache flushed from time to time.
-                    // NOTE: we install the interval here because the `tokio::timer::Interval`
-                    // requires a rt.
-                    handler.set_flush_cache_interval(Duration::from_secs(60));
-                    handler.await
-                });
-            })
-            .expect("failed to spawn thread");
+        let fut = async move {
+            // Flush cache every 60s, this ensures that long-running fork tests get their
+            // cache flushed from time to time.
+            // NOTE: we install the interval here because the `tokio::timer::Interval`
+            // requires a rt.
+            handler.set_flush_cache_interval(Duration::from_secs(60));
+            handler.await
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(rt) => _ = rt.spawn(fut),
+            Err(_) => {
+                _ = std::thread::Builder::new()
+                    .name("multi-fork-backend".into())
+                    .spawn(move || {
+                        tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .expect("failed to build tokio runtime")
+                            .block_on(fut)
+                    })
+                    .expect("failed to spawn thread")
+            }
+        }
+
         trace!(target: "fork::multi", "spawned MultiForkHandler thread");
         fork
     }
