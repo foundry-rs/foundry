@@ -1,27 +1,38 @@
 //! The `forge verify-bytecode` command.
 
 use crate::{
+    RetryArgs,
     etherscan::EtherscanVerificationProvider,
     provider::{VerificationContext, VerificationProvider, VerificationProviderType},
     utils::is_host_only,
-    RetryArgs,
 };
-use alloy_primitives::{map::HashSet, Address};
+use alloy_primitives::{Address, map::HashSet};
 use alloy_provider::Provider;
-use clap::{Parser, ValueHint};
+use clap::{Parser, ValueEnum, ValueHint};
 use eyre::Result;
 use foundry_block_explorers::EtherscanApiVersion;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::{self, LoadConfig},
 };
-use foundry_common::{compile::ProjectCompiler, ContractsByArtifact};
+use foundry_common::{ContractsByArtifact, compile::ProjectCompiler};
 use foundry_compilers::{artifacts::EvmVersion, compilers::solc::Solc, info::ContractInfo};
-use foundry_config::{figment, impl_figment_convert, impl_figment_convert_cast, Config, SolcReq};
+use foundry_config::{Config, SolcReq, figment, impl_figment_convert, impl_figment_convert_cast};
 use itertools::Itertools;
 use reqwest::Url;
 use semver::BuildMetadata;
 use std::path::PathBuf;
+
+/// The programming language used for smart contract development.
+///
+/// This enum represents the supported contract languages for verification.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum ContractLanguage {
+    /// Solidity programming language
+    Solidity,
+    /// Vyper programming language  
+    Vyper,
+}
 
 /// Verification provider arguments
 #[derive(Clone, Debug, Parser)]
@@ -147,6 +158,12 @@ pub struct VerifyArgs {
 
     #[command(flatten)]
     pub verifier: VerifierArgs,
+
+    /// The contract language (`solidity` or `vyper`).
+    ///
+    /// Defaults to `solidity` if none provided.
+    #[arg(long, value_enum)]
+    pub language: Option<ContractLanguage>,
 }
 
 impl_figment_convert!(VerifyArgs);
@@ -223,7 +240,7 @@ impl VerifyArgs {
                 .create_verify_request(&self, &context)
                 .await?;
             sh_println!("{}", args.source)?;
-            return Ok(())
+            return Ok(());
         }
 
         let verifier_url = self.verifier.verifier_url.clone();
@@ -237,10 +254,10 @@ impl VerifyArgs {
         if let Some(optimizations) = &self.num_of_optimizations {
             sh_println!("Optimizations:    {optimizations}")?
         }
-        if let Some(args) = &self.constructor_args {
-            if !args.is_empty() {
-                sh_println!("Constructor args: {args}")?
-            }
+        if let Some(args) = &self.constructor_args
+            && !args.is_empty()
+        {
+            sh_println!("Constructor args: {args}")?
         }
         self.verifier.verifier.client(self.etherscan.key().as_deref())?.verify(self, context).await.map_err(|err| {
             if let Some(verifier_url) = verifier_url {
@@ -309,12 +326,16 @@ impl VerifyArgs {
                         "Ambiguous compiler versions found in cache: {}",
                         unique_versions.iter().join(", ")
                     );
-                    eyre::bail!("Compiler version has to be set in `foundry.toml`. If the project was not deployed with foundry, specify the version through `--compiler-version` flag.")
+                    eyre::bail!(
+                        "Compiler version has to be set in `foundry.toml`. If the project was not deployed with foundry, specify the version through `--compiler-version` flag."
+                    )
                 }
 
                 unique_versions.into_iter().next().unwrap().to_owned()
             } else {
-                eyre::bail!("If cache is disabled, compiler version must be either provided with `--compiler-version` option or set in foundry.toml")
+                eyre::bail!(
+                    "If cache is disabled, compiler version must be either provided with `--compiler-version` option or set in foundry.toml"
+                )
             };
 
             let settings = if let Some(profile) = &self.compilation_profile {
@@ -353,17 +374,20 @@ impl VerifyArgs {
                 if profiles.is_empty() {
                     eyre::bail!("No matching artifact found for {}", contract.name);
                 } else if profiles.len() > 1 {
-                    eyre::bail!("Ambiguous compilation profiles found in cache: {}, please specify the profile through `--compilation-profile` flag", profiles.iter().join(", "))
+                    eyre::bail!(
+                        "Ambiguous compilation profiles found in cache: {}, please specify the profile through `--compilation-profile` flag",
+                        profiles.iter().join(", ")
+                    )
                 }
 
                 let profile = profiles.into_iter().next().unwrap().to_owned();
-                let settings = cache.profiles.get(&profile).expect("must be present");
-
-                settings
+                cache.profiles.get(&profile).expect("must be present")
             } else if project.additional_settings.is_empty() {
                 &project.settings
             } else {
-                eyre::bail!("If cache is disabled, compilation profile must be provided with `--compiler-version` option or set in foundry.toml")
+                eyre::bail!(
+                    "If cache is disabled, compilation profile must be provided with `--compiler-version` option or set in foundry.toml"
+                )
             };
 
             VerificationContext::new(
@@ -407,6 +431,16 @@ impl VerifyArgs {
                 settings.clone(),
             )
         }
+    }
+
+    /// Detects the language for verification from source file extension, if none provided.
+    pub fn detect_language(&self, ctx: &VerificationContext) -> ContractLanguage {
+        self.language.unwrap_or_else(|| {
+            match ctx.target_path.extension().and_then(|e| e.to_str()) {
+                Some("vy") => ContractLanguage::Vyper,
+                _ => ContractLanguage::Solidity,
+            }
+        })
     }
 }
 

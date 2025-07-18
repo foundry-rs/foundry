@@ -3,7 +3,7 @@
 use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
 use alloy_primitives::U256;
 use forge::fuzz::CounterExample;
-use foundry_test_utils::{forgetest_init, str, Filter};
+use foundry_test_utils::{Filter, forgetest_init, str};
 use std::collections::BTreeMap;
 
 macro_rules! get_counterexample {
@@ -671,13 +671,7 @@ async fn test_invariant_after_invariant() {
                     None,
                     None,
                 ),
-                (
-                    "invariant_failure()",
-                    false,
-                    Some("invariant failure".into()),
-                    None,
-                    None,
-                ),
+                ("invariant_failure()", false, Some("invariant failure".into()), None, None),
                 ("invariant_success()", true, None, None, None),
             ],
         )]),
@@ -1445,4 +1439,127 @@ Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
 
 "#]]);
+});
+
+// Tests that `targetSelector` and `excludeSelector` applied on test contract selectors are
+// applied.
+// <https://github.com/foundry-rs/foundry/issues/11006>
+forgetest_init!(invariant_target_test_include_exclude_selectors, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 10;
+        config.invariant.depth = 100;
+    });
+    prj.add_test(
+        "InvariantTargetTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantTargetIncludeTest is Test {
+    bool include = true;
+    function setUp() public {
+       targetContract(address(this));
+       bytes4[] memory selectors = new bytes4[](2);
+       selectors[0] = this.shouldInclude1.selector;
+       selectors[1] = this.shouldInclude2.selector;
+       targetSelector(FuzzSelector({addr: address(this), selectors: selectors}));
+    }
+
+    function shouldExclude1() public {
+        include = false;
+    }
+
+    function shouldInclude1() public {
+        include = true;
+    }
+
+    function shouldExclude2() public {
+        include = false;
+    }
+
+    function shouldInclude2() public {
+        include = true;
+    }
+
+    function invariant_include() public view {
+        require(include, "does not include");
+    }
+}
+
+contract InvariantTargetExcludeTest is Test {
+    bool include = true;
+    function setUp() public {
+       targetContract(address(this));
+       bytes4[] memory selectors = new bytes4[](2);
+       selectors[0] = this.shouldExclude1.selector;
+       selectors[1] = this.shouldExclude2.selector;
+       excludeSelector(FuzzSelector({addr: address(this), selectors: selectors}));
+    }
+
+    function shouldExclude1() public {
+        include = false;
+    }
+
+    function shouldInclude1() public {
+        include = true;
+    }
+
+    function shouldExclude2() public {
+        include = false;
+    }
+
+    function shouldInclude2() public {
+        include = true;
+    }
+
+    function invariant_exclude() public view {
+        require(include, "does not include");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "invariant_include"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetIncludeTest
+[PASS] invariant_include() (runs: 10, calls: 1000, reverts: 0)
+
+╭----------------------------+----------------+-------+---------+----------╮
+| Contract                   | Selector       | Calls | Reverts | Discards |
++==========================================================================+
+| InvariantTargetIncludeTest | shouldInclude1 | [..]   | 0       | 0        |
+|----------------------------+----------------+-------+---------+----------|
+| InvariantTargetIncludeTest | shouldInclude2 | [..]   | 0       | 0        |
+╰----------------------------+----------------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    cmd.forge_fuse().args(["test", "--mt", "invariant_exclude"]).assert_success().stdout_eq(str![
+        [r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetExcludeTest
+[PASS] invariant_exclude() (runs: 10, calls: 1000, reverts: 0)
+
+╭----------------------------+----------------+-------+---------+----------╮
+| Contract                   | Selector       | Calls | Reverts | Discards |
++==========================================================================+
+| InvariantTargetExcludeTest | shouldInclude1 | [..]   | 0       | 0        |
+|----------------------------+----------------+-------+---------+----------|
+| InvariantTargetExcludeTest | shouldInclude2 | [..]   | 0       | 0        |
+╰----------------------------+----------------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]
+    ]);
 });

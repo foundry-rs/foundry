@@ -6,7 +6,7 @@ use crate::cmd::{
     send::SendTxArgs, storage::StorageArgs, txpool::TxPoolSubcommands, wallet::WalletSubcommands,
 };
 use alloy_ens::NameOrAddress;
-use alloy_primitives::{Address, Selector, B256, U256};
+use alloy_primitives::{Address, B256, Selector, U256};
 use alloy_rpc_types::BlockId;
 use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
@@ -20,7 +20,7 @@ use std::{path::PathBuf, str::FromStr};
     name = "cast",
     version = SHORT_VERSION,
     long_version = LONG_VERSION,
-    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html",
+    after_help = "Find more information in the book: https://getfoundry.sh/cast/overview",
     next_display_order = None,
 )]
 pub struct Cast {
@@ -359,6 +359,10 @@ pub enum CastSubcommand {
         /// If specified, only get the given field of the block.
         #[arg(long, short)]
         field: Option<String>,
+
+        /// Print the raw RLP encoded block header.
+        #[arg(long, conflicts_with = "field")]
+        raw: bool,
 
         #[arg(long, env = "CAST_FULL_BLOCK")]
         full: bool,

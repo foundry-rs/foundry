@@ -1,5 +1,5 @@
-use axum::{routing::get_service, Router};
-use forge_doc::mdbook::{utils::fs::get_404_output_file, MDBook};
+use axum::{Router, routing::get_service};
+use forge_doc::mdbook::{MDBook, utils::fs::get_404_output_file};
 use std::{
     io,
     net::{SocketAddr, ToSocketAddrs},
@@ -94,7 +94,7 @@ impl Server {
 async fn serve(build_dir: PathBuf, address: SocketAddr, file_404: &str) -> io::Result<()> {
     let file_404 = build_dir.join(file_404);
     let svc = ServeDir::new(build_dir).not_found_service(ServeFile::new(file_404));
-    let app = Router::new().nest_service("/", get_service(svc));
+    let app = Router::new().fallback_service(get_service(svc));
     let tcp_listener = tokio::net::TcpListener::bind(address).await?;
     axum::serve(tcp_listener, app.into_make_service()).await
 }

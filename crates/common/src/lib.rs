@@ -39,7 +39,7 @@ pub mod version;
 
 pub use constants::*;
 pub use contracts::*;
-pub use io::{shell, stdin, Shell};
+pub use io::{Shell, shell, stdin};
 pub use traits::*;
 pub use transactions::*;
 pub use utils::*;

@@ -1,13 +1,13 @@
 use crate::{
+    Cast, SimpleCast,
     opts::{Cast as CastArgs, CastSubcommand, ToBaseArgs},
     traces::identifier::SignaturesIdentifier,
-    Cast, SimpleCast,
 };
 use alloy_consensus::transaction::{Recovered, SignerRecoverable};
 use alloy_dyn_abi::{DynSolValue, ErrorExt, EventExt};
 use alloy_eips::eip7702::SignedAuthorization;
-use alloy_ens::{namehash, ProviderEnsExt};
-use alloy_primitives::{eip191_hash_message, hex, keccak256, Address, B256};
+use alloy_ens::{ProviderEnsExt, namehash};
+use alloy_primitives::{Address, B256, eip191_hash_message, hex, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
 use clap::{CommandFactory, Parser};
@@ -19,9 +19,9 @@ use foundry_common::{
     fmt::{format_tokens, format_tokens_raw, format_uint_exp},
     fs,
     selectors::{
-        decode_calldata, decode_event_topic, decode_function_selector, decode_selectors,
-        import_selectors, parse_signatures, pretty_calldata, ParsedSignatures, SelectorImportData,
-        SelectorKind,
+        ParsedSignatures, SelectorImportData, SelectorKind, decode_calldata, decode_event_topic,
+        decode_function_selector, decode_selectors, import_selectors, parse_signatures,
+        pretty_calldata,
     },
     shell, stdin,
 };
@@ -33,8 +33,7 @@ pub fn run() -> Result<()> {
 
     let args = CastArgs::parse();
     args.global.init()?;
-
-    run_command(args)
+    args.global.tokio_runtime().block_on(run_command(args))
 }
 
 /// Setup the global logger and other utilities.
@@ -49,7 +48,6 @@ pub fn setup() -> Result<()> {
 }
 
 /// Run the subcommand.
-#[tokio::main]
 pub async fn run_command(args: CastArgs) -> Result<()> {
     match args.cmd {
         // Constants
@@ -316,13 +314,17 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 Cast::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?
             )?
         }
-        CastSubcommand::Block { block, full, field, rpc } => {
+        CastSubcommand::Block { block, full, field, raw, rpc } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
+
+            // Can use either --raw or specify raw as a field
+            let raw = raw || field.as_ref().is_some_and(|f| f == "raw");
+
             sh_println!(
                 "{}",
                 Cast::new(provider)
-                    .block(block.unwrap_or(BlockId::Number(Latest)), full, field)
+                    .block(block.unwrap_or(BlockId::Number(Latest)), full, field, raw)
                     .await?
             )?
         }
@@ -410,7 +412,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             {
                 if resolve {
                     let resolved = &resolve_results[pos];
-                    sh_println!("{selector}\t{arguments:max_args_len$}\t{state_mutability:max_mutability_len$}\t{resolved}")?
+                    sh_println!(
+                        "{selector}\t{arguments:max_args_len$}\t{state_mutability:max_mutability_len$}\t{resolved}"
+                    )?
                 } else {
                     sh_println!("{selector}\t{arguments:max_args_len$}\t{state_mutability}")?
                 }

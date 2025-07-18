@@ -1,6 +1,6 @@
 use crate::executors::{
-    invariant::{InvariantTest, InvariantTestRun},
     Executor,
+    invariant::{InvariantTest, InvariantTestRun},
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_primitives::U256;
@@ -18,6 +18,7 @@ use proptest::{
 };
 use serde::Serialize;
 use std::{
+    fmt,
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -25,6 +26,7 @@ use uuid::Uuid;
 
 const METADATA_SUFFIX: &str = "metadata.json";
 const JSON_EXTENSION: &str = ".json";
+const FAVORABILITY_THRESHOLD: f64 = 0.3;
 
 /// Possible mutation strategies to apply on a call sequence.
 #[derive(Debug, Clone)]
@@ -45,7 +47,7 @@ enum MutationType {
 
 /// Holds Corpus information.
 #[derive(Serialize)]
-struct Corpus {
+struct CorpusEntry {
     // Unique corpus identifier.
     uuid: Uuid,
     // Total mutations of corpus as primary source.
@@ -55,9 +57,12 @@ struct Corpus {
     // Corpus call sequence.
     #[serde(skip_serializing)]
     tx_seq: Vec<BasicTxDetails>,
+    // Whether this corpus is favored, i.e. producing new finds more often than
+    // `FAVORABILITY_THRESHOLD`.
+    is_favored: bool,
 }
 
-impl Corpus {
+impl CorpusEntry {
     /// New corpus from given call sequence and corpus path to read uuid.
     pub fn new(tx_seq: Vec<BasicTxDetails>, path: PathBuf) -> eyre::Result<Self> {
         let uuid = if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
@@ -65,12 +70,61 @@ impl Corpus {
         } else {
             Uuid::new_v4()
         };
-        Ok(Self { uuid, total_mutations: 0, new_finds_produced: 0, tx_seq })
+        Ok(Self { uuid, total_mutations: 0, new_finds_produced: 0, tx_seq, is_favored: false })
     }
 
     /// New corpus with given call sequence and new uuid.
     pub fn from_tx_seq(tx_seq: Vec<BasicTxDetails>) -> Self {
-        Self { uuid: Uuid::new_v4(), total_mutations: 0, new_finds_produced: 0, tx_seq }
+        Self {
+            uuid: Uuid::new_v4(),
+            total_mutations: 0,
+            new_finds_produced: 0,
+            tx_seq,
+            is_favored: false,
+        }
+    }
+}
+
+#[derive(Serialize, Default)]
+pub(crate) struct CorpusMetrics {
+    // Number of edges seen during the invariant run.
+    cumulative_edges_seen: usize,
+    // Number of features (new hitcount bin of previously hit edge) seen during the invariant run.
+    cumulative_features_seen: usize,
+    // Number of corpus entries.
+    corpus_count: usize,
+    // Number of corpus entries that are favored.
+    favored_items: usize,
+}
+
+impl fmt::Display for CorpusMetrics {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f)?;
+        writeln!(f, "        - cumulative edges seen: {}", self.cumulative_edges_seen)?;
+        writeln!(f, "        - cumulative features seen: {}", self.cumulative_features_seen)?;
+        writeln!(f, "        - corpus count: {}", self.corpus_count)?;
+        write!(f, "        - favored items: {}", self.favored_items)?;
+        Ok(())
+    }
+}
+
+impl CorpusMetrics {
+    /// Records number of new edges or features explored during the campaign.
+    pub fn update_seen(&mut self, is_edge: bool) {
+        if is_edge {
+            self.cumulative_edges_seen += 1;
+        } else {
+            self.cumulative_features_seen += 1;
+        }
+    }
+
+    /// Updates campaign favored items.
+    pub fn update_favored(&mut self, is_favored: bool, corpus_favored: bool) {
+        if is_favored && !corpus_favored {
+            self.favored_items += 1;
+        } else if !is_favored && corpus_favored {
+            self.favored_items -= 1;
+        }
     }
 }
 
@@ -81,21 +135,23 @@ pub struct TxCorpusManager {
     // Call sequence mutation strategy type generator.
     mutation_generator: BoxedStrategy<MutationType>,
     // Path to invariant corpus directory. If None, sequences with new coverage are not persisted.
-    corpus_dir: Option<PathBuf>,
+    corpus_dir: Option<PathBuf>, // TODO consolidate into config
     // Whether corpus to use gzip file compression and decompression.
     corpus_gzip: bool,
     // Number of mutations until entry marked as eligible to be flushed from in-memory corpus.
-    // Mutations will be perfored at least `corpus_min_mutations` times.
+    // Mutations will be performed at least `corpus_min_mutations` times.
     corpus_min_mutations: usize,
     // Number of corpus that won't be evicted from memory.
     corpus_min_size: usize,
     // In-memory corpus, populated from persisted files and current runs.
     // Mutation is performed on these.
-    in_memory_corpus: Vec<Corpus>,
+    in_memory_corpus: Vec<CorpusEntry>,
     // Identifier of current mutated entry.
     current_mutated: Option<Uuid>,
     // Number of failed replays from persisted corpus.
     failed_replays: usize,
+    // Corpus metrics.
+    pub(crate) metrics: CorpusMetrics,
 }
 
 impl TxCorpusManager {
@@ -134,7 +190,8 @@ impl TxCorpusManager {
                 in_memory_corpus,
                 current_mutated: None,
                 failed_replays,
-            })
+                metrics: CorpusMetrics::default(),
+            });
         };
 
         // Ensure corpus dir for invariant function is created.
@@ -144,17 +201,19 @@ impl TxCorpusManager {
         }
 
         let fuzzed_contracts = fuzzed_contracts.targets.lock();
+        let mut metrics = CorpusMetrics::default();
 
         for entry in std::fs::read_dir(&corpus_dir)? {
             let path = entry?.path();
-            if path.is_file() {
-                if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-                    // Ignore metadata files
-                    if name.contains(METADATA_SUFFIX) {
-                        continue
-                    }
+            if path.is_file()
+                && let Some(name) = path.file_name().and_then(|s| s.to_str())
+            {
+                // Ignore metadata files
+                if name.contains(METADATA_SUFFIX) {
+                    continue;
                 }
             }
+            metrics.corpus_count += 1;
 
             let read_corpus_result = match path.extension().and_then(|ext| ext.to_str()) {
                 Some("gz") => foundry_common::fs::read_json_gzip_file::<Vec<BasicTxDetails>>(&path),
@@ -163,7 +222,7 @@ impl TxCorpusManager {
 
             let Ok(tx_seq) = read_corpus_result else {
                 trace!(target: "corpus", "failed to load corpus from {}", path.display());
-                continue
+                continue;
             };
 
             if !tx_seq.is_empty() {
@@ -180,7 +239,11 @@ impl TxCorpusManager {
                         .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))?;
 
                     if fuzzed_contracts.can_replay(tx) {
-                        call_result.merge_edge_coverage(history_map);
+                        let (new_coverage, is_edge) = call_result.merge_edge_coverage(history_map);
+                        if new_coverage {
+                            metrics.update_seen(is_edge);
+                        }
+
                         executor.commit(&mut call_result);
                     } else {
                         failed_replays += 1;
@@ -195,7 +258,7 @@ impl TxCorpusManager {
                 );
 
                 // Populate in memory corpus with sequence from corpus file.
-                in_memory_corpus.push(Corpus::new(tx_seq, path)?);
+                in_memory_corpus.push(CorpusEntry::new(tx_seq, path)?);
             }
         }
 
@@ -209,6 +272,7 @@ impl TxCorpusManager {
             in_memory_corpus,
             current_mutated: None,
             failed_replays,
+            metrics,
         })
     }
 
@@ -229,6 +293,10 @@ impl TxCorpusManager {
                 if test_run.new_coverage {
                     corpus.new_finds_produced += 1
                 }
+                let is_favored = (corpus.new_finds_produced as f64 / corpus.total_mutations as f64)
+                    < FAVORABILITY_THRESHOLD;
+                self.metrics.update_favored(is_favored, corpus.is_favored);
+                corpus.is_favored = is_favored;
 
                 trace!(
                     target: "corpus",
@@ -245,7 +313,7 @@ impl TxCorpusManager {
             return;
         }
 
-        let corpus = Corpus::from_tx_seq(test_run.inputs.clone());
+        let corpus = CorpusEntry::from_tx_seq(test_run.inputs.clone());
         let corpus_uuid = corpus.uuid;
 
         // Persist to disk if corpus dir is configured.
@@ -273,6 +341,7 @@ impl TxCorpusManager {
 
         // This includes reverting txs in the corpus and `can_continue` removes
         // them. We want this as it is new coverage and may help reach the other branch.
+        self.metrics.corpus_count += 1;
         self.in_memory_corpus.push(corpus);
     }
 
@@ -291,31 +360,30 @@ impl TxCorpusManager {
 
         if !self.in_memory_corpus.is_empty() {
             // Flush oldest corpus mutated more than configured max mutations unless they are
-            // producing new finds more than 1/3 of the time.
+            // favored.
             let should_evict = self.in_memory_corpus.len() > self.corpus_min_size.max(1);
-            if should_evict {
-                if let Some(index) = self.in_memory_corpus.iter().position(|corpus| {
-                    corpus.total_mutations > self.corpus_min_mutations &&
-                        (corpus.new_finds_produced as f64 / corpus.total_mutations as f64) < 0.3
-                }) {
-                    let corpus = self.in_memory_corpus.get(index).unwrap();
-                    let uuid = corpus.uuid;
-                    debug!(target: "corpus", "evict corpus {uuid}");
+            if should_evict
+                && let Some(index) = self.in_memory_corpus.iter().position(|corpus| {
+                    corpus.total_mutations > self.corpus_min_mutations && !corpus.is_favored
+                })
+            {
+                let corpus = self.in_memory_corpus.get(index).unwrap();
 
-                    // Flush to disk the seed metadata at the time of eviction.
-                    let eviction_time = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .expect("Time went backwards")
-                        .as_secs();
-                    foundry_common::fs::write_json_file(
-                        corpus_dir
-                            .join(format!("{uuid}-{eviction_time}-{METADATA_SUFFIX}"))
-                            .as_path(),
-                        &corpus,
-                    )?;
-                    // Remove corpus from memory.
-                    self.in_memory_corpus.remove(index);
-                }
+                let uuid = corpus.uuid;
+                debug!(target: "corpus", "evict corpus {uuid}");
+
+                // Flush to disk the seed metadata at the time of eviction.
+                let eviction_time = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_secs();
+                foundry_common::fs::write_json_file(
+                    corpus_dir.join(format!("{uuid}-{eviction_time}-{METADATA_SUFFIX}")).as_path(),
+                    &corpus,
+                )?;
+
+                // Remove corpus from memory.
+                self.in_memory_corpus.remove(index);
             }
 
             let mutation_type = self
@@ -331,9 +399,9 @@ impl TxCorpusManager {
             match mutation_type {
                 MutationType::Splice => {
                     trace!(target: "corpus", "splice {} and {}", primary.uuid, secondary.uuid);
-                    if should_evict {
-                        self.current_mutated = Some(primary.uuid);
-                    }
+
+                    self.current_mutated = Some(primary.uuid);
+
                     let start1 = rng.random_range(0..primary.tx_seq.len());
                     let end1 = rng.random_range(start1..primary.tx_seq.len());
 
@@ -350,9 +418,9 @@ impl TxCorpusManager {
                 MutationType::Repeat => {
                     let corpus = if rng.random::<bool>() { primary } else { secondary };
                     trace!(target: "corpus", "repeat {}", corpus.uuid);
-                    if should_evict {
-                        self.current_mutated = Some(corpus.uuid);
-                    }
+
+                    self.current_mutated = Some(corpus.uuid);
+
                     new_seq = corpus.tx_seq.clone();
                     let start = rng.random_range(0..corpus.tx_seq.len());
                     let end = rng.random_range(start..corpus.tx_seq.len());
@@ -362,9 +430,9 @@ impl TxCorpusManager {
                 }
                 MutationType::Interleave => {
                     trace!(target: "corpus", "interleave {} with {}", primary.uuid, secondary.uuid);
-                    if should_evict {
-                        self.current_mutated = Some(primary.uuid);
-                    }
+
+                    self.current_mutated = Some(primary.uuid);
+
                     for (tx1, tx2) in primary.tx_seq.iter().zip(secondary.tx_seq.iter()) {
                         // chunks?
                         let tx = if rng.random::<bool>() { tx1.clone() } else { tx2.clone() };
@@ -374,9 +442,9 @@ impl TxCorpusManager {
                 MutationType::Prefix => {
                     let corpus = if rng.random::<bool>() { primary } else { secondary };
                     trace!(target: "corpus", "overwrite prefix of {}", corpus.uuid);
-                    if should_evict {
-                        self.current_mutated = Some(corpus.uuid);
-                    }
+
+                    self.current_mutated = Some(corpus.uuid);
+
                     new_seq = corpus.tx_seq.clone();
                     for i in 0..rng.random_range(0..=new_seq.len()) {
                         new_seq[i] = self.new_tx(test_runner)?;
@@ -385,9 +453,9 @@ impl TxCorpusManager {
                 MutationType::Suffix => {
                     let corpus = if rng.random::<bool>() { primary } else { secondary };
                     trace!(target: "corpus", "overwrite suffix of {}", corpus.uuid);
-                    if should_evict {
-                        self.current_mutated = Some(corpus.uuid);
-                    }
+
+                    self.current_mutated = Some(corpus.uuid);
+
                     new_seq = corpus.tx_seq.clone();
                     for i in new_seq.len() - rng.random_range(0..new_seq.len())..corpus.tx_seq.len()
                     {
@@ -398,9 +466,9 @@ impl TxCorpusManager {
                     let targets = test.targeted_contracts.targets.lock();
                     let corpus = if rng.random::<bool>() { primary } else { secondary };
                     trace!(target: "corpus", "ABI mutate args of {}", corpus.uuid);
-                    if should_evict {
-                        self.current_mutated = Some(corpus.uuid);
-                    }
+
+                    self.current_mutated = Some(corpus.uuid);
+
                     new_seq = corpus.tx_seq.clone();
 
                     let idx = rng.random_range(0..new_seq.len());
@@ -485,13 +553,13 @@ impl TxCorpusManager {
         // Early return with new input if corpus dir / coverage guided fuzzing not configured or if
         // call was discarded.
         if self.corpus_dir.is_none() || discarded {
-            return self.new_tx(test_runner)
+            return self.new_tx(test_runner);
         }
 
         // When running with coverage guided fuzzing enabled then generate new sequence if initial
         // sequence's length is less than depth or randomly, to occasionally intermix new txs.
         if depth > sequence.len().saturating_sub(1) || test_runner.rng().random_ratio(1, 10) {
-            return self.new_tx(test_runner)
+            return self.new_tx(test_runner);
         }
 
         // Continue with the next call initial sequence
@@ -507,7 +575,13 @@ impl TxCorpusManager {
             .current())
     }
 
+    /// Returns campaign failed replays.
     pub fn failed_replays(self) -> usize {
         self.failed_replays
+    }
+
+    /// Updates seen edges or features metrics.
+    pub fn update_seen_metrics(&mut self, is_edge: bool) {
+        self.metrics.update_seen(is_edge);
     }
 }

@@ -1,25 +1,23 @@
 //! Anvil specific [`revm::Inspector`] implementation
 
 use crate::eth::macros::node_info;
-use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, Log, U256};
 use foundry_evm::{
-    backend::DatabaseError,
     call_inspectors,
     decode::decode_console_logs,
     inspectors::{LogCollector, TracingInspector},
     traces::{
-        render_trace_arena_inner, CallTraceDecoder, SparsedTraceArena, TracingInspectorConfig,
+        CallTraceDecoder, SparsedTraceArena, TracingInspectorConfig, render_trace_arena_inner,
     },
 };
 use revm::{
+    Inspector,
     context::ContextTr,
     inspector::JournalExt,
     interpreter::{
-        interpreter::EthInterpreter, CallInputs, CallOutcome, CreateInputs, CreateOutcome,
-        Interpreter,
+        CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter,
+        interpreter::EthInterpreter,
     },
-    Database, Inspector,
 };
 
 /// The [`revm::Inspector`] used when transacting in the evm
@@ -108,11 +106,9 @@ fn print_traces(tracer: TracingInspector) {
     node_info!("{}", render_trace_arena_inner(&traces, false, true));
 }
 
-impl<CTX, D> Inspector<CTX, EthInterpreter> for AnvilInspector
+impl<CTX> Inspector<CTX, EthInterpreter> for AnvilInspector
 where
-    D: Database<Error = DatabaseError>,
-    CTX: ContextTr<Db = D>,
-    CTX::Journal: JournalExt,
+    CTX: ContextTr<Journal: JournalExt>,
 {
     fn initialize_interp(&mut self, interp: &mut Interpreter, ecx: &mut CTX) {
         call_inspectors!([&mut self.tracer], |inspector| {
@@ -155,10 +151,10 @@ where
     }
 
     fn create(&mut self, ecx: &mut CTX, inputs: &mut CreateInputs) -> Option<CreateOutcome> {
-        if let Some(tracer) = &mut self.tracer {
-            if let Some(out) = tracer.create(ecx, inputs) {
-                return Some(out);
-            }
+        if let Some(tracer) = &mut self.tracer
+            && let Some(out) = tracer.create(ecx, inputs)
+        {
+            return Some(out);
         }
         None
     }
@@ -172,7 +168,7 @@ where
     #[inline]
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
         if let Some(tracer) = &mut self.tracer {
-            Inspector::<EthEvmContext<D>>::selfdestruct(tracer, contract, target, value);
+            <TracingInspector as Inspector<CTX>>::selfdestruct(tracer, contract, target, value);
         }
     }
 }

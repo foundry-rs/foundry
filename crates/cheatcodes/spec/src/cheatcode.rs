@@ -139,14 +139,14 @@ impl Group {
     pub const fn safety(self) -> Option<Safety> {
         match self {
             Self::Evm | Self::Testing => None,
-            Self::Scripting |
-            Self::Filesystem |
-            Self::Environment |
-            Self::String |
-            Self::Json |
-            Self::Toml |
-            Self::Crypto |
-            Self::Utilities => Some(Safety::Safe),
+            Self::Scripting
+            | Self::Filesystem
+            | Self::Environment
+            | Self::String
+            | Self::Json
+            | Self::Toml
+            | Self::Crypto
+            | Self::Utilities => Some(Safety::Safe),
         }
     }
 

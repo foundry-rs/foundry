@@ -3,7 +3,7 @@
 use alloy_chains::NamedChain;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{TransactionBuilder, TransactionResponse};
-use alloy_primitives::{address, b256, Bytes, B256};
+use alloy_primitives::{B256, Bytes, address, b256, hex};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{BlockNumberOrTag, Index, TransactionRequest};
 use anvil::NodeConfig;
@@ -90,7 +90,7 @@ Display options:
           - 4 (-vvvv): Print execution traces for all tests, and setup traces for failing tests.
           - 5 (-vvvvv): Print execution and setup traces for all tests, including storage changes.
 
-Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html
+Find more information in the book: https://getfoundry.sh/cast/overview
 
 "#]]);
 });
@@ -140,6 +140,28 @@ transactions:        [
 0x950091817a57e22b6c1f3b951a15f52d41ac89b299cc8f9c89bb6d185f80c415
 
 "#]]);
+});
+
+casttest!(block_raw, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    let output = cmd
+        .args(["block", "22934900", "--rpc-url", eth_rpc_url.as_str(), "--raw"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string();
+
+    // Hash the output with keccak256
+    let hash = alloy_primitives::keccak256(hex::decode(output).unwrap());
+
+    // Verify the Mainnet's block #22934900 header hash equals the expected value
+    // obtained with go-ethereum's `block.Header().Hash()` method
+    assert_eq!(
+        hash.to_string(),
+        "0x49fd7f3b9ba5d67fa60197027f09454d4cac945e8f271edcc84c3fd5872446d3"
+    );
 });
 
 // tests that the `cast find-block` command works correctly
@@ -1128,6 +1150,38 @@ casttest!(rpc_with_args, |_prj, cmd| {
     cmd.args(["rpc", "--rpc-url", eth_rpc_url.as_str(), "eth_getBlockByNumber", "0x123", "false"])
     .assert_json_stdout(str![[r#"
 {"number":"0x123","hash":"0xc5dab4e189004a1312e9db43a40abb2de91ad7dd25e75880bf36016d8e9df524","transactions":[],"logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","receiptsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","extraData":"0x476574682f4c5649562f76312e302e302f6c696e75782f676f312e342e32","nonce":"0x29d6547c196e00e0","miner":"0xbb7b8287f3f0a933474a79eae42cbca977791171","difficulty":"0x494433b31","gasLimit":"0x1388","gasUsed":"0x0","uncles":[],"sha3Uncles":"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347","size":"0x220","transactionsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","stateRoot":"0x3fe6bd17aa85376c7d566df97d9f2e536f37f7a87abb3a6f9e2891cf9442f2e4","mixHash":"0x943056aa305aa6d22a3c06110942980342d1f4d4b11c17711961436a0f963ea0","parentHash":"0x7abfd11e862ccde76d6ea8ee20978aac26f4bcb55de1188cc0335be13e817017","timestamp":"0x55ba4564"}
+
+"#]]);
+});
+
+// test for cast_rpc with arguments
+casttest!(rpc_format_as_json, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    // Call `cast rpc eth_getBlockByNumber 0x123 false`
+    cmd.args(["rpc", "--rpc-url", eth_rpc_url.as_str(), "eth_getBlockByNumber", "0x123", "false", "--json"])
+    .assert_json_stdout(str![[r#"
+{
+  "hash": "0xc5dab4e189004a1312e9db43a40abb2de91ad7dd25e75880bf36016d8e9df524",
+  "parentHash": "0x7abfd11e862ccde76d6ea8ee20978aac26f4bcb55de1188cc0335be13e817017",
+  "sha3Uncles": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+  "miner": "0xbb7b8287f3f0a933474a79eae42cbca977791171",
+  "stateRoot": "0x3fe6bd17aa85376c7d566df97d9f2e536f37f7a87abb3a6f9e2891cf9442f2e4",
+  "transactionsRoot": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+  "receiptsRoot": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+  "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+  "difficulty": "0x494433b31",
+  "number": "0x123",
+  "gasLimit": "0x1388",
+  "gasUsed": "0x0",
+  "timestamp": "0x55ba4564",
+  "extraData": "0x476574682f4c5649562f76312e302e302f6c696e75782f676f312e342e32",
+  "mixHash": "0x943056aa305aa6d22a3c06110942980342d1f4d4b11c17711961436a0f963ea0",
+  "nonce": "0x29d6547c196e00e0",
+  "size": "0x220",
+  "uncles": [],
+  "transactions": []
+}
 
 "#]]);
 });
@@ -2611,6 +2665,108 @@ forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
         .assert_success();
 });
 
+// https://github.com/foundry-rs/foundry/issues/10848
+forgetest_async!(cast_call_disable_labels, |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "Counter",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function getBalance(address target) public returns (uint256) {
+        return target.balance;
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    // Deploy counter contract.
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "CounterScript",
+    ])
+    .assert_success();
+
+    // Override state, `number()` should return overridden value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-state",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x1234",
+            "number()(uint256)",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+4660
+
+"#]]);
+
+    // Override state, `number()` should return overridden value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--labels",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:WETH",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-state",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x1234",
+            "number()(uint256)",
+            "--trace",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [2402] WETH::number()
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000001234
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+
+    // Override state, `number()` with `disable_labels`.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--labels",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:WETH",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-state",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x1234",
+            "number()(uint256)",
+            "--trace",
+            "--disable-labels",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [2402] 0x5FbDB2315678afecb367f032d93F642f64180aa3::number()
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000001234
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
 // https://github.com/foundry-rs/foundry/issues/10189
 forgetest_async!(cast_call_custom_override, |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
@@ -3145,6 +3301,277 @@ casttest!(tx_raw_opstack_deposit, |_prj, cmd| {
 "#]]);
 });
 
+// Test that cast send --create works correctly with constructor arguments
+// <https://github.com/foundry-rs/foundry/issues/10947>
+forgetest_async!(cast_send_create_with_constructor_args, |prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    // Deploy a simple contract with constructor arguments
+    // Contract source that takes constructor args
+    prj.add_source(
+        "ConstructorContract",
+        r#"
+contract ConstructorContract {
+    uint256 public value;
+    string public name;
+    
+    constructor(uint256 _value, string memory _name) {
+        value = _value;
+        name = _name;
+    }
+    
+    function getValue() public view returns (uint256) {
+        return value;
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    // Compile to get bytecode
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    // Get the compiled bytecode
+    let bytecode_path = prj.root().join("out/ConstructorContract.sol/ConstructorContract.json");
+    let contract_json = std::fs::read_to_string(bytecode_path).unwrap();
+    let contract_data: serde_json::Value = serde_json::from_str(&contract_json).unwrap();
+    let bytecode = contract_data["bytecode"]["object"].as_str().unwrap();
+
+    // Use cast send --create with constructor arguments
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+            "--create",
+            bytecode,
+            "constructor(uint256,string)",
+            "42",
+            "TestContract",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Extract the deployed contract address from output
+    let lines: Vec<&str> = output.lines().collect();
+    let mut address = None;
+    for line in lines {
+        if line.contains("contractAddress") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            address = Some(parts[1]);
+            break;
+        }
+    }
+    let address = address.expect("Contract address not found in output");
+
+    // Verify the contract was deployed correctly by calling getValue()
+    let value_output = cmd
+        .cast_fuse()
+        .args(["call", address, "getValue()", "--rpc-url", &endpoint])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // The value should be 42 (0x2a in hex)
+    assert!(
+        value_output.contains("0x000000000000000000000000000000000000000000000000000000000000002a")
+    );
+});
+
+// Test that cast estimate --create works correctly with constructor arguments
+// <https://github.com/foundry-rs/foundry/issues/10947>
+casttest!(cast_estimate_create_with_constructor_args, |prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    // Add a simple contract with constructor arguments
+    prj.add_source(
+        "EstimateContract",
+        r#"
+contract EstimateContract {
+    uint256 public value;
+    string public name;
+    
+    constructor(uint256 _value, string memory _name) {
+        value = _value;
+        name = _name;
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    // Compile to get bytecode
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    // Get the compiled bytecode
+    let bytecode_path = prj.root().join("out/EstimateContract.sol/EstimateContract.json");
+    let contract_json = std::fs::read_to_string(bytecode_path).unwrap();
+    let contract_data: serde_json::Value = serde_json::from_str(&contract_json).unwrap();
+    let bytecode = contract_data["bytecode"]["object"].as_str().unwrap();
+
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "estimate",
+            "--rpc-url",
+            eth_rpc_url.as_str(),
+            "--create",
+            bytecode,
+            "constructor(uint256,string)",
+            "100",
+            "TestContract",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Parse the gas estimate
+    let gas_estimate = output.trim().parse::<u64>().expect("Failed to parse gas estimate");
+
+    // Gas estimate should be positive and reasonable for contract deployment
+    assert!(gas_estimate > 50000, "Gas estimate too low for contract deployment");
+    assert!(gas_estimate < 5000000, "Gas estimate unreasonably high");
+});
+
+// Test edge case: empty constructor arguments
+// <https://github.com/foundry-rs/foundry/issues/10947>
+forgetest_async!(cast_send_create_empty_constructor, |prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    // Simple contract with no constructor arguments
+    prj.add_source(
+        "SimpleContract",
+        r#"
+contract SimpleContract {
+    uint256 public constant VALUE = 42;
+}
+"#,
+    )
+    .unwrap();
+
+    // Compile
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    // Get bytecode
+    let bytecode_path = prj.root().join("out/SimpleContract.sol/SimpleContract.json");
+    let contract_json = std::fs::read_to_string(bytecode_path).unwrap();
+    let contract_data: serde_json::Value = serde_json::from_str(&contract_json).unwrap();
+    let bytecode = contract_data["bytecode"]["object"].as_str().unwrap();
+
+    // Deploy with empty constructor
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+            "--create",
+            bytecode,
+            "constructor()",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify deployment succeeded
+    assert!(output.contains("contractAddress"));
+});
+
+// Test complex constructor arguments (multiple types)
+// <https://github.com/foundry-rs/foundry/issues/10947>
+forgetest_async!(cast_send_create_complex_constructor, |prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    // Contract with complex constructor
+    prj.add_source(
+        "ComplexContract",
+        r#"
+contract ComplexContract {
+    address public owner;
+    uint256[] public values;
+    bool public active;
+    
+    constructor(address _owner, uint256[] memory _values, bool _active) {
+        owner = _owner;
+        values = _values;
+        active = _active;
+    }
+    
+    function getValuesLength() public view returns (uint256) {
+        return values.length;
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    // Compile
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    // Get bytecode
+    let bytecode_path = prj.root().join("out/ComplexContract.sol/ComplexContract.json");
+    let contract_json = std::fs::read_to_string(bytecode_path).unwrap();
+    let contract_data: serde_json::Value = serde_json::from_str(&contract_json).unwrap();
+    let bytecode = contract_data["bytecode"]["object"].as_str().unwrap();
+
+    // Deploy with complex arguments
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+            "--create",
+            bytecode,
+            "constructor(address,uint256[],bool)",
+            "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+            "[1,2,3,4,5]",
+            "true",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Extract deployed address
+    let lines: Vec<&str> = output.lines().collect();
+    let mut address = None;
+    for line in lines {
+        if line.contains("contractAddress") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                address = Some(parts[1]);
+                break;
+            }
+        }
+    }
+    let address = address.expect("Contract address not found in output");
+
+    // Verify the array length was set correctly
+    let length_output = cmd
+        .cast_fuse()
+        .args(["call", address, "getValuesLength()", "--rpc-url", &endpoint])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Should return 5 (0x5 in hex)
+    assert!(
+        length_output
+            .contains("0x0000000000000000000000000000000000000000000000000000000000000005")
+    );
+});
+
 casttest!(recover_authority, |_prj, cmd| {
     let auth = r#"{
         "chainId": "0x1",
@@ -3156,6 +3583,66 @@ casttest!(recover_authority, |_prj, cmd| {
     }"#;
     cmd.args(["recover-authority", auth]).assert_success().stdout_eq(str![[r#"
 0x17816E9A858b161c3E37016D139cf618056CaCD4
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10945>
+// tests `cast code --disassemble`
+casttest!(can_disassemble_contract_code, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Mainnet);
+    cmd.args([
+        "code",
+        "--disassemble",
+        "--rpc-url",
+        rpc.as_str(),
+        "0x1F573D6Fb3F13d689FF844B4cE37794d79a7FF1C",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+00000000: PUSH1 0x60
+00000002: PUSH1 0x40
+00000004: MSTORE
+00000005: CALLDATASIZE
+00000006: ISZERO
+00000007: PUSH2 0x010f
+0000000a: JUMPI
+0000000b: PUSH4 0xffffffff
+00000010: PUSH29 0x0100000000000000000000000000000000000000000000000000000000
+0000002e: PUSH1 0x00
+...
+"#]]);
+});
+
+// tests that cast call properly applies state diff override
+// <https://github.com/foundry-rs/foundry/issues/10930>
+casttest!(cast_call_can_override_state_diff, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Sepolia);
+    cmd.args([
+        "call",
+        "--rpc-url",
+        rpc.as_str(),
+        "--data",
+        "0x",
+        "0x1EA77b250eF79e917A5A637D5BB82D0980653F1B",
+        "--override-state-diff",
+        "0x1EA77b250eF79e917A5A637D5BB82D0980653F1B:1:1",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x1337
+
+"#]]);
+    cmd.args(["--trace"]).assert_success().stdout_eq(str![[r#"
+Traces:
+  [7281] 0x1EA77b250eF79e917A5A637D5BB82D0980653F1B::fallback()
+    ├─ [2275] 0xe537cb8a46Bd179c0C36aB7E3Fdecd759C8B80fc::fallback() [delegatecall]
+    │   └─ ← [Return] 0x1337
+    └─ ← [Return] 0x1337
+
+
+Transaction successfully executed.
+[GAS]
 
 "#]]);
 });

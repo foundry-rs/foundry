@@ -7,20 +7,20 @@
 // the concrete `Executor` type.
 
 use crate::{
-    inspectors::{
-        cheatcodes::BroadcastableTransactions, Cheatcodes, InspectorData, InspectorStack,
-    },
     Env,
+    inspectors::{
+        Cheatcodes, InspectorData, InspectorStack, cheatcodes::BroadcastableTransactions,
+    },
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{
-    keccak256,
+    Address, Bytes, Log, TxKind, U256, keccak256,
     map::{AddressHashMap, HashMap},
-    Address, Bytes, Log, TxKind, U256,
 };
-use alloy_sol_types::{sol, SolCall};
+use alloy_sol_types::{SolCall, sol};
 use foundry_evm_core::{
+    EvmEnv, InspectorExt,
     backend::{Backend, BackendError, BackendResult, CowBackend, DatabaseExt, GLOBAL_FAIL_SLOT},
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
@@ -28,7 +28,6 @@ use foundry_evm_core::{
     },
     decode::{RevertDecoder, SkipReason},
     utils::StateChangeset,
-    EvmEnv, InspectorExt,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
@@ -40,7 +39,7 @@ use revm::{
         transaction::SignedAuthorization,
     },
     database::{DatabaseCommit, DatabaseRef},
-    interpreter::{return_ok, InstructionResult},
+    interpreter::{InstructionResult, return_ok},
     primitives::hardfork::SpecId,
 };
 use std::{
@@ -620,17 +619,16 @@ impl Executor {
         }
 
         // Check the global failure slot.
-        if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS) {
-            if let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT) {
-                if !failed_slot.present_value().is_zero() {
-                    return false;
-                }
-            }
+        if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS)
+            && let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT)
+            && !failed_slot.present_value().is_zero()
+        {
+            return false;
         }
-        if let Ok(failed_slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT) {
-            if !failed_slot.is_zero() {
-                return false;
-            }
+        if let Ok(failed_slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
+            && !failed_slot.is_zero()
+        {
+            return false;
         }
 
         if !self.legacy_assertions {
@@ -811,7 +809,7 @@ impl From<DeployResult> for RawCallResult {
 #[derive(Debug)]
 pub struct RawCallResult {
     /// The status of the call
-    pub exit_reason: InstructionResult,
+    pub exit_reason: Option<InstructionResult>,
     /// Whether the call reverted or not
     pub reverted: bool,
     /// Whether the call includes a snapshot failure
@@ -848,13 +846,14 @@ pub struct RawCallResult {
     /// The raw output of the execution
     pub out: Option<Output>,
     /// The chisel state
-    pub chisel_state: Option<(Vec<U256>, Vec<u8>, InstructionResult)>,
+    pub chisel_state: Option<(Vec<U256>, Vec<u8>, Option<InstructionResult>)>,
+    pub reverter: Option<Address>,
 }
 
 impl Default for RawCallResult {
     fn default() -> Self {
         Self {
-            exit_reason: InstructionResult::Continue,
+            exit_reason: None,
             reverted: false,
             has_state_snapshot_failure: false,
             result: Bytes::new(),
@@ -872,6 +871,7 @@ impl Default for RawCallResult {
             cheatcodes: Default::default(),
             out: None,
             chisel_state: None,
+            reverter: None,
         }
     }
 }
@@ -899,7 +899,7 @@ impl RawCallResult {
         if let Some(reason) = SkipReason::decode(&self.result) {
             return EvmError::Skip(reason);
         }
-        let reason = rd.unwrap_or_default().decode(&self.result, Some(self.exit_reason));
+        let reason = rd.unwrap_or_default().decode(&self.result, self.exit_reason);
         EvmError::Execution(Box::new(self.into_execution_error(reason)))
     }
 
@@ -910,7 +910,9 @@ impl RawCallResult {
 
     /// Returns an `EvmError` if the call failed, otherwise returns `self`.
     pub fn into_result(self, rd: Option<&RevertDecoder>) -> Result<Self, EvmError> {
-        if self.exit_reason.is_ok() {
+        if let Some(reason) = self.exit_reason
+            && reason.is_ok()
+        {
             Ok(self)
         } else {
             Err(self.into_evm_error(rd))
@@ -941,8 +943,9 @@ impl RawCallResult {
 
     /// Update provided history map with edge coverage info collected during this call.
     /// Uses AFL binning algo <https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L57-L85>
-    pub fn merge_edge_coverage(&mut self, history_map: &mut [u8]) -> bool {
+    pub fn merge_edge_coverage(&mut self, history_map: &mut [u8]) -> (bool, bool) {
         let mut new_coverage = false;
+        let mut is_edge = false;
         if let Some(x) = &mut self.edge_coverage {
             // Iterate over the current map and the history map together and update
             // the history map, if we discover some new coverage, report true
@@ -964,6 +967,10 @@ impl RawCallResult {
 
                     // If the old record for this edge pair is lower, update
                     if *hist < bucket {
+                        if *hist == 0 {
+                            // Counts as an edge the first time we see it, otherwise it's a feature.
+                            is_edge = true;
+                        }
                         *hist = bucket;
                         new_coverage = true;
                     }
@@ -973,7 +980,7 @@ impl RawCallResult {
                 }
             }
         }
-        new_coverage
+        (new_coverage, is_edge)
     }
 }
 
@@ -1042,6 +1049,7 @@ fn convert_executed_result(
         edge_coverage,
         cheatcodes,
         chisel_state,
+        reverter,
     } = inspector.collect();
 
     if logs.is_empty() {
@@ -1054,7 +1062,7 @@ fn convert_executed_result(
         .filter(|txs| !txs.is_empty());
 
     Ok(RawCallResult {
-        exit_reason,
+        exit_reason: Some(exit_reason),
         reverted: !matches!(exit_reason, return_ok!()),
         has_state_snapshot_failure,
         result,
@@ -1072,6 +1080,7 @@ fn convert_executed_result(
         cheatcodes,
         out,
         chisel_state,
+        reverter,
     })
 }
 

@@ -1,8 +1,8 @@
 use alloy_consensus::Transaction;
 use alloy_network::{AnyNetwork, TransactionResponse};
 use alloy_primitives::{
+    Address, Bytes, U256,
     map::{HashMap, HashSet},
-    Address, Bytes,
 };
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::BlockTransactions;
@@ -10,24 +10,23 @@ use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
-    utils::{handle_traces, init_progress, TraceResult},
+    utils::{TraceResult, handle_traces, init_progress},
 };
-use foundry_common::{is_known_system_sender, shell, SYSTEM_TRANSACTION_TYPE};
+use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_impersonated_tx, is_known_system_sender, shell};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
-    figment::{
-        self,
-        value::{Dict, Map},
-        Figment, Metadata, Profile,
-    },
     Config,
+    figment::{
+        self, Figment, Metadata, Profile,
+        value::{Dict, Map},
+    },
 };
 use foundry_evm::{
+    Env,
     executors::{EvmError, TracingExecutor},
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode, Traces},
     utils::configure_tx_env,
-    Env,
 };
 use foundry_evm_core::env::AsEnvMut;
 
@@ -56,6 +55,10 @@ pub struct RunArgs {
     /// May result in different results than the live execution!
     #[arg(long)]
     quick: bool,
+
+    /// Disables the labels in the traces.
+    #[arg(long, default_value_t = false)]
+    disable_labels: bool,
 
     /// Label addresses in the trace.
     ///
@@ -130,8 +133,8 @@ impl RunArgs {
             .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
         // check if the tx is a system transaction
-        if is_known_system_sender(tx.from()) ||
-            tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
+        if is_known_system_sender(tx.from())
+            || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
         {
             return Err(eyre::eyre!(
                 "{:?} is a system transaction.\nReplaying system transactions is currently not supported.",
@@ -154,10 +157,10 @@ impl RunArgs {
         let mut evm_version = self.evm_version;
 
         env.evm_env.cfg_env.disable_block_gas_limit = self.disable_block_gas_limit;
-        env.evm_env.block_env.number = tx_block_number;
+        env.evm_env.block_env.number = U256::from(tx_block_number);
 
         if let Some(block) = &block {
-            env.evm_env.block_env.timestamp = block.header.timestamp;
+            env.evm_env.block_env.timestamp = U256::from(block.header.timestamp);
             env.evm_env.block_env.beneficiary = block.header.beneficiary;
             env.evm_env.block_env.difficulty = block.header.difficulty;
             env.evm_env.block_env.prevrandao = Some(block.header.mix_hash.unwrap_or_default());
@@ -210,15 +213,15 @@ impl RunArgs {
                 pb.set_position(0);
 
                 let BlockTransactions::Full(ref txs) = block.transactions else {
-                    return Err(eyre::eyre!("Could not get block txs"))
+                    return Err(eyre::eyre!("Could not get block txs"));
                 };
 
                 for (index, tx) in txs.iter().enumerate() {
                     // System transactions such as on L2s don't contain any pricing info so
                     // we skip them otherwise this would cause
                     // reverts
-                    if is_known_system_sender(tx.from()) ||
-                        tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
+                    if is_known_system_sender(tx.from())
+                        || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
                     {
                         pb.set_position((index + 1) as u64);
                         continue;
@@ -228,6 +231,8 @@ impl RunArgs {
                     }
 
                     configure_tx_env(&mut env.as_env_mut(), &tx.inner);
+
+                    env.evm_env.cfg_env.disable_balance_check = true;
 
                     if let Some(to) = Transaction::to(tx) {
                         trace!(tx=?tx.tx_hash(),?to, "executing previous call transaction");
@@ -251,7 +256,7 @@ impl RunArgs {
                                             tx.tx_hash(),
                                             env.evm_env.block_env.number
                                         )
-                                    })
+                                    });
                                 }
                             }
                         }
@@ -267,6 +272,9 @@ impl RunArgs {
             executor.set_trace_printer(self.trace_printer);
 
             configure_tx_env(&mut env.as_env_mut(), &tx.inner);
+            if is_impersonated_tx(tx.inner.inner.inner()) {
+                env.evm_env.cfg_env.disable_balance_check = true;
+            }
 
             if let Some(to) = Transaction::to(&tx) {
                 trace!(tx=?tx.tx_hash(), to=?to, "executing call transaction");
@@ -287,6 +295,7 @@ impl RunArgs {
             self.with_local_artifacts,
             self.debug,
             self.decode_internal,
+            self.disable_labels,
         )
         .await?;
 
