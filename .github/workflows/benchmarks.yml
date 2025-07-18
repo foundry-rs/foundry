@@ -88,7 +88,7 @@ jobs:
           ./foundry-bench --output-dir ./benches --force-install \
             --versions $VERSIONS \
             --repos $REPOS \
-            --benchmarks forge_test,forge_fuzz_test,forge_isolate_test \
+            --benchmarks forge_test,forge_fuzz_test \
             --output-file forge_test_bench.md
 
       - name: Upload test benchmark results
@@ -157,9 +157,40 @@ jobs:
           name: forge-coverage-results
           path: benches/forge_coverage_bench.md
 
+  forge-isolate-test-bench:
+    name: Forge Isolate Test Benchmarks
+    needs: setup
+    runs-on: foundry-runner
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Benchmark setup
+        uses: ./.github/actions/benchmark-setup
+
+      - name: Run forge isolate test benchmarks
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: |
+          VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
+          # Isolate tests default to Vectorized/solady but can be overridden
+          REPOS="${{ github.event.inputs.repos || env.VECTORIZED_SOLADY }}"
+
+          ./foundry-bench --output-dir ./benches --force-install \
+            --versions $VERSIONS \
+            --repos $REPOS \
+            --benchmarks forge_isolate_test \
+            --output-file forge_isolate_test_bench.md
+
+      - name: Upload isolate test benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-isolate-test-results
+          path: benches/forge_isolate_test_bench.md
+
   combine-results:
     name: Combine and Publish Results
-    needs: [forge-test-bench, forge-build-bench, forge-coverage-bench]
+    needs: [forge-test-bench, forge-build-bench, forge-coverage-bench, forge-isolate-test-bench]
     runs-on: foundry-runner
     steps:
       - name: Checkout repository

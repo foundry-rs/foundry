@@ -126,7 +126,7 @@ EOF
 FIRST_FILE=1
 SYSTEM_INFO=""
 
-for bench_file in "forge_test_bench.md" "forge_build_bench.md" "forge_coverage_bench.md"; do
+for bench_file in "forge_test_bench.md" "forge_build_bench.md" "forge_coverage_bench.md" "forge_isolate_test_bench.md"; do
     if [ -f "$OUTPUT_DIR/$bench_file" ]; then
         echo "Processing $bench_file..."
         
@@ -134,6 +134,9 @@ for bench_file in "forge_test_bench.md" "forge_build_bench.md" "forge_coverage_b
         case "$bench_file" in
             "forge_test_bench.md")
                 SECTION_NAME="Forge Test"
+                ;;
+            "forge_isolate_test_bench.md")
+                SECTION_NAME="Forge Test (Isolated)"
                 ;;
             "forge_build_bench.md")
                 SECTION_NAME="Forge Build"
@@ -162,14 +165,6 @@ for bench_file in "forge_test_bench.md" "forge_build_bench.md" "forge_coverage_b
                 echo "## Forge Fuzz Test" >> "$OUTPUT_DIR/LATEST.md"
                 echo >> "$OUTPUT_DIR/LATEST.md"
                 extract_benchmark_table "$OUTPUT_DIR/$bench_file" "Forge Fuzz Test" >> "$OUTPUT_DIR/LATEST.md"
-            fi
-            
-            # Check if Forge Test (Isolated) section exists
-            if grep -q "^## Forge Test (Isolated)" "$OUTPUT_DIR/$bench_file"; then
-                echo >> "$OUTPUT_DIR/LATEST.md"
-                echo "## Forge Test (Isolated)" >> "$OUTPUT_DIR/LATEST.md"
-                echo >> "$OUTPUT_DIR/LATEST.md"
-                extract_benchmark_table "$OUTPUT_DIR/$bench_file" "Forge Test (Isolated)" >> "$OUTPUT_DIR/LATEST.md"
             fi
         elif [[ "$bench_file" == "forge_build_bench.md" ]]; then
             # Extract No Cache table
