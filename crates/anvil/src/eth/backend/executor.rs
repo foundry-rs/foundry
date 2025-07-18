@@ -487,7 +487,7 @@ where
             PrecompilesMap::from_static(eth_precompiles),
         );
 
-        let eth = EthEvm::new(eth_evm, true);
+        let eth = EthEvm::new(alloy_evm::rwasm_revm::RwasmEvm(eth_evm),true);
 
         EitherEvm::Eth(eth)
     }
