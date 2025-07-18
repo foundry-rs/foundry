@@ -184,12 +184,6 @@ pub fn now() -> Duration {
     SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards")
 }
 
-/// Runs the `future` in a new [`tokio::runtime::Runtime`]
-pub fn block_on<F: Future>(future: F) -> F::Output {
-    let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
-    rt.block_on(future)
-}
-
 /// Loads a dotenv file, from the cwd and the project root, ignoring potential failure.
 ///
 /// We could use `warn!` here, but that would imply that the dotenv file can't configure
