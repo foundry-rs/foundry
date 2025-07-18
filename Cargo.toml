@@ -364,6 +364,20 @@ idna_adapter = "=1.1.0"
 zip-extract = "=0.2.1"
 
 [patch.crates-io]
+revm = { path = "../fluentbase-v2/revm/crates/revm" }
+revm-bytecode = { path = "../fluentbase-v2/revm/crates/bytecode" }
+revm-database = { path = "../fluentbase-v2/revm/crates/database" }
+revm-database-interface = { path = "../fluentbase-v2/revm/crates/database/interface" }
+revm-state = { path = "../fluentbase-v2/revm/crates/state" }
+revm-primitives = { path = "../fluentbase-v2/revm/crates/primitives" }
+revm-interpreter = { path = "../fluentbase-v2/revm/crates/interpreter" }
+revm-inspector = { path = "../fluentbase-v2/revm/crates/inspector" }
+revm-context = { path = "../fluentbase-v2/revm/crates/context" }
+revm-context-interface = { path = "../fluentbase-v2/revm/crates/context/interface" }
+op-revm = { path = "../fluentbase-v2/revm/crates/op-revm" }
+
+alloy-evm = { path = "../alloy-rwasm/crates/evm", features = ["enforce-rwasm"] }
+
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
 # alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }
