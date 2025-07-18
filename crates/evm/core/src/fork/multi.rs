@@ -81,16 +81,12 @@ impl MultiFork {
         trace!(target: "fork::multi", "spawning multifork");
 
         let (fork, mut handler) = Self::new();
-        // Spawn a light-weight thread with a thread-local async runtime just for
-        // sending and receiving data from the remote client(s).
+        // Spawn a light-weight thread just for sending and receiving data from the remote
+        // client(s).
+        let rt = tokio::runtime::Handle::current();
         std::thread::Builder::new()
             .name("multi-fork-backend".into())
             .spawn(move || {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to build tokio runtime");
-
                 rt.block_on(async move {
                     // Flush cache every 60s, this ensures that long-running fork tests get their
                     // cache flushed from time to time.
