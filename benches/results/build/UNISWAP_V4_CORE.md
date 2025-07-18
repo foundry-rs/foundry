@@ -1,6 +1,6 @@
 # Foundry Benchmark Results
 
-**Date**: 2025-07-17 14:12:52
+**Date**: 2025-07-17 19:30:41
 
 ## Summary
 
@@ -20,7 +20,7 @@ Benchmarked 3 Foundry versions across 1 repositories.
 
 | Repository | v1.2.3 | nightly-05918765cb239024e9ca396825abb9f46257419a | nightly-0af43412f809c998d8b2fe69a1c9a789b7ebd085 |
 |------------|----------|----------|----------|
-| Uniswap-v4-core | 26.21 s | 27.03 s | 26.50 s |
+| Uniswap-v4-core | 2m 6.4s | 2m 6.8s | 2m 14.6s |
 
 ## System Information
 

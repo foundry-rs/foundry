@@ -1,6 +1,6 @@
 # Foundry Benchmark Results
 
-**Date**: 2025-07-17 14:02:24
+**Date**: 2025-07-17 18:51:31
 
 ## Summary
 
@@ -20,7 +20,7 @@ Benchmarked 3 Foundry versions across 1 repositories.
 
 | Repository | v1.2.3 | nightly-05918765cb239024e9ca396825abb9f46257419a | nightly-0af43412f809c998d8b2fe69a1c9a789b7ebd085 |
 |------------|----------|----------|----------|
-| ithacaxyz-account | 2.08 s | 2.10 s | 2.31 s |
+| ithacaxyz-account | 9.67 s | 9.57 s | 9.76 s |
 
 ## System Information
 

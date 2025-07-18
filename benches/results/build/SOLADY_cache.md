@@ -1,6 +1,6 @@
 # Foundry Benchmark Results
 
-**Date**: 2025-07-17 14:42:42
+**Date**: 2025-07-17 19:49:36
 
 ## Summary
 
@@ -20,7 +20,7 @@ Benchmarked 3 Foundry versions across 1 repositories.
 
 | Repository | v1.2.3 | nightly-05918765cb239024e9ca396825abb9f46257419a | nightly-0af43412f809c998d8b2fe69a1c9a789b7ebd085 |
 |------------|----------|----------|----------|
-| solady | 3.07 s | 3.06 s | 3.10 s |
+| solady | 0.095 s | 0.117 s | 0.159 s |
 
 ## System Information
 

@@ -1,6 +1,6 @@
 # Foundry Benchmark Results
 
-**Date**: 2025-07-17 14:21:00
+**Date**: 2025-07-17 19:40:32
 
 ## Summary
 
@@ -20,7 +20,7 @@ Benchmarked 3 Foundry versions across 1 repositories.
 
 | Repository | v1.2.3 | nightly-05918765cb239024e9ca396825abb9f46257419a | nightly-0af43412f809c998d8b2fe69a1c9a789b7ebd085 |
 |------------|----------|----------|----------|
-| sparkdotfi-spark-psm | 2.82 s | 2.83 s | 2.99 s |
+| sparkdotfi-spark-psm | 14.31 s | 13.39 s | 13.86 s |
 
 ## System Information
 
