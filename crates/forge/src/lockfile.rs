@@ -178,7 +178,7 @@ impl<'a> Lockfile<'a> {
             .deps
             .get_mut(dep)
             .map(|d| {
-                new_dep_id.mark_overide();
+                new_dep_id.mark_override();
                 std::mem::replace(d, new_dep_id)
             })
             .ok_or_eyre(format!("Dependency not found in lockfile: {}", dep.display()))?;
@@ -232,7 +232,7 @@ pub enum DepIdentifier {
     /// Release tag `name` and the `rev` it is currently pointing to.
     /// Running `forge update` does not update the tag/rev.
     /// Dependency will remain pinned to the existing tag/rev unless r#override like so `forge
-    /// update owner/dep@tag=diffent_tag`.
+    /// update owner/dep@tag=different_tag`.
     #[serde(rename = "tag")]
     Tag {
         name: String,
@@ -304,7 +304,7 @@ impl DepIdentifier {
     }
 
     /// Marks as dependency as overridden.
-    pub fn mark_overide(&mut self) {
+    pub fn mark_override(&mut self) {
         match self {
             Self::Branch { r#override, .. } => *r#override = true,
             Self::Tag { r#override, .. } => *r#override = true,

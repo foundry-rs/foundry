@@ -1,0 +1,20 @@
+[files]
+extend-exclude = [
+    ".git",
+    "target",
+    "testdata",
+    "Cargo.toml",
+    "Cargo.lock",
+    "*.json",
+]
+
+[default.extend-words]
+crate = "crate"
+ser = "ser"
+ratatui = "ratatui"
+Caf = "Caf"
+froms = "froms"
+strat = "strat"
+ba = "ba"  # Used in hexadecimal values and git commit hashes
+abd = "abd"  # Used in function signatures
+nd = "nd"  # Used in function names like "2nd"
