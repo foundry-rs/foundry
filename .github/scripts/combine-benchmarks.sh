@@ -163,6 +163,14 @@ for bench_file in "forge_test_bench.md" "forge_build_bench.md" "forge_coverage_b
                 echo >> "$OUTPUT_DIR/LATEST.md"
                 extract_benchmark_table "$OUTPUT_DIR/$bench_file" "Forge Fuzz Test" >> "$OUTPUT_DIR/LATEST.md"
             fi
+            
+            # Check if Forge Test (Isolated) section exists
+            if grep -q "^## Forge Test (Isolated)" "$OUTPUT_DIR/$bench_file"; then
+                echo >> "$OUTPUT_DIR/LATEST.md"
+                echo "## Forge Test (Isolated)" >> "$OUTPUT_DIR/LATEST.md"
+                echo >> "$OUTPUT_DIR/LATEST.md"
+                extract_benchmark_table "$OUTPUT_DIR/$bench_file" "Forge Test (Isolated)" >> "$OUTPUT_DIR/LATEST.md"
+            fi
         elif [[ "$bench_file" == "forge_build_bench.md" ]]; then
             # Extract No Cache table
             echo "### No Cache" >> "$OUTPUT_DIR/LATEST.md"

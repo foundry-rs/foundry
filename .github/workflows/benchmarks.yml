@@ -86,7 +86,7 @@ jobs:
           ./foundry-bench --output-dir ./benches --force-install \
             --versions $VERSIONS \
             --repos $REPOS \
-            --benchmarks forge_test,forge_fuzz_test \
+            --benchmarks forge_test,forge_fuzz_test,forge_isolate_test \
             --output-file forge_test_bench.md
 
       - name: Upload test benchmark results
