@@ -44,6 +44,18 @@ build: ## Build the project.
 build-%:
 	cross build --target $* --features "$(FEATURES)" --profile "$(PROFILE)"
 
+
+.PHONY: build-gblend
+build-gblend: clean-gblend build ## Build gblend executables with symlinks.
+	mkdir -p $(BIN_DIR)
+	for bin in anvil cast chisel forge; do \
+		ln -sf $(CURDIR)/target/debug/$$bin $(BIN_DIR)/gblend-$$bin; \
+	done
+
+.PHONY: clean-gblend
+clean-gblend: ## Remove gblend executables.
+	rm -f $(BIN_DIR)/gblend-{anvil,cast,chisel,forge}
+
 .PHONY: docker-build-push
 docker-build-push: docker-build-prepare ## Build and push a cross-arch Docker image tagged with DOCKER_IMAGE_NAME.
 	FEATURES="jemalloc aws-kms gcp-kms cli asm-keccak" $(MAKE) build-x86_64-unknown-linux-gnu
@@ -151,3 +163,4 @@ dprint-check: ## Check formatting with dprint
 		cargo install dprint; \
 	fi
 	dprint check
+
