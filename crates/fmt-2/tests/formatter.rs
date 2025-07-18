@@ -186,9 +186,9 @@ fmt_tests! {
     OperatorExpressions, // OK
     PragmaDirective, // OK
     Repros, // TODO: check boxes, panics
-    ReturnStatement, // OK? is it acceptable? (inline block logic is incosisten with 'if stmt' unit test)
-    RevertNamedArgsStatement, // TODO: comments
-    RevertStatement, // FIX: idempotency (comment-related)
+    ReturnStatement, // OK? is it acceptable? (inline block logic is inconsistent with 'if stmt' unit test)
+    RevertNamedArgsStatement, // OK? is it acceptable? (TODO: properly break long calls)
+    RevertStatement, // OK
     SimpleComments, // FIX: idempotency (comment-related)
     SortedImports, // FIX: sorting order
     StatementBlock, // OK

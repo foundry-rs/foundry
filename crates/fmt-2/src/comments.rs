@@ -246,7 +246,7 @@ impl Comments {
         next_pos: Option<BytePos>,
     ) -> Option<&Comment> {
         if let Some(cmnt) = self.peek() {
-            if !cmnt.style.is_trailing() {
+            if !(cmnt.style.is_trailing() || cmnt.style.is_mixed()) {
                 return None;
             }
             let span_line = sm.lookup_char_pos(span_pos);

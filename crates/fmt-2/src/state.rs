@@ -75,15 +75,12 @@ impl<'sess> State<'sess, '_> {
         let mut last_style: Option<CommentStyle> = None;
         let mut all_blank = true;
         let config_cache = config;
-        while let Some(cmnt) = self.peek_comment() {
-            if cmnt.pos() >= pos {
-                break;
-            }
+        while self.peek_comment().is_some_and(|c| c.pos() < pos) {
             let cmnt = self.next_comment().unwrap();
             if cmnt.style.is_blank() {
                 match config.skip_blanks {
                     Some(Skip::All) => continue,
-                    Some(Skip::First) => {
+                    Some(Skip::Leading) => {
                         if all_blank {
                             continue;
                         }
@@ -184,10 +181,6 @@ impl<'sess> State<'sess, '_> {
                 }
             }
             CommentStyle::BlankLine => {
-                if config.skip_blanks.is_some() {
-                    return;
-                }
-
                 // We need to do at least one, possibly two hardbreaks.
                 let twice = match self.last_token() {
                     Some(Token::String(s)) => ";" == s,
@@ -241,38 +234,34 @@ impl<'sess> State<'sess, '_> {
         self.comments.peek_trailing_comment(self.sm, span_pos, next_pos)
     }
 
-    fn print_trailing_comment(&mut self, span_pos: BytePos, next_pos: Option<BytePos>) -> bool {
-        if let Some(cmnt) = self.comments.trailing_comment(self.sm, span_pos, next_pos) {
-            self.print_comment(cmnt, CommentConfig::default());
-            return true;
+    fn print_trailing_comment_inner(
+        &mut self,
+        span_pos: BytePos,
+        next_pos: Option<BytePos>,
+        config: Option<CommentConfig>,
+    ) -> bool {
+        let mut printed = false;
+        while let Some(cmnt) = self.comments.trailing_comment(self.sm, span_pos, next_pos) {
+            self.print_comment(
+                cmnt,
+                config.unwrap_or(CommentConfig::skip_ws().mixed_no_break().mixed_prev_space()),
+            );
+            printed = true;
         }
 
-        false
+        printed
+    }
+
+    fn print_trailing_comment(&mut self, span_pos: BytePos, next_pos: Option<BytePos>) -> bool {
+        self.print_trailing_comment_inner(span_pos, next_pos, None)
     }
 
     fn print_trailing_comment_no_break(&mut self, span_pos: BytePos, next_pos: Option<BytePos>) {
-        if let Some(mut cmnt) = self.comments.trailing_comment(self.sm, span_pos, next_pos) {
-            if !self.is_bol_or_only_ind() {
-                self.nbsp();
-            }
-
-            if cmnt.lines.len() == 1 {
-                self.word(cmnt.lines.pop().unwrap());
-            } else {
-                self.visual_align();
-                for (pos, line) in cmnt.lines.into_iter().delimited() {
-                    if !line.is_empty() {
-                        self.word(line);
-                    }
-                    if !pos.is_last {
-                        self.hardbreak();
-                    } else {
-                        self.zerobreak();
-                    }
-                }
-                self.end();
-            }
-        }
+        self.print_trailing_comment_inner(
+            span_pos,
+            next_pos,
+            Some(CommentConfig::skip_ws().trailing_no_break().mixed_no_break().mixed_prev_space()),
+        );
     }
 
     fn print_remaining_comments(&mut self) {
@@ -334,6 +323,17 @@ impl<'sess> State<'sess, '_> {
         P: FnMut(&mut Self, &'a T),
         S: FnMut(&T) -> Option<Span>,
     {
+        if values.is_empty() {
+            self.word("(");
+            self.s.cbox(self.ind);
+            if self.print_comments(pos_hi, CommentConfig::skip_ws().mixed_prev_space()).is_some() {
+                self.break_offset_if_not_bol(0, -self.ind, false);
+            }
+            self.end();
+            self.word(")");
+            return;
+        }
+
         // Format single-item inline lists directly without boxes
         if values.len() == 1 && matches!(format, ListFormat::Inline) {
             self.word("(");
@@ -378,7 +378,7 @@ impl<'sess> State<'sess, '_> {
             span.hi(),
             print,
             get_span,
-            ListFormat::Consistent(false),
+            ListFormat::Consistent { cmnts_break: false, with_space: false },
             false,
         );
         self.word("]");
@@ -387,7 +387,7 @@ impl<'sess> State<'sess, '_> {
     fn commasep<'a, T, P, S>(
         &mut self,
         values: &'a [T],
-        pos_lo: BytePos,
+        _pos_lo: BytePos,
         pos_hi: BytePos,
         mut print: P,
         mut get_span: S,
@@ -412,14 +412,18 @@ impl<'sess> State<'sess, '_> {
                 CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
             ) {
                 skip_first_break = true;
-                if format.breaks_comments() && cmnt.is_mixed() {
-                    // If cmnts should break + mixed comment before the 1st item, force hardbreak.
-                    self.hardbreak();
-                }
+                // If mixed comment before the 1st item, manually handle breaks.
+                match (cmnt.is_mixed(), format.breaks_comments()) {
+                    (true, true) => self.hardbreak(),
+                    (true, false) => self.space(),
+                    _ => {}
+                };
             }
         }
         if !skip_first_break {
-            self.zerobreak();
+            format.soft_break(&mut self.s);
+        } else if is_single_without_cmnts && format.with_space() {
+            self.nbsp();
         }
         if format.is_compact() {
             self.s.cbox(0);
@@ -471,8 +475,10 @@ impl<'sess> State<'sess, '_> {
             self.end();
         }
         if !skip_last_break {
-            self.zerobreak();
+            format.soft_break(&mut self.s);
             self.s.offset(-self.ind);
+        } else if is_single_without_cmnts && format.with_space() {
+            self.nbsp();
         }
         self.end();
     }
@@ -487,8 +493,10 @@ impl State<'_, '_> {
 
     /// Returns `true` if the span is disabled and has been printed as-is.
     #[must_use]
-    fn handle_span(&mut self, span: Span) -> bool {
-        self.print_comments(span.lo(), CommentConfig::default());
+    fn handle_span(&mut self, span: Span, skip_prev_cmnts: bool) -> bool {
+        if !skip_prev_cmnts {
+            self.print_comments(span.lo(), CommentConfig::default());
+        }
         self.print_span_if_disabled(span)
     }
 
@@ -547,7 +555,7 @@ impl<'ast> State<'_, 'ast> {
 
     fn separate_items(&mut self, next_item: &'ast ast::Item<'ast>) {
         if item_needs_iso(&next_item.kind) &&
-            !self.comments.iter().any(|c| c.pos() < next_item.span.lo())
+            !self.comments.iter().any(|c| c.pos() < next_item.span.lo() && c.style.is_blank())
         {
             self.hardbreak();
         }
@@ -556,12 +564,14 @@ impl<'ast> State<'_, 'ast> {
     fn print_item(&mut self, item: &'ast ast::Item<'ast>, skip_ws: bool) {
         let ast::Item { ref docs, span, ref kind } = *item;
         self.print_docs(docs);
+
         let add_zero_break = if skip_ws {
-            self.print_comments(span.lo(), CommentConfig::skip_ws().mixed_prev_space())
+            self.print_comments(span.lo(), CommentConfig::skip_ws())
         } else {
             self.print_comments(span.lo(), CommentConfig::default())
         }
         .is_some_and(|cmnt| cmnt.is_mixed());
+
         if add_zero_break {
             self.zerobreak();
         }
@@ -717,7 +727,7 @@ impl<'ast> State<'_, 'ast> {
                 self.hardbreak();
             }
             if self.peek_comment_before(body[0].span.lo()).is_some() {
-                self.print_comments(body[0].span.lo(), CommentConfig::skip_first_ws());
+                self.print_comments(body[0].span.lo(), CommentConfig::skip_leading_ws());
             }
 
             let mut items = body.iter().peekable();
@@ -762,8 +772,9 @@ impl<'ast> State<'_, 'ast> {
         self.hardbreak_if_nonempty();
         for var in fields.iter() {
             self.print_var_def(var);
-            self.print_trailing_comment(var.span.hi(), None);
-            self.hardbreak_if_not_bol();
+            if !self.print_trailing_comment(var.span.hi(), None) {
+                self.hardbreak();
+            }
         }
         self.print_comments(span.hi(), CommentConfig::skip_ws());
         self.s.offset(-self.ind);
@@ -779,13 +790,12 @@ impl<'ast> State<'_, 'ast> {
         self.word(" {");
         self.hardbreak_if_nonempty();
         for (pos, ident) in variants.iter().delimited() {
+            self.print_comments(ident.span.lo(), CommentConfig::default());
             self.print_ident(ident);
             if !pos.is_last {
                 self.word(",");
             }
-            self.print_trailing_comment(ident.span.hi(), None);
-            self.hardbreak_if_not_bol();
-            if !pos.is_last {
+            if !self.print_trailing_comment(ident.span.hi(), None) {
                 self.hardbreak();
             }
         }
@@ -826,7 +836,11 @@ impl<'ast> State<'_, 'ast> {
             self.print_ident(&name);
         }
         self.s.cbox(-self.ind);
-        self.print_parameter_list(parameters, parameters.span, ListFormat::Consistent(true));
+        self.print_parameter_list(
+            parameters,
+            parameters.span,
+            ListFormat::Consistent { cmnts_break: true, with_space: false },
+        );
         self.end();
 
         // Map attributes to their corresponding comments
@@ -880,7 +894,11 @@ impl<'ast> State<'_, 'ast> {
                     self.space();
                 }
                 self.word("returns ");
-                self.print_parameter_list(ret, ret.span, ListFormat::Consistent(false));
+                self.print_parameter_list(
+                    ret,
+                    ret.span,
+                    ListFormat::Consistent { cmnts_break: false, with_space: false },
+                );
                 empty_returns = false;
             }
         }
@@ -950,7 +968,11 @@ impl<'ast> State<'_, 'ast> {
         let ast::ItemError { name, parameters } = err;
         self.word("error ");
         self.print_ident(name);
-        self.print_parameter_list(parameters, parameters.span, ListFormat::Consistent(false));
+        self.print_parameter_list(
+            parameters,
+            parameters.span,
+            ListFormat::Compact { cmnts_break: false, with_space: false },
+        );
         self.word(";");
     }
 
@@ -958,7 +980,11 @@ impl<'ast> State<'_, 'ast> {
         let ast::ItemEvent { name, parameters, anonymous } = event;
         self.word("event ");
         self.print_ident(name);
-        self.print_parameter_list(parameters, parameters.span, ListFormat::Compact(false));
+        self.print_parameter_list(
+            parameters,
+            parameters.span,
+            ListFormat::Compact { cmnts_break: true, with_space: false },
+        );
         if *anonymous {
             self.word(" anonymous");
         }
@@ -983,7 +1009,7 @@ impl<'ast> State<'_, 'ast> {
             initializer,
         } = var;
 
-        if self.handle_span(*span) {
+        if self.handle_span(*span, false) {
             return;
         }
 
@@ -1064,7 +1090,7 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn print_path(&mut self, path: &'ast ast::PathSlice) {
-        self.s.cbox(self.ind);
+        self.s.ibox(self.ind);
         for (pos, ident) in path.segments().iter().delimited() {
             self.print_ident(ident);
             if !pos.is_last {
@@ -1078,7 +1104,7 @@ impl<'ast> State<'_, 'ast> {
     // TODO: Yul literals are slightly different than normal solidity ones
     fn print_lit(&mut self, lit: &'ast ast::Lit) {
         let ast::Lit { span, symbol, ref kind } = *lit;
-        if self.handle_span(span) {
+        if self.handle_span(span, false) {
             return;
         }
 
@@ -1087,7 +1113,7 @@ impl<'ast> State<'_, 'ast> {
                 self.cbox(0);
                 for (pos, (span, symbol)) in lit.literals().delimited() {
                     self.ibox(0);
-                    if !self.handle_span(span) {
+                    if !self.handle_span(span, false) {
                         let quote_pos = span.lo() + kind.prefix().len() as u32;
                         self.print_str_lit(kind, quote_pos, symbol.as_str());
                     }
@@ -1250,7 +1276,7 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn print_ty(&mut self, ty: &'ast ast::Type<'ast>) {
-        if self.handle_span(ty.span) {
+        if self.handle_span(ty.span, false) {
             return;
         }
 
@@ -1317,7 +1343,11 @@ impl<'ast> State<'_, 'ast> {
                     if !ret.is_empty() {
                         self.word("returns");
                         self.nbsp();
-                        self.print_parameter_list(ret, ret.span, ListFormat::Consistent(false));
+                        self.print_parameter_list(
+                            ret,
+                            ret.span,
+                            ListFormat::Consistent { cmnts_break: false, with_space: false },
+                        );
                     }
                 }
                 self.end();
@@ -1425,7 +1455,7 @@ impl<'ast> State<'_, 'ast> {
 
     fn print_override(&mut self, override_: &'ast ast::Override<'ast>) {
         let ast::Override { span, paths } = override_;
-        if self.handle_span(*span) {
+        if self.handle_span(*span, false) {
             return;
         }
         self.word("override");
@@ -1439,7 +1469,7 @@ impl<'ast> State<'_, 'ast> {
                 span.hi(),
                 |this, path| this.print_path(path),
                 get_span!(()),
-                ListFormat::Consistent(false),
+                ListFormat::Consistent { cmnts_break: false, with_space: false },
                 false,
             );
         }
@@ -1449,7 +1479,7 @@ impl<'ast> State<'_, 'ast> {
 
     fn print_expr(&mut self, expr: &'ast ast::Expr<'ast>) {
         let ast::Expr { span, ref kind } = *expr;
-        if self.handle_span(span) {
+        if self.handle_span(span, false) {
             return;
         }
 
@@ -1479,16 +1509,14 @@ impl<'ast> State<'_, 'ast> {
                 }
 
                 self.print_expr(lhs);
-                let printed = !self.same_source_line(lhs.span.hi(), rhs.span.hi()) &&
-                    self.print_trailing_comment(lhs.span.hi(), None);
                 if let ast::ExprKind::Assign(..) = kind {
-                    if !printed {
+                    if !self.print_trailing_comment(lhs.span.hi(), Some(rhs.span.hi())) {
                         self.nbsp();
                     }
                     self.word(bin_op.kind.to_str());
                     self.word("=");
                 } else {
-                    if !printed {
+                    if !self.print_trailing_comment(lhs.span.hi(), Some(rhs.span.hi())) {
                         self.space_if_not_bol();
                     }
                     self.word(bin_op.kind.to_str());
@@ -1625,7 +1653,7 @@ impl<'ast> State<'_, 'ast> {
                     // if a trailing comment is printed at the very end, we have to manually adjust
                     // the offset to avoid having a double break.
                     self.break_offset_if_not_bol(0, self.ind, false);
-                } else {
+                } else if !matches!(expr.kind, ast::ExprKind::Ident(_) | ast::ExprKind::Type(_)) {
                     self.zerobreak();
                 }
                 self.word(".");
@@ -1692,7 +1720,7 @@ impl<'ast> State<'_, 'ast> {
                     }
                 },
                 |e| e.as_deref().map(|e| e.span),
-                ListFormat::Consistent(false),
+                ListFormat::Consistent { cmnts_break: false, with_space: false },
                 is_binary_expr(&expr.kind),
             ),
             ast::ExprKind::TypeCall(ty) => {
@@ -1703,7 +1731,7 @@ impl<'ast> State<'_, 'ast> {
                     span.hi(),
                     Self::print_ty,
                     get_span!(),
-                    ListFormat::Consistent(false),
+                    ListFormat::Consistent { cmnts_break: false, with_space: false },
                     false,
                 );
             }
@@ -1738,7 +1766,7 @@ impl<'ast> State<'_, 'ast> {
 
     fn print_call_args(&mut self, args: &'ast ast::CallArgs<'ast>) {
         let ast::CallArgs { span, ref kind } = *args;
-        if self.handle_span(span) {
+        if self.handle_span(span, true) {
             return;
         }
 
@@ -1750,7 +1778,7 @@ impl<'ast> State<'_, 'ast> {
                     span.hi(),
                     |this, e| this.print_expr(e),
                     get_span!(),
-                    ListFormat::Compact(true),
+                    ListFormat::Compact { cmnts_break: true, with_space: false },
                     false,
                 );
             }
@@ -1777,9 +1805,10 @@ impl<'ast> State<'_, 'ast> {
             |s, arg| {
                 s.cbox(ind);
                 s.print_ident(&arg.name);
-                // Use a non-breaking space after the colon to keep `name: value` together.
                 s.word(":");
-                if !s.print_trailing_comment(arg.name.span.hi(), None) {
+                if s.same_source_line(arg.name.span.hi(), arg.value.span.hi()) {
+                    s.nbsp();
+                } else if !s.print_trailing_comment(arg.name.span.hi(), None) {
                     s.nbsp();
                 }
                 s.print_comments(
@@ -1789,12 +1818,8 @@ impl<'ast> State<'_, 'ast> {
                 s.print_expr(&arg.value);
                 s.end();
             },
-            // Closure to provide the full span of a single named argument.
-            // This is crucial for `commasep` to handle comments around each argument correctly.
             |arg| Some(ast::Span::new(arg.name.span.lo(), arg.value.span.hi())),
-            // Use Compact format: it tries to fit everything on one line,
-            // and breaks consistently if it doesn't fit or if comments interfere.
-            ListFormat::Consistent(true),
+            ListFormat::Consistent { cmnts_break: true, with_space: self.config.bracket_spacing },
             false,
         );
 
@@ -1809,7 +1834,7 @@ impl<'ast> State<'_, 'ast> {
         // return statements can't have a preceeding comment in the same line.
         let force_break = matches!(kind, ast::StmtKind::Return(..)) &&
             self.peek_comment_before(span.lo()).is_some_and(|cmnt| cmnt.style.is_mixed());
-        if self.handle_span(span) {
+        if self.handle_span(span, false) {
             return;
         }
         match kind {
@@ -1826,7 +1851,7 @@ impl<'ast> State<'_, 'ast> {
                         span.hi(),
                         Self::print_ast_str_lit,
                         get_span!(),
-                        ListFormat::Consistent(false),
+                        ListFormat::Consistent { cmnts_break: false, with_space: false },
                         false,
                     );
                 }
@@ -1844,7 +1869,7 @@ impl<'ast> State<'_, 'ast> {
                         }
                     },
                     |v| v.as_ref().map(|v| v.span),
-                    ListFormat::Consistent(false),
+                    ListFormat::Consistent { cmnts_break: false, with_space: false },
                     false,
                 );
                 self.word(" = ");
@@ -1993,7 +2018,11 @@ impl<'ast> State<'_, 'ast> {
                     }
                     if !args.is_empty() {
                         self.word("returns ");
-                        self.print_parameter_list(args, *try_span, ListFormat::Compact(false));
+                        self.print_parameter_list(
+                            args,
+                            *try_span,
+                            ListFormat::Compact { cmnts_break: false, with_space: false },
+                        );
                         self.nbsp();
                     }
                     self.print_block(block, *try_span);
@@ -2067,10 +2096,12 @@ impl<'ast> State<'_, 'ast> {
         if stmt_needs_semi(kind) {
             self.word(";");
         }
+        // print comments without breaks, as those are handled by the caller.
         self.print_comments(
             stmt.span.hi(),
             CommentConfig::skip_ws().trailing_no_break().mixed_no_break().mixed_prev_space(),
         );
+        self.print_trailing_comment_no_break(stmt.span.hi(), None);
     }
 
     fn print_if_no_else(
@@ -2096,7 +2127,7 @@ impl<'ast> State<'_, 'ast> {
             pos_hi,
             Self::print_expr,
             get_span!(),
-            ListFormat::Compact(true),
+            ListFormat::Compact { cmnts_break: true, with_space: false },
             is_binary_expr(&cond.kind),
         );
     }
@@ -2107,7 +2138,16 @@ impl<'ast> State<'_, 'ast> {
         path: &'ast ast::PathSlice,
         args: &'ast ast::CallArgs<'ast>,
     ) {
-        self.word_nbsp(kw);
+        self.word(kw);
+        if self
+            .print_comments(
+                path.span().lo(),
+                CommentConfig::skip_ws().mixed_no_break().mixed_prev_space().mixed_post_nbsp(),
+            )
+            .is_none()
+        {
+            self.nbsp();
+        };
         self.print_path(path);
         self.print_call_args(args);
     }
@@ -2455,7 +2495,7 @@ impl<'ast> State<'_, 'ast> {
     fn print_yul_stmt(&mut self, stmt: &'ast yul::Stmt<'ast>) {
         let yul::Stmt { ref docs, span, ref kind } = *stmt;
         self.print_docs(docs);
-        if self.handle_span(span) {
+        if self.handle_span(span, false) {
             return;
         }
 
@@ -2474,7 +2514,7 @@ impl<'ast> State<'_, 'ast> {
                     stmt.span.hi(),
                     |this, path| this.print_path(path),
                     get_span!(()),
-                    ListFormat::Consistent(false),
+                    ListFormat::Consistent { cmnts_break: false, with_space: false },
                     false,
                 );
                 self.word(" := ");
@@ -2542,7 +2582,7 @@ impl<'ast> State<'_, 'ast> {
                     span.hi(),
                     Self::print_ident,
                     get_span!(),
-                    ListFormat::Consistent(false),
+                    ListFormat::Consistent { cmnts_break: false, with_space: false },
                     false,
                 );
                 self.nbsp();
@@ -2554,7 +2594,7 @@ impl<'ast> State<'_, 'ast> {
                         stmt.span.hi(),
                         Self::print_ident,
                         get_span!(),
-                        ListFormat::Consistent(false),
+                        ListFormat::Consistent { cmnts_break: false, with_space: false },
                         false,
                     );
                     self.nbsp();
@@ -2572,7 +2612,7 @@ impl<'ast> State<'_, 'ast> {
                     stmt.span.hi(),
                     Self::print_ident,
                     get_span!(),
-                    ListFormat::Consistent(false),
+                    ListFormat::Consistent { cmnts_break: false, with_space: false },
                     false,
                 );
                 if let Some(expr) = expr {
@@ -2592,7 +2632,7 @@ impl<'ast> State<'_, 'ast> {
 
     fn print_yul_expr(&mut self, expr: &'ast yul::Expr<'ast>) {
         let yul::Expr { span, ref kind } = *expr;
-        if self.handle_span(span) {
+        if self.handle_span(span, false) {
             return;
         }
 
@@ -2612,7 +2652,7 @@ impl<'ast> State<'_, 'ast> {
             Span::DUMMY.hi(),
             Self::print_yul_expr,
             get_span!(),
-            ListFormat::Consistent(false),
+            ListFormat::Consistent { cmnts_break: false, with_space: false },
             false,
         );
     }
@@ -2705,10 +2745,10 @@ impl<'ast> State<'_, 'ast> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ListFormat {
     /// Breaks all elements if any break.
-    Consistent(bool),
+    Consistent { cmnts_break: bool, with_space: bool },
     /// Attempts to fit all elements in one line, before breaking consistently.
     /// The boolean indicates whether mixed comments should force a break.
-    Compact(bool),
+    Compact { cmnts_break: bool, with_space: bool },
     /// If the list contains just one element, it will print unboxed (will not break).
     /// Otherwise, will break consistently.
     Inline,
@@ -2717,14 +2757,30 @@ pub(crate) enum ListFormat {
 impl ListFormat {
     pub(crate) fn breaks_comments(&self) -> bool {
         match self {
-            Self::Consistent(yes) => *yes,
-            Self::Compact(yes) => *yes,
+            Self::Consistent { cmnts_break, .. } => *cmnts_break,
+            Self::Compact { cmnts_break, .. } => *cmnts_break,
             Self::Inline => false,
         }
     }
 
+    pub(crate) fn with_space(&self) -> bool {
+        match self {
+            Self::Consistent { with_space, .. } => *with_space,
+            Self::Compact { with_space, .. } => *with_space,
+            Self::Inline => false,
+        }
+    }
+
+    fn soft_break(&self, p: &mut pp::Printer) {
+        if self.with_space() {
+            p.space();
+        } else {
+            p.zerobreak();
+        }
+    }
+
     pub(crate) fn is_compact(&self) -> bool {
-        matches!(self, Self::Compact(_))
+        matches!(self, Self::Compact { .. })
     }
 }
 
@@ -2919,20 +2975,20 @@ fn item_needs_iso(item: &ast::ItemKind<'_>) -> bool {
         ast::ItemKind::Contract(..) | ast::ItemKind::Struct(..) | ast::ItemKind::Enum(..) => true,
 
         ast::ItemKind::Pragma(..) |
-        ast::ItemKind::Function(..) |
         ast::ItemKind::Import(..) |
         ast::ItemKind::Using(..) |
         ast::ItemKind::Variable(..) |
         ast::ItemKind::Udvt(..) |
         ast::ItemKind::Error(..) |
-        ast::ItemKind::Event(..) => false,
+        ast::ItemKind::Event(..) |
+        ast::ItemKind::Function(..) => false,
     }
 }
 
 #[derive(Clone, Copy)]
 pub enum Skip {
-    First,
     All,
+    Leading,
 }
 
 #[derive(Debug)]
@@ -2978,8 +3034,8 @@ impl CommentConfig {
         Self { skip_blanks: Some(Skip::All), ..Default::default() }
     }
 
-    fn skip_first_ws() -> Self {
-        Self { skip_blanks: Some(Skip::First), ..Default::default() }
+    fn skip_leading_ws() -> Self {
+        Self { skip_blanks: Some(Skip::Leading), ..Default::default() }
     }
 
     fn offset(mut self, off: isize) -> Self {
