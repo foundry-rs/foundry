@@ -671,7 +671,7 @@ ignore them in the `.gitignore` file."
     /// If the status is prefix with `-`, the submodule is not initialized.
     ///
     /// Ref: <https://git-scm.com/docs/git-submodule#Documentation/git-submodule.txt-status--cached--recursive--ltpathgt82308203>
-    pub fn submodules_unintialized(self) -> Result<bool> {
+    pub fn submodules_uninitialized(self) -> Result<bool> {
         self.cmd()
             .args(["submodule", "status"])
             .get_stdout_lossy()
