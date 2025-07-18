@@ -305,7 +305,7 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_build_with_cache",
             version,
-            "FORGE_LINT_LINT_ON_BUILD=false forge build",
+            "FOUNDRY_LINT_LINT_ON_BUILD=false forge build",
             runs,
             None,
             Some("forge build"),
@@ -325,7 +325,7 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_build_no_cache",
             version,
-            "FORGE_LINT_LINT_ON_BUILD=false forge build",
+            "FOUNDRY_LINT_LINT_ON_BUILD=false forge build",
             runs,
             Some("forge clean"),
             None,
