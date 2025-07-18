@@ -1,11 +1,15 @@
 [files]
 extend-exclude = [
-    ".git",
-    "target",
-    "testdata",
-    "Cargo.toml",
-    "Cargo.lock",
-    "*.json",
+    ".git",  # Version control
+    "target",  # Build artifacts
+    "testdata",  # Test fixtures
+    "Cargo.toml",  # Dependency manifest
+    "Cargo.lock",  # Dependency lock file
+    "*.json",  # JSON files
+    "**/tests/**",  # Test directories
+    "**/test/**",  # Test directories
+    "**/*_test.*",  # Test files
+    "**/*_tests.*",  # Test files
 ]
 
 [default.extend-words]
