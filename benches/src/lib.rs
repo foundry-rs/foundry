@@ -355,6 +355,25 @@ impl BenchmarkProject {
         )
     }
 
+    /// Benchmark forge test with --isolate flag
+    pub fn bench_forge_isolate_test(
+        &self,
+        version: &str,
+        runs: u32,
+        verbose: bool,
+    ) -> Result<HyperfineResult> {
+        // Build before running tests
+        self.hyperfine(
+            "forge_isolate_test",
+            version,
+            "forge test --isolate",
+            runs,
+            Some("forge build"),
+            None,
+            verbose,
+        )
+    }
+
     /// Get the root path of the project
     pub fn root(&self) -> &Path {
         &self.root_path
@@ -374,6 +393,7 @@ impl BenchmarkProject {
             "forge_build_with_cache" => self.bench_forge_build_with_cache(version, runs, verbose),
             "forge_fuzz_test" => self.bench_forge_fuzz_test(version, runs, verbose),
             "forge_coverage" => self.bench_forge_coverage(version, runs, verbose),
+            "forge_isolate_test" => self.bench_forge_isolate_test(version, runs, verbose),
             _ => eyre::bail!("Unknown benchmark: {}", benchmark),
         }
     }

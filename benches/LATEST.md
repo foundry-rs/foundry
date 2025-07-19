@@ -1,6 +1,6 @@
 # 📊 Foundry Benchmark Results
 
-**Generated at**: 2025-07-11 11:48:21 UTC
+**Generated at**: 2025-07-18 09:47:02 UTC
 
 ## Forge Test
 
@@ -11,19 +11,19 @@
 ### Foundry Versions
 
 - **stable**: forge Version: 1.2.3-stable (a813a2c 2025-06-08)
-- **nightly**: forge Version: 1.2.3-nightly (d592b3e 2025-07-11)
+- **nightly**: forge Version: 1.3.0-nightly (5eb910c 2025-07-18)
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 6.86 s | 6.03 s |
-| solady | 7.70 s | 6.94 s |
+| ithacaxyz-account | 5.84 s | 6.44 s |
+| solady | 6.90 s | 6.98 s |
 
 ## Forge Fuzz Test
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 6.65 s | 6.28 s |
-| solady | 7.87 s | 6.98 s |
+| ithacaxyz-account | 6.13 s | 6.58 s |
+| solady | 7.72 s | 7.27 s |
 
 ## Forge Build
 
@@ -34,21 +34,21 @@
 ### Foundry Versions
 
 - **stable**: forge Version: 1.2.3-stable (a813a2c 2025-06-08)
-- **nightly**: forge Version: 1.2.3-nightly (d592b3e 2025-07-11)
+- **nightly**: forge Version: 1.3.0-nightly (5eb910c 2025-07-18)
 
 ### No Cache
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 2.57 s | 2.61 s |
-| solady | 3.95 s | 4.08 s |
+| ithacaxyz-account | 2.59 s | 2.82 s |
+| solady | 4.03 s | 4.06 s |
 
 ### With Cache
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 2.58 s | 2.60 s |
-| solady | 4.04 s | 4.07 s |
+| ithacaxyz-account | 2.59 s | 2.83 s |
+| solady | 4.10 s | 3.99 s |
 
 ## Forge Coverage
 
@@ -58,11 +58,25 @@
 ### Foundry Versions
 
 - **stable**: forge Version: 1.2.3-stable (a813a2c 2025-06-08)
-- **nightly**: forge Version: 1.2.3-nightly (d592b3e 2025-07-11)
+- **nightly**: forge Version: 1.3.0-nightly (5eb910c 2025-07-18)
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 21.49 s | 20.85 s |
+| ithacaxyz-account | 20.54 s | 21.97 s |
+
+## Forge Test (Isolated)
+
+### Repositories Tested
+
+1. [Vectorized/solady](https://github.com/Vectorized/solady)
+### Foundry Versions
+
+- **stable**: forge Version: 1.2.3-stable (a813a2c 2025-06-08)
+- **nightly**: forge Version: 1.3.0-nightly (5eb910c 2025-07-18)
+
+| Repository | stable | nightly |
+|------------|----------|----------|
+| solady | 3.24 s | 3.03 s |
 
 ## System Information
 
