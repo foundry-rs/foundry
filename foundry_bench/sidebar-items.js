@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["RUNS"],"fn":["default_benchmark_repos","get_benchmark_versions","get_forge_version","get_forge_version_details","setup_benchmark_repos","switch_foundry_version"],"mod":["results"],"static":["BENCHMARK_REPOS","FOUNDRY_VERSIONS"],"struct":["BenchmarkProject","RepoConfig"]};

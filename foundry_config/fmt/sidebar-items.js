@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["HexUnderscore","IndentStyle","IntTypes","MultilineFuncHeaderStyle","NumberUnderscore","QuoteStyle","SingleLineBlockStyle"],"struct":["FormatterConfig"]};

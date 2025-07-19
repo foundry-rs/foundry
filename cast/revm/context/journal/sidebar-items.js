@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["JournalEntry"],"mod":["entry","inner"],"struct":["Journal","JournalInner"],"trait":["JournalEntryTr"]};
