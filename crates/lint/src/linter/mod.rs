@@ -133,32 +133,37 @@ pub enum Snippet {
 
 impl Snippet {
     pub fn to_note(self, ctx: &LintContext<'_>) -> Vec<(DiagMsg, Style)> {
-        let mut output = Vec::new();
-        match self.desc() {
-            Some(desc) => {
-                output.push((DiagMsg::from(desc), Style::NoStyle));
-                output.push((DiagMsg::from("\n\n"), Style::NoStyle));
-            }
-            None => output.push((DiagMsg::from(" \n"), Style::NoStyle)),
-        }
+        let mut output = if let Some(desc) = self.desc() {
+            vec![(DiagMsg::from(desc), Style::NoStyle), (DiagMsg::from("\n\n"), Style::NoStyle)]
+        } else {
+            vec![(DiagMsg::from(" \n"), Style::NoStyle)]
+        };
+
         match self {
             Self::Diff { span, add, .. } => {
-                // Get the original code from the span if provided
+                // Get the original code from the span if provided and normalize its indentation
                 if let Some(span) = span
                     && let Some(rmv) = ctx.span_to_snippet(span)
                 {
-                    for line in rmv.lines() {
-                        output.push((DiagMsg::from(format!("- {line}\n")), Style::Removal));
+                    let mut lines = rmv.lines().peekable();
+                    if let Some(first) = lines.peek() {
+                        let ind = first.len() - first.trim_start().len();
+                        output.extend(lines.map(|line| {
+                            (
+                                DiagMsg::from(format!("- {}\n", line.get(ind..).unwrap_or(""))),
+                                Style::Removal,
+                            )
+                        }));
                     }
                 }
-                for line in add.lines() {
-                    output.push((DiagMsg::from(format!("+ {line}\n")), Style::Addition));
-                }
+                output.extend(
+                    add.lines().map(|line| (DiagMsg::from(format!("+ {line}\n")), Style::Addition)),
+                );
             }
             Self::Block { code, .. } => {
-                for line in code.lines() {
-                    output.push((DiagMsg::from(format!("- {line}\n")), Style::NoStyle));
-                }
+                output.extend(
+                    code.lines().map(|line| (DiagMsg::from(format!("- {line}\n")), Style::NoStyle)),
+                );
             }
         }
         output.push((DiagMsg::from("\n"), Style::NoStyle));
