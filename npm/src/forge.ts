@@ -1,8 +1,8 @@
-import { BINARY_NAME } from '#const'
 import * as NodeChildProcess from 'node:child_process'
 import * as NodeFS from 'node:fs'
 import * as NodeModule from 'node:module'
 import * as NodePath from 'node:path'
+import { BINARY_NAME } from './const.js'
 
 const require = NodeModule.createRequire(import.meta.url)
 
@@ -15,14 +15,14 @@ function getBinaryPath() {
   switch (platform) {
     case 'win32':
       binaryName += '.exe'
-      if (arch === 'x64') packageName = '@foundry-rs/forge-win32-x64'
+      if (arch === 'x64') packageName = '@foundry-rs/forge-win32-amd64'
       break
     case 'darwin':
-      if (arch === 'x64') packageName = '@foundry-rs/forge-darwin-x64'
+      if (arch === 'x64') packageName = '@foundry-rs/forge-darwin-amd64'
       else if (arch === 'arm64') packageName = '@foundry-rs/forge-darwin-arm64'
       break
     case 'linux':
-      if (arch === 'x64') packageName = '@foundry-rs/forge-linux-x64'
+      if (arch === 'x64') packageName = '@foundry-rs/forge-linux-amd64'
       else if (arch === 'arm64') packageName = '@foundry-rs/forge-linux-arm64'
       break
     default:

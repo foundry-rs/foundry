@@ -1,9 +1,9 @@
 {
-  "name": "@foundry-rs/forge-darwin-x64",
+  "name": "@foundry-rs/forge-darwin-amd64",
   "version": "1.2.3",
   "type": "module",
   "homepage": "https://getfoundry.sh",
-  "description": "Fast and flexible Ethereum testing framework (macOS x64)",
+  "description": "Fast and flexible Ethereum testing framework (macOS amd64)",
   "bin": {
     "forge": "./bin/forge"
   },

@@ -1,4 +1,4 @@
-import { BINARY_DISTRIBUTION_VERSION, BINARY_NAME, getRegistryUrl, PLATFORM_SPECIFIC_PACKAGE_NAME } from '#const.ts'
+import { BINARY_NAME, getRegistryUrl, PLATFORM_SPECIFIC_PACKAGE_NAME } from '#const.ts'
 import { colors } from '#utilities.ts'
 import * as NodeFS from 'node:fs'
 import * as NodeHttps from 'node:https'
@@ -70,8 +70,7 @@ function extractFileFromTarball(
 
 async function downloadBinaryFromNpm() {
   const registryUrl = getRegistryUrl()
-  const url =
-    `${registryUrl}/${PLATFORM_SPECIFIC_PACKAGE_NAME}/-/${PLATFORM_SPECIFIC_PACKAGE_NAME}-${BINARY_DISTRIBUTION_VERSION}.tgz`
+  const url = `${registryUrl}/${PLATFORM_SPECIFIC_PACKAGE_NAME}/-/${PLATFORM_SPECIFIC_PACKAGE_NAME}.tgz`
   console.info(
     colors.green,
     'Downloading binary from:\n',

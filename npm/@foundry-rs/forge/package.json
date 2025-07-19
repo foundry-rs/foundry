@@ -1,6 +1,6 @@
 {
   "name": "@foundry-rs/forge",
-  "version": "1.2.3",
+  "version": "1.3.0",
   "type": "module",
   "homepage": "https://getfoundry.sh",
   "description": "Fast and flexible Ethereum testing framework",
@@ -19,11 +19,11 @@
     "postinstall": "node ./dist/install.mjs"
   },
   "optionalDependencies": {
-    "@foundry-rs/forge-darwin-arm64": "1.2.3",
-    "@foundry-rs/forge-darwin-amd64": "1.2.3",
-    "@foundry-rs/forge-linux-arm64": "1.2.3",
-    "@foundry-rs/forge-linux-x64": "1.2.3",
-    "@foundry-rs/forge-win32-x64": "1.2.3"
+    "@foundry-rs/forge-darwin-arm64": "1.3.0",
+    "@foundry-rs/forge-darwin-amd64": "1.3.0",
+    "@foundry-rs/forge-linux-arm64": "1.3.0",
+    "@foundry-rs/forge-linux-amd64": "1.3.0",
+    "@foundry-rs/forge-win32-amd64": "1.3.0"
   },
   "publishConfig": {
     "access": "public",
