@@ -1,0 +1,176 @@
+warning[unsafe-typecast]: typecasts that can truncate values should be avoided
+ --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+  |
+5 |         uint128 b = uint128(a);
+  |                     ----------
+  |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be avoided
+ --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+  |
+8 |         uint64 c = uint64(a);
+  |                    ---------
+  |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be avoided
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+11 |         uint8 d = uint8(a);
+   |                   --------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be avoided
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+15 |         int128 f = int128(e);
+   |                    ---------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be avoided
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+18 |         int8 g = int8(e);
+   |                  -------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be avoided
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+33 |         uint256 b = uint256(a);
+   |                     ----------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be avoided
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+37 |         uint256 d = uint256(c);
+   |                     ----------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be avoided
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+41 |         int256 f = int256(e);
+   |                    ---------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be avoided
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+44 |         int128 g = int128(e);
+   |                    ---------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be avoided
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+48 |         int128 i = int128(h);
+   |                    ---------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be avoided
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+54 |         bytes16 b = bytes16(a);
+   |                     ----------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be avoided
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+57 |         bytes8 c = bytes8(a);
+   |                    ---------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be avoided
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+61 |         bytes32 e = bytes32(d);
+   |                     ----------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be avoided
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+65 |         bytes32 g = bytes32(bytes(f));
+   |                     -----------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be avoided
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+77 |         uint128 b = uint128(uint160(a));
+   |                     -------------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be avoided
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+80 |         int256 c = int256(uint160(a));
+   |                    ------------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be avoided
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+83 |         uint8 d = uint8(uint160(a));
+   |                   -----------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be avoided
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+94 |         uint128 a = uint128(1000000000000000000000000000000000000000);
+   |                     -------------------------------------------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be avoided
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+95 |         uint64 b = uint64(1000000000000000000000);
+   |                    ------------------------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be avoided
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+96 |         int128 c = int128(-1000000000000000000000000000000000000000);
+   |                    -------------------------------------------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be avoided
+  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+   |
+99 |         uint256 d = uint256(-1000);
+   |                     --------------
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be avoided
+   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+    |
+100 |         int256 e = int256(1000000000000000000000000000000000000000);
+    |                    ------------------------------------------------
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+

@@ -28,3 +28,4 @@ solar-sema.workspace = true
 heck.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
+num-bigint.workspace = true
