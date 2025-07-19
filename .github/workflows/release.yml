@@ -272,6 +272,60 @@ jobs:
             ${{ steps.artifacts.outputs.foundry_attestation }}
             ${{ steps.man.outputs.foundry_man }}
 
+      - name: Setup Bun (npm)
+        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        with:
+          bun-version: "latest"
+          scope: "@foundry-rs"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        working-directory: ./npm
+        run: bun install --frozen-lockfile
+
+      - name: Publish @foundry-rs/forge-${{ matrix.platform }}-${{ matrix.arch }} (npm)
+        shell: bash
+        working-directory: ./npm
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_REGISTRY_URL: "https://registry.npmjs.org"
+          ARCH: ${{ matrix.arch }}
+          TARGET: ${{ matrix.target }}
+          PLATFORM: ${{ matrix.platform }}
+          OUT_DIR: target/${{ matrix.target }}/${{ env.PROFILE }}
+          VERSION_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
+        run: |-
+          bun ./scripts/prepublish.ts
+          bun run ./scripts/publish.ts ./@foundry-rs/forge-${{ env.PLATFORM }}-${{ env.ARCH }}
+
+  publish-npm:
+    name: Publish @foundry-rs/forge
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
+        with:
+          bun-version: "latest"
+          scope: "@foundry-rs"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        working-directory: ./npm
+        run: bun install --frozen-lockfile
+
+      - name: Publish @foundry-rs/forge
+        shell: bash
+        working-directory: ./npm
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_REGISTRY_URL: "https://registry.npmjs.org"
+        run: |-
+          bun ./scripts/prepublish.ts
+          bun run ./scripts/publish.ts ./@foundry-rs/forge
+
   cleanup:
     name: Release cleanup
     runs-on: ubuntu-latest
