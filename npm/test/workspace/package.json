@@ -2,7 +2,5 @@
   "private": true,
   "trustedDependencies": [],
   "type": "module",
-  "dependencies": {
-    "@foundry-rs/forge": "^1.2.3"
-  }
+  "dependencies": {}
 }
