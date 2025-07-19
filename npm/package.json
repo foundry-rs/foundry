@@ -1,0 +1,19 @@
+{
+  "private": true,
+  "version": "0.0.1",
+  "imports": {
+    "#package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsdown --config='tsdown.config.ts'",
+    "prepublishOnly": "bun build && bun run ./scripts/prepublish.ts"
+  },
+  "dependencies": {
+    "tsdown": "^0.12.9",
+    "typescript": "^5.8.3",
+    "@types/bun": "^1.2.18",
+    "@types/node": "^24.0.15"
+  },
+  "license": "MIT OR Apache-2.0",
+  "$schema": "https://json.schemastore.org/package.json"
+}

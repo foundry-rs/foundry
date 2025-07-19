@@ -12,3 +12,4 @@ node_modules
 dist
 bin
 _
+*.tgz
