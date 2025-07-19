@@ -1,6 +1,6 @@
 # 📊 Foundry Benchmark Results
 
-**Generated at**: 2025-07-17 20:15:00 UTC
+**Generated at**: 2025-07-18 23:05:00 UTC
 
 ## Forge Test
 
@@ -50,28 +50,28 @@
 
 ### No Cache
 
-| Repository           | v1.2.3  | nightly-05918765cb239024e9ca396825abb9f46257419a | nightly-0af43412f809c998d8b2fe69a1c9a789b7ebd085 |
-| -------------------- | ------- | ------------------------------------------------ | ------------------------------------------------ |
-| ithacaxyz-account    | 9.67 s  | 9.57 s                                           | 9.76 s                                           |
-| solady               | 14.93 s | 15.08 s                                          | 15.06 s                                          |
-| sparkdotfi-spark-psm | 14.31 s | 13.39 s                                          | 13.86 s                                          |
-| Uniswap-v4-core      | 2m 6.4s | 2m 6.8s                                          | 2m 14.6s                                         |
+| Repository           | v1.2.3   | nightly-05918765cb239024e9ca396825abb9f46257419a | nightly-0af43412f809c998d8b2fe69a1c9a789b7ebd085 |
+| -------------------- | -------- | ------------------------------------------------ | ------------------------------------------------ |
+| ithacaxyz-account    | 9.32 s   | 9.32 s                                           | 9.46 s                                           |
+| solady               | 15.01 s  | 14.97 s                                          | 14.81 s                                          |
+| sparkdotfi-spark-psm | 13.42 s  | 13.29 s                                          | 13.28 s                                          |
+| Uniswap-v4-core      | 2m 11.6s | 2m 7.4s                                          | 2m 6.3s                                          |
 
 ### With Cache
 
 | Repository           | v1.2.3  | nightly-05918765cb239024e9ca396825abb9f46257419a | nightly-0af43412f809c998d8b2fe69a1c9a789b7ebd085 |
 | -------------------- | ------- | ------------------------------------------------ | ------------------------------------------------ |
-| ithacaxyz-account    | 0.212 s | 0.214 s                                          | 0.433 s                                          |
-| solady               | 0.095 s | 0.117 s                                          | 0.159 s                                          |
-| sparkdotfi-spark-psm | 0.173 s | 0.180 s                                          | 0.315 s                                          |
-| Uniswap-v4-core      | 0.138 s | 0.149 s                                          | 0.211 s                                          |
+| ithacaxyz-account    | 0.203 s | 0.205 s                                          | 0.201 s                                          |
+| solady               | 0.092 s | 0.090 s                                          | 0.094 s                                          |
+| sparkdotfi-spark-psm | 0.170 s | 0.174 s                                          | 0.173 s                                          |
+| Uniswap-v4-core      | 0.135 s | 0.139 s                                          | 0.135 s                                          |
 
 ## Forge Coverage
 
 ### Repositories Tested
 
 1. [ithacaxyz/account](https://github.com/ithacaxyz/account)
-2. [sparkdotfi/spark-psm](https://github.com/sparkdotfi/spark-psm)  
+2. [sparkdotfi/spark-psm](https://github.com/sparkdotfi/spark-psm)
 3. [Uniswap/v4-core](https://github.com/Uniswap/v4-core)
 
 ### Foundry Versions
