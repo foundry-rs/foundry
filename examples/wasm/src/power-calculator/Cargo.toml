@@ -1,0 +1,33 @@
+[package]
+name = "power-calculator"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+fluentbase-sdk = { git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.3.4-dev", default-features=false }
+
+
+[dev-dependencies]
+fluentbase-sdk-testing = { git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.3.4-dev", default-features=false }
+
+[build-dependencies]
+fluentbase-build = { git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.3.4-dev", default-features=false }
+
+[features]
+default = ["std"]
+std = ["fluentbase-sdk/std"]
+wasm = []
+
+[profile.release]
+opt-level = "z"
+lto = true
+panic = "abort"
+codegen-units = 1
+
+
+
+# Exclude from foundry workspace
+[workspace]
