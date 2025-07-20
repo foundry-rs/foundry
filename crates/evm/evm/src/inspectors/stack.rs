@@ -57,8 +57,6 @@ pub struct InspectorStackBuilder {
     pub logs: Option<bool>,
     /// Whether line coverage info should be collected.
     pub line_coverage: Option<bool>,
-    /// Whether edge coverage info should be collected.
-    pub edge_coverage: Option<bool>,
     /// Whether to print all opcode traces into the console. Useful for debugging the EVM.
     pub print: Option<bool>,
     /// The chisel state inspector.
@@ -138,13 +136,6 @@ impl InspectorStackBuilder {
         self
     }
 
-    /// Set whether to collect edge coverage information.
-    #[inline]
-    pub fn edge_coverage(mut self, yes: bool) -> Self {
-        self.edge_coverage = Some(yes);
-        self
-    }
-
     /// Set whether to enable the trace printer.
     #[inline]
     pub fn print(mut self, yes: bool) -> Self {
@@ -194,7 +185,6 @@ impl InspectorStackBuilder {
             trace_mode,
             logs,
             line_coverage,
-            edge_coverage,
             print,
             chisel_state,
             enable_isolation,
@@ -221,7 +211,6 @@ impl InspectorStackBuilder {
             stack.set_chisel(chisel_state);
         }
         stack.collect_line_coverage(line_coverage.unwrap_or(false));
-        stack.collect_edge_coverage(edge_coverage.unwrap_or(false));
         stack.collect_logs(logs.unwrap_or(true));
         stack.print(print.unwrap_or(false));
         stack.tracing(trace_mode);
