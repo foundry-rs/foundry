@@ -43,7 +43,7 @@ dirs.workspace = true
 eyre.workspace = true
 regex.workspace = true
 reqwest.workspace = true
-revm.workspace = true
+revm = {workspace = true, features = ["json"]}
 rustyline = "15"
 semver.workspace = true
 serde_json.workspace = true

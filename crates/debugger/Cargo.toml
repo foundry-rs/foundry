@@ -26,6 +26,6 @@ eyre.workspace = true
 ratatui = { version = "0.29", default-features = false, features = [
     "crossterm",
 ] }
-revm.workspace = true
+revm = {workspace = true, features = ["json"]}
 tracing.workspace = true
 serde.workspace = true

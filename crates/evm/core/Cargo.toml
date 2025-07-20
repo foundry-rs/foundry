@@ -49,7 +49,7 @@ revm = { workspace = true, features = [
     "secp256r1",
 ] }
 revm-inspectors.workspace = true
-op-revm.workspace = true
+op-revm = {workspace = true, features = ["json"]}
 alloy-op-evm.workspace = true
 
 auto_impl.workspace = true

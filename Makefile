@@ -52,6 +52,10 @@ build-gblend: clean-gblend build ## Build gblend executables with symlinks.
 		ln -sf $(CURDIR)/target/debug/$$bin $(BIN_DIR)/gblend-$$bin; \
 	done
 
+.PHONY: build-gblend-forge
+build-gblend-forge: ## Build only forge executable.
+	cargo build --bin forge
+
 .PHONY: clean-gblend
 clean-gblend: ## Remove gblend executables.
 	rm -f $(BIN_DIR)/gblend-{anvil,cast,chisel,forge}

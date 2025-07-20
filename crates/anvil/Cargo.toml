@@ -65,9 +65,10 @@ revm = { workspace = true, features = [
     "serde",
     "memory_limit",
     "c-kzg",
+    "json"
 ] }
 revm-inspectors.workspace = true
-op-revm.workspace = true
+op-revm = {workspace = true, features = ["json"]}
 
 # axum related
 axum.workspace = true

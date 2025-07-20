@@ -3,7 +3,7 @@ pragma solidity ^0.8.13;
 
 import {Script, console} from "forge-std/Script.sol";
 import {Counter} from "../src/Counter.sol";
-import {IPowerCalculator} from "../src/generated/IPowerCalculator.sol";
+import {IPowerCalculator} from "../out/PowerCalculator.wasm/interface.sol";
 
 contract Deploy is Script {
     function run() external {

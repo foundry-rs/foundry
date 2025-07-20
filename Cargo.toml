@@ -203,6 +203,10 @@ foundry-test-utils = { path = "crates/test-utils" }
 foundry-wallets = { path = "crates/wallets" }
 foundry-linking = { path = "crates/linking" }
 
+# fluentbase
+
+fluentbase-build = { path = "../fluentbase-v2/crates/build", features = ["json"] }
+
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.19.1", default-features = false }
 foundry-compilers = { version = "0.17.4", default-features = false }

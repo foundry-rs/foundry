@@ -586,7 +586,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-serde",
  "alloy-sol-types",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "serde",
  "serde_json",
  "serde_with",
@@ -2409,6 +2409,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "cargo_metadata"
+version = "0.19.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd5eb614ed4c27c5d706420e4320fbe3216ab31fa1c33cd8246ac36dae4479ba"
+dependencies = [
+ "camino",
+ "cargo-platform",
+ "semver 1.0.26",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "cassowary"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4145,6 +4159,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "fluentbase-build"
+version = "0.3.6-dev"
+dependencies = [
+ "anyhow",
+ "cargo_metadata 0.19.2",
+ "chrono",
+ "clap",
+ "convert_case 0.8.0",
+ "fluentbase-sdk-derive-core",
+ "fluentbase-types",
+ "proc-macro2",
+ "quote",
+ "rwasm",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "syn 2.0.104",
+ "toml 0.8.23",
+ "tracing",
+]
+
+[[package]]
 name = "fluentbase-codec"
 version = "0.3.6-dev"
 dependencies = [
@@ -4696,6 +4732,7 @@ dependencies = [
  "dunce",
  "eyre",
  "flate2",
+ "fluentbase-build",
  "foundry-block-explorers",
  "foundry-common-fmt",
  "foundry-compilers",
@@ -4758,7 +4795,7 @@ dependencies = [
  "fs_extra",
  "futures-util",
  "home",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "path-slash",
  "rand 0.8.5",
  "rayon",
@@ -8096,7 +8133,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.104",
@@ -9075,7 +9112,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.0.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#f5ace75cbe9ddbb299a86a4473eca37d0c5d25bf"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?branch=devel#853d86b9faa87685c13d65eb7aef5d43387b81e6"
 dependencies = [
  "anyhow",
  "bincode 2.0.1",
@@ -9780,7 +9817,7 @@ dependencies = [
  "derive_builder",
  "derive_more 2.0.1",
  "dunce",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "itoa",
  "lasso",
  "match_cfg",
@@ -9817,7 +9854,7 @@ dependencies = [
  "alloy-primitives",
  "bitflags 2.9.1",
  "bumpalo",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -10993,7 +11030,7 @@ dependencies = [
  "anyhow",
  "bstr",
  "cargo-platform",
- "cargo_metadata",
+ "cargo_metadata 0.18.1",
  "color-eyre",
  "colored",
  "comma",

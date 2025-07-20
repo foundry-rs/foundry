@@ -61,7 +61,7 @@ op-alloy-consensus = { workspace = true, features = ["alloy-compat"] }
 chrono.workspace = true
 eyre.workspace = true
 futures.workspace = true
-revm.workspace = true
+revm = {workspace = true, features = ["json"]}
 rand.workspace = true
 rand_08.workspace = true
 rayon.workspace = true

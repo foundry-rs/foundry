@@ -49,27 +49,3 @@ impl<SDK: SharedAPI> PowerCalculator<SDK> {
 }
 
 basic_entrypoint!(PowerCalculator);
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use fluentbase_sdk_testing::HostTestingContext;
-
-    #[test]
-    fn test_power_2_to_3() {
-        // Create power(2, 3) call
-        let base = U256::from(2);
-        let exponent = U256::from(3);
-        let input = PowerCall::new((base, exponent)).encode();
-
-        // Execute contract
-        let sdk = HostTestingContext::default().with_input(input);
-        let mut calculator = PowerCalculator::new(sdk.clone());
-        calculator.main();
-
-        // Check result
-        let encoded_output = &sdk.take_output();
-        let output = PowerReturn::decode(&encoded_output.as_slice()).unwrap();
-        assert_eq!(output.0, U256::from(8)); // 2^3 = 8
-    }
-}

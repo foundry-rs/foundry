@@ -20,7 +20,7 @@ foundry-evm-core.workspace = true
 
 alloy-primitives.workspace = true
 eyre.workspace = true
-revm.workspace = true
+revm = {workspace = true, features = ["json"]}
 semver.workspace = true
 tracing.workspace = true
 rayon.workspace = true

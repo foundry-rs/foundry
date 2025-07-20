@@ -30,7 +30,7 @@ alloy-provider = { workspace = true, features = ["trace-api"] }
 tracing.workspace = true
 foundry-compilers = { workspace = true, features = ["full"] }
 foundry-block-explorers = { workspace = true, features = ["foundry-compilers"] }
-revm.workspace = true
+revm = {workspace = true, features = ["json"]}
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 reqwest = { workspace = true, features = ["json"] }
