@@ -40,7 +40,7 @@ use alloy_consensus::{
     transaction::Recovered,
 };
 use alloy_eips::{eip1559::BaseFeeParams, eip4844::kzg_to_versioned_hash, eip7840::BlobParams};
-use alloy_evm::{Database, Evm, eth::EthEvmContext, precompiles::PrecompilesMap};
+use alloy_evm::{Database, Evm, IntoTxEnv, eth::EthEvmContext, precompiles::PrecompilesMap};
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
     EthereumWallet, UnknownTxEnvelope, UnknownTypedTransaction,
@@ -112,7 +112,7 @@ use revm::{
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::AccountInfo,
 };
-use revm_inspectors::transfer::TransferInspector;
+use revm_inspectors::{tracing::js::JsInspector, transfer::TransferInspector};
 use std::{
     collections::BTreeMap,
     fmt::Debug,
@@ -1927,8 +1927,30 @@ impl Backend {
                         }
                     },
 
-                    GethDebugTracerType::JsTracer(_code) => {
-                        Err(RpcError::invalid_params("unsupported tracer type").into())
+                    GethDebugTracerType::JsTracer(code) => {
+                        let config = tracer_config.into_json();
+                        let mut inspector = JsInspector::new(code, config)
+                            .map_err(|err| BlockchainError::Message(err.to_string()))?;
+
+                        let env = self.build_call_env(request, fee_details, block.clone());
+                        let result;
+                        let res;
+
+                        {
+                            let mut evm = self.new_evm_with_inspector_ref(
+                                &cache_db as &dyn DatabaseRef,
+                                &env,
+                                &mut inspector,
+                            );
+                            result = evm.transact(env.tx.clone())?;
+                            let insp = evm.inspector_mut();
+
+                            res = insp
+                                .json_result(result, &env.tx.into_tx_env(), &block, &cache_db)
+                                .map_err(|err| BlockchainError::Message(err.to_string()))?;
+                        }
+
+                        Ok(GethTrace::JS(res))
                     }
                 };
             }

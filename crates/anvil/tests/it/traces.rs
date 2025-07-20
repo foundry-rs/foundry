@@ -928,3 +928,83 @@ async fn test_trace_filter() {
     let traces = api.trace_filter(tracer).await.unwrap();
     assert_eq!(traces.len(), 5);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_call_tracer_debug_trace_call_js_tracer() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let deployer: EthereumWallet = wallets[0].clone().into();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), deployer);
+
+    let multicall_contract = Multicall::deploy(&provider).await.unwrap();
+    let simple_storage_contract =
+        SimpleStorage::deploy(&provider, "init value".to_string()).await.unwrap();
+
+    let set_value = simple_storage_contract.setValue("bar".to_string());
+    let set_value_calldata = set_value.calldata();
+
+    let internal_call_tx_builder = multicall_contract.aggregate(vec![Multicall::Call {
+        target: *simple_storage_contract.address(),
+        callData: set_value_calldata.to_owned(),
+    }]);
+
+    let internal_call_tx_calldata = internal_call_tx_builder.calldata().to_owned();
+
+    let internal_call_tx = TransactionRequest::default()
+        .from(wallets[1].address())
+        .to(*multicall_contract.address())
+        .with_input(internal_call_tx_calldata);
+
+    let js_tracer_code = r#"
+{
+  data: [],
+  step: function(log) {
+    var op = log.op.toString();
+    if (op === "SLOAD") {
+      this.data.push(log.getPC() + ": SLOAD " + log.contract.getAddress() + ":" + log.stack.peek(0));
+      this.data.push("    Result: " + log.stack.peek(0));
+    } else if (op === "SSTORE") {
+      this.data.push(log.getPC() + ": SSTORE " + log.contract.getAddress() + ":" + log.stack.peek(1) + " <- " + log.stack.peek(0));
+    }
+  },
+  result: function() {
+    return this.data;
+  },
+  fault: function(log) {}
+}
+"#;
+
+    let result = handle
+        .http_provider()
+        .debug_trace_call(
+            WithOtherFields::new(internal_call_tx),
+            BlockId::latest(),
+            GethDebugTracingCallOptions::default()
+                .with_tracing_options(GethDebugTracingOptions::js_tracer(js_tracer_code)),
+        )
+        .await
+        .unwrap();
+
+    let expected = vec![
+        "547: SLOAD 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:0",
+        "    Result: 0",
+        "1907: SLOAD 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:1",
+        "    Result: 1",
+        "772: SLOAD 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:1",
+        "    Result: 1",
+        "835: SSTORE 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:4.4498830125527143e+76 <- 1",
+        "919: SSTORE 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:0 <- 8.008442285988055e+76",
+        "712: SLOAD 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:0",
+        "    Result: 0",
+        "765: SSTORE 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:5.465844868464591e+47 <- 0",
+    ];
+
+    let actual: Vec<String> = match result {
+        GethTrace::JS(serde_json::Value::Array(arr)) => {
+            arr.into_iter().map(|v| v.as_str().unwrap().to_string()).collect()
+        }
+        other => panic!("Expected JS tracer result as array, got: {:?}", other),
+    };
+
+    assert_eq!(actual, expected);
+}
