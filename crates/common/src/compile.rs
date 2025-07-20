@@ -1,26 +1,29 @@
 //! Support for compiling [foundry_compilers::Project]
 
 use crate::{
-    TestFunctionExt,
     preprocessor::TestOptimizerPreprocessor,
-    reports::{ReportKind, report_kind},
+    reports::{report_kind, ReportKind},
     shell,
     term::SpinnerReporter,
+    TestFunctionExt,
 };
-use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS};
-use eyre::Result;
+use alloy_json_abi::JsonAbi;
+use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Color, Table};
+use eyre::{eyre, Result, WrapErr};
+use fluentbase_build::{execute_build, Artifact as FluentArtifact, BuildArgs, BuildResult};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
-    Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
-    artifacts::{BytecodeObject, Contract, Source, remappings::Remapping},
+    artifacts::{remappings::Remapping, BytecodeObject, Contract, Evm, Source},
     compilers::{
-        Compiler,
         solc::{Solc, SolcCompiler},
+        Compiler,
     },
     info::ContractInfo as CompilerContractInfo,
     project::Preprocessor,
     report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
+    AggregatedCompilerOutput, Artifact, Project, ProjectBuilder, ProjectCompileOutput,
+    ProjectPathsConfig, SolcConfig,
 };
 use num_format::{Locale, ToFormattedString};
 use std::{
@@ -170,6 +173,9 @@ impl ProjectCompiler {
         // Taking is fine since we don't need these in `compile_with`.
         let files = std::mem::take(&mut self.files);
         let preprocess = self.dynamic_test_linking;
+        sh_println!("files: {:?}", files);
+        sh_println!("preprocess: {:?}", preprocess);
+        &self.build_rust_contracts(&project).expect("failed to build rust contracts");
         self.compile_with(|| {
             let sources = if !files.is_empty() {
                 Source::read_all(files)?
@@ -198,7 +204,7 @@ impl ProjectCompiler {
     /// ```
     #[instrument(target = "forge::compile", skip_all)]
     fn compile_with<C: Compiler<CompilerContract = Contract>, F>(
-        self,
+        &self,
         f: F,
     ) -> Result<ProjectCompileOutput<C>>
     where
@@ -236,6 +242,142 @@ impl ProjectCompiler {
         }
 
         Ok(output)
+    }
+
+    /// Finds and compiles Rust contracts, returning aggregated compilation output.
+    ///
+    /// This method is called before the main Solidity/Vyper compilation to compile
+    /// Rust contracts and return their compilation results in the standard format.
+    fn build_rust_contracts<C: Compiler<CompilerContract = Contract>>(
+        &self,
+        project: &Project<C>,
+    ) -> Result<()> {
+        // Find all Rust projects (crates) in source directories
+        let rust_projects = find_rust_projects(&project.paths.sources)?;
+
+        if rust_projects.is_empty() {
+            sh_println!("No files found")?;
+            return Ok(());
+        }
+
+        sh_println!("Compiling {} Rust contract(s)...", rust_projects.len())?;
+        let timer = Instant::now();
+
+        // Iterate through each found Rust project and compile it
+        for rust_project_path in &rust_projects {
+            let contract_path = rust_project_path
+                .file_name()
+                .ok_or_else(|| {
+                    eyre!("Rust project path has no name: {}", rust_project_path.display())
+                })?
+                .to_str()
+                .ok_or_else(|| eyre!("Rust project path is not valid UTF-8"))?;
+
+            let contract_name_clean = contract_path
+                .split('-')
+                .map(|word| {
+                    let mut chars = word.chars();
+                    match chars.next() {
+                        None => String::new(),
+                        Some(first) => {
+                            first.to_uppercase().collect::<String>()
+                                + &chars.as_str().to_lowercase()
+                        }
+                    }
+                })
+                .collect::<String>();
+            let contract_name = format!("{contract_name_clean}.wasm");
+
+            sh_println!("  - Compiling contract {contract_path}:{contract_name}...");
+
+            // Configure the build. For MVP, use hardcoded values.
+            // Key requirement: generate ABI and Solidity interface.
+            let build_args = BuildArgs {
+                contract_name: Some(contract_name.clone()),
+                generate: vec![FluentArtifact::Solidity, FluentArtifact::Abi],
+                // Disable Docker for faster local development and testing.
+                // In the future, this value can be taken from `foundry.toml`.
+                docker: false,
+                // Specify where `fluentbase-build` should place its artifacts.
+                // We use a subdirectory in Foundry's standard `out` directory.
+                output: Some(project.artifacts_path().to_path_buf()),
+                ..Default::default()
+            };
+
+            sh_println!("  - Build args: {build_args:?}");
+
+            // Execute Rust contract build
+            let build_result = execute_build(&build_args, Some(rust_project_path.clone()))
+                .map_err(|e| eyre::eyre!("{}", e))
+                .wrap_err_with(|| {
+                    format!("Failed to build Rust contract at {}", rust_project_path.display())
+                })?;
+
+            // Read generated ABI and WASM bytecode
+            let abi_path = build_result
+                .abi_path
+                .ok_or_else(|| eyre!("ABI file was not generated for {}", contract_name))?;
+            let wasm_path = build_result.wasm_path;
+
+            let abi_json_str = std::fs::read_to_string(&abi_path)
+                .wrap_err_with(|| format!("Failed to read ABI file at {}", abi_path.display()))?;
+            let wasm_bytecode = std::fs::read(&wasm_path)
+                .wrap_err_with(|| format!("Failed to read WASM file at {}", wasm_path.display()))?;
+
+            // Convert read data to standard Foundry artifact format
+            let abi: JsonAbi = serde_json::from_str(&abi_json_str)?;
+            let bytecode = BytecodeObject::Bytecode(wasm_bytecode.into());
+            let evm = Evm {
+                bytecode: Some(bytecode.clone().into()),
+                deployed_bytecode: None,
+                method_identifiers: Default::default(),
+                assembly: None,
+                legacy_assembly: None,
+                gas_estimates: None,
+            };
+            let artifact = Contract {
+                abi: Some(abi),
+                evm: Some(evm),
+                userdoc: Default::default(),
+                devdoc: Default::default(),
+                storage_layout: Default::default(),
+                transient_storage_layout: Default::default(),
+                metadata: None,
+                ir: None,
+                ewasm: None,
+                ir_optimized: None,
+                ir_optimized_ast: None,
+            };
+
+            println!("  - Successfully compiled {contract_name} to {wasm_path:?}");
+
+            // Save artifact in Foundry format
+            // Create the contract-specific directory (e.g., out/PowerCalculator.wasm/)
+            let contract_dir = project.artifacts_path().join(&contract_name);
+            std::fs::create_dir_all(&contract_dir).wrap_err_with(|| {
+                format!("Failed to create directory {}", contract_dir.display())
+            })?;
+
+            // Define the artifact file path (e.g.,
+            // out/PowerCalculator.wasm/PowerCalculator.wasm.json)
+            let artifact_file = contract_dir.join(format!("{contract_name_clean}.json"));
+
+            // Serialize the artifact to JSON
+            let artifact_json = serde_json::to_string_pretty(&artifact)
+                .wrap_err("Failed to serialize contract artifact to JSON")?;
+
+            // Write the JSON to file
+            std::fs::write(&artifact_file, artifact_json).wrap_err_with(|| {
+                format!("Failed to write artifact to {}", artifact_file.display())
+            })?;
+
+            println!("  - Successfully compiled {contract_name} to {wasm_path:?}");
+            println!("  - Saved artifact to {}", artifact_file.display());
+        }
+
+        sh_println!("Finished compiling Rust contracts in {:.2?}", timer.elapsed())?;
+
+        Ok(())
     }
 
     /// If configured, this will print sizes or names
@@ -403,21 +545,21 @@ impl Display for SizeReport {
 impl SizeReport {
     fn format_json_output(&self) -> String {
         let contracts = self
-            .contracts
-            .iter()
-            .filter(|(_, c)| !c.is_dev_contract && (c.runtime_size > 0 || c.init_size > 0))
-            .map(|(name, contract)| {
-                (
-                    name.clone(),
-                    serde_json::json!({
+                .contracts
+                .iter()
+                .filter(|(_, c)| !c.is_dev_contract && (c.runtime_size > 0 || c.init_size > 0))
+                .map(|(name, contract)| {
+                    (
+                        name.clone(),
+                        serde_json::json!({
                         "runtime_size": contract.runtime_size,
                         "init_size": contract.init_size,
                         "runtime_margin": CONTRACT_RUNTIME_SIZE_LIMIT as isize - contract.runtime_size as isize,
                         "init_margin": CONTRACT_INITCODE_SIZE_LIMIT as isize - contract.init_size as isize,
                     }),
-                )
-            })
-            .collect::<serde_json::Map<_, _>>();
+                    )
+                })
+                .collect::<serde_json::Map<_, _>>();
 
         serde_json::to_string(&contracts).unwrap()
     }
@@ -591,6 +733,24 @@ pub fn with_compilation_reporter<O>(quiet: bool, f: impl FnOnce() -> O) -> O {
     foundry_compilers::report::with_scoped(&reporter, f)
 }
 
+fn find_rust_projects(src_root: &Path) -> Result<Vec<PathBuf>> {
+    sh_println!("find_rust_projects at: src_root={}", src_root.display());
+    let mut projects = Vec::new();
+    if !src_root.is_dir() {
+        return Ok(projects);
+    }
+
+    for entry in std::fs::read_dir(src_root)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() && path.join("Cargo.toml").exists() {
+            projects.push(path);
+        }
+    }
+
+    Ok(projects)
+}
+
 /// Container type for parsing contract identifiers from CLI.
 ///
 /// Passed string can be of the following forms:
@@ -651,8 +811,6 @@ impl std::fmt::Debug for PathOrContractInfo {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn parse_contract_identifiers() {
         let t = ["src/Counter.sol", "src/Counter.sol:Counter", "Counter"];
