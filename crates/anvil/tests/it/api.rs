@@ -463,10 +463,6 @@ async fn can_get_code_by_hash() {
     // The code hash for DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE
     let code_hash = b256!("2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989");
 
-    let retrieved_code = api.debug_code_by_hash(code_hash, None).await.unwrap();
-
-    assert_eq!(
-        retrieved_code.unwrap().as_ref(),
-        foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE
-    );
+    let code = api.debug_code_by_hash(code_hash, None).await.unwrap();
+    assert_eq!(&code.unwrap(), foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE);
 }
