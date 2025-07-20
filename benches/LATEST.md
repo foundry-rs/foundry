@@ -1,6 +1,6 @@
 # 📊 Foundry Benchmark Results
 
-**Generated at**: 2025-07-11 11:48:21 UTC
+**Generated at**: 2025-07-17 14:25:08 UTC
 
 ## Forge Test
 
@@ -11,19 +11,19 @@
 ### Foundry Versions
 
 - **stable**: forge Version: 1.2.3-stable (a813a2c 2025-06-08)
-- **nightly**: forge Version: 1.2.3-nightly (d592b3e 2025-07-11)
+- **nightly**: forge Version: 1.3.0-nightly (0af4341 2025-07-17)
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 6.86 s | 6.03 s |
-| solady | 7.70 s | 6.94 s |
+| ithacaxyz-account | 5.12 s | 5.15 s |
+| solady | 2.99 s | 2.87 s |
 
 ## Forge Fuzz Test
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 6.65 s | 6.28 s |
-| solady | 7.87 s | 6.98 s |
+| ithacaxyz-account | 5.45 s | 5.20 s |
+| solady | 3.08 s | 3.00 s |
 
 ## Forge Build
 
@@ -34,21 +34,21 @@
 ### Foundry Versions
 
 - **stable**: forge Version: 1.2.3-stable (a813a2c 2025-06-08)
-- **nightly**: forge Version: 1.2.3-nightly (d592b3e 2025-07-11)
+- **nightly**: forge Version: 1.3.0-nightly (0af4341 2025-07-17)
 
 ### No Cache
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 2.57 s | 2.61 s |
-| solady | 3.95 s | 4.08 s |
+| ithacaxyz-account | 2.58 s | 2.83 s |
+| solady | 3.88 s | 3.98 s |
 
 ### With Cache
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 2.58 s | 2.60 s |
-| solady | 4.04 s | 4.07 s |
+| ithacaxyz-account | 0.210 s | 0.443 s |
+| solady | 0.093 s | 0.195 s |
 
 ## Forge Coverage
 
@@ -58,15 +58,15 @@
 ### Foundry Versions
 
 - **stable**: forge Version: 1.2.3-stable (a813a2c 2025-06-08)
-- **nightly**: forge Version: 1.2.3-nightly (d592b3e 2025-07-11)
+- **nightly**: forge Version: 1.3.0-nightly (0af4341 2025-07-17)
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 21.49 s | 20.85 s |
+| ithacaxyz-account | 22.03 s | 21.98 s |
 
 ## System Information
 
 
 - **OS**: linux
 - **CPU**: 8
-- **Rustc**: unknown
+- **Rustc**: rustc 1.88.0 (6b00bc388 2025-06-23)
