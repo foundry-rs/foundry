@@ -280,6 +280,10 @@ pub enum EthRequest {
         #[serde(default)] GethDebugTracingCallOptions,
     ),
 
+    /// reth's `debug_codeByHash` endpoint
+    #[serde(rename = "debug_codeByHash")]
+    DebugCodeByHash(B256, #[serde(default)] Option<BlockId>),
+
     /// Trace transaction endpoint for parity's `trace_transaction`
     #[serde(rename = "trace_transaction", with = "sequence")]
     TraceTransaction(B256),
