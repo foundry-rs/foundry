@@ -2594,6 +2594,19 @@ impl Backend {
         Ok(GethTrace::Default(Default::default()))
     }
 
+    /// Returns code by its hash
+    pub async fn debug_code_by_hash(
+        &self,
+        code_hash: B256,
+        block_id: Option<BlockId>,
+    ) -> Result<Option<Bytes>, BlockchainError> {
+        if let Some(fork) = self.get_fork() {
+            return Ok(fork.debug_code_by_hash(code_hash, block_id).await?);
+        }
+
+        Ok(None)
+    }
+
     fn mined_geth_trace_transaction(
         &self,
         hash: B256,
