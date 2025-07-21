@@ -133,8 +133,6 @@ impl<I: InspectorExt> FoundryEvm<'_, I> {
         &mut self,
         frame: FrameInput,
     ) -> Result<FrameResult, EVMError<DatabaseError>> {
-        println!("DEBUG evm/core/evm run_execution: frame {:?}", frame);
-
         let bytecode: Option<Bytes> = match &frame {
             FrameInput::Create(create) => Some(create.init_code.clone()),
             FrameInput::EOFCreate(eof_create) => match &eof_create.kind {
@@ -143,27 +141,6 @@ impl<I: InspectorExt> FoundryEvm<'_, I> {
             },
             _ => None,
         };
-        println!("bytecode: {:?}", bytecode);
-        // TODO(d1r1): We need to get rwasm execution result here somehow. In previous version we
-        // were able to do it as is. If i remember correct. So in the new version we need to
-
-        let is_rwasm =
-            bytecode.as_ref().map_or(false, |bytes| bytes.starts_with(&[0x00, 0x61, 0x73, 0x6D]));
-
-        if is_rwasm {
-            println!("DEBUG: Detected RWASM contract, switching execution logic");
-
-            // let action = run_rwasm_loop(&mut rwasm_frame, &mut self.inner)?;
-
-            // return match action {
-            //     InterpreterAction::Return { result } => Ok(FrameResult {
-            //         gas: result.gas,
-            //         output: result.output,
-            //         result: result.result,
-            //     }),
-            //     _ => Err(EVMError::Custom("Unexpected action".into())),
-            // };
-        }
         let mut handler = FoundryHandler::<_>::default();
         let frame = handler.inspect_first_frame_init(&mut self.inner.0, frame)?;
         let frame_result = match frame {
@@ -314,14 +291,11 @@ impl<'db, I: InspectorExt> Handler for FoundryHandler<'db, I> {
         evm: &mut Self::Evm,
         result: <Self::Frame as revm::handler::Frame>::FrameResult,
     ) -> Result<(), Self::Error> {
-        println!("DEBUG: crates/evm/core/evm.rs frame_return_result");
         let result = if self
             .create2_overrides
             .last()
             .is_some_and(|(depth, _)| *depth == evm.journal().depth)
         {
-            println!("DEBUG2: crates/evm/core/evm.rs frame_return_result");
-
             let (_, call_inputs) = self.create2_overrides.pop().unwrap();
             let FrameResult::Call(mut result) = result else {
                 unreachable!("create2 override should be a call frame");
@@ -345,9 +319,6 @@ impl<'db, I: InspectorExt> Handler for FoundryHandler<'db, I> {
         } else {
             result
         };
-
-        println!("DEBUG3: crates/evm/core/evm.rs inner.frame_return_result");
-
         self.inner.frame_return_result(frame, evm, result)
     }
 }

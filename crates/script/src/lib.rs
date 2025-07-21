@@ -243,7 +243,6 @@ impl ScriptArgs {
 
     /// Executes the script
     pub async fn run_script(self) -> Result<()> {
-        println!("DEBUG:: Running script!!!");
         trace!(target: "script", "executing script command");
 
         let state = self.preprocess().await?;

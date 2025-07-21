@@ -5,11 +5,9 @@ libs = ["lib"]
 solc = "0.8.23"
 optimizer = true
 optimizer_runs = 200
-gas_price = 2250000009
-gas_limit = 500000000
+# gas_price = 2250000009
+# gas_limit = 500000000
 
 eth_rpc_url = "https://rpc.dev.gblend.xyz/"
 
 # WASM configuration
-[wasm]
-enabled = true

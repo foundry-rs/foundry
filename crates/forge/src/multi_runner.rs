@@ -169,7 +169,6 @@ impl MultiContractRunner {
         tx: mpsc::Sender<(String, SuiteResult)>,
         show_progress: bool,
     ) -> Result<()> {
-        println!("DEBUG 2 crates/forge/src/multi_runner.rs test()");
         let tokio_handle = tokio::runtime::Handle::current();
         trace!("running all tests");
 
@@ -238,7 +237,6 @@ impl MultiContractRunner {
         tokio_handle: &tokio::runtime::Handle,
         progress: Option<&TestsProgress>,
     ) -> SuiteResult {
-        println!("DEBUG 2.1 crates/forge/src/multi_runner.rs run_test_suite()");
         let identifier = artifact_id.identifier();
         let mut span_name = identifier.as_str();
 
@@ -252,7 +250,6 @@ impl MultiContractRunner {
         debug!("start executing all tests in contract");
 
         let executor = self.tcfg.executor(self.known_contracts.clone(), artifact_id, db.clone());
-        println!("DEBUG 2.2 crates/forge/src/multi_runner.rs create executor");
 
         let runner = ContractRunner::new(
             &identifier,
@@ -352,7 +349,6 @@ impl TestRunnerConfig {
         artifact_id: &ArtifactId,
         db: Backend,
     ) -> Executor {
-        println!("DEBUG crates/forge/src/multi_runner.rs executor()");
         let cheats_config = Arc::new(CheatsConfig::new(
             &self.config,
             self.evm_opts.clone(),

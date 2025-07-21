@@ -18,24 +18,24 @@ contract Deploy is Script {
             powerCalculator := create(0, add(wasmBytecode, 0x20), mload(wasmBytecode))
         }
         
-        // require(powerCalculator != address(0), "PowerCalculator deployment failed");
-        // console.log("PowerCalculator deployed at:", powerCalculator);
+        require(powerCalculator != address(0), "PowerCalculator deployment failed");
+        console.log("PowerCalculator deployed at:", powerCalculator);
 
-        // // Test PowerCalculator directly
-        // uint256 result = IPowerCalculator(powerCalculator).power(2, 3);
-        // console.log("Direct call: 2^3 =", result);
-        // require(result == 8, "PowerCalculator test failed");
+        // Test PowerCalculator directly
+        uint256 result = IPowerCalculator(powerCalculator).power(2, 3);
+        console.log("Direct call: 2^3 =", result);
+        require(result == 8, "PowerCalculator test failed");
 
-        // // Deploy Counter
-        // Counter counter = new Counter(powerCalculator);
-        // console.log("Counter deployed at:", address(counter));
-        // console.log("Initial counter value:", counter.number());
+        // Deploy Counter
+        Counter counter = new Counter(powerCalculator);
+        console.log("Counter deployed at:", address(counter));
+        console.log("Initial counter value:", counter.number());
 
-        // // Test Counter with PowerCalculator
-        // counter.incrementByPowerOfTwo(3);
-        // uint256 newValue = counter.number();
-        // console.log("Counter after incrementByPowerOfTwo(3):", newValue);
-        // require(newValue == 9, "Expected 1 + 2^3 = 9");
+        // Test Counter with PowerCalculator
+        counter.incrementByPowerOfTwo(3);
+        uint256 newValue = counter.number();
+        console.log("Counter after incrementByPowerOfTwo(3):", newValue);
+        require(newValue == 9, "Expected 1 + 2^3 = 9");
 
         console.log("Success! Both contracts deployed and tested.");
         

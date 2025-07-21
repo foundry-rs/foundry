@@ -82,7 +82,6 @@ pub async fn send_transaction(
     estimate_via_rpc: bool,
     estimate_multiplier: u64,
 ) -> Result<TxHash> {
-    println!("DEBUG: create/broadcast/send_transaction() 1");
     if let SendTransactionKind::Raw(tx, _) | SendTransactionKind::Unlocked(tx) = &mut kind {
         if sequential_broadcast {
             let from = tx.from.expect("no sender");

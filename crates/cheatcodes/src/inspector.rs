@@ -86,22 +86,15 @@ pub trait CheatcodesExecutor {
         inputs: CreateInputs,
         ccx: &mut CheatsCtxt,
     ) -> Result<CreateOutcome, EVMError<DatabaseError>> {
-        println!("DEBUG: cheatcodes/inspector/exec_create");
         with_evm(self, ccx, |evm| {
             evm.inner.0.ctx.journaled_state.depth += 1;
 
             let frame = FrameInput::Create(Box::new(inputs));
 
-            println!("frame: {:?}",frame);
-
             let outcome = match evm.run_execution(frame)? {
                 FrameResult::Call(_) | FrameResult::EOFCreate(_) => unreachable!(),
                 FrameResult::Create(create) => create,
             };
-
-            println!("outcome: {:?}", outcome);
-
-
 
             evm.inner.0.ctx.journaled_state.depth -= 1;
 
@@ -109,33 +102,6 @@ pub trait CheatcodesExecutor {
         })
     }
 
-//    fn exec_create_rwasm(
-//         &mut self,
-//         inputs: CreateInputs,
-//         ccx: &mut CheatsCtxt,
-//     ) -> Result<CreateOutcome, EVMError<DatabaseError>> {
-//         println!("DEBUG: cheatcodes/inspector/exec_create_rwasm");
-//         with_rwasm(self, ccx, |rwasm| {
-//             rwasm.inner.ctx.journaled_state.depth += 1;
-
-//             let frame = FrameInput::Create(Box::new(inputs));
-
-//             println!("frame: {:?}",frame);
-
-//             let outcome = match rwasm.run_execution(frame)? {
-//                 FrameResult::Call(_) | FrameResult::EOFCreate(_) => unreachable!(),
-//                 FrameResult::Create(create) => create,
-//             };
-
-//             println!("outcome: {:?}", outcome);
-
-
-
-//             rwasm.inner.ctx.journaled_state.depth -= 1;
-
-//             Ok(outcome)
-//         })
-//     }
     fn console_log(&mut self, ccx: &mut CheatsCtxt, msg: &str) {
         self.get_inspector(ccx.state).console_log(msg);
     }
@@ -187,48 +153,6 @@ where
     Ok(res)
 }
 
-
-
-// /// Constructs [FoundryEvm] and runs a given closure with it.
-// fn with_rwasm<E, F, O>(
-//     executor: &mut E,
-//     ccx: &mut CheatsCtxt,
-//     f: F,
-// ) -> Result<O, EVMError<DatabaseError>>
-// where
-//     E: CheatcodesExecutor + ?Sized,
-//     F: for<'a, 'b> FnOnce(
-//         &mut FoundryEvm<'a, &'b mut dyn InspectorExt>,
-//     ) -> Result<O, EVMError<DatabaseError>>,
-// {
-//     let mut inspector = executor.get_inspector(ccx.state);
-//     let error = std::mem::replace(&mut ccx.ecx.error, Ok(()));
-
-//     let ctx = EthEvmContext {
-//         block: ccx.ecx.block.clone(),
-//         cfg: ccx.ecx.cfg.clone(),
-//         tx: ccx.ecx.tx.clone(),
-//         journaled_state: Journal {
-//             inner: ccx.ecx.journaled_state.inner.clone(),
-//             database: &mut *ccx.ecx.journaled_state.database as &mut dyn DatabaseExt,
-//         },
-//         local: LocalContext::default(),
-//         chain: (),
-//         error,
-//     };
-
-//     let mut evm = new_rwasm_with_existing_context(ctx, &mut *inspector);
-
-//     let res = f(&mut evm)?;
-
-//     ccx.ecx.journaled_state.inner = evm.inner.ctx.journaled_state.inner;
-//     ccx.ecx.block = evm.inner.ctx.block;
-//     ccx.ecx.tx = evm.inner.ctx.tx;
-//     ccx.ecx.cfg = evm.inner.ctx.cfg;
-//     ccx.ecx.error = evm.inner.ctx.error;
-
-//     Ok(res)
-// }
 
 /// Basic implementation of [CheatcodesExecutor] that simply returns the [Cheatcodes] instance as an
 /// inspector.
@@ -1212,7 +1136,6 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
     }
 
     fn call(&mut self, ecx: Ecx, inputs: &mut CallInputs) -> Option<CallOutcome> {
-        println!("DEBUG: cheatcodes/inspector/call: {:?}", inputs);
         Self::call_with_executor(self, ecx, inputs, &mut TransparentCheatcodesExecutor)
     }
 

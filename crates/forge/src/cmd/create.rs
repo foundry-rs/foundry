@@ -103,8 +103,6 @@ pub struct CreateArgs {
 impl CreateArgs {
     /// Executes the command to create a contract
     pub async fn run(mut self) -> Result<()> {
-        println!("DEBUG: create/run() 1");
-
         let mut config = self.load_config()?;
 
         // Install missing dependencies.
@@ -155,8 +153,6 @@ impl CreateArgs {
         } else {
             vec![]
         };
-
-         println!("DEBUG: create/run() 2");
 
         let provider = utils::get_provider(&config)?;
 
@@ -282,7 +278,6 @@ impl CreateArgs {
         id: ArtifactId,
         dry_run: bool,
     ) -> Result<()> {
-        println!("DEBUG: 1 create/deploy");
         let bin = bin.into_bytes().unwrap_or_default();
         if bin.is_empty() {
             eyre::bail!("no bytecode found in bin object for {}", self.contract.name)
@@ -329,7 +324,6 @@ impl CreateArgs {
         println!("DEBUG:2  create/deploy");
 
 
-        // println!("DEBUG: set gas limit: {:?}", );
 
         if is_legacy {
             let gas_price = if let Some(gas_price) = self.tx.gas_price {

@@ -366,7 +366,7 @@ impl ProjectCompiler {
 
             // Save Foundry artifact with the correct name that Foundry expects
             // Create the contract-specific directory (e.g., out/PowerCalculator.wasm/)
-            let contract_output_dir = project.artifacts_path().join(&contract_name);
+            let contract_output_dir = project.artifacts_path().join(&contract_name_clean);
             std::fs::create_dir_all(&contract_output_dir).wrap_err_with(|| {
                 format!("Failed to create directory {}", contract_output_dir.display())
             })?;
@@ -446,111 +446,6 @@ impl ProjectCompiler {
     //         )?;
     //     }
 
-    //     Ok(())
-    // }
-
-    // fn integrate_rust_contracts_into_output<C: Compiler<CompilerContract = Contract>>(
-    //     &self,
-    //     output: &mut ProjectCompileOutput<C>,
-    //     rust_contracts: Vec<(String, PathBuf, Contract)>,
-    //     project: &Project<C>,
-    // ) -> Result<()> {
-    //     if rust_contracts.is_empty() {
-    //         return Ok(());
-    //     }
-    //
-    //     // ОТЛАДОЧНЫЙ КОД - посмотрим что есть в существующих build contexts
-    //     sh_println!("=== DEBUG: Existing build info ===");
-    //     for (build_id, build_context) in output.builds() {
-    //         sh_println!("Build ID: {}", build_id);
-    //         sh_println!("Build Context: {:#?}", build_context);
-    //         break; // смотрим только первый для примера
-    //     }
-    //
-    //     // Также посмотрим на build_infos в compiler output
-    //     sh_println!("=== DEBUG: Compiler output build infos ===");
-    //     for (i, build_info) in output.output().build_infos.iter().enumerate() {
-    //         sh_println!("Build Info #{}: ID={}", i, build_info.id);
-    //         sh_println!("Build Context: {:#?}", build_info.build_context);
-    //         sh_println!(
-    //             "Build Info Map keys: {:?}",
-    //             build_info.build_info.keys().collect::<Vec<_>>()
-    //         );
-    //
-    //         // Выводим некоторые значения из build_info map
-    //         for (key, value) in build_info.build_info.iter().take(5) {
-    //             sh_println!("  {}: {}", key, value);
-    //         }
-    //
-    //         if i == 0 {
-    //             break;
-    //         } // смотрим только первый
-    //     }
-    //
-    //     sh_println!("=== Integrating {} Rust contracts ===", rust_contracts.len());
-    //
-    //     // Ваш существующий код для создания rust_compiler_output...
-    //     let mut rust_compiler_output = foundry_compilers::CompilerOutput {
-    //         errors: Vec::new(),
-    //         sources: std::collections::BTreeMap::new(),
-    //         contracts: std::collections::BTreeMap::new(),
-    //         metadata: std::collections::BTreeMap::new(),
-    //     };
-    //
-    //     for (contract_name, _rust_project_path, contract) in rust_contracts {
-    //         let interface_path = project
-    //             .artifacts_path()
-    //             .join(format!("{}.wasm", contract_name))
-    //             .join("interface.sol");
-    //
-    //         // Добавляем контракт
-    //         let mut contracts_for_file = std::collections::BTreeMap::new();
-    //         contracts_for_file.insert(contract_name.clone(), contract);
-    //         rust_compiler_output.contracts.insert(interface_path.clone(), contracts_for_file);
-    //
-    //         // Добавляем source file если существует
-    //         if interface_path.exists() {
-    //             let source_file = SourceFile { id: 0, ast: None };
-    //             rust_compiler_output.sources.insert(interface_path.clone(), source_file);
-    //         }
-    //     }
-    //
-    //     // ХАКАЕМ: используем существующий build info как шаблон
-    //     if let Some(existing_build_info) = output.output().build_infos.first() {
-    //         sh_println!("=== Using existing build info as template ===");
-    //
-    //         let mut rust_build_info = existing_build_info.clone();
-    //
-    //         // Модифицируем только ID и некоторые поля
-    //         rust_build_info.id = format!(
-    //             "rust-contracts-{}",
-    //             std::time::SystemTime::now()
-    //                 .duration_since(std::time::UNIX_EPOCH)
-    //                 .unwrap_or_default()
-    //                 .as_secs()
-    //         );
-    //
-    //         // Модифицируем build_info map для Rust
-    //         rust_build_info
-    //             .build_info
-    //             .insert("compiler".to_string(), serde_json::Value::String("rust".to_string()));
-    //         rust_build_info
-    //             .build_info
-    //             .insert("profile".to_string(), serde_json::Value::String("rust".to_string()));
-    //
-    //         // Используем extend
-    //         output.output_mut().extend(
-    //             semver::Version::new(1, 0, 0),
-    //             rust_build_info,
-    //             "rust",
-    //             rust_compiler_output,
-    //         );
-    //     } else {
-    //         sh_println!("=== No existing build info found, skipping Rust integration ===");
-    //         return Ok(());
-    //     }
-    //
-    //     sh_println!("=== Rust contracts integration complete ===");
     //     Ok(())
     // }
 

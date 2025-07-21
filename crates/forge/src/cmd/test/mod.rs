@@ -457,7 +457,6 @@ impl TestArgs {
         filter: &ProjectPathsAwareFilter,
         output: &ProjectCompileOutput,
     ) -> eyre::Result<TestOutcome> {
-        println!("DEBUG 1: crates/forge/src/cmd/test; run_tests()");
         if self.list {
             return list(runner, filter);
         }
