@@ -33,7 +33,7 @@ alloy-pubsub.workspace = true
 alloy-rpc-client.workspace = true
 alloy-rpc-types = { workspace = true, features = ["eth", "engine"] }
 alloy-serde.workspace = true
-alloy-sol-types.workspace = true
+alloy-sol-types = {workspace = true, features = ["json"]}
 alloy-transport-http = { workspace = true, features = [
     "reqwest",
     "reqwest-rustls-tls",
