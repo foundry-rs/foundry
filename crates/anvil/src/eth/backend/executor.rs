@@ -8,6 +8,7 @@ use crate::{
         error::InvalidTransactionError,
         pool::transactions::PoolTransaction,
     },
+    evm::celo_precompile::celo_precompile_lookup,
     inject_precompiles,
     mem::inspector::AnvilInspector,
 };
@@ -339,6 +340,10 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
 
             if self.odyssey {
                 inject_precompiles(&mut evm, vec![(P256VERIFY, P256VERIFY_BASE_GAS_FEE)]);
+            }
+
+            if self.celo {
+                evm.precompiles_mut().set_precompile_lookup(celo_precompile_lookup);
             }
 
             if let Some(factory) = &self.precompile_factory {

@@ -9,6 +9,8 @@ use foundry_evm_core::either_evm::EitherEvm;
 use op_revm::OpContext;
 use revm::{Inspector, precompile::PrecompileWithAddress};
 
+pub mod celo_precompile;
+
 /// Object-safe trait that enables injecting extra precompiles when using
 /// `anvil` as a library.
 pub trait PrecompileFactory: Send + Sync + Unpin + Debug {
