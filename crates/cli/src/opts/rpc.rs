@@ -2,13 +2,14 @@ use crate::opts::ChainValueParser;
 use alloy_chains::ChainKind;
 use clap::Parser;
 use eyre::Result;
+use foundry_block_explorers::EtherscanApiVersion;
 use foundry_config::{
+    Chain, Config,
     figment::{
-        self,
+        self, Metadata, Profile,
         value::{Dict, Map},
-        Metadata, Profile,
     },
-    impl_figment_convert_cast, Chain, Config,
+    impl_figment_convert_cast,
 };
 use foundry_wallets::WalletOpts;
 use serde::Serialize;
@@ -21,6 +22,13 @@ pub struct RpcOpts {
     /// The RPC endpoint, default value is http://localhost:8545.
     #[arg(short = 'r', long = "rpc-url", env = "ETH_RPC_URL")]
     pub url: Option<String>,
+
+    /// Allow insecure RPC connections (accept invalid HTTPS certificates).
+    ///
+    /// When the provider's inner runtime transport variant is HTTP, this configures the reqwest
+    /// client to accept invalid certificates.
+    #[arg(short = 'k', long = "insecure", default_value = "false")]
+    pub accept_invalid_certs: bool,
 
     /// Use the Flashbots RPC URL with fast mode (<https://rpc.flashbots.net/fast>).
     ///
@@ -103,6 +111,9 @@ impl RpcOpts {
         if let Some(headers) = &self.rpc_headers {
             dict.insert("eth_rpc_headers".into(), headers.clone().into());
         }
+        if self.accept_invalid_certs {
+            dict.insert("eth_rpc_accept_invalid_certs".into(), true.into());
+        }
         dict
     }
 }
@@ -113,6 +124,16 @@ pub struct EtherscanOpts {
     #[arg(short = 'e', long = "etherscan-api-key", alias = "api-key", env = "ETHERSCAN_API_KEY")]
     #[serde(rename = "etherscan_api_key", skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
+
+    /// The Etherscan API version.
+    #[arg(
+        short,
+        long = "etherscan-api-version",
+        alias = "api-version",
+        env = "ETHERSCAN_API_VERSION"
+    )]
+    #[serde(rename = "etherscan_api_version", skip_serializing_if = "Option::is_none")]
+    pub api_version: Option<EtherscanApiVersion>,
 
     /// The chain name or EIP-155 chain ID.
     #[arg(
@@ -154,6 +175,11 @@ impl EtherscanOpts {
         if let Some(key) = self.key() {
             dict.insert("etherscan_api_key".into(), key.into());
         }
+
+        if let Some(api_version) = &self.api_version {
+            dict.insert("etherscan_api_version".into(), api_version.to_string().into());
+        }
+
         if let Some(chain) = self.chain {
             if let ChainKind::Id(id) = chain.kind() {
                 dict.insert("chain_id".into(), (*id).into());

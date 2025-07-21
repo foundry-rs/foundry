@@ -50,8 +50,8 @@ forgetest!(expect_revert_tests_should_fail, |prj, cmd| {
 [FAIL: next call did not revert as expected] testShouldFailExpectRevertDidNotRevert() ([GAS])
 [FAIL: Error != expected error: but reverts with this message != should revert with this message] testShouldFailExpectRevertErrorDoesNotMatch() ([GAS])
 [FAIL: next call did not revert as expected] testShouldFailRevertNotOnImmediateNextCall() ([GAS])
-[FAIL: revert: some message] testShouldFailexpectCheatcodeRevertForCreate() ([GAS])
-[FAIL: revert: revert] testShouldFailexpectCheatcodeRevertForExtCall() ([GAS])
+[FAIL: some message] testShouldFailexpectCheatcodeRevertForCreate() ([GAS])
+[FAIL: revert] testShouldFailexpectCheatcodeRevertForExtCall() ([GAS])
 Suite result: FAILED. 0 passed; 7 failed; 0 skipped; [ELAPSED]
 ...
 "#,
@@ -75,12 +75,13 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
         .stdout_eq(
             r#"No files changed, compilation skipped
 ...
+[FAIL: call reverted with 'my cool error' when it was expected not to revert] testShouldFailIfExpectRevertWrongString() ([GAS])
 [FAIL: call reverted when it was expected not to revert] testShouldFailNoRevert() ([GAS])
 [FAIL: expected 0 reverts with reason: revert, but got one] testShouldFailNoRevertSpecific() ([GAS])
-[FAIL: Error != expected error: second-revert != revert] testShouldFailReverCountSpecifc() ([GAS])
 [FAIL: next call did not revert as expected] testShouldFailRevertCountAny() ([GAS])
 [FAIL: Error != expected error: wrong revert != called a function and then reverted] testShouldFailRevertCountCallsThenReverts() ([GAS])
-Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
+[FAIL: Error != expected error: second-revert != revert] testShouldFailRevertCountSpecific() ([GAS])
+Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#,
         );
@@ -90,11 +91,13 @@ Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
         .assert_failure()
         .stdout_eq(r#"No files changed, compilation skipped
 ...
+[FAIL: call reverted with 'revert' from 0x2e234DAe75C793f67A35089C9d99245E1C58470b, but expected 0 reverts from 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f] testNoRevertWithWrongReverter() ([GAS])
+[FAIL: call reverted with 'revert2' from 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f, but expected 0 reverts with reason 'revert' from 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f] testNoReverterCountWithData() ([GAS])
 [FAIL: expected 0 reverts from address: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f, but got one] testShouldFailNoRevertWithReverter() ([GAS])
 [FAIL: Reverter != expected reverter: 0x2e234DAe75C793f67A35089C9d99245E1C58470b != 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f] testShouldFailRevertCountWithReverter() ([GAS])
 [FAIL: Error != expected error: wrong revert != revert] testShouldFailReverterCountWithWrongData() ([GAS])
 [FAIL: Reverter != expected reverter: 0x2e234DAe75C793f67A35089C9d99245E1C58470b != 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f] testShouldFailWrongReverterCountWithData() ([GAS])
-Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#);
 });
@@ -238,7 +241,7 @@ forgetest!(mem_safety_test_should_fail, |prj, cmd| {
         r#"[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 ...
-[FAIL: revert: Expected call to fail] testShouldFailExpectSafeMemoryCall() ([GAS])
+[FAIL: Expected call to fail] testShouldFailExpectSafeMemoryCall() ([GAS])
 [FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_CALL() ([GAS])
 [FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_CALLCODE() ([GAS])
 [FAIL: memory write at offset 0xA0 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0xA0]; counterexample: calldata=[..] args=[..]] testShouldFailExpectSafeMemory_CALLDATACOPY(uint256) (runs: 0, [AVG_GAS])
@@ -336,7 +339,7 @@ contract FailingSetupTest is DSTest {
         r#"[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 ...
-[FAIL: revert: setup failed predictably] setUp() ([GAS])
+[FAIL: setup failed predictably] setUp() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#

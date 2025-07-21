@@ -6,15 +6,19 @@ use crate::{
         SerializableHistoricalStates, SerializableState, SerializableTransaction, StateDb,
     },
     mem::state::state_root,
-    revm::{db::DbAccount, primitives::AccountInfo},
 };
-use alloy_primitives::{map::HashMap, Address, B256, U256, U64};
+use alloy_primitives::{Address, B256, U256, map::HashMap};
 use alloy_rpc_types::BlockId;
 use foundry_evm::backend::{BlockchainDb, DatabaseResult, StateSnapshot};
+use revm::{
+    context::BlockEnv,
+    database::{DatabaseRef, DbAccount},
+    state::AccountInfo,
+};
 
 // reexport for convenience
-pub use foundry_evm::{backend::MemDb, revm::db::DatabaseRef};
-use foundry_evm::{backend::RevertStateSnapshotAction, revm::primitives::BlockEnv};
+pub use foundry_evm::backend::MemDb;
+use foundry_evm::backend::RevertStateSnapshotAction;
 
 impl Db for MemDb {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
@@ -26,19 +30,20 @@ impl Db for MemDb {
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: B256) {
-        self.inner.block_hashes.insert(number, hash);
+        self.inner.cache.block_hashes.insert(number, hash);
     }
 
     fn dump_state(
         &self,
         at: BlockEnv,
-        best_number: U64,
+        best_number: u64,
         blocks: Vec<SerializableBlock>,
         transactions: Vec<SerializableTransaction>,
         historical_states: Option<SerializableHistoricalStates>,
     ) -> DatabaseResult<Option<SerializableState>> {
         let accounts = self
             .inner
+            .cache
             .accounts
             .clone()
             .into_iter()
@@ -92,7 +97,7 @@ impl Db for MemDb {
     }
 
     fn maybe_state_root(&self) -> Option<B256> {
-        Some(state_root(&self.inner.accounts))
+        Some(state_root(&self.inner.cache.accounts))
     }
 
     fn current_state(&self) -> StateDb {
@@ -106,7 +111,7 @@ impl MaybeFullDatabase for MemDb {
     }
 
     fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
-        Some(&self.inner.accounts)
+        Some(&self.inner.cache.accounts)
     }
 
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
@@ -143,16 +148,15 @@ impl MaybeForkedDatabase for MemDb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Bytes;
-    use foundry_evm::revm::primitives::{Bytecode, KECCAK_EMPTY};
-    use std::{collections::BTreeMap, str::FromStr};
+    use alloy_primitives::{Bytes, address};
+    use revm::{bytecode::Bytecode, primitives::KECCAK_EMPTY};
+    use std::collections::BTreeMap;
 
     // verifies that all substantial aspects of a loaded account remain the same after an account
     // is dumped and reloaded
     #[test]
     fn test_dump_reload_cycle() {
-        let test_addr: Address =
-            Address::from_str("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266").unwrap();
+        let test_addr: Address = address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266");
 
         let mut dump_db = MemDb::default();
 
@@ -172,7 +176,7 @@ mod tests {
 
         // blocks dumping/loading tested in storage.rs
         let state = dump_db
-            .dump_state(Default::default(), U64::ZERO, Vec::new(), Vec::new(), Default::default())
+            .dump_state(Default::default(), 0, Vec::new(), Vec::new(), Default::default())
             .unwrap()
             .unwrap();
 
@@ -192,10 +196,8 @@ mod tests {
     // accounts as well.
     #[test]
     fn test_load_state_merge() {
-        let test_addr: Address =
-            Address::from_str("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266").unwrap();
-        let test_addr2: Address =
-            Address::from_str("0x70997970c51812dc3a010c7d01b50e0d17dc79c8").unwrap();
+        let test_addr: Address = address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266");
+        let test_addr2: Address = address!("0x70997970c51812dc3a010c7d01b50e0d17dc79c8");
 
         let contract_code = Bytecode::new_raw(Bytes::from("fake contract code"));
 

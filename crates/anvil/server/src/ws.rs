@@ -1,13 +1,13 @@
-use crate::{error::RequestError, pubsub::PubSubConnection, PubSubRpcHandler};
+use crate::{PubSubRpcHandler, error::RequestError, pubsub::PubSubConnection};
 use anvil_rpc::request::Request;
 use axum::{
     extract::{
-        ws::{Message, WebSocket},
         State, WebSocketUpgrade,
+        ws::{Message, WebSocket},
     },
     response::Response,
 };
-use futures::{ready, Sink, Stream};
+use futures::{Sink, Stream, ready};
 use std::{
     pin::Pin,
     task::{Context, Poll},
@@ -45,7 +45,7 @@ impl Sink<String> for SocketConn {
     }
 
     fn start_send(self: Pin<&mut Self>, item: String) -> Result<(), Self::Error> {
-        self.project().0.start_send(Message::Text(item))
+        self.project().0.start_send(Message::Text(item.into()))
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {

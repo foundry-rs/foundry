@@ -1,19 +1,17 @@
 use crate::cmd::{
     access_list::AccessListArgs, artifact::ArtifactArgs, bind::BindArgs, call::CallArgs,
     constructor_args::ConstructorArgsArgs, create2::Create2Args, creation_code::CreationCodeArgs,
-    estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs,
-    mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs,
-    txpool::TxPoolSubcommands, wallet::WalletSubcommands,
+    da_estimate::DAEstimateArgs, estimate::EstimateArgs, find_block::FindBlockArgs,
+    interface::InterfaceArgs, logs::LogsArgs, mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs,
+    send::SendTxArgs, storage::StorageArgs, txpool::TxPoolSubcommands, wallet::WalletSubcommands,
 };
-use alloy_primitives::{Address, B256, U256};
+use alloy_ens::NameOrAddress;
+use alloy_primitives::{Address, B256, Selector, U256};
 use alloy_rpc_types::BlockId;
 use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
 use foundry_cli::opts::{EtherscanOpts, GlobalArgs, RpcOpts};
-use foundry_common::{
-    ens::NameOrAddress,
-    version::{LONG_VERSION, SHORT_VERSION},
-};
+use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
 use std::{path::PathBuf, str::FromStr};
 
 /// A Swiss Army knife for interacting with Ethereum applications from the command line.
@@ -22,7 +20,7 @@ use std::{path::PathBuf, str::FromStr};
     name = "cast",
     version = SHORT_VERSION,
     long_version = LONG_VERSION,
-    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html",
+    after_help = "Find more information in the book: https://getfoundry.sh/cast/overview",
     next_display_order = None,
 )]
 pub struct Cast {
@@ -117,6 +115,8 @@ pub enum CastSubcommand {
     ToCheckSumAddress {
         /// The address to convert.
         address: Option<Address>,
+        /// EIP-155 chain ID to encode the address using EIP-1191.
+        chain_id: Option<u64>,
     },
 
     /// Convert hex data to an ASCII string.
@@ -362,6 +362,10 @@ pub enum CastSubcommand {
         #[arg(long, short)]
         field: Option<String>,
 
+        /// Print the raw RLP encoded block header.
+        #[arg(long, conflicts_with = "field")]
+        raw: bool,
+
         #[arg(long, env = "CAST_FULL_BLOCK")]
         full: bool,
 
@@ -391,6 +395,10 @@ pub enum CastSubcommand {
         /// The arguments to encode.
         #[arg(allow_hyphen_values = true)]
         args: Vec<String>,
+
+        // Path to file containing arguments to encode.
+        #[arg(long, value_name = "PATH")]
+        file: Option<PathBuf>,
     },
 
     /// Get the symbolic name of the current chain.
@@ -420,8 +428,30 @@ pub enum CastSubcommand {
         address: Option<Address>,
 
         /// The nonce of the deployer address.
-        #[arg(long)]
+        #[arg(
+            long,
+            conflicts_with = "salt",
+            conflicts_with = "init_code",
+            conflicts_with = "init_code_hash"
+        )]
         nonce: Option<u64>,
+
+        /// The salt for CREATE2 address computation.
+        #[arg(long, conflicts_with = "nonce")]
+        salt: Option<B256>,
+
+        /// The init code for CREATE2 address computation.
+        #[arg(
+            long,
+            requires = "salt",
+            conflicts_with = "init_code_hash",
+            conflicts_with = "nonce"
+        )]
+        init_code: Option<String>,
+
+        /// The init code hash for CREATE2 address computation.
+        #[arg(long, requires = "salt", conflicts_with = "init_code", conflicts_with = "nonce")]
+        init_code_hash: Option<B256>,
 
         #[command(flatten)]
         rpc: RpcOpts,
@@ -446,7 +476,15 @@ pub enum CastSubcommand {
     #[command(visible_alias = "t")]
     Tx {
         /// The transaction hash.
-        tx_hash: String,
+        tx_hash: Option<String>,
+
+        /// The sender of the transaction.
+        #[arg(long, value_parser = NameOrAddress::from_str)]
+        from: Option<NameOrAddress>,
+
+        /// Nonce of the transaction.
+        #[arg(long)]
+        nonce: Option<u64>,
 
         /// If specified, only get the given field of the transaction. If "raw", the RLP encoded
         /// transaction will be printed.
@@ -646,7 +684,7 @@ pub enum CastSubcommand {
     #[command(name = "4byte", visible_aliases = &["4", "4b"])]
     FourByte {
         /// The function selector.
-        selector: Option<String>,
+        selector: Option<Selector>,
     },
 
     /// Decode ABI-encoded calldata using <https://openchain.xyz>.
@@ -661,7 +699,7 @@ pub enum CastSubcommand {
     FourByteEvent {
         /// Topic 0
         #[arg(value_name = "TOPIC_0")]
-        topic: Option<String>,
+        topic: Option<B256>,
     },
 
     /// Upload the given signatures to <https://openchain.xyz>.
@@ -1038,6 +1076,10 @@ pub enum CastSubcommand {
     #[command(visible_aliases = &["dt", "decode-tx"])]
     DecodeTransaction { tx: Option<String> },
 
+    /// Recovery an EIP-7702 authority from a Authorization JSON string.
+    #[command(visible_aliases = &["decode-auth"])]
+    RecoverAuthority { auth: String },
+
     /// Extracts function selectors and arguments from bytecode
     #[command(visible_alias = "sel")]
     Selectors {
@@ -1049,16 +1091,15 @@ pub enum CastSubcommand {
         resolve: bool,
     },
 
-    /// Decodes EOF container bytes
-    #[command()]
-    DecodeEof { eof: Option<String> },
-
     /// Inspect the TxPool of a node.
     #[command(visible_alias = "tp")]
     TxPool {
         #[command(subcommand)]
         command: TxPoolSubcommands,
     },
+    /// Estimates the data availability size of a given opstack block.
+    #[command(name = "da-estimate")]
+    DAEstimate(DAEstimateArgs),
 }
 
 /// CLI arguments for `cast --to-base`.
@@ -1134,6 +1175,19 @@ mod tests {
                     args,
                     vec!["5c9d55b78febcc2061715ba4f57ecf8ea2711f2c".to_string(), "2".to_string()]
                 )
+            }
+            _ => unreachable!(),
+        };
+    }
+
+    #[test]
+    fn parse_call_data_with_file() {
+        let args: Cast = Cast::parse_from(["foundry-cli", "calldata", "f()", "--file", "test.txt"]);
+        match args.cmd {
+            CastSubcommand::CalldataEncode { sig, file, args } => {
+                assert_eq!(sig, "f()".to_string());
+                assert_eq!(file, Some(PathBuf::from("test.txt")));
+                assert!(args.is_empty());
             }
             _ => unreachable!(),
         };

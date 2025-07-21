@@ -7,16 +7,16 @@ use foundry_compilers::{
     solc::Solc,
 };
 use foundry_config::{
+    CompilationRestrictions, Config, FsPermissions, FuzzConfig, InvariantConfig, SettingsOverrides,
+    SolcReq,
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     filter::GlobMatcher,
     fs_permissions::{FsAccessPermission, PathPermission},
-    CompilationRestrictions, Config, FsPermissions, FuzzConfig, InvariantConfig, SettingsOverrides,
-    SolcReq,
 };
 use foundry_evm::opts::EvmOpts;
 use foundry_test_utils::{
-    foundry_compilers::artifacts::{remappings::Remapping, EvmVersion},
-    util::{pretty_err, OutputExt, TestCommand, OTHER_SOLC_VERSION},
+    foundry_compilers::artifacts::{EvmVersion, remappings::Remapping},
+    util::{OTHER_SOLC_VERSION, OutputExt, TestCommand, pretty_err},
 };
 use path_slash::PathBufExt;
 use semver::VersionReq;
@@ -42,6 +42,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         out: "out-test".into(),
         libs: vec!["lib-test".into()],
         cache: true,
+        dynamic_test_linking: false,
         cache_path: "test-cache".into(),
         snapshots: "snapshots".into(),
         gas_snapshot_check: false,
@@ -90,6 +91,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         invariant: InvariantConfig {
             runs: 256,
             failure_persist_dir: Some("test-cache/fuzz".into()),
+            corpus_dir: Some("cache/invariant/corpus".into()),
             ..Default::default()
         },
         ffi: true,
@@ -99,7 +101,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),
         tx_origin: "00a329c0648769A73afAc7F9F81E08FB43dBEA72".parse().unwrap(),
         initial_balance: U256::from(0xffffffffffffffffffffffffu128),
-        block_number: 10,
+        block_number: U256::from(10),
         fork_block_number: Some(200),
         chain: Some(9999.into()),
         gas_limit: 99_000_000u64.into(),
@@ -107,22 +109,24 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         gas_price: Some(999),
         block_base_fee_per_gas: 10,
         block_coinbase: Address::random(),
-        block_timestamp: 10,
+        block_timestamp: U256::from(10),
         block_difficulty: 10,
         block_prevrandao: B256::random(),
         block_gas_limit: Some(100u64.into()),
         disable_block_gas_limit: false,
         memory_limit: 1 << 27,
         eth_rpc_url: Some("localhost".to_string()),
+        eth_rpc_accept_invalid_certs: false,
         eth_rpc_jwt: None,
         eth_rpc_timeout: None,
         eth_rpc_headers: None,
         etherscan_api_key: None,
+        etherscan_api_version: None,
         etherscan: Default::default(),
         verbosity: 4,
         remappings: vec![Remapping::from_str("forge-std/=lib/forge-std/").unwrap().into()],
         libraries: vec![
-            "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6".to_string()
+            "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6".to_string(),
         ],
         ignored_error_codes: vec![],
         ignored_file_paths: vec![],
@@ -146,6 +150,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         build_info: false,
         build_info_path: None,
         fmt: Default::default(),
+        lint: Default::default(),
         doc: Default::default(),
         bind_json: Default::default(),
         fs_permissions: Default::default(),
@@ -162,12 +167,11 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         assertions_revert: true,
         legacy_assertions: false,
         extra_args: vec![],
-        eof_version: None,
         odyssey: false,
         transaction_timeout: 120,
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
-        eof: false,
+        script_execution_protection: true,
         _non_exhaustive: (),
     };
     prj.write_config(input.clone());
@@ -341,11 +345,15 @@ forgetest_init!(can_get_evm_opts, |prj, _cmd| {
     assert_eq!(config.eth_rpc_url, Some(url.to_string()));
     assert!(config.ffi);
 
-    std::env::set_var("FOUNDRY_ETH_RPC_URL", url);
+    unsafe {
+        std::env::set_var("FOUNDRY_ETH_RPC_URL", url);
+    }
     let figment = Config::figment_with_root(prj.root()).merge(("debug", false));
     let evm_opts: EvmOpts = figment.extract().unwrap();
     assert_eq!(evm_opts.fork_url, Some(url.to_string()));
-    std::env::remove_var("FOUNDRY_ETH_RPC_URL");
+    unsafe {
+        std::env::remove_var("FOUNDRY_ETH_RPC_URL");
+    }
 });
 
 // checks that we can set various config values
@@ -971,6 +979,7 @@ remappings = ["forge-std/=lib/forge-std/src/"]
 auto_detect_remappings = true
 libraries = []
 cache = true
+dynamic_test_linking = false
 cache_path = "cache"
 snapshots = "snapshots"
 gas_snapshot_check = false
@@ -980,7 +989,7 @@ allow_paths = []
 include_paths = []
 skip = []
 force = false
-evm_version = "cancun"
+evm_version = "prague"
 gas_reports = ["*"]
 gas_reports_ignore = []
 gas_reports_include_tests = false
@@ -989,6 +998,7 @@ offline = false
 optimizer = false
 optimizer_runs = 200
 verbosity = 0
+eth_rpc_accept_invalid_certs = false
 ignored_error_codes = [
     "license",
     "code-size",
@@ -1036,21 +1046,22 @@ assertions_revert = true
 legacy_assertions = false
 odyssey = false
 transaction_timeout = 120
-eof = false
 additional_compiler_profiles = []
 compilation_restrictions = []
-
-[[profile.default.fs_permissions]]
-access = "read"
-path = "out"
+script_execution_protection = true
 
 [profile.default.rpc_storage_caching]
 chains = "all"
 endpoints = "all"
 
+[[profile.default.fs_permissions]]
+access = "read"
+path = "out"
+
 [fmt]
 line_length = 120
 tab_width = 4
+style = "space"
 bracket_spacing = false
 int_types = "long"
 multiline_func_header = "attributes_first"
@@ -1064,6 +1075,12 @@ ignore = []
 contract_new_lines = false
 sort_imports = false
 
+[lint]
+severity = []
+exclude_lints = []
+ignore = []
+lint_on_build = true
+
 [doc]
 out = "docs"
 title = ""
@@ -1073,6 +1090,7 @@ ignore = []
 
 [fuzz]
 runs = 256
+fail_on_revert = true
 max_test_rejects = 65536
 dictionary_weight = 40
 include_storage = true
@@ -1097,9 +1115,13 @@ max_fuzz_dictionary_values = 6553600
 shrink_run_limit = 5000
 max_assume_rejects = 65536
 gas_report_samples = 256
+corpus_gzip = true
+corpus_min_mutations = 5
+corpus_min_size = 0
 failure_persist_dir = "cache/invariant"
-show_metrics = false
+show_metrics = true
 show_solidity = false
+show_edge_coverage = false
 
 [labels]
 
@@ -1128,6 +1150,7 @@ exclude = []
   "auto_detect_remappings": true,
   "libraries": [],
   "cache": true,
+  "dynamic_test_linking": false,
   "cache_path": "cache",
   "snapshots": "snapshots",
   "gas_snapshot_check": false,
@@ -1137,7 +1160,7 @@ exclude = []
   "include_paths": [],
   "skip": [],
   "force": false,
-  "evm_version": "cancun",
+  "evm_version": "prague",
   "gas_reports": [
     "*"
   ],
@@ -1152,10 +1175,12 @@ exclude = []
   "model_checker": null,
   "verbosity": 0,
   "eth_rpc_url": null,
+  "eth_rpc_accept_invalid_certs": false,
   "eth_rpc_jwt": null,
   "eth_rpc_timeout": null,
   "eth_rpc_headers": null,
   "etherscan_api_key": null,
+  "etherscan_api_version": null,
   "ignored_error_codes": [
     "license",
     "code-size",
@@ -1176,6 +1201,7 @@ exclude = []
   "show_progress": false,
   "fuzz": {
     "runs": 256,
+    "fail_on_revert": true,
     "max_test_rejects": 65536,
     "seed": null,
     "dictionary_weight": 40,
@@ -1202,10 +1228,15 @@ exclude = []
     "shrink_run_limit": 5000,
     "max_assume_rejects": 65536,
     "gas_report_samples": 256,
+    "corpus_dir": null,
+    "corpus_gzip": true,
+    "corpus_min_mutations": 5,
+    "corpus_min_size": 0,
     "failure_persist_dir": "cache/invariant",
-    "show_metrics": false,
+    "show_metrics": true,
     "timeout": null,
-    "show_solidity": false
+    "show_solidity": false,
+    "show_edge_coverage": false
   },
   "ffi": false,
   "allow_internal_expect_revert": false,
@@ -1249,6 +1280,7 @@ exclude = []
   "fmt": {
     "line_length": 120,
     "tab_width": 4,
+    "style": "space",
     "bracket_spacing": false,
     "int_types": "long",
     "multiline_func_header": "attributes_first",
@@ -1261,6 +1293,12 @@ exclude = []
     "ignore": [],
     "contract_new_lines": false,
     "sort_imports": false
+  },
+  "lint": {
+    "severity": [],
+    "exclude_lints": [],
+    "ignore": [],
+    "lint_on_build": true
   },
   "doc": {
     "out": "docs",
@@ -1293,9 +1331,9 @@ exclude = []
   "legacy_assertions": false,
   "odyssey": false,
   "transaction_timeout": 120,
-  "eof": false,
   "additional_compiler_profiles": [],
-  "compilation_restrictions": []
+  "compilation_restrictions": [],
+  "script_execution_protection": true
 }
 
 "#]]);
@@ -1697,7 +1735,7 @@ contract Counter {
     let v1_profile = SettingsOverrides {
         name: "v1".to_string(),
         via_ir: Some(true),
-        evm_version: Some(EvmVersion::Cancun),
+        evm_version: Some(EvmVersion::Prague),
         optimizer: None,
         optimizer_runs: Some(44444444),
         bytecode_hash: None,
@@ -1783,19 +1821,19 @@ contract Counter {
 
     let (via_ir, evm_version, enabled, runs) = artifact_settings("Counter.sol/Counter.json");
     assert_eq!(None, via_ir);
-    assert_eq!("\"cancun\"", evm_version.unwrap().to_string());
+    assert_eq!("\"prague\"", evm_version.unwrap().to_string());
     assert_eq!("false", enabled.unwrap().to_string());
     assert_eq!("200", runs.unwrap().to_string());
 
     let (via_ir, evm_version, enabled, runs) = artifact_settings("v1/Counter.sol/Counter.json");
     assert_eq!("true", via_ir.unwrap().to_string());
-    assert_eq!("\"cancun\"", evm_version.unwrap().to_string());
+    assert_eq!("\"prague\"", evm_version.unwrap().to_string());
     assert_eq!("true", enabled.unwrap().to_string());
     assert_eq!("44444444", runs.unwrap().to_string());
 
     let (via_ir, evm_version, enabled, runs) = artifact_settings("v2/Counter.sol/Counter.json");
     assert_eq!("true", via_ir.unwrap().to_string());
-    assert_eq!("\"cancun\"", evm_version.unwrap().to_string());
+    assert_eq!("\"prague\"", evm_version.unwrap().to_string());
     assert_eq!("true", enabled.unwrap().to_string());
     assert_eq!("111", runs.unwrap().to_string());
 

@@ -4,16 +4,18 @@ use crate::{
     utils::http_provider_with_signer,
 };
 use alloy_eips::BlockId;
+use alloy_hardforks::EthereumHardfork;
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{
-    hex::{self, FromHex},
     Address, Bytes, U256,
+    hex::{self, FromHex},
 };
 use alloy_provider::{
-    ext::{DebugApi, TraceApi},
     Provider,
+    ext::{DebugApi, TraceApi},
 };
 use alloy_rpc_types::{
+    TransactionRequest,
     state::StateOverride,
     trace::{
         filter::{TraceFilter, TraceFilterMode},
@@ -23,11 +25,10 @@ use alloy_rpc_types::{
         },
         parity::{Action, LocalizedTransactionTrace},
     },
-    TransactionRequest,
 };
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
-use anvil::{spawn, EthereumHardfork, NodeConfig};
+use anvil::{NodeConfig, spawn};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_transfer_parity_traces() {
@@ -138,7 +139,11 @@ async fn test_transfer_debug_trace_call() {
 
     let traces = handle
         .http_provider()
-        .debug_trace_call(tx, BlockId::latest(), GethDebugTracingCallOptions::default())
+        .debug_trace_call(
+            WithOtherFields::new(tx),
+            BlockId::latest(),
+            GethDebugTracingCallOptions::default(),
+        )
         .await
         .unwrap();
 
@@ -183,7 +188,7 @@ async fn test_call_tracer_debug_trace_call() {
     let internal_call_tx_traces = handle
         .http_provider()
         .debug_trace_call(
-            internal_call_tx.clone(),
+            WithOtherFields::new(internal_call_tx.clone()),
             BlockId::latest(),
             GethDebugTracingCallOptions::default().with_tracing_options(
                 GethDebugTracingOptions::default()
@@ -211,7 +216,7 @@ async fn test_call_tracer_debug_trace_call() {
     let internal_call_only_top_call_tx_traces = handle
         .http_provider()
         .debug_trace_call(
-            internal_call_tx.clone(),
+            WithOtherFields::new(internal_call_tx.clone()),
             BlockId::latest(),
             GethDebugTracingCallOptions::default().with_tracing_options(
                 GethDebugTracingOptions::default()
@@ -240,7 +245,7 @@ async fn test_call_tracer_debug_trace_call() {
     let direct_call_tx_traces = handle
         .http_provider()
         .debug_trace_call(
-            direct_call_tx,
+            WithOtherFields::new(direct_call_tx),
             BlockId::latest(),
             GethDebugTracingCallOptions::default().with_tracing_options(
                 GethDebugTracingOptions::default()
@@ -284,7 +289,7 @@ async fn test_debug_trace_call_state_override() {
     let tx_traces = handle
         .http_provider()
         .debug_trace_call(
-            tx.clone(),
+            WithOtherFields::new(tx.clone()),
             BlockId::latest(),
             GethDebugTracingCallOptions::default()
                 .with_tracing_options(GethDebugTracingOptions::default())
@@ -872,6 +877,21 @@ async fn test_trace_filter() {
 
     let traces = api.trace_filter(tracer).await;
     assert!(traces.is_err());
+
+    // Test same from and to block is valid
+    let latest = provider.get_block_number().await.unwrap();
+    let tracer = TraceFilter {
+        from_block: Some(latest),
+        to_block: Some(latest),
+        from_address: vec![],
+        to_address: vec![],
+        mode: TraceFilterMode::Union,
+        after: None,
+        count: None,
+    };
+
+    let traces = api.trace_filter(tracer).await;
+    assert!(traces.is_ok());
 
     // Test invalid block range
     let latest = provider.get_block_number().await.unwrap();

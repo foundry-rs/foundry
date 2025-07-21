@@ -11,4 +11,5 @@ mod invariant;
 mod mutation;
 mod repros;
 mod spec;
+mod table;
 mod vyper;

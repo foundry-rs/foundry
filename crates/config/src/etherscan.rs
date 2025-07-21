@@ -1,15 +1,16 @@
 //! Support for multiple Etherscan keys.
 
 use crate::{
-    resolve::{interpolate, UnresolvedEnvVarError, RE_PLACEHOLDER},
     Chain, Config, NamedChain,
+    resolve::{RE_PLACEHOLDER, UnresolvedEnvVarError, interpolate},
 };
 use figment::{
+    Error, Metadata, Profile, Provider,
     providers::Env,
     value::{Dict, Map},
-    Error, Metadata, Profile, Provider,
 };
-use inflector::Inflector;
+use foundry_block_explorers::EtherscanApiVersion;
+use heck::ToKebabCase;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     collections::BTreeMap,
@@ -36,10 +37,10 @@ impl Provider for EtherscanEnvProvider {
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut dict = Dict::default();
         let env_provider = Env::raw().only(&["ETHERSCAN_API_KEY"]);
-        if let Some((key, value)) = env_provider.iter().next() {
-            if !value.trim().is_empty() {
-                dict.insert(key.as_str().to_string(), value.into());
-            }
+        if let Some((key, value)) = env_provider.iter().next()
+            && !value.trim().is_empty()
+        {
+            dict.insert(key.as_str().to_string(), value.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
@@ -83,13 +84,13 @@ impl EtherscanConfigs {
     }
 
     /// Returns all (alias -> url) pairs
-    pub fn resolved(self) -> ResolvedEtherscanConfigs {
+    pub fn resolved(self, default_api_version: EtherscanApiVersion) -> ResolvedEtherscanConfigs {
         ResolvedEtherscanConfigs {
             configs: self
                 .configs
                 .into_iter()
                 .map(|(name, e)| {
-                    let resolved = e.resolve(Some(&name));
+                    let resolved = e.resolve(Some(&name), default_api_version);
                     (name, resolved)
                 })
                 .collect(),
@@ -173,6 +174,9 @@ pub struct EtherscanConfig {
     /// Etherscan API URL
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Etherscan API Version. Defaults to v2
+    #[serde(default, alias = "api-version", skip_serializing_if = "Option::is_none")]
+    pub api_version: Option<EtherscanApiVersion>,
     /// The etherscan API KEY that's required to make requests
     pub key: EtherscanApiKey,
 }
@@ -187,8 +191,11 @@ impl EtherscanConfig {
     pub fn resolve(
         self,
         alias: Option<&str>,
+        default_api_version: EtherscanApiVersion,
     ) -> Result<ResolvedEtherscanConfig, EtherscanConfigError> {
-        let Self { chain, mut url, key } = self;
+        let Self { chain, mut url, key, api_version } = self;
+
+        let api_version = api_version.unwrap_or(default_api_version);
 
         if let Some(url) = &mut url {
             *url = interpolate(url)?;
@@ -219,17 +226,23 @@ impl EtherscanConfig {
         match (chain, url) {
             (Some(chain), Some(api_url)) => Ok(ResolvedEtherscanConfig {
                 api_url,
+                api_version,
                 browser_url: chain.etherscan_urls().map(|(_, url)| url.to_string()),
                 key,
                 chain: Some(chain),
             }),
-            (Some(chain), None) => ResolvedEtherscanConfig::create(key, chain).ok_or_else(|| {
-                let msg = alias.map(|a| format!(" `{a}`")).unwrap_or_default();
-                EtherscanConfigError::UnknownChain(msg, chain)
+            (Some(chain), None) => ResolvedEtherscanConfig::create(key, chain, api_version)
+                .ok_or_else(|| {
+                    let msg = alias.map(|a| format!(" `{a}`")).unwrap_or_default();
+                    EtherscanConfigError::UnknownChain(msg, chain)
+                }),
+            (None, Some(api_url)) => Ok(ResolvedEtherscanConfig {
+                api_url,
+                browser_url: None,
+                key,
+                chain: None,
+                api_version,
             }),
-            (None, Some(api_url)) => {
-                Ok(ResolvedEtherscanConfig { api_url, browser_url: None, key, chain: None })
-            }
             (None, None) => {
                 let msg = alias
                     .map(|a| format!(" for Etherscan config with unknown alias `{a}`"))
@@ -251,6 +264,9 @@ pub struct ResolvedEtherscanConfig {
     pub browser_url: Option<String>,
     /// The resolved API key.
     pub key: String,
+    /// Etherscan API Version.
+    #[serde(default)]
+    pub api_version: EtherscanApiVersion,
     /// The chain name or EIP-155 chain ID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain: Option<Chain>,
@@ -258,11 +274,16 @@ pub struct ResolvedEtherscanConfig {
 
 impl ResolvedEtherscanConfig {
     /// Creates a new instance using the api key and chain
-    pub fn create(api_key: impl Into<String>, chain: impl Into<Chain>) -> Option<Self> {
+    pub fn create(
+        api_key: impl Into<String>,
+        chain: impl Into<Chain>,
+        api_version: EtherscanApiVersion,
+    ) -> Option<Self> {
         let chain = chain.into();
         let (api_url, browser_url) = chain.etherscan_urls()?;
         Some(Self {
             api_url: api_url.to_string(),
+            api_version,
             browser_url: Some(browser_url.to_string()),
             key: api_key.into(),
             chain: Some(chain),
@@ -294,13 +315,10 @@ impl ResolvedEtherscanConfig {
         self,
     ) -> Result<foundry_block_explorers::Client, foundry_block_explorers::errors::EtherscanError>
     {
-        let Self { api_url, browser_url, key: api_key, chain } = self;
-        let (mainnet_api, mainnet_url) = NamedChain::Mainnet.etherscan_urls().expect("exist; qed");
+        let Self { api_url, browser_url, key: api_key, chain, api_version } = self;
 
-        let cache = chain
-            // try to match against mainnet, which is usually the most common target
-            .or_else(|| (api_url == mainnet_api).then(Chain::mainnet))
-            .and_then(Config::foundry_etherscan_chain_cache_dir);
+        let chain = chain.unwrap_or_default();
+        let cache = Config::foundry_etherscan_chain_cache_dir(chain);
 
         if let Some(cache_path) = &cache {
             // we also create the `sources` sub dir here
@@ -314,15 +332,15 @@ impl ResolvedEtherscanConfig {
             .user_agent(ETHERSCAN_USER_AGENT)
             .tls_built_in_root_certs(api_url.scheme() == "https")
             .build()?;
-        foundry_block_explorers::Client::builder()
+        let mut client_builder = foundry_block_explorers::Client::builder()
             .with_client(client)
+            .with_api_version(api_version)
             .with_api_key(api_key)
-            .with_api_url(api_url)?
-            // the browser url is not used/required by the client so we can simply set the
-            // mainnet browser url here
-            .with_url(browser_url.as_deref().unwrap_or(mainnet_url))?
-            .with_cache(cache, Duration::from_secs(24 * 60 * 60))
-            .build()
+            .with_cache(cache, Duration::from_secs(24 * 60 * 60));
+        if let Some(browser_url) = browser_url {
+            client_builder = client_builder.with_url(browser_url)?;
+        }
+        client_builder.chain(chain)?.build()
     }
 }
 
@@ -423,12 +441,36 @@ mod tests {
                 chain: Some(Mainnet.into()),
                 url: None,
                 key: EtherscanApiKey::Key("ABCDEFG".to_string()),
+                api_version: None,
             },
         );
 
-        let mut resolved = configs.resolved();
+        let mut resolved = configs.resolved(EtherscanApiVersion::V2);
         let config = resolved.remove("mainnet").unwrap().unwrap();
-        let _ = config.into_client().unwrap();
+        // None version = None
+        assert_eq!(config.api_version, EtherscanApiVersion::V2);
+        let client = config.into_client().unwrap();
+        assert_eq!(*client.etherscan_api_version(), EtherscanApiVersion::V2);
+    }
+
+    #[test]
+    fn can_create_v1_client_via_chain() {
+        let mut configs = EtherscanConfigs::default();
+        configs.insert(
+            "mainnet".to_string(),
+            EtherscanConfig {
+                chain: Some(Mainnet.into()),
+                url: None,
+                api_version: Some(EtherscanApiVersion::V1),
+                key: EtherscanApiKey::Key("ABCDEG".to_string()),
+            },
+        );
+
+        let mut resolved = configs.resolved(EtherscanApiVersion::V2);
+        let config = resolved.remove("mainnet").unwrap().unwrap();
+        assert_eq!(config.api_version, EtherscanApiVersion::V1);
+        let client = config.into_client().unwrap();
+        assert_eq!(*client.etherscan_api_version(), EtherscanApiVersion::V1);
     }
 
     #[test]
@@ -440,10 +482,11 @@ mod tests {
                 chain: Some(Mainnet.into()),
                 url: Some("https://api.etherscan.io/api".to_string()),
                 key: EtherscanApiKey::Key("ABCDEFG".to_string()),
+                api_version: None,
             },
         );
 
-        let mut resolved = configs.resolved();
+        let mut resolved = configs.resolved(EtherscanApiVersion::V2);
         let config = resolved.remove("mainnet").unwrap().unwrap();
         let _ = config.into_client().unwrap();
     }
@@ -457,22 +500,28 @@ mod tests {
             EtherscanConfig {
                 chain: Some(Mainnet.into()),
                 url: Some("https://api.etherscan.io/api".to_string()),
+                api_version: None,
                 key: EtherscanApiKey::Env(format!("${{{env}}}")),
             },
         );
 
-        let mut resolved = configs.clone().resolved();
+        let mut resolved = configs.clone().resolved(EtherscanApiVersion::V2);
         let config = resolved.remove("mainnet").unwrap();
         assert!(config.is_err());
 
-        std::env::set_var(env, "ABCDEFG");
+        unsafe {
+            std::env::set_var(env, "ABCDEFG");
+        }
 
-        let mut resolved = configs.resolved();
+        let mut resolved = configs.resolved(EtherscanApiVersion::V2);
         let config = resolved.remove("mainnet").unwrap().unwrap();
         assert_eq!(config.key, "ABCDEFG");
-        let _ = config.into_client().unwrap();
+        let client = config.into_client().unwrap();
+        assert_eq!(*client.etherscan_api_version(), EtherscanApiVersion::V2);
 
-        std::env::remove_var(env);
+        unsafe {
+            std::env::remove_var(env);
+        }
     }
 
     #[test]
@@ -484,10 +533,11 @@ mod tests {
                 chain: None,
                 url: Some("https://api.etherscan.io/api".to_string()),
                 key: EtherscanApiKey::Key("ABCDEFG".to_string()),
+                api_version: None,
             },
         );
 
-        let mut resolved = configs.clone().resolved();
+        let mut resolved = configs.clone().resolved(EtherscanApiVersion::V2);
         let config = resolved.remove("blast_sepolia").unwrap().unwrap();
         assert_eq!(config.chain, Some(Chain::blast_sepolia()));
     }
@@ -498,11 +548,13 @@ mod tests {
             chain: None,
             url: Some("https://api.etherscan.io/api".to_string()),
             key: EtherscanApiKey::Key("ABCDEFG".to_string()),
+            api_version: None,
         };
-        let resolved = config.clone().resolve(Some("base_sepolia")).unwrap();
+        let resolved =
+            config.clone().resolve(Some("base_sepolia"), EtherscanApiVersion::V2).unwrap();
         assert_eq!(resolved.chain, Some(Chain::base_sepolia()));
 
-        let resolved = config.resolve(Some("base-sepolia")).unwrap();
+        let resolved = config.resolve(Some("base-sepolia"), EtherscanApiVersion::V2).unwrap();
         assert_eq!(resolved.chain, Some(Chain::base_sepolia()));
     }
 }

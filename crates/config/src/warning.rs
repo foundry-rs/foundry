@@ -82,7 +82,10 @@ impl fmt::Display for Warning {
                 write!(f, "Key `{old}` is being deprecated and will be removed in future versions.")
             }
             Self::DeprecatedKey { old, new } => {
-                write!(f, "Key `{old}` is being deprecated in favor of `{new}`. It will be removed in future versions.")
+                write!(
+                    f,
+                    "Key `{old}` is being deprecated in favor of `{new}`. It will be removed in future versions."
+                )
             }
         }
     }

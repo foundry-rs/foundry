@@ -7,7 +7,7 @@ use crate::prelude::{
 };
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_json_abi::EventParam;
-use alloy_primitives::{hex, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, hex};
 use core::fmt::Debug;
 use eyre::{Result, WrapErr};
 use foundry_compilers::Artifact;
@@ -53,14 +53,12 @@ impl SessionSource {
             // This is used to decide which is the final statement within the `run()` method.
             // see <https://github.com/foundry-rs/foundry/issues/4617>.
             let last_yul_return = run_func_statements.iter().find_map(|statement| {
-                if let pt::Statement::Assembly { loc: _, dialect: _, flags: _, block } = statement {
-                    if let Some(statement) = block.statements.last() {
-                        if let pt::YulStatement::FunctionCall(yul_call) = statement {
-                            if yul_call.id.name == "return" {
-                                return Some(statement.loc())
-                            }
-                        }
-                    }
+                if let pt::Statement::Assembly { loc: _, dialect: _, flags: _, block } = statement
+                    && let Some(statement) = block.statements.last()
+                    && let pt::YulStatement::FunctionCall(yul_call) = statement
+                    && yul_call.id.name == "return"
+                {
+                    return Some(statement.loc());
                 }
                 None
             });
@@ -109,10 +107,10 @@ impl SessionSource {
                 };
 
                 // Consider yul return statement as final statement (if it's loc is lower) .
-                if let Some(yul_return) = last_yul_return {
-                    if yul_return.end() < source_loc.start() {
-                        source_loc = yul_return;
-                    }
+                if let Some(yul_return) = last_yul_return
+                    && yul_return.end() < source_loc.start()
+                {
+                    source_loc = yul_return;
                 }
 
                 // Map the source location of the final statement of the `run()` function to its
@@ -133,7 +131,7 @@ impl SessionSource {
                 };
 
                 // Create a new runner
-                let mut runner = self.prepare_runner(final_pc).await;
+                let mut runner = self.prepare_runner(final_pc).await?;
 
                 // Return [ChiselResult] or bubble up error
                 runner.run(bytecode.into_owned())
@@ -163,7 +161,7 @@ impl SessionSource {
             Ok((source, _)) => source,
             Err(err) => {
                 debug!(%err, "failed to build new source");
-                return Ok((true, None))
+                return Ok((true, None));
             }
         };
 
@@ -181,7 +179,7 @@ impl SessionSource {
                         if self.config.foundry_config.verbosity >= 3 {
                             sh_err!("Could not inspect: {err}")?;
                         }
-                        return Ok((true, None))
+                        return Ok((true, None));
                     }
                 }
             }
@@ -202,7 +200,7 @@ impl SessionSource {
 
             if let Some(event_definition) = intermediate_contract.event_definitions.get(input) {
                 let formatted = format_event_definition(event_definition)?;
-                return Ok((false, Some(formatted)))
+                return Ok((false, Some(formatted)));
             }
 
             // we were unable to check the event
@@ -211,7 +209,7 @@ impl SessionSource {
             }
 
             debug!(%err, %input, "failed abi encode input");
-            return Ok((false, None))
+            return Ok((false, None));
         }
 
         let Some((stack, memory, _)) = &res.state else {
@@ -227,7 +225,7 @@ impl SessionSource {
                 }
             }
 
-            return Err(eyre::eyre!("Failed to inspect expression"))
+            return Err(eyre::eyre!("Failed to inspect expression"));
         };
 
         let generated_output = source
@@ -311,7 +309,7 @@ impl SessionSource {
     /// ### Returns
     ///
     /// A configured [ChiselRunner]
-    async fn prepare_runner(&mut self, final_pc: usize) -> ChiselRunner {
+    async fn prepare_runner(&mut self, final_pc: usize) -> Result<ChiselRunner> {
         let env =
             self.config.evm_opts.evm_env().await.expect("Could not instantiate fork environment");
 
@@ -320,7 +318,7 @@ impl SessionSource {
             Some(backend) => backend,
             None => {
                 let fork = self.config.evm_opts.get_fork(&self.config.foundry_config, env.clone());
-                let backend = Backend::spawn(fork);
+                let backend = Backend::spawn(fork)?;
                 self.config.backend = Some(backend.clone());
                 backend
             }
@@ -346,7 +344,7 @@ impl SessionSource {
 
         // Create a [ChiselRunner] with a default balance of [U256::MAX] and
         // the sender [Address::zero].
-        ChiselRunner::new(executor, U256::MAX, Address::ZERO, self.config.calldata.clone())
+        Ok(ChiselRunner::new(executor, U256::MAX, Address::ZERO, self.config.calldata.clone()))
     }
 }
 
@@ -788,7 +786,7 @@ impl Type {
     /// See: <https://github.com/ethereum/solidity/blob/81268e336573721819e39fbb3fefbc9344ad176c/libsolidity/ast/Types.cpp#L4106>
     fn map_special(self) -> Self {
         if !matches!(self, Self::Function(_, _, _) | Self::Access(_, _) | Self::Custom(_)) {
-            return self
+            return self;
         }
 
         let mut types = Vec::with_capacity(5);
@@ -797,7 +795,7 @@ impl Type {
 
         let len = types.len();
         if len == 0 {
-            return self
+            return self;
         }
 
         // Type members, like array, bytes etc
@@ -809,7 +807,7 @@ impl Type {
                     let ty = Self::Builtin(ty);
                     match access.as_str() {
                         "length" if ty.is_dynamic() || ty.is_array() || ty.is_fixed_bytes() => {
-                            return Self::Builtin(DynSolType::Uint(256))
+                            return Self::Builtin(DynSolType::Uint(256));
                         }
                         "pop" if ty.is_dynamic_array() => return ty,
                         _ => {}
@@ -835,8 +833,8 @@ impl Type {
                     match name {
                         "block" => match access {
                             "coinbase" => Some(DynSolType::Address),
-                            "timestamp" | "difficulty" | "prevrandao" | "number" | "gaslimit" |
-                            "chainid" | "basefee" | "blobbasefee" => Some(DynSolType::Uint(256)),
+                            "timestamp" | "difficulty" | "prevrandao" | "number" | "gaslimit"
+                            | "chainid" | "basefee" | "blobbasefee" => Some(DynSolType::Uint(256)),
                             _ => None,
                         },
                         "msg" => match access {
@@ -864,7 +862,7 @@ impl Type {
                                         return match ty {
                                             Self::Tuple(_) => ty,
                                             ty => Self::Tuple(vec![Some(ty)]),
-                                        }
+                                        };
                                     }
                                     None => None,
                                 }
@@ -957,7 +955,7 @@ impl Type {
             custom_type.pop();
         }
         if custom_type.is_empty() {
-            return Ok(None)
+            return Ok(None);
         }
 
         // If a contract exists with the given name, check its definitions for a match.
@@ -972,7 +970,7 @@ impl Type {
             if let Some(func) = intermediate_contract.function_definitions.get(cur_type) {
                 // Check if the custom type is a function pointer member access
                 if let res @ Some(_) = func_members(func, custom_type) {
-                    return Ok(res)
+                    return Ok(res);
                 }
 
                 // Because tuple types cannot be passed to `abi.encode`, we will only be
@@ -993,7 +991,7 @@ impl Type {
                 // struct, array, etc.
                 if let pt::Expression::Variable(ident) = return_ty {
                     custom_type.push(ident.name.clone());
-                    return Self::infer_custom_type(intermediate, custom_type, Some(contract_name))
+                    return Self::infer_custom_type(intermediate, custom_type, Some(contract_name));
                 }
 
                 // Check if our final function call alters the state. If it does, we bail so that it
@@ -1025,29 +1023,31 @@ impl Type {
                     .collect::<Result<Vec<_>>>()?;
                 Ok(Some(DynSolType::Tuple(inner_types)))
             } else {
-                eyre::bail!("Could not find any definition in contract \"{contract_name}\" for type: {custom_type:?}")
+                eyre::bail!(
+                    "Could not find any definition in contract \"{contract_name}\" for type: {custom_type:?}"
+                )
             }
         } else {
             // Check if the custom type is a variable or function within the REPL contract before
             // anything. If it is, we can stop here.
             if let Ok(res) = Self::infer_custom_type(intermediate, custom_type, Some("REPL".into()))
             {
-                return Ok(res)
+                return Ok(res);
             }
 
             // Check if the first element of the custom type is a known contract. If it is, begin
-            // our recursion on on that contract's definitions.
+            // our recursion on that contract's definitions.
             let name = custom_type.last().unwrap();
             let contract = intermediate.intermediate_contracts.get(name);
             if contract.is_some() {
                 let contract_name = custom_type.pop();
-                return Self::infer_custom_type(intermediate, custom_type, contract_name)
+                return Self::infer_custom_type(intermediate, custom_type, contract_name);
             }
 
             // See [`Type::infer_var_expr`]
             let name = custom_type.last().unwrap();
             if let Some(expr) = intermediate.repl_contract_expressions.get(name) {
-                return Self::infer_var_expr(expr, Some(intermediate), custom_type)
+                return Self::infer_var_expr(expr, Some(intermediate), custom_type);
             }
 
             // The first element of our custom type was neither a variable or a function within the
@@ -1175,7 +1175,7 @@ impl Type {
         let pt::Expression::Variable(contract_name) =
             intermediate.repl_contract_expressions.get(&contract_name.name)?
         else {
-            return None
+            return None;
         };
 
         let contract = intermediate
@@ -1213,9 +1213,9 @@ impl Type {
                     Some(DynSolType::Array(inner)) | Some(DynSolType::FixedArray(inner, _)) => {
                         Some(*inner)
                     }
-                    Some(DynSolType::Bytes) |
-                    Some(DynSolType::String) |
-                    Some(DynSolType::FixedBytes(_)) => Some(DynSolType::FixedBytes(1)),
+                    Some(DynSolType::Bytes)
+                    | Some(DynSolType::String)
+                    | Some(DynSolType::FixedBytes(_)) => Some(DynSolType::FixedBytes(1)),
                     ty => ty,
                 }
             }
@@ -1240,10 +1240,10 @@ impl Type {
     fn is_array(&self) -> bool {
         matches!(
             self,
-            Self::Array(_) |
-                Self::FixedArray(_, _) |
-                Self::Builtin(DynSolType::Array(_)) |
-                Self::Builtin(DynSolType::FixedArray(_, _))
+            Self::Array(_)
+                | Self::FixedArray(_, _)
+                | Self::Builtin(DynSolType::Array(_))
+                | Self::Builtin(DynSolType::FixedArray(_, _))
         )
     }
 
@@ -1264,7 +1264,7 @@ impl Type {
 #[inline]
 fn func_members(func: &pt::FunctionDefinition, custom_type: &[String]) -> Option<DynSolType> {
     if !matches!(func.ty, pt::FunctionTy::Function) {
-        return None
+        return None;
     }
 
     let vis = func.attributes.iter().find_map(|attr| match attr {
@@ -1708,7 +1708,7 @@ mod tests {
                     Ok((v, solc)) => {
                         // successfully installed
                         let _ = sh_println!("found installed Solc v{v} @ {}", solc.solc.display());
-                        break
+                        break;
                     }
                     Err(e) => {
                         // try reinstalling
@@ -1716,7 +1716,7 @@ mod tests {
                         let solc = Solc::blocking_install(&version.parse().unwrap());
                         if solc.map_err(SolcError::from).is_ok() {
                             *is_preinstalled = true;
-                            break
+                            break;
                         }
                     }
                 }

@@ -4,14 +4,15 @@ use crate::{
     backend::{RevertStateSnapshotAction, StateSnapshot},
     state_snapshot::StateSnapshots,
 };
-use alloy_primitives::{map::HashMap, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, map::HashMap};
 use alloy_rpc_types::BlockId;
 use foundry_fork_db::{BlockchainDb, DatabaseError, SharedBackend};
 use parking_lot::Mutex;
 use revm::{
-    db::{CacheDB, DatabaseRef},
-    primitives::{Account, AccountInfo, Bytecode},
     Database, DatabaseCommit,
+    bytecode::Bytecode,
+    database::{CacheDB, DatabaseRef},
+    state::{Account, AccountInfo},
 };
 use std::sync::Arc;
 
@@ -209,7 +210,12 @@ pub struct ForkDbStateSnapshot {
 
 impl ForkDbStateSnapshot {
     fn get_storage(&self, address: Address, index: U256) -> Option<U256> {
-        self.local.accounts.get(&address).and_then(|account| account.storage.get(&index)).copied()
+        self.local
+            .cache
+            .accounts
+            .get(&address)
+            .and_then(|account| account.storage.get(&index))
+            .copied()
     }
 }
 
@@ -220,7 +226,7 @@ impl DatabaseRef for ForkDbStateSnapshot {
     type Error = DatabaseError;
 
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        match self.local.accounts.get(&address) {
+        match self.local.cache.accounts.get(&address) {
             Some(account) => Ok(Some(account.info.clone())),
             None => {
                 let mut acc = self.state_snapshot.accounts.get(&address).cloned();
@@ -238,7 +244,7 @@ impl DatabaseRef for ForkDbStateSnapshot {
     }
 
     fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        match self.local.accounts.get(&address) {
+        match self.local.cache.accounts.get(&address) {
             Some(account) => match account.storage.get(&index) {
                 Some(entry) => Ok(*entry),
                 None => match self.get_storage(address, index) {
@@ -266,7 +272,6 @@ mod tests {
     use super::*;
     use crate::backend::BlockchainDbMeta;
     use foundry_common::provider::get_http_provider;
-    use std::collections::BTreeSet;
 
     /// Demonstrates that `Database::basic` for `ForkedDatabase` will always return the
     /// `AccountInfo`
@@ -274,11 +279,8 @@ mod tests {
     async fn fork_db_insert_basic_default() {
         let rpc = foundry_test_utils::rpc::next_http_rpc_endpoint();
         let provider = get_http_provider(rpc.clone());
-        let meta = BlockchainDbMeta {
-            cfg_env: Default::default(),
-            block_env: Default::default(),
-            hosts: BTreeSet::from([rpc]),
-        };
+        let meta = BlockchainDbMeta::new(Default::default(), rpc);
+
         let db = BlockchainDb::new(meta, None);
 
         let backend = SharedBackend::spawn_backend(Arc::new(provider), db.clone(), None).await;

@@ -3,20 +3,19 @@ use crate::{opts::CompilerOpts, utils::LoadConfig};
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_compilers::{
-    artifacts::{remappings::Remapping, RevertStrings},
+    Project,
+    artifacts::{RevertStrings, remappings::Remapping},
     compilers::multi::MultiCompiler,
     utils::canonicalized,
-    Project,
 };
 use foundry_config::{
-    figment,
+    Config, Remappings, figment,
     figment::{
+        Figment, Metadata, Profile, Provider,
         error::Kind::InvalidType,
         value::{Dict, Map, Value},
-        Figment, Metadata, Profile, Provider,
     },
     filter::SkipBuildFilter,
-    Config, Remappings,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -33,6 +32,11 @@ pub struct BuildOpts {
     #[arg(long)]
     #[serde(skip)]
     pub no_cache: bool,
+
+    /// Enable dynamic test linking.
+    #[arg(long, conflicts_with = "no_cache")]
+    #[serde(skip)]
+    pub dynamic_test_linking: bool,
 
     /// Set pre-linked libraries.
     #[arg(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
@@ -124,11 +128,6 @@ pub struct BuildOpts {
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_info_path: Option<PathBuf>,
-
-    /// Whether to compile contracts to EOF bytecode.
-    #[arg(long)]
-    #[serde(skip)]
-    pub eof: bool,
 
     /// Skip building files whose names contain the given filter.
     ///
@@ -245,6 +244,10 @@ impl Provider for BuildOpts {
             dict.insert("cache".to_string(), false.into());
         }
 
+        if self.dynamic_test_linking {
+            dict.insert("dynamic_test_linking".to_string(), true.into());
+        }
+
         if self.build_info {
             dict.insert("build_info".to_string(), self.build_info.into());
         }
@@ -271,10 +274,6 @@ impl Provider for BuildOpts {
 
         if let Some(ref revert) = self.revert_strings {
             dict.insert("revert_strings".to_string(), revert.to_string().into());
-        }
-
-        if self.eof {
-            dict.insert("eof".to_string(), true.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))

@@ -13,7 +13,7 @@ use std::{collections::BTreeMap, env};
 async fn test_core() {
     let filter = Filter::new(".*", ".*", ".*core");
     let mut runner = TEST_DATA_DEFAULT.runner();
-    let results = runner.test_collect(&filter);
+    let results = runner.test_collect(&filter).unwrap();
 
     assert_multiple(
         &results,
@@ -77,7 +77,7 @@ async fn test_core() {
 async fn test_linking() {
     let filter = Filter::new(".*", ".*", ".*linking");
     let mut runner = TEST_DATA_DEFAULT.runner();
-    let results = runner.test_collect(&filter);
+    let results = runner.test_collect(&filter).unwrap();
 
     assert_multiple(
         &results,
@@ -111,7 +111,7 @@ async fn test_linking() {
 async fn test_logs() {
     let filter = Filter::new(".*", ".*", ".*logs");
     let mut runner = TEST_DATA_DEFAULT.runner();
-    let results = runner.test_collect(&filter);
+    let results = runner.test_collect(&filter).unwrap();
 
     assert_multiple(
         &results,
@@ -709,7 +709,9 @@ async fn test_logs() {
 async fn test_env_vars() {
     let env_var_key = "_foundryCheatcodeSetEnvTestKey";
     let env_var_val = "_foundryCheatcodeSetEnvTestVal";
-    env::remove_var(env_var_key);
+    unsafe {
+        env::remove_var(env_var_key);
+    }
 
     let filter = Filter::new("testSetEnv", ".*", ".*");
     let mut runner = TEST_DATA_DEFAULT.runner();
@@ -722,7 +724,7 @@ async fn test_env_vars() {
 async fn test_doesnt_run_abstract_contract() {
     let filter = Filter::new(".*", ".*", ".*Abstract.t.sol".to_string().as_str());
     let mut runner = TEST_DATA_DEFAULT.runner();
-    let results = runner.test_collect(&filter);
+    let results = runner.test_collect(&filter).unwrap();
     assert!(!results.contains_key("default/core/Abstract.t.sol:AbstractTestBase"));
     assert!(results.contains_key("default/core/Abstract.t.sol:AbstractTest"));
 }
@@ -731,7 +733,7 @@ async fn test_doesnt_run_abstract_contract() {
 async fn test_trace() {
     let filter = Filter::new(".*", ".*", ".*trace");
     let mut runner = TEST_DATA_DEFAULT.tracing_runner();
-    let suite_result = runner.test_collect(&filter);
+    let suite_result = runner.test_collect(&filter).unwrap();
 
     // TODO: This trace test is very basic - it is probably a good candidate for snapshot
     // testing.
@@ -752,7 +754,7 @@ async fn test_trace() {
             assert_eq!(
                 execution_traces.count(),
                 1,
-                "Test {test_name} did not not have exactly 1 execution trace."
+                "Test {test_name} did not have exactly 1 execution trace."
             );
         }
     }
@@ -764,7 +766,7 @@ async fn test_assertions_revert_false() {
     let mut runner = TEST_DATA_DEFAULT.runner_with(|config| {
         config.assertions_revert = false;
     });
-    let results = runner.test_collect(&filter);
+    let results = runner.test_collect(&filter).unwrap();
 
     assert_multiple(
         &results,
@@ -790,7 +792,7 @@ async fn test_legacy_assertions() {
     let mut runner = TEST_DATA_DEFAULT.runner_with(|config| {
         config.legacy_assertions = true;
     });
-    let results = runner.test_collect(&filter);
+    let results = runner.test_collect(&filter).unwrap();
 
     assert_multiple(
         &results,
@@ -809,7 +811,7 @@ async fn test_legacy_assertions() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_before_setup_with_selfdestruct() {
     let filter = Filter::new(".*", ".*BeforeTestSelfDestructTest", ".*");
-    let results = TEST_DATA_PARIS.runner().test_collect(&filter);
+    let results = TEST_DATA_PARIS.runner().test_collect(&filter).unwrap();
 
     assert_multiple(
         &results,

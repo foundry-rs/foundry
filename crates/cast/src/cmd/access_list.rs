@@ -1,7 +1,8 @@
 use crate::{
-    tx::{CastTxBuilder, SenderKind},
     Cast,
+    tx::{CastTxBuilder, SenderKind},
 };
+use alloy_ens::NameOrAddress;
 use alloy_rpc_types::BlockId;
 use clap::Parser;
 use eyre::Result;
@@ -9,7 +10,6 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{self, LoadConfig},
 };
-use foundry_common::ens::NameOrAddress;
 use std::str::FromStr;
 
 /// CLI arguments for `cast access-list`.

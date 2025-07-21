@@ -1,19 +1,18 @@
 //! background service
 
 use crate::{
+    NodeResult,
     eth::{
         fees::FeeHistoryService,
         miner::Miner,
-        pool::{transactions::PoolTransaction, Pool},
+        pool::{Pool, transactions::PoolTransaction},
     },
     filter::Filters,
-    mem::{storage::MinedBlockOutcome, Backend},
-    NodeResult,
+    mem::{Backend, storage::MinedBlockOutcome},
 };
 use futures::{FutureExt, Stream, StreamExt};
 use std::{
     collections::VecDeque,
-    future::Future,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -83,7 +82,7 @@ impl Future for NodeService {
                 pin.block_producer.queued.push_back(transactions);
             } else {
                 // no progress made
-                break
+                break;
             }
         }
 
@@ -154,7 +153,7 @@ impl Stream for BlockProducer {
                     Err(err) => {
                         panic!("miner task failed: {err}");
                     }
-                }
+                };
             } else {
                 pin.block_mining = Some(mining)
             }

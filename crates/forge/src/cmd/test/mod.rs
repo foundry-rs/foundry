@@ -1,44 +1,44 @@
 use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use crate::{
+    MultiContractRunner, MultiContractRunnerBuilder, TestFilter,
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::matches_contract,
     mutation::{MutationHandler, MutationReporter, MutationsSummary},
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
+        CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
         debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena, folded_stack_trace,
         identifier::SignaturesIdentifier,
-        CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
     },
-    MultiContractRunner, MultiContractRunnerBuilder, TestFilter,
 };
 use alloy_primitives::U256;
 use chrono::Utc;
 use clap::{Parser, ValueHint};
-use eyre::{bail, Context, OptionExt, Result};
+use eyre::{Context, OptionExt, Result, bail};
+use foundry_block_explorers::EtherscanApiVersion;
 use foundry_cli::{
     opts::{BuildOpts, GlobalArgs},
     utils::{self, FoundryPathExt, LoadConfig},
 };
-use foundry_common::{compile::ProjectCompiler, evm::EvmArgs, fs, shell, TestFunctionExt};
+use foundry_common::{TestFunctionExt, compile::ProjectCompiler, evm::EvmArgs, fs, shell};
 use foundry_compilers::{
+    ProjectCompileOutput,
     artifacts::output_selection::OutputSelection,
     compilers::{
-        multi::{MultiCompiler, MultiCompilerLanguage},
         Language,
+        multi::{MultiCompiler, MultiCompilerLanguage},
     },
     utils::source_files_iter,
-    ProjectCompileOutput,
 };
 use foundry_config::{
-    figment,
+    Config, figment,
     figment::{
-        value::{Dict, Map},
         Metadata, Profile, Provider,
+        value::{Dict, Map},
     },
     filter::GlobMatcher,
-    Config,
 };
 use foundry_debugger::Debugger;
 use foundry_evm::traces::identifier::TraceIdentifiers;
@@ -47,7 +47,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
     path::PathBuf,
-    sync::{mpsc::channel, Arc},
+    sync::{Arc, mpsc::channel},
     time::{Duration, Instant},
 };
 use yansi::Paint;
@@ -57,7 +57,7 @@ mod summary;
 use crate::{result::TestKind, traces::render_trace_arena_inner};
 pub use filter::FilterArgs;
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
-use summary::{format_invariant_metrics_table, TestSummaryReport};
+use summary::{TestSummaryReport, format_invariant_metrics_table};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
@@ -146,6 +146,10 @@ pub struct TestArgs {
     /// The Etherscan (or equivalent) API key.
     #[arg(long, env = "ETHERSCAN_API_KEY", value_name = "KEY")]
     etherscan_api_key: Option<String>,
+
+    /// The Etherscan API version.
+    #[arg(long, env = "ETHERSCAN_API_VERSION", value_name = "VERSION")]
+    etherscan_api_version: Option<EtherscanApiVersion>,
 
     /// List tests instead of running them.
     #[arg(long, short, conflicts_with_all = ["show_progress", "decode_internal", "summary"], help_heading = "Display options")]
@@ -326,8 +330,10 @@ impl TestArgs {
 
         let sources_to_compile = self.get_sources_to_compile(&config, &filter)?;
 
-        let compiler =
-            ProjectCompiler::new().quiet(shell::is_json() || self.junit).files(sources_to_compile);
+        let compiler = ProjectCompiler::new()
+            .dynamic_test_linking(config.dynamic_test_linking)
+            .quiet(shell::is_json() || self.junit)
+            .files(sources_to_compile);
 
         let output = compiler.compile(&project)?;
 
@@ -388,7 +394,7 @@ impl TestArgs {
 
             // Decode traces.
             let decoder = outcome.last_run_decoder.as_ref().unwrap();
-            decode_trace_arena(arena, decoder).await?;
+            decode_trace_arena(arena, decoder).await;
             let mut fst = folded_stack_trace::build(arena);
 
             let label = if self.flamegraph { "flamegraph" } else { "flamechart" };
@@ -467,9 +473,9 @@ impl TestArgs {
                 // If --mutate-contract is provided, use it to filter contracts
                 source_files_iter(&project.paths.sources, MultiCompilerLanguage::FILE_EXTENSIONS)
                     .filter(|entry| {
-                        entry.is_sol() &&
-                            !entry.is_sol_test() &&
-                            output
+                        entry.is_sol()
+                            && !entry.is_sol_test()
+                            && output
                                 .artifact_ids()
                                 .find(|(id, _)| id.source == *entry)
                                 .is_some_and(|(id, _)| contract_pattern.is_match(&id.name))
@@ -526,7 +532,7 @@ impl TestArgs {
                                 evm_opts.clone(),
                             )?;
 
-                        let results = runner.test_collect(&new_filter);
+                        let results = runner.test_collect(&new_filter)?;
 
                         let outcome = TestOutcome::new(results, self.allow_failure);
                         mutation_summary.update_valid_mutant(&outcome);
@@ -589,7 +595,7 @@ impl TestArgs {
 
         // Run tests in a non-streaming fashion and collect results for serialization.
         if !self.gas_report && !self.summary && shell::is_json() {
-            let mut results = runner.test_collect(filter);
+            let mut results = runner.test_collect(filter)?;
             results.values_mut().for_each(|suite_result| {
                 for test_result in suite_result.test_results.values_mut() {
                     if verbosity >= 2 {
@@ -606,7 +612,7 @@ impl TestArgs {
         }
 
         if self.junit {
-            let results = runner.test_collect(filter);
+            let results = runner.test_collect(filter)?;
             sh_println!("{}", junit_xml_report(&results, verbosity).to_string()?)?;
             return Ok(TestOutcome::new(results, self.allow_failure));
         }
@@ -640,10 +646,8 @@ impl TestArgs {
             .with_verbosity(verbosity);
         // Signatures are of no value for gas reports.
         if !self.gas_report {
-            builder = builder.with_signature_identifier(SignaturesIdentifier::new(
-                Config::foundry_cache_dir(),
-                config.offline,
-            )?);
+            builder =
+                builder.with_signature_identifier(SignaturesIdentifier::from_config(&config)?);
         }
 
         if self.decode_internal {
@@ -673,11 +677,11 @@ impl TestArgs {
             decoder.clear_addresses();
 
             // We identify addresses if we're going to print *any* trace or gas report.
-            let identify_addresses = verbosity >= 3 ||
-                self.gas_report ||
-                self.debug ||
-                self.flamegraph ||
-                self.flamechart;
+            let identify_addresses = verbosity >= 3
+                || self.gas_report
+                || self.debug
+                || self.flamegraph
+                || self.flamechart;
 
             // Print suite header.
             if !silent {
@@ -700,10 +704,10 @@ impl TestArgs {
                     sh_println!("{}", result.short_result(name))?;
 
                     // Display invariant metrics if invariant kind.
-                    if let TestKind::Invariant { metrics, .. } = &result.kind {
-                        if !metrics.is_empty() {
-                            let _ = sh_println!("\n{}\n", format_invariant_metrics_table(metrics));
-                        }
+                    if let TestKind::Invariant { metrics, .. } = &result.kind
+                        && !metrics.is_empty()
+                    {
+                        let _ = sh_println!("\n{}\n", format_invariant_metrics_table(metrics));
                     }
 
                     // We only display logs at level 2 and above
@@ -753,7 +757,7 @@ impl TestArgs {
                     };
 
                     if should_include {
-                        decode_trace_arena(arena, &decoder).await?;
+                        decode_trace_arena(arena, &decoder).await;
                         decoded_traces.push(render_trace_arena_inner(arena, false, verbosity > 4));
                     }
                 }
@@ -991,6 +995,10 @@ impl Provider for TestArgs {
             dict.insert("etherscan_api_key".to_string(), etherscan_api_key.to_string().into());
         }
 
+        if let Some(api_version) = &self.etherscan_api_version {
+            dict.insert("etherscan_api_version".to_string(), api_version.to_string().into());
+        }
+
         if self.show_progress {
             dict.insert("show_progress".to_string(), true.into());
         }
@@ -1031,12 +1039,12 @@ fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
         let mut filter = String::new();
         let mut failures = outcome.failures().peekable();
         while let Some((test_name, _)) = failures.next() {
-            if test_name.is_any_test() {
-                if let Some(test_match) = test_name.split("(").next() {
-                    filter.push_str(test_match);
-                    if failures.peek().is_some() {
-                        filter.push('|');
-                    }
+            if test_name.is_any_test()
+                && let Some(test_match) = test_name.split("(").next()
+            {
+                filter.push_str(test_match);
+                if failures.peek().is_some() {
+                    filter.push('|');
                 }
             }
         }

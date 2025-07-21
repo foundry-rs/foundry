@@ -16,6 +16,7 @@ pub fn run() -> Result<()> {
 
 /// Setup the exception handler and other utilities.
 pub fn setup() -> Result<()> {
+    utils::install_crypto_provider();
     handler::install();
     utils::load_dotenv();
     utils::enable_paint();
@@ -42,11 +43,11 @@ pub fn run_command(args: Anvil) -> Result<()> {
                 &mut std::io::stdout(),
             ),
         }
-        return Ok(())
+        return Ok(());
     }
 
     let _ = fdlimit::raise_fd_limit();
-    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(args.node.run())
+    args.global.tokio_runtime().block_on(args.node.run())
 }
 
 #[cfg(test)]

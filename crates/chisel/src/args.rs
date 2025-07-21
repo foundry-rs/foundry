@@ -10,13 +10,13 @@ use foundry_cli::{
 };
 use foundry_common::fs;
 use foundry_config::{
-    figment::{
-        value::{Dict, Map},
-        Metadata, Profile, Provider,
-    },
     Config,
+    figment::{
+        Metadata, Profile, Provider,
+        value::{Dict, Map},
+    },
 };
-use rustyline::{config::Configurer, error::ReadlineError, Editor};
+use rustyline::{Editor, config::Configurer, error::ReadlineError};
 use std::path::PathBuf;
 use tracing::debug;
 use yansi::Paint;
@@ -29,12 +29,12 @@ pub fn run() -> Result<()> {
 
     let args = Chisel::parse();
     args.global.init()?;
-
-    run_command(args)
+    args.global.tokio_runtime().block_on(run_command(args))
 }
 
 /// Setup the global logger and other utilities.
 pub fn setup() -> Result<()> {
+    utils::install_crypto_provider();
     handler::install();
     utils::subscriber();
     utils::load_dotenv();
@@ -43,7 +43,6 @@ pub fn setup() -> Result<()> {
 }
 
 /// Run the subcommand.
-#[tokio::main]
 pub async fn run_command(args: Chisel) -> Result<()> {
     // Keeps track of whether or not an interrupt was the last input
     let mut interrupt = false;
@@ -76,7 +75,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
                 DispatchResult::CommandFailed(e) => sh_err!("{e}")?,
                 _ => panic!("Unexpected result: Please report this bug."),
             }
-            return Ok(())
+            return Ok(());
         }
         Some(ChiselSubcommand::Load { id }) | Some(ChiselSubcommand::View { id }) => {
             // For both of these subcommands, we need to attempt to load the session from cache
@@ -84,7 +83,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
                 DispatchResult::CommandSuccess(_) => { /* Continue */ }
                 DispatchResult::CommandFailed(e) => {
                     sh_err!("{e}")?;
-                    return Ok(())
+                    return Ok(());
                 }
                 _ => panic!("Unexpected result! Please report this bug."),
             }
@@ -97,7 +96,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
                     }
                     _ => panic!("Unexpected result! Please report this bug."),
                 }
-                return Ok(())
+                return Ok(());
             }
         }
         Some(ChiselSubcommand::ClearCache) => {
@@ -106,11 +105,11 @@ pub async fn run_command(args: Chisel) -> Result<()> {
                 DispatchResult::CommandFailed(e) => sh_err!("{e}")?,
                 _ => panic!("Unexpected result! Please report this bug."),
             }
-            return Ok(())
+            return Ok(());
         }
         Some(ChiselSubcommand::Eval { command }) => {
             dispatch_repl_line(&mut dispatcher, command).await?;
-            return Ok(())
+            return Ok(());
         }
         None => { /* No chisel subcommand present; Continue */ }
     }
@@ -152,7 +151,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
             }
             Err(ReadlineError::Interrupted) => {
                 if interrupt {
-                    break
+                    break;
                 } else {
                     sh_println!("(To exit, press Ctrl+C again)")?;
                     interrupt = true;
@@ -161,7 +160,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
             Err(ReadlineError::Eof) => break,
             Err(err) => {
                 sh_err!("{err:?}")?;
-                break
+                break;
             }
         }
     }
@@ -193,15 +192,19 @@ async fn dispatch_repl_line(dispatcher: &mut ChiselDispatcher, line: &str) -> Re
             if let Some(msg) = msg {
                 sh_println!("{}", msg.green())?;
             }
-        },
+        }
         DispatchResult::UnrecognizedCommand(e) => sh_err!("{e}")?,
         DispatchResult::SolangParserFailed(e) => {
             sh_err!("{}", "Compilation error".red())?;
             sh_eprintln!("{}", format!("{e:?}").red())?;
         }
         DispatchResult::FileIoError(e) => sh_err!("{}", format!("File IO - {e}").red())?,
-        DispatchResult::CommandFailed(msg) | DispatchResult::Failure(Some(msg)) => sh_err!("{}", msg.red())?,
-        DispatchResult::Failure(None) => sh_err!("Please report this bug as a github issue if it persists: https://github.com/foundry-rs/foundry/issues/new/choose")?,
+        DispatchResult::CommandFailed(msg) | DispatchResult::Failure(Some(msg)) => {
+            sh_err!("{}", msg.red())?
+        }
+        DispatchResult::Failure(None) => sh_err!(
+            "Please report this bug as a github issue if it persists: https://github.com/foundry-rs/foundry/issues/new/choose"
+        )?,
     }
     Ok(r.is_error())
 }

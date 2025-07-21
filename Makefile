@@ -5,24 +5,26 @@
 
 # Cargo profile for builds.
 PROFILE ?= dev
+
 # The docker image name
 DOCKER_IMAGE_NAME ?= ghcr.io/foundry-rs/foundry:latest
+
 BIN_DIR = dist/bin
 CARGO_TARGET_DIR ?= target
 
 # List of features to use when building. Can be overridden via the environment.
 # No jemalloc on Windows
 ifeq ($(OS),Windows_NT)
-    FEATURES ?= aws-kms cli asm-keccak
+    FEATURES ?= aws-kms gcp-kms cli asm-keccak
 else
-    FEATURES ?= jemalloc aws-kms cli asm-keccak
+    FEATURES ?= jemalloc aws-kms gcp-kms cli asm-keccak
 endif
 
 ##@ Help
 
 .PHONY: help
 help: ## Display this help.
-	@awk 'BEGIN {FS = ":.*##"; printf "Usage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*##"; printf "Usage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
 ##@ Build
 
@@ -44,13 +46,13 @@ build-%:
 
 .PHONY: docker-build-push
 docker-build-push: docker-build-prepare ## Build and push a cross-arch Docker image tagged with DOCKER_IMAGE_NAME.
-	$(MAKE) build-x86_64-unknown-linux-gnu
+	FEATURES="jemalloc aws-kms gcp-kms cli asm-keccak" $(MAKE) build-x86_64-unknown-linux-gnu
 	mkdir -p $(BIN_DIR)/amd64
 	for bin in anvil cast chisel forge; do \
 		cp $(CARGO_TARGET_DIR)/x86_64-unknown-linux-gnu/$(PROFILE)/$$bin $(BIN_DIR)/amd64/; \
 	done
 
-	$(MAKE) build-aarch64-unknown-linux-gnu
+	FEATURES="aws-kms gcp-kms cli asm-keccak" $(MAKE) build-aarch64-unknown-linux-gnu
 	mkdir -p $(BIN_DIR)/arm64
 	for bin in anvil cast chisel forge; do \
 		cp $(CARGO_TARGET_DIR)/aarch64-unknown-linux-gnu/$(PROFILE)/$$bin $(BIN_DIR)/arm64/; \
@@ -73,47 +75,79 @@ docker-build-prepare: ## Prepare the Docker build environment.
 		docker buildx use cross-builder; \
 	fi
 
+##@ Test
+
+.PHONY: test-unit
+test-unit: ## Run unit tests.
+	cargo nextest run -E 'kind(test) & !test(/\b(issue|ext_integration)/)'
+
+.PHONY: test-doc
+test-doc: ## Run doc tests.
+	cargo test --doc --workspace
+
+.PHONY: test
+test: ## Run all tests.
+	make test-unit && \
+	make test-doc
+
+##@ Linting
+
+.PHONY: fmt
+fmt: ## Run all formatters.
+	cargo +nightly fmt
+	./.github/scripts/format.sh --check
+
+.PHONY: lint-clippy
+lint-clippy: ## Run clippy on the codebase.
+	cargo +nightly clippy \
+	--workspace \
+	--all-targets \
+	--all-features \
+	-- -D warnings
+
+.PHONY: lint-typos
+lint-typos: ## Run typos on the codebase.
+	@command -v typos >/dev/null || { \
+		echo "typos not found. Please install it by running the command `cargo install typos-cli` or refer to the following link for more information: https://github.com/crate-ci/typos" \
+		exit 1; \
+	}
+	typos
+
+.PHONY: lint
+lint: ## Run all linters.
+	make fmt && \
+	make lint-clippy && \
+	make lint-typos
+
 ##@ Other
 
 .PHONY: clean
 clean: ## Clean the project.
 	cargo clean
 
-## Linting
+.PHONY: deny
+deny: ## Perform a `cargo` deny check.
+	cargo deny --all-features check all
 
-fmt: ## Run all formatters.
-	cargo +nightly fmt
-	./.github/scripts/format.sh --check
-
-lint-foundry:
-	RUSTFLAGS="-Dwarnings" cargo clippy --workspace --all-targets --all-features
-
-lint-codespell: ensure-codespell
-	codespell --skip "*.json"
-
-ensure-codespell:
-	@if ! command -v codespell &> /dev/null; then \
-		echo "codespell not found. Please install it by running the command `pip install codespell` or refer to the following link for more information: https://github.com/codespell-project/codespell" \
-		exit 1; \
-    fi
-
-lint: ## Run all linters.
-	make fmt && \
-	make lint-foundry && \
-	make lint-codespell
-
-## Testing
-
-test-foundry:
-	cargo nextest run -E 'kind(test) & !test(/\b(issue|ext_integration)/)'
-
-test-doc:
-	cargo test --doc --workspace
-
-test: ## Run all tests.
-	make test-foundry && \
-	make test-doc
-
-pr: ## Run all tests and linters in preparation for a PR.
+.PHONY: pr
+pr: ## Run all checks and tests.
+	make deny && \
 	make lint && \
 	make test
+
+# dprint formatting commands
+.PHONY: dprint-fmt
+dprint-fmt: ## Format code with dprint
+	@if ! command -v dprint > /dev/null; then \
+		echo "Installing dprint..."; \
+		cargo install dprint; \
+	fi
+	dprint fmt
+
+.PHONY: dprint-check
+dprint-check: ## Check formatting with dprint
+	@if ! command -v dprint > /dev/null; then \
+		echo "Installing dprint..."; \
+		cargo install dprint; \
+	fi
+	dprint check

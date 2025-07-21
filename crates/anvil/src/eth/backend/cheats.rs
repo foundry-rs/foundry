@@ -1,6 +1,6 @@
 //! Support for "cheat codes" / bypass functions
 
-use alloy_primitives::{map::AddressHashSet, Address};
+use alloy_primitives::{Address, map::AddressHashSet};
 use parking_lot::RwLock;
 use std::sync::Arc;
 
@@ -27,7 +27,7 @@ impl CheatsManager {
         // which does not check that list when auto impersonation is enabled.
         if state.impersonated_accounts.contains(&addr) {
             // need to check if already impersonated, so we don't overwrite the code
-            return true
+            return true;
         }
         state.impersonated_accounts.insert(addr)
     }
@@ -40,11 +40,16 @@ impl CheatsManager {
 
     /// Returns true if the `addr` is currently impersonated
     pub fn is_impersonated(&self, addr: Address) -> bool {
-        if self.state.read().auto_impersonate_accounts {
+        if self.auto_impersonate_accounts() {
             true
         } else {
             self.state.read().impersonated_accounts.contains(&addr)
         }
+    }
+
+    /// Returns true is auto impersonation is enabled
+    pub fn auto_impersonate_accounts(&self) -> bool {
+        self.state.read().auto_impersonate_accounts
     }
 
     /// Sets the auto impersonation flag which if set to true will make the `is_impersonated`
