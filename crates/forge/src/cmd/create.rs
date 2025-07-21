@@ -103,6 +103,8 @@ pub struct CreateArgs {
 impl CreateArgs {
     /// Executes the command to create a contract
     pub async fn run(mut self) -> Result<()> {
+        println!("DEBUG: create/run() 1");
+
         let mut config = self.load_config()?;
 
         // Install missing dependencies.
@@ -154,6 +156,8 @@ impl CreateArgs {
             vec![]
         };
 
+         println!("DEBUG: create/run() 2");
+
         let provider = utils::get_provider(&config)?;
 
         // respect chain, if set explicitly via cmd args
@@ -162,6 +166,7 @@ impl CreateArgs {
         } else {
             provider.get_chain_id().await?
         };
+
 
         // Whether to broadcast the transaction or not
         let dry_run = !self.broadcast;
@@ -277,6 +282,7 @@ impl CreateArgs {
         id: ArtifactId,
         dry_run: bool,
     ) -> Result<()> {
+        println!("DEBUG: 1 create/deploy");
         let bin = bin.into_bytes().unwrap_or_default();
         if bin.is_empty() {
             eyre::bail!("no bytecode found in bin object for {}", self.contract.name)
@@ -314,10 +320,16 @@ impl CreateArgs {
         }
 
         deployer.tx.set_gas_limit(if let Some(gas_limit) = self.tx.gas_limit {
+            println!("DEBUG: using gas limit: {:?}", gas_limit);
             Ok(gas_limit.to())
         } else {
+            println!("DEBUG: estimate_gas");
             provider.estimate_gas(deployer.tx.clone()).await
         }?);
+        println!("DEBUG:2  create/deploy");
+
+
+        // println!("DEBUG: set gas limit: {:?}", );
 
         if is_legacy {
             let gas_price = if let Some(gas_price) = self.tx.gas_price {
@@ -342,6 +354,7 @@ impl CreateArgs {
             deployer.tx.set_max_fee_per_gas(max_fee);
             deployer.tx.set_max_priority_fee_per_gas(priority_fee);
         }
+        println!("DEBUG:3 create/deploy");
 
         // Before we actually deploy the contract we try check if the verify settings are valid
         let mut constructor_args = None;

@@ -1,21 +1,20 @@
 //! Forge test runner for multiple contracts.
 
 use crate::{
-    ContractRunner, TestFilter, progress::TestsProgress, result::SuiteResult,
-    runner::LIBRARY_DEPLOYER,
+    progress::TestsProgress, result::SuiteResult, runner::LIBRARY_DEPLOYER, ContractRunner,
+    TestFilter,
 };
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
-use foundry_common::{ContractsByArtifact, TestFunctionExt, get_contract_name, shell::verbosity};
+use foundry_common::{get_contract_name, shell::verbosity, ContractsByArtifact, TestFunctionExt};
 use foundry_compilers::{
-    Artifact, ArtifactId, ProjectCompileOutput,
     artifacts::{Contract, Libraries},
     compilers::Compiler,
+    Artifact, ArtifactId, ProjectCompileOutput,
 };
 use foundry_config::{Config, InlineConfig};
 use foundry_evm::{
-    Env,
     backend::Backend,
     decode::RevertDecoder,
     executors::{Executor, ExecutorBuilder},
@@ -23,6 +22,7 @@ use foundry_evm::{
     inspectors::CheatsConfig,
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
+    Env,
 };
 use foundry_linking::{LinkOutput, Linker};
 use rayon::prelude::*;
@@ -32,7 +32,7 @@ use std::{
     collections::BTreeMap,
     fmt::Debug,
     path::Path,
-    sync::{Arc, mpsc},
+    sync::{mpsc, Arc},
     time::Instant,
 };
 
@@ -169,6 +169,7 @@ impl MultiContractRunner {
         tx: mpsc::Sender<(String, SuiteResult)>,
         show_progress: bool,
     ) -> Result<()> {
+        println!("DEBUG 2 crates/forge/src/multi_runner.rs test()");
         let tokio_handle = tokio::runtime::Handle::current();
         trace!("running all tests");
 
@@ -237,6 +238,7 @@ impl MultiContractRunner {
         tokio_handle: &tokio::runtime::Handle,
         progress: Option<&TestsProgress>,
     ) -> SuiteResult {
+        println!("DEBUG 2.1 crates/forge/src/multi_runner.rs run_test_suite()");
         let identifier = artifact_id.identifier();
         let mut span_name = identifier.as_str();
 
@@ -250,6 +252,8 @@ impl MultiContractRunner {
         debug!("start executing all tests in contract");
 
         let executor = self.tcfg.executor(self.known_contracts.clone(), artifact_id, db.clone());
+        println!("DEBUG 2.2 crates/forge/src/multi_runner.rs create executor");
+
         let runner = ContractRunner::new(
             &identifier,
             contract,
@@ -348,6 +352,7 @@ impl TestRunnerConfig {
         artifact_id: &ArtifactId,
         db: Backend,
     ) -> Executor {
+        println!("DEBUG crates/forge/src/multi_runner.rs executor()");
         let cheats_config = Arc::new(CheatsConfig::new(
             &self.config,
             self.evm_opts.clone(),

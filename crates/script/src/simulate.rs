@@ -260,6 +260,7 @@ impl FilledTransactionsState {
     ///
     /// Each transaction will be added with the correct transaction type and gas estimation.
     pub async fn bundle(self) -> Result<BundledState> {
+        println!("DEBUG: script/simulate {:?}", 1);
         let is_multi_deployment = self.execution_artifacts.rpc_data.total_rpcs.len() > 1;
 
         if is_multi_deployment && !self.build_data.libraries.is_empty() {
@@ -267,6 +268,8 @@ impl FilledTransactionsState {
         }
 
         let mut total_gas_per_rpc: HashMap<String, u128> = HashMap::default();
+
+
 
         // Batches sequence of transactions from different rpcs.
         let mut new_sequence = VecDeque::new();
@@ -294,6 +297,8 @@ impl FilledTransactionsState {
                     if let Some(tx) = tx.as_unsigned_mut() {
                         trace!("estimating with different gas calculation");
                         let gas = tx.gas.expect("gas is set by simulation.");
+
+                        println!("gas: {:?}", gas);
 
                         // We are trying to show the user an estimation of the total gas usage.
                         //

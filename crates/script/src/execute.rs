@@ -62,6 +62,7 @@ impl LinkedState {
     /// Given linked and compiled artifacts, prepares data we need for execution.
     /// This includes the function to call and the calldata to pass to it.
     pub async fn prepare_execution(self) -> Result<PreExecutionState> {
+        println!("DEBUG:: Preparing execution");
         let Self { args, script_config, script_wallets, build_data } = self;
 
         let target_contract = build_data.get_target_contract()?;
@@ -101,6 +102,7 @@ impl PreExecutionState {
     /// Executes the script and returns the state after execution.
     /// Might require executing script twice in cases when we determine sender from execution.
     pub async fn execute(mut self) -> Result<ExecutedState> {
+        println!("DEBUG: script/execute() 1");
         let mut runner = self
             .script_config
             .get_runner_with_cheatcodes(
@@ -127,6 +129,8 @@ impl PreExecutionState {
 
             return Box::pin(state.link().await?.prepare_execution().await?.execute()).await;
         }
+
+        println!("DEBUG: create/run() 2, result: {:?}", result.gas_used);
 
         Ok(ExecutedState {
             args: self.args,

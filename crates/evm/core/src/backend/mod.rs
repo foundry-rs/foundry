@@ -771,6 +771,8 @@ impl Backend {
         env: &mut Env,
         inspector: &mut I,
     ) -> eyre::Result<ResultAndState> {
+        println!("DEBUG:evm/core/backend inspect()");
+        
         self.initialize(env);
         let mut evm = crate::evm::new_evm_with_inspector(self, env.to_owned(), inspector);
 

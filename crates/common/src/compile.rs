@@ -458,7 +458,7 @@ impl ProjectCompiler {
     //     if rust_contracts.is_empty() {
     //         return Ok(());
     //     }
-    // 
+    //
     //     // ОТЛАДОЧНЫЙ КОД - посмотрим что есть в существующих build contexts
     //     sh_println!("=== DEBUG: Existing build info ===");
     //     for (build_id, build_context) in output.builds() {
@@ -466,7 +466,7 @@ impl ProjectCompiler {
     //         sh_println!("Build Context: {:#?}", build_context);
     //         break; // смотрим только первый для примера
     //     }
-    // 
+    //
     //     // Также посмотрим на build_infos в compiler output
     //     sh_println!("=== DEBUG: Compiler output build infos ===");
     //     for (i, build_info) in output.output().build_infos.iter().enumerate() {
@@ -476,19 +476,19 @@ impl ProjectCompiler {
     //             "Build Info Map keys: {:?}",
     //             build_info.build_info.keys().collect::<Vec<_>>()
     //         );
-    // 
+    //
     //         // Выводим некоторые значения из build_info map
     //         for (key, value) in build_info.build_info.iter().take(5) {
     //             sh_println!("  {}: {}", key, value);
     //         }
-    // 
+    //
     //         if i == 0 {
     //             break;
     //         } // смотрим только первый
     //     }
-    // 
+    //
     //     sh_println!("=== Integrating {} Rust contracts ===", rust_contracts.len());
-    // 
+    //
     //     // Ваш существующий код для создания rust_compiler_output...
     //     let mut rust_compiler_output = foundry_compilers::CompilerOutput {
     //         errors: Vec::new(),
@@ -496,31 +496,31 @@ impl ProjectCompiler {
     //         contracts: std::collections::BTreeMap::new(),
     //         metadata: std::collections::BTreeMap::new(),
     //     };
-    // 
+    //
     //     for (contract_name, _rust_project_path, contract) in rust_contracts {
     //         let interface_path = project
     //             .artifacts_path()
     //             .join(format!("{}.wasm", contract_name))
     //             .join("interface.sol");
-    // 
+    //
     //         // Добавляем контракт
     //         let mut contracts_for_file = std::collections::BTreeMap::new();
     //         contracts_for_file.insert(contract_name.clone(), contract);
     //         rust_compiler_output.contracts.insert(interface_path.clone(), contracts_for_file);
-    // 
+    //
     //         // Добавляем source file если существует
     //         if interface_path.exists() {
     //             let source_file = SourceFile { id: 0, ast: None };
     //             rust_compiler_output.sources.insert(interface_path.clone(), source_file);
     //         }
     //     }
-    // 
+    //
     //     // ХАКАЕМ: используем существующий build info как шаблон
     //     if let Some(existing_build_info) = output.output().build_infos.first() {
     //         sh_println!("=== Using existing build info as template ===");
-    // 
+    //
     //         let mut rust_build_info = existing_build_info.clone();
-    // 
+    //
     //         // Модифицируем только ID и некоторые поля
     //         rust_build_info.id = format!(
     //             "rust-contracts-{}",
@@ -529,7 +529,7 @@ impl ProjectCompiler {
     //                 .unwrap_or_default()
     //                 .as_secs()
     //         );
-    // 
+    //
     //         // Модифицируем build_info map для Rust
     //         rust_build_info
     //             .build_info
@@ -537,7 +537,7 @@ impl ProjectCompiler {
     //         rust_build_info
     //             .build_info
     //             .insert("profile".to_string(), serde_json::Value::String("rust".to_string()));
-    // 
+    //
     //         // Используем extend
     //         output.output_mut().extend(
     //             semver::Version::new(1, 0, 0),
@@ -549,7 +549,7 @@ impl ProjectCompiler {
     //         sh_println!("=== No existing build info found, skipping Rust integration ===");
     //         return Ok(());
     //     }
-    // 
+    //
     //     sh_println!("=== Rust contracts integration complete ===");
     //     Ok(())
     // }
@@ -656,10 +656,10 @@ impl ProjectCompiler {
 }
 
 // https://eips.ethereum.org/EIPS/eip-170
-const CONTRACT_RUNTIME_SIZE_LIMIT: usize = 24576;
+const CONTRACT_RUNTIME_SIZE_LIMIT: usize = 245760;
 
 // https://eips.ethereum.org/EIPS/eip-3860
-const CONTRACT_INITCODE_SIZE_LIMIT: usize = 49152;
+const CONTRACT_INITCODE_SIZE_LIMIT: usize = 491520;
 
 /// Contracts with info about their size
 pub struct SizeReport {

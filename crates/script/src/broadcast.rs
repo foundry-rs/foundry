@@ -33,6 +33,23 @@ pub async fn estimate_gas<P: Provider<AnyNetwork>>(
     provider: &P,
     estimate_multiplier: u64,
 ) -> Result<()> {
+    println!("d1r1: DEBUG: Set WASM deployment gas limit to 30M");
+
+    // Check if this is a WASM deployment (CREATE transaction with WASM magic number)
+     let is_wasm_deployment = tx.to.is_none() && {
+        if let Some(tx_input) = tx.input.input() {
+            tx_input.len() >= 4 && tx_input[0..4] == [0x00, 0x61, 0x73, 0x6d] // WASM magic number
+        } else {
+            false
+        }
+    };
+    
+    if is_wasm_deployment {
+        // Use fixed high gas limit for WASM
+        tx.set_gas_limit(30_000_000u64);
+        eprintln!("DEBUG: Set WASM deployment gas limit to 30M");
+        return Ok(());
+    }
     // if already set, some RPC endpoints might simply return the gas value that is already
     // set in the request and omit the estimate altogether, so we remove it here
     tx.gas = None;
@@ -65,6 +82,7 @@ pub async fn send_transaction(
     estimate_via_rpc: bool,
     estimate_multiplier: u64,
 ) -> Result<TxHash> {
+    println!("DEBUG: create/broadcast/send_transaction() 1");
     if let SendTransactionKind::Raw(tx, _) | SendTransactionKind::Unlocked(tx) = &mut kind {
         if sequential_broadcast {
             let from = tx.from.expect("no sender");

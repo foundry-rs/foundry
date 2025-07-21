@@ -225,6 +225,15 @@ impl TestArgs {
             eyre::bail!("Compilation failed");
         }
 
+        let contract_names: Vec<String> = output
+            .artifacts()
+            .map(|(name, _artifact)| name)
+            .collect();
+
+        sh_println!("Compiled contracts: {:?}", contract_names);
+
+
+
         // ABIs of all sources
         let abis = output
             .into_artifacts()
@@ -272,6 +281,13 @@ impl TestArgs {
             &project.paths.sources,
             MultiCompilerLanguage::FILE_EXTENSIONS,
         ));
+        // // Always recompile all sources to ensure that `getCode` cheatcode can use any artifact.
+        // test_sources.extend(source_files_iter(
+        //     &project.paths.sources,
+        //     "rs",
+        // ));
+
+        println!("test sources");
 
         Ok(test_sources)
     }
@@ -441,6 +457,7 @@ impl TestArgs {
         filter: &ProjectPathsAwareFilter,
         output: &ProjectCompileOutput,
     ) -> eyre::Result<TestOutcome> {
+        println!("DEBUG 1: crates/forge/src/cmd/test; run_tests()");
         if self.list {
             return list(runner, filter);
         }
@@ -501,6 +518,8 @@ impl TestArgs {
 
         let remote_chain_id = runner.evm_opts.get_remote_chain_id().await;
         let known_contracts = runner.known_contracts.clone();
+
+
 
         let libraries = runner.libraries.clone();
 

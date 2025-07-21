@@ -210,6 +210,8 @@ impl ScriptRunner {
                 Err(e) => return Err(e.into()),
             }
         };
+        
+        println!("DEBUG: gas used: {:?}", gas_used);
 
         Ok((
             address,

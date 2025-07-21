@@ -243,6 +243,7 @@ impl ScriptArgs {
 
     /// Executes the script
     pub async fn run_script(self) -> Result<()> {
+        println!("DEBUG:: Running script!!!");
         trace!(target: "script", "executing script command");
 
         let state = self.preprocess().await?;
@@ -265,6 +266,7 @@ impl ScriptArgs {
                 .await?
                 .prepare_simulation()
                 .await?;
+            
 
             if pre_simulation.args.debug {
                 return match pre_simulation.args.dump.clone() {

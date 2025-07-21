@@ -1,34 +1,37 @@
 use std::ops::{Deref, DerefMut};
 
 use crate::{
-    Env, InspectorExt, backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
+    backend::DatabaseExt, constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH, Env, InspectorExt,
 };
 use alloy_consensus::constants::KECCAK_EMPTY;
 use alloy_evm::{
-    Evm, EvmEnv,
     eth::EthEvmContext,
     precompiles::{DynPrecompile, PrecompilesMap},
+    rwasm_revm::{RwasmEvm, RwasmFrame},
+    Evm, EvmEnv,
 };
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_fork_db::DatabaseError;
 use revm::{
-    Context, ExecuteEvm, Journal,
     context::{
-        BlockEnv, CfgEnv, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr, LocalContext, TxEnv,
         result::{EVMError, HaltReason, ResultAndState},
+        BlockEnv, CfgEnv, ContextTr, CreateScheme, Evm as RevmRwasm, JournalTr, LocalContext,
+        TxEnv,
     },
     handler::{
-        EthFrame, EthPrecompiles, FrameInitOrResult, FrameResult, Handler, ItemOrResult,
-        MainnetHandler, instructions::EthInstructions,
+        instructions::EthInstructions, EthPrecompiles, FrameInitOrResult, FrameResult, Handler,
+        ItemOrResult, MainnetHandler,
     },
     inspector::InspectorHandler,
     interpreter::{
-        CallInput, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
-        FrameInput, Gas, InstructionResult, InterpreterResult, interpreter::EthInterpreter,
-        return_ok,
+        interpreter::EthInterpreter, return_ok, CallInput, CallInputs, CallOutcome, CallScheme,
+        CallValue, CreateInputs, CreateOutcome, EOFCreateKind, FrameInput, Gas, InstructionResult,
+        InterpreterResult,
     },
-    precompile::{PrecompileSpecId, Precompiles, secp256r1::P256VERIFY},
+    precompile::{secp256r1::P256VERIFY, PrecompileSpecId, Precompiles},
     primitives::hardfork::SpecId,
+    state::Bytecode,
+    Context, ExecuteEvm, Journal,
 };
 
 pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
@@ -51,14 +54,8 @@ pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
     };
     let spec = ctx.cfg.spec;
 
-    let mut evm = FoundryEvm {
-        inner: RevmEvm::new_with_inspector(
-            ctx,
-            inspector,
-            EthInstructions::default(),
-            get_precompiles(spec),
-        ),
-    };
+    let mut evm =
+        FoundryEvm { inner: RwasmEvm::new(ctx, inspector).with_precompiles(get_precompiles(spec)) };
 
     inject_precompiles(&mut evm);
 
@@ -71,14 +68,8 @@ pub fn new_evm_with_existing_context<'a>(
 ) -> FoundryEvm<'a, &'a mut dyn InspectorExt> {
     let spec = ctx.cfg.spec;
 
-    let mut evm = FoundryEvm {
-        inner: RevmEvm::new_with_inspector(
-            ctx,
-            inspector,
-            EthInstructions::default(),
-            get_precompiles(spec),
-        ),
-    };
+    let mut evm =
+        FoundryEvm { inner: RwasmEvm::new(ctx, inspector).with_precompiles(get_precompiles(spec)) };
 
     inject_precompiles(&mut evm);
 
@@ -128,7 +119,7 @@ fn get_create2_factory_call_inputs(
 
 pub struct FoundryEvm<'db, I: InspectorExt> {
     #[allow(clippy::type_complexity)]
-    pub inner: RevmEvm<
+    pub inner: RwasmEvm<
         EthEvmContext<&'db mut dyn DatabaseExt>,
         I,
         EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt>>,
@@ -141,12 +132,41 @@ impl<I: InspectorExt> FoundryEvm<'_, I> {
         &mut self,
         frame: FrameInput,
     ) -> Result<FrameResult, EVMError<DatabaseError>> {
-        let mut handler = FoundryHandler::<_>::default();
+        println!("DEBUG evm/core/evm run_execution: frame {:?}", frame);
 
-        // Create first frame action
-        let frame = handler.inspect_first_frame_init(&mut self.inner, frame)?;
+        let bytecode: Option<Bytes> = match &frame {
+            FrameInput::Create(create) => Some(create.init_code.clone()),
+            FrameInput::EOFCreate(eof_create) => match &eof_create.kind {
+                EOFCreateKind::Tx { initdata } => Some(initdata.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        println!("bytecode: {:?}", bytecode);
+        // TODO(d1r1): We need to get rwasm execution result here somehow. In previous version we
+        // were able to do it as is. If i remember correct. So in the new version we need to
+
+        let is_rwasm =
+            bytecode.as_ref().map_or(false, |bytes| bytes.starts_with(&[0x00, 0x61, 0x73, 0x6D]));
+
+        if is_rwasm {
+            println!("DEBUG: Detected RWASM contract, switching execution logic");
+
+            // let action = run_rwasm_loop(&mut rwasm_frame, &mut self.inner)?;
+
+            // return match action {
+            //     InterpreterAction::Return { result } => Ok(FrameResult {
+            //         gas: result.gas,
+            //         output: result.output,
+            //         result: result.result,
+            //     }),
+            //     _ => Err(EVMError::Custom("Unexpected action".into())),
+            // };
+        }
+        let mut handler = FoundryHandler::<_>::default();
+        let frame = handler.inspect_first_frame_init(&mut self.inner.0, frame)?;
         let frame_result = match frame {
-            ItemOrResult::Item(frame) => handler.inspect_run_exec_loop(&mut self.inner, frame)?,
+            ItemOrResult::Item(frame) => handler.inspect_run_exec_loop(&mut self.inner.0, frame)?,
             ItemOrResult::Result(result) => result,
         };
 
@@ -164,31 +184,31 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
     type Tx = TxEnv;
 
     fn chain_id(&self) -> u64 {
-        self.inner.ctx.cfg.chain_id
+        self.inner.0.ctx.cfg.chain_id
     }
 
     fn block(&self) -> &BlockEnv {
-        &self.inner.block
+        &self.inner.0.block
     }
 
     fn db_mut(&mut self) -> &mut Self::DB {
-        self.inner.db()
+        self.inner.0.db()
     }
 
     fn precompiles(&self) -> &Self::Precompiles {
-        &self.inner.precompiles
+        &self.inner.0.precompiles
     }
 
     fn precompiles_mut(&mut self) -> &mut Self::Precompiles {
-        &mut self.inner.precompiles
+        &mut self.inner.0.precompiles
     }
 
     fn inspector(&self) -> &Self::Inspector {
-        &self.inner.inspector
+        &self.inner.0.inspector
     }
 
     fn inspector_mut(&mut self) -> &mut Self::Inspector {
-        &mut self.inner.inspector
+        &mut self.inner.0.inspector
     }
 
     fn set_inspector_enabled(&mut self, _enabled: bool) {
@@ -201,7 +221,7 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
         let mut handler = FoundryHandler::<_>::default();
         self.inner.set_tx(tx);
-        handler.inspect_run(&mut self.inner)
+        handler.inspect_run(&mut self.inner.0)
     }
 
     fn transact_system_call(
@@ -217,7 +237,7 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
     where
         Self: Sized,
     {
-        let Context { block: block_env, cfg: cfg_env, journaled_state, .. } = self.inner.ctx;
+        let Context { block: block_env, cfg: cfg_env, journaled_state, .. } = self.inner.0.ctx;
 
         (journaled_state.database, EvmEnv { block_env, cfg_env })
     }
@@ -227,28 +247,28 @@ impl<'db, I: InspectorExt> Deref for FoundryEvm<'db, I> {
     type Target = Context<BlockEnv, TxEnv, CfgEnv, &'db mut dyn DatabaseExt>;
 
     fn deref(&self) -> &Self::Target {
-        &self.inner.ctx
+        &self.inner.0.ctx
     }
 }
 
 impl<I: InspectorExt> DerefMut for FoundryEvm<'_, I> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner.ctx
+        &mut self.inner.0.ctx
     }
 }
 
 pub struct FoundryHandler<'db, I: InspectorExt> {
     #[allow(clippy::type_complexity)]
     inner: MainnetHandler<
-        RevmEvm<
+        RevmRwasm<
             EthEvmContext<&'db mut dyn DatabaseExt>,
             I,
             EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt>>,
             PrecompilesMap,
         >,
         EVMError<DatabaseError>,
-        EthFrame<
-            RevmEvm<
+        RwasmFrame<
+            RevmRwasm<
                 EthEvmContext<&'db mut dyn DatabaseExt>,
                 I,
                 EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt>>,
@@ -268,15 +288,15 @@ impl<I: InspectorExt> Default for FoundryHandler<'_, I> {
 }
 
 impl<'db, I: InspectorExt> Handler for FoundryHandler<'db, I> {
-    type Evm = RevmEvm<
+    type Evm = RevmRwasm<
         EthEvmContext<&'db mut dyn DatabaseExt>,
         I,
         EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt>>,
         PrecompilesMap,
     >;
     type Error = EVMError<DatabaseError>;
-    type Frame = EthFrame<
-        RevmEvm<
+    type Frame = RwasmFrame<
+        RevmRwasm<
             EthEvmContext<&'db mut dyn DatabaseExt>,
             I,
             EthInstructions<EthInterpreter, EthEvmContext<&'db mut dyn DatabaseExt>>,
@@ -293,11 +313,14 @@ impl<'db, I: InspectorExt> Handler for FoundryHandler<'db, I> {
         evm: &mut Self::Evm,
         result: <Self::Frame as revm::handler::Frame>::FrameResult,
     ) -> Result<(), Self::Error> {
+        println!("DEBUG: crates/evm/core/evm.rs frame_return_result");
         let result = if self
             .create2_overrides
             .last()
             .is_some_and(|(depth, _)| *depth == evm.journal().depth)
         {
+            println!("DEBUG2: crates/evm/core/evm.rs frame_return_result");
+
             let (_, call_inputs) = self.create2_overrides.pop().unwrap();
             let FrameResult::Call(mut result) = result else {
                 unreachable!("create2 override should be a call frame");
@@ -321,6 +344,8 @@ impl<'db, I: InspectorExt> Handler for FoundryHandler<'db, I> {
         } else {
             result
         };
+
+        println!("DEBUG3: crates/evm/core/evm.rs inner.frame_return_result");
 
         self.inner.frame_return_result(frame, evm, result)
     }

@@ -296,6 +296,7 @@ impl Cheatcode for getDeployedCodeCall {
 
 impl Cheatcode for deployCode_0Call {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        println!("111DEBUG:: apply_full: fs deployCode_0Call");
         let Self { artifactPath: path } = self;
         deploy_code(ccx, executor, path, None, None, None)
     }
@@ -360,10 +361,13 @@ fn deploy_code(
     value: Option<U256>,
     salt: Option<U256>,
 ) -> Result {
+    println!("DEBUG: cheatcodes/fs/deploy_code");
     let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
+    println!("bytecode: {:?}", hex::encode(&bytecode));
     if let Some(args) = constructor_args {
         bytecode.extend_from_slice(args);
     }
+
 
     let scheme =
         if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create };
@@ -380,6 +384,7 @@ fn deploy_code(
     )?;
 
     if !outcome.result.result.is_ok() {
+        println!("outcom result not ok :(");
         return Err(crate::Error::from(outcome.result.output));
     }
 
@@ -399,6 +404,7 @@ fn deploy_code(
 /// - `ContractName`
 /// - `ContractName:0.8.23`
 fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<Bytes> {
+    // println!("state: {:#?}", state);
     let path = if path.ends_with(".json") {
         PathBuf::from(path)
     } else {

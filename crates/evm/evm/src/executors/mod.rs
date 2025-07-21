@@ -114,6 +114,7 @@ impl Executor {
         gas_limit: u64,
         legacy_assertions: bool,
     ) -> Self {
+        println!("DEBUG crates/evm/evm/src/executors/mod.rs Executor::new()");
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // do not fail.
         backend.insert_account_info(
@@ -326,6 +327,7 @@ impl Executor {
         value: U256,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult, EvmError> {
+        println!("DEBUG:evm/executors/deploy");
         let env = self.build_test_env(from, TxKind::Create, code, value);
         self.deploy_with_env(env, rd)
     }
@@ -342,6 +344,8 @@ impl Executor {
         env: Env,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult, EvmError> {
+        println!("DEBUG:evm/executors/deploy_with_env");
+
         assert!(
             matches!(env.tx.kind, TxKind::Create),
             "Expected create transaction, got {:?}",
@@ -498,6 +502,7 @@ impl Executor {
     /// Execute the transaction configured in `env.tx`.
     #[instrument(name = "transact", level = "debug", skip_all)]
     pub fn transact_with_env(&mut self, mut env: Env) -> eyre::Result<RawCallResult> {
+        println!("DEBUG:evm/executors/transact_with_env");
         let mut inspector = self.inspector().clone();
         let backend = self.backend_mut();
         let result = backend.inspect(&mut env, &mut inspector)?;
