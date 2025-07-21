@@ -149,6 +149,7 @@ mod tests {
                 ..Default::default()
             },
             is_optimism: true,
+            is_celo: false,
         };
 
         let mut chain = L1BlockInfo::default();
