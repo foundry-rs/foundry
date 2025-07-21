@@ -931,7 +931,7 @@ async fn test_trace_filter() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_tracer_debug_trace_call_js_tracer() {
-    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
     let wallets = handle.dev_wallets().collect::<Vec<_>>();
     let deployer: EthereumWallet = wallets[0].clone().into();
     let provider = http_provider_with_signer(&handle.http_endpoint(), deployer);
@@ -957,28 +957,27 @@ async fn test_call_tracer_debug_trace_call_js_tracer() {
 
     let js_tracer_code = r#"
 {
-  data: [],
-  step: function(log) {
+data: [],
+step: function(log) {
     var op = log.op.toString();
     if (op === "SLOAD") {
-      this.data.push(log.getPC() + ": SLOAD " + log.contract.getAddress() + ":" + log.stack.peek(0));
-      this.data.push("    Result: " + log.stack.peek(0));
+    this.data.push(log.getPC() + ": SLOAD " + log.contract.getAddress() + ":" + log.stack.peek(0));
+    this.data.push("    Result: " + log.stack.peek(0));
     } else if (op === "SSTORE") {
-      this.data.push(log.getPC() + ": SSTORE " + log.contract.getAddress() + ":" + log.stack.peek(1) + " <- " + log.stack.peek(0));
+    this.data.push(log.getPC() + ": SSTORE " + log.contract.getAddress() + ":" + log.stack.peek(1) + " <- " + log.stack.peek(0));
     }
-  },
-  result: function() {
+},
+result: function() {
     return this.data;
-  },
-  fault: function(log) {}
+},
+fault: function(log) {}
 }
 "#;
 
-    let result = handle
-        .http_provider()
+    let result = api
         .debug_trace_call(
             WithOtherFields::new(internal_call_tx),
-            BlockId::latest(),
+            Some(BlockId::latest()),
             GethDebugTracingCallOptions::default()
                 .with_tracing_options(GethDebugTracingOptions::js_tracer(js_tracer_code)),
         )
@@ -999,12 +998,12 @@ async fn test_call_tracer_debug_trace_call_js_tracer() {
         "765: SSTORE 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:5.465844868464591e+47 <- 0",
     ];
 
-    let actual: Vec<String> = match result {
-        GethTrace::JS(serde_json::Value::Array(arr)) => {
-            arr.into_iter().map(|v| v.as_str().unwrap().to_string()).collect()
-        }
-        other => panic!("Expected JS tracer result as array, got: {:?}", other),
-    };
+    let actual: Vec<String> = result
+        .try_into_json_value()
+        .ok()
+        .and_then(|val| val.as_array().cloned())
+        .map(|arr| arr.into_iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
 
     assert_eq!(actual, expected);
 }
