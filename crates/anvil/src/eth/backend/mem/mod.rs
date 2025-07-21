@@ -2600,6 +2600,9 @@ impl Backend {
         code_hash: B256,
         block_id: Option<BlockId>,
     ) -> Result<Option<Bytes>, BlockchainError> {
+        if let Ok(code) = self.db.read().await.code_by_hash_ref(code_hash) {
+            return Ok(Some(code.original_bytes()));
+        }
         if let Some(fork) = self.get_fork() {
             return Ok(fork.debug_code_by_hash(code_hash, block_id).await?);
         }
