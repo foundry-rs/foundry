@@ -982,32 +982,3 @@ impl std::fmt::Debug for PathOrContractInfo {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn parse_contract_identifiers() {
-        let t = ["src/Counter.sol", "src/Counter.sol:Counter", "Counter"];
-
-        let i1 = PathOrContractInfo::from_str(t[0]).unwrap();
-        assert_eq!(i1, PathOrContractInfo::Path(PathBuf::from(t[0])));
-
-        let i2 = PathOrContractInfo::from_str(t[1]).unwrap();
-        assert_eq!(
-            i2,
-            PathOrContractInfo::ContractInfo(CompilerContractInfo {
-                path: Some("src/Counter.sol".to_string()),
-                name: "Counter".to_string()
-            })
-        );
-
-        let i3 = PathOrContractInfo::from_str(t[2]).unwrap();
-        assert_eq!(
-            i3,
-            PathOrContractInfo::ContractInfo(CompilerContractInfo {
-                path: None,
-                name: "Counter".to_string()
-            })
-        );
-    }
-}

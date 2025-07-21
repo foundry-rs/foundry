@@ -7,9 +7,10 @@ use alloy_consensus::constants::KECCAK_EMPTY;
 use alloy_evm::{
     eth::EthEvmContext,
     precompiles::{DynPrecompile, PrecompilesMap},
-    rwasm_revm::{RwasmEvm, RwasmFrame},
+    rwasm_revm::{RwasmEvm},
     Evm, EvmEnv,
 };
+use alloy_evm::rwasm_revm::RwasmFrame;
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_fork_db::DatabaseError;
 use revm::{
@@ -377,7 +378,7 @@ impl<I: InspectorExt> InspectorHandler for FoundryHandler<'_, I> {
         let create2_deployer = evm.inspector.create2_deployer();
 
         // Generate call inputs for CREATE2 factory.
-        let call_inputs = get_create2_factory_call_inputs(salt, inputs, create2_deployer);
+        let call_inputs = get_create2_factory_call_inputs(salt, &inputs, create2_deployer);
 
         // Push data about current override to the stack.
         self.create2_overrides.push((evm.journal().depth(), call_inputs.clone()));

@@ -34,7 +34,9 @@ pub fn inject_precompiles<DB, I>(
 mod tests {
     use std::convert::Infallible;
 
-    use alloy_evm::{EthEvm, Evm, EvmEnv, eth::EthEvmContext, precompiles::PrecompilesMap};
+    use alloy_evm::{
+        EthEvm, Evm, EvmEnv, eth::EthEvmContext, precompiles::PrecompilesMap, rwasm_revm::RwasmEvm,
+    };
     use alloy_op_evm::OpEvm;
     use alloy_primitives::{Address, Bytes, TxKind, U256, address};
     use foundry_evm_core::either_evm::EitherEvm;
@@ -113,17 +115,26 @@ mod tests {
             spec,
         }
         .precompiles;
-        let eth_evm = EitherEvm::Eth(EthEvm::new(
-            RevmEvm::new_with_inspector(
-                eth_evm_context,
+        let eth_evm = EitherEvm::<
+            _,
+            EthInstructions<EthInterpreter, EthEvmContext<EmptyDB>>,
+            PrecompilesMap,
+        >::Eth(EthEvm::new(
+            RwasmEvm::<
+                _,
                 NoOpInspector,
-                EthInstructions::<EthInterpreter, EthEvmContext<EmptyDB>>::default(),
-                PrecompilesMap::from_static(eth_precompiles),
-            ),
+                EthInstructions<EthInterpreter, EthEvmContext<EmptyDB>>,
+                PrecompilesMap,
+            >::new(eth_evm_context, NoOpInspector),
             true,
         ));
 
-        (eth_env, eth_evm)
+        (
+            eth_env,
+            eth_evm,
+            EthInstructions::<EthInterpreter, EthEvmContext<EmptyDB>>::default(),
+            PrecompilesMap::from_static(eth_precompiles),
+        )
     }
 
     /// Creates a new OP EVM instance with the custom precompile factory.

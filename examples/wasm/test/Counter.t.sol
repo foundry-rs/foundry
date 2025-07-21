@@ -13,10 +13,10 @@ contract CounterTest is Test {
         // Deploy the WASM PowerCalculator contract
         // TODO(d1r1): to deploy contract we actually need to use rwasm executor. see
         // crates/evm/core/src/evm.rs:155 for details
-        // powerCalculator = vm.deployCode("out/PowerCalculator.wasm/PowerCalculator.json");
+//        powerCalculator = vm.deployCode("out/PowerCalculator.wasm/PowerCalculator.json");
 
         // TODO: remove mock after figure out why we can't use our patched revm version
-        // powerCalculator = vm.deployCode("MockPowerCalculator");
+        powerCalculator = vm.deployCode("MockPowerCalculator");
 
         // Deploy Counter with the PowerCalculator address
         counter = new Counter(powerCalculator);

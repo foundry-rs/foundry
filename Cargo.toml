@@ -71,8 +71,8 @@ all = "warn"
 # Uncomment this section if you're using a debugger.
 [profile.dev]
 # https://davidlattimore.github.io/posts/2024/02/04/speeding-up-the-rust-edit-build-run-cycle.html
-debug = "line-tables-only"
-split-debuginfo = "unpacked"
+#debug = "line-tables-only"
+#split-debuginfo = "unpacked"
 
 [profile.release]
 opt-level = 3
@@ -205,7 +205,7 @@ foundry-linking = { path = "crates/linking" }
 
 # fluentbase
 
-fluentbase-build = { path = "../fluentbase-v2/crates/build", features = ["json"] }
+fluentbase-build = { path = "../fluentbase2/crates/build", features = ["json"] }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.19.1", default-features = false }
@@ -272,8 +272,8 @@ revm-inspectors = { version = "0.23.0", features = ["serde"] }
 op-revm = { version = "5.0.1", default-features = false }
 
 ## alloy-evm
-alloy-evm = {version="0.10.0", features=["enforce-rwasm"]}
-alloy-op-evm = {version="0.10.0"}
+alloy-evm = { version = "0.10.0", features = ["enforce-rwasm"] }
+alloy-op-evm = { version = "0.10.0" }
 
 ## cli
 anstream = "0.6"
@@ -368,19 +368,19 @@ idna_adapter = "=1.1.0"
 zip-extract = "=0.2.1"
 
 [patch.crates-io]
-revm = { path = "../fluentbase-v2/revm/crates/revm" }
-revm-bytecode = { path = "../fluentbase-v2/revm/crates/bytecode" }
-revm-database = { path = "../fluentbase-v2/revm/crates/database" }
-revm-database-interface = { path = "../fluentbase-v2/revm/crates/database/interface" }
-revm-state = { path = "../fluentbase-v2/revm/crates/state" }
-revm-primitives = { path = "../fluentbase-v2/revm/crates/primitives" }
-revm-interpreter = { path = "../fluentbase-v2/revm/crates/interpreter" }
-revm-inspector = { path = "../fluentbase-v2/revm/crates/inspector" }
-revm-context = { path = "../fluentbase-v2/revm/crates/context" }
-revm-context-interface = { path = "../fluentbase-v2/revm/crates/context/interface" }
-op-revm = { path = "../fluentbase-v2/revm/crates/op-revm" }
+revm = { path = "../fluentbase2/revm/crates/revm" }
+revm-bytecode = { path = "../fluentbase2/revm/crates/bytecode" }
+revm-database = { path = "../fluentbase2/revm/crates/database" }
+revm-database-interface = { path = "../fluentbase2/revm/crates/database/interface" }
+revm-state = { path = "../fluentbase2/revm/crates/state" }
+revm-primitives = { path = "../fluentbase2/revm/crates/primitives" }
+revm-interpreter = { path = "../fluentbase2/revm/crates/interpreter" }
+revm-inspector = { path = "../fluentbase2/revm/crates/inspector" }
+revm-context = { path = "../fluentbase2/revm/crates/context" }
+revm-context-interface = { path = "../fluentbase2/revm/crates/context/interface" }
+op-revm = { path = "../fluentbase2/revm/crates/op-revm" }
 
-alloy-evm = { path = "../alloy-rwasm/crates/evm", features = ["enforce-rwasm"] }
+alloy-evm = { path = "../alloy-evm/crates/evm", features = ["enforce-rwasm"] }
 
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
