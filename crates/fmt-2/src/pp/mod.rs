@@ -129,8 +129,14 @@ impl Printer {
         }
     }
 
-    pub(crate) fn space_left(&self) -> isize {
-        self.space
+    pub(crate) fn space_left(&self) -> usize {
+        if self.space > 0 {
+            self.space as usize
+        } else if self.margin > 0 {
+            self.margin as usize
+        } else {
+            0
+        }
     }
 
     pub(crate) fn last_token(&self) -> Option<&Token> {

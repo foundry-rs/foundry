@@ -252,7 +252,7 @@ impl Comments {
             let span_line = sm.lookup_char_pos(span_pos);
             let comment_line = sm.lookup_char_pos(cmnt.pos());
             let next = next_pos.unwrap_or_else(|| cmnt.pos() + BytePos(1));
-            if span_pos < cmnt.pos() && cmnt.pos() < next && span_line.line == comment_line.line {
+            if span_pos <= cmnt.pos() && cmnt.pos() < next && span_line.line == comment_line.line {
                 return Some(cmnt);
             }
         }
