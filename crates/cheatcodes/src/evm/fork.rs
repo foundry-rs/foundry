@@ -7,7 +7,7 @@ use alloy_primitives::{B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
-use foundry_common::provider::ProviderBuilder;
+use foundry_common::{provider::ProviderBuilder, sema::StructDefinitions};
 use foundry_evm_core::{AsEnvMut, ContextExt, fork::CreateFork};
 
 impl Cheatcode for activeForkCall {
@@ -208,7 +208,7 @@ impl Cheatcode for rpc_0Call {
             .database
             .active_fork_url()
             .ok_or_else(|| fmt_err!("no active fork URL found"))?;
-        rpc_call(ccx.state, &url, method, params)
+        rpc_call(&ccx.state.struct_defs, &url, method, params)
     }
 }
 
@@ -216,7 +216,7 @@ impl Cheatcode for rpc_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { urlOrAlias, method, params } = self;
         let url = state.config.rpc_endpoint(urlOrAlias)?.url()?;
-        rpc_call(state, &url, method, params)
+        rpc_call(&state.struct_defs, &url, method, params)
     }
 }
 
@@ -369,14 +369,14 @@ fn persist_caller(ccx: &mut CheatsCtxt) {
 }
 
 /// Performs an Ethereum JSON-RPC request to the given endpoint.
-fn rpc_call(state: &Cheatcodes, url: &str, method: &str, params: &str) -> Result {
+fn rpc_call(struct_defs: &StructDefinitions, url: &str, method: &str, params: &str) -> Result {
     let provider = ProviderBuilder::new(url).build()?;
     let params_json: serde_json::Value = serde_json::from_str(params)?;
     let result =
         foundry_common::block_on(provider.raw_request(method.to_string().into(), params_json))
             .map_err(|err| fmt_err!("{method:?}: {err}"))?;
     let result_as_tokens = convert_to_bytes(
-        &json_value_to_token(&state.struct_defs, &result)
+        &json_value_to_token(struct_defs, &result)
             .map_err(|err| fmt_err!("failed to parse result: {err}"))?,
     );
 

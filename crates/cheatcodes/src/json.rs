@@ -1,7 +1,7 @@
 //! Implementations of [`Json`](spec::Group::Json) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, Result, Vm::*, string};
-use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver, eip712, eip712_parser};
+use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver, eip712_parser};
 use alloy_primitives::{Address, B256, I256, hex};
 use alloy_sol_types::SolValue;
 use foundry_common::{fs, sema::StructDefinitions};
@@ -535,6 +535,7 @@ pub(super) fn json_value_to_token(defs: &StructDefinitions, value: &Value) -> Re
                     .map(DynSolValue::Tuple)
             } else {
                 // Fallback to alphabetical sorting if no matching struct is found.
+                // See: [#3647](https://github.com/foundry-rs/foundry/pull/3647)
                 let ordered_object: BTreeMap<_, _> =
                     map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
                 ordered_object
@@ -678,49 +679,23 @@ pub(super) fn resolve_type(
     type_description: &str,
     struct_defs: Option<&StructDefinitions>,
 ) -> Result<DynSolType> {
-    let mut resolver = Resolver::default();
+    let ordered_ty = |ty| {
+        if let Some(defs) = struct_defs { reorder_type(ty, defs) } else { ty }
+    };
 
-    // Populate the resolver with all known struct definitions from the project.
-    if let Some(struct_defs) = struct_defs {
-        for (name, fields) in struct_defs.iter() {
-            let props = fields
-                .iter()
-                .filter_map(|(field_name, field_ty)| {
-                    eip712::PropertyDef::new(field_ty.as_str(), field_name.as_str()).ok()
-                })
-                .collect::<Vec<_>>();
-
-            if props.len() != fields.len() {
-                bail!("struct has an invalid field");
-            }
-
-            // The struct name from `StructDefinitions` should be a valid root type.
-            let type_def = eip712::TypeDef::new(name.clone(), props)?;
-            resolver.ingest(type_def);
-        }
-    }
+    if let Ok(ty) = DynSolType::parse(type_description) {
+        return Ok(ordered_ty(ty));
+    };
 
     if let Ok(encoded) = eip712_parser::EncodeType::parse(type_description) {
-        // Ingest the types from the EIP-712 string. These might be new or override
-        // project-wide definitions for the scope of this resolution.
+        let main_type = encoded.types[0].type_name;
+        let mut resolver = Resolver::default();
         for t in &encoded.types {
             resolver.ingest(t.to_owned());
         }
 
-        // The primary type is the first one in an EIP-712 string.
-        let main_type = encoded
-            .types
-            .first()
-            .ok_or_else(|| fmt_err!("EIP-712 type description is empty"))?
-            .type_name;
-
         // Get the alphabetically-sorted type from the resolver, and reorder if necessary.
-        let resolved_ty = resolver.resolve(main_type)?;
-        return Ok(if let Some(defs) = struct_defs {
-            reorder_type(resolved_ty, defs)
-        } else {
-            resolved_ty
-        });
+        return Ok(ordered_ty(resolver.resolve(main_type)?));
     }
 
     bail!("type description should be a valid Solidity type or a EIP712 `encodeType` string")
@@ -746,7 +721,7 @@ fn reorder_type(ty: DynSolType, struct_defs: &StructDefinitions) -> DynSolType {
                     if let Some(field_ty) = type_map.get(field_name) {
                         sorted_tuple.push(reorder_type(field_ty.clone(), struct_defs));
                     }
-                    // NOTE(rusowsky): Should we bail if there is a missing file?
+                    // NOTE(rusowsky): Should we bail if there is a missing field?
                 }
                 DynSolType::CustomStruct { name, prop_names: sorted_props, tuple: sorted_tuple }
             } else {
