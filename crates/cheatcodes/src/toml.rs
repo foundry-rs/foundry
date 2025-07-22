@@ -37,7 +37,7 @@ impl Cheatcode for parseToml_1Call {
 }
 
 impl Cheatcode for parseTomlUintCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { toml, key } = self;
         parse_toml_coerce(toml, key, &DynSolType::Uint(256))
     }
@@ -201,12 +201,12 @@ fn parse_toml_str(toml: &str) -> Result<TomlValue> {
 
 /// Parse a TOML string and return the value at the given path.
 fn parse_toml(state: &Cheatcodes, toml: &str, key: &str) -> Result {
-    parse_json(state, &toml_to_json_string(toml)?, key)
+    parse_json(&state.struct_defs, &toml_to_json_string(toml)?, key)
 }
 
 /// Parse a TOML string and return the value at the given path, coercing it to the given type.
 fn parse_toml_coerce(toml: &str, key: &str, ty: &DynSolType) -> Result {
-    parse_json_coerce(&toml_to_json_string(toml)?, key, ty, None)
+    parse_json_coerce(&toml_to_json_string(toml)?, key, ty)
 }
 
 /// Parse a TOML string and return an array of all keys at the given path.

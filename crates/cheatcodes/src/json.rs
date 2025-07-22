@@ -29,147 +29,112 @@ impl Cheatcode for keyExistsJsonCall {
 impl Cheatcode for parseJson_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json } = self;
-        parse_json(state, json, "$")
+        parse_json(&state.struct_defs, json, "$")
     }
 }
 
 impl Cheatcode for parseJson_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json(state, json, key)
+        parse_json(&state.struct_defs, json, key)
     }
 }
 
 impl Cheatcode for parseJsonUintCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Uint(256), Some(&state.struct_defs))
+        parse_json_coerce(json, key, &DynSolType::Uint(256))
     }
 }
 
 impl Cheatcode for parseJsonUintArrayCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(
-            json,
-            key,
-            &DynSolType::Array(Box::new(DynSolType::Uint(256))),
-            Some(&state.struct_defs),
-        )
+        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Uint(256))))
     }
 }
 
 impl Cheatcode for parseJsonIntCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Int(256), Some(&state.struct_defs))
+        parse_json_coerce(json, key, &DynSolType::Int(256))
     }
 }
 
 impl Cheatcode for parseJsonIntArrayCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(
-            json,
-            key,
-            &DynSolType::Array(Box::new(DynSolType::Int(256))),
-            Some(&state.struct_defs),
-        )
+        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Int(256))))
     }
 }
 
 impl Cheatcode for parseJsonBoolCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Bool, Some(&state.struct_defs))
+        parse_json_coerce(json, key, &DynSolType::Bool)
     }
 }
 
 impl Cheatcode for parseJsonBoolArrayCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(
-            json,
-            key,
-            &DynSolType::Array(Box::new(DynSolType::Bool)),
-            Some(&state.struct_defs),
-        )
+        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Bool)))
     }
 }
 
 impl Cheatcode for parseJsonAddressCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Address, Some(&state.struct_defs))
+        parse_json_coerce(json, key, &DynSolType::Address)
     }
 }
 
 impl Cheatcode for parseJsonAddressArrayCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(
-            json,
-            key,
-            &DynSolType::Array(Box::new(DynSolType::Address)),
-            Some(&state.struct_defs),
-        )
+        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Address)))
     }
 }
 
 impl Cheatcode for parseJsonStringCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::String, Some(&state.struct_defs))
+        parse_json_coerce(json, key, &DynSolType::String)
     }
 }
 
 impl Cheatcode for parseJsonStringArrayCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(
-            json,
-            key,
-            &DynSolType::Array(Box::new(DynSolType::String)),
-            Some(&state.struct_defs),
-        )
+        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::String)))
     }
 }
 
 impl Cheatcode for parseJsonBytesCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Bytes, Some(&state.struct_defs))
+        parse_json_coerce(json, key, &DynSolType::Bytes)
     }
 }
 
 impl Cheatcode for parseJsonBytesArrayCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(
-            json,
-            key,
-            &DynSolType::Array(Box::new(DynSolType::Bytes)),
-            Some(&state.struct_defs),
-        )
+        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Bytes)))
     }
 }
 
 impl Cheatcode for parseJsonBytes32Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::FixedBytes(32), Some(&state.struct_defs))
+        parse_json_coerce(json, key, &DynSolType::FixedBytes(32))
     }
 }
 
 impl Cheatcode for parseJsonBytes32ArrayCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(
-            json,
-            key,
-            &DynSolType::Array(Box::new(DynSolType::FixedBytes(32))),
-            Some(&state.struct_defs),
-        )
+        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::FixedBytes(32))))
     }
 }
 
@@ -177,7 +142,7 @@ impl Cheatcode for parseJsonType_0Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json, typeDescription } = self;
         let ty = resolve_type(typeDescription, Some(&state.struct_defs))?;
-        parse_json_coerce(json, "$", &ty, Some(&state.struct_defs)).map(|v| v.abi_encode())
+        parse_json_coerce(json, "$", &ty).map(|v| v.abi_encode())
     }
 }
 
@@ -185,7 +150,7 @@ impl Cheatcode for parseJsonType_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json, key, typeDescription } = self;
         let ty = resolve_type(typeDescription, Some(&state.struct_defs))?;
-        parse_json_coerce(json, key, &ty, Some(&state.struct_defs)).map(|v| v.abi_encode())
+        parse_json_coerce(json, key, &ty).map(|v| v.abi_encode())
     }
 }
 
@@ -193,8 +158,7 @@ impl Cheatcode for parseJsonTypeArrayCall {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { json, key, typeDescription } = self;
         let ty = resolve_type(typeDescription, Some(&state.struct_defs))?;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(ty)), Some(&state.struct_defs))
-            .map(|v| v.abi_encode())
+        parse_json_coerce(json, key, &DynSolType::Array(Box::new(ty))).map(|v| v.abi_encode())
     }
 }
 
@@ -409,33 +373,24 @@ pub(super) fn check_json_key_exists(json: &str, key: &str) -> Result {
     Ok(exists.abi_encode())
 }
 
-pub(super) fn parse_json(state: &Cheatcodes, json: &str, path: &str) -> Result {
+pub(super) fn parse_json(defs: &StructDefinitions, json: &str, path: &str) -> Result {
     let value = parse_json_str(json)?;
     let selected = select(&value, path)?;
-    let sol = json_to_sol(state, &selected)?;
+    let sol = json_to_sol(defs, &selected)?;
     Ok(encode(sol))
 }
 
-pub(super) fn parse_json_coerce(
-    json: &str,
-    path: &str,
-    ty: &DynSolType,
-    struct_defs: Option<&StructDefinitions>,
-) -> Result {
+pub(super) fn parse_json_coerce(json: &str, path: &str, ty: &DynSolType) -> Result {
     let json = parse_json_str(json)?;
     let [value] = select(&json, path)?[..] else {
         bail!("path {path:?} must return exactly one JSON value");
     };
 
-    parse_json_as(value, ty, struct_defs).map(|v| v.abi_encode())
+    parse_json_as(value, ty).map(|v| v.abi_encode())
 }
 
 /// Parses given [serde_json::Value] as a [DynSolValue].
-pub(super) fn parse_json_as(
-    value: &Value,
-    ty: &DynSolType,
-    struct_defs: Option<&StructDefinitions>,
-) -> Result<DynSolValue> {
+pub(super) fn parse_json_as(value: &Value, ty: &DynSolType) -> Result<DynSolValue> {
     let to_string = |v: &Value| {
         let mut s = v.to_string();
         s.retain(|c: char| c != '"');
@@ -443,84 +398,54 @@ pub(super) fn parse_json_as(
     };
 
     match (value, ty) {
-        (Value::Array(array), ty) => parse_json_array(array, ty, struct_defs),
-        (Value::Object(object), ty) => parse_json_map(object, ty, struct_defs),
+        (Value::Array(array), ty) => parse_json_array(array, ty),
+        (Value::Object(object), ty) => parse_json_map(object, ty),
         (Value::String(s), DynSolType::String) => Ok(DynSolValue::String(s.clone())),
         _ => string::parse_value(&to_string(value), ty),
     }
 }
 
-pub(super) fn parse_json_array(
-    array: &[Value],
-    ty: &DynSolType,
-    struct_defs: Option<&StructDefinitions>,
-) -> Result<DynSolValue> {
+pub(super) fn parse_json_array(array: &[Value], ty: &DynSolType) -> Result<DynSolValue> {
     match ty {
         DynSolType::Tuple(types) => {
             ensure!(array.len() == types.len(), "array length mismatch");
             let values = array
                 .iter()
                 .zip(types)
-                .map(|(e, ty)| parse_json_as(e, ty, struct_defs))
+                .map(|(e, ty)| parse_json_as(e, ty))
                 .collect::<Result<Vec<_>>>()?;
 
             Ok(DynSolValue::Tuple(values))
         }
         DynSolType::Array(inner) => {
-            let values = array
-                .iter()
-                .map(|e| parse_json_as(e, inner, struct_defs))
-                .collect::<Result<Vec<_>>>()?;
+            let values =
+                array.iter().map(|e| parse_json_as(e, inner)).collect::<Result<Vec<_>>>()?;
             Ok(DynSolValue::Array(values))
         }
         DynSolType::FixedArray(inner, len) => {
             ensure!(array.len() == *len, "array length mismatch");
-            let values = array
-                .iter()
-                .map(|e| parse_json_as(e, inner, struct_defs))
-                .collect::<Result<Vec<_>>>()?;
+            let values =
+                array.iter().map(|e| parse_json_as(e, inner)).collect::<Result<Vec<_>>>()?;
             Ok(DynSolValue::FixedArray(values))
         }
         _ => bail!("expected {ty}, found array"),
     }
 }
 
-pub(super) fn parse_json_map(
-    map: &Map<String, Value>,
-    ty: &DynSolType,
-    struct_defs: Option<&StructDefinitions>,
-) -> Result<DynSolValue> {
+pub(super) fn parse_json_map(map: &Map<String, Value>, ty: &DynSolType) -> Result<DynSolValue> {
     let Some((name, fields, types)) = ty.as_custom_struct() else {
         bail!("expected {ty}, found JSON object");
     };
 
-    let type_map: std::collections::HashMap<&str, &DynSolType> =
-        fields.iter().map(|s| s.as_str()).zip(types.iter()).collect();
-
-    let ordered_prop_names = if let Some(defs) = struct_defs
-        && let Some(struct_fields) = defs.get(name)
-    {
-        // Use the field order from the struct definition.
-        struct_fields.iter().map(|(field_name, _)| field_name.clone()).collect::<Vec<_>>()
-    } else {
-        // Fall back to the fields from the type (which are alphabetically ordered).
-        fields.to_vec()
-    };
-
-    let mut tuple = Vec::with_capacity(ordered_prop_names.len());
-    for field_name in &ordered_prop_names {
+    let mut tuple = Vec::with_capacity(fields.len());
+    for (i, field_name) in fields.iter().enumerate() {
         let Some(value) = map.get(field_name) else {
             bail!("field {field_name:?} not found in JSON object")
         };
-        let Some(field_ty) = type_map.get(field_name.as_str()) else {
-            // This case should ideally not be hit if the struct definition is consistent
-            // with the provided type.
-            bail!("type for field {field_name:?} not found in provided type description");
-        };
-        tuple.push(parse_json_as(value, *field_ty, struct_defs)?);
+        tuple.push(parse_json_as(value, &types[i])?);
     }
 
-    Ok(DynSolValue::CustomStruct { name: name.to_string(), prop_names: ordered_prop_names, tuple })
+    Ok(DynSolValue::CustomStruct { name: name.to_string(), prop_names: fields.to_owned(), tuple })
 }
 
 pub(super) fn parse_json_keys(json: &str, key: &str) -> Result {
@@ -540,10 +465,10 @@ fn parse_json_str(json: &str) -> Result<Value> {
     serde_json::from_str(json).map_err(|e| fmt_err!("failed parsing JSON: {e}"))
 }
 
-fn json_to_sol(state: &Cheatcodes, json: &[&Value]) -> Result<Vec<DynSolValue>> {
+fn json_to_sol(defs: &StructDefinitions, json: &[&Value]) -> Result<Vec<DynSolValue>> {
     let mut sol = Vec::with_capacity(json.len());
     for value in json {
-        sol.push(json_value_to_token(state, value)?);
+        sol.push(json_value_to_token(&defs, value)?);
     }
     Ok(sol)
 }
@@ -581,19 +506,19 @@ pub(super) fn canonicalize_json_path(path: &str) -> Cow<'_, str> {
 /// it will call itself to convert each of it's value and encode the whole as a
 /// Tuple
 #[instrument(target = "cheatcodes", level = "trace", ret)]
-pub(super) fn json_value_to_token(state: &Cheatcodes, value: &Value) -> Result<DynSolValue> {
+pub(super) fn json_value_to_token(defs: &StructDefinitions, value: &Value) -> Result<DynSolValue> {
     match value {
         Value::Null => Ok(DynSolValue::FixedBytes(B256::ZERO, 32)),
         Value::Bool(boolean) => Ok(DynSolValue::Bool(*boolean)),
         Value::Array(array) => array
             .iter()
-            .map(|v| json_value_to_token(state, v))
+            .map(|v| json_value_to_token(&defs, v))
             .collect::<Result<_>>()
             .map(DynSolValue::Array),
         Value::Object(map) => {
             // Try to find a struct definition that matches the object keys.
             let keys: BTreeSet<_> = map.keys().map(|s| s.as_str()).collect();
-            let matching_def = state.struct_defs.values().find(|fields| {
+            let matching_def = defs.values().find(|fields| {
                 fields.len() == keys.len()
                     && fields.iter().map(|(name, _)| name.as_str()).collect::<BTreeSet<_>>() == keys
             });
@@ -604,7 +529,7 @@ pub(super) fn json_value_to_token(state: &Cheatcodes, value: &Value) -> Result<D
                     .iter()
                     .map(|(name, _)| {
                         // unwrap is safe because we know the key exists.
-                        json_value_to_token(state, map.get(name).unwrap())
+                        json_value_to_token(defs, map.get(name).unwrap())
                     })
                     .collect::<Result<_>>()
                     .map(DynSolValue::Tuple)
@@ -614,7 +539,7 @@ pub(super) fn json_value_to_token(state: &Cheatcodes, value: &Value) -> Result<D
                     map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
                 ordered_object
                     .values()
-                    .map(|value| json_value_to_token(state, value))
+                    .map(|value| json_value_to_token(defs, value))
                     .collect::<Result<_>>()
                     .map(DynSolValue::Tuple)
             }
@@ -788,10 +713,58 @@ pub(super) fn resolve_type(
             .first()
             .ok_or_else(|| fmt_err!("EIP-712 type description is empty"))?
             .type_name;
-        return Ok(resolver.resolve(main_type)?);
+
+        // Get the alphabetically-sorted type from the resolver, and reorder if necessary.
+        let resolved_ty = resolver.resolve(main_type)?;
+        return Ok(if let Some(defs) = struct_defs {
+            reorder_type(resolved_ty, defs)
+        } else {
+            resolved_ty
+        });
     }
 
     bail!("type description should be a valid Solidity type or a EIP712 `encodeType` string")
+}
+
+/// Recursively traverses a `DynSolType` and reorders the fields of any
+/// `CustomStruct` variants according to the provided `StructDefinitions`.
+///
+/// This is necessary because the EIP-712 resolver sorts struct fields alphabetically,
+/// but we want to respect the order defined in the Solidity source code.
+fn reorder_type(ty: DynSolType, struct_defs: &StructDefinitions) -> DynSolType {
+    match ty {
+        DynSolType::CustomStruct { name, prop_names, tuple } => {
+            if let Some(def) = struct_defs.get(&name) {
+                // The incoming `prop_names` and `tuple` are alphabetically sorted.
+                let type_map: std::collections::HashMap<String, DynSolType> =
+                    prop_names.into_iter().zip(tuple.into_iter()).collect();
+
+                let mut sorted_props = Vec::with_capacity(def.len());
+                let mut sorted_tuple = Vec::with_capacity(def.len());
+                for (field_name, _) in def {
+                    sorted_props.push(field_name.clone());
+                    if let Some(field_ty) = type_map.get(field_name) {
+                        sorted_tuple.push(reorder_type(field_ty.clone(), struct_defs));
+                    }
+                    // NOTE(rusowsky): Should we bail if there is a missing file?
+                }
+                DynSolType::CustomStruct { name, prop_names: sorted_props, tuple: sorted_tuple }
+            } else {
+                // No definition found, so we can't reorder. However, we still reorder its children
+                // in case they have known structs.
+                let new_tuple = tuple.into_iter().map(|t| reorder_type(t, struct_defs)).collect();
+                DynSolType::CustomStruct { name, prop_names, tuple: new_tuple }
+            }
+        }
+        DynSolType::Array(inner) => DynSolType::Array(Box::new(reorder_type(*inner, struct_defs))),
+        DynSolType::FixedArray(inner, len) => {
+            DynSolType::FixedArray(Box::new(reorder_type(*inner, struct_defs)), len)
+        }
+        DynSolType::Tuple(inner) => {
+            DynSolType::Tuple(inner.into_iter().map(|t| reorder_type(t, struct_defs)).collect())
+        }
+        _ => ty,
+    }
 }
 
 #[cfg(test)]
@@ -809,6 +782,15 @@ mod tests {
             }
             _ => false,
         }
+    }
+
+    fn is_not_json_object_string(value: &DynSolValue) -> bool {
+        if let DynSolValue::String(s) = value {
+            if let Ok(parsed_json) = serde_json::from_str::<Value>(s) {
+                return !parsed_json.is_object();
+            }
+        }
+        true
     }
 
     /// [DynSolValue::Bytes] of length 32 and 20 are converted to [DynSolValue::FixedBytes] and
@@ -844,27 +826,26 @@ mod tests {
 
     // Tests to ensure that conversion [DynSolValue] -> [serde_json::Value] -> [DynSolValue]
     proptest::proptest! {
-        // TODO: fix
-        // #[test]
-        // fn test_json_roundtrip_guessed(v in guessable_types()) {
-        //     let json = serialize_value_as_json(v.clone()).unwrap();
-        //     let value = json_value_to_token(&json).unwrap();
+        #[test]
+        fn test_json_roundtrip_guessed(v in guessable_types()) {
+            let json = serialize_value_as_json(v.clone()).unwrap();
+            let value = json_value_to_token(&StructDefinitions::default(), &json).unwrap();
 
-        //     // do additional abi_encode -> abi_decode to avoid zero signed integers getting decoded as unsigned and causing assert_eq to fail.
-        //     let decoded = v.as_type().unwrap().abi_decode(&value.abi_encode()).unwrap();
-        //     assert_eq!(decoded, v);
-        // }
+            // do additional abi_encode -> abi_decode to avoid zero signed integers getting decoded as unsigned and causing assert_eq to fail.
+            let decoded = v.as_type().unwrap().abi_decode(&value.abi_encode()).unwrap();
+            assert_eq!(decoded, v);
+        }
 
         #[test]
         fn test_json_roundtrip(v in proptest::arbitrary::any::<DynSolValue>().prop_filter("filter out values without type", |v| v.as_type().is_some())) {
                 let json = serialize_value_as_json(v.clone()).unwrap();
-            let value = parse_json_as(&json, &v.as_type().unwrap(), None).unwrap();
+            let value = parse_json_as(&json, &v.as_type().unwrap()).unwrap();
                 assert_eq!(value, v);
         }
     }
 
     #[test]
-    fn test_parse_json_struct_with_definitions() {
+    fn test_resolve_type_with_definitions() -> Result<()> {
         // Define a struct with fields in a specific order (not alphabetical)
         let mut defs_map = HashMap::new();
         defs_map.insert(
@@ -884,186 +865,89 @@ mod tests {
         );
         let struct_defs = StructDefinitions::new(defs_map);
 
-        // JSON with fields in different order
-        let json_str = r#"{
-            "apples": [
-                {
-                    "sweetness": 7,
-                    "sourness": 3,
-                    "color": "Red"
-                },
-                {
-                    "sweetness": 5,
-                    "sourness": 5,
-                    "color": "Green"
-                },
-                {
-                    "sweetness": 9,
-                    "sourness": 1,
-                    "color": "Yellow"
-                }
-            ],
-            "name": "Fresh Fruit"
-        }"#;
+        // Simulate resolver output: type string, using alphabetical order for fields.
+        let ty_desc = "FruitStall(Apple[] apples,string name)Apple(string color,uint8 sourness,uint8 sweetness)";
 
-        // Create the expected type. The type resolver will order properties alphabetically.
-        let apple_ty = DynSolType::CustomStruct {
-            name: "Apple".to_string(),
-            prop_names: vec!["color".to_string(), "sourness".to_string(), "sweetness".to_string()],
-            tuple: vec![DynSolType::String, DynSolType::Uint(8), DynSolType::Uint(8)],
-        };
-
-        let fruit_ty = DynSolType::CustomStruct {
-            name: "FruitStall".to_string(),
-            prop_names: vec!["apples".to_string(), "name".to_string()],
-            tuple: vec![DynSolType::Array(Box::new(apple_ty)), DynSolType::String],
-        };
-
-        // Parse the JSON.
-        let json_value: Value = serde_json::from_str(json_str).unwrap();
-        let result = parse_json_as(&json_value, &fruit_ty, Some(&struct_defs)).unwrap();
-
-        // Assert that the parsed structure respects the definition order.
-        if let DynSolValue::CustomStruct { name, prop_names, tuple } = result {
+        // Resolve type and ensure struct definition order is preserved.
+        let ty = resolve_type(ty_desc, Some(&struct_defs)).unwrap();
+        if let DynSolType::CustomStruct { name, prop_names, tuple } = ty {
             assert_eq!(name, "FruitStall");
             assert_eq!(prop_names, vec!["name", "apples"]);
             assert_eq!(tuple.len(), 2);
-            assert_eq!(tuple[0], DynSolValue::String("Fresh Fruit".to_string()));
+            assert_eq!(tuple[0], DynSolType::String);
 
-            if let DynSolValue::Array(apples) = &tuple[1] {
-                assert_eq!(apples.len(), 3);
-                if let DynSolValue::CustomStruct { prop_names, tuple, .. } = &apples[0] {
+            if let DynSolType::Array(apple_ty_boxed) = &tuple[1] {
+                if let DynSolType::CustomStruct { name, prop_names, tuple } = &**apple_ty_boxed {
+                    assert_eq!(*name, "Apple");
+                    // Check that the inner struct's fields are also in definition order.
                     assert_eq!(*prop_names, vec!["color", "sweetness", "sourness"]);
-                    assert_eq!(tuple[0], DynSolValue::String("Red".to_string()));
-                    assert_eq!(tuple[1], DynSolValue::Uint(U256::from(7), 8));
-                    assert_eq!(tuple[2], DynSolValue::Uint(U256::from(3), 8));
-                } else {
-                    panic!("Expected CustomStruct for the first apple");
+                    assert_eq!(
+                        *tuple,
+                        vec![DynSolType::String, DynSolType::Uint(8), DynSolType::Uint(8)]
+                    );
+
+                    return Ok(());
                 }
-                if let DynSolValue::CustomStruct { prop_names, tuple, .. } = &apples[2] {
-                    assert_eq!(*prop_names, vec!["color", "sweetness", "sourness"]);
-                    assert_eq!(tuple[0], DynSolValue::String("Yellow".to_string()));
-                    assert_eq!(tuple[1], DynSolValue::Uint(U256::from(9), 8));
-                    assert_eq!(tuple[2], DynSolValue::Uint(U256::from(1), 8));
-                } else {
-                    panic!("Expected CustomStruct for the second apple");
-                }
-            } else {
-                panic!("Expected an array of apples");
             }
-        } else {
-            panic!("Expected a CustomStruct for FruitStall");
         }
+        panic!("Expected FruitStall and Apple to be CustomStruct");
     }
 
     #[test]
-    fn test_parse_json_struct_without_definitions() {
-        // JSON with fields in alphabetical order
-        let json_str = r#"{
-            "active": true,
-            "age": 30,
-            "name": "Alice"
-        }"#;
+    fn test_resolve_type_without_definitions() -> Result<()> {
+        // Simulate resolver output: type string, using alphabetical order for fields.
+        let ty_desc = "Person(bool active,uint256 age,string name)";
 
-        // Create the expected type with alphabetical order
-        let ty = DynSolType::CustomStruct {
-            name: "Person".to_string(),
-            prop_names: vec!["active".to_string(), "age".to_string(), "name".to_string()],
-            tuple: vec![DynSolType::Bool, DynSolType::Uint(256), DynSolType::String],
-        };
-
-        // Parse JSON without struct definitions
-        let json_value: Value = serde_json::from_str(json_str).unwrap();
-        let result = parse_json_as(&json_value, &ty, None).unwrap();
-
-        // Check that fields remain in alphabetical order when no definitions provided
-        match result {
-            DynSolValue::CustomStruct { name, prop_names, tuple } => {
-                assert_eq!(name, "Person");
-                assert_eq!(prop_names, vec!["active", "age", "name"]);
-                assert_eq!(tuple.len(), 3);
-
-                // Check values are in alphabetical order
-                assert_eq!(tuple[0], DynSolValue::Bool(true));
-                assert_eq!(tuple[1], DynSolValue::Uint(U256::from(30), 256));
-                assert_eq!(tuple[2], DynSolValue::String("Alice".to_string()));
-            }
-            _ => panic!("Expected CustomStruct"),
+        // Resolve the type without providing any struct definitions and ensure that original
+        // (alphabetical) order is unchanged.
+        let ty = resolve_type(ty_desc, None).unwrap();
+        if let DynSolType::CustomStruct { name, prop_names, tuple } = ty {
+            assert_eq!(name, "Person");
+            assert_eq!(prop_names, vec!["active", "age", "name"]);
+            assert_eq!(tuple.len(), 3);
+            assert_eq!(tuple, vec![DynSolType::Bool, DynSolType::Uint(256), DynSolType::String]);
+            return Ok(());
         }
+        panic!("Expected Person to be CustomStruct");
     }
 
     #[test]
-    fn test_parse_json_array_of_structs() {
+    fn test_resolve_type_for_array_of_structs() -> Result<()> {
+        // Define a struct with fields in a specific, non-alphabetical order.
         let mut defs_map = HashMap::new();
         defs_map.insert(
             "Item".to_string(),
             vec![
-                ("id".to_string(), "uint256".to_string()),
                 ("name".to_string(), "string".to_string()),
                 ("price".to_string(), "uint256".to_string()),
+                ("id".to_string(), "uint256".to_string()),
             ],
         );
         let struct_defs = StructDefinitions::new(defs_map);
 
-        // JSON array with structs
-        let json_str = r#"[
-            {
-                "name": "Apple",
-                "price": 100,
-                "id": 1
-            },
-            {
-                "price": 200,
-                "id": 2,
-                "name": "Banana"
-            }
-        ]"#;
+        // Simulate resolver output: type string, using alphabetical order for fields.
+        let ty_desc = "Item(uint256 id,string name,uint256 price)";
 
-        // Create the expected type
-        let item_ty = DynSolType::CustomStruct {
-            name: "Item".to_string(),
-            prop_names: vec!["id".to_string(), "name".to_string(), "price".to_string()],
-            tuple: vec![DynSolType::Uint(256), DynSolType::String, DynSolType::Uint(256)],
-        };
-        let array_ty = DynSolType::Array(Box::new(item_ty));
-
-        // Parse JSON
-        let json_value: Value = serde_json::from_str(json_str).unwrap();
-        let result = parse_json_as(&json_value, &array_ty, Some(&struct_defs)).unwrap();
-
-        // Check array of structs
-        match result {
-            DynSolValue::Array(items) => {
-                assert_eq!(items.len(), 2);
-
-                // Check first item
-                match &items[0] {
-                    DynSolValue::CustomStruct { prop_names, tuple, .. } => {
-                        assert_eq!(prop_names, &vec!["id", "name", "price"]);
-                        assert_eq!(tuple[0], DynSolValue::Uint(U256::from(1), 256));
-                        assert_eq!(tuple[1], DynSolValue::String("Apple".to_string()));
-                        assert_eq!(tuple[2], DynSolValue::Uint(U256::from(100), 256));
-                    }
-                    _ => panic!("Expected CustomStruct in array"),
-                }
-
-                // Check second item
-                match &items[1] {
-                    DynSolValue::CustomStruct { prop_names, tuple, .. } => {
-                        assert_eq!(prop_names, &vec!["id", "name", "price"]);
-                        assert_eq!(tuple[0], DynSolValue::Uint(U256::from(2), 256));
-                        assert_eq!(tuple[1], DynSolValue::String("Banana".to_string()));
-                        assert_eq!(tuple[2], DynSolValue::Uint(U256::from(200), 256));
-                    }
-                    _ => panic!("Expected CustomStruct in array"),
-                }
-            }
-            _ => panic!("Expected Array"),
+        // Resolve type and ensure struct definition order is preserved.
+        let ty = resolve_type(ty_desc, Some(&struct_defs)).unwrap();
+        let array_ty = DynSolType::Array(Box::new(ty));
+        if let DynSolType::Array(item_ty) = array_ty
+            && let DynSolType::CustomStruct { name, prop_names, tuple } = *item_ty
+        {
+            assert_eq!(name, "Item");
+            assert_eq!(prop_names, vec!["name", "price", "id"]);
+            assert_eq!(
+                tuple,
+                vec![DynSolType::String, DynSolType::Uint(256), DynSolType::Uint(256)]
+            );
+            return Ok(());
         }
+        panic!("Expected CustomStruct in array");
     }
 
     #[test]
     fn test_parse_json_missing_field() {
+        // Define a struct with a specific field order.
         let mut defs_map = HashMap::new();
         defs_map.insert(
             "Person".to_string(),
@@ -1077,17 +961,16 @@ mod tests {
         // JSON missing the "age" field
         let json_str = r#"{ "name": "Alice" }"#;
 
-        let ty = DynSolType::CustomStruct {
-            name: "Person".to_string(),
-            prop_names: vec!["age".to_string(), "name".to_string()],
-            tuple: vec![DynSolType::Uint(256), DynSolType::String],
-        };
+        // Simulate resolver output: type string, using alphabetical order for fields.
+        let type_description = "Person(uint256 age,string name)";
+        let ty = resolve_type(type_description, Some(&struct_defs)).unwrap();
 
+        // Now, attempt to parse the incomplete JSON using the ordered type.
         let json_value: Value = serde_json::from_str(json_str).unwrap();
-        let result = parse_json_as(&json_value, &ty, Some(&struct_defs));
+        let result = parse_json_as(&json_value, &ty);
 
-        // Should fail with missing field error
+        // Should fail with a missing field error because `parse_json_map` requires all fields.
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("field \"age\" not found"));
+        assert!(result.unwrap_err().to_string().contains("field \"age\" not found in JSON object"));
     }
 }

@@ -82,19 +82,22 @@ impl<'hir> SemanticAnalysisProcessor<'hir> {
         for &field_id in strukt.fields {
             let var = hir.variable(field_id);
             let name = var.name.ok_or_else(|| eyre!("Struct field is missing a name"))?.to_string();
-            let ty_str = self.ty_to_string(gcx.type_of_hir_ty(&var.ty))?;
-
-            fields.push((name, ty_str));
+            if let Some(ty_str) = self.ty_to_string(gcx.type_of_hir_ty(&var.ty)) {
+                fields.push((name, ty_str));
+            }
         }
 
-        self.struct_defs.insert(qualified_name, fields);
+        if !fields.is_empty() {
+            self.struct_defs.insert(qualified_name, fields);
+        }
+
         Ok(())
     }
 
     /// Converts a resolved `Ty` into its canonical string representation.
-    fn ty_to_string(&mut self, ty: Ty<'hir>) -> Result<String> {
+    fn ty_to_string(&mut self, ty: Ty<'hir>) -> Option<String> {
         let ty = ty.peel_refs();
-        Ok(match ty.kind {
+        let res = match ty.kind {
             TyKind::Elementary(e) => e.to_string(),
             TyKind::Array(ty, size) => {
                 let inner_type = self.ty_to_string(ty)?;
@@ -106,7 +109,7 @@ impl<'hir> SemanticAnalysisProcessor<'hir> {
             }
             TyKind::Struct(id) => {
                 // Ensure the nested struct is resolved before proceeding.
-                self.resolve_struct_definition(id)?;
+                self.resolve_struct_definition(id).ok()?;
                 self.get_fully_qualified_name(id)
             }
             TyKind::Udvt(ty, _) => self.ty_to_string(ty)?,
@@ -115,8 +118,10 @@ impl<'hir> SemanticAnalysisProcessor<'hir> {
             // For now, map contracts to `address`
             TyKind::Contract(_) => "address".to_string(),
             // Explicitly disallow unsupported types
-            _ => eyre::bail!("Unsupported field type"),
-        })
+            _ => return None,
+        };
+
+        Some(res)
     }
 
     /// Helper to get the fully qualified name `Contract.Struct`.
