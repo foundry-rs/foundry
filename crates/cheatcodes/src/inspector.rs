@@ -409,6 +409,9 @@ pub struct Cheatcodes {
     /// Expected revert information
     pub expected_revert: Option<ExpectedRevert>,
 
+    /// Assertion information
+    pub assertion: Option<crate::credible::Assertion>,
+
     /// Assume next call can revert and discard fuzz run if it does.
     pub assume_no_revert: Option<AssumeNoRevert>,
 
@@ -552,6 +555,7 @@ impl Cheatcodes {
             mocked_functions: Default::default(),
             expected_calls: Default::default(),
             expected_emits: Default::default(),
+            assertion: Default::default(),
             expected_creates: Default::default(),
             allowed_mem_writes: Default::default(),
             broadcast: Default::default(),
@@ -1041,6 +1045,43 @@ impl Cheatcodes {
             }]);
         }
 
+        if let Some(assertion) = self.assertion.take() {
+            let tx_attributes = crate::credible::TxAttributes {
+                value: call.call_value(),
+                data: call.input.bytes(ecx),
+                caller: call.caller,
+                kind: TxKind::Call(call.target_address),
+            };
+
+            let call_outcome = match crate::credible::execute_assertion(
+                &assertion,
+                tx_attributes,
+                ecx,
+                executor,
+                self,
+                false,
+            ) {
+                Ok(_) => Some(CallOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Return,
+                        output: Default::default(),
+                        gas,
+                    },
+                    memory_offset: call.return_memory_offset.clone(),
+                }),
+                Err(err) => Some(CallOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: err.abi_encode().into(),
+                        gas,
+                    },
+                    memory_offset: call.return_memory_offset.clone(),
+                }),
+            };
+
+            return call_outcome;
+        }
+
         None
     }
 
@@ -1212,8 +1253,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         }
     }
 
-    fn call(&mut self, ecx: Ecx, inputs: &mut CallInputs) -> Option<CallOutcome> {
-        Self::call_with_executor(self, ecx, inputs, &mut TransparentCheatcodesExecutor)
+    fn call(&mut self, ecx: Ecx, call: &mut CallInputs) -> Option<CallOutcome> {
+        Self::call_with_executor(self, ecx, call, &mut TransparentCheatcodesExecutor)
     }
 
     fn call_end(&mut self, ecx: Ecx, call: &CallInputs, outcome: &mut CallOutcome) {
@@ -1258,10 +1299,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                 assume_no_revert.reverted_by = Some(call.target_address);
             }
 
-            // allow multiple cheatcode calls at the same depth
             let curr_depth = ecx.journaled_state.depth();
+            // allow multiple cheatcode calls at the same depth
             if curr_depth <= assume_no_revert.depth && !cheatcode_call {
-                // Discard run if we're at the same depth as cheatcode, call reverted, and no
+                // discard run if we're at the same depth as cheatcode, call reverted, and no
                 // specific reason was supplied
                 if outcome.result.is_revert() {
                     let assume_no_revert = std::mem::take(&mut self.assume_no_revert).unwrap();
@@ -1742,6 +1783,42 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                 storageAccesses: vec![],    // updated on create_end
                 depth: curr_depth as u64,
             }]);
+        }
+        if let Some(assertion) = self.assertion.take() {
+            let tx_attributes = crate::credible::TxAttributes {
+                value: input.value(),
+                data: input.init_code(),
+                caller: input.caller(),
+                kind: TxKind::Create,
+            };
+
+            let call_outcome = match crate::credible::execute_assertion(
+                &assertion,
+                tx_attributes,
+                ecx,
+                &mut TransparentCheatcodesExecutor,
+                self,
+                true,
+            ) {
+                Ok(address) => Some(CreateOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Return,
+                        output: Default::default(),
+                        gas,
+                    },
+                    address,
+                }),
+                Err(err) => Some(CreateOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: err.abi_encode().into(),
+                        gas,
+                    },
+                    address: None,
+                }),
+            };
+
+            return call_outcome;
         }
 
         None
