@@ -10,7 +10,7 @@ contract Deploy is Script {
         vm.startBroadcast();
 
         // Deploy WASM PowerCalculator
-        bytes memory wasmBytecode = vm.getCode("out/PowerCalculator.wasm/PowerCalculator.json");
+        bytes memory wasmBytecode = vm.getCode("out/PowerCalculator/PowerCalculator.json");
         console.log("WASM bytecode size:", wasmBytecode.length);
         
         address powerCalculator;

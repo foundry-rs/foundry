@@ -10,9 +10,11 @@ contract CounterTest is Test {
     address public powerCalculator;
 
     function setUp() public {
+        // lslslsl
         powerCalculator = vm.deployCode(
             "out/PowerCalculator/PowerCalculator.json"
         );
+
         // Deploy Counter with the PowerCalculator address
         counter = new Counter(powerCalculator);
     }
