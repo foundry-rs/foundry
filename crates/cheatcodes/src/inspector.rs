@@ -455,9 +455,12 @@ pub struct Cheatcodes {
     /// Used to prevent duplicate changes file executing non-committing calls.
     pub fs_commit: bool,
 
-    /// Serialized JSON values.
-    pub serialized_jsons: HashMap<String, Vec<(String, Value)>>,
+    /// Struct definitions in the contracts. Used to keep field order when parsing JSON values.
     pub struct_defs: StructDefinitions,
+
+    /// Serialized JSON values.
+    // **Note**: both must a BTreeMap to ensure the order of the keys is deterministic.
+    pub serialized_jsons: BTreeMap<String, BTreeMap<String, Value>>,
 
     /// All recorded ETH `deal`s.
     pub eth_deals: Vec<DealRecord>,

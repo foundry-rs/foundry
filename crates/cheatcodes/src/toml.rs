@@ -201,7 +201,7 @@ fn parse_toml_str(toml: &str) -> Result<TomlValue> {
 
 /// Parse a TOML string and return the value at the given path.
 fn parse_toml(state: &Cheatcodes, toml: &str, key: &str) -> Result {
-    parse_json(&state.struct_defs, &toml_to_json_string(toml)?, key)
+    parse_json(&toml_to_json_string(toml)?, key, &state.struct_defs)
 }
 
 /// Parse a TOML string and return the value at the given path, coercing it to the given type.

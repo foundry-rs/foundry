@@ -5,33 +5,33 @@ use solar_sema::{
     GcxWrapper, Hir, hir,
     ty::{Ty, TyKind},
 };
-use std::{collections::HashMap, ops::Deref, sync::Arc};
+use std::{collections::BTreeMap, ops::Deref, sync::Arc};
 
 #[derive(Debug, Clone)]
-pub struct StructDefinitions(Arc<HashMap<String, Vec<(String, String)>>>);
+pub struct StructDefinitions(Arc<BTreeMap<String, Vec<(String, String)>>>);
 
 impl StructDefinitions {
-    pub fn new(map: HashMap<String, Vec<(String, String)>>) -> Self {
+    pub fn new(map: BTreeMap<String, Vec<(String, String)>>) -> Self {
         Self(Arc::new(map))
     }
 }
 
 impl Default for StructDefinitions {
     fn default() -> Self {
-        Self(Arc::new(HashMap::new()))
+        Self(Arc::new(BTreeMap::new()))
     }
 }
 
 impl Deref for StructDefinitions {
-    type Target = HashMap<String, Vec<(String, String)>>;
+    type Target = BTreeMap<String, Vec<(String, String)>>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl AsRef<Arc<HashMap<String, Vec<(String, String)>>>> for StructDefinitions {
-    fn as_ref(&self) -> &Arc<HashMap<String, Vec<(String, String)>>> {
+impl AsRef<Arc<BTreeMap<String, Vec<(String, String)>>>> for StructDefinitions {
+    fn as_ref(&self) -> &Arc<BTreeMap<String, Vec<(String, String)>>> {
         &self.0
     }
 }
@@ -39,13 +39,13 @@ impl AsRef<Arc<HashMap<String, Vec<(String, String)>>>> for StructDefinitions {
 /// Generates a map of all struct definitions from the HIR using the resolved `Ty` system.
 pub struct SemanticAnalysisProcessor<'hir> {
     gcx: GcxWrapper<'hir>,
-    struct_defs: HashMap<String, Vec<(String, String)>>,
+    struct_defs: BTreeMap<String, Vec<(String, String)>>,
 }
 
 impl<'hir> SemanticAnalysisProcessor<'hir> {
     /// Constructs a new generator.
     pub fn new(gcx: GcxWrapper<'hir>) -> Self {
-        Self { gcx, struct_defs: HashMap::new() }
+        Self { gcx, struct_defs: BTreeMap::new() }
     }
 
     /// Processes the HIR to generate all the struct definitions.
