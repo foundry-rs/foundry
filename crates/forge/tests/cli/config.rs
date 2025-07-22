@@ -84,7 +84,6 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             max_test_rejects: 100203,
             seed: Some(U256::from(1000)),
             failure_persist_dir: Some("test-cache/fuzz".into()),
-            failure_persist_file: Some("failures".to_string()),
             show_logs: false,
             ..Default::default()
         },
@@ -1099,7 +1098,6 @@ max_fuzz_dictionary_addresses = 15728640
 max_fuzz_dictionary_values = 6553600
 gas_report_samples = 256
 failure_persist_dir = "cache/fuzz"
-failure_persist_file = "failures"
 show_logs = false
 
 [invariant]
@@ -1211,7 +1209,6 @@ exclude = []
     "max_fuzz_dictionary_values": 6553600,
     "gas_report_samples": 256,
     "failure_persist_dir": "cache/fuzz",
-    "failure_persist_file": "failures",
     "show_logs": false,
     "timeout": null
   },

@@ -26,8 +26,6 @@ pub struct FuzzConfig {
     pub gas_report_samples: u32,
     /// Path where fuzz failures are recorded and replayed.
     pub failure_persist_dir: Option<PathBuf>,
-    /// Name of the file to record fuzz failures, defaults to `failures`.
-    pub failure_persist_file: Option<String>,
     /// show `console.log` in fuzz test, defaults to `false`
     pub show_logs: bool,
     /// Optional timeout (in seconds) for each property test
@@ -44,7 +42,6 @@ impl Default for FuzzConfig {
             dictionary: FuzzDictionaryConfig::default(),
             gas_report_samples: 256,
             failure_persist_dir: None,
-            failure_persist_file: None,
             show_logs: false,
             timeout: None,
         }
@@ -54,11 +51,7 @@ impl Default for FuzzConfig {
 impl FuzzConfig {
     /// Creates fuzz configuration to write failures in `{PROJECT_ROOT}/cache/fuzz` dir.
     pub fn new(cache_dir: PathBuf) -> Self {
-        Self {
-            failure_persist_dir: Some(cache_dir),
-            failure_persist_file: Some("failures".to_string()),
-            ..Default::default()
-        }
+        Self { failure_persist_dir: Some(cache_dir), ..Default::default() }
     }
 }
 

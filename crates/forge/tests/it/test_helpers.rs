@@ -127,7 +127,6 @@ impl ForgeTestProfile {
             },
             gas_report_samples: 256,
             failure_persist_dir: Some(tempfile::tempdir().unwrap().keep()),
-            failure_persist_file: Some("testfailure".to_string()),
             show_logs: false,
             timeout: None,
         };

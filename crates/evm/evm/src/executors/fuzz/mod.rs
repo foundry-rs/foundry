@@ -54,14 +54,16 @@ pub struct FuzzTestData {
 /// inputs, until it finds a counterexample. The provided [`TestRunner`] contains all the
 /// configuration which can be overridden via [environment variables](proptest::test_runner::Config)
 pub struct FuzzedExecutor {
-    /// The EVM executor
+    /// The EVM executor.
     executor: Executor,
     /// The fuzzer
     runner: TestRunner,
-    /// The account that calls tests
+    /// The account that calls tests.
     sender: Address,
-    /// The fuzz configuration
+    /// The fuzz configuration.
     config: FuzzConfig,
+    /// The persisted counterexample to be replayed, if any.
+    persisted_failure: Option<BaseCounterExample>,
 }
 
 impl FuzzedExecutor {
@@ -71,15 +73,16 @@ impl FuzzedExecutor {
         runner: TestRunner,
         sender: Address,
         config: FuzzConfig,
+        persisted_failure: Option<BaseCounterExample>,
     ) -> Self {
-        Self { executor, runner, sender, config }
+        Self { executor, runner, sender, config, persisted_failure }
     }
 
     /// Fuzzes the provided function, assuming it is available at the contract at `address`
     /// If `should_fail` is set to `true`, then it will stop only when there's a success
     /// test case.
     ///
-    /// Returns a list of all the consumed gas and calldata of every fuzz case
+    /// Returns a list of all the consumed gas and calldata of every fuzz case.
     pub fn fuzz(
         &mut self,
         func: &Function,
@@ -116,57 +119,64 @@ impl FuzzedExecutor {
         let mut runs = 0;
         let mut rejects = 0;
         let mut run_failure = None;
+
         'stop: while continue_campaign(runs) {
-            let Ok(strategy) = strategy.new_tree(&mut self.runner) else {
-                run_failure = Some(TestCaseError::fail("no input generated to call fuzzed target"));
-                break 'stop;
+            // If counterexample recorded, replay it first, without incrementing runs.
+            let input = if let Some(failure) = self.persisted_failure.take() {
+                failure.calldata
+            } else {
+                // If running with progress, then increment current run.
+                if let Some(progress) = progress {
+                    progress.inc(1);
+                };
+
+                runs += 1;
+
+                let Ok(strategy) = strategy.new_tree(&mut self.runner) else {
+                    run_failure =
+                        Some(TestCaseError::fail("no input generated to call fuzzed target"));
+                    break 'stop;
+                };
+                strategy.current()
             };
 
-            // If running with progress then increment current run.
-            if let Some(progress) = progress {
-                progress.inc(1);
-            };
+            match self.single_fuzz(address, input) {
+                Ok(fuzz_outcome) => match fuzz_outcome {
+                    FuzzOutcome::Case(case) => {
+                        let mut data = execution_data.borrow_mut();
+                        data.gas_by_case.push((case.case.gas, case.case.stipend));
 
-            match self.single_fuzz(address, strategy.current()) {
-                Ok(fuzz_outcome) => {
-                    match fuzz_outcome {
-                        FuzzOutcome::Case(case) => {
-                            let mut data = execution_data.borrow_mut();
-                            data.gas_by_case.push((case.case.gas, case.case.stipend));
-
-                            if data.first_case.is_none() {
-                                data.first_case.replace(case.case);
-                            }
-
-                            if let Some(call_traces) = case.traces {
-                                if data.traces.len() == max_traces_to_collect {
-                                    data.traces.pop();
-                                }
-                                data.traces.push(call_traces);
-                                data.breakpoints.replace(case.breakpoints);
-                            }
-
-                            if show_logs {
-                                data.logs.extend(case.logs);
-                            }
-
-                            HitMaps::merge_opt(&mut data.coverage, case.coverage);
-                            data.deprecated_cheatcodes = case.deprecated_cheatcodes;
+                        if data.first_case.is_none() {
+                            data.first_case.replace(case.case);
                         }
-                        FuzzOutcome::CounterExample(CounterExampleOutcome {
-                            exit_reason: status,
-                            counterexample: outcome,
-                            ..
-                        }) => {
-                            let reason = rd.maybe_decode(&outcome.1.result, status);
-                            execution_data.borrow_mut().logs.extend(outcome.1.logs.clone());
-                            execution_data.borrow_mut().counterexample = outcome;
-                            // HACK: we have to use an empty string here to denote `None`.
-                            run_failure = Some(TestCaseError::fail(reason.unwrap_or_default()));
-                            break 'stop;
+
+                        if let Some(call_traces) = case.traces {
+                            if data.traces.len() == max_traces_to_collect {
+                                data.traces.pop();
+                            }
+                            data.traces.push(call_traces);
+                            data.breakpoints.replace(case.breakpoints);
                         }
+
+                        if show_logs {
+                            data.logs.extend(case.logs);
+                        }
+
+                        HitMaps::merge_opt(&mut data.coverage, case.coverage);
+                        data.deprecated_cheatcodes = case.deprecated_cheatcodes;
                     }
-                }
+                    FuzzOutcome::CounterExample(CounterExampleOutcome {
+                        exit_reason: status,
+                        counterexample: outcome,
+                        ..
+                    }) => {
+                        let reason = rd.maybe_decode(&outcome.1.result, status);
+                        execution_data.borrow_mut().logs.extend(outcome.1.logs.clone());
+                        execution_data.borrow_mut().counterexample = outcome;
+                        run_failure = Some(TestCaseError::fail(reason.unwrap_or_default()));
+                        break 'stop;
+                    }
+                },
                 Err(err) => {
                     match err {
                         TestCaseError::Fail(_) => {
@@ -188,8 +198,6 @@ impl FuzzedExecutor {
                     }
                 }
             }
-
-            runs += 1;
         }
 
         let fuzz_result = execution_data.into_inner();
