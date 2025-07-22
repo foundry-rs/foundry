@@ -330,6 +330,9 @@ impl EthApi {
             EthRequest::DebugTraceCall(tx, block, opts) => {
                 self.debug_trace_call(tx, block, opts).await.to_rpc_result()
             }
+            EthRequest::DebugCodeByHash(hash, block) => {
+                self.debug_code_by_hash(hash, block).await.to_rpc_result()
+            }
             EthRequest::TraceTransaction(tx) => self.trace_transaction(tx).await.to_rpc_result(),
             EthRequest::TraceBlock(block) => self.trace_block(block).await.to_rpc_result(),
             EthRequest::TraceFilter(filter) => self.trace_filter(filter).await.to_rpc_result(),
@@ -1745,6 +1748,18 @@ impl EthApi {
         let result: std::result::Result<GethTrace, BlockchainError> =
             self.backend.call_with_tracing(request, fees, Some(block_request), opts).await;
         result
+    }
+
+    /// Returns code by its hash
+    ///
+    /// Handler for RPC call: `debug_codeByHash`
+    pub async fn debug_code_by_hash(
+        &self,
+        hash: B256,
+        block_id: Option<BlockId>,
+    ) -> Result<Option<Bytes>> {
+        node_info!("debug_codeByHash");
+        self.backend.debug_code_by_hash(hash, block_id).await
     }
 
     /// Returns traces for the transaction hash via parity's tracing endpoint

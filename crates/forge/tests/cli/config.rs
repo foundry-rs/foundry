@@ -1121,6 +1121,7 @@ corpus_min_size = 0
 failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
+show_edge_coverage = false
 
 [labels]
 
@@ -1234,7 +1235,8 @@ exclude = []
     "failure_persist_dir": "cache/invariant",
     "show_metrics": true,
     "timeout": null,
-    "show_solidity": false
+    "show_solidity": false,
+    "show_edge_coverage": false
   },
   "ffi": false,
   "allow_internal_expect_revert": false,
