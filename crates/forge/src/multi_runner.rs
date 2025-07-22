@@ -7,7 +7,10 @@ use crate::{
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
-use foundry_common::{ContractsByArtifact, TestFunctionExt, get_contract_name, shell::verbosity};
+use foundry_common::{
+    ContractsByArtifact, TestFunctionExt, get_contract_name, sema::StructDefinitions,
+    shell::verbosity,
+};
 use foundry_compilers::{
     Artifact, ArtifactId, ProjectCompileOutput,
     artifacts::{Contract, Libraries},
@@ -58,6 +61,8 @@ pub struct MultiContractRunner {
     pub libs_to_deploy: Vec<Bytes>,
     /// Library addresses used to link contracts.
     pub libraries: Libraries,
+    /// Other metadata extracted from the semantic analysis of the contracts.
+    pub metadata: StructDefinitions,
 
     /// The fork to use at launch
     pub fork: Option<CreateFork>,
@@ -249,7 +254,12 @@ impl MultiContractRunner {
 
         debug!("start executing all tests in contract");
 
-        let executor = self.tcfg.executor(self.known_contracts.clone(), artifact_id, db.clone());
+        let executor = self.tcfg.executor(
+            self.known_contracts.clone(),
+            artifact_id,
+            db.clone(),
+            self.metadata.clone(),
+        );
         let runner = ContractRunner::new(
             &identifier,
             contract,
@@ -347,6 +357,7 @@ impl TestRunnerConfig {
         known_contracts: ContractsByArtifact,
         artifact_id: &ArtifactId,
         db: Backend,
+        struct_defs: StructDefinitions,
     ) -> Executor {
         let cheats_config = Arc::new(CheatsConfig::new(
             &self.config,
@@ -363,6 +374,7 @@ impl TestRunnerConfig {
                     .enable_isolation(self.isolation)
                     .odyssey(self.odyssey)
                     .create2_deployer(self.evm_opts.create2_deployer)
+                    .struct_defs(struct_defs)
             })
             .spec_id(self.spec_id)
             .gas_limit(self.evm_opts.gas_limit())
@@ -404,6 +416,8 @@ pub struct MultiContractRunnerBuilder {
     pub isolation: bool,
     /// Whether to enable Odyssey features.
     pub odyssey: bool,
+    ///
+    pub struct_defs: StructDefinitions,
 }
 
 impl MultiContractRunnerBuilder {
@@ -419,6 +433,7 @@ impl MultiContractRunnerBuilder {
             isolation: Default::default(),
             decode_internal: Default::default(),
             odyssey: Default::default(),
+            struct_defs: Default::default(),
         }
     }
 
@@ -464,6 +479,11 @@ impl MultiContractRunnerBuilder {
 
     pub fn odyssey(mut self, enable: bool) -> Self {
         self.odyssey = enable;
+        self
+    }
+
+    pub fn struct_defs(mut self, struct_defs: StructDefinitions) -> Self {
+        self.struct_defs = struct_defs;
         self
     }
 
@@ -527,6 +547,7 @@ impl MultiContractRunnerBuilder {
             known_contracts,
             libs_to_deploy,
             libraries,
+            metadata: self.struct_defs,
 
             fork: self.fork,
 

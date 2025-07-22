@@ -8,6 +8,7 @@ use alloy_primitives::{
     map::{AddressHashMap, HashMap},
 };
 use foundry_cheatcodes::{CheatcodesExecutor, Wallets};
+use foundry_common::sema::StructDefinitions;
 use foundry_evm_core::{
     ContextExt, Env, InspectorExt,
     backend::{DatabaseExt, JournaledState},
@@ -71,6 +72,8 @@ pub struct InspectorStackBuilder {
     pub wallets: Option<Wallets>,
     /// The CREATE2 deployer address.
     pub create2_deployer: Address,
+    ///
+    pub struct_defs: StructDefinitions,
 }
 
 impl InspectorStackBuilder {
@@ -175,6 +178,12 @@ impl InspectorStackBuilder {
         self
     }
 
+    #[inline]
+    pub fn struct_defs(mut self, struct_defs: StructDefinitions) -> Self {
+        self.struct_defs = struct_defs;
+        self
+    }
+
     /// Builds the stack of inspectors to use when transacting/committing on the EVM.
     pub fn build(self) -> InspectorStack {
         let Self {
@@ -191,12 +200,13 @@ impl InspectorStackBuilder {
             odyssey,
             wallets,
             create2_deployer,
+            struct_defs,
         } = self;
         let mut stack = InspectorStack::new();
 
         // inspectors
         if let Some(config) = cheatcodes {
-            let mut cheatcodes = Cheatcodes::new(config);
+            let mut cheatcodes = Cheatcodes::new(config, struct_defs);
             // Set wallets if they are provided
             if let Some(wallets) = wallets {
                 cheatcodes.set_wallets(wallets);
@@ -737,10 +747,12 @@ impl InspectorStackRefMut<'_> {
     /// it.
     fn with_stack<O>(&mut self, f: impl FnOnce(&mut InspectorStack) -> O) -> O {
         let mut stack = InspectorStack {
-            cheatcodes: self
-                .cheatcodes
-                .as_deref_mut()
-                .map(|cheats| core::mem::replace(cheats, Cheatcodes::new(cheats.config.clone()))),
+            cheatcodes: self.cheatcodes.as_deref_mut().map(|cheats| {
+                core::mem::replace(
+                    cheats,
+                    Cheatcodes::new(cheats.config.clone(), cheats.struct_defs.clone()),
+                )
+            }),
             inner: std::mem::take(self.inner),
         };
 

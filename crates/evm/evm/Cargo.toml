@@ -45,6 +45,7 @@ revm = { workspace = true, default-features = false, features = [
     "c-kzg",
 ] }
 revm-inspectors.workspace = true
+solar-sema.workspace = true
 
 eyre.workspace = true
 parking_lot.workspace = true

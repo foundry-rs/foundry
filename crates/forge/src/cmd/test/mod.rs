@@ -2,6 +2,7 @@ use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder, TestFilter,
     decode::decode_console_logs,
+    foundry_common::sema::{SemanticAnalysisProcessor, StructDefinitions},
     gas_report::GasReport,
     multi_runner::matches_contract,
     result::{SuiteResult, TestOutcome, TestStatus},
@@ -18,7 +19,7 @@ use clap::{Parser, ValueHint};
 use eyre::{Context, OptionExt, Result, bail};
 use foundry_block_explorers::EtherscanApiVersion;
 use foundry_cli::{
-    opts::{BuildOpts, GlobalArgs},
+    opts::{BuildOpts, GlobalArgs, solar_pcx_from_build_opts},
     utils::{self, LoadConfig},
 };
 use foundry_common::{TestFunctionExt, compile::ProjectCompiler, evm::EvmArgs, fs, shell};
@@ -42,6 +43,7 @@ use foundry_config::{
 use foundry_debugger::Debugger;
 use foundry_evm::traces::identifier::TraceIdentifiers;
 use regex::Regex;
+use solar_sema::interface::Session;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
@@ -308,6 +310,7 @@ impl TestArgs {
         trace!(target: "forge::test", ?filter, "using filter");
 
         let sources_to_compile = self.get_sources_to_compile(&config, &filter)?;
+        let input: Vec<PathBuf> = sources_to_compile.iter().cloned().collect();
 
         let compiler = ProjectCompiler::new()
             .dynamic_test_linking(config.dynamic_test_linking)
@@ -315,6 +318,28 @@ impl TestArgs {
             .files(sources_to_compile);
 
         let output = compiler.compile(&project)?;
+
+        // Instantiate solar's parsing context
+        let mut sess = Session::builder().with_stderr_emitter().build();
+        sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
+
+        let mut pcx = solar_pcx_from_build_opts(&sess, &self.build, Some(&project), Some(&input))?;
+
+        let sess = pcx.sess;
+        let struct_defs = sess.enter_parallel(|| -> Result<StructDefinitions> {
+            // Load all files into the parsing ctx
+            pcx.load_files(input).map_err(|_| eyre::eyre!("Error loding files"))?;
+
+            // Parse and lower to HIR
+            let hir_arena = solar_sema::thread_local::ThreadLocal::new();
+            let hir_result = pcx.parse_and_lower(&hir_arena);
+
+            if let Ok(Some(gcx)) = hir_result {
+                return SemanticAnalysisProcessor::new(gcx).process().map(|res| res.struct_defs());
+            }
+
+            Err(eyre::eyre!("Error lowering AST"))
+        })?;
 
         // Create test options from general project settings and compiler output.
         let project_root = &project.paths.root;
@@ -355,6 +380,7 @@ impl TestArgs {
             .with_fork(evm_opts.get_fork(&config, env.clone()))
             .enable_isolation(evm_opts.isolate)
             .odyssey(evm_opts.odyssey)
+            .struct_defs(struct_defs)
             .build::<MultiCompiler>(project_root, &output, env, evm_opts)?;
 
         let libraries = runner.libraries.clone();

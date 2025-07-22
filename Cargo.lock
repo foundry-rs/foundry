@@ -4468,6 +4468,7 @@ dependencies = [
  "revm-inspectors",
  "serde",
  "serde_json",
+ "solar-sema",
  "thiserror 2.0.12",
  "tracing",
  "uuid 1.17.0",

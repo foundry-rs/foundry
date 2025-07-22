@@ -855,6 +855,7 @@ fn latest_broadcast(
 mod tests {
     use super::*;
     use crate::CheatsConfig;
+    use foundry_common::sema::StructDefinitions;
     use std::sync::Arc;
 
     fn cheats() -> Cheatcodes {
@@ -863,7 +864,7 @@ mod tests {
             root: PathBuf::from(&env!("CARGO_MANIFEST_DIR")),
             ..Default::default()
         };
-        Cheatcodes::new(Arc::new(config))
+        Cheatcodes::new(Arc::new(config), StructDefinitions::default())
     }
 
     #[test]

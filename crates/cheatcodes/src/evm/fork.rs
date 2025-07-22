@@ -208,7 +208,7 @@ impl Cheatcode for rpc_0Call {
             .database
             .active_fork_url()
             .ok_or_else(|| fmt_err!("no active fork URL found"))?;
-        rpc_call(&url, method, params)
+        rpc_call(ccx.state, &url, method, params)
     }
 }
 
@@ -216,7 +216,7 @@ impl Cheatcode for rpc_1Call {
     fn apply(&self, state: &mut Cheatcodes) -> Result {
         let Self { urlOrAlias, method, params } = self;
         let url = state.config.rpc_endpoint(urlOrAlias)?.url()?;
-        rpc_call(&url, method, params)
+        rpc_call(state, &url, method, params)
     }
 }
 
@@ -369,14 +369,15 @@ fn persist_caller(ccx: &mut CheatsCtxt) {
 }
 
 /// Performs an Ethereum JSON-RPC request to the given endpoint.
-fn rpc_call(url: &str, method: &str, params: &str) -> Result {
+fn rpc_call(state: &Cheatcodes, url: &str, method: &str, params: &str) -> Result {
     let provider = ProviderBuilder::new(url).build()?;
     let params_json: serde_json::Value = serde_json::from_str(params)?;
     let result =
         foundry_common::block_on(provider.raw_request(method.to_string().into(), params_json))
             .map_err(|err| fmt_err!("{method:?}: {err}"))?;
     let result_as_tokens = convert_to_bytes(
-        &json_value_to_token(&result).map_err(|err| fmt_err!("failed to parse result: {err}"))?,
+        &json_value_to_token(state, &result)
+            .map_err(|err| fmt_err!("failed to parse result: {err}"))?,
     );
 
     Ok(result_as_tokens.abi_encode())
