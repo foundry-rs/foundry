@@ -33,7 +33,7 @@ alloy-pubsub.workspace = true
 alloy-rpc-client.workspace = true
 alloy-rpc-types = { workspace = true, features = ["eth", "engine"] }
 alloy-serde.workspace = true
-alloy-sol-types = {workspace = true, features = ["json"]}
+alloy-sol-types = { workspace = true, features = ["json"] }
 alloy-transport-http = { workspace = true, features = [
     "reqwest",
     "reqwest-rustls-tls",
@@ -78,6 +78,8 @@ terminal_size.workspace = true
 ciborium.workspace = true
 
 flate2.workspace = true
+cargo_metadata = "0.19.2"
+convert_case = "0.7.1"
 
 [build-dependencies]
 chrono.workspace = true

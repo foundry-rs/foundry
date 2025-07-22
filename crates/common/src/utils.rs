@@ -1,9 +1,15 @@
 //! Uncategorised utilities.
 
-use alloy_primitives::{B256, Bytes, U256, hex, keccak256};
+use alloy_primitives::{hex, keccak256, Bytes, B256, U256};
+use cargo_metadata::MetadataCommand;
+use convert_case::{Case, Casing};
 use foundry_compilers::artifacts::BytecodeObject;
 use regex::Regex;
-use std::sync::LazyLock;
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    sync::LazyLock,
+};
 
 static BYTECODE_PLACEHOLDER_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"__\$.{34}\$__").expect("invalid regex"));
@@ -73,3 +79,29 @@ pub fn strip_bytecode_placeholders(bytecode: &BytecodeObject) -> Option<Bytes> {
         }
     }
 }
+pub fn find_rust_contracts(src_root: &Path) -> eyre::Result<BTreeMap<String, (PathBuf, String)>> {
+    let mut contracts = BTreeMap::new();
+
+    for entry in walkdir::WalkDir::new(src_root).into_iter().filter_entry(|e| {
+        e.file_type().is_dir() && e.file_name() != "target"
+    }) {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.join("Cargo.toml").exists() {
+            let metadata =
+                MetadataCommand::new().manifest_path(path.join("Cargo.toml")).no_deps().exec()?;
+
+            if let Some(package) = metadata.packages.first() {
+                let original_name = &package.name;
+                let contract_name = format!("{}.wasm", original_name.to_case(Case::Pascal));
+                let canonical_path = path.canonicalize()?;
+
+                contracts.insert(contract_name, (canonical_path, original_name.clone()));
+            }
+        }
+    }
+
+    Ok(contracts)
+}
+

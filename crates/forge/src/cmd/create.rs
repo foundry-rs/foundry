@@ -3,7 +3,7 @@ use alloy_chains::Chain;
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt, Specifier};
 use alloy_json_abi::{Constructor, JsonAbi};
 use alloy_network::{AnyNetwork, AnyTransactionReceipt, EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, Bytes, hex};
+use alloy_primitives::{hex, Address, Bytes};
 use alloy_provider::{PendingTransactionError, Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
@@ -14,26 +14,30 @@ use eyre::{Context, Result};
 use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::{
     opts::{BuildOpts, EthereumOpts, EtherscanOpts, TransactionOpts},
-    utils::{self, LoadConfig, read_constructor_args_file, remove_contract},
+    utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
-use foundry_common::{
-    compile::{self},
-    fmt::parse_tokens,
-    shell,
-};
-use foundry_compilers::{
-    ArtifactId, artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize,
-};
+use foundry_common::{compile::{self}, find_rust_contracts, fmt::parse_tokens, shell};
+use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize, ArtifactFile, ArtifactId, Compiler};
 use foundry_config::{
-    Config,
     figment::{
-        self, Metadata, Profile,
-        value::{Dict, Map},
+        self, value::{Dict, Map}, Metadata,
+        Profile,
     },
     merge_impl_figment_convert,
+    Config,
 };
 use serde_json::json;
-use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc, time::Duration};
+use std::{borrow::Borrow, fs, marker::PhantomData, path::PathBuf, sync::Arc, time::Duration};
+use foundry_compilers::artifacts::CompactBytecode;
+use rand::{distributions::Alphanumeric, Rng};
+
+fn generate_build_id() -> String {
+    rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(8)
+        .map(char::from)
+        .collect()
+}
 
 merge_impl_figment_convert!(CreateArgs, build, eth);
 
@@ -114,15 +118,48 @@ impl CreateArgs {
         // Find Project & Compile
         let project = config.project()?;
 
+        // Check if the contract is rust
+        // TODO(d1r1): after move compilation logic into Founry compiler - we can simplify this flow completely
+        let rust_contracts = find_rust_contracts(&project.paths.sources)?;
+
         let target_path = if let Some(ref mut path) = self.contract.path {
             canonicalize(project.root().join(path))?
+        } else if let Some((rust_path, _)) = rust_contracts.get(&self.contract.name) {
+            rust_path.clone()
         } else {
             project.find_contract_path(&self.contract.name)?
         };
 
         let output = compile::compile_target(&target_path, &project, shell::is_json())?;
 
-        let (abi, bin, id) = remove_contract(output, &target_path, &self.contract.name)?;
+        let (abi, bin, id) = if rust_contracts.contains_key(&self.contract.name) {
+            let artifact_dir = project.artifacts_path().join(&self.contract.name);
+            let artifact: serde_json::Value = serde_json::from_str(
+                &fs::read_to_string(&artifact_dir.join("foundry.json"))?,
+            )?;
+
+            // Extract ABI
+            let abi: JsonAbi = serde_json::from_value(artifact["abi"].clone())?;
+
+            // Extract Bytecode
+            let bin: CompactBytecode  = serde_json::from_value(artifact["bytecode"].clone())?;
+            
+
+            // Create ArtifactId
+            let id = ArtifactId {
+                path: artifact_dir,
+                name: self.contract.name.clone(),
+                source: target_path.clone(),
+                version: semver::Version::new(0, 1, 0),
+                profile: "release".to_string(),
+                // TODO(d1r1): use actual build id (that used for caching)
+                build_id: generate_build_id(),
+            };
+            (abi, bin, id)
+        } else {
+            remove_contract(output, &target_path, &self.contract.name)?
+        };
+
 
         let bin = match bin.object {
             BytecodeObject::Bytecode(_) => bin.object,
@@ -181,7 +218,7 @@ impl CreateArgs {
                 id,
                 dry_run,
             )
-            .await
+                .await
         } else {
             // Deploy with signer
             let signer = self.eth.wallet.signer().await?;
@@ -200,7 +237,7 @@ impl CreateArgs {
                 id,
                 dry_run,
             )
-            .await
+                .await
         }
     }
 
@@ -322,7 +359,6 @@ impl CreateArgs {
             provider.estimate_gas(deployer.tx.clone()).await
         }?);
         println!("DEBUG:2  create/deploy");
-
 
 
         if is_legacy {
@@ -471,6 +507,8 @@ impl CreateArgs {
         let params = params.iter().map(|(ty, arg)| (ty, arg.as_str()));
         parse_tokens(params).map_err(Into::into)
     }
+
+
 }
 
 impl figment::Provider for CreateArgs {

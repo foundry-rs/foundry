@@ -37,6 +37,8 @@ pub mod transactions;
 mod utils;
 pub mod version;
 
+mod rust_compiler;
+
 pub use constants::*;
 pub use contracts::*;
 pub use io::{Shell, shell, stdin};

@@ -13,18 +13,18 @@ use eyre::{eyre, ContextCompat, Result, WrapErr};
 use fluentbase_build::{execute_build, Artifact as FluentArtifact, BuildArgs, BuildResult};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
-    artifacts::{remappings::Remapping, BytecodeObject, Contract, Evm, Source, SourceFile},
-    compilers::{
+    artifacts::{remappings::Remapping, BytecodeObject, Contract, Evm, Source, SourceFile}, compilers::{
         solc::{Solc, SolcCompiler},
         Compiler,
-    },
-    info::ContractInfo as CompilerContractInfo,
-    project::Preprocessor,
-    report::{BasicStdoutReporter, NoReporter, Report},
-    solc::SolcSettings,
-    sources::VersionedSourceFile,
-    AggregatedCompilerOutput, Artifact, Project, ProjectBuilder, ProjectCompileOutput,
-    ProjectPathsConfig, SolcConfig,
+    }, info::ContractInfo as CompilerContractInfo, project::Preprocessor, report::{BasicStdoutReporter, NoReporter, Report},
+    solc::SolcSettings, sources::VersionedSourceFile,
+    AggregatedCompilerOutput,
+    Artifact,
+    Project,
+    ProjectBuilder,
+    ProjectCompileOutput,
+    ProjectPathsConfig,
+    SolcConfig,
 };
 use num_format::{Locale, ToFormattedString};
 use std::{
@@ -150,6 +150,8 @@ impl ProjectCompiler {
         self.dynamic_test_linking = preprocess;
         self
     }
+    // TODO(d1r1): move rust compilation to the foundry-compilers crate.
+    //
     /// Compiles the project.
     pub fn compile<C: Compiler<CompilerContract = Contract>>(
         mut self,
@@ -159,6 +161,8 @@ impl ProjectCompiler {
         TestOptimizerPreprocessor: Preprocessor<C>,
     {
         self.project_root = project.root().to_path_buf();
+
+        self.build_rust_contracts(&project)?;
 
         // TODO: Avoid using std::process::exit(0).
         // Replacing this with a return (e.g., Ok(ProjectCompileOutput::default())) would be more
@@ -175,8 +179,7 @@ impl ProjectCompiler {
         let files = std::mem::take(&mut self.files);
         let preprocess = self.dynamic_test_linking;
 
-        let rust_artifacts = self.build_rust_contracts(&project)?;
-        let mut output = self.compile_with(|| {
+        self.compile_with(|| {
             let sources = if !files.is_empty() {
                 Source::read_all(files)?
             } else {
@@ -189,11 +192,7 @@ impl ProjectCompiler {
                 compiler = compiler.with_preprocessor(TestOptimizerPreprocessor);
             }
             compiler.compile().map_err(Into::into)
-        })?;
-        // todo!()
-        // self.integrate_rust_contracts_into_output(&mut output, rust_artifacts, project)?;
-
-        Ok(output)
+        })
     }
 
     /// Compiles the project with the given closure
@@ -250,21 +249,19 @@ impl ProjectCompiler {
 
     /// Finds and compiles Rust contracts, returning aggregated compilation output.
     fn build_rust_contracts<C: Compiler<CompilerContract = Contract>>(
-        &self,
+        &mut self,
         project: &Project<C>,
-    ) -> Result<Vec<(String, PathBuf, Contract)>> {
+    ) -> Result<()> {
         // Find all Rust projects (crates) in source directories
         let rust_projects = find_rust_projects(&project.paths.sources)?;
 
         if rust_projects.is_empty() {
             sh_println!("No Rust contracts found")?;
-            return Ok(Vec::new());
+            return Ok(());
         }
 
         sh_println!("Compiling {} Rust contract(s)...", rust_projects.len())?;
         let timer = Instant::now();
-
-        let mut artifacts = Vec::with_capacity(rust_projects.len());
 
         // Iterate through each found Rust project and compile it
         for rust_project_path in rust_projects {
@@ -283,12 +280,14 @@ impl ProjectCompiler {
 
             // Configure the build to generate Foundry artifact
             let build_args = BuildArgs {
-                contract_name: Some(contract_name_clean.clone()),
+                contract_name: Some(contract_name.clone()),
                 generate: vec![
                     FluentArtifact::Solidity,
                     FluentArtifact::Abi,
                     FluentArtifact::Foundry,
                     FluentArtifact::Rwasm,
+                    FluentArtifact::Wat,
+                    FluentArtifact::Metadata,
                 ],
                 docker: false,
                 output: Some(project.artifacts_path().to_path_buf()),
@@ -298,96 +297,17 @@ impl ProjectCompiler {
             sh_println!("  - Build args: {build_args:?}");
 
             // Execute Rust contract build
-            let build_result = execute_build(&build_args, Some(rust_project_path.clone()))
+            execute_build(&build_args, Some(rust_project_path.clone()))
                 .map_err(|e| eyre::eyre!("Build failed: {}", e))
                 .wrap_err_with(|| {
                     format!("Failed to build Rust contract at {}", rust_project_path.display())
                 })?;
-
-            // Read the generated Foundry artifact (foundry.json)
-            let foundry_artifact_path = build_result
-                .foundry_metadata_path
-                .as_ref()
-                .ok_or_else(|| eyre!("Foundry artifact was not generated for {}", contract_name))?;
-
-            let foundry_artifact_json = std::fs::read_to_string(foundry_artifact_path)
-                .wrap_err_with(|| {
-                    format!(
-                        "Failed to read Foundry artifact at {}",
-                        foundry_artifact_path.display()
-                    )
-                })?;
-
-            // Parse the Foundry artifact to extract the Contract
-            let foundry_artifact: serde_json::Value = serde_json::from_str(&foundry_artifact_json)
-                .wrap_err("Failed to parse Foundry artifact JSON")?;
-
-            // Extract ABI and create Contract structure
-            let abi: JsonAbi = serde_json::from_value(foundry_artifact["abi"].clone())
-                .wrap_err("Failed to parse ABI from Foundry artifact")?;
-
-            // Extract bytecode from Foundry artifact
-            let bytecode_hex = foundry_artifact["bytecode"]["object"]
-                .as_str()
-                .ok_or_else(|| eyre!("No bytecode found in Foundry artifact"))?;
-
-            let bytecode_bytes = if bytecode_hex.starts_with("0x") {
-                hex::decode(&bytecode_hex[2..])
-            } else {
-                hex::decode(bytecode_hex)
-            }
-            .wrap_err("Failed to decode bytecode hex")?;
-
-            let bytecode = BytecodeObject::Bytecode(bytecode_bytes.into());
-            let evm = Evm {
-                bytecode: Some(bytecode.clone().into()),
-                deployed_bytecode: None,
-                method_identifiers: BTreeMap::new(),
-                assembly: None,
-                legacy_assembly: None,
-                gas_estimates: None,
-            };
-
-            let contract = Contract {
-                abi: Some(abi),
-                evm: Some(evm),
-                userdoc: Default::default(),
-                devdoc: Default::default(),
-                storage_layout: Default::default(),
-                transient_storage_layout: Default::default(),
-                metadata: None,
-                ir: None,
-                ewasm: None,
-                ir_optimized: None,
-                ir_optimized_ast: None,
-            };
-
-            artifacts.push((contract_name_clean.clone(), rust_project_path, contract));
-
-            // Save Foundry artifact with the correct name that Foundry expects
-            // Create the contract-specific directory (e.g., out/PowerCalculator.wasm/)
-            let contract_output_dir = project.artifacts_path().join(&contract_name_clean);
-            std::fs::create_dir_all(&contract_output_dir).wrap_err_with(|| {
-                format!("Failed to create directory {}", contract_output_dir.display())
-            })?;
-
-            // Save as ContractName.json (what Foundry expects)
-            let foundry_artifact_file =
-                contract_output_dir.join(format!("{}.json", contract_name_clean));
-            std::fs::copy(foundry_artifact_path, &foundry_artifact_file).wrap_err_with(|| {
-                format!("Failed to copy Foundry artifact to {}", foundry_artifact_file.display())
-            })?;
-
-            sh_println!(
-                "  - Successfully compiled {} to {:?}",
-                contract_name,
-                build_result.wasm_path
-            );
-            sh_println!("  - Saved Foundry artifact to {}", foundry_artifact_file.display());
+            // remove directory after proccessing
+            self.files.retain(|file| !file.starts_with(&rust_project_path));
         }
-
         sh_println!("Finished compiling Rust contracts in {:.2?}", timer.elapsed())?;
-        Ok(artifacts)
+
+        Ok(())
     }
 
     /// Normalizes contract directory name to PascalCase contract name
