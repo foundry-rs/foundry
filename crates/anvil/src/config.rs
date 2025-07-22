@@ -65,6 +65,7 @@ use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
 
 pub use foundry_common::version::SHORT_VERSION as VERSION_MESSAGE;
+use foundry_evm::traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier};
 
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
@@ -1102,6 +1103,15 @@ impl NodeConfig {
             genesis_init: self.genesis.clone(),
         };
 
+        let mut decoder_builder = CallTraceDecoderBuilder::new();
+        if self.print_traces {
+            // if traces should get printed we configure the decoder with the signatures cache
+            if let Ok(identifier) = SignaturesIdentifier::new(false) {
+                debug!(target: "node", "using signature identifier");
+                decoder_builder = decoder_builder.with_signature_identifier(identifier);
+            }
+        }
+
         // only memory based backend for now
         let backend = mem::Backend::with_genesis(
             db,
@@ -1112,6 +1122,7 @@ impl NodeConfig {
             self.enable_steps_tracing,
             self.print_logs,
             self.print_traces,
+            Arc::new(decoder_builder.build()),
             self.odyssey,
             self.prune_history,
             self.max_persisted_states,
