@@ -1,30 +1,30 @@
 use crate::{
-    ScriptArgs, ScriptConfig, build::LinkedBuildData, progress::ScriptProgress,
-    sequence::ScriptSequenceKind, verify::BroadcastedState,
+    build::LinkedBuildData, progress::ScriptProgress, sequence::ScriptSequenceKind, verify::BroadcastedState,
+    ScriptArgs, ScriptConfig,
 };
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::TxEnvelope;
-use alloy_eips::{BlockId, eip2718::Encodable2718};
+use alloy_eips::{eip2718::Encodable2718, BlockId};
 use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{
-    Address, TxHash,
-    map::{AddressHashMap, AddressHashSet},
-    utils::format_units,
+    map::{AddressHashMap, AddressHashSet}, utils::format_units,
+    Address,
+    TxHash,
 };
-use alloy_provider::{Provider, utils::Eip1559Estimation};
+use alloy_provider::{utils::Eip1559Estimation, Provider};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
-use eyre::{Context, Result, bail};
+use eyre::{bail, Context, Result};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
 use foundry_common::{
-    TransactionMaybeSigned,
-    provider::{RetryProvider, get_http_provider, try_get_http_provider},
+    provider::{get_http_provider, try_get_http_provider, RetryProvider},
     shell,
+    TransactionMaybeSigned,
 };
 use foundry_config::Config;
-use futures::{StreamExt, future::join_all};
+use futures::{future::join_all, StreamExt};
 use itertools::Itertools;
 use std::{cmp::Ordering, sync::Arc};
 
@@ -33,23 +33,6 @@ pub async fn estimate_gas<P: Provider<AnyNetwork>>(
     provider: &P,
     estimate_multiplier: u64,
 ) -> Result<()> {
-    println!("d1r1: DEBUG: Set WASM deployment gas limit to 30M");
-
-    // Check if this is a WASM deployment (CREATE transaction with WASM magic number)
-     let is_wasm_deployment = tx.to.is_none() && {
-        if let Some(tx_input) = tx.input.input() {
-            tx_input.len() >= 4 && tx_input[0..4] == [0x00, 0x61, 0x73, 0x6d] // WASM magic number
-        } else {
-            false
-        }
-    };
-    
-    if is_wasm_deployment {
-        // Use fixed high gas limit for WASM
-        tx.set_gas_limit(30_000_000u64);
-        eprintln!("DEBUG: Set WASM deployment gas limit to 30M");
-        return Ok(());
-    }
     // if already set, some RPC endpoints might simply return the gas value that is already
     // set in the request and omit the estimate altogether, so we remove it here
     tx.gas = None;

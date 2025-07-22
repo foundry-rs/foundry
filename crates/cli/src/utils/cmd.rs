@@ -1,27 +1,27 @@
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{Address, Bytes, map::HashMap};
+use alloy_primitives::{map::HashMap, Address, Bytes};
 use eyre::{Result, WrapErr};
 use foundry_common::{
-    ContractsByArtifact, TestFunctionExt, compile::ProjectCompiler, fs, selectors::SelectorKind,
-    shell,
+    compile::ProjectCompiler, fs, selectors::SelectorKind, shell, ContractsByArtifact,
+    TestFunctionExt,
 };
 use foundry_compilers::{
-    Artifact, ArtifactId, ProjectCompileOutput,
-    artifacts::{CompactBytecode, Settings},
-    cache::{CacheEntry, CompilerCache},
-    utils::read_json_file,
+    artifacts::{CompactBytecode, Settings}, cache::{CacheEntry, CompilerCache}, utils::read_json_file,
+    Artifact,
+    ArtifactId,
+    ProjectCompileOutput,
 };
-use foundry_config::{Chain, Config, NamedChain, error::ExtractConfigError, figment::Figment};
+use foundry_config::{error::ExtractConfigError, figment::Figment, Chain, Config, NamedChain};
 use foundry_debugger::Debugger;
 use foundry_evm::{
     executors::{DeployResult, EvmError, RawCallResult},
     opts::EvmOpts,
     traces::{
-        CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
-        debug::{ContractSources, DebugTraceIdentifier},
-        decode_trace_arena,
-        identifier::{SignaturesCache, SignaturesIdentifier, TraceIdentifiers},
-        render_trace_arena_inner,
+        debug::{ContractSources, DebugTraceIdentifier}, decode_trace_arena, identifier::{SignaturesCache, SignaturesIdentifier, TraceIdentifiers}, render_trace_arena_inner,
+        CallTraceDecoder,
+        CallTraceDecoderBuilder,
+        TraceKind,
+        Traces,
     },
 };
 use std::{
@@ -162,8 +162,14 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
     pb
 }
 
+// TODO(d1r1): replace with alloy-chain after pr would be merged
+const FLUENTBASE_DEVNET: u64 = 20993;
+const FLUENTBASE_TESTENT: u64 = 20994;
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain_id: u64) -> bool {
+    if chain_id == FLUENTBASE_TESTENT || chain_id == FLUENTBASE_DEVNET {
+        return true;
+    }
     if let Some(chain) = Chain::from(chain_id).named() {
         return chain.is_arbitrum()
             || chain.is_elastic()
