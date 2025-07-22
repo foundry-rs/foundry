@@ -468,7 +468,7 @@ fn parse_json_str(json: &str) -> Result<Value> {
 fn json_to_sol(defs: &StructDefinitions, json: &[&Value]) -> Result<Vec<DynSolValue>> {
     let mut sol = Vec::with_capacity(json.len());
     for value in json {
-        sol.push(json_value_to_token(&defs, value)?);
+        sol.push(json_value_to_token(defs, value)?);
     }
     Ok(sol)
 }
@@ -512,7 +512,7 @@ pub(super) fn json_value_to_token(defs: &StructDefinitions, value: &Value) -> Re
         Value::Bool(boolean) => Ok(DynSolValue::Bool(*boolean)),
         Value::Array(array) => array
             .iter()
-            .map(|v| json_value_to_token(&defs, v))
+            .map(|v| json_value_to_token(defs, v))
             .collect::<Result<_>>()
             .map(DynSolValue::Array),
         Value::Object(map) => {
@@ -737,7 +737,7 @@ fn reorder_type(ty: DynSolType, struct_defs: &StructDefinitions) -> DynSolType {
             if let Some(def) = struct_defs.get(&name) {
                 // The incoming `prop_names` and `tuple` are alphabetically sorted.
                 let type_map: std::collections::HashMap<String, DynSolType> =
-                    prop_names.into_iter().zip(tuple.into_iter()).collect();
+                    prop_names.into_iter().zip(tuple).collect();
 
                 let mut sorted_props = Vec::with_capacity(def.len());
                 let mut sorted_tuple = Vec::with_capacity(def.len());
@@ -770,7 +770,7 @@ fn reorder_type(ty: DynSolType, struct_defs: &StructDefinitions) -> DynSolType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{FixedBytes, U256};
+    use alloy_primitives::FixedBytes;
     use proptest::strategy::Strategy;
     use std::collections::HashMap;
 
@@ -782,15 +782,6 @@ mod tests {
             }
             _ => false,
         }
-    }
-
-    fn is_not_json_object_string(value: &DynSolValue) -> bool {
-        if let DynSolValue::String(s) = value {
-            if let Ok(parsed_json) = serde_json::from_str::<Value>(s) {
-                return !parsed_json.is_object();
-            }
-        }
-        true
     }
 
     /// [DynSolValue::Bytes] of length 32 and 20 are converted to [DynSolValue::FixedBytes] and
@@ -876,18 +867,18 @@ mod tests {
             assert_eq!(tuple.len(), 2);
             assert_eq!(tuple[0], DynSolType::String);
 
-            if let DynSolType::Array(apple_ty_boxed) = &tuple[1] {
-                if let DynSolType::CustomStruct { name, prop_names, tuple } = &**apple_ty_boxed {
-                    assert_eq!(*name, "Apple");
-                    // Check that the inner struct's fields are also in definition order.
-                    assert_eq!(*prop_names, vec!["color", "sweetness", "sourness"]);
-                    assert_eq!(
-                        *tuple,
-                        vec![DynSolType::String, DynSolType::Uint(8), DynSolType::Uint(8)]
-                    );
+            if let DynSolType::Array(apple_ty_boxed) = &tuple[1]
+                && let DynSolType::CustomStruct { name, prop_names, tuple } = &**apple_ty_boxed
+            {
+                assert_eq!(*name, "Apple");
+                // Check that the inner struct's fields are also in definition order.
+                assert_eq!(*prop_names, vec!["color", "sweetness", "sourness"]);
+                assert_eq!(
+                    *tuple,
+                    vec![DynSolType::String, DynSolType::Uint(8), DynSolType::Uint(8)]
+                );
 
-                    return Ok(());
-                }
+                return Ok(());
             }
         }
         panic!("Expected FruitStall and Apple to be CustomStruct");

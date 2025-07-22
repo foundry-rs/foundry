@@ -416,7 +416,7 @@ pub struct MultiContractRunnerBuilder {
     pub isolation: bool,
     /// Whether to enable Odyssey features.
     pub odyssey: bool,
-    ///
+    /// The user-defined structs of the contracts.
     pub struct_defs: StructDefinitions,
 }
 

@@ -1,5 +1,4 @@
-//! Semantic analysis helpers for extracting type information and other useful metadata from the
-//! HIR.
+//! Semantic analysis helpers for extracting type information and other metadata from the HIR.
 
 use eyre::{Result, eyre};
 use solar_sema::{
@@ -13,13 +12,13 @@ pub struct StructDefinitions(Arc<HashMap<String, Vec<(String, String)>>>);
 
 impl StructDefinitions {
     pub fn new(map: HashMap<String, Vec<(String, String)>>) -> Self {
-        StructDefinitions(Arc::new(map))
+        Self(Arc::new(map))
     }
 }
 
 impl Default for StructDefinitions {
     fn default() -> Self {
-        StructDefinitions(Arc::new(HashMap::new()))
+        Self(Arc::new(HashMap::new()))
     }
 }
 
@@ -101,11 +100,11 @@ impl<'hir> SemanticAnalysisProcessor<'hir> {
             TyKind::Elementary(e) => e.to_string(),
             TyKind::Array(ty, size) => {
                 let inner_type = self.ty_to_string(ty)?;
-                format!("{}[{}]", inner_type, size)
+                format!("{inner_type}[{size}]")
             }
             TyKind::DynArray(ty) => {
                 let inner_type = self.ty_to_string(ty)?;
-                format!("{}[]", inner_type)
+                format!("{inner_type}[]")
             }
             TyKind::Struct(id) => {
                 // Ensure the nested struct is resolved before proceeding.
@@ -129,10 +128,9 @@ impl<'hir> SemanticAnalysisProcessor<'hir> {
         let hir = self.hir();
         let strukt = hir.strukt(id);
         if let Some(contract_id) = strukt.contract {
-            let contract_name = hir.contract(contract_id).name.as_str();
-            format!("{}.{}", contract_name, strukt.name.as_str())
+            format!("{}.{}", hir.contract(contract_id).name.as_str(), strukt.name.as_str())
         } else {
-            strukt.name.as_str().to_string()
+            strukt.name.as_str().into()
         }
     }
 }

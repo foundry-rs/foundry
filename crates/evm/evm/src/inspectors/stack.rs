@@ -72,7 +72,7 @@ pub struct InspectorStackBuilder {
     pub wallets: Option<Wallets>,
     /// The CREATE2 deployer address.
     pub create2_deployer: Address,
-    ///
+    /// The user-defined structs of the contracts.
     pub struct_defs: StructDefinitions,
 }
 
