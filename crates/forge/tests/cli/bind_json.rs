@@ -70,7 +70,7 @@ interface Vm {
     function serializeJsonType(string calldata typeDescription, bytes memory value) external pure returns (string memory json);
     function serializeJsonType(string calldata objectKey, string calldata valueKey, string calldata typeDescription, bytes memory value) external returns (string memory json);
 }
-        
+
 library JsonBindings {
     Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
@@ -121,5 +121,54 @@ library JsonBindings {
 "#]],
     );
 
+    cmd.forge_fuse().args(["test"]).assert_success();
+});
+
+// tests enhanced `vm.parseJson` cheatcode, which isn't constraint to alphabetical ordering of the
+// struct types, partially closing the gap with `forge bind-json`.
+forgetest_init!(test_parse_json, |prj, cmd| {
+    prj.add_test(
+        "JsonCheats",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+struct Apple {
+    string color;
+    uint8 sweetness;
+    uint8 sourness;
+}
+
+struct FruitStall {
+    string name;
+    Apple[] apples;
+}
+
+contract JsonParseCheatsTest is Test {
+    function testJsonParseOrder() public {
+        string memory json =
+            '{"name":"Fresh Fruit","apples":[{"sweetness":7,"sourness":3,"color":"Red"},{"sweetness":5,"sourness":5,"color":"Green"}]}';
+
+        bytes memory decoded = vm.parseJson(json);
+        FruitStall memory stall = abi.decode(decoded, (FruitStall));
+
+        assertEq(stall.apples.length, 2);
+        assertEq(stall.name, "Fresh Fruit");
+
+        Apple memory appple = stall.apples[0];
+        assertEq(appple.color, "Red");
+        assertEq(appple.sweetness, 7);
+        assertEq(appple.sourness, 3);
+
+        appple = stall.apples[1];
+        assertEq(appple.color, "Green");
+        assertEq(appple.sweetness, 5);
+        assertEq(appple.sourness, 5);
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    // Directly run the test. No `bind-json` or type schemas are needed.
     cmd.forge_fuse().args(["test"]).assert_success();
 });
