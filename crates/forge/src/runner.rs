@@ -930,7 +930,7 @@ impl<'a> FunctionRunner<'a> {
         );
 
         // Run fuzz test.
-        let fuzzed_executor =
+        let mut fuzzed_executor =
             FuzzedExecutor::new(self.executor.into_owned(), runner, self.tcfg.sender, fuzz_config);
         let result = fuzzed_executor.fuzz(
             func,
