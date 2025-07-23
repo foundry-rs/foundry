@@ -235,17 +235,19 @@ impl InspectorStackBuilder {
 /// dispatch.
 #[macro_export]
 macro_rules! call_inspectors {
-    ([$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $call:expr $(,)?) => {
+    ([$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $body:expr $(,)?) => {
         $(
             if let Some($id) = $inspector {
-                ({ #[inline(always)] #[cold] || $call })();
+                $crate::utils::cold_path();
+                $body;
             }
         )+
     };
-    (#[ret] [$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $call:expr $(,)?) => {{
+    (#[ret] [$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $body:expr $(,)?) => {{
         $(
             if let Some($id) = $inspector {
-                if let Some(result) = ({ #[inline(always)] #[cold] || $call })() {
+                $crate::utils::cold_path();
+                if let Some(result) = $body {
                     return result;
                 }
             }
@@ -843,6 +845,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
         );
     }
 
+    #[allow(clippy::redundant_clone)]
     fn log(
         &mut self,
         interpreter: &mut Interpreter,
