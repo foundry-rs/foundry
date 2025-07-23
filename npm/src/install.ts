@@ -1,10 +1,9 @@
-import { BINARY_NAME, getRegistryUrl, PLATFORM_SPECIFIC_PACKAGE_NAME } from '#const.ts'
-import { colors } from '#utilities.ts'
 import * as NodeFS from 'node:fs'
 import * as NodeHttps from 'node:https'
 import * as NodeModule from 'node:module'
 import * as NodePath from 'node:path'
 import * as NodeZlib from 'node:zlib'
+import { BINARY_NAME, colors, getRegistryUrl, PLATFORM_SPECIFIC_PACKAGE_NAME } from './const.js'
 
 const fallbackBinaryPath = NodePath.join(import.meta.dirname, BINARY_NAME)
 

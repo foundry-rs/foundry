@@ -13,3 +13,4 @@ dist
 bin
 _
 *.tgz
+.zed
