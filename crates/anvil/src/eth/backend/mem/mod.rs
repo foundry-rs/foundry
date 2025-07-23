@@ -1,6 +1,7 @@
 //! In-memory blockchain backend.
 
 use self::state::trie_storage;
+use super::executor::new_evm_with_inspector_ref;
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
     config::PruneStateHistoryConfig,
@@ -40,7 +41,9 @@ use alloy_consensus::{
     transaction::Recovered,
 };
 use alloy_eips::{eip1559::BaseFeeParams, eip4844::kzg_to_versioned_hash, eip7840::BlobParams};
-use alloy_evm::{Database, Evm, eth::EthEvmContext, precompiles::PrecompilesMap};
+use alloy_evm::{
+    Database, Evm, eth::EthEvmContext, overrides::OverrideBlockHashes, precompiles::PrecompilesMap,
+};
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
     EthereumWallet, UnknownTxEnvelope, UnknownTypedTransaction,
@@ -89,7 +92,7 @@ use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     decode::RevertDecoder,
     inspectors::AccessListInspector,
-    traces::TracingInspectorConfig,
+    traces::{CallTraceDecoder, TracingInspectorConfig},
     utils::{get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id},
 };
 use foundry_evm_core::either_evm::EitherEvm;
@@ -124,8 +127,6 @@ use std::{
 };
 use storage::{Blockchain, DEFAULT_HISTORY_LIMIT, MinedTransaction};
 use tokio::sync::RwLock as AsyncRwLock;
-
-use super::executor::new_evm_with_inspector_ref;
 
 pub mod cache;
 pub mod fork_db;
@@ -226,6 +227,8 @@ pub struct Backend {
     enable_steps_tracing: bool,
     print_logs: bool,
     print_traces: bool,
+    /// Recorder used for decoding traces, used together with print_traces
+    call_trace_decoder: Arc<CallTraceDecoder>,
     odyssey: bool,
     /// How to keep history state
     prune_state_history_config: PruneStateHistoryConfig,
@@ -255,6 +258,7 @@ impl Backend {
         enable_steps_tracing: bool,
         print_logs: bool,
         print_traces: bool,
+        call_trace_decoder: Arc<CallTraceDecoder>,
         odyssey: bool,
         prune_state_history_config: PruneStateHistoryConfig,
         max_persisted_states: Option<usize>,
@@ -360,6 +364,7 @@ impl Backend {
             enable_steps_tracing,
             print_logs,
             print_traces,
+            call_trace_decoder,
             odyssey,
             prune_state_history_config,
             transaction_block_keeper,
@@ -1211,7 +1216,7 @@ impl Backend {
         inspector.print_logs();
 
         if self.print_traces {
-            inspector.print_traces();
+            inspector.print_traces(self.call_trace_decoder.clone());
         }
 
         Ok((exit_reason, out, gas_used, state, logs.unwrap_or_default()))
@@ -1254,6 +1259,7 @@ impl Backend {
             enable_steps_tracing: self.enable_steps_tracing,
             print_logs: self.print_logs,
             print_traces: self.print_traces,
+            call_trace_decoder: self.call_trace_decoder.clone(),
             precompile_factory: self.precompile_factory.clone(),
             odyssey: self.odyssey,
             optimism: self.is_optimism(),
@@ -1340,6 +1346,7 @@ impl Backend {
                     enable_steps_tracing: self.enable_steps_tracing,
                     print_logs: self.print_logs,
                     print_traces: self.print_traces,
+                    call_trace_decoder: self.call_trace_decoder.clone(),
                     odyssey: self.odyssey,
                     precompile_factory: self.precompile_factory.clone(),
                     optimism: self.is_optimism(),
@@ -1477,7 +1484,7 @@ impl Backend {
                     state::apply_state_overrides(state_overrides.into_iter().collect(), &mut cache_db)?;
                 }
                 if let Some(block_overrides) = overrides.block {
-                    state::apply_block_overrides(*block_overrides, &mut cache_db, &mut block);
+                    cache_db.apply_block_overrides(*block_overrides, &mut block);
                 }
                 self.call_with_state(&cache_db as &dyn DatabaseRef, request, fee_details, block)
             }?;
@@ -1656,7 +1663,7 @@ impl Backend {
                     state::apply_state_overrides(state_overrides, &mut cache_db)?;
                 }
                 if let Some(block_overrides) = block_overrides {
-                    state::apply_block_overrides(block_overrides, &mut cache_db, &mut block_env);
+                    cache_db.apply_block_overrides(block_overrides, &mut block_env);
                 }
 
                 // execute all calls in that block
@@ -1862,7 +1869,7 @@ impl Backend {
         inspector.print_logs();
 
         if self.print_traces {
-            inspector.into_print_traces();
+            inspector.into_print_traces(self.call_trace_decoder.clone());
         }
 
         Ok((exit_reason, out, gas_used as u128, state))
@@ -1887,7 +1894,7 @@ impl Backend {
                 state::apply_state_overrides(state_overrides, &mut cache_db)?;
             }
             if let Some(block_overrides) = block_overrides {
-                state::apply_block_overrides(block_overrides, &mut cache_db, &mut block);
+                cache_db.apply_block_overrides(block_overrides, &mut block);
             }
 
             if let Some(tracer) = tracer {
