@@ -129,9 +129,9 @@ where
         });
     }
 
+    #[allow(clippy::redundant_clone)]
     fn log(&mut self, interp: &mut Interpreter, ecx: &mut CTX, log: Log) {
         call_inspectors!([&mut self.tracer, &mut self.log_collector], |inspector| {
-            // TODO: rm the log.clone
             inspector.log(interp, ecx, log.clone());
         });
     }
