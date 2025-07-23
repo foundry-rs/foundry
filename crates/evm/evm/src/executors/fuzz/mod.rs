@@ -20,10 +20,38 @@ use proptest::{
     strategy::{Strategy, ValueTree},
     test_runner::{TestCaseError, TestRunner},
 };
-use std::{cell::RefCell, collections::BTreeMap};
+use std::{collections::BTreeMap, fmt};
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
+
+#[derive(Default)]
+struct FuzzCoverageMetrics {
+    // Number of edges seen during the fuzz test.
+    cumulative_edges_seen: usize,
+    // Number of features (new hitcount bin of previously hit edge) seen during the fuzz test.
+    cumulative_features_seen: usize,
+}
+
+impl fmt::Display for FuzzCoverageMetrics {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f)?;
+        writeln!(f, "        - cumulative edges seen: {}", self.cumulative_edges_seen)?;
+        writeln!(f, "        - cumulative features seen: {}", self.cumulative_features_seen)?;
+        Ok(())
+    }
+}
+
+impl FuzzCoverageMetrics {
+    /// Records number of new edges or features explored during the campaign.
+    pub fn update_seen(&mut self, is_edge: bool) {
+        if is_edge {
+            self.cumulative_edges_seen += 1;
+        } else {
+            self.cumulative_features_seen += 1;
+        }
+    }
+}
 
 /// Contains data collected during fuzz test runs.
 #[derive(Default)]
@@ -64,7 +92,11 @@ pub struct FuzzedExecutor {
     config: FuzzConfig,
     /// The persisted counterexample to be replayed, if any.
     persisted_failure: Option<BaseCounterExample>,
+    /// History of binned hitcount of edges seen during fuzzing.
+    history_map: Vec<u8>,
 }
+
+const COVERAGE_MAP_SIZE: usize = 65536;
 
 impl FuzzedExecutor {
     /// Instantiates a fuzzed executor given a testrunner
@@ -75,7 +107,14 @@ impl FuzzedExecutor {
         config: FuzzConfig,
         persisted_failure: Option<BaseCounterExample>,
     ) -> Self {
-        Self { executor, runner, sender, config, persisted_failure }
+        Self {
+            executor,
+            runner,
+            sender,
+            config,
+            persisted_failure,
+            history_map: vec![0u8; COVERAGE_MAP_SIZE],
+        }
     }
 
     /// Fuzzes the provided function, assuming it is available at the contract at `address`
@@ -93,7 +132,7 @@ impl FuzzedExecutor {
         progress: Option<&ProgressBar>,
     ) -> FuzzTestResult {
         // Stores the fuzz test execution data.
-        let execution_data = RefCell::new(FuzzTestData::default());
+        let mut execution_data = FuzzTestData::default();
         let state = self.build_fuzz_state(deployed_libs);
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
         let strategy = proptest::prop_oneof![
@@ -106,19 +145,20 @@ impl FuzzedExecutor {
 
         // Start timer for this fuzz test.
         let timer = FuzzTestTimer::new(self.config.timeout);
-
+        let max_runs = self.config.runs;
         let continue_campaign = |runs: u32| {
             // If timeout is configured, then perform fuzz runs until expires.
-            if self.config.timeout.is_some() {
+            if timer.is_enabled() {
                 return !timer.is_timed_out();
             }
             // If no timeout configured then loop until configured runs.
-            runs < self.config.runs
+            runs < max_runs
         };
 
         let mut runs = 0;
         let mut rejects = 0;
         let mut run_failure = None;
+        let mut coverage_metrics = FuzzCoverageMetrics::default();
 
         'stop: while continue_campaign(runs) {
             // If counterexample recorded, replay it first, without incrementing runs.
@@ -128,6 +168,10 @@ impl FuzzedExecutor {
                 // If running with progress, then increment current run.
                 if let Some(progress) = progress {
                     progress.inc(1);
+                    // Display metrics in progress bar.
+                    if self.config.show_edge_coverage {
+                        progress.set_message(format!("{}", &coverage_metrics));
+                    }
                 };
 
                 runs += 1;
@@ -140,30 +184,29 @@ impl FuzzedExecutor {
                 strategy.current()
             };
 
-            match self.single_fuzz(address, input) {
+            match self.single_fuzz(address, input, &mut coverage_metrics) {
                 Ok(fuzz_outcome) => match fuzz_outcome {
                     FuzzOutcome::Case(case) => {
-                        let mut data = execution_data.borrow_mut();
-                        data.gas_by_case.push((case.case.gas, case.case.stipend));
+                        execution_data.gas_by_case.push((case.case.gas, case.case.stipend));
 
-                        if data.first_case.is_none() {
-                            data.first_case.replace(case.case);
+                        if execution_data.first_case.is_none() {
+                            execution_data.first_case.replace(case.case);
                         }
 
                         if let Some(call_traces) = case.traces {
-                            if data.traces.len() == max_traces_to_collect {
-                                data.traces.pop();
+                            if execution_data.traces.len() == max_traces_to_collect {
+                                execution_data.traces.pop();
                             }
-                            data.traces.push(call_traces);
-                            data.breakpoints.replace(case.breakpoints);
+                            execution_data.traces.push(call_traces);
+                            execution_data.breakpoints.replace(case.breakpoints);
                         }
 
                         if show_logs {
-                            data.logs.extend(case.logs);
+                            execution_data.logs.extend(case.logs);
                         }
 
-                        HitMaps::merge_opt(&mut data.coverage, case.coverage);
-                        data.deprecated_cheatcodes = case.deprecated_cheatcodes;
+                        HitMaps::merge_opt(&mut execution_data.coverage, case.coverage);
+                        execution_data.deprecated_cheatcodes = case.deprecated_cheatcodes;
                     }
                     FuzzOutcome::CounterExample(CounterExampleOutcome {
                         exit_reason: status,
@@ -171,8 +214,8 @@ impl FuzzedExecutor {
                         ..
                     }) => {
                         let reason = rd.maybe_decode(&outcome.1.result, status);
-                        execution_data.borrow_mut().logs.extend(outcome.1.logs.clone());
-                        execution_data.borrow_mut().counterexample = outcome;
+                        execution_data.logs.extend(outcome.1.logs.clone());
+                        execution_data.counterexample = outcome;
                         run_failure = Some(TestCaseError::fail(reason.unwrap_or_default()));
                         break 'stop;
                     }
@@ -198,30 +241,29 @@ impl FuzzedExecutor {
             }
         }
 
-        let fuzz_result = execution_data.into_inner();
-        let (calldata, call) = fuzz_result.counterexample;
+        let (calldata, call) = execution_data.counterexample;
 
-        let mut traces = fuzz_result.traces;
+        let mut traces = execution_data.traces;
         let (last_run_traces, last_run_breakpoints) = if run_failure.is_none() {
-            (traces.pop(), fuzz_result.breakpoints)
+            (traces.pop(), execution_data.breakpoints)
         } else {
             (call.traces.clone(), call.cheatcodes.map(|c| c.breakpoints))
         };
 
         let mut result = FuzzTestResult {
-            first_case: fuzz_result.first_case.unwrap_or_default(),
-            gas_by_case: fuzz_result.gas_by_case,
+            first_case: execution_data.first_case.unwrap_or_default(),
+            gas_by_case: execution_data.gas_by_case,
             success: run_failure.is_none(),
             skipped: false,
             reason: None,
             counterexample: None,
-            logs: fuzz_result.logs,
+            logs: execution_data.logs,
             labeled_addresses: call.labels,
             traces: last_run_traces,
             breakpoints: last_run_breakpoints,
             gas_report_traces: traces.into_iter().map(|a| a.arena).collect(),
-            line_coverage: fuzz_result.coverage,
-            deprecated_cheatcodes: fuzz_result.deprecated_cheatcodes,
+            line_coverage: execution_data.coverage,
+            deprecated_cheatcodes: execution_data.deprecated_cheatcodes,
         };
 
         match run_failure {
@@ -258,15 +300,23 @@ impl FuzzedExecutor {
 
     /// Granular and single-step function that runs only one fuzz and returns either a `CaseOutcome`
     /// or a `CounterExampleOutcome`
-    pub fn single_fuzz(
-        &self,
+    fn single_fuzz(
+        &mut self,
         address: Address,
-        calldata: alloy_primitives::Bytes,
+        calldata: Bytes,
+        coverage_metrics: &mut FuzzCoverageMetrics,
     ) -> Result<FuzzOutcome, TestCaseError> {
         let mut call = self
             .executor
             .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
             .map_err(|e| TestCaseError::fail(e.to_string()))?;
+
+        if self.config.show_edge_coverage {
+            let (new_coverage, is_edge) = call.merge_edge_coverage(&mut self.history_map);
+            if new_coverage {
+                coverage_metrics.update_seen(is_edge);
+            }
+        }
 
         // Handle `vm.assume`.
         if call.result.as_ref() == MAGIC_ASSUME {

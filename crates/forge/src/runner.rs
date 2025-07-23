@@ -933,17 +933,16 @@ impl<'a> FunctionRunner<'a> {
             &func.name,
         );
 
+        let mut executor = self.executor.into_owned();
+        // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
+        // metrics (useful for benchmarking the fuzzer).
+        executor.inspector_mut().collect_edge_coverage(fuzz_config.show_edge_coverage);
         // Load persisted counterexample, if any.
         let persisted_failure =
             foundry_common::fs::read_json_file::<BaseCounterExample>(failure_file.as_path()).ok();
         // Run fuzz test.
-        let mut fuzzed_executor = FuzzedExecutor::new(
-            self.executor.into_owned(),
-            runner,
-            self.tcfg.sender,
-            fuzz_config,
-            persisted_failure,
-        );
+        let mut fuzzed_executor =
+            FuzzedExecutor::new(executor, runner, self.tcfg.sender, fuzz_config, persisted_failure);
         let result = fuzzed_executor.fuzz(
             func,
             &self.setup.fuzz_fixtures,

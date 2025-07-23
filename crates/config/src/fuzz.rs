@@ -30,6 +30,8 @@ pub struct FuzzConfig {
     pub show_logs: bool,
     /// Optional timeout (in seconds) for each property test
     pub timeout: Option<u32>,
+    /// Whether to collect and display edge coverage metrics.
+    pub show_edge_coverage: bool,
 }
 
 impl Default for FuzzConfig {
@@ -44,6 +46,7 @@ impl Default for FuzzConfig {
             failure_persist_dir: None,
             show_logs: false,
             timeout: None,
+            show_edge_coverage: false,
         }
     }
 }

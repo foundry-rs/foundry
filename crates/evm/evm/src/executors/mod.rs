@@ -1095,6 +1095,11 @@ impl FuzzTestTimer {
         Self { inner: timeout.map(|timeout| (Instant::now(), Duration::from_secs(timeout.into()))) }
     }
 
+    /// Whether the fuzz test timer is enabled.
+    pub fn is_enabled(&self) -> bool {
+        self.inner.is_some()
+    }
+
     /// Whether the current fuzz test timed out and should be stopped.
     pub fn is_timed_out(&self) -> bool {
         self.inner.is_some_and(|(start, duration)| start.elapsed() > duration)

@@ -1099,6 +1099,7 @@ max_fuzz_dictionary_values = 6553600
 gas_report_samples = 256
 failure_persist_dir = "cache/fuzz"
 show_logs = false
+show_edge_coverage = false
 
 [invariant]
 runs = 256
@@ -1210,7 +1211,8 @@ exclude = []
     "gas_report_samples": 256,
     "failure_persist_dir": "cache/fuzz",
     "show_logs": false,
-    "timeout": null
+    "timeout": null,
+    "show_edge_coverage": false
   },
   "invariant": {
     "runs": 256,

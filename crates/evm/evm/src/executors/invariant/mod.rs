@@ -350,7 +350,7 @@ impl<'a> InvariantExecutor<'a> {
         let mut last_metrics_report = Instant::now();
         let continue_campaign = |runs: u32| {
             // If timeout is configured, then perform invariant runs until expires.
-            if self.config.timeout.is_some() {
+            if timer.is_enabled() {
                 return !timer.is_timed_out();
             }
             // If no timeout configured then loop until configured runs.
