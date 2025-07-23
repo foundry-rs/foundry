@@ -183,6 +183,9 @@ pub fn json_files(root: &Path) -> impl Iterator<Item = PathBuf> {
     files_with_ext(root, "json")
 }
 
+/// Returns an iterator over all decoded files.
+///
+/// This is effectively [`json_files`] with `.map(serde_json::from_str(read_to_string))`.
 pub fn read_json_files<T>(root: &Path) -> impl Iterator<Item = Result<T>>
 where
     T: DeserializeOwned,
