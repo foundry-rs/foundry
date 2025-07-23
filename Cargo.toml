@@ -353,7 +353,6 @@ jiff = "0.2"
 heck = "0.5"
 uuid = "1.17.0"
 flate2 = "1.1"
-num-bigint = "0.4"
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
 # Use unicode-rs which has a smaller binary size than the default ICU4X as the IDNA backend, used
