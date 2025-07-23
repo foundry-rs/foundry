@@ -1,6 +1,6 @@
 use super::UnsafeTypecast;
 use crate::{
-    linter::{LateLintPass, LintContext},
+    linter::{LateLintPass, LintContext, Snippet},
     sol::{Severity, SolLint},
 };
 use solar_sema::hir::{self, ExprKind, TypeKind};
@@ -27,12 +27,21 @@ impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
                 if args.len() == 1 {
                     if let Some(first_arg) = args.exprs().next() {
                         if is_unsafe_typecast_hir(hir, first_arg, target_type) {
-                            ctx.emit(&UNSAFE_TYPECAST, expr.span);
+                            let suggestion = get_suggestion();
+                            ctx.emit_with_fix(&UNSAFE_TYPECAST, expr.span, suggestion);
                         }
                     }
                 }
             }
         }
+    }
+}
+
+// Returns the suggested fix based on the unsafe typecast expression
+fn get_suggestion() -> Snippet {
+    Snippet::Block {
+        desc: Some("Consider disabling this lint only if you're certain the cast is safe:"),
+        code: "// Ensure the value fits in the target type before casting\n// forge-lint: disable-next-line(unsafe-typecast)\n// Cast is safe because [explain why]".to_string(),
     }
 }
 
@@ -79,21 +88,19 @@ fn infer_source_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::El
         }
 
         // ... rest of the function remains the same
-        ExprKind::Lit(lit) => {
-            match &lit.kind {
-                solar_ast::LitKind::Number(num) => {
-                    if is_negative_number_literal(num) {
-                        Some(hir::ElementaryType::Int(solar_ast::TypeSize::ZERO))
-                    } else {
-                        Some(hir::ElementaryType::UInt(solar_ast::TypeSize::ZERO))
-                    }
+        ExprKind::Lit(lit) => match &lit.kind {
+            solar_ast::LitKind::Number(num) => {
+                if is_negative_number_literal(num) {
+                    Some(hir::ElementaryType::Int(solar_ast::TypeSize::ZERO))
+                } else {
+                    Some(hir::ElementaryType::UInt(solar_ast::TypeSize::ZERO))
                 }
-                solar_ast::LitKind::Address(_) => Some(hir::ElementaryType::Address(false)),
-                solar_ast::LitKind::Str(..) => Some(hir::ElementaryType::String),
-                solar_ast::LitKind::Bool(_) => Some(hir::ElementaryType::Bool),
-                _ => None,
             }
-        }
+            solar_ast::LitKind::Address(_) => Some(hir::ElementaryType::Address(false)),
+            solar_ast::LitKind::Str(..) => Some(hir::ElementaryType::String),
+            solar_ast::LitKind::Bool(_) => Some(hir::ElementaryType::Bool),
+            _ => None,
+        },
 
         ExprKind::Ident(resolutions) => {
             if let Some(first_res) = resolutions.first() {
@@ -110,26 +117,14 @@ fn infer_source_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::El
             None
         }
 
-        ExprKind::Unary(op, inner_expr) => {
-            match op.kind {
-                solar_ast::UnOpKind::Neg => {
-                    match infer_source_type(hir, inner_expr) {
-                        Some(hir::ElementaryType::UInt(size)) => {
-                            Some(hir::ElementaryType::Int(size))
-                        }
-                        Some(signed_type @ hir::ElementaryType::Int(_)) => {
-                            Some(signed_type)
-                        }
-                        _ => {
-                            Some(hir::ElementaryType::Int(solar_ast::TypeSize::ZERO))
-                        }
-                    }
-                }
-                _ => {
-                    infer_source_type(hir, inner_expr)
-                }
-            }
-        }
+        ExprKind::Unary(op, inner_expr) => match op.kind {
+            solar_ast::UnOpKind::Neg => match infer_source_type(hir, inner_expr) {
+                Some(hir::ElementaryType::UInt(size)) => Some(hir::ElementaryType::Int(size)),
+                Some(signed_type @ hir::ElementaryType::Int(_)) => Some(signed_type),
+                _ => Some(hir::ElementaryType::Int(solar_ast::TypeSize::ZERO)),
+            },
+            _ => infer_source_type(hir, inner_expr),
+        },
 
         _ => None,
     }
