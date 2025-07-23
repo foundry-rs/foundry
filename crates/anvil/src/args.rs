@@ -47,7 +47,7 @@ pub fn run_command(args: Anvil) -> Result<()> {
     }
 
     let _ = fdlimit::raise_fd_limit();
-    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(args.node.run())
+    args.global.tokio_runtime().block_on(args.node.run())
 }
 
 #[cfg(test)]

@@ -2502,7 +2502,6 @@ dependencies = [
  "solar-parse",
  "strum 0.27.1",
  "time",
- "tokio",
  "tracing",
  "tracing-subscriber 0.3.19",
  "walkdir",
