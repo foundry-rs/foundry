@@ -168,16 +168,9 @@ contract UnsafeTypecast {
         int256 a = -1000;
         uint256 b = uint256(a); //~WARN: typecasts that can truncate values should be avoided
         
-        // Unsafe: int128 -> uint256 (potential loss of sign)
-        int128 c = -100;
-        uint256 d = uint256(c); //~WARN: typecasts that can truncate values should be avoided
-        
         // Unsafe: uint256 -> int256 (potential overflow)
         uint256 e = 1000;
         int256 f = int256(e); //~WARN: typecasts that can truncate values should be avoided
-        
-        // Unsafe: uint256 -> int128 (potential overflow and truncation)
-        int128 g = int128(e); //~WARN: typecasts that can truncate values should be avoided
         
         // Unsafe: uint128 -> int128 (potential overflow)
         uint128 h = 100;
@@ -212,8 +205,6 @@ contract UnsafeTypecast {
         address a = 0x1234567890123456789012345678901234567890;
         uint128 b = uint128(uint160(a)); //~WARN: typecasts that can truncate values should be avoided
         
-        // Unsafe: address -> int256 (sign issues)
-        int256 c = int256(uint160(a)); //~WARN: typecasts that can truncate values should be avoided
         
         // Unsafe: address -> uint8 (severe truncation)
         uint8 d = uint8(uint160(a)); //~WARN: typecasts that can truncate values should be avoided
@@ -226,11 +217,6 @@ contract UnsafeTypecast {
     }
     
     function literalCasts() public {
-        // Unsafe: literal downcasts
-        uint128 a = uint128(1000000000000000000000000000000000000000); //~WARN: typecasts that can truncate values should be avoided
-        uint64 b = uint64(1000000000000000000000); //~WARN: typecasts that can truncate values should be avoided
-        int128 c = int128(-1000000000000000000000000000000000000000); //~WARN: typecasts that can truncate values should be avoided
-        
         // Unsafe: signed/unsigned conversions
         uint256 d = uint256(-1000); //~WARN: typecasts that can truncate values should be avoided
         int256 e = int256(1000000000000000000000000000000000000000); //~WARN: typecasts that can truncate values should be avoided

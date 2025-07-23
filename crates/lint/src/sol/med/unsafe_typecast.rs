@@ -87,7 +87,6 @@ fn infer_source_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::El
             None
         }
 
-        // ... rest of the function remains the same
         ExprKind::Lit(lit) => match &lit.kind {
             solar_ast::LitKind::Number(num) => {
                 if is_negative_number_literal(num) {
