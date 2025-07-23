@@ -28,6 +28,7 @@ use alloy_signer_local::{
     MnemonicBuilder, PrivateKeySigner,
     coins_bip39::{English, Mnemonic},
 };
+use alloy_sol_types::private::alloy_json_abi::ContractObject;
 use alloy_transport::TransportError;
 use anvil_server::ServerConfig;
 use eyre::{Context, Result};
@@ -168,6 +169,8 @@ pub struct NodeConfig {
     pub print_logs: bool,
     /// Enable printing of traces.
     pub print_traces: bool,
+    /// The path to the forge project, if any
+    pub project_path: Option<PathBuf>,
     /// Enable auto impersonation of accounts on startup
     pub enable_auto_impersonate: bool,
     /// Configure the code size limit
@@ -463,6 +466,7 @@ impl Default for NodeConfig {
             enable_steps_tracing: false,
             print_logs: true,
             print_traces: false,
+            project_path: None,
             enable_auto_impersonate: false,
             no_storage_caching: false,
             server_config: Default::default(),
@@ -918,6 +922,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the path to the associated foundry project
+    #[must_use]
+    pub fn with_project_path(mut self, project_path: Option<PathBuf>) -> Self {
+        self.project_path = project_path;
+        self
+    }
+
     /// Sets whether to enable autoImpersonate
     #[must_use]
     pub fn with_auto_impersonate(mut self, enable_auto_impersonate: bool) -> Self {
@@ -1109,6 +1120,24 @@ impl NodeConfig {
             if let Ok(identifier) = SignaturesIdentifier::new(false) {
                 debug!(target: "node", "using signature identifier");
                 decoder_builder = decoder_builder.with_signature_identifier(identifier);
+            }
+
+            // try loading all project ABI info
+            if let Some(config) = self
+                .project_path
+                .as_ref()
+                .and_then(|root| Config::load_with_root(root).ok())
+                .or_else(|| Config::load().ok())
+            {
+                let out = config.root.join(config.out);
+                debug!(target: "node", ?out, "reading project artifacts");
+                for abi in foundry_common::fs::read_json_files::<ContractObject>(&out)
+                    .filter_map(Result::ok)
+                    .filter_map(|contract| contract.abi)
+                {
+                    debug!(target: "node", "collect project abi");
+                    decoder_builder.collect_abi(&abi);
+                }
             }
         }
 

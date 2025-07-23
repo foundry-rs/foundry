@@ -52,11 +52,17 @@ impl CallTraceDecoderBuilder {
         self
     }
 
-    /// Add known errors to the decoder.
+    /// Add known ABI to the decoder.
     #[inline]
     pub fn with_abi(mut self, abi: &JsonAbi) -> Self {
-        self.decoder.collect_abi(abi, None);
+        self.collect_abi(abi);
         self
+    }
+
+    /// Add known ABI to the decoder.
+    #[inline]
+    pub fn collect_abi(&mut self, abi: &JsonAbi) {
+        self.decoder.collect_abi(abi, None);
     }
 
     /// Add known contracts to the decoder.

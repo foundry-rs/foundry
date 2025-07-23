@@ -149,6 +149,12 @@ pub struct NodeArgs {
     #[arg(long, value_name = "PATH", conflicts_with = "init")]
     pub dump_state: Option<PathBuf>,
 
+    /// The path of the associated forge project
+    ///
+    /// This can be used together with `--print-traces` to load ABI infos.
+    #[arg(long, value_name = "PATH")]
+    pub project_path: Option<PathBuf>,
+
     /// Preserve historical state snapshots when dumping the state.
     ///
     /// This will save the in-memory states of the chain at particular block hashes.
@@ -269,6 +275,7 @@ impl NodeArgs {
             .with_steps_tracing(self.evm.steps_tracing)
             .with_print_logs(!self.evm.disable_console_log)
             .with_print_traces(self.evm.print_traces)
+            .with_project_path(self.project_path)
             .with_auto_impersonate(self.evm.auto_impersonate)
             .with_ipc(self.ipc)
             .with_code_size_limit(self.evm.code_size_limit)
