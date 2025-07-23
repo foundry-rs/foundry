@@ -1,6 +1,6 @@
 # 📊 Foundry Benchmark Results
 
-**Generated at**: 2025-07-17 14:25:08 UTC
+**Generated at**: 2025-07-23 09:01:16 UTC
 
 ## Forge Test
 
@@ -11,19 +11,33 @@
 ### Foundry Versions
 
 - **stable**: forge Version: 1.2.3-stable (a813a2c 2025-06-08)
-- **nightly**: forge Version: 1.3.0-nightly (0af4341 2025-07-17)
+- **nightly**: forge Version: 1.3.0-nightly (cb8f3bf 2025-07-23)
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 5.12 s | 5.15 s |
-| solady | 2.99 s | 2.87 s |
+| ithacaxyz-account | 5.44 s | 4.91 s |
+| solady | 3.02 s | 2.76 s |
 
 ## Forge Fuzz Test
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 5.45 s | 5.20 s |
-| solady | 3.08 s | 3.00 s |
+| ithacaxyz-account | 5.27 s | 4.90 s |
+| solady | 2.89 s | 2.82 s |
+
+## Forge Test (Isolated)
+
+### Repositories Tested
+
+1. [Vectorized/solady](https://github.com/Vectorized/solady)
+### Foundry Versions
+
+- **stable**: forge Version: 1.2.3-stable (a813a2c 2025-06-08)
+- **nightly**: forge Version: 1.3.0-nightly (cb8f3bf 2025-07-23)
+
+| Repository | stable | nightly |
+|------------|----------|----------|
+| solady | 3.21 s | 2.88 s |
 
 ## Forge Build
 
@@ -34,21 +48,21 @@
 ### Foundry Versions
 
 - **stable**: forge Version: 1.2.3-stable (a813a2c 2025-06-08)
-- **nightly**: forge Version: 1.3.0-nightly (0af4341 2025-07-17)
+- **nightly**: forge Version: 1.3.0-nightly (cb8f3bf 2025-07-23)
 
 ### No Cache
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 2.58 s | 2.83 s |
-| solady | 3.88 s | 3.98 s |
+| ithacaxyz-account | 2.58 s | 2.79 s |
+| solady | 3.79 s | 3.89 s |
 
 ### With Cache
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 0.210 s | 0.443 s |
-| solady | 0.093 s | 0.195 s |
+| ithacaxyz-account | 0.209 s | 0.458 s |
+| solady | 0.096 s | 0.226 s |
 
 ## Forge Coverage
 
@@ -58,11 +72,11 @@
 ### Foundry Versions
 
 - **stable**: forge Version: 1.2.3-stable (a813a2c 2025-06-08)
-- **nightly**: forge Version: 1.3.0-nightly (0af4341 2025-07-17)
+- **nightly**: forge Version: 1.3.0-nightly (cb8f3bf 2025-07-23)
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 22.03 s | 21.98 s |
+| ithacaxyz-account | 21.88 s | 22.52 s |
 
 ## System Information
 
