@@ -22,16 +22,13 @@ impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
         // Check for type cast expressions: Type(value)
         if let ExprKind::Call(call_expr, args, _) = &expr.kind {
             // Check if this is a type cast (function call where the function is a type)
-            if let ExprKind::Type(target_type) = &call_expr.kind {
-                // We need exactly one argument for a type cast
-                if args.len() == 1 {
-                    if let Some(first_arg) = args.exprs().next() {
-                        if is_unsafe_typecast_hir(hir, first_arg, target_type) {
-                            let suggestion = get_suggestion();
-                            ctx.emit_with_fix(&UNSAFE_TYPECAST, expr.span, suggestion);
-                        }
-                    }
-                }
+            if let ExprKind::Type(target_type) = &call_expr.kind
+                && args.len() == 1
+                && let Some(first_arg) = args.exprs().next()
+                && is_unsafe_typecast_hir(hir, first_arg, target_type)
+            {
+                let suggestion = get_suggestion();
+                ctx.emit_with_fix(&UNSAFE_TYPECAST, expr.span, suggestion);
             }
         }
     }
@@ -72,16 +69,14 @@ fn infer_source_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::El
     match &expr.kind {
         // Type cast: Type(value) - recursively check the inner value
         ExprKind::Call(call_expr, args, _) => {
-            if let ExprKind::Type(ty) = &call_expr.kind {
-                if args.len() == 1 {
-                    if let TypeKind::Elementary(_elem_type) = &ty.kind {
-                        // For type casts, recursively check the source of the inner expression
-                        // This allows us to see through cast chains like uint160(address_var)
-                        if let Some(first_arg) = args.exprs().next() {
-                            return infer_source_type(hir, first_arg);
-                        }
-                    }
-                }
+            if let ExprKind::Type(ty) = &call_expr.kind
+                && args.len() == 1
+                && let TypeKind::Elementary(_elem_type) = &ty.kind
+                && let Some(first_arg) = args.exprs().next()
+            {
+                // For type casts, recursively check the source of the inner expression
+                // This allows us to see through cast chains like uint160(address_var)
+                return infer_source_type(hir, first_arg);
             }
             // For other function calls, try to infer from context or return None
             None
@@ -102,15 +97,10 @@ fn infer_source_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::El
         },
 
         ExprKind::Ident(resolutions) => {
-            if let Some(first_res) = resolutions.first() {
-                match first_res {
-                    hir::Res::Item(hir::ItemId::Variable(var_id)) => {
-                        let variable = hir.variable(*var_id);
-                        if let TypeKind::Elementary(elem_type) = &variable.ty.kind {
-                            return Some(*elem_type);
-                        }
-                    }
-                    _ => {}
+            if let Some(hir::Res::Item(hir::ItemId::Variable(var_id))) = resolutions.first() {
+                let variable = hir.variable(*var_id);
+                if let TypeKind::Elementary(elem_type) = &variable.ty.kind {
+                    return Some(*elem_type);
                 }
             }
             None
@@ -140,7 +130,6 @@ fn is_unsafe_elementary_typecast(
     target_type: &hir::ElementaryType,
 ) -> bool {
     use hir::ElementaryType;
-    use solar_ast::TypeSize;
 
     match (source_type, target_type) {
         // Numeric downcasts (smaller target size)
