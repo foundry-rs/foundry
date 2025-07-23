@@ -35,6 +35,7 @@ use alloy_consensus::{
 };
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
+use alloy_evm::overrides::OverrideBlockHashes;
 use alloy_network::{
     AnyRpcBlock, AnyRpcTransaction, BlockResponse, Ethereum, NetworkWallet, TransactionBuilder,
     TransactionResponse, eip2718::Decodable2718,
@@ -2965,7 +2966,7 @@ impl EthApi {
                         )?;
                     }
                     if let Some(block_overrides) = overrides.block {
-                        state::apply_block_overrides(*block_overrides, &mut cache_db, &mut block);
+                        cache_db.apply_block_overrides(*block_overrides, &mut block);
                     }
                     this.do_estimate_gas_with_state(request, &cache_db as &dyn DatabaseRef, block)
                 })
