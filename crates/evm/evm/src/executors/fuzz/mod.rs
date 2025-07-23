@@ -20,7 +20,7 @@ use proptest::{
     strategy::{Strategy, ValueTree},
     test_runner::{TestCaseError, TestRunner},
 };
-use std::{collections::BTreeMap, fmt};
+use std::fmt;
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
@@ -55,25 +55,31 @@ impl FuzzCoverageMetrics {
 
 /// Contains data collected during fuzz test runs.
 #[derive(Default)]
-pub struct FuzzTestData {
+struct FuzzTestData {
     // Stores the first fuzz case.
-    pub first_case: Option<FuzzCase>,
+    first_case: Option<FuzzCase>,
     // Stored gas usage per fuzz case.
-    pub gas_by_case: Vec<(u64, u64)>,
+    gas_by_case: Vec<(u64, u64)>,
     // Stores the result and calldata of the last failed call, if any.
-    pub counterexample: (Bytes, RawCallResult),
+    counterexample: (Bytes, RawCallResult),
     // Stores up to `max_traces_to_collect` traces.
-    pub traces: Vec<SparsedTraceArena>,
+    traces: Vec<SparsedTraceArena>,
     // Stores breakpoints for the last fuzz case.
-    pub breakpoints: Option<Breakpoints>,
+    breakpoints: Option<Breakpoints>,
     // Stores coverage information for all fuzz cases.
-    pub coverage: Option<HitMaps>,
+    coverage: Option<HitMaps>,
     // Stores logs for all fuzz cases
-    pub logs: Vec<Log>,
-    // Stores gas snapshots for all fuzz cases
-    pub gas_snapshots: BTreeMap<String, BTreeMap<String, String>>,
+    logs: Vec<Log>,
     // Deprecated cheatcodes mapped to their replacements.
-    pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
+    deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
+    // Coverage metrics collected during the fuzz test.
+    coverage_metrics: FuzzCoverageMetrics,
+    // Runs performed in fuzz test.
+    runs: u32,
+    // Current assume rejects of the fuzz run.
+    rejects: u32,
+    // Test failure.
+    failure: Option<TestCaseError>,
 }
 
 /// Wrapper around an [`Executor`] which provides fuzzing support using [`proptest`].
@@ -132,7 +138,7 @@ impl FuzzedExecutor {
         progress: Option<&ProgressBar>,
     ) -> FuzzTestResult {
         // Stores the fuzz test execution data.
-        let mut execution_data = FuzzTestData::default();
+        let mut test_data = FuzzTestData::default();
         let state = self.build_fuzz_state(deployed_libs);
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
         let strategy = proptest::prop_oneof![
@@ -155,12 +161,7 @@ impl FuzzedExecutor {
             runs < max_runs
         };
 
-        let mut runs = 0;
-        let mut rejects = 0;
-        let mut run_failure = None;
-        let mut coverage_metrics = FuzzCoverageMetrics::default();
-
-        'stop: while continue_campaign(runs) {
+        'stop: while continue_campaign(test_data.runs) {
             // If counterexample recorded, replay it first, without incrementing runs.
             let input = if let Some(failure) = self.persisted_failure.take() {
                 failure.calldata
@@ -170,43 +171,43 @@ impl FuzzedExecutor {
                     progress.inc(1);
                     // Display metrics in progress bar.
                     if self.config.show_edge_coverage {
-                        progress.set_message(format!("{}", &coverage_metrics));
+                        progress.set_message(format!("{}", &test_data.coverage_metrics));
                     }
                 };
 
-                runs += 1;
+                test_data.runs += 1;
 
                 let Ok(strategy) = strategy.new_tree(&mut self.runner) else {
-                    run_failure =
+                    test_data.failure =
                         Some(TestCaseError::fail("no input generated to call fuzzed target"));
                     break 'stop;
                 };
                 strategy.current()
             };
 
-            match self.single_fuzz(address, input, &mut coverage_metrics) {
+            match self.single_fuzz(address, input, &mut test_data.coverage_metrics) {
                 Ok(fuzz_outcome) => match fuzz_outcome {
                     FuzzOutcome::Case(case) => {
-                        execution_data.gas_by_case.push((case.case.gas, case.case.stipend));
+                        test_data.gas_by_case.push((case.case.gas, case.case.stipend));
 
-                        if execution_data.first_case.is_none() {
-                            execution_data.first_case.replace(case.case);
+                        if test_data.first_case.is_none() {
+                            test_data.first_case.replace(case.case);
                         }
 
                         if let Some(call_traces) = case.traces {
-                            if execution_data.traces.len() == max_traces_to_collect {
-                                execution_data.traces.pop();
+                            if test_data.traces.len() == max_traces_to_collect {
+                                test_data.traces.pop();
                             }
-                            execution_data.traces.push(call_traces);
-                            execution_data.breakpoints.replace(case.breakpoints);
+                            test_data.traces.push(call_traces);
+                            test_data.breakpoints.replace(case.breakpoints);
                         }
 
                         if show_logs {
-                            execution_data.logs.extend(case.logs);
+                            test_data.logs.extend(case.logs);
                         }
 
-                        HitMaps::merge_opt(&mut execution_data.coverage, case.coverage);
-                        execution_data.deprecated_cheatcodes = case.deprecated_cheatcodes;
+                        HitMaps::merge_opt(&mut test_data.coverage, case.coverage);
+                        test_data.deprecated_cheatcodes = case.deprecated_cheatcodes;
                     }
                     FuzzOutcome::CounterExample(CounterExampleOutcome {
                         exit_reason: status,
@@ -214,24 +215,24 @@ impl FuzzedExecutor {
                         ..
                     }) => {
                         let reason = rd.maybe_decode(&outcome.1.result, status);
-                        execution_data.logs.extend(outcome.1.logs.clone());
-                        execution_data.counterexample = outcome;
-                        run_failure = Some(TestCaseError::fail(reason.unwrap_or_default()));
+                        test_data.logs.extend(outcome.1.logs.clone());
+                        test_data.counterexample = outcome;
+                        test_data.failure = Some(TestCaseError::fail(reason.unwrap_or_default()));
                         break 'stop;
                     }
                 },
                 Err(err) => {
                     match err {
                         TestCaseError::Fail(_) => {
-                            run_failure = Some(err);
+                            test_data.failure = Some(err);
                             break 'stop;
                         }
                         TestCaseError::Reject(_) => {
                             // Apply max rejects only if configured, otherwise silently discard run.
                             if self.config.max_test_rejects > 0 {
-                                rejects += 1;
-                                if rejects >= self.config.max_test_rejects {
-                                    run_failure = Some(err);
+                                test_data.rejects += 1;
+                                if test_data.rejects >= self.config.max_test_rejects {
+                                    test_data.failure = Some(err);
                                     break 'stop;
                                 }
                             }
@@ -241,32 +242,31 @@ impl FuzzedExecutor {
             }
         }
 
-        let (calldata, call) = execution_data.counterexample;
-
-        let mut traces = execution_data.traces;
-        let (last_run_traces, last_run_breakpoints) = if run_failure.is_none() {
-            (traces.pop(), execution_data.breakpoints)
+        let (calldata, call) = test_data.counterexample;
+        let mut traces = test_data.traces;
+        let (last_run_traces, last_run_breakpoints) = if test_data.failure.is_none() {
+            (traces.pop(), test_data.breakpoints)
         } else {
             (call.traces.clone(), call.cheatcodes.map(|c| c.breakpoints))
         };
 
         let mut result = FuzzTestResult {
-            first_case: execution_data.first_case.unwrap_or_default(),
-            gas_by_case: execution_data.gas_by_case,
-            success: run_failure.is_none(),
+            first_case: test_data.first_case.unwrap_or_default(),
+            gas_by_case: test_data.gas_by_case,
+            success: test_data.failure.is_none(),
             skipped: false,
             reason: None,
             counterexample: None,
-            logs: execution_data.logs,
+            logs: test_data.logs,
             labeled_addresses: call.labels,
             traces: last_run_traces,
             breakpoints: last_run_breakpoints,
             gas_report_traces: traces.into_iter().map(|a| a.arena).collect(),
-            line_coverage: execution_data.coverage,
-            deprecated_cheatcodes: execution_data.deprecated_cheatcodes,
+            line_coverage: test_data.coverage,
+            deprecated_cheatcodes: test_data.deprecated_cheatcodes,
         };
 
-        match run_failure {
+        match test_data.failure {
             Some(TestCaseError::Fail(reason)) => {
                 let reason = reason.to_string();
                 result.reason = (!reason.is_empty()).then_some(reason);

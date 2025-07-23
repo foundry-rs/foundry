@@ -29,7 +29,6 @@ use result::{assert_after_invariant, assert_invariants, can_continue};
 use revm::state::Account;
 use shrink::shrink_sequence;
 use std::{
-    cell::RefCell,
     collections::{HashMap as Map, btree_map::Entry},
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -122,42 +121,42 @@ pub struct InvariantMetrics {
 }
 
 /// Contains data collected during invariant test runs.
-pub struct InvariantTestData {
+struct InvariantTestData {
     // Consumed gas and calldata of every successful fuzz call.
-    pub fuzz_cases: Vec<FuzzedCases>,
+    fuzz_cases: Vec<FuzzedCases>,
     // Data related to reverts or failed assertions of the test.
-    pub failures: InvariantFailures,
+    failures: InvariantFailures,
     // Calldata in the last invariant run.
-    pub last_run_inputs: Vec<BasicTxDetails>,
+    last_run_inputs: Vec<BasicTxDetails>,
     // Additional traces for gas report.
-    pub gas_report_traces: Vec<Vec<CallTraceArena>>,
+    gas_report_traces: Vec<Vec<CallTraceArena>>,
     // Last call results of the invariant test.
-    pub last_call_results: Option<RawCallResult>,
+    last_call_results: Option<RawCallResult>,
     // Line coverage information collected from all fuzzed calls.
-    pub line_coverage: Option<HitMaps>,
+    line_coverage: Option<HitMaps>,
     // Metrics for each fuzzed selector.
-    pub metrics: Map<String, InvariantMetrics>,
+    metrics: Map<String, InvariantMetrics>,
 
     // Proptest runner to query for random values.
     // The strategy only comes with the first `input`. We fill the rest of the `inputs`
     // until the desired `depth` so we can use the evolving fuzz dictionary
     // during the run.
-    pub branch_runner: TestRunner,
+    branch_runner: TestRunner,
 }
 
 /// Contains invariant test data.
-pub struct InvariantTest {
+struct InvariantTest {
     // Fuzz state of invariant test.
-    pub fuzz_state: EvmFuzzState,
+    fuzz_state: EvmFuzzState,
     // Contracts fuzzed by the invariant test.
-    pub targeted_contracts: FuzzRunIdentifiedContracts,
+    targeted_contracts: FuzzRunIdentifiedContracts,
     // Data collected during invariant runs.
-    pub execution_data: RefCell<InvariantTestData>,
+    test_data: InvariantTestData,
 }
 
 impl InvariantTest {
     /// Instantiates an invariant test.
-    pub fn new(
+    fn new(
         fuzz_state: EvmFuzzState,
         targeted_contracts: FuzzRunIdentifiedContracts,
         failures: InvariantFailures,
@@ -168,7 +167,7 @@ impl InvariantTest {
         if last_call_results.is_none() {
             fuzz_cases.push(FuzzedCases::new(vec![]));
         }
-        let execution_data = RefCell::new(InvariantTestData {
+        let test_data = InvariantTestData {
             fuzz_cases,
             failures,
             last_run_inputs: vec![],
@@ -177,48 +176,48 @@ impl InvariantTest {
             line_coverage: None,
             metrics: Map::default(),
             branch_runner,
-        });
-        Self { fuzz_state, targeted_contracts, execution_data }
+        };
+        Self { fuzz_state, targeted_contracts, test_data }
     }
 
     /// Returns number of invariant test reverts.
-    pub fn reverts(&self) -> usize {
-        self.execution_data.borrow().failures.reverts
+    fn reverts(&self) -> usize {
+        self.test_data.failures.reverts
     }
 
     /// Whether invariant test has errors or not.
-    pub fn has_errors(&self) -> bool {
-        self.execution_data.borrow().failures.error.is_some()
+    fn has_errors(&self) -> bool {
+        self.test_data.failures.error.is_some()
     }
 
     /// Set invariant test error.
-    pub fn set_error(&self, error: InvariantFuzzError) {
-        self.execution_data.borrow_mut().failures.error = Some(error);
+    fn set_error(&mut self, error: InvariantFuzzError) {
+        self.test_data.failures.error = Some(error);
     }
 
     /// Set last invariant test call results.
-    pub fn set_last_call_results(&self, call_result: Option<RawCallResult>) {
-        self.execution_data.borrow_mut().last_call_results = call_result;
+    fn set_last_call_results(&mut self, call_result: Option<RawCallResult>) {
+        self.test_data.last_call_results = call_result;
     }
 
     /// Set last invariant run call sequence.
-    pub fn set_last_run_inputs(&self, inputs: &Vec<BasicTxDetails>) {
-        self.execution_data.borrow_mut().last_run_inputs.clone_from(inputs);
+    fn set_last_run_inputs(&mut self, inputs: &Vec<BasicTxDetails>) {
+        self.test_data.last_run_inputs.clone_from(inputs);
     }
 
     /// Merge current collected line coverage with the new coverage from last fuzzed call.
-    pub fn merge_coverage(&self, new_coverage: Option<HitMaps>) {
-        HitMaps::merge_opt(&mut self.execution_data.borrow_mut().line_coverage, new_coverage);
+    fn merge_coverage(&mut self, new_coverage: Option<HitMaps>) {
+        HitMaps::merge_opt(&mut self.test_data.line_coverage, new_coverage);
     }
 
     /// Update metrics for a fuzzed selector, extracted from tx details.
     /// Always increments number of calls; discarded runs (through assume cheatcodes) are tracked
     /// separated from reverts.
-    pub fn record_metrics(&self, tx_details: &BasicTxDetails, reverted: bool, discarded: bool) {
+    fn record_metrics(&mut self, tx_details: &BasicTxDetails, reverted: bool, discarded: bool) {
         if let Some(metric_key) =
             self.targeted_contracts.targets.lock().fuzzed_metric_key(tx_details)
         {
-            let test_metrics = &mut self.execution_data.borrow_mut().metrics;
+            let test_metrics = &mut self.test_data.metrics;
             let invariant_metrics = test_metrics.entry(metric_key).or_default();
             invariant_metrics.calls += 1;
             if discarded {
@@ -231,17 +230,16 @@ impl InvariantTest {
 
     /// End invariant test run by collecting results, cleaning collected artifacts and reverting
     /// created fuzz state.
-    pub fn end_run(&self, run: InvariantTestRun, gas_samples: usize) {
+    fn end_run(&mut self, run: InvariantTestRun, gas_samples: usize) {
         // We clear all the targeted contracts created during this run.
         self.targeted_contracts.clear_created_contracts(run.created_contracts);
 
-        let mut invariant_data = self.execution_data.borrow_mut();
-        if invariant_data.gas_report_traces.len() < gas_samples {
-            invariant_data
+        if self.test_data.gas_report_traces.len() < gas_samples {
+            self.test_data
                 .gas_report_traces
                 .push(run.run_traces.into_iter().map(|arena| arena.arena).collect());
         }
-        invariant_data.fuzz_cases.push(FuzzedCases::new(run.fuzz_runs));
+        self.test_data.fuzz_cases.push(FuzzedCases::new(run.fuzz_runs));
 
         // Revert state to not persist values between runs.
         self.fuzz_state.revert();
@@ -249,28 +247,28 @@ impl InvariantTest {
 }
 
 /// Contains data for an invariant test run.
-pub struct InvariantTestRun {
+struct InvariantTestRun {
     // Invariant run call sequence.
-    pub inputs: Vec<BasicTxDetails>,
+    inputs: Vec<BasicTxDetails>,
     // Current invariant run executor.
-    pub executor: Executor,
+    executor: Executor,
     // Invariant run stat reports (eg. gas usage).
-    pub fuzz_runs: Vec<FuzzCase>,
+    fuzz_runs: Vec<FuzzCase>,
     // Contracts created during current invariant run.
-    pub created_contracts: Vec<Address>,
+    created_contracts: Vec<Address>,
     // Traces of each call of the invariant run call sequence.
-    pub run_traces: Vec<SparsedTraceArena>,
+    run_traces: Vec<SparsedTraceArena>,
     // Current depth of invariant run.
-    pub depth: u32,
+    depth: u32,
     // Current assume rejects of the invariant run.
-    pub assume_rejects_counter: u32,
+    rejects: u32,
     // Whether new coverage was discovered during this run.
-    pub new_coverage: bool,
+    new_coverage: bool,
 }
 
 impl InvariantTestRun {
     /// Instantiates an invariant test run.
-    pub fn new(first_input: BasicTxDetails, executor: Executor, depth: usize) -> Self {
+    fn new(first_input: BasicTxDetails, executor: Executor, depth: usize) -> Self {
         Self {
             inputs: vec![first_input],
             executor,
@@ -278,7 +276,7 @@ impl InvariantTestRun {
             created_contracts: vec![],
             run_traces: vec![],
             depth: 0,
-            assume_rejects_counter: 0,
+            rejects: 0,
             new_coverage: false,
         }
     }
@@ -341,7 +339,7 @@ impl<'a> InvariantExecutor<'a> {
             return Err(eyre!("Invariant test function should have no inputs"));
         }
 
-        let (invariant_test, mut corpus_manager) =
+        let (mut invariant_test, mut corpus_manager) =
             self.prepare_test(&invariant_contract, fuzz_fixtures, deployed_libs)?;
 
         // Start timer for this invariant test.
@@ -362,7 +360,7 @@ impl<'a> InvariantExecutor<'a> {
             self.config.corpus_dir.is_some() || self.config.show_edge_coverage;
 
         'stop: while continue_campaign(runs) {
-            let initial_seq = corpus_manager.new_sequence(&invariant_test)?;
+            let initial_seq = corpus_manager.new_sequence(&mut invariant_test)?;
 
             // Create current invariant run data.
             let mut current_run = InvariantTestRun::new(
@@ -424,8 +422,8 @@ impl<'a> InvariantExecutor<'a> {
 
                 if discarded {
                     current_run.inputs.pop();
-                    current_run.assume_rejects_counter += 1;
-                    if current_run.assume_rejects_counter > self.config.max_assume_rejects {
+                    current_run.rejects += 1;
+                    if current_run.rejects > self.config.max_assume_rejects {
                         invariant_test.set_error(InvariantFuzzError::MaxAssumeRejects(
                             self.config.max_assume_rejects,
                         ));
@@ -475,7 +473,7 @@ impl<'a> InvariantExecutor<'a> {
                     // Determine if test can continue or should exit.
                     let result = can_continue(
                         &invariant_contract,
-                        &invariant_test,
+                        &mut invariant_test,
                         &mut current_run,
                         &self.config,
                         call_result,
@@ -495,7 +493,7 @@ impl<'a> InvariantExecutor<'a> {
                 }
 
                 current_run.inputs.push(corpus_manager.generate_next_input(
-                    &invariant_test,
+                    &mut invariant_test,
                     &initial_seq,
                     discarded,
                     current_run.depth as usize,
@@ -509,7 +507,7 @@ impl<'a> InvariantExecutor<'a> {
             if invariant_contract.call_after_invariant && !invariant_test.has_errors() {
                 assert_after_invariant(
                     &invariant_contract,
-                    &invariant_test,
+                    &mut invariant_test,
                     &current_run,
                     &self.config,
                 )
@@ -546,7 +544,7 @@ impl<'a> InvariantExecutor<'a> {
         trace!(?fuzz_fixtures);
         invariant_test.fuzz_state.log_stats();
 
-        let result = invariant_test.execution_data.into_inner();
+        let result = invariant_test.test_data;
         Ok(InvariantFuzzTestResult {
             error: result.failures.error,
             cases: result.fuzz_cases,
