@@ -199,7 +199,9 @@ impl Linter for SolidityLinter {
         sess
     }
 
-    /// Run AST-based lints
+    /// Run AST-based lints.
+    ///
+    /// Note: the `ParsingContext` should already have the sources loaded.
     fn early_lint<'sess>(&self, input: &[PathBuf], pcx: ParsingContext<'sess>) {
         let sess = pcx.sess;
         _ = sess.enter_parallel(|| -> Result<(), diagnostics::ErrorGuaranteed> {
@@ -220,7 +222,9 @@ impl Linter for SolidityLinter {
         });
     }
 
-    /// Run HIR-based lints
+    /// Run HIR-based lints.
+    ///
+    /// Note: the `ParsingContext` should already have the sources loaded.
     fn late_lint<'sess>(&self, input: &[PathBuf], pcx: ParsingContext<'sess>) {
         let sess = pcx.sess;
         _ = sess.enter_parallel(|| -> Result<(), diagnostics::ErrorGuaranteed> {
