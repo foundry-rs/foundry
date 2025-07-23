@@ -70,7 +70,7 @@ interface Vm {
     function serializeJsonType(string calldata typeDescription, bytes memory value) external pure returns (string memory json);
     function serializeJsonType(string calldata objectKey, string calldata valueKey, string calldata typeDescription, bytes memory value) external returns (string memory json);
 }
-
+        
 library JsonBindings {
     Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 

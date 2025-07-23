@@ -1052,8 +1052,8 @@ mod tests {
         defs_map.insert(
             "Wallet".to_string(),
             vec![
-                ("owner".to_string(), "address".to_string()), // Order: owner, balance, id
-                ("balance".to_string(), "uint256".to_string()), // Alphabetical: balance, id, owner
+                ("owner".to_string(), "address".to_string()),
+                ("balance".to_string(), "uint256".to_string()),
                 ("id".to_string(), "bytes32".to_string()),
             ],
         );
@@ -1077,7 +1077,7 @@ mod tests {
         let json_string = serde_json::to_string(&json_value).unwrap();
         assert_eq!(
             json_string,
-            format!(r#"{{"owner":"{}","balance":5000,"id":"{}"}}"#, owner_address, wallet_id)
+            format!(r#"{{"owner":"{owner_address}","balance":5000,"id":"{wallet_id}"}}"#)
         );
 
         // Resolve the type, which should also respect the struct definition order.
