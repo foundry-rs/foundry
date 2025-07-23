@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
-import { colors } from '#utilities.ts'
 import * as NodeFS from 'node:fs'
 import * as NodePath from 'node:path'
+import { colors } from '../src/const'
 
 const REGISTRY_URL = Bun.env.NPM_REGISTRY_URL || 'https://registry.npmjs.org'
 
@@ -23,6 +23,7 @@ async function main() {
 
   const publishVersion = getPublishVersion()
   console.info(colors.green, 'Publish version:', publishVersion)
+  if (!publishVersion) throw new Error('Publish version is required')
 
   if (packagePath === '@foundry-rs/forge')
     await updateOptionalDependencies(packagePath, publishVersion)
