@@ -1,6 +1,6 @@
 # 📊 Foundry Benchmark Results
 
-**Generated at**: 2025-07-23 08:26:14 UTC
+**Generated at**: 2025-07-23 09:01:16 UTC
 
 ## Forge Test
 
@@ -15,15 +15,29 @@
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 5.05 s | 5.01 s |
-| solady | 2.86 s | 2.72 s |
+| ithacaxyz-account | 5.44 s | 4.91 s |
+| solady | 3.02 s | 2.76 s |
 
 ## Forge Fuzz Test
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 5.53 s | 4.94 s |
-| solady | 2.92 s | 2.77 s |
+| ithacaxyz-account | 5.27 s | 4.90 s |
+| solady | 2.89 s | 2.82 s |
+
+## Forge Test (Isolated)
+
+### Repositories Tested
+
+1. [Vectorized/solady](https://github.com/Vectorized/solady)
+### Foundry Versions
+
+- **stable**: forge Version: 1.2.3-stable (a813a2c 2025-06-08)
+- **nightly**: forge Version: 1.3.0-nightly (cb8f3bf 2025-07-23)
+
+| Repository | stable | nightly |
+|------------|----------|----------|
+| solady | 3.21 s | 2.88 s |
 
 ## Forge Build
 
@@ -40,15 +54,15 @@
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 2.59 s | 2.86 s |
-| solady | 3.83 s | 3.97 s |
+| ithacaxyz-account | 2.58 s | 2.79 s |
+| solady | 3.79 s | 3.89 s |
 
 ### With Cache
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 0.197 s | 0.423 s |
-| solady | 0.089 s | 0.189 s |
+| ithacaxyz-account | 0.209 s | 0.458 s |
+| solady | 0.096 s | 0.226 s |
 
 ## Forge Coverage
 
@@ -62,21 +76,7 @@
 
 | Repository | stable | nightly |
 |------------|----------|----------|
-| ithacaxyz-account | 21.90 s | 21.59 s |
-
-## Forge Test (Isolated)
-
-### Repositories Tested
-
-1. [Vectorized/solady](https://github.com/Vectorized/solady)
-### Foundry Versions
-
-- **stable**: forge Version: 1.2.3-stable (a813a2c 2025-06-08)
-- **nightly**: forge Version: 1.3.0-nightly (cb8f3bf 2025-07-23)
-
-| Repository | stable | nightly |
-|------------|----------|----------|
-| solady | 3.03 s | 2.81 s |
+| ithacaxyz-account | 21.88 s | 22.52 s |
 
 ## System Information
 
