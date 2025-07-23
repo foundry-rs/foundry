@@ -108,7 +108,7 @@ impl FuzzedExecutor {
         let timer = FuzzTestTimer::new(self.config.timeout);
 
         let continue_campaign = |runs: u32| {
-            // If timeout is configured, then perform invariant runs until expires.
+            // If timeout is configured, then perform fuzz runs until expires.
             if self.config.timeout.is_some() {
                 return !timer.is_timed_out();
             }
@@ -191,8 +191,6 @@ impl FuzzedExecutor {
                                     run_failure = Some(err);
                                     break 'stop;
                                 }
-                            } else {
-                                continue 'stop;
                             }
                         }
                     }
