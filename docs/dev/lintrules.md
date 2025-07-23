@@ -42,12 +42,13 @@ The `forge-lint` system operates by analyzing Solidity source code through a dua
   // Note: The macro automatically generates a help link to the Foundry book
   ```
 
-- Register the pass struct and the lint using `register_lints!` in the `mod.rs` of its corresponding severity category. Specify the pass type (`early`, `late`, or both):
+- Register the pass struct and the lint using `register_lints!` in the `mod.rs` of its corresponding severity category. Specify the pass type (`early`, `late`, or both). Note that a single pass can handle multiple lints:
   ```rust
   register_lints!(
     (PascalCaseStruct, early, (PASCAL_CASE_STRUCT)),
     (MixedCaseVariable, early, (MIXED_CASE_VARIABLE)),
     (MixedCaseFunction, early, (MIXED_CASE_FUNCTION)),
+    (ScreamingSnakeCase, early, (SCREAMING_SNAKE_CASE_CONSTANT, SCREAMING_SNAKE_CASE_IMMUTABLE)),
     (AsmKeccak256, late, (ASM_KECCAK256))
   );
   // The macro automatically generates the pass structs and helper functions
@@ -73,15 +74,25 @@ The `forge-lint` system operates by analyzing Solidity source code through a dua
 Lints can now provide actionable code fix suggestions using the `emit_with_fix` method:
 
 ```rust
-// Example: Suggesting a code diff
+// Example: Suggesting a code diff with a span
 cx.emit_with_fix(
     lint,
     node.span,
-    "consider using inline assembly",
     Snippet::Diff {
         desc: Some("use inline assembly for gas optimization"),
-        rmv: original_code,
+        span: Some(node.span), // Optional: specify the span to replace
         add: optimized_assembly_code,
+    }
+);
+
+// Example: Suggesting a code diff without a span (uses the lint's span)
+cx.emit_with_fix(
+    lint,
+    node.span,
+    Snippet::Diff {
+        desc: Some("rename to follow naming convention"),
+        span: None, // Will use the lint's span
+        add: corrected_name,
     }
 );
 
@@ -89,7 +100,6 @@ cx.emit_with_fix(
 cx.emit_with_fix(
     lint,
     node.span,
-    "add this implementation",
     Snippet::Block {
         desc: Some("suggested implementation"),
         code: suggested_code,

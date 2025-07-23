@@ -188,7 +188,10 @@ impl SignaturesIdentifier {
     /// Saves the cache to the file system.
     pub fn save(&self) {
         if let Some(path) = &self.cache_path {
-            foundry_compilers::utils::RuntimeOrHandle::new().block_on(self.cache.read()).save(path);
+            self.cache
+                .try_read()
+                .expect("SignaturesIdentifier cache is locked while attempting to save")
+                .save(path);
         }
     }
 

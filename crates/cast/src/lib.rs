@@ -3,7 +3,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-use alloy_consensus::TxEnvelope;
+use alloy_consensus::{Header, TxEnvelope};
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
@@ -352,7 +352,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// let provider =
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
-    /// let block = cast.block(5, true, None).await?;
+    /// let block = cast.block(5, true, None, false).await?;
     /// println!("{}", block);
     /// # Ok(())
     /// # }
@@ -362,6 +362,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         block: B,
         full: bool,
         field: Option<String>,
+        raw: bool,
     ) -> Result<String> {
         let block = block.into();
         if let Some(ref field) = field
@@ -378,16 +379,17 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             .await?
             .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
 
-        let block = if let Some(ref field) = field {
+        Ok(if raw {
+            let header: Header = block.into_inner().header.inner.try_into_header()?;
+            format!("0x{}", hex::encode(alloy_rlp::encode(&header)))
+        } else if let Some(ref field) = field {
             get_pretty_block_attr(&block, field)
                 .unwrap_or_else(|| format!("{field} is not a valid block field"))
         } else if shell::is_json() {
             serde_json::to_value(&block).unwrap().to_string()
         } else {
             block.pretty()
-        };
-
-        Ok(block)
+        })
     }
 
     async fn block_field_as_num<B: Into<BlockId>>(&self, block: B, field: String) -> Result<U256> {
@@ -397,6 +399,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             false,
             // Select only select field
             Some(field),
+            false,
         )
         .await?
         .parse()
@@ -425,12 +428,14 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             false,
             // Select only block hash
             Some(String::from("hash")),
+            false,
         )
         .await?;
 
         Ok(match &genesis_hash[..] {
             "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" => {
-                match &(Self::block(self, 1920000, false, Some("hash".to_string())).await?)[..] {
+                match &(Self::block(self, 1920000, false, Some("hash".to_string()), false).await?)[..]
+                {
                     "0x94365e3a8c0b35089c1d1195081fe7489b528a84b22199c916180db8b28ade7f" => {
                         "etclive"
                     }
@@ -472,7 +477,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             "0x6d3c66c5357ec91d5c43af47e234a939b22557cbb552dc45bebbceeed90fbe34" => "bsctest",
             "0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b" => "bsc",
             "0x31ced5b9beb7f8782b014660da0cb18cc409f121f408186886e1ca3e8eeca96b" => {
-                match &(Self::block(self, 1, false, Some(String::from("hash"))).await?)[..] {
+                match &(Self::block(self, 1, false, Some(String::from("hash")), false).await?)[..] {
                     "0x738639479dc82d199365626f90caa82f7eafcfe9ed354b456fb3d294597ceb53" => {
                         "avalanche-fuji"
                     }
@@ -1243,12 +1248,7 @@ impl SimpleCast {
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn from_fixed_point(value: &str, decimals: &str) -> Result<String> {
-        // TODO: https://github.com/alloy-rs/core/pull/461
-        let units: Unit = if let Ok(x) = decimals.parse() {
-            Unit::new(x).ok_or_else(|| eyre::eyre!("invalid unit"))?
-        } else {
-            decimals.parse()?
-        };
+        let units: Unit = Unit::from_str(decimals)?;
         let n = ParseUnits::parse_units(value, units)?;
         Ok(n.to_string())
     }

@@ -105,19 +105,19 @@ lint-clippy: ## Run clippy on the codebase.
 	--all-features \
 	-- -D warnings
 
-.PHONY: lint-codespell
-lint-codespell: ## Run codespell on the codebase.
-	@command -v codespell >/dev/null || { \
-		echo "codespell not found. Please install it by running the command `pipx install codespell` or refer to the following link for more information: https://github.com/codespell-project/codespell" \
+.PHONY: lint-typos
+lint-typos: ## Run typos on the codebase.
+	@command -v typos >/dev/null || { \
+		echo "typos not found. Please install it by running the command `cargo install typos-cli` or refer to the following link for more information: https://github.com/crate-ci/typos" \
 		exit 1; \
 	}
-	codespell --skip "*.json"
+	typos
 
 .PHONY: lint
 lint: ## Run all linters.
 	make fmt && \
 	make lint-clippy && \
-	make lint-codespell
+	make lint-typos
 
 ##@ Other
 

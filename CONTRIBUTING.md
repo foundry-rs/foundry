@@ -198,9 +198,9 @@ Releases are automatically done by the release workflow when a tag is pushed, ho
 2. Update documentation links
 3. Perform a final audit for breaking changes.
 
-[rust-coc]: https://github.com/rust-lang/rust/blob/master/CODE_OF_CONDUCT.md
+[rust-coc]: https://www.rust-lang.org/policies/code-of-conduct
 [dev-tg]: https://t.me/foundry_rs
 [foundry-book]: https://github.com/foundry-rs/foundry-book
 [support-tg]: https://t.me/foundry_support
 [mcve]: https://stackoverflow.com/help/mcve
-[hiding-a-comment]: https://help.github.com/articles/managing-disruptive-comments/#hiding-a-comment
+[hiding-a-comment]: https://docs.github.com/en/communities/moderating-comments-and-conversations/managing-disruptive-comments

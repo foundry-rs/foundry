@@ -115,6 +115,8 @@ pub enum CastSubcommand {
     ToCheckSumAddress {
         /// The address to convert.
         address: Option<Address>,
+        /// EIP-155 chain ID to encode the address using EIP-1191.
+        chain_id: Option<u64>,
     },
 
     /// Convert hex data to an ASCII string.
@@ -359,6 +361,10 @@ pub enum CastSubcommand {
         /// If specified, only get the given field of the block.
         #[arg(long, short)]
         field: Option<String>,
+
+        /// Print the raw RLP encoded block header.
+        #[arg(long, conflicts_with = "field")]
+        raw: bool,
 
         #[arg(long, env = "CAST_FULL_BLOCK")]
         full: bool,
