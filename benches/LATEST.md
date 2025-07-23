@@ -1,6 +1,6 @@
 # 📊 Foundry Benchmark Results
 
-**Generated at**: 2025-07-17 14:25:08 UTC
+**Generated at**: 2025-07-23 08:26:14 UTC
 
 ## Forge Test
 
@@ -8,23 +8,22 @@
 
 1. [ithacaxyz/account](https://github.com/ithacaxyz/account)
 2. [Vectorized/solady](https://github.com/Vectorized/solady)
-
 ### Foundry Versions
 
 - **stable**: forge Version: 1.2.3-stable (a813a2c 2025-06-08)
-- **nightly**: forge Version: 1.3.0-nightly (0af4341 2025-07-17)
+- **nightly**: forge Version: 1.3.0-nightly (cb8f3bf 2025-07-23)
 
-| Repository        | stable | nightly |
-| ----------------- | ------ | ------- |
-| ithacaxyz-account | 5.12 s | 5.15 s  |
-| solady            | 2.99 s | 2.87 s  |
+| Repository | stable | nightly |
+|------------|----------|----------|
+| ithacaxyz-account | 5.05 s | 5.01 s |
+| solady | 2.86 s | 2.72 s |
 
 ## Forge Fuzz Test
 
-| Repository        | stable | nightly |
-| ----------------- | ------ | ------- |
-| ithacaxyz-account | 5.45 s | 5.20 s  |
-| solady            | 3.08 s | 3.00 s  |
+| Repository | stable | nightly |
+|------------|----------|----------|
+| ithacaxyz-account | 5.53 s | 4.94 s |
+| solady | 2.92 s | 2.77 s |
 
 ## Forge Build
 
@@ -32,42 +31,55 @@
 
 1. [ithacaxyz/account](https://github.com/ithacaxyz/account)
 2. [Vectorized/solady](https://github.com/Vectorized/solady)
-
 ### Foundry Versions
 
 - **stable**: forge Version: 1.2.3-stable (a813a2c 2025-06-08)
-- **nightly**: forge Version: 1.3.0-nightly (0af4341 2025-07-17)
+- **nightly**: forge Version: 1.3.0-nightly (cb8f3bf 2025-07-23)
 
 ### No Cache
 
-| Repository        | stable | nightly |
-| ----------------- | ------ | ------- |
-| ithacaxyz-account | 2.58 s | 2.83 s  |
-| solady            | 3.88 s | 3.98 s  |
+| Repository | stable | nightly |
+|------------|----------|----------|
+| ithacaxyz-account | 2.59 s | 2.86 s |
+| solady | 3.83 s | 3.97 s |
 
 ### With Cache
 
-| Repository        | stable  | nightly |
-| ----------------- | ------- | ------- |
-| ithacaxyz-account | 0.210 s | 0.443 s |
-| solady            | 0.093 s | 0.195 s |
+| Repository | stable | nightly |
+|------------|----------|----------|
+| ithacaxyz-account | 0.197 s | 0.423 s |
+| solady | 0.089 s | 0.189 s |
 
 ## Forge Coverage
 
 ### Repositories Tested
 
 1. [ithacaxyz/account](https://github.com/ithacaxyz/account)
-
 ### Foundry Versions
 
 - **stable**: forge Version: 1.2.3-stable (a813a2c 2025-06-08)
-- **nightly**: forge Version: 1.3.0-nightly (0af4341 2025-07-17)
+- **nightly**: forge Version: 1.3.0-nightly (cb8f3bf 2025-07-23)
 
-| Repository        | stable  | nightly |
-| ----------------- | ------- | ------- |
-| ithacaxyz-account | 22.03 s | 21.98 s |
+| Repository | stable | nightly |
+|------------|----------|----------|
+| ithacaxyz-account | 21.90 s | 21.59 s |
+
+## Forge Test (Isolated)
+
+### Repositories Tested
+
+1. [Vectorized/solady](https://github.com/Vectorized/solady)
+### Foundry Versions
+
+- **stable**: forge Version: 1.2.3-stable (a813a2c 2025-06-08)
+- **nightly**: forge Version: 1.3.0-nightly (cb8f3bf 2025-07-23)
+
+| Repository | stable | nightly |
+|------------|----------|----------|
+| solady | 3.03 s | 2.81 s |
 
 ## System Information
+
 
 - **OS**: linux
 - **CPU**: 8
