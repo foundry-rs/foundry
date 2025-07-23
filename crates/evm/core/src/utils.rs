@@ -18,7 +18,7 @@ pub use revm::state::EvmState as StateChangeset;
 #[cold]
 #[inline(always)]
 pub fn cold_path() {
-    // TODO: inline always and call `std::hint::cold_path` once stable.
+    // TODO: remove `#[cold]` and call `std::hint::cold_path` once stable.
 }
 
 /// Depending on the configured chain id and block number this should apply any specific changes
