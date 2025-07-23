@@ -1,7 +1,7 @@
 note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    |
-61 |     modifier multipleBeforePlaceholder() {
+67 |     modifier multipleBeforePlaceholder() {
    |              -------------------------
    |
    = note: wrap modifier logic to reduce code size
@@ -28,7 +28,7 @@ note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
 note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    |
-69 |     modifier multipleAfterPlaceholder() {
+75 |     modifier multipleAfterPlaceholder() {
    |              ------------------------
    |
    = note: wrap modifier logic to reduce code size
@@ -55,7 +55,7 @@ note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
 note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    |
-77 |     modifier multipleBeforeAfterPlaceholder(address sender) {
+83 |     modifier multipleBeforeAfterPlaceholder(address sender) {
    |              ------------------------------
    |
    = note: wrap modifier logic to reduce code size
@@ -88,7 +88,7 @@ note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
 note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
    |
-90 |     modifier onlyOwner() {
+96 |     modifier onlyOwner() {
    |              ---------
    |
    = note: wrap modifier logic to reduce code size
@@ -109,32 +109,32 @@ note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
 note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
-  --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
-   |
-96 |     modifier onlyRole(bytes32 role) {
-   |              --------
-   |
-   = note: wrap modifier logic to reduce code size
-           
-           - modifier onlyRole(bytes32 role) {
-           -     if(!hasRole[msg.sender][role]) revert("Not authorized"); // _onlyRole(role);
-           -     _;
-           - }
-           + modifier onlyRole(bytes32 role) {
-           +     _onlyRole(role);
-           +     _;
-           + }
-           + 
-           + function _onlyRole(bytes32 role) internal {
-           +     if(!hasRole[msg.sender][role]) revert("Not authorized");
-           + }
-           
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
+    |
+102 |     modifier onlyRole(bytes32 role) {
+    |              --------
+    |
+    = note: wrap modifier logic to reduce code size
+            
+            - modifier onlyRole(bytes32 role) {
+            -     if(!hasRole[msg.sender][role]) revert("Not authorized"); // _onlyRole(role);
+            -     _;
+            - }
+            + modifier onlyRole(bytes32 role) {
+            +     _onlyRole(role);
+            +     _;
+            + }
+            + 
+            + function _onlyRole(bytes32 role) internal {
+            +     if(!hasRole[msg.sender][role]) revert("Not authorized");
+            + }
+            
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
 
 note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
    --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
     |
-102 |     modifier onlyRoleOrOpenRole(bytes32 role) {
+108 |     modifier onlyRoleOrOpenRole(bytes32 role) {
     |              ------------------
     |
     = note: wrap modifier logic to reduce code size
@@ -157,7 +157,7 @@ note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
 note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
    --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
     |
-108 |     modifier onlyRoleOrAdmin(bytes32 role, address admin) {
+114 |     modifier onlyRoleOrAdmin(bytes32 role, address admin) {
     |              ---------------
     |
     = note: wrap modifier logic to reduce code size
@@ -180,7 +180,7 @@ note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
 note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
    --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
     |
-118 |     modifier assign(address sender) {
+124 |     modifier assign(address sender) {
     |              ------
     |
     = note: wrap modifier logic to reduce code size
@@ -205,7 +205,7 @@ note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
 note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
    --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
     |
-125 |     modifier assemblyBlock(address sender) {
+131 |     modifier assemblyBlock(address sender) {
     |              -------------
     |
     = note: wrap modifier logic to reduce code size
@@ -232,7 +232,7 @@ note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
 note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
    --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
     |
-133 |     modifier uncheckedBlock(address sender) {
+139 |     modifier uncheckedBlock(address sender) {
     |              --------------
     |
     = note: wrap modifier logic to reduce code size
@@ -259,7 +259,7 @@ note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
 note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
    --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
     |
-141 |     modifier emitEvent(address sender) {
+147 |     modifier emitEvent(address sender) {
     |              ---------
     |
     = note: wrap modifier logic to reduce code size
@@ -275,6 +275,29 @@ note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
             + 
             + function _emitEvent(address sender) internal {
             +     emit DidSomething(sender);
+            + }
+            
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
+    |
+157 |     modifier onlyOwnerContract(address sender) {
+    |              -----------------
+    |
+    = note: wrap modifier logic to reduce code size
+            
+            - modifier onlyOwnerContract(address sender) {
+            -     c.onlyOwner(sender);
+            -     _;
+            - }
+            + modifier onlyOwnerContract(address sender) {
+            +     _onlyOwnerContract(sender);
+            +     _;
+            + }
+            + 
+            + function _onlyOwnerContract(address sender) internal {
+            +     c.onlyOwner(sender);
             + }
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic

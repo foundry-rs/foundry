@@ -5,6 +5,10 @@ library Lib {
     function onlyOwner(address sender) internal {}
 }
 
+contract C {
+    function onlyOwner() public {}
+}
+
 /**
  * @title UnwrappedModifierLogicTest
  * @notice Test cases for the unwrapped-modifier-logic lint
@@ -14,6 +18,8 @@ library Lib {
  */
 contract UnwrappedModifierLogicTest {
     // Helpers
+
+    C immutable c;
 
     event DidSomething(address who);
     mapping(address => bool) isOwner;
@@ -140,6 +146,16 @@ contract UnwrappedModifierLogicTest {
     // Only call expressions are allowed (public/private/internal functions).
     modifier emitEvent(address sender) { //~NOTE: wrap modifier logic to reduce code size
         emit DidSomething(sender);
+        _;
+    }
+
+    /// -----------------------------------------------------------------------
+    /// Bad patterns (contract calls)
+    /// -----------------------------------------------------------------------
+
+    // Bad because there's an external call.
+    modifier onlyOwnerContract(address sender) { //~NOTE: wrap modifier logic to reduce code size
+        c.onlyOwner(sender);
         _;
     }
 }
