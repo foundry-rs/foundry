@@ -2312,15 +2312,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bzip2"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bea8dcd42434048e4f7a304411d9273a411f647446c1234a65ce0554923f4cff"
-dependencies = [
- "libbz2-rs-sys",
-]
-
-[[package]]
 name = "bzip2-sys"
 version = "0.1.13+1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5840,12 +5831,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db13adb97ab515a3691f56e4dbab09283d0b86cb45abd991d8634a9d6f501760"
 
 [[package]]
-name = "libbz2-rs-sys"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "775bf80d5878ab7c2b1080b5351a48b2f737d9f6f8b383574eebcc22be0dfccb"
-
-[[package]]
 name = "libc"
 version = "0.2.174"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8952,9 +8937,9 @@ dependencies = [
 
 [[package]]
 name = "soldeer-commands"
-version = "0.6.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64c6643ada3819431e78fd2f31943ba2d8428780d34205db00b719fe4944a533"
+checksum = "4e8ff0e7ac2832b40dafe5b80811be1be41e6cab457c53aec3adcc80d8e03d02"
 dependencies = [
  "bon",
  "clap",
@@ -8971,9 +8956,9 @@ dependencies = [
 
 [[package]]
 name = "soldeer-core"
-version = "0.6.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb97101eb5bad9cf4959325de64513303d238f30584ce9abe8ad21460c14afac"
+checksum = "92fd37a392b41211f12efbe0d5475bc7effde301dddc088998be8ada02e39941"
 dependencies = [
  "bon",
  "chrono",
@@ -10922,7 +10907,7 @@ checksum = "fabe6324e908f85a1c52063ce7aa26b68dcb7eb6dbc83a2d148403c9bc3eba50"
 dependencies = [
  "aes",
  "arbitrary",
- "bzip2 0.5.2",
+ "bzip2",
  "constant_time_eq",
  "crc32fast",
  "crossbeam-utils",
@@ -10951,7 +10936,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9aed4ac33e8eb078c89e6cbb1d5c4c7703ec6d299fc3e7c3695af8f8b423468b"
 dependencies = [
  "arbitrary",
- "bzip2 0.6.0",
  "crc32fast",
  "flate2",
  "indexmap 2.10.0",
