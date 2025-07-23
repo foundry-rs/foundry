@@ -69,7 +69,7 @@ impl UnwrappedModifierLogic {
     }
 
     fn check_stmts(&self, hir: &hir::Hir<'_>, stmts: &[hir::Stmt<'_>]) -> bool {
-        let mut total_valid = 0;
+        let mut has_valid = false;
         for stmt in stmts {
             if !self.is_valid_stmt(hir, stmt) {
                 return true;
@@ -77,10 +77,13 @@ impl UnwrappedModifierLogic {
             if let hir::StmtKind::Expr(expr) = &stmt.kind
                 && self.is_valid_expr(hir, expr)
             {
-                total_valid += 1;
+                if has_valid {
+                    return true;
+                }
+                has_valid = true;
             }
         }
-        total_valid > 1
+        false
     }
 
     fn get_snippet<'a>(
