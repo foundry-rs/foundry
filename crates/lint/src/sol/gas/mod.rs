@@ -8,5 +8,5 @@ use unwrapped_modifier_logic::UNWRAPPED_MODIFIER_LOGIC;
 
 register_lints!(
     (AsmKeccak256, late, (ASM_KECCAK256)),
-    (UnwrappedModifierLogic, early, (UNWRAPPED_MODIFIER_LOGIC))
+    (UnwrappedModifierLogic, late, (UNWRAPPED_MODIFIER_LOGIC))
 );

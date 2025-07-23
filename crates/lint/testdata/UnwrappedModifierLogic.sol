@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
+library Lib {
+    function onlyOwner(address sender) internal {}
+}
+
 /**
  * @title UnwrappedModifierLogicTest
  * @notice Test cases for the unwrapped-modifier-logic lint
@@ -22,6 +26,11 @@ contract UnwrappedModifierLogicTest {
     function checkPublic(address sender) public {}
     function checkPrivate(address sender) private {}
     function checkInternal(address sender) internal {}
+
+    modifier onlyOwnerLibrary() {
+        Lib.onlyOwner(msg.sender);
+        _;
+    }
 
     modifier onlyOwnerPublic() {
         checkPublic(msg.sender);
