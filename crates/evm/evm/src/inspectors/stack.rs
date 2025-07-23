@@ -761,7 +761,7 @@ impl InspectorStackRefMut<'_> {
         if self.enable_isolation {
             // If we're in isolation mode, we need to keep track of the state at the beginning of
             // the frame to be able to roll back on revert
-            self.top_frame_journal = ecx.journaled_state.state.clone();
+            self.top_frame_journal.clone_from(&ecx.journaled_state.state);
         }
     }
 
