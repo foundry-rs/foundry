@@ -323,13 +323,8 @@ impl TestArgs {
         let mut sess = Session::builder().with_stderr_emitter().build();
         sess.dcx = sess.dcx.set_flags(|flags| flags.track_diagnostics = false);
 
-        let mut pcx = solar_pcx_from_build_opts(&sess, &self.build, Some(&project), Some(&input))?;
-
-        let sess = pcx.sess;
+        let pcx = solar_pcx_from_build_opts(&sess, &self.build, Some(&project), Some(&input))?;
         let struct_defs = sess.enter_parallel(|| -> Result<StructDefinitions> {
-            // Load all files into the parsing ctx
-            pcx.load_files(input).map_err(|_| eyre::eyre!("Error loding files"))?;
-
             // Parse and lower to HIR
             let hir_arena = solar_sema::thread_local::ThreadLocal::new();
             let hir_result = pcx.parse_and_lower(&hir_arena);
