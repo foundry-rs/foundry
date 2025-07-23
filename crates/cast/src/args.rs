@@ -33,8 +33,7 @@ pub fn run() -> Result<()> {
 
     let args = CastArgs::parse();
     args.global.init()?;
-
-    run_command(args)
+    args.global.tokio_runtime().block_on(run_command(args))
 }
 
 /// Setup the global logger and other utilities.
@@ -49,7 +48,6 @@ pub fn setup() -> Result<()> {
 }
 
 /// Run the subcommand.
-#[tokio::main]
 pub async fn run_command(args: CastArgs) -> Result<()> {
     match args.cmd {
         // Constants
@@ -111,9 +109,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             };
             sh_println!("0x{output}")?
         }
-        CastSubcommand::ToCheckSumAddress { address } => {
+        CastSubcommand::ToCheckSumAddress { address, chain_id } => {
             let value = stdin::unwrap_line(address)?;
-            sh_println!("{}", value.to_checksum(None))?
+            sh_println!("{}", value.to_checksum(chain_id))?
         }
         CastSubcommand::ToUint256 { value } => {
             let value = stdin::unwrap_line(value)?;

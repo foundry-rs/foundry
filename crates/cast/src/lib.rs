@@ -1248,12 +1248,7 @@ impl SimpleCast {
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn from_fixed_point(value: &str, decimals: &str) -> Result<String> {
-        // TODO: https://github.com/alloy-rs/core/pull/461
-        let units: Unit = if let Ok(x) = decimals.parse() {
-            Unit::new(x).ok_or_else(|| eyre::eyre!("invalid unit"))?
-        } else {
-            decimals.parse()?
-        };
+        let units: Unit = Unit::from_str(decimals)?;
         let n = ParseUnits::parse_units(value, units)?;
         Ok(n.to_string())
     }

@@ -52,7 +52,7 @@ impl UpdateArgs {
             foundry_lock.iter_mut().for_each(|(_path, dep_id)| {
                 // Set r#override flag to true if the dep is a branch
                 if let DepIdentifier::Branch { .. } = dep_id {
-                    dep_id.mark_overide();
+                    dep_id.mark_override();
                 }
             });
         } else {
