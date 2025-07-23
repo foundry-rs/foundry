@@ -200,12 +200,9 @@ impl Linter for SolidityLinter {
     }
 
     /// Run AST-based lints
-    fn early_lint<'sess>(&self, input: &[PathBuf], mut pcx: ParsingContext<'sess>) {
+    fn early_lint<'sess>(&self, input: &[PathBuf], pcx: ParsingContext<'sess>) {
         let sess = pcx.sess;
         _ = sess.enter_parallel(|| -> Result<(), diagnostics::ErrorGuaranteed> {
-            // Load all files into the parsing ctx
-            pcx.load_files(input)?;
-
             // Parse the sources
             let ast_arena = solar_sema::thread_local::ThreadLocal::new();
             let ast_result = pcx.parse(&ast_arena);
@@ -224,12 +221,9 @@ impl Linter for SolidityLinter {
     }
 
     /// Run HIR-based lints
-    fn late_lint<'sess>(&self, input: &[PathBuf], mut pcx: ParsingContext<'sess>) {
+    fn late_lint<'sess>(&self, input: &[PathBuf], pcx: ParsingContext<'sess>) {
         let sess = pcx.sess;
         _ = sess.enter_parallel(|| -> Result<(), diagnostics::ErrorGuaranteed> {
-            // Load all files into the parsing ctx
-            pcx.load_files(input)?;
-
             // Parse and lower to HIR
             let hir_arena = solar_sema::thread_local::ThreadLocal::new();
             let hir_result = pcx.parse_and_lower(&hir_arena);
