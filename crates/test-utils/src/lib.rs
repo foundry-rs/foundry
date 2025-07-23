@@ -10,10 +10,6 @@
 #[macro_use]
 extern crate tracing;
 
-// See /Cargo.toml.
-use idna_adapter as _;
-use zip_extract as _;
-
 // Macros useful for testing.
 mod macros;
 
