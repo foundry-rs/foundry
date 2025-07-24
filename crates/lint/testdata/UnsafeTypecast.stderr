@@ -1062,31 +1062,3 @@ warning[unsafe-typecast]: typecasts that can truncate values should be avoided
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
 
-warning[unsafe-typecast]: typecasts that can truncate values should be avoided
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-221 |         uint256 d = uint256(-1000);
-    |                     --------------
-    |
-    = note: Consider disabling this lint only if you're certain the cast is safe:
-            
-            - // Ensure the value fits in the target type before casting
-            - // forge-lint: disable-next-line(unsafe-typecast)
-            - // Cast is safe because [explain why]
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be avoided
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-222 |         int256 e = int256(1000000000000000000000000000000000000000);
-    |                    ------------------------------------------------
-    |
-    = note: Consider disabling this lint only if you're certain the cast is safe:
-            
-            - // Ensure the value fits in the target type before casting
-            - // forge-lint: disable-next-line(unsafe-typecast)
-            - // Cast is safe because [explain why]
-            
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-

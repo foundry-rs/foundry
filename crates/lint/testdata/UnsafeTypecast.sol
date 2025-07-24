@@ -67,7 +67,7 @@ contract UnsafeTypecast {
         int248 E = int248(D);
         int256 F = int256(E);
     }
-    function downcastSafeUint() public pure {
+    function downcastUnsafeUint() public pure {
         uint256 a = type(uint256).max;
         uint248 b = uint248(a); //~WARN: typecasts that can truncate values should be avoided
         uint240 c = uint240(b); //~WARN: typecasts that can truncate values should be avoided
@@ -101,7 +101,7 @@ contract UnsafeTypecast {
         uint16 E = uint16(D); //~WARN: typecasts that can truncate values should be avoided
         uint8 F = uint8(E); //~WARN: typecasts that can truncate values should be avoided
     }
-    function downcastSafeInt() public pure {
+    function downcastUnsafeInt() public pure {
         int256 a = type(int256).max;
         int248 b = int248(a); //~WARN: typecasts that can truncate values should be avoided
         int240 c = int240(b); //~WARN: typecasts that can truncate values should be avoided
@@ -216,13 +216,4 @@ contract UnsafeTypecast {
         uint256 f = uint256(uint160(a));
     }
     
-    function literalCasts() public {
-        // Unsafe: signed/unsigned conversions
-        uint256 d = uint256(-1000); //~WARN: typecasts that can truncate values should be avoided
-        int256 e = int256(1000000000000000000000000000000000000000); //~WARN: typecasts that can truncate values should be avoided
-        
-        // Safe: literal upcasts
-        uint256 f = uint256(1000);
-        int256 g = int256(-1000);
-    }
 } 

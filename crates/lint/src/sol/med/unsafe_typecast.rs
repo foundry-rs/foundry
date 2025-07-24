@@ -20,16 +20,14 @@ impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
         expr: &'hir hir::Expr<'hir>,
     ) {
         // Check for type cast expressions: Type(value)
-        if let ExprKind::Call(call_expr, args, _) = &expr.kind {
-            // Check if this is a type cast (function call where the function is a type)
-            if let ExprKind::Type(target_type) = &call_expr.kind
-                && args.len() == 1
-                && let Some(first_arg) = args.exprs().next()
-                && is_unsafe_typecast_hir(hir, first_arg, target_type)
-            {
-                let suggestion = get_suggestion();
-                ctx.emit_with_fix(&UNSAFE_TYPECAST, expr.span, suggestion);
-            }
+        if let ExprKind::Call(call_expr, args, _) = &expr.kind
+            && let ExprKind::Type(target_type) = &call_expr.kind
+            && args.len() == 1
+            && let Some(first_arg) = args.exprs().next()
+            && is_unsafe_typecast_hir(hir, first_arg, target_type)
+        {
+            let suggestion = get_suggestion();
+            ctx.emit_with_fix(&UNSAFE_TYPECAST, expr.span, suggestion);
         }
     }
 }
@@ -49,15 +47,13 @@ fn is_unsafe_typecast_hir(
     target_type: &hir::Type<'_>,
 ) -> bool {
     // Get target elementary type
-    let target_elem_type = match &target_type.kind {
-        TypeKind::Elementary(elem_type) => elem_type,
-        _ => return false,
+    let TypeKind::Elementary(target_elem_type) = &target_type.kind else {
+        return false;
     };
 
     // Determine source type from the expression
-    let source_elem_type = match infer_source_type(hir, source_expr) {
-        Some(elem_type) => elem_type,
-        None => return false,
+    let Some(source_elem_type) = infer_source_type(hir, source_expr) else {
+        return false;
     };
 
     is_unsafe_elementary_typecast(&source_elem_type, target_elem_type)
@@ -74,27 +70,20 @@ fn infer_source_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::El
                 && let TypeKind::Elementary(_elem_type) = &ty.kind
                 && let Some(first_arg) = args.exprs().next()
             {
-                // For type casts, recursively check the source of the inner expression
-                // This allows us to see through cast chains like uint160(address_var)
                 return infer_source_type(hir, first_arg);
             }
-            // For other function calls, try to infer from context or return None
             None
         }
 
-        ExprKind::Lit(lit) => match &lit.kind {
-            solar_ast::LitKind::Number(num) => {
-                if is_negative_number_literal(num) {
-                    Some(hir::ElementaryType::Int(solar_ast::TypeSize::ZERO))
-                } else {
-                    Some(hir::ElementaryType::UInt(solar_ast::TypeSize::ZERO))
-                }
-            }
-            solar_ast::LitKind::Address(_) => Some(hir::ElementaryType::Address(false)),
-            solar_ast::LitKind::Str(..) => Some(hir::ElementaryType::String),
-            solar_ast::LitKind::Bool(_) => Some(hir::ElementaryType::Bool),
-            _ => None,
-        },
+        ExprKind::Lit(_) => {
+            // Return None for all literal types since the compiler performs type checking
+            // during assignment.
+            // For example, assigning `uint8 foo = 300;` will fail with
+            // "value 300 does not fit into type uint8" since uint8 max is 255.
+            // This eliminates the need for runtime literal type inference and the bigint
+            // dependency. ref: https://solang.readthedocs.io/en/latest/language/types.html
+            None
+        }
 
         ExprKind::Ident(resolutions) => {
             if let Some(hir::Res::Item(hir::ItemId::Variable(var_id))) = resolutions.first() {
@@ -119,11 +108,6 @@ fn infer_source_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::El
     }
 }
 
-/// Helper function to detect negative number literals
-fn is_negative_number_literal(num: &num_bigint::BigInt) -> bool {
-    num.sign().eq(&num_bigint::Sign::Minus)
-}
-
 /// Checks if a type cast from source_type to target_type is unsafe.
 fn is_unsafe_elementary_typecast(
     source_type: &hir::ElementaryType,
@@ -133,10 +117,8 @@ fn is_unsafe_elementary_typecast(
 
     match (source_type, target_type) {
         // Numeric downcasts (smaller target size)
-        (ElementaryType::UInt(source_size), ElementaryType::UInt(target_size)) => {
-            source_size.bits() > target_size.bits()
-        }
-        (ElementaryType::Int(source_size), ElementaryType::Int(target_size)) => {
+        (ElementaryType::UInt(source_size), ElementaryType::UInt(target_size))
+        | (ElementaryType::Int(source_size), ElementaryType::Int(target_size)) => {
             source_size.bits() > target_size.bits()
         }
 
@@ -154,10 +136,8 @@ fn is_unsafe_elementary_typecast(
         }
 
         // Dynamic bytes to fixed bytes (potential truncation)
-        (ElementaryType::Bytes, ElementaryType::FixedBytes(_)) => true,
-
-        // String to fixed bytes (potential truncation)
-        (ElementaryType::String, ElementaryType::FixedBytes(_)) => true,
+        (ElementaryType::Bytes, ElementaryType::FixedBytes(_))
+        | (ElementaryType::String, ElementaryType::FixedBytes(_)) => true,
 
         // Address to smaller uint (truncation) - address is 160 bits
         (ElementaryType::Address(_), ElementaryType::UInt(target_size)) => target_size.bits() < 160,

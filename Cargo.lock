@@ -3924,7 +3924,6 @@ dependencies = [
  "foundry-compilers",
  "foundry-config",
  "heck",
- "num-bigint",
  "rayon",
  "solar-ast",
  "solar-data-structures",
