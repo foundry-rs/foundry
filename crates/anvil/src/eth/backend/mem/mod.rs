@@ -1943,22 +1943,16 @@ impl Backend {
                             .map_err(|err| BlockchainError::Message(err.to_string()))?;
 
                         let env = self.build_call_env(request, fee_details, block.clone());
-                        let result;
-                        let res;
-
-                        {
-                            let mut evm = self.new_evm_with_inspector_ref(
-                                &cache_db as &dyn DatabaseRef,
-                                &env,
-                                &mut inspector,
-                            );
-                            result = evm.transact(env.tx.clone())?;
-                            let insp = evm.inspector_mut();
-
-                            res = insp
-                                .json_result(result, &env.tx.into_tx_env(), &block, &cache_db)
-                                .map_err(|err| BlockchainError::Message(err.to_string()))?;
-                        }
+                        let mut evm = self.new_evm_with_inspector_ref(
+                            &cache_db as &dyn DatabaseRef,
+                            &env,
+                            &mut inspector,
+                        );
+                        let result = evm.transact(env.tx.clone())?;
+                        let res = evm
+                            .inspector_mut()
+                            .json_result(result, &env.tx.into_tx_env(), &block, &cache_db)
+                            .map_err(|err| BlockchainError::Message(err.to_string()))?;
 
                         Ok(GethTrace::JS(res))
                     }
