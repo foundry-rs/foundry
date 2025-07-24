@@ -107,7 +107,7 @@ impl FromStr for Severity {
             "gas" => Ok(Self::Gas),
             "size" | "codesize" | "code-size" => Ok(Self::CodeSize),
             _ => Err(format!(
-                "unknown variant: found `{s}`, expected `one of `High`, `Med`, `Low`, `Info`, `Gas`, CodeSize`"
+                "unknown variant: found `{s}`, expected `one of `High`, `Med`, `Low`, `Info`, `Gas`, `CodeSize`"
             )),
         }
     }
