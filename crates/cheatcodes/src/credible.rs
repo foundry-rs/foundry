@@ -1,6 +1,6 @@
 use crate::{inspector::Ecx, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Bytes, FixedBytes, TxKind};
-use alloy_sol_types::{Revert, SolError, SolEvent, SolValue};
+use alloy_sol_types::{Revert, SolError, SolValue};
 use assertion_executor::{
     db::{fork_db::ForkDb, DatabaseCommit, DatabaseRef},
     primitives::{
@@ -11,10 +11,7 @@ use assertion_executor::{
     ExecutorConfig,
 };
 
-use foundry_evm_core::{
-    abi::console::ds::Console,
-    backend::{DatabaseError, DatabaseExt},
-};
+use foundry_evm_core::backend::{DatabaseError, DatabaseExt};
 use revm::context_interface::{ContextTr, JournalTr};
 use std::{
     cmp::max,
@@ -207,12 +204,10 @@ pub fn execute_assertion(
         .first()
         .expect("Expected 1 assertion to be executed, but got 0");
 
-    for log in assertion_fn_result.as_result().logs() {
-        if Some(&Console::log::SIGNATURE_HASH) == log.topics().first() {
-            let decoded_log = Console::log::decode_log(log);
-            if let Ok(log_data) = decoded_log {
-                inspector.console_log(&format!("{}", log_data.val));
-            }
+    if !assertion_fn_result.console_logs.is_empty() {
+        inspector.console_log("Assertion function logs: ");
+        for log in assertion_fn_result.console_logs.iter() {
+            inspector.console_log(log);
         }
     }
 
