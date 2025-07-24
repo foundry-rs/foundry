@@ -155,13 +155,13 @@ fmt_tests! {
     ArrayExpressions, // TODO: print cmnt before memory kw once span is available (solar). Is the rest acceptable?
     BlockComments, // OK
     BlockCommentsFunction, // OK
-    ConditionalOperatorExpression, // TODO: FIX break after =
+    ConditionalOperatorExpression, //OK
     ConstructorDefinition, // OK? is it acceptable to force no line before pragma?
     ConstructorModifierStyle, // OK
     ContractDefinition, // OK? Is it acceptable?
     DocComments, // OKish (basics). TODO: wrapp comments
     DoWhileStatement, // OK
-    EmitStatement, // OK
+    EmitStatement, // OK? is it acceptable? (matches perfectly with `ListFormat::Compact`, but test `EventDefinition` doesn't match)
     EnumDefinition, // OK
     EnumVariants, // OK
     ErrorDefinition, // OK
@@ -181,27 +181,27 @@ fmt_tests! {
     LiteralExpression, // OK? is it acceptable?
     MappingType, // OK? is it acceptable?
     ModifierDefinition, // OK
-    NamedFunctionCallExpression, // TODO: FIX break after =
+    NamedFunctionCallExpression, // FIX: break after =
     NumberLiteralUnderscore, // OK
     OperatorExpressions, // OK
     PragmaDirective, // OK
     Repros, // TODO: check boxes, panics
     ReturnStatement, // OK? is it acceptable? (inline block logic is inconsistent with 'if stmt' unit test)
-    RevertNamedArgsStatement, // OK? is it acceptable? (TODO: properly break long calls)
+    RevertNamedArgsStatement, // OK? is it acceptable? (properly break long calls?)
     RevertStatement, // OK
-    SimpleComments, // OK
+    SimpleComments, // OK (basics). TODO: wrap comments
     SortedImports, // FIX: sorting order
     StatementBlock, // OK
     StructDefinition, // OK
     ThisExpression, // OK
     TrailingComma, // OK (solar error)
-    TryStatement, // OK? is it acceptable?
+    TryStatement, // OK? is it acceptable? FIX: mixed cmnts
     TypeDefinition, // OK
-    UnitExpression, // OKish. TODO: print cmnt before memory kw once span is available (solar).
+    UnitExpression, // OKish. TODO: print cmnt before subdomain once span is available (solar).
     UsingDirective, // OK
     VariableAssignment, // OK? is it acceptable?
     VariableDefinition, // OK? is it acceptable? (solar forces constants to be initialized)
     WhileStatement,  // OK
-    Yul, // FIX: idemptency (comment-related)
+    Yul, // FIX: spacing
     YulStrings, // OK
 }
