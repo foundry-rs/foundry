@@ -180,12 +180,9 @@ fn gather_comments(sf: &SourceFile) -> Vec<Comment> {
                 let code_to_the_right =
                     !matches!(text[pos + token.len as usize..].chars().next(), Some('\r' | '\n'));
                 let style = match (code_to_the_left, code_to_the_right) {
+                    (_, true) => CommentStyle::Mixed,
                     (false, false) => CommentStyle::Isolated,
-                    // NOTE(rusowsky): unlike with `Trailing` comments, which are always printed
-                    // with a hardbreak, `Mixed` comments should be followed by a space and defer
-                    // breaks to the printer. Because of that, non-isolated code blocks are labeled
-                    // as mixed.
-                    _ => CommentStyle::Mixed,
+                    (true, false) => CommentStyle::Trailing,
                 };
                 let kind = CommentKind::Block;
 
@@ -239,36 +236,41 @@ impl Comments {
         self.comments.as_slice().iter()
     }
 
-    pub fn peek_trailing_comment(
+    /// Finds the first trailing comment on the same line as `span_pos`, allowing for `Mixed`
+    /// style comments to appear before it.
+    ///
+    /// Returns the comment and its index in the buffer.
+    pub fn peek_trailing(
         &self,
         sm: &SourceMap,
         span_pos: BytePos,
         next_pos: Option<BytePos>,
-    ) -> Option<&Comment> {
-        if let Some(cmnt) = self.peek() {
-            if !(cmnt.style.is_trailing() || cmnt.style.is_mixed()) {
-                return None;
+    ) -> Option<(&Comment, usize)> {
+        let span_line = sm.lookup_char_pos(span_pos).line;
+        for (i, cmnt) in self.iter().enumerate() {
+            // If we have moved to the next line, we can stop.
+            let comment_line = sm.lookup_char_pos(cmnt.pos()).line;
+            if comment_line != span_line {
+                break;
             }
-            let span_line = sm.lookup_char_pos(span_pos);
-            let comment_line = sm.lookup_char_pos(cmnt.pos());
-            let next = next_pos.unwrap_or_else(|| cmnt.pos() + BytePos(1));
-            if span_pos <= cmnt.pos() && cmnt.pos() < next && span_line.line == comment_line.line {
-                return Some(cmnt);
+
+            // The comment must start after the given span position.
+            if cmnt.pos() < span_pos {
+                continue;
+            }
+
+            // The comment must be before the next element.
+            if cmnt.pos() >= next_pos.unwrap_or_else(|| cmnt.pos() + BytePos(1)) {
+                break;
+            }
+
+            // Stop when we find a trailing or a non-mixed comment
+            match cmnt.style {
+                CommentStyle::Mixed => continue,
+                CommentStyle::Trailing => return Some((cmnt, i)),
+                _ => break,
             }
         }
-
         None
-    }
-
-    pub fn trailing_comment(
-        &mut self,
-        sm: &SourceMap,
-        span_pos: BytePos,
-        next_pos: Option<BytePos>,
-    ) -> Option<Comment> {
-        match self.peek_trailing_comment(sm, span_pos, next_pos) {
-            Some(_) => self.next(),
-            None => None,
-        }
     }
 }

@@ -181,7 +181,7 @@ fmt_tests! {
     LiteralExpression, // OK? is it acceptable?
     MappingType, // OK? is it acceptable?
     ModifierDefinition, // OK
-    NamedFunctionCallExpression, // FIX: break after =
+    NamedFunctionCallExpression, // Okish. Is it acceptable?
     NumberLiteralUnderscore, // OK
     OperatorExpressions, // OK
     PragmaDirective, // OK
@@ -195,7 +195,7 @@ fmt_tests! {
     StructDefinition, // OK
     ThisExpression, // OK
     TrailingComma, // OK (solar error)
-    TryStatement, // OK? is it acceptable? FIX: mixed cmnts
+    TryStatement, // OK? is it acceptable?
     TypeDefinition, // OK
     UnitExpression, // OKish. TODO: print cmnt before subdomain once span is available (solar).
     UsingDirective, // OK
