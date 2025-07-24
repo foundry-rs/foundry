@@ -22,7 +22,8 @@ vergen = { workspace = true, default-features = false, features = [
 ] }
 
 [dependencies]
-assertion-executor = { git = "https://github.com/phylaxsystems/credible-sdk.git", rev = "d17125a", features = ["phoundry"]}
+assertion-executor = { git = "https://github.com/phylaxsystems/credible-sdk.git", rev = "a7571bb", features = ["phoundry"]}
+#assertion-executor = { path = "../../../credible-sdk/crates/assertion-executor", features = ["phoundry"]}
 
 foundry-cheatcodes-spec.workspace = true
 foundry-common.workspace = true
