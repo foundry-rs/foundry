@@ -83,6 +83,20 @@ jobs:
             --benchmarks forge_test,forge_fuzz_test \
             --output-file forge_test_bench.md
 
+      - name: Run forge isolate test benchmarks
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: |
+          VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
+          # Isolate tests default to Vectorized/solady but can be overridden
+          REPOS="${{ github.event.inputs.repos || env.VECTORIZED_SOLADY }}"
+
+          ./target/release/foundry-bench --output-dir ./benches --force-install \
+            --versions $VERSIONS \
+            --repos $REPOS \
+            --benchmarks forge_isolate_test \
+            --output-file forge_isolate_test_bench.md
+
       - name: Run forge build benchmarks
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
@@ -124,6 +138,7 @@ jobs:
           name: benchmark-results
           path: |
             benches/forge_test_bench.md
+            benches/forge_isolate_test_bench.md
             benches/forge_build_bench.md
             benches/forge_coverage_bench.md
             benches/LATEST.md
