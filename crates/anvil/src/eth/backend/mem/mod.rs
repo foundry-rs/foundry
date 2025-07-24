@@ -42,7 +42,7 @@ use alloy_consensus::{
 };
 use alloy_eips::{eip1559::BaseFeeParams, eip4844::kzg_to_versioned_hash, eip7840::BlobParams};
 use alloy_evm::{
-    Database, Evm,
+    Database, Evm, IntoTxEnv,
     eth::EthEvmContext,
     overrides::{OverrideBlockHashes, apply_state_overrides},
     precompiles::PrecompilesMap,
