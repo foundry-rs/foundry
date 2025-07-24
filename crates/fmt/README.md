@@ -130,6 +130,7 @@ The formatter supports multiple configuration options defined in `FormatterConfi
 | ignore                       | []               | Globs to ignore                                                                                                                                             |
 | contract_new_lines           | false            | Add new line at start and end of contract declarations                                                                                                      |
 | sort_imports                 | false            | Sort import statements alphabetically in groups                                                                                                             |
+| style                        | space            | Configures if spaces or tabs should be used for indents. `tab_width` will be ignored if set to `tab`. Available options: `space`, `tab`                     |
 
 ### Disable Line
 

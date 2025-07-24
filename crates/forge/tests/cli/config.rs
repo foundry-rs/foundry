@@ -1061,6 +1061,7 @@ path = "out"
 [fmt]
 line_length = 120
 tab_width = 4
+style = "space"
 bracket_spacing = false
 int_types = "long"
 multiline_func_header = "attributes_first"
@@ -1120,6 +1121,7 @@ corpus_min_size = 0
 failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
+show_edge_coverage = false
 
 [labels]
 
@@ -1233,7 +1235,8 @@ exclude = []
     "failure_persist_dir": "cache/invariant",
     "show_metrics": true,
     "timeout": null,
-    "show_solidity": false
+    "show_solidity": false,
+    "show_edge_coverage": false
   },
   "ffi": false,
   "allow_internal_expect_revert": false,
@@ -1277,6 +1280,7 @@ exclude = []
   "fmt": {
     "line_length": 120,
     "tab_width": 4,
+    "style": "space",
     "bracket_spacing": false,
     "int_types": "long",
     "multiline_func_header": "attributes_first",

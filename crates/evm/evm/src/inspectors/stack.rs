@@ -211,7 +211,6 @@ impl InspectorStackBuilder {
             stack.set_chisel(chisel_state);
         }
         stack.collect_line_coverage(line_coverage.unwrap_or(false));
-        stack.collect_edge_coverage(true);
         stack.collect_logs(logs.unwrap_or(true));
         stack.print(print.unwrap_or(false));
         stack.tracing(trace_mode);
@@ -236,17 +235,19 @@ impl InspectorStackBuilder {
 /// dispatch.
 #[macro_export]
 macro_rules! call_inspectors {
-    ([$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $call:expr $(,)?) => {
+    ([$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $body:expr $(,)?) => {
         $(
             if let Some($id) = $inspector {
-                ({ #[inline(always)] #[cold] || $call })();
+                $crate::utils::cold_path();
+                $body;
             }
         )+
     };
-    (#[ret] [$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $call:expr $(,)?) => {{
+    (#[ret] [$($inspector:expr),+ $(,)?], |$id:ident $(,)?| $body:expr $(,)?) => {{
         $(
             if let Some($id) = $inspector {
-                if let Some(result) = ({ #[inline(always)] #[cold] || $call })() {
+                $crate::utils::cold_path();
+                if let Some(result) = $body {
                     return result;
                 }
             }
@@ -298,19 +299,21 @@ pub struct InspectorStack {
 /// See [`InspectorStack`].
 #[derive(Default, Clone, Debug)]
 pub struct InspectorStackInner {
+    // Inspectors.
     pub chisel_state: Option<ChiselState>,
-    pub line_coverage: Option<LineCoverageCollector>,
     pub edge_coverage: Option<EdgeCovInspector>,
     pub fuzzer: Option<Fuzzer>,
+    pub line_coverage: Option<LineCoverageCollector>,
     pub log_collector: Option<LogCollector>,
     pub printer: Option<CustomPrintTracer>,
-    pub tracer: Option<TracingInspector>,
+    pub revert_diag: Option<RevertDiagnostic>,
     pub script_execution_inspector: Option<ScriptExecutionInspector>,
+    pub tracer: Option<TracingInspector>,
+
+    // InspectorExt and other internal data.
     pub enable_isolation: bool,
     pub odyssey: bool,
     pub create2_deployer: Address,
-    pub revert_diag: Option<RevertDiagnostic>,
-
     /// Flag marking if we are in the inner EVM context.
     pub in_inner_context: bool,
     pub inner_context_data: Option<InnerContextData>,
@@ -760,7 +763,7 @@ impl InspectorStackRefMut<'_> {
         if self.enable_isolation {
             // If we're in isolation mode, we need to keep track of the state at the beginning of
             // the frame to be able to roll back on revert
-            self.top_frame_journal = ecx.journaled_state.state.clone();
+            self.top_frame_journal.clone_from(&ecx.journaled_state.state);
         }
     }
 
@@ -787,6 +790,47 @@ impl InspectorStackRefMut<'_> {
             ecx.journaled_state.state = std::mem::take(&mut self.top_frame_journal);
         }
     }
+
+    #[inline(always)]
+    fn step_inlined(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
+    ) {
+        call_inspectors!(
+            [
+                &mut self.fuzzer,
+                &mut self.tracer,
+                &mut self.line_coverage,
+                &mut self.edge_coverage,
+                &mut self.script_execution_inspector,
+                &mut self.printer,
+                &mut self.revert_diag,
+                // Keep `cheatcodes` last to make use of the tail call.
+                &mut self.cheatcodes,
+            ],
+            |inspector| (*inspector).step(interpreter, ecx),
+        );
+    }
+
+    #[inline(always)]
+    fn step_end_inlined(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
+    ) {
+        call_inspectors!(
+            [
+                &mut self.tracer,
+                &mut self.chisel_state,
+                &mut self.printer,
+                &mut self.revert_diag,
+                // Keep `cheatcodes` last to make use of the tail call.
+                &mut self.cheatcodes,
+            ],
+            |inspector| (*inspector).step_end(interpreter, ecx),
+        );
+    }
 }
 
 impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_> {
@@ -812,19 +856,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
         interpreter: &mut Interpreter,
         ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
     ) {
-        call_inspectors!(
-            [
-                &mut self.fuzzer,
-                &mut self.tracer,
-                &mut self.line_coverage,
-                &mut self.edge_coverage,
-                &mut self.cheatcodes,
-                &mut self.script_execution_inspector,
-                &mut self.printer,
-                &mut self.revert_diag
-            ],
-            |inspector| inspector.step(interpreter, ecx),
-        );
+        self.step_inlined(interpreter, ecx);
     }
 
     fn step_end(
@@ -832,18 +864,10 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStackRefMut<'_>
         interpreter: &mut Interpreter,
         ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
     ) {
-        call_inspectors!(
-            [
-                &mut self.tracer,
-                &mut self.cheatcodes,
-                &mut self.chisel_state,
-                &mut self.printer,
-                &mut self.revert_diag
-            ],
-            |inspector| inspector.step_end(interpreter, ecx),
-        );
+        self.step_end_inlined(interpreter, ecx);
     }
 
+    #[allow(clippy::redundant_clone)]
     fn log(
         &mut self,
         interpreter: &mut Interpreter,
@@ -1061,22 +1085,20 @@ impl InspectorExt for InspectorStackRefMut<'_> {
 }
 
 impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for InspectorStack {
-    #[inline]
     fn step(
         &mut self,
         interpreter: &mut Interpreter,
         ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
     ) {
-        self.as_mut().step(interpreter, ecx)
+        self.as_mut().step_inlined(interpreter, ecx)
     }
 
-    #[inline]
     fn step_end(
         &mut self,
         interpreter: &mut Interpreter,
         ecx: &mut EthEvmContext<&mut dyn DatabaseExt>,
     ) {
-        self.as_mut().step_end(interpreter, ecx)
+        self.as_mut().step_end_inlined(interpreter, ecx)
     }
 
     fn call(

@@ -3,12 +3,11 @@
 use crate::eth::error::BlockchainError;
 use alloy_primitives::{Address, B256, U256, keccak256, map::HashMap};
 use alloy_rlp::Encodable;
-use alloy_rpc_types::{BlockOverrides, state::StateOverride};
+use alloy_rpc_types::state::StateOverride;
 use alloy_trie::{HashBuilder, Nibbles};
 use foundry_evm::backend::DatabaseError;
 use revm::{
     bytecode::Bytecode,
-    context::BlockEnv,
     database::{CacheDB, DatabaseRef, DbAccount},
     state::AccountInfo,
 };
@@ -120,52 +119,4 @@ where
         };
     }
     Ok(())
-}
-
-/// Applies the given block overrides to the env and updates overridden block hashes in the db.
-pub fn apply_block_overrides<DB>(
-    overrides: BlockOverrides,
-    cache_db: &mut CacheDB<DB>,
-    env: &mut BlockEnv,
-) {
-    let BlockOverrides {
-        number,
-        difficulty,
-        time,
-        gas_limit,
-        coinbase,
-        random,
-        base_fee,
-        block_hash,
-    } = overrides;
-
-    if let Some(block_hashes) = block_hash {
-        // override block hashes
-        cache_db
-            .cache
-            .block_hashes
-            .extend(block_hashes.into_iter().map(|(num, hash)| (U256::from(num), hash)))
-    }
-
-    if let Some(number) = number {
-        env.number = number.saturating_to();
-    }
-    if let Some(difficulty) = difficulty {
-        env.difficulty = difficulty;
-    }
-    if let Some(time) = time {
-        env.timestamp = U256::from(time);
-    }
-    if let Some(gas_limit) = gas_limit {
-        env.gas_limit = gas_limit;
-    }
-    if let Some(coinbase) = coinbase {
-        env.beneficiary = coinbase;
-    }
-    if let Some(random) = random {
-        env.prevrandao = Some(random);
-    }
-    if let Some(base_fee) = base_fee {
-        env.basefee = base_fee.saturating_to();
-    }
 }
