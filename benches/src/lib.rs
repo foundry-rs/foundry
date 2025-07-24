@@ -390,6 +390,7 @@ impl BenchmarkProject {
             runs,
             Some("forge build"),
             None,
+            None,
             verbose,
         )
     }
