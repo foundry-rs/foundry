@@ -1,7 +1,5 @@
 //! Errors related to fuzz tests.
 
-use proptest::test_runner::Reason;
-
 /// Possible errors when running fuzz tests
 #[derive(Debug, thiserror::Error)]
 pub enum FuzzError {
@@ -11,7 +9,7 @@ pub enum FuzzError {
     TooManyRejects(u32),
 }
 
-impl From<FuzzError> for Reason {
+impl From<FuzzError> for proptest::test_runner::Reason {
     fn from(error: FuzzError) -> Self {
         error.to_string().into()
     }
