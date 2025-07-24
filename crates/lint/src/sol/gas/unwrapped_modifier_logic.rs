@@ -71,14 +71,10 @@ impl UnwrappedModifierLogic {
             match &stmt.kind {
                 hir::StmtKind::Placeholder => continue,
                 hir::StmtKind::Expr(expr) => {
-                    if self.is_valid_expr(hir, expr) {
-                        if has_valid_stmt {
-                            return true;
-                        }
-                        has_valid_stmt = true;
-                    } else {
+                    if !self.is_valid_expr(hir, expr) || has_valid_stmt {
                         return true;
                     }
+                    has_valid_stmt = true;
                 }
                 _ => return true,
             }
