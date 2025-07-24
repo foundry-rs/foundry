@@ -30,6 +30,7 @@ pub mod provider;
 pub mod reports;
 pub mod retry;
 pub mod selectors;
+pub mod sema;
 pub mod serde_helpers;
 pub mod term;
 pub mod traits;

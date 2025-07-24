@@ -33,7 +33,9 @@ use alloy_rpc_types::{
     request::{TransactionInput, TransactionRequest},
 };
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
-use foundry_common::{SELECTOR_LEN, TransactionMaybeSigned, evm::Breakpoints};
+use foundry_common::{
+    SELECTOR_LEN, TransactionMaybeSigned, evm::Breakpoints, sema::StructDefinitions,
+};
 use foundry_evm_core::{
     InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
@@ -453,6 +455,9 @@ pub struct Cheatcodes {
     /// Used to prevent duplicate changes file executing non-committing calls.
     pub fs_commit: bool,
 
+    /// Struct definitions in the contracts. Used to keep field order when parsing JSON values.
+    pub struct_defs: StructDefinitions,
+
     /// Serialized JSON values.
     // **Note**: both must a BTreeMap to ensure the order of the keys is deterministic.
     pub serialized_jsons: BTreeMap<String, BTreeMap<String, Value>>,
@@ -500,13 +505,13 @@ pub struct Cheatcodes {
 // create.
 impl Default for Cheatcodes {
     fn default() -> Self {
-        Self::new(Arc::default())
+        Self::new(Arc::default(), StructDefinitions::default())
     }
 }
 
 impl Cheatcodes {
     /// Creates a new `Cheatcodes` with the given settings.
-    pub fn new(config: Arc<CheatsConfig>) -> Self {
+    pub fn new(config: Arc<CheatsConfig>, struct_defs: StructDefinitions) -> Self {
         Self {
             fs_commit: true,
             labels: config.labels.clone(),
@@ -535,6 +540,7 @@ impl Cheatcodes {
             access_list: Default::default(),
             test_context: Default::default(),
             serialized_jsons: Default::default(),
+            struct_defs,
             eth_deals: Default::default(),
             gas_metering: Default::default(),
             gas_snapshots: Default::default(),
