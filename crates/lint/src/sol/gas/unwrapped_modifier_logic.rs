@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext, Snippet},
     sol::{Severity, SolLint},
 };
-use solar_ast::Span;
+use solar_ast::{self as ast, Span};
 use solar_sema::hir::{self, Res};
 
 declare_forge_lint!(
@@ -22,7 +22,7 @@ impl<'hir> LateLintPass<'hir> for UnwrappedModifierLogic {
     ) {
         // Only check modifiers with a body and a name
         let (body, name) = match (func.kind, &func.body, func.name) {
-            (solar_ast::FunctionKind::Modifier, Some(body), Some(name)) => (body, name),
+            (ast::FunctionKind::Modifier, Some(body), Some(name)) => (body, name),
             _ => return,
         };
 
@@ -41,48 +41,49 @@ impl<'hir> LateLintPass<'hir> for UnwrappedModifierLogic {
 }
 
 impl UnwrappedModifierLogic {
+    /// Returns `true` if an expr is not a built-in ('require' or 'assert') call or a lib function.
     fn is_valid_expr(&self, hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
-        match &expr.kind {
-            hir::ExprKind::Call(func_expr, _, _) => match &func_expr.kind {
-                hir::ExprKind::Ident(resolutions) => {
-                    !resolutions.iter().any(|r| matches!(r, Res::Builtin(_)))
-                }
-                hir::ExprKind::Member(base, _) => {
-                    if let hir::ExprKind::Ident(resolutions) = &base.kind {
-                        resolutions.iter().any(|r| matches!(r, Res::Item(hir::ItemId::Contract(id)) if hir.contract(*id).kind == solar_ast::ContractKind::Library))
+        if let hir::ExprKind::Call(func_expr, _, _) = &expr.kind {
+            if let hir::ExprKind::Ident(resolutions) = &func_expr.kind {
+                return !resolutions.iter().any(|r| matches!(r, Res::Builtin(_)));
+            }
+
+            if let hir::ExprKind::Member(base, _) = &func_expr.kind
+                && let hir::ExprKind::Ident(resolutions) = &base.kind
+            {
+                return resolutions.iter().any(|r| {
+                    matches!(r, Res::Item(hir::ItemId::Contract(id)) if hir.contract(*id).kind == ast::ContractKind::Library)
+                });
+            }
+        }
+
+        false
+    }
+
+    /// Checks if a block of statements is complex and should be wrapped in a helper function.
+    ///
+    /// This is true if the block contains:
+    /// 1. Any statement that is not a placeholder or a valid expression.
+    /// 2. More than one simple call expression.
+    fn stmts_require_wrapping(&self, hir: &hir::Hir<'_>, stmts: &[hir::Stmt<'_>]) -> bool {
+        let mut has_valid_stmt = false;
+        for stmt in stmts {
+            match &stmt.kind {
+                hir::StmtKind::Placeholder => continue,
+                hir::StmtKind::Expr(expr) => {
+                    if self.is_valid_expr(hir, expr) {
+                        if has_valid_stmt {
+                            return true;
+                        }
+                        has_valid_stmt = true;
                     } else {
-                        false
+                        return true;
                     }
                 }
-                _ => false,
-            },
-            _ => false,
-        }
-    }
-
-    fn is_valid_stmt(&self, hir: &hir::Hir<'_>, stmt: &hir::Stmt<'_>) -> bool {
-        match &stmt.kind {
-            hir::StmtKind::Expr(expr) => self.is_valid_expr(hir, expr),
-            hir::StmtKind::Placeholder => true,
-            _ => false,
-        }
-    }
-
-    fn check_stmts(&self, hir: &hir::Hir<'_>, stmts: &[hir::Stmt<'_>]) -> bool {
-        let mut has_valid = false;
-        for stmt in stmts {
-            if !self.is_valid_stmt(hir, stmt) {
-                return true;
-            }
-            if let hir::StmtKind::Expr(expr) = &stmt.kind
-                && self.is_valid_expr(hir, expr)
-            {
-                if has_valid {
-                    return true;
-                }
-                has_valid = true;
+                _ => return true,
             }
         }
+
         false
     }
 
@@ -94,8 +95,8 @@ impl UnwrappedModifierLogic {
         before: &'a [hir::Stmt<'a>],
         after: &'a [hir::Stmt<'a>],
     ) -> Option<Snippet> {
-        let wrap_before = !before.is_empty() && self.check_stmts(hir, before);
-        let wrap_after = !after.is_empty() && self.check_stmts(hir, after);
+        let wrap_before = !before.is_empty() && self.stmts_require_wrapping(hir, before);
+        let wrap_after = !after.is_empty() && self.stmts_require_wrapping(hir, after);
 
         if !(wrap_before || wrap_after) {
             return None;
