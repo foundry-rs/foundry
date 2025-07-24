@@ -9,7 +9,7 @@ contract GetRawBlockHeaderTest is DSTest {
 
     function testGetRawBlockHeaderWithFork() public {
         // TODO: Not sure how RPCs are handled in tests.
-        vm.createSelectFork("https://eth.llamarpc.com");
+        vm.createSelectFork("mainnet");
         assertEq(
             keccak256(vm.getRawBlockHeader(22985278)), 
             // `cast keccak256 $(cast block 22985278 --raw)`
