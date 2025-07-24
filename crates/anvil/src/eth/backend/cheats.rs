@@ -16,8 +16,6 @@ pub struct CheatsManager {
 impl CheatsManager {
     /// Sets the account to impersonate
     ///
-    /// This also accepts the actual code hash if the address is a contract to bypass EIP-3607
-    ///
     /// Returns `true` if the account is already impersonated
     pub fn impersonate(&self, addr: Address) -> bool {
         trace!(target: "cheats", "Start impersonating {:?}", addr);
