@@ -1,5 +1,5 @@
 use super::{
-    backend::mem::{BlockRequest, DatabaseRef, State, state},
+    backend::mem::{BlockRequest, DatabaseRef, State},
     sign::build_typed_transaction,
 };
 use crate::{
@@ -35,7 +35,7 @@ use alloy_consensus::{
 };
 use alloy_dyn_abi::TypedData;
 use alloy_eips::eip2718::Encodable2718;
-use alloy_evm::overrides::OverrideBlockHashes;
+use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
 use alloy_network::{
     AnyRpcBlock, AnyRpcTransaction, BlockResponse, Ethereum, NetworkWallet, TransactionBuilder,
     TransactionResponse, eip2718::Decodable2718,
@@ -2960,7 +2960,7 @@ impl EthApi {
                 .with_database_at(Some(block_request), |state, mut block| {
                     let mut cache_db = CacheDB::new(state);
                     if let Some(state_overrides) = overrides.state {
-                        state::apply_state_overrides(
+                        apply_state_overrides(
                             state_overrides.into_iter().collect(),
                             &mut cache_db,
                         )?;
