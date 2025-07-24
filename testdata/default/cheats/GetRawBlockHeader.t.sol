@@ -12,7 +12,7 @@ contract GetRawBlockHeaderTest is DSTest {
         vm.createSelectFork("https://eth.llamarpc.com");
         assertEq(
             keccak256(vm.getRawBlockHeader(22985278)), 
-            // `cast keccak256 $(cast block 22985278 --flashbots --raw)`
+            // `cast keccak256 $(cast block 22985278 --raw)`
             0x492419d85d2817f50577807a287742fbdcaae00ce89f2ea885e419ee4493b00f
         );
     }
