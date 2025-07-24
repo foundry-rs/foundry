@@ -32,6 +32,14 @@ impl Printer {
         self.word(" ");
     }
 
+    pub fn space_or_nbsp(&mut self, breaks: bool) {
+        if breaks {
+            self.space();
+        } else {
+            self.nbsp();
+        }
+    }
+
     pub fn word_nbsp(&mut self, w: impl Into<Cow<'static, str>>) {
         self.word(w);
         self.nbsp();
