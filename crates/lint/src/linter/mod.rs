@@ -163,9 +163,9 @@ pub enum Snippet {
         span: Option<Span>,
         /// The fix.
         add: String,
-        /// If `true`, the leading whitespaces of the first line will be trimed from the whole code
-        /// block. Applies to both, the added and removed code. This is useful for aligning
-        /// the indentation of multi-line replacements.
+        /// If `true`, the leading whitespaces of the first line will be trimmed from the whole
+        /// code block. Applies to both, the added and removed code. This is useful for
+        /// aligning the indentation of multi-line replacements.
         trim_code: bool,
     },
 }

@@ -27,7 +27,7 @@ impl<'hir> LateLintPass<'hir> for UnwrappedModifierLogic {
         };
 
         // Split statements into before and after the placeholder `_`.
-        let stmts = &body.stmts[..];
+        let stmts = body.stmts[..].as_ref();
         let (before, after) = stmts
             .iter()
             .position(|s| matches!(s.kind, hir::StmtKind::Placeholder))
