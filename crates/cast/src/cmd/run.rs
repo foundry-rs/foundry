@@ -17,7 +17,7 @@ use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
     Config,
     figment::{
-        self, Figment, Metadata, Profile,
+        self, Metadata, Profile,
         value::{Dict, Map},
     },
 };
@@ -114,7 +114,7 @@ impl RunArgs {
     ///
     /// Note: This executes the transaction(s) as is: Cheatcodes are disabled
     pub async fn run(self) -> Result<()> {
-        let figment = Into::<Figment>::into(&self.rpc).merge(&self);
+        let figment = self.rpc.into_figment(self.with_local_artifacts);
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::from_provider(figment)?.sanitized();
 
