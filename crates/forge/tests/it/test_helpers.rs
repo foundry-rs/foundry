@@ -160,6 +160,7 @@ impl ForgeTestProfile {
             show_metrics: true,
             timeout: None,
             show_solidity: false,
+            show_edge_coverage: false,
         };
 
         config.sanitized()
