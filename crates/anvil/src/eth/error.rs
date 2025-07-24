@@ -197,12 +197,10 @@ where
 {
     fn from(value: StateOverrideError<E>) -> Self {
         match value {
-            StateOverrideError::InvalidBytecode(err) => {
-                BlockchainError::StateOverrideError(err.to_string())
-            }
-            StateOverrideError::BothStateAndStateDiff(addr) => BlockchainError::StateOverrideError(
-                format!("state and state_diff can't be used together for account {}", addr),
-            ),
+            StateOverrideError::InvalidBytecode(err) => Self::StateOverrideError(err.to_string()),
+            StateOverrideError::BothStateAndStateDiff(addr) => Self::StateOverrideError(format!(
+                "state and state_diff can't be used together for account {addr}",
+            )),
             StateOverrideError::Database(err) => err.into(),
         }
     }
