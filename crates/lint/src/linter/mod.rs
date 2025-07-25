@@ -128,18 +128,16 @@ impl<'s> LintContext<'s> {
     }
 
     /// Gets the number of leading whitespaces (indentation) of the line where the span begins.
-    pub fn get_ind_for_span(&self, span: Span) -> usize {
-        if span.is_dummy() {
-            return 0;
-        }
-
-        // Get the line text and compute the indentation prior to the span's position.
-        let loc = self.sess.source_map().lookup_char_pos(span.lo());
-        if let Some(line_text) = loc.file.get_line(loc.line) {
-            let col_offset = loc.col.to_usize();
-            if col_offset <= line_text.len() {
-                let prev_text = &line_text[..col_offset];
-                return prev_text.len() - prev_text.trim().len();
+    pub fn get_span_indentation(&self, span: Span) -> usize {
+        if !span.is_dummy() {
+            // Get the line text and compute the indentation prior to the span's position.
+            let loc = self.sess.source_map().lookup_char_pos(span.lo());
+            if let Some(line_text) = loc.file.get_line(loc.line) {
+                let col_offset = loc.col.to_usize();
+                if col_offset <= line_text.len() {
+                    let prev_text = &line_text[..col_offset];
+                    return prev_text.len() - prev_text.trim().len();
+                }
             }
         }
 
@@ -188,15 +186,13 @@ impl Snippet {
                 if let Some(span) = span
                     && let Some(rmv) = ctx.span_to_snippet(span)
                 {
-                    let ind = ctx.get_ind_for_span(span);
-                    output.extend(rmv.lines().map(|line| {
+                    let ind = ctx.get_span_indentation(span);
+                    let diag_msg = |line: &str, prefix: &str, style: Style| {
                         let content = if trim { Self::trim_start_limited(line, ind) } else { line };
-                        (DiagMsg::from(format!("- {content}\n")), Style::Removal)
-                    }));
-                    output.extend(add.lines().map(|line| {
-                        let content = if trim { Self::trim_start_limited(line, ind) } else { line };
-                        (DiagMsg::from(format!("+ {content}\n")), Style::Addition)
-                    }));
+                        (DiagMsg::from(format!("{prefix}{content}\n")), style)
+                    };
+                    output.extend(rmv.lines().map(|line| diag_msg(line, "- ", Style::Removal)));
+                    output.extend(add.lines().map(|line| diag_msg(line, "+ ", Style::Addition)));
                 } else {
                     // Should never happen, but fall back to `Self::Block` behavior.
                     output.extend(
@@ -222,6 +218,7 @@ impl Snippet {
         }
     }
 
+    /// Removes up to `max_chars` whitespaces from the start of the string.
     fn trim_start_limited(s: &str, max_chars: usize) -> &str {
         let (mut chars, mut byte_offset) = (0, 0);
         for c in s.chars() {

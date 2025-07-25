@@ -100,34 +100,26 @@ impl UnwrappedModifierLogic {
 
         let binding = func.name.unwrap();
         let modifier_name = binding.name.as_str();
+        let mut param_list = vec![];
+        let mut param_decls = vec![];
 
-        // Get parameter names from the function
-        let param_list = func
-            .parameters
-            .iter()
-            .filter_map(|&var_id| {
-                let var = hir.variable(var_id);
-                var.name.map(|n| n.name.to_string())
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
+        for var_id in func.parameters {
+            let var = hir.variable(*var_id);
+            let ty = ctx
+                .span_to_snippet(var.ty.span)
+                .unwrap_or_else(|| "/* unknown type */".to_string());
 
-        // Get parameter declarations with types
-        let param_decls = func
-            .parameters
-            .iter()
-            .map(|&var_id| {
-                let var = hir.variable(var_id);
-                let name = var.name.as_ref().map(|n| n.name.as_str()).unwrap_or("");
-                let ty = ctx
-                    .span_to_snippet(var.ty.span)
-                    .unwrap_or_else(|| "/* unknown type */".to_string());
-                format!("{ty} {name}")
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
+            // solidity functions should always have named parameters
+            if let Some(ident) = var.name {
+                param_list.push(ident.to_string());
+                param_decls.push(format!("{ty} {}", ident.to_string()));
+            }
+        }
 
-        let body_indent = " ".repeat(ctx.get_ind_for_span(
+        let param_list = param_list.join(", ");
+        let param_decls = param_decls.join(", ");
+
+        let body_indent = " ".repeat(ctx.get_span_indentation(
             before.first().or(after.first()).map(|stmt| stmt.span).unwrap_or(func.span),
         ));
         let body = match (wrap_before, wrap_after) {
@@ -143,7 +135,7 @@ impl UnwrappedModifierLogic {
             _ => unreachable!(),
         };
 
-        let mod_indent = " ".repeat(ctx.get_ind_for_span(func.span));
+        let mod_indent = " ".repeat(ctx.get_span_indentation(func.span));
         let mut replacement = format!(
             "{mod_indent}modifier {modifier_name}({param_decls}) {{\n{body}\n{mod_indent}}}"
         );
