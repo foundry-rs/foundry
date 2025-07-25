@@ -59,6 +59,9 @@ pub use invariant::InvariantExecutor;
 mod trace;
 pub use trace::TracingExecutor;
 
+const COVERAGE_MAP_SIZE: usize = 65536;
+const DURATION_BETWEEN_METRICS_REPORT: Duration = Duration::from_secs(5);
+
 sol! {
     interface ITest {
         function setUp() external;

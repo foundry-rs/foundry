@@ -1,9 +1,11 @@
-use crate::executors::{Executor, FuzzTestTimer, RawCallResult};
+use crate::executors::{
+    COVERAGE_MAP_SIZE, DURATION_BETWEEN_METRICS_REPORT, Executor, FuzzTestTimer, RawCallResult,
+};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log, U256, map::HashMap};
 use eyre::Result;
-use foundry_common::evm::Breakpoints;
+use foundry_common::{evm::Breakpoints, sh_println};
 use foundry_config::FuzzConfig;
 use foundry_evm_core::{
     constants::{CHEATCODE_ADDRESS, MAGIC_ASSUME},
@@ -20,12 +22,17 @@ use proptest::{
     strategy::{Strategy, ValueTree},
     test_runner::{TestCaseError, TestRunner},
 };
-use std::fmt;
+use serde::Serialize;
+use serde_json::json;
+use std::{
+    fmt,
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
 mod types;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
 
-#[derive(Default)]
+#[derive(Serialize, Default)]
 struct FuzzCoverageMetrics {
     // Number of edges seen during the fuzz test.
     cumulative_edges_seen: usize,
@@ -102,8 +109,6 @@ pub struct FuzzedExecutor {
     history_map: Vec<u8>,
 }
 
-const COVERAGE_MAP_SIZE: usize = 65536;
-
 impl FuzzedExecutor {
     /// Instantiates a fuzzed executor given a testrunner
     pub fn new(
@@ -147,18 +152,13 @@ impl FuzzedExecutor {
         ];
         // We want to collect at least one trace which will be displayed to user.
         let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
-        let show_logs = self.config.show_logs;
 
         // Start timer for this fuzz test.
         let timer = FuzzTestTimer::new(self.config.timeout);
+        let mut last_metrics_report = Instant::now();
         let max_runs = self.config.runs;
         let continue_campaign = |runs: u32| {
-            // If timeout is configured, then perform fuzz runs until expires.
-            if timer.is_enabled() {
-                return !timer.is_timed_out();
-            }
-            // If no timeout configured then loop until configured runs.
-            runs < max_runs
+            if timer.is_enabled() { !timer.is_timed_out() } else { runs < max_runs }
         };
 
         'stop: while continue_campaign(test_data.runs) {
@@ -173,6 +173,19 @@ impl FuzzedExecutor {
                     if self.config.show_edge_coverage {
                         progress.set_message(format!("{}", &test_data.coverage_metrics));
                     }
+                } else if self.config.show_edge_coverage
+                    && last_metrics_report.elapsed() > DURATION_BETWEEN_METRICS_REPORT
+                {
+                    // Display metrics inline.
+                    let metrics = json!({
+                        "timestamp": SystemTime::now()
+                            .duration_since(UNIX_EPOCH).unwrap()
+                            .as_secs(),
+                        "test": func.name,
+                        "metrics": &test_data.coverage_metrics,
+                    });
+                    let _ = sh_println!("{}", serde_json::to_string(&metrics).unwrap());
+                    last_metrics_report = Instant::now();
                 };
 
                 test_data.runs += 1;
@@ -202,7 +215,7 @@ impl FuzzedExecutor {
                             test_data.breakpoints.replace(case.breakpoints);
                         }
 
-                        if show_logs {
+                        if self.config.show_logs {
                             test_data.logs.extend(case.logs);
                         }
 

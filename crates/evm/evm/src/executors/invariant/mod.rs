@@ -31,7 +31,7 @@ use shrink::shrink_sequence;
 use std::{
     collections::{HashMap as Map, btree_map::Entry},
     sync::Arc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 mod error;
@@ -50,7 +50,10 @@ use serde_json::json;
 mod corpus;
 
 mod shrink;
-use crate::executors::{EvmError, FuzzTestTimer, invariant::corpus::TxCorpusManager};
+use crate::executors::{
+    COVERAGE_MAP_SIZE, DURATION_BETWEEN_METRICS_REPORT, EvmError, FuzzTestTimer,
+    invariant::corpus::TxCorpusManager,
+};
 pub use shrink::check_sequence;
 
 sol! {
@@ -106,8 +109,6 @@ sol! {
         function targetInterfaces() public view returns (FuzzInterface[] memory targetedInterfaces);
     }
 }
-
-const DURATION_BETWEEN_METRICS_REPORT: Duration = Duration::from_secs(5);
 
 /// Contains invariant metrics for a single fuzzed selector.
 #[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -304,7 +305,6 @@ pub struct InvariantExecutor<'a> {
     /// History of binned hitcount of edges seen during fuzzing.
     history_map: Vec<u8>,
 }
-const COVERAGE_MAP_SIZE: usize = 65536;
 
 impl<'a> InvariantExecutor<'a> {
     /// Instantiates a fuzzed executor EVM given a testrunner
@@ -347,12 +347,7 @@ impl<'a> InvariantExecutor<'a> {
         let timer = FuzzTestTimer::new(self.config.timeout);
         let mut last_metrics_report = Instant::now();
         let continue_campaign = |runs: u32| {
-            // If timeout is configured, then perform invariant runs until expires.
-            if timer.is_enabled() {
-                return !timer.is_timed_out();
-            }
-            // If no timeout configured then loop until configured runs.
-            runs < self.config.runs
+            if timer.is_enabled() { !timer.is_timed_out() } else { runs < self.config.runs }
         };
 
         // Invariant runs with edge coverage if corpus dir is set or showing edge coverage.
