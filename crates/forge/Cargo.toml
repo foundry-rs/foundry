@@ -62,8 +62,6 @@ alloy-serde.workspace = true
 alloy-signer.workspace = true
 alloy-transport.workspace = true
 
-revm.workspace = true
-
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete = "4"
 clap_complete_fig = "4"
@@ -72,7 +70,10 @@ indicatif.workspace = true
 inferno = { version = "0.12", default-features = false }
 itertools.workspace = true
 parking_lot.workspace = true
+rand.workspace = true
 regex = { workspace = true, default-features = false }
+reqwest = { workspace = true, features = ["json"] }
+revm.workspace = true
 semver.workspace = true
 serde_json.workspace = true
 similar = { version = "2", features = ["inline"] }
@@ -80,6 +81,7 @@ solang-parser.workspace = true
 solar-parse.workspace = true
 solar-sema.workspace = true
 strum = { workspace = true, features = ["derive"] }
+tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
 toml_edit = "0.22"
@@ -88,6 +90,7 @@ watchexec-events = "6.0"
 watchexec-signals = "5.0"
 clearscreen = "4.0"
 evm-disassembler.workspace = true
+num-bigint = "0.4"
 path-slash.workspace = true
 
 # doc server
@@ -111,6 +114,8 @@ reqwest = { workspace = true, features = ["json"] }
 mockall = "0.13"
 globset = "0.4"
 paste = "1.0"
+
+rstest = "0.25.0"
 similar-asserts.workspace = true
 svm = { package = "svm-rs", version = "0.5", default-features = false, features = [
     "rustls",
