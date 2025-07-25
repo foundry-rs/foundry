@@ -337,8 +337,8 @@ impl CheatcodesExecutor for InspectorStackInner {
         Box::new(InspectorStackRefMut { cheatcodes: Some(cheats), inner: self })
     }
 
-    fn tracing_inspector(&mut self) -> Option<&mut Option<Box<TracingInspector>>> {
-        Some(&mut self.tracer)
+    fn tracing_inspector(&mut self) -> Option<&mut TracingInspector> {
+        self.tracer.as_deref_mut()
     }
 }
 
