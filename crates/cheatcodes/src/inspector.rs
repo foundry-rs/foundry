@@ -1387,10 +1387,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                 .find(|(expected, _)| !expected.found && expected.count > 0)
             {
                 outcome.result.result = InstructionResult::Revert;
-                let error_msg = expected
-                    .mismatch_error
-                    .as_deref()
-                    .unwrap_or("log != expected log");
+                let error_msg = expected.mismatch_error.as_deref().unwrap_or("log != expected log");
                 outcome.result.output = error_msg.abi_encode().into();
                 return;
             }
