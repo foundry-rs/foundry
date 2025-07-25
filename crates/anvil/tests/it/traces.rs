@@ -929,6 +929,7 @@ async fn test_trace_filter() {
     assert_eq!(traces.len(), 5);
 }
 
+#[cfg(feature = "js-tracer")]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_tracer_debug_trace_call_js_tracer() {
     let (api, handle) = spawn(NodeConfig::test()).await;

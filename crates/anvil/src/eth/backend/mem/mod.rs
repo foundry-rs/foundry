@@ -41,8 +41,11 @@ use alloy_consensus::{
     transaction::Recovered,
 };
 use alloy_eips::{eip1559::BaseFeeParams, eip4844::kzg_to_versioned_hash, eip7840::BlobParams};
+#[cfg(feature = "js-tracer")]
+use alloy_evm::IntoTxEnv;
+
 use alloy_evm::{
-    Database, Evm, IntoTxEnv,
+    Database, Evm,
     eth::EthEvmContext,
     overrides::{OverrideBlockHashes, apply_state_overrides},
     precompiles::PrecompilesMap,
@@ -118,7 +121,7 @@ use revm::{
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::AccountInfo,
 };
-use revm_inspectors::{tracing::js::JsInspector, transfer::TransferInspector};
+use revm_inspectors::transfer::TransferInspector;
 use std::{
     collections::BTreeMap,
     fmt::Debug,
@@ -1936,11 +1939,16 @@ impl Backend {
                             Err(RpcError::invalid_params("unsupported tracer type").into())
                         }
                     },
-
+                    #[cfg(not(feature = "js-tracer"))]
+                    GethDebugTracerType::JsTracer(_) => {
+                        Err(RpcError::invalid_params("unsupported tracer type").into())
+                    }
+                    #[cfg(feature = "js-tracer")]
                     GethDebugTracerType::JsTracer(code) => {
                         let config = tracer_config.into_json();
-                        let mut inspector = JsInspector::new(code, config)
-                            .map_err(|err| BlockchainError::Message(err.to_string()))?;
+                        let mut inspector =
+                            revm_inspectors::tracing::js::JsInspector::new(code, config)
+                                .map_err(|err| BlockchainError::Message(err.to_string()))?;
 
                         let env = self.build_call_env(request, fee_details, block.clone());
                         let mut evm = self.new_evm_with_inspector_ref(
