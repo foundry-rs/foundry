@@ -1135,7 +1135,7 @@ pub(crate) fn get_emit_mismatch_message(
     } else {
         if is_anonymous {
             // For anon logs - param 0  is also checked.
-            return format!("anonymous log mismatch at param {}", mismatches.join(", "));
+            return format!("anonymous log mismatch at {}", mismatches.join(", "));
         }
         // For non-anon logs - param 0 / topic[0] is the event sig.
         format!("log mismatch at {}", mismatches.join(", "))
