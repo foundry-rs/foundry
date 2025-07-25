@@ -454,7 +454,7 @@ impl FilledTransactionsState {
             receipts: vec![],
             pending: vec![],
             paths,
-            timestamp: now().as_millis(),
+            timestamp: now()?.as_millis(),
             libraries,
             chain,
             commit,
