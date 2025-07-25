@@ -5,7 +5,7 @@ use std::{
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result, Vm::*};
 use alloy_primitives::{
-    Address, Bytes, LogData as RawLog, U256,
+    Address, Bytes, LogData as RawLog, U256, hex,
     map::{AddressHashMap, HashMap, hash_map::Entry},
 };
 use revm::{
@@ -110,6 +110,8 @@ pub struct ExpectedEmit {
     pub found: bool,
     /// Number of times the log is expected to be emitted
     pub count: u64,
+    /// Stores mismatch details if a log didn't match
+    pub mismatch_error: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -762,8 +764,16 @@ fn expect_emit(
     anonymous: bool,
     count: u64,
 ) -> Result {
-    let expected_emit =
-        ExpectedEmit { depth, checks, address, found: false, log: None, anonymous, count };
+    let expected_emit = ExpectedEmit {
+        depth,
+        checks,
+        address,
+        found: false,
+        log: None,
+        anonymous,
+        count,
+        mismatch_error: None,
+    };
     if let Some(found_emit_pos) = state.expected_emits.iter().position(|(emit, _)| emit.found) {
         // The order of emits already found (back of queue) should not be modified, hence push any
         // new emit before first found emit.
@@ -857,11 +867,23 @@ pub(crate) fn handle_expect_emit(
 
     event_to_fill_or_check.found = || -> bool {
         if !checks_topics_and_data(event_to_fill_or_check.checks, expected, log) {
+            // Store detailed mismatch information
+            event_to_fill_or_check.mismatch_error = Some(get_emit_mismatch_message(
+                event_to_fill_or_check.checks,
+                expected,
+                log,
+                event_to_fill_or_check.anonymous,
+            ));
             return false;
         }
 
         // Maybe match source address.
         if event_to_fill_or_check.address.is_some_and(|addr| addr != log.address) {
+            event_to_fill_or_check.mismatch_error = Some(format!(
+                "log emitter mismatch: expected={:#x}, got={:#x}",
+                event_to_fill_or_check.address.unwrap(),
+                log.address
+            ));
             return false;
         }
 
@@ -1017,6 +1039,107 @@ fn checks_topics_and_data(checks: [bool; 5], expected: &RawLog, log: &RawLog) ->
     }
 
     true
+}
+
+/// Gets a detailed mismatch message for emit assertions
+pub(crate) fn get_emit_mismatch_message(
+    checks: [bool; 5],
+    expected: &RawLog,
+    actual: &RawLog,
+    is_anonymous: bool,
+) -> String {
+    // Early return for completely different events or incompatible structures
+
+    // 1. Different number of topics
+    if actual.topics().len() != expected.topics().len() {
+        return "log != expected log".to_string();
+    }
+
+    // 2. Different event signatures (for non-anonymous events)
+    if !is_anonymous
+        && checks[0]
+        && (!expected.topics().is_empty() && !actual.topics().is_empty())
+        && expected.topics()[0] != actual.topics()[0]
+    {
+        return "log != expected log".to_string();
+    }
+
+    // 3. Check data
+    if checks[4] && expected.data.as_ref() != actual.data.as_ref() {
+        let expected_bytes = expected.data.as_ref();
+        let actual_bytes = actual.data.as_ref();
+
+        // Different lengths or not ABI-encoded
+        if expected_bytes.len() != actual_bytes.len()
+            || expected_bytes.len() % 32 != 0
+            || expected_bytes.is_empty()
+        {
+            return "log != expected log".to_string();
+        }
+    }
+
+    // expected and actual events are the same, so check individual parameters
+    let mut mismatches = Vec::new();
+
+    // Check topics (indexed parameters)
+    for (i, (expected_topic, actual_topic)) in
+        expected.topics().iter().zip(actual.topics().iter()).enumerate()
+    {
+        // Skip topic[0] for non-anonymous events (already checked above)
+        if i == 0 && !is_anonymous {
+            continue;
+        }
+
+        // Only check if the corresponding check flag is set
+        if i < checks.len() && checks[i] && expected_topic != actual_topic {
+            let param_idx = if is_anonymous {
+                i // For anonymous events, topic[0] is param 0
+            } else {
+                i - 1 // For regular events, topic[0] is event signature, so topic[1] is param 0
+            };
+            mismatches.push(format!(
+                "param {}: expected={:#x}, got={:#x}",
+                param_idx, expected_topic, actual_topic
+            ));
+        }
+    }
+
+    // Check data (non-indexed parameters) - we already verified compatibility above
+    if checks[4] && expected.data.as_ref() != actual.data.as_ref() {
+        let expected_bytes = expected.data.as_ref();
+        let actual_bytes = actual.data.as_ref();
+
+        let num_indexed_params = if is_anonymous {
+            expected.topics().len()
+        } else {
+            expected.topics().len().saturating_sub(1)
+        };
+
+        for (i, (expected_chunk, actual_chunk)) in
+            expected_bytes.chunks(32).zip(actual_bytes.chunks(32)).enumerate()
+        {
+            if expected_chunk != actual_chunk {
+                let param_idx = num_indexed_params + i;
+                mismatches.push(format!(
+                    "param {}: expected={}, got={}",
+                    param_idx,
+                    hex::encode_prefixed(expected_chunk),
+                    hex::encode_prefixed(actual_chunk)
+                ));
+            }
+        }
+    }
+
+    if mismatches.is_empty() {
+        "log != expected log".to_string()
+    } else {
+        if is_anonymous {
+            // For anon logs - param 0  is also checked.
+            return format!("anonymous log mismatch at param {}", mismatches.join(", "));
+        }
+        // For non-anon logs - param 0 / topic[0] is the event sig.
+        format!("log mismatch at {}", mismatches.join(", "))
+    }
 }
 
 fn expect_safe_memory(state: &mut Cheatcodes, start: u64, end: u64, depth: u64) -> Result {

@@ -1381,10 +1381,17 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                 .collect::<Vec<_>>();
 
             // Revert if not all emits expected were matched.
-            if self.expected_emits.iter().any(|(expected, _)| !expected.found && expected.count > 0)
+            if let Some((expected, _)) = self
+                .expected_emits
+                .iter()
+                .find(|(expected, _)| !expected.found && expected.count > 0)
             {
                 outcome.result.result = InstructionResult::Revert;
-                outcome.result.output = "log != expected log".abi_encode().into();
+                let error_msg = expected
+                    .mismatch_error
+                    .as_deref()
+                    .unwrap_or("log != expected log");
+                outcome.result.output = error_msg.abi_encode().into();
                 return;
             }
 
