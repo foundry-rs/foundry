@@ -478,6 +478,17 @@ impl InspectorStack {
             script_address;
     }
 
+    #[inline(always)]
+    fn as_mut(&mut self) -> InspectorStackRefMut<'_> {
+        InspectorStackRefMut { cheatcodes: self.cheatcodes.as_deref_mut(), inner: &mut self.inner }
+    }
+
+    /// Returns an [`InspectorExt`] using this stack's inspectors.
+    #[inline]
+    pub fn as_inspector(&mut self) -> impl InspectorExt + '_ {
+        self
+    }
+
     /// Collects all the data gathered during inspection into a single struct.
     pub fn collect(self) -> InspectorData {
         let Self {
@@ -525,11 +536,6 @@ impl InspectorStack {
             chisel_state: chisel_state.and_then(|state| state.state),
             reverter,
         }
-    }
-
-    #[inline(always)]
-    fn as_mut(&mut self) -> InspectorStackRefMut<'_> {
-        InspectorStackRefMut { cheatcodes: self.cheatcodes.as_deref_mut(), inner: &mut self.inner }
     }
 }
 
