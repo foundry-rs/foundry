@@ -46,7 +46,7 @@ impl MultiChainSequence {
     ) -> Result<Self> {
         let (path, sensitive_path) = Self::get_paths(config, sig, target, dry_run)?;
 
-        Ok(Self { deployments, path, sensitive_path, timestamp: now().as_millis() })
+        Ok(Self { deployments, path, sensitive_path, timestamp: now()?.as_millis() })
     }
 
     /// Gets paths in the formats
@@ -113,7 +113,7 @@ impl MultiChainSequence {
     pub fn save(&mut self, silent: bool, save_ts: bool) -> Result<()> {
         self.deployments.iter_mut().for_each(|sequence| sequence.sort_receipts());
 
-        self.timestamp = now().as_millis();
+        self.timestamp = now()?.as_millis();
 
         let sensitive_sequence = SensitiveMultiChainSequence::from_multi_sequence(self.clone());
 
