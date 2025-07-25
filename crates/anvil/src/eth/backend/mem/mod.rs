@@ -41,9 +41,6 @@ use alloy_consensus::{
     transaction::Recovered,
 };
 use alloy_eips::{eip1559::BaseFeeParams, eip4844::kzg_to_versioned_hash, eip7840::BlobParams};
-#[cfg(feature = "js-tracer")]
-use alloy_evm::IntoTxEnv;
-
 use alloy_evm::{
     Database, Evm,
     eth::EthEvmContext,
@@ -1945,6 +1942,7 @@ impl Backend {
                     }
                     #[cfg(feature = "js-tracer")]
                     GethDebugTracerType::JsTracer(code) => {
+                        use alloy_evm::IntoTxEnv;
                         let config = tracer_config.into_json();
                         let mut inspector =
                             revm_inspectors::tracing::js::JsInspector::new(code, config)
