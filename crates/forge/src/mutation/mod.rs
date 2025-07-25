@@ -21,7 +21,7 @@ use foundry_config::Config;
 use rayon::prelude::*;
 use solar_parse::ast::visit::Visit;
 use std::path::{Path, PathBuf};
-use tempfile::TempDir;
+
 pub struct MutationsSummary {
     total: usize,
     dead: usize,
@@ -72,8 +72,6 @@ pub struct MutationHandler {
     pub mutations: Vec<Mutant>,
     config: Arc<foundry_config::Config>,
     report: MutationsSummary,
-    // Ensure we don't clean it between creation and mutant generation (been there, done that)
-    temp_dir: Option<TempDir>,
 }
 
 impl MutationHandler {
@@ -83,7 +81,6 @@ impl MutationHandler {
             src: Arc::default(),
             mutations: vec![],
             config,
-            temp_dir: None,
             report: MutationsSummary::new(),
         }
     }
@@ -120,18 +117,10 @@ impl MutationHandler {
     }
 
     /// Based on a given mutation, emit the corresponding mutated solidity code and write it to disk
-    pub fn generate_mutated_solidity(&self, mutation: &Mutant, src_contract_path: &Path) {
-        let temp_dir_path = &mutation.path;
-
+    pub fn generate_mutated_solidity(&self, mutation: &Mutant) {
         let span = mutation.span;
         let replacement = mutation.mutation.to_string();
 
-        let target_path = temp_dir_path
-            .ancestors()
-            .next()
-            .unwrap()
-            .join("src")
-            .join(src_contract_path.file_name().unwrap());
         let src_content = Arc::clone(&self.src);
 
         let start_pos = span.lo().0 as usize;
@@ -145,7 +134,14 @@ impl MutationHandler {
         new_content.push_str(&replacement);
         new_content.push_str(after);
 
-        std::fs::write(&target_path, new_content)
-            .unwrap_or_else(|_| panic!("Failed to write to target file {:?}", &target_path));
+        std::fs::write(&self.contract_to_mutate, new_content).unwrap_or_else(|_| {
+            panic!("Failed to write to target file {:?}", &self.contract_to_mutate)
+        });
+    }
+
+    pub fn restore_original_source(&self) {
+        std::fs::write(&self.contract_to_mutate, &*self.src).unwrap_or_else(|_| {
+            panic!("Failed to write to target file {:?}", &self.contract_to_mutate)
+        });
     }
 }

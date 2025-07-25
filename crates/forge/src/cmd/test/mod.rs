@@ -496,22 +496,31 @@ impl TestArgs {
             let mut mutation_summary = MutationsSummary::new();
 
             for path in mutate_paths {
+                sh_println!("Running mutation tests for {}", path.display()).unwrap();
+
                 let mut handler = MutationHandler::new(path, config.clone());
 
                 handler.read_source_contract()?;
                 handler.generate_ast().await;
 
-                for mutant in &handler.mutations {
-                    handler.generate_mutated_solidity(&mutant, &config.src);
+                for (i, mutant) in handler.mutations.iter().enumerate() {
+                    sh_println!("Testing mutant {} out of {}", i + 1, handler.mutations.len())
+                        .unwrap();
 
+                    handler.generate_mutated_solidity(&mutant);
+                    dbg!(&mutant);
+                    dbg!("gen");
                     let new_filter = self.filter(&config).unwrap();
 
                     let compiler = ProjectCompiler::new()
                         .dynamic_test_linking(config.dynamic_test_linking)
+                        // .quiet(true);
                         .quiet(shell::is_json() || self.junit);
-                    let compile_output = compiler.compile(&project)?;
 
-                    if compile_output.has_compiler_errors() {
+                    let compile_output = compiler.compile(&project);
+                    dbg!("compile");
+
+                    if compile_output.is_err() {
                         mutation_summary.update_invalid_mutant();
                     } else {
                         let mut runner = MultiContractRunnerBuilder::new(config.clone())
@@ -522,17 +531,20 @@ impl TestArgs {
                             .odyssey(evm_opts.odyssey)
                             .build::<MultiCompiler>(
                                 &config.root,
-                                &compile_output,
+                                &compile_output.unwrap(),
                                 env.clone(),
                                 evm_opts.clone(),
                             )?;
 
                         let results = runner.test_collect(&new_filter)?;
+                        dbg!("test");
 
                         let outcome = TestOutcome::new(results, self.allow_failure);
                         mutation_summary.update_valid_mutant(&outcome);
                     }
                 }
+
+                handler.restore_original_source();
             }
 
             MutationReporter::new().report(&mutation_summary);

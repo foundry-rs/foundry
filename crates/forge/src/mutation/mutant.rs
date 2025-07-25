@@ -120,7 +120,12 @@ impl Display for MutationType {
             Self::Assignment(kind) => match kind {
                 AssignVarTypes::Literal(kind) => match kind {
                     LitKind::Number(val) => write!(f, "{val}"),
-                    _ => todo!(),
+                    LitKind::Bool(val) => write!(f, "{val}"),
+                    LitKind::Address(val) => write!(f, "{val}"),
+                    // Reachable?
+                    LitKind::Rational(val) => write!(f, "{val}"),
+                    LitKind::Str(_, val, _) => write!(f, "{val:?}"),
+                    LitKind::Err(val) => todo!(),
                 },
                 AssignVarTypes::Identifier(ident) => write!(f, "{ident}"),
             },
@@ -129,10 +134,10 @@ impl Display for MutationType {
             Self::ElimDelegate => write!(f, "call"),
             Self::UnaryOperator(mutated) => write!(f, "{mutated}"),
 
-            Self::FunctionCall |
-            Self::Require |
-            Self::SwapArgumentsFunction |
-            Self::SwapArgumentsOperator => write!(f, ""),
+            Self::FunctionCall
+            | Self::Require
+            | Self::SwapArgumentsFunction
+            | Self::SwapArgumentsOperator => write!(f, ""),
         }
     }
 }
