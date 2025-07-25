@@ -6,8 +6,8 @@ mod visitor;
 // Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to
 // select mutants) Use Solar:
 use solar_parse::{
-    ast::interface::{source_map::FileName, Session},
     Parser,
+    ast::interface::{Session, source_map::FileName},
 };
 use std::sync::Arc;
 
@@ -16,7 +16,7 @@ use crate::mutation::{mutant::Mutant, visitor::MutantVisitor};
 pub use crate::mutation::reporter::MutationReporter;
 
 use crate::result::TestOutcome;
-use foundry_compilers::{project::ProjectCompiler, ProjectCompileOutput};
+use foundry_compilers::{ProjectCompileOutput, project::ProjectCompiler};
 use foundry_config::Config;
 use rayon::prelude::*;
 use solar_parse::ast::visit::Visit;
@@ -69,7 +69,7 @@ impl MutationsSummary {
 pub struct MutationHandler {
     contract_to_mutate: PathBuf,
     src: Arc<String>,
-    mutations: Vec<Mutant>,
+    pub mutations: Vec<Mutant>,
     config: Arc<foundry_config::Config>,
     report: MutationsSummary,
     // Ensure we don't clean it between creation and mutant generation (been there, done that)
@@ -119,102 +119,8 @@ impl MutationHandler {
         });
     }
 
-    /// Create a folder for each mutation, naming based on the type and span
-    pub fn create_mutation_folders(&mut self) {
-        let temp_dir_root = tempfile::tempdir().unwrap();
-        let target_contract_path = &self.contract_to_mutate;
-
-        for mutant in &mut self.mutations {
-            let mutation_dir = temp_dir_root
-                .path()
-                .join(
-                    target_contract_path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .replace('.', "_"),
-                )
-                .join(format!("mutation_{}", mutant.get_unique_id()));
-            std::fs::create_dir_all(&mutation_dir).expect("Failed to create mutation directory");
-
-            let config = Arc::clone(&self.config);
-            Self::copy_origin(&mutation_dir, target_contract_path, config);
-
-            mutant.path = mutation_dir;
-        }
-
-        self.temp_dir = Some(temp_dir_root);
-    }
-
-    /// Emit the solidity of the mutated contract, write it to disk and (try to) compile it
-    pub async fn generate_and_compile(&self) -> Vec<(&Mutant, Option<ProjectCompileOutput>)> {
-        let src_path = &self.contract_to_mutate;
-
-        self.mutations.iter().for_each(|mutant| {
-            self.generate_mutant(mutant, src_path);
-        });
-
-        self.mutations
-            .par_iter()
-            .map(|mutant| {
-                if let Some(output) = self.compile_mutant(mutant) {
-                    (mutant, Some(output))
-                } else {
-                    (mutant, None)
-                }
-            })
-            .collect()
-    }
-
-    /// Copy the src, cache and out folders to one of the mutant temp folder
-    /// @todo use symlinks for the untouched part of the src folder
-    fn copy_origin(path: &Path, src_contract_path: &Path, config: Arc<Config>) {
-        let cache_src = &config.cache_path;
-        let out_src = &config.out;
-        let contract_src = &config.src;
-
-        let cache_dest = path.join(cache_src.file_name().unwrap());
-        let out_dest = path.join(out_src.file_name().unwrap());
-        let contract_dest = path.join(contract_src.file_name().unwrap());
-
-        std::fs::create_dir_all(&cache_dest).expect("Failed to create temp cache directory");
-        std::fs::create_dir_all(&out_dest).expect("Failed to create temp out directory");
-        std::fs::create_dir_all(&contract_dest).expect("Failed to create temp src directory");
-
-        Self::copy_dir_except(cache_src, cache_dest, src_contract_path)
-            .expect("Failed to copy in temp cache");
-        Self::copy_dir_except(out_src, out_dest, src_contract_path)
-            .expect("Failed to copy in temp out directory");
-        Self::copy_dir_except(contract_src, contract_dest, src_contract_path)
-            .expect("Failed to copy in temp src directory");
-    }
-
-    /// Recursively copy all files except one, from a src to a dst folder
-    fn copy_dir_except(
-        src: impl AsRef<Path>,
-        dst: impl AsRef<Path>,
-        except: &Path,
-    ) -> std::io::Result<()> {
-        std::fs::create_dir_all(&dst)?;
-
-        for entry in std::fs::read_dir(src)? {
-            let entry = entry?;
-            let ty = entry.file_type()?;
-
-            if ty.is_dir() {
-                Self::copy_dir_except(entry.path(), dst.as_ref().join(entry.file_name()), except)?;
-            } else if entry.file_name() != except.file_name().unwrap_or_default() {
-                // std::os::unix::fs::symlink(entry.path(),
-                // &dst.as_ref().join(entry.file_name()))?; // and for windows, would be
-                // std::os::windows::fs::symlink_file
-                std::fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
-            }
-        }
-        Ok(())
-    }
-
     /// Based on a given mutation, emit the corresponding mutated solidity code and write it to disk
-    fn generate_mutant(&self, mutation: &Mutant, src_contract_path: &Path) {
+    pub fn generate_mutated_solidity(&self, mutation: &Mutant, src_contract_path: &Path) {
         let temp_dir_path = &mutation.path;
 
         let span = mutation.span;
@@ -241,25 +147,5 @@ impl MutationHandler {
 
         std::fs::write(&target_path, new_content)
             .unwrap_or_else(|_| panic!("Failed to write to target file {:?}", &target_path));
-    }
-
-    /// Compile a directory and get the compilation output
-    fn compile_mutant(&self, mutant: &Mutant) -> Option<ProjectCompileOutput> {
-        let temp_folder = &mutant.path;
-
-        let mut config = (*self.config).clone();
-        config.src = temp_folder.clone();
-        config.cache_path = temp_folder.join("cache");
-        config.out = temp_folder.join("out");
-        let project = config.project().unwrap();
-
-        let compiler = ProjectCompiler::new(&project).unwrap();
-
-        let output = compiler.compile().unwrap();
-
-        match output.has_compiler_errors() {
-            true => None,
-            false => Some(output),
-        }
     }
 }

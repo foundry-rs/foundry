@@ -311,8 +311,9 @@ impl TestArgs {
 
         let should_mutate = self.mutate.is_some();
 
-        // Mutation test uses cache to avoid recompiling non-mutated contracts -> force it
-        if should_mutate && !config.cache {
+        // Force dyn test linking for mutation testing
+        if should_mutate {
+            config.dynamic_test_linking = true;
             config.cache = true;
         }
 
@@ -499,34 +500,28 @@ impl TestArgs {
 
                 handler.read_source_contract()?;
                 handler.generate_ast().await;
-                handler.create_mutation_folders();
 
-                let mutants = handler.generate_and_compile().await;
+                for mutant in &handler.mutations {
+                    handler.generate_mutated_solidity(&mutant, &config.src);
 
-                // @todo ugly - needs to be refactored
-                for mutant in mutants {
-                    if let Some(compile_output) = mutant.1 {
-                        let mutant_path = mutant.0.path.clone();
+                    let new_filter = self.filter(&config).unwrap();
 
-                        let mut new_config = (*config).clone();
+                    let compiler = ProjectCompiler::new()
+                        .dynamic_test_linking(config.dynamic_test_linking)
+                        .quiet(shell::is_json() || self.junit);
+                    let compile_output = compiler.compile(&project)?;
 
-                        new_config.root = mutant_path.clone();
-                        new_config.src = mutant_path.clone().join(config.src.file_name().unwrap());
-                        new_config.out = mutant_path.clone().join(config.out.file_name().unwrap());
-                        new_config.cache_path =
-                            mutant_path.clone().join(config.cache_path.file_name().unwrap());
-
-                        let new_config = Arc::new(new_config);
-                        let new_filter = self.filter(&new_config).unwrap();
-
-                        let mut runner = MultiContractRunnerBuilder::new(new_config.clone())
+                    if compile_output.has_compiler_errors() {
+                        mutation_summary.update_invalid_mutant();
+                    } else {
+                        let mut runner = MultiContractRunnerBuilder::new(config.clone())
                             .set_debug(false)
                             .initial_balance(evm_opts.initial_balance)
                             .evm_spec(config.evm_spec_id())
                             .sender(evm_opts.sender)
                             .odyssey(evm_opts.odyssey)
                             .build::<MultiCompiler>(
-                                &mutant_path,
+                                &config.root,
                                 &compile_output,
                                 env.clone(),
                                 evm_opts.clone(),
@@ -536,8 +531,6 @@ impl TestArgs {
 
                         let outcome = TestOutcome::new(results, self.allow_failure);
                         mutation_summary.update_valid_mutant(&outcome);
-                    } else {
-                        mutation_summary.update_invalid_mutant();
                     }
                 }
             }
