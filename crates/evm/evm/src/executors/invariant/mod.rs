@@ -609,8 +609,11 @@ impl<'a> InvariantExecutor<'a> {
             ));
         }
 
-        self.executor.inspector_mut().fuzzer =
-            Some(Fuzzer { call_generator, fuzz_state: fuzz_state.clone(), collect: true });
+        self.executor.inspector_mut().set_fuzzer(Fuzzer {
+            call_generator,
+            fuzz_state: fuzz_state.clone(),
+            collect: true,
+        });
 
         // Let's make sure the invariant is sound before actually starting the run:
         // We'll assert the invariant in its initial state, and if it fails, we'll

@@ -842,7 +842,7 @@ pub struct RawCallResult {
     /// The `revm::Env` after the call
     pub env: Env,
     /// The cheatcode states after execution
-    pub cheatcodes: Option<Cheatcodes>,
+    pub cheatcodes: Option<Box<Cheatcodes>>,
     /// The raw output of the execution
     pub out: Option<Output>,
     /// The chisel state
