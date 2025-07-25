@@ -191,7 +191,9 @@ impl BundledState {
             .iter_mut()
             .enumerate()
             .map(|(sequence_idx, sequence)| async move {
-                let rpc_url = sequence.rpc_url();
+                let rpc_url = sequence.rpc_url().ok_or_else(|| {
+                    eyre::eyre!("Sequence {} has no transactions", sequence_idx)
+                })?;
                 let provider = Arc::new(get_http_provider(rpc_url));
                 progress_ref
                     .wait_for_pending(
@@ -268,7 +270,10 @@ impl BundledState {
         for i in 0..self.sequence.sequences().len() {
             let mut sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
-            let provider = Arc::new(try_get_http_provider(sequence.rpc_url())?);
+            let rpc_url = sequence.rpc_url().ok_or_else(|| {
+                eyre::eyre!("Sequence {} has no transactions", i)
+            })?;
+            let provider = Arc::new(try_get_http_provider(rpc_url)?);
             let already_broadcasted = sequence.receipts.len();
 
             let seq_progress = progress.get_sequence_progress(i, sequence);
