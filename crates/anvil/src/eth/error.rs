@@ -1,6 +1,7 @@
 //! Aggregated error type for this module
 
 use crate::eth::pool::transactions::PoolTransaction;
+use alloy_evm::overrides::StateOverrideError;
 use alloy_primitives::{B256, Bytes, SignatureError};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Error as SignerError;
@@ -186,6 +187,21 @@ impl From<WalletError> for BlockchainError {
             WalletError::InvalidTransactionRequest => {
                 Self::Message("invalid tx request".to_string())
             }
+        }
+    }
+}
+
+impl<E> From<StateOverrideError<E>> for BlockchainError
+where
+    E: Into<Self>,
+{
+    fn from(value: StateOverrideError<E>) -> Self {
+        match value {
+            StateOverrideError::InvalidBytecode(err) => Self::StateOverrideError(err.to_string()),
+            StateOverrideError::BothStateAndStateDiff(addr) => Self::StateOverrideError(format!(
+                "state and state_diff can't be used together for account {addr}",
+            )),
+            StateOverrideError::Database(err) => err.into(),
         }
     }
 }
