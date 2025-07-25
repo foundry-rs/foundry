@@ -130,3 +130,4 @@ cmd = [
     "anvil-server/clap",
     "tokio/signal",
 ]
+js-tracer = ["revm-inspectors/js-tracer"]
