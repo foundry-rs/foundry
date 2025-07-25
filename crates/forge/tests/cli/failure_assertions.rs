@@ -198,13 +198,13 @@ forgetest!(expect_emit_tests_should_fail, |prj, cmd| {
 [FAIL: log != expected log] testShouldFailEmitOnlyAppliesToNextCall() ([GAS])
 [FAIL: next call did not revert as expected] testShouldFailEmitWindowWithRevertDisallowed() ([GAS])
 [FAIL: log != expected log] testShouldFailEventsOnTwoCalls() ([GAS])
-[FAIL: log != expected log; counterexample: calldata=[..] args=[..]] testShouldFailExpectEmit(bool,bool,bool,bool,uint128,uint128,uint128,uint128) (runs: 0, [AVG_GAS])
-[FAIL: log != expected log] testShouldFailExpectEmitAddress() ([GAS])
-[FAIL: log != expected log] testShouldFailExpectEmitAddressWithArgs() ([GAS])
+[FAIL: log mismatch at param [..]; counterexample: calldata=[..] args=[..]] testShouldFailExpectEmit(bool,bool,bool,bool,uint128,uint128,uint128,uint128) (runs: 0, [AVG_GAS])
+[FAIL: log emitter mismatch: expected=[..], got=[..]] testShouldFailExpectEmitAddress() ([GAS])
+[FAIL: log emitter mismatch: expected=[..], got=[..]] testShouldFailExpectEmitAddressWithArgs() ([GAS])
 [FAIL: log != expected log] testShouldFailExpectEmitCanMatchWithoutExactOrder() ([GAS])
 [FAIL: expected an emit, but no logs were emitted afterwards. you might have mismatched events or not enough events were emitted] testShouldFailExpectEmitDanglingNoReference() ([GAS])
 [FAIL: expected an emit, but no logs were emitted afterwards. you might have mismatched events or not enough events were emitted] testShouldFailExpectEmitDanglingWithReference() ([GAS])
-[FAIL: log != expected log; counterexample: calldata=[..] args=[..]] testShouldFailExpectEmitNested(bool,bool,bool,bool,uint128,uint128,uint128,uint128) (runs: 0, [AVG_GAS])
+[FAIL: log mismatch at param [..]; counterexample: calldata=[..] args=[..]] testShouldFailExpectEmitNested(bool,bool,bool,bool,uint128,uint128,uint128,uint128) (runs: 0, [AVG_GAS])
 [FAIL: log != expected log] testShouldFailLowLevelWithoutEmit() ([GAS])
 [FAIL: log != expected log] testShouldFailMatchRepeatedEventsOutOfOrder() ([GAS])
 [FAIL: log != expected log] testShouldFailNoEmitDirectlyOnNextCall() ([GAS])
@@ -227,6 +227,36 @@ Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
 ...
 "#,
         );
+});
+
+forgetest!(expect_emit_params_tests_should_fail, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_vm();
+
+    let expect_emit_failure_tests = include_str!("../fixtures/ExpectEmitParamFailures.t.sol");
+
+    prj.add_source("ExpectEmitParamFailures.sol", expect_emit_failure_tests).unwrap();
+
+    cmd.forge_fuse().args(["test", "--mc", "ExpectEmitParamFailures"]).assert_failure().stdout_eq(
+        r#"[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+...
+[PASS] testSelectiveChecks() ([GAS])
+Suite result: FAILED. 1 passed; 8 failed; 0 skipped; [ELAPSED]
+...
+[FAIL: anonymous log mismatch at param 0: expected=0x0000000000000000000000000000000000000000000000000000000000000064, got=0x00000000000000000000000000000000000000000000000000000000000003e7] testAnonymousEventMismatch() ([GAS])
+[FAIL: log != expected log] testCompletelyDifferentEvent() ([GAS])
+[FAIL: log mismatch at param 1: expected=0x00000000000000000000000000000000000000000000000000000000000000c8, got=0x00000000000000000000000000000000000000000000000000000000000003e7] testIndexedParamMismatch() ([GAS])
+[FAIL: log mismatch at param 0: expected=0x0000000000000000000000000000000000000000000000000000000000000064, got=0x000000000000000000000000000000000000000000000000000000000000006f, param 1: expected=0x00000000000000000000000000000000000000000000000000000000000000c8, got=0x00000000000000000000000000000000000000000000000000000000000000de, param 2: expected=0x000000000000000000000000000000000000000000000000000000000000012c, got=0x000000000000000000000000000000000000000000000000000000000000014d, param 3: expected=0x0000000000000000000000000000000000000000000000000000000000000190, got=0x00000000000000000000000000000000000000000000000000000000000001bc, param 4: expected=0x00000000000000000000000000000000000000000000000000000000000001f4, got=0x000000000000000000000000000000000000000000000000000000000000022b] testManyParameterMismatches() ([GAS])
+[FAIL: log mismatch at param 2: expected=0x000000000000000000000000000000000000000000000000000000000000012c, got=0x00000000000000000000000000000000000000000000000000000000000003e7] testMixedEventNonIndexedMismatch() ([GAS])
+[FAIL: log mismatch at param 0: expected=0x0000000000000000000000000000000000000000000000000000000000000064, got=0x00000000000000000000000000000000000000000000000000000000000003e7, param 1: expected=0x00000000000000000000000000000000000000000000000000000000000000c8, got=0x0000000000000000000000000000000000000000000000000000000000000378, param 2: expected=0x000000000000000000000000000000000000000000000000000000000000012c, got=0x0000000000000000000000000000000000000000000000000000000000000309] testMultipleMismatches() ([GAS])
+[FAIL: log mismatch at param 2: expected=0x000000000000000000000000000000000000000000000000000000000000012c, got=0x00000000000000000000000000000000000000000000000000000000000003e7] testNonIndexedParamMismatch() ([GAS])
+[FAIL: log mismatch at param 2: expected=0x000000000000000000000000000000000000000000000000000000000000012c, got=0x00000000000000000000000000000000000000000000000000000000000003e7] testParameterNumbering() ([GAS])
+
+Encountered a total of 8 failing tests, 1 tests succeeded
+...
+"#,
+    );
 });
 
 forgetest!(mem_safety_test_should_fail, |prj, cmd| {
