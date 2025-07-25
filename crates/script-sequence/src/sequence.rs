@@ -101,7 +101,7 @@ impl ScriptSequence {
 
         let Some((path, sensitive_path)) = self.paths.clone() else { return Ok(()) };
 
-        self.timestamp = now().as_millis();
+        self.timestamp = now()?.as_millis();
         let ts_name = format!("run-{}.json", self.timestamp);
 
         let sensitive_script_sequence: SensitiveScriptSequence = self.clone().into();
@@ -201,9 +201,9 @@ impl ScriptSequence {
         Ok((broadcast, cache))
     }
 
-    /// Returns the first RPC URL of this sequence.
-    pub fn rpc_url(&self) -> &str {
-        self.transactions.front().expect("empty sequence").rpc.as_str()
+    /// Returns the first RPC URL of this sequence, or None if sequence is empty.
+    pub fn rpc_url(&self) -> Option<&str> {
+        self.transactions.front().map(|tx| tx.rpc.as_str())
     }
 
     /// Returns the list of the transactions without the metadata.
@@ -237,8 +237,8 @@ pub fn sig_to_file_name(sig: &str) -> String {
     sig.to_string()
 }
 
-pub fn now() -> Duration {
-    SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards")
+pub fn now() -> Result<Duration, std::time::SystemTimeError> {
+    SystemTime::now().duration_since(UNIX_EPOCH)
 }
 
 #[cfg(test)]
