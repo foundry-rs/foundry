@@ -5,8 +5,7 @@ use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     fs::{self, File},
-    io::{BufReader, BufWriter, Read, Write},
-    marker::PhantomData,
+    io::{BufReader, BufWriter, Write},
     path::{Component, Path, PathBuf},
 };
 
@@ -181,53 +180,6 @@ pub fn files_with_ext<'a>(root: &Path, ext: &'a str) -> impl Iterator<Item = Pat
 /// Returns an iterator over all JSON files under the `root` dir.
 pub fn json_files(root: &Path) -> impl Iterator<Item = PathBuf> {
     files_with_ext(root, "json")
-}
-
-/// Returns an iterator over all decoded files.
-///
-/// This is effectively [`json_files`] with `.map(serde_json::from_str(read_to_string))`.
-pub fn read_json_files<T>(root: &Path) -> impl Iterator<Item = Result<T>>
-where
-    T: DeserializeOwned,
-{
-    JsonFileDecodeIter::new(json_files(root))
-}
-
-/// An Iterator that decodes json files.
-struct JsonFileDecodeIter<T, Iter> {
-    buf: String,
-    files: Iter,
-    _marker: PhantomData<fn() -> T>,
-}
-
-impl<T, Iter> JsonFileDecodeIter<T, Iter> {
-    fn new(files: Iter) -> Self {
-        Self { buf: String::with_capacity(1024), files, _marker: Default::default() }
-    }
-
-    fn decode(&mut self, path: PathBuf) -> Result<T>
-    where
-        T: DeserializeOwned,
-    {
-        let file = open(&path)?;
-        self.buf.clear();
-        let mut reader = BufReader::new(file);
-        reader.read_to_string(&mut self.buf).map_err(|err| FsPathError::read(err, path.clone()))?;
-
-        serde_json::from_str(&self.buf).map_err(|source| FsPathError::ReadJson { source, path })
-    }
-}
-
-impl<T, Iter> Iterator for JsonFileDecodeIter<T, Iter>
-where
-    T: DeserializeOwned,
-    Iter: Iterator<Item = PathBuf>,
-{
-    type Item = Result<T>;
-    fn next(&mut self) -> Option<Self::Item> {
-        let file = self.files.next()?;
-        Some(self.decode(file))
-    }
 }
 
 /// Canonicalize a path, returning an error if the path does not exist.

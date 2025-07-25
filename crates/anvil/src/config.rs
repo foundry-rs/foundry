@@ -28,18 +28,20 @@ use alloy_signer_local::{
     MnemonicBuilder, PrivateKeySigner,
     coins_bip39::{English, Mnemonic},
 };
-use alloy_sol_types::private::alloy_json_abi::ContractObject;
 use alloy_transport::TransportError;
 use anvil_server::ServerConfig;
 use eyre::{Context, Result};
+pub use foundry_common::version::SHORT_VERSION as VERSION_MESSAGE;
 use foundry_common::{
-    ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
+    ALCHEMY_FREE_TIER_CUPS, ContractsByArtifact, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
+    compile::ProjectCompiler,
     provider::{ProviderBuilder, RetryProvider},
 };
-use foundry_config::Config;
+use foundry_config::{Config, FigmentProviders};
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
+    traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier},
     utils::{apply_chain_and_block_specific_env_changes, get_blob_base_fee_update_fraction},
 };
 use foundry_evm_core::AsEnvMut;
@@ -64,9 +66,6 @@ use std::{
 };
 use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
-
-pub use foundry_common::version::SHORT_VERSION as VERSION_MESSAGE;
-use foundry_evm::traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier};
 
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
@@ -1122,22 +1121,17 @@ impl NodeConfig {
                 decoder_builder = decoder_builder.with_signature_identifier(identifier);
             }
 
-            // try loading all project ABI info
-            if let Some(config) = self
-                .project_path
-                .as_ref()
-                .and_then(|root| Config::load_with_root(root).ok())
-                .or_else(|| Config::load().ok())
-            {
-                let out = config.root.join(config.out);
-                debug!(target: "node", ?out, "reading project artifacts");
-                for abi in foundry_common::fs::read_json_files::<ContractObject>(&out)
-                    .filter_map(Result::ok)
-                    .filter_map(|contract| contract.abi)
-                {
-                    debug!(target: "node", "collect project abi");
-                    decoder_builder.collect_abi(&abi);
-                }
+            // Build and load project contracts and bytecode.
+            if let Some(root) = &self.project_path {
+                let figment = Config::with_root(root).to_figment(FigmentProviders::All);
+                let config = Config::from_provider(figment)?.sanitized();
+                let project = config.project()?;
+                let compiler = ProjectCompiler::new();
+                let output = compiler.compile(&project)?;
+                let known_contracts = ContractsByArtifact::new(
+                    output.artifact_ids().map(|(id, artifact)| (id, artifact.clone().into())),
+                );
+                decoder_builder = decoder_builder.with_known_contracts(&known_contracts);
             }
         }
 
