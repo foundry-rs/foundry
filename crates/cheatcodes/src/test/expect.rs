@@ -1071,7 +1071,7 @@ pub(crate) fn get_emit_mismatch_message(
 
         // Different lengths or not ABI-encoded
         if expected_bytes.len() != actual_bytes.len()
-            || expected_bytes.len() % 32 != 0
+            || !expected_bytes.len().is_multiple_of(32)
             || expected_bytes.is_empty()
         {
             return "log != expected log".to_string();
@@ -1097,10 +1097,8 @@ pub(crate) fn get_emit_mismatch_message(
             } else {
                 i - 1 // For regular events, topic[0] is event signature, so topic[1] is param 0
             };
-            mismatches.push(format!(
-                "param {}: expected={:#x}, got={:#x}",
-                param_idx, expected_topic, actual_topic
-            ));
+            mismatches
+                .push(format!("param {param_idx}: expected={expected_topic}, got={actual_topic}"));
         }
     }
 
