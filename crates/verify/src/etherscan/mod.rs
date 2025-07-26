@@ -92,7 +92,6 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     .wrap_err_with(|| {
                         // valid json
                         let args = serde_json::to_string(&verify_args).unwrap();
-                        // Removed error! to avoid duplication - wrap_err_with already provides error context
                         format!("Failed to submit contract verification, payload:\n{args}")
                     })?;
 
@@ -109,11 +108,9 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     if resp.result.starts_with("Unable to locate ContractCode at")
                         || resp.result.starts_with("The address is not a smart contract")
                     {
-                        // Removed warn! to avoid duplication - error message already contains the info
                         return Err(eyre!("Could not detect deployment: {}", resp.result));
                     }
 
-                    // Removed warn! to avoid duplication - sh_err! already provides error output
                     sh_err!(
                         "Failed to verify contract - Response: `{}`, Details: `{}`",
                         resp.message,
