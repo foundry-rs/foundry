@@ -5,7 +5,7 @@ use alloy_primitives::hex;
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use clap::Parser;
-use eyre::{OptionExt, Result};
+use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{LoadConfig, get_provider},
@@ -49,7 +49,7 @@ pub struct MakeTxArgs {
     /// Generate a raw RLP-encoded unsigned transaction.
     ///
     /// Relaxes the wallet requirement.
-    #[arg(long, requires = "from")]
+    #[arg(long)]
     raw_unsigned: bool,
 
     /// Call `eth_signTransaction` using the `--from` argument or $ETH_FROM as sender
@@ -106,8 +106,7 @@ impl MakeTxArgs {
 
         if raw_unsigned {
             // Build unsigned raw tx
-            let from = eth.wallet.from.ok_or_eyre("missing `--from` address")?;
-            let raw_tx = tx_builder.build_unsigned_raw(from).await?;
+            let raw_tx = tx_builder.build_unsigned_raw(eth.wallet.from).await?;
 
             sh_println!("{raw_tx}")?;
             return Ok(());

@@ -286,7 +286,7 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
         self,
         sender: impl Into<SenderKind<'_>>,
     ) -> Result<(WithOtherFields<TransactionRequest>, Option<Function>)> {
-        self._build(sender, true, false).await
+        self._build(Some(sender.into()), true, false).await
     }
 
     /// Builds [TransactionRequest] without filling missing fields. Used for read-only calls such as
@@ -295,14 +295,14 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
         self,
         sender: impl Into<SenderKind<'_>>,
     ) -> Result<(WithOtherFields<TransactionRequest>, Option<Function>)> {
-        self._build(sender, false, false).await
+        self._build(Some(sender.into()), false, false).await
     }
 
     /// Builds an unsigned RLP-encoded raw transaction.
     ///
     /// Returns the hex encoded string representation of the transaction.
-    pub async fn build_unsigned_raw(self, from: Address) -> Result<String> {
-        let (tx, _) = self._build(SenderKind::Address(from), true, true).await?;
+    pub async fn build_unsigned_raw(self, from: Option<Address>) -> Result<String> {
+        let (tx, _) = self._build(from.map(SenderKind::Address), true, true).await?;
         let tx = tx.build_unsigned()?;
         match tx {
             AnyTypedTransaction::Ethereum(t) => Ok(hex::encode_prefixed(t.encoded_for_signing())),
@@ -312,12 +312,11 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
 
     async fn _build(
         mut self,
-        sender: impl Into<SenderKind<'_>>,
+        sender: Option<SenderKind<'_>>,
         fill: bool,
         unsigned: bool,
     ) -> Result<(WithOtherFields<TransactionRequest>, Option<Function>)> {
-        let sender = sender.into();
-        let from = sender.address();
+        let from = sender.as_ref().map(|s| s.address());
 
         self.tx.set_kind(self.state.kind);
 
@@ -325,20 +324,36 @@ impl<P: Provider<AnyNetwork>> CastTxBuilder<P, InputState> {
         let input = Bytes::copy_from_slice(&self.state.input);
         self.tx.input = TransactionInput { input: Some(input.clone()), data: Some(input) };
 
-        self.tx.set_from(from);
+        if let Some(from_addr) = from {
+            self.tx.set_from(from_addr);
+        }
         self.tx.set_chain_id(self.chain.id());
 
-        let tx_nonce = if let Some(nonce) = self.tx.nonce {
-            nonce
-        } else {
-            let nonce = self.provider.get_transaction_count(from).await?;
-            if fill {
-                self.tx.nonce = Some(nonce);
+        // The nonce is resolved using the following priority:
+        // 1. If `self.tx.nonce` is already set, use that value
+        // 2. If no nonce is set but a `from` address is available, fetch the current transaction count from the provider
+        // 3. If no nonce is set, no `from` address is provided, but the transaction is `unsigned`, default to 0
+        // 4. If none of the above conditions are met, return an error
+        // When `fill` is true, the resolved nonce will be stored back into `self.tx.nonce` for future use.
+        let tx_nonce = match self.tx.nonce {
+            Some(nonce) => nonce,
+            None => {
+                let nonce = match from {
+                    Some(from_addr) => self.provider.get_transaction_count(from_addr).await?,
+                    None if unsigned => 0,
+                    None => eyre::bail!("No from address provided and unable to determine nonce"),
+                };
+
+                if fill {
+                    self.tx.nonce = Some(nonce);
+                }
+                nonce
             }
-            nonce
         };
 
         if !unsigned {
+            let sender =
+                sender.ok_or_else(|| eyre::eyre!("Sender is required for signed transactions"))?;
             self.resolve_auth(sender, tx_nonce).await?;
         } else if self.auth.is_some() {
             let Some(CliAuthorizationList::Signed(signed_auth)) = self.auth.take() else {
