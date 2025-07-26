@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["contains_incorrect_shift"],"static":["INCORRECT_SHIFT"]};

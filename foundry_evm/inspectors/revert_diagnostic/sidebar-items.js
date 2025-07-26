@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["IGNORE"],"enum":["DetailedRevertReason"],"fn":["is_delegatecall"],"struct":["RevertDiagnostic"]};

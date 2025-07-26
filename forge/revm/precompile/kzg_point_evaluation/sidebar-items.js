@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ADDRESS","GAS_COST","POINT_EVALUATION","RETURN_VALUE","VERSIONED_HASH_VERSION_KZG"],"fn":["kzg_to_versioned_hash","run","verify_kzg_proof"]};

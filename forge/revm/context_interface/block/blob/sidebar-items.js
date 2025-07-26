@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["calc_blob_gasprice","calc_excess_blob_gas","calc_excess_blob_gas_osaka","fake_exponential","get_base_fee_per_blob_gas"],"struct":["BlobExcessGasAndPrice"]};

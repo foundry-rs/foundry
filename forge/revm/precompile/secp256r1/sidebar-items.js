@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["P256VERIFY","P256VERIFY_ADDRESS","P256VERIFY_BASE_GAS_FEE","P256VERIFY_BASE_GAS_FEE_OSAKA","P256VERIFY_OSAKA"],"fn":["p256_verify","p256_verify_osaka","precompiles","verify_impl"]};
