@@ -4,12 +4,12 @@ use clap::Parser;
 use eyre::Result;
 use foundry_block_explorers::EtherscanApiVersion;
 use foundry_config::{
-    Chain, Config,
+    Chain, Config, FigmentProviders,
     figment::{
-        self, Metadata, Profile,
+        self, Figment, Metadata, Profile,
         value::{Dict, Map},
     },
-    impl_figment_convert_cast,
+    find_project_root, impl_figment_convert_cast,
 };
 use foundry_wallets::WalletOpts;
 use serde::Serialize;
@@ -115,6 +115,13 @@ impl RpcOpts {
             dict.insert("eth_rpc_accept_invalid_certs".into(), true.into());
         }
         dict
+    }
+
+    pub fn into_figment(self, all: bool) -> Figment {
+        let root = find_project_root(None).expect("could not determine project root");
+        Config::with_root(&root)
+            .to_figment(if all { FigmentProviders::All } else { FigmentProviders::Cast })
+            .merge(self)
     }
 }
 

@@ -27,6 +27,7 @@ use thiserror::Error;
 #[macro_use]
 pub mod macros;
 
+pub mod codesize;
 pub mod gas;
 pub mod high;
 pub mod info;
@@ -38,6 +39,7 @@ static ALL_REGISTERED_LINTS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     lints.extend_from_slice(med::REGISTERED_LINTS);
     lints.extend_from_slice(info::REGISTERED_LINTS);
     lints.extend_from_slice(gas::REGISTERED_LINTS);
+    lints.extend_from_slice(codesize::REGISTERED_LINTS);
     lints.into_iter().map(|lint| lint.id()).collect()
 });
 
@@ -109,9 +111,10 @@ impl SolidityLinter {
         passes_and_lints.extend(med::create_early_lint_passes());
         passes_and_lints.extend(info::create_early_lint_passes());
 
-        // Do not apply gas-severity rules on tests and scripts
+        // Do not apply 'gas' and 'codesize' severity rules on tests and scripts
         if !self.path_config.is_test_or_script(path) {
             passes_and_lints.extend(gas::create_early_lint_passes());
+            passes_and_lints.extend(codesize::create_early_lint_passes());
         }
 
         // Filter passes based on linter config
@@ -146,11 +149,12 @@ impl SolidityLinter {
         passes_and_lints.extend(med::create_late_lint_passes());
         passes_and_lints.extend(info::create_late_lint_passes());
 
-        // Do not apply gas-severity rules on tests and scripts
+        // Do not apply 'gas' and 'codesize' severity rules on tests and scripts
         if let FileName::Real(ref path) = file.name
             && !self.path_config.is_test_or_script(path)
         {
             passes_and_lints.extend(gas::create_late_lint_passes());
+            passes_and_lints.extend(codesize::create_late_lint_passes());
         }
 
         // Filter passes based on config
@@ -199,13 +203,12 @@ impl Linter for SolidityLinter {
         sess
     }
 
-    /// Run AST-based lints
-    fn early_lint<'sess>(&self, input: &[PathBuf], mut pcx: ParsingContext<'sess>) {
+    /// Run AST-based lints.
+    ///
+    /// Note: the `ParsingContext` should already have the sources loaded.
+    fn early_lint<'sess>(&self, input: &[PathBuf], pcx: ParsingContext<'sess>) {
         let sess = pcx.sess;
         _ = sess.enter_parallel(|| -> Result<(), diagnostics::ErrorGuaranteed> {
-            // Load all files into the parsing ctx
-            pcx.load_files(input)?;
-
             // Parse the sources
             let ast_arena = solar_sema::thread_local::ThreadLocal::new();
             let ast_result = pcx.parse(&ast_arena);
@@ -223,13 +226,12 @@ impl Linter for SolidityLinter {
         });
     }
 
-    /// Run HIR-based lints
-    fn late_lint<'sess>(&self, input: &[PathBuf], mut pcx: ParsingContext<'sess>) {
+    /// Run HIR-based lints.
+    ///
+    /// Note: the `ParsingContext` should already have the sources loaded.
+    fn late_lint<'sess>(&self, input: &[PathBuf], pcx: ParsingContext<'sess>) {
         let sess = pcx.sess;
         _ = sess.enter_parallel(|| -> Result<(), diagnostics::ErrorGuaranteed> {
-            // Load all files into the parsing ctx
-            pcx.load_files(input)?;
-
             // Parse and lower to HIR
             let hir_arena = solar_sema::thread_local::ThreadLocal::new();
             let hir_result = pcx.parse_and_lower(&hir_arena);

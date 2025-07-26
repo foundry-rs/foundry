@@ -1,6 +1,7 @@
 //! In-memory blockchain backend.
 
 use self::state::trie_storage;
+use super::executor::new_evm_with_inspector_ref;
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
     config::PruneStateHistoryConfig,
@@ -40,7 +41,12 @@ use alloy_consensus::{
     transaction::Recovered,
 };
 use alloy_eips::{eip1559::BaseFeeParams, eip4844::kzg_to_versioned_hash, eip7840::BlobParams};
-use alloy_evm::{Database, Evm, eth::EthEvmContext, precompiles::PrecompilesMap};
+use alloy_evm::{
+    Database, Evm,
+    eth::EthEvmContext,
+    overrides::{OverrideBlockHashes, apply_state_overrides},
+    precompiles::PrecompilesMap,
+};
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
     EthereumWallet, UnknownTxEnvelope, UnknownTypedTransaction,
@@ -89,7 +95,7 @@ use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE,
     decode::RevertDecoder,
     inspectors::AccessListInspector,
-    traces::TracingInspectorConfig,
+    traces::{CallTraceDecoder, TracingInspectorConfig},
     utils::{get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id},
 };
 use foundry_evm_core::either_evm::EitherEvm;
@@ -124,8 +130,6 @@ use std::{
 };
 use storage::{Blockchain, DEFAULT_HISTORY_LIMIT, MinedTransaction};
 use tokio::sync::RwLock as AsyncRwLock;
-
-use super::executor::new_evm_with_inspector_ref;
 
 pub mod cache;
 pub mod fork_db;
@@ -226,6 +230,8 @@ pub struct Backend {
     enable_steps_tracing: bool,
     print_logs: bool,
     print_traces: bool,
+    /// Recorder used for decoding traces, used together with print_traces
+    call_trace_decoder: Arc<CallTraceDecoder>,
     odyssey: bool,
     /// How to keep history state
     prune_state_history_config: PruneStateHistoryConfig,
@@ -255,6 +261,7 @@ impl Backend {
         enable_steps_tracing: bool,
         print_logs: bool,
         print_traces: bool,
+        call_trace_decoder: Arc<CallTraceDecoder>,
         odyssey: bool,
         prune_state_history_config: PruneStateHistoryConfig,
         max_persisted_states: Option<usize>,
@@ -360,6 +367,7 @@ impl Backend {
             enable_steps_tracing,
             print_logs,
             print_traces,
+            call_trace_decoder,
             odyssey,
             prune_state_history_config,
             transaction_block_keeper,
@@ -1211,7 +1219,7 @@ impl Backend {
         inspector.print_logs();
 
         if self.print_traces {
-            inspector.print_traces();
+            inspector.print_traces(self.call_trace_decoder.clone());
         }
 
         Ok((exit_reason, out, gas_used, state, logs.unwrap_or_default()))
@@ -1254,6 +1262,7 @@ impl Backend {
             enable_steps_tracing: self.enable_steps_tracing,
             print_logs: self.print_logs,
             print_traces: self.print_traces,
+            call_trace_decoder: self.call_trace_decoder.clone(),
             precompile_factory: self.precompile_factory.clone(),
             odyssey: self.odyssey,
             optimism: self.is_optimism(),
@@ -1340,6 +1349,7 @@ impl Backend {
                     enable_steps_tracing: self.enable_steps_tracing,
                     print_logs: self.print_logs,
                     print_traces: self.print_traces,
+                    call_trace_decoder: self.call_trace_decoder.clone(),
                     odyssey: self.odyssey,
                     precompile_factory: self.precompile_factory.clone(),
                     optimism: self.is_optimism(),
@@ -1474,10 +1484,10 @@ impl Backend {
             let (exit, out, gas, state) = {
                 let mut cache_db = CacheDB::new(state);
                 if let Some(state_overrides) = overrides.state {
-                    state::apply_state_overrides(state_overrides.into_iter().collect(), &mut cache_db)?;
+                    apply_state_overrides(state_overrides.into_iter().collect(), &mut cache_db)?;
                 }
                 if let Some(block_overrides) = overrides.block {
-                    state::apply_block_overrides(*block_overrides, &mut cache_db, &mut block);
+                    cache_db.apply_block_overrides(*block_overrides, &mut block);
                 }
                 self.call_with_state(&cache_db as &dyn DatabaseRef, request, fee_details, block)
             }?;
@@ -1653,10 +1663,10 @@ impl Backend {
 
                 // apply state overrides before executing the transactions
                 if let Some(state_overrides) = state_overrides {
-                    state::apply_state_overrides(state_overrides, &mut cache_db)?;
+                    apply_state_overrides(state_overrides, &mut cache_db)?;
                 }
                 if let Some(block_overrides) = block_overrides {
-                    state::apply_block_overrides(block_overrides, &mut cache_db, &mut block_env);
+                    cache_db.apply_block_overrides(block_overrides, &mut block_env);
                 }
 
                 // execute all calls in that block
@@ -1862,7 +1872,7 @@ impl Backend {
         inspector.print_logs();
 
         if self.print_traces {
-            inspector.into_print_traces();
+            inspector.into_print_traces(self.call_trace_decoder.clone());
         }
 
         Ok((exit_reason, out, gas_used as u128, state))
@@ -1884,10 +1894,10 @@ impl Backend {
 
             let mut cache_db = CacheDB::new(state);
             if let Some(state_overrides) = state_overrides {
-                state::apply_state_overrides(state_overrides, &mut cache_db)?;
+                apply_state_overrides(state_overrides, &mut cache_db)?;
             }
             if let Some(block_overrides) = block_overrides {
-                state::apply_block_overrides(block_overrides, &mut cache_db, &mut block);
+                cache_db.apply_block_overrides(block_overrides, &mut block);
             }
 
             if let Some(tracer) = tracer {
@@ -1926,9 +1936,31 @@ impl Backend {
                             Err(RpcError::invalid_params("unsupported tracer type").into())
                         }
                     },
-
-                    GethDebugTracerType::JsTracer(_code) => {
+                    #[cfg(not(feature = "js-tracer"))]
+                    GethDebugTracerType::JsTracer(_) => {
                         Err(RpcError::invalid_params("unsupported tracer type").into())
+                    }
+                    #[cfg(feature = "js-tracer")]
+                    GethDebugTracerType::JsTracer(code) => {
+                        use alloy_evm::IntoTxEnv;
+                        let config = tracer_config.into_json();
+                        let mut inspector =
+                            revm_inspectors::tracing::js::JsInspector::new(code, config)
+                                .map_err(|err| BlockchainError::Message(err.to_string()))?;
+
+                        let env = self.build_call_env(request, fee_details, block.clone());
+                        let mut evm = self.new_evm_with_inspector_ref(
+                            &cache_db as &dyn DatabaseRef,
+                            &env,
+                            &mut inspector,
+                        );
+                        let result = evm.transact(env.tx.clone())?;
+                        let res = evm
+                            .inspector_mut()
+                            .json_result(result, &env.tx.into_tx_env(), &block, &cache_db)
+                            .map_err(|err| BlockchainError::Message(err.to_string()))?;
+
+                        Ok(GethTrace::JS(res))
                     }
                 };
             }
@@ -2592,6 +2624,22 @@ impl Backend {
         }
 
         Ok(GethTrace::Default(Default::default()))
+    }
+
+    /// Returns code by its hash
+    pub async fn debug_code_by_hash(
+        &self,
+        code_hash: B256,
+        block_id: Option<BlockId>,
+    ) -> Result<Option<Bytes>, BlockchainError> {
+        if let Ok(code) = self.db.read().await.code_by_hash_ref(code_hash) {
+            return Ok(Some(code.original_bytes()));
+        }
+        if let Some(fork) = self.get_fork() {
+            return Ok(fork.debug_code_by_hash(code_hash, block_id).await?);
+        }
+
+        Ok(None)
     }
 
     fn mined_geth_trace_transaction(

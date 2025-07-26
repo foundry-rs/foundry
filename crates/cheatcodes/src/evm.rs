@@ -874,7 +874,7 @@ impl Cheatcode for setBlockhashCall {
 
 impl Cheatcode for startDebugTraceRecordingCall {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
-        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_mut()) else {
+        let Some(tracer) = executor.tracing_inspector() else {
             return Err(Error::from("no tracer initiated, consider adding -vvv flag"));
         };
 
@@ -905,7 +905,7 @@ impl Cheatcode for startDebugTraceRecordingCall {
 
 impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
-        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_mut()) else {
+        let Some(tracer) = executor.tracing_inspector() else {
             return Err(Error::from("no tracer initiated, consider adding -vvv flag"));
         };
 

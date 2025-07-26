@@ -43,7 +43,6 @@ where
         self.insert_map(interpreter);
     }
 
-    #[inline]
     fn step(&mut self, interpreter: &mut Interpreter, _context: &mut CTX) {
         let map = self.get_or_insert_map(interpreter);
         map.hit(interpreter.bytecode.pc() as u32);
