@@ -347,9 +347,9 @@ impl TxCorpusManager {
 
     /// Generates new call sequence from in memory corpus. Evicts oldest corpus mutated more than
     /// configured max mutations value.
-    pub fn new_sequence(&mut self, test: &InvariantTest) -> eyre::Result<Vec<BasicTxDetails>> {
+    pub fn new_sequence(&mut self, test: &mut InvariantTest) -> eyre::Result<Vec<BasicTxDetails>> {
         let mut new_seq = vec![];
-        let test_runner = &mut test.execution_data.borrow_mut().branch_runner;
+        let test_runner = &mut test.test_data.branch_runner;
 
         // Early return with first_input only if corpus dir / coverage guided fuzzing not
         // configured.
@@ -543,12 +543,12 @@ impl TxCorpusManager {
     /// sequence.
     pub fn generate_next_input(
         &mut self,
-        test: &InvariantTest,
+        test: &mut InvariantTest,
         sequence: &[BasicTxDetails],
         discarded: bool,
         depth: usize,
     ) -> eyre::Result<BasicTxDetails> {
-        let test_runner = &mut test.execution_data.borrow_mut().branch_runner;
+        let test_runner = &mut test.test_data.branch_runner;
 
         // Early return with new input if corpus dir / coverage guided fuzzing not configured or if
         // call was discarded.
