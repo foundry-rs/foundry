@@ -215,4 +215,3 @@ contract FunctionOverrides is FunctionInterfaces, FunctionDefinitions {
         a = 1;
     }
 }
-

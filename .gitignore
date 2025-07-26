@@ -6,3 +6,5 @@ snapshots/
 out.json
 .idea
 .vscode
+.claude
+CLAUDE.md

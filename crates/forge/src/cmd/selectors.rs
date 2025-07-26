@@ -11,7 +11,6 @@ use foundry_common::{
     selectors::{import_selectors, SelectorImportData},
 };
 use foundry_compilers::{artifacts::output_selection::ContractOutputSelection, info::ContractInfo};
-use foundry_config::Config;
 use std::fs::canonicalize;
 
 /// CLI arguments for `forge selectors`.
@@ -95,7 +94,7 @@ impl SelectorsSubcommands {
                 // compile the project to get the artifacts/abis
                 let project = build_args.project()?;
                 let outcome = ProjectCompiler::new().quiet(true).compile(&project)?;
-                cache_local_signatures(&outcome, &Config::foundry_cache_dir().unwrap())?
+                cache_local_signatures(&outcome)?;
             }
             Self::Upload { contract, all, project_paths } => {
                 let build_args = BuildOpts {

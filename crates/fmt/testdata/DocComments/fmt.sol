@@ -1,3 +1,4 @@
+// config: wrap_comments = true
 pragma solidity ^0.8.13;
 
 /// @title A Hello world example

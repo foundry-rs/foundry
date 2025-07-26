@@ -1,10 +1,15 @@
 use super::{install, watch::WatchArgs};
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
+use forge_lint::{linter::Linter, sol::SolidityLinter};
+use foundry_cli::{
+    opts::BuildOpts,
+    utils::{cache_local_signatures, LoadConfig},
+};
 use foundry_common::{compile::ProjectCompiler, shell};
 use foundry_compilers::{
     compilers::{multi::MultiCompilerLanguage, Language},
+    solc::SolcLanguage,
     utils::source_files_iter,
     Project, ProjectCompileOutput,
 };
@@ -15,6 +20,7 @@ use foundry_config::{
         value::{Dict, Map, Value},
         Metadata, Profile, Provider,
     },
+    filter::expand_globs,
     Config,
 };
 use serde::Serialize;
@@ -98,13 +104,63 @@ impl BuildArgs {
             .ignore_eip_3860(self.ignore_eip_3860)
             .bail(!format_json);
 
+        // Runs the SolidityLinter before compilation.
+        self.lint(&project, &config)?;
         let output = compiler.compile(&project)?;
+
+        // Cache project selectors.
+        cache_local_signatures(&output)?;
 
         if format_json && !self.names && !self.sizes {
             sh_println!("{}", serde_json::to_string_pretty(&output.output())?)?;
         }
 
         Ok(output)
+    }
+
+    fn lint(&self, project: &Project, config: &Config) -> Result<()> {
+        let format_json = shell::is_json();
+        if project.compiler.solc.is_some() && config.lint.lint_on_build && !shell::is_quiet() {
+            let linter = SolidityLinter::new(config.project_paths())
+                .with_json_emitter(format_json)
+                .with_description(!format_json)
+                .with_severity(if config.lint.severity.is_empty() {
+                    None
+                } else {
+                    Some(config.lint.severity.clone())
+                })
+                .without_lints(if config.lint.exclude_lints.is_empty() {
+                    None
+                } else {
+                    Some(
+                        config
+                            .lint
+                            .exclude_lints
+                            .iter()
+                            .filter_map(|s| forge_lint::sol::SolLint::try_from(s.as_str()).ok())
+                            .collect(),
+                    )
+                });
+
+            // Expand ignore globs and canonicalize from the get go
+            let ignored = expand_globs(&config.root, config.lint.ignore.iter())?
+                .iter()
+                .flat_map(foundry_common::fs::canonicalize_path)
+                .collect::<Vec<_>>();
+
+            let curr_dir = std::env::current_dir()?;
+            let input_files = config
+                .project_paths::<SolcLanguage>()
+                .input_files_iter()
+                .filter(|p| !(ignored.contains(p) || ignored.contains(&curr_dir.join(p))))
+                .collect::<Vec<_>>();
+
+            if !input_files.is_empty() {
+                linter.lint(&input_files);
+            }
+        }
+
+        Ok(())
     }
 
     /// Returns the `Project` for the current workspace

@@ -123,6 +123,9 @@ pub struct CallTraceDecoder {
     /// Contract addresses that have fallback functions, mapped to function selectors of that
     /// contract.
     pub fallback_contracts: HashMap<Address, HashSet<Selector>>,
+    /// Contract addresses that have do NOT have fallback functions, mapped to function selectors
+    /// of that contract.
+    pub non_fallback_contracts: HashMap<Address, HashSet<Selector>>,
 
     /// All known functions.
     pub functions: HashMap<Selector, Vec<Function>>,
@@ -176,6 +179,7 @@ impl CallTraceDecoder {
             ]),
             receive_contracts: Default::default(),
             fallback_contracts: Default::default(),
+            non_fallback_contracts: Default::default(),
 
             functions: console::hh::abi::functions()
                 .into_values()
@@ -307,6 +311,9 @@ impl CallTraceDecoder {
             if abi.fallback.is_some() {
                 self.fallback_contracts
                     .insert(address, abi.functions().map(|f| f.selector()).collect());
+            } else {
+                self.non_fallback_contracts
+                    .insert(address, abi.functions().map(|f| f.selector()).collect());
             }
         }
     }
@@ -364,6 +371,45 @@ impl CallTraceDecoder {
                     &functions
                 }
             };
+
+            // Check if unsupported fn selector: calldata dooes NOT point to one of its selectors +
+            // non-fallback contract + no receive
+            if let Some(contract_selectors) = self.non_fallback_contracts.get(&trace.address) {
+                if !contract_selectors.contains(&selector) &&
+                    (!cdata.is_empty() || !self.receive_contracts.contains(&trace.address))
+                {
+                    let return_data = if !trace.success {
+                        let revert_msg =
+                            self.revert_decoder.decode(&trace.output, Some(trace.status));
+
+                        if trace.output.is_empty() || revert_msg.contains("EvmError: Revert") {
+                            Some(format!(
+                                "unrecognized function selector {} for contract {}, which has no fallback function.",
+                                selector, trace.address
+                            ))
+                        } else {
+                            Some(revert_msg)
+                        }
+                    } else {
+                        None
+                    };
+
+                    if let Some(func) = functions.first() {
+                        return DecodedCallTrace {
+                            label,
+                            call_data: Some(self.decode_function_input(trace, func)),
+                            return_data,
+                        };
+                    } else {
+                        return DecodedCallTrace {
+                            label,
+                            call_data: self.fallback_call_data(trace),
+                            return_data,
+                        };
+                    };
+                }
+            }
+
             let [func, ..] = &functions[..] else {
                 return DecodedCallTrace {
                     label,
@@ -409,7 +455,7 @@ impl CallTraceDecoder {
             }
 
             if args.is_none() {
-                if let Ok(v) = func.abi_decode_input(&trace.data[SELECTOR_LEN..], false) {
+                if let Ok(v) = func.abi_decode_input(&trace.data[SELECTOR_LEN..]) {
                     args = Some(v.iter().map(|value| self.format_value(value)).collect());
                 }
             }
@@ -445,7 +491,7 @@ impl CallTraceDecoder {
                 }
             }
             "sign" | "signP256" => {
-                let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
+                let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..]).ok()?;
 
                 // Redact private key and replace in trace
                 // sign(uint256,bytes32) / signP256(uint256,bytes32) / sign(Wallet,bytes32)
@@ -458,7 +504,7 @@ impl CallTraceDecoder {
                 Some(decoded.iter().map(format_token).collect())
             }
             "signDelegation" | "signAndAttachDelegation" => {
-                let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
+                let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..]).ok()?;
                 // Redact private key and replace in trace for
                 // signAndAttachDelegation(address implementation, uint256 privateKey)
                 // signDelegation(address implementation, uint256 privateKey)
@@ -482,7 +528,7 @@ impl CallTraceDecoder {
             "parseJsonBytes32Array" |
             "writeJson" |
             // `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
-            "keyExists" | 
+            "keyExists" |
             "keyExistsJson" |
             "serializeBool" |
             "serializeUint" |
@@ -495,10 +541,10 @@ impl CallTraceDecoder {
                 if self.verbosity >= 5 {
                     None
                 } else {
-                    let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
+                    let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..]).ok()?;
                     let token = if func.name.as_str() == "parseJson" ||
                         // `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
-                        func.name.as_str() == "keyExists" || 
+                        func.name.as_str() == "keyExists" ||
                         func.name.as_str() == "keyExistsJson"
                     {
                         "<JSON file>"
@@ -513,7 +559,7 @@ impl CallTraceDecoder {
                 if self.verbosity >= 5 {
                     None
                 } else {
-                    let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
+                    let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..]).ok()?;
                     let token = if func.name.as_str() == "parseToml" ||
                         func.name.as_str() == "keyExistsToml"
                     {
@@ -528,7 +574,7 @@ impl CallTraceDecoder {
             "createFork" |
             "createSelectFork" |
             "rpc" => {
-                let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..], false).ok()?;
+                let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..]).ok()?;
 
                 // Redact RPC URL except if referenced by an alias
                 if !decoded.is_empty() && func.inputs[0].ty == "string" {
@@ -561,7 +607,7 @@ impl CallTraceDecoder {
         }
 
         if let Some(values) =
-            funcs.iter().find_map(|func| func.abi_decode_output(&trace.output, false).ok())
+            funcs.iter().find_map(|func| func.abi_decode_output(&trace.output).ok())
         {
             // Functions coming from an external database do not have any outputs specified,
             // and will lead to returning an empty list of values.
@@ -628,7 +674,7 @@ impl CallTraceDecoder {
             }
         };
         for event in events {
-            if let Ok(decoded) = event.decode_log(log, false) {
+            if let Ok(decoded) = event.decode_log(log) {
                 let params = reconstruct_params(event, &decoded);
                 return DecodedCallLog {
                     name: Some(event.name.clone()),

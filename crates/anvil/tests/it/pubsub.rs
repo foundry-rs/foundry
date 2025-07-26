@@ -49,7 +49,7 @@ async fn test_sub_logs_legacy() {
     let contract = EmitLogs::new(contract_addr, provider.clone());
 
     let val = contract.getValue().call().await.unwrap();
-    assert_eq!(val._0, msg);
+    assert_eq!(val, msg);
 
     // subscribe to events from the contract
     let filter = Filter::new().address(contract.address().to_owned());
@@ -89,7 +89,7 @@ async fn test_sub_logs() {
     let contract = EmitLogs::new(contract_addr, provider.clone());
 
     let val = contract.getValue().call().await.unwrap();
-    assert_eq!(val._0, msg);
+    assert_eq!(val, msg);
 
     // subscribe to events from the contract
     let filter = Filter::new().address(contract.address().to_owned());

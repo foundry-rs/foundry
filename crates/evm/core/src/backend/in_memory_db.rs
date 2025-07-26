@@ -4,8 +4,10 @@ use crate::state_snapshot::StateSnapshots;
 use alloy_primitives::{Address, B256, U256};
 use foundry_fork_db::DatabaseError;
 use revm::{
-    db::{CacheDB, DatabaseRef, EmptyDB},
-    primitives::{Account, AccountInfo, Bytecode, HashMap as Map},
+    bytecode::Bytecode,
+    database::{CacheDB, DatabaseRef, EmptyDB},
+    primitives::HashMap as Map,
+    state::{Account, AccountInfo},
     Database, DatabaseCommit,
 };
 

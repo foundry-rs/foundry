@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand, ValueHint};
 use eyre::Result;
 use foundry_common::shell;
 use foundry_compilers::{artifacts::EvmVersion, Graph};
-use foundry_config::Config;
+use foundry_config::{normalize_evm_version_vyper, Config};
 use semver::Version;
 use serde::Serialize;
 use std::{collections::BTreeMap, path::PathBuf};
@@ -93,11 +93,16 @@ impl ResolveArgs {
                         .collect();
 
                     let evm_version = if shell::verbosity() > 1 {
-                        Some(
-                            EvmVersion::default()
-                                .normalize_version_solc(version)
-                                .unwrap_or_default(),
-                        )
+                        let evm = EvmVersion::default()
+                            .normalize_version_solc(version)
+                            .unwrap_or_default();
+
+                        // Vyper does not yet support Prague, so we normalize it to Cancun.
+                        if language.is_vyper() {
+                            Some(normalize_evm_version_vyper(evm))
+                        } else {
+                            Some(evm)
+                        }
                     } else {
                         None
                     };

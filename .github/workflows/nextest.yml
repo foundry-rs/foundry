@@ -54,7 +54,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           target: ${{ matrix.target }}
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.98
 
       # External tests dependencies
       - name: Setup Node.js
@@ -72,6 +74,7 @@ jobs:
         with:
           python-version: 3.11
       - name: Install Vyper
+        # Also update vyper version in .devcontainer/Dockerfile.dev
         run: pip --version && pip install vyper==0.4.0
 
       - name: Forge RPC cache

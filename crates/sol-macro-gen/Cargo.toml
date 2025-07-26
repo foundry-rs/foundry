@@ -26,3 +26,5 @@ prettyplease.workspace = true
 serde_json.workspace = true
 
 eyre.workspace = true
+
+heck.workspace = true

@@ -152,56 +152,56 @@ macro_rules! fmt_tests {
 fmt_tests! {
     #[ignore = "annotations are not valid Solidity"]
     Annotation,
-    ArrayExpressions,
-    BlockComments,
-    BlockCommentsFunction,
-    ConditionalOperatorExpression,
-    ConstructorDefinition,
-    ConstructorModifierStyle,
-    ContractDefinition,
-    DocComments,
-    DoWhileStatement,
-    EmitStatement,
-    EnumDefinition,
-    EnumVariants,
-    ErrorDefinition,
-    EventDefinition,
-    ForStatement,
-    FunctionCall,
-    FunctionCallArgsStatement,
-    FunctionDefinition,
-    FunctionDefinitionWithFunctionReturns,
-    FunctionType,
-    HexUnderscore,
-    IfStatement,
-    IfStatement2,
-    ImportDirective,
-    InlineDisable,
-    IntTypes,
-    LiteralExpression,
-    MappingType,
-    ModifierDefinition,
-    NamedFunctionCallExpression,
-    NumberLiteralUnderscore,
-    OperatorExpressions,
-    PragmaDirective,
-    Repros,
-    ReturnStatement,
-    RevertNamedArgsStatement,
-    RevertStatement,
-    SimpleComments,
-    SortedImports,
-    StatementBlock,
-    StructDefinition,
-    ThisExpression,
-    TrailingComma,
-    TryStatement,
-    TypeDefinition,
-    UnitExpression,
-    UsingDirective,
-    VariableAssignment,
-    VariableDefinition,
-    WhileStatement,
-    Yul,
-    YulStrings,
+    ArrayExpressions, // TODO: print cmnt before memory kw once span is available (solar). Is the rest acceptable?
+    BlockComments, // OK
+    BlockCommentsFunction, // OK
+    ConditionalOperatorExpression, //OK
+    ConstructorDefinition, // OK? is it acceptable to force no line before pragma?
+    ConstructorModifierStyle, // OK
+    ContractDefinition, // OK? Is it acceptable?
+    DocComments, // OK? is it acceptable?
+    DoWhileStatement, // OK
+    EmitStatement, // OK? is it acceptable? (matches perfectly with `ListFormat::Compact`, but test `EventDefinition` doesn't match)
+    EnumDefinition, // OK
+    EnumVariants, // OK
+    ErrorDefinition, // OK
+    EventDefinition, // OK
+    ForStatement, // OK (works if we use one less digit + breaks as it should)
+    FunctionCall, // OK: TODO: enhance PP so that trailing comments aren't accounted for when breaking lines after a simcolon?
+    FunctionCallArgsStatement, // OK? Is it acceptable?
+    FunctionDefinition, // OK? Is it acceptable?
+    FunctionDefinitionWithFunctionReturns, // OK
+    FunctionType, // OK? is it acceptable?
+    HexUnderscore, // OK
+    IfStatement, // Ok
+    IfStatement2, // OK
+    ImportDirective, // OK
+    InlineDisable, // FIX: invalid output
+    IntTypes, // OK
+    LiteralExpression, // OK? is it acceptable?
+    MappingType, // OK? is it acceptable?
+    ModifierDefinition, // OK
+    NamedFunctionCallExpression, // Okish. Is it acceptable?
+    NumberLiteralUnderscore, // OK
+    OperatorExpressions, // OK
+    PragmaDirective, // OK
+    Repros, // TODO: check boxes, panics
+    ReturnStatement, // OK? is it acceptable? (inline block logic is inconsistent with 'if stmt' unit test)
+    RevertNamedArgsStatement, // OK? is it acceptable? (properly break long calls?)
+    RevertStatement, // OK
+    SimpleComments, // OK
+    SortedImports, // FIX: sorting order
+    StatementBlock, // OK
+    StructDefinition, // OK
+    ThisExpression, // OK
+    TrailingComma, // OK (solar error)
+    TryStatement, // OK? is it acceptable?
+    TypeDefinition, // OK
+    UnitExpression, // OKish. TODO: print cmnt before subdomain once span is available (solar).
+    UsingDirective, // OK
+    VariableAssignment, // OK? is it acceptable?
+    VariableDefinition, // OK? is it acceptable? (solar forces constants to be initialized)
+    WhileStatement,  // OK
+    Yul, // FIX: spacing
+    YulStrings, // OK
 }

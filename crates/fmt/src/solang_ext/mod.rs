@@ -11,11 +11,12 @@ pub mod pt {
         EnumDefinition, ErrorDefinition, ErrorParameter, EventDefinition, EventParameter,
         Expression, FunctionAttribute, FunctionDefinition, FunctionTy, HexLiteral, Identifier,
         IdentifierPath, Import, ImportPath, Loc, Mutability, NamedArgument, OptionalCodeLocation,
-        Parameter, ParameterList, SourceUnit, SourceUnitPart, Statement, StorageLocation,
-        StringLiteral, StructDefinition, Type, TypeDefinition, UserDefinedOperator, Using,
-        UsingFunction, UsingList, VariableAttribute, VariableDeclaration, VariableDefinition,
-        Visibility, YulBlock, YulExpression, YulFor, YulFunctionCall, YulFunctionDefinition,
-        YulStatement, YulSwitch, YulSwitchOptions, YulTypedIdentifier,
+        Parameter, ParameterList, PragmaDirective, SourceUnit, SourceUnitPart, Statement,
+        StorageLocation, StringLiteral, StructDefinition, Type, TypeDefinition,
+        UserDefinedOperator, Using, UsingFunction, UsingList, VariableAttribute,
+        VariableDeclaration, VariableDefinition, Visibility, YulBlock, YulExpression, YulFor,
+        YulFunctionCall, YulFunctionDefinition, YulStatement, YulSwitch, YulSwitchOptions,
+        YulTypedIdentifier,
     };
 }
 
