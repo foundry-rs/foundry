@@ -41,8 +41,8 @@ enum IndentStyle {
 pub(crate) struct BreakToken {
     pub(crate) offset: isize,
     pub(crate) blank_space: usize,
-    pub(crate) pre_break: Option<char>,
-    pub(crate) post_break: Option<char>,
+    pub(crate) pre_break: Option<&'static str>,
+    pub(crate) post_break: Option<&'static str>,
     pub(crate) if_nonempty: bool,
     pub(crate) never_break: bool,
 }
@@ -416,7 +416,7 @@ impl Printer {
         } else {
             if let Some(pre_break) = token.pre_break {
                 self.print_indent();
-                self.out.push(pre_break);
+                self.out.push_str(pre_break);
             }
             if DEBUG {
                 self.out.push('·');
@@ -427,8 +427,8 @@ impl Printer {
             self.space = cmp::max(self.margin - indent, MIN_SPACE);
             if let Some(post_break) = token.post_break {
                 self.print_indent();
-                self.out.push(post_break);
-                self.space -= post_break.len_utf8() as isize;
+                self.out.push_str(post_break);
+                self.space -= post_break.len() as isize;
             }
         }
     }

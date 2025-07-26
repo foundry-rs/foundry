@@ -180,7 +180,7 @@ fn format_once(
         let source = file.src.as_str();
         let arena = solar_parse::ast::Arena::new();
         let mut parser = solar_parse::Parser::from_source_file(&sess, &arena, &file);
-        let comments = Comments::new(&file);
+        let comments = Comments::new(&file, sess.source_map());
         let ast = parser.parse_file().map_err(|e| e.emit())?;
         let inline_config = parse_inline_config(&sess, &comments, source);
 

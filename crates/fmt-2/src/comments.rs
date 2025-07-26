@@ -218,9 +218,43 @@ fn gather_comments(sf: &SourceFile) -> Vec<Comment> {
     comments
 }
 
+/// Post-processes a list of comments to group consecutive comments.
+///
+/// Necessary for properly indenting multi-line trailing comments, which would
+/// otherwise be parsed as a `Trailing` followed by several `Isolated`.
+fn group_comments(sm: &SourceMap, comments: Vec<Comment>) -> Vec<Comment> {
+    let mut processed = Vec::new();
+    let mut cursor = comments.into_iter().peekable();
+
+    while let Some(mut current) = cursor.next() {
+        if current.kind == CommentKind::Line &&
+            (current.style.is_trailing() || current.style.is_isolated())
+        {
+            let mut ref_line = sm.lookup_char_pos(current.span.hi()).line;
+            while let Some(next_comment) = cursor.peek() {
+                if !next_comment.style.is_isolated() ||
+                    next_comment.kind != CommentKind::Line ||
+                    ref_line + 1 != sm.lookup_char_pos(next_comment.span.lo()).line
+                {
+                    break;
+                }
+
+                let next_to_merge = cursor.next().unwrap();
+                current.lines.extend(next_to_merge.lines);
+                current.span = current.span.to(next_to_merge.span);
+                ref_line += 1;
+            }
+        }
+
+        processed.push(current);
+    }
+
+    processed
+}
+
 impl Comments {
-    pub fn new(sf: &SourceFile) -> Self {
-        Self { comments: gather_comments(sf).into_iter() }
+    pub fn new(sf: &SourceFile, sm: &SourceMap) -> Self {
+        Self { comments: group_comments(sm, gather_comments(sf)).into_iter() }
     }
 
     pub fn peek(&self) -> Option<&Comment> {

@@ -159,7 +159,7 @@ fmt_tests! {
     ConstructorDefinition, // OK? is it acceptable to force no line before pragma?
     ConstructorModifierStyle, // OK
     ContractDefinition, // OK? Is it acceptable?
-    DocComments, // OKish (basics). TODO: wrapp comments
+    DocComments, // OK? is it acceptable?
     DoWhileStatement, // OK
     EmitStatement, // OK? is it acceptable? (matches perfectly with `ListFormat::Compact`, but test `EventDefinition` doesn't match)
     EnumDefinition, // OK
@@ -189,7 +189,7 @@ fmt_tests! {
     ReturnStatement, // OK? is it acceptable? (inline block logic is inconsistent with 'if stmt' unit test)
     RevertNamedArgsStatement, // OK? is it acceptable? (properly break long calls?)
     RevertStatement, // OK
-    SimpleComments, // OK (basics). TODO: wrap comments
+    SimpleComments, // OK
     SortedImports, // FIX: sorting order
     StatementBlock, // OK
     StructDefinition, // OK

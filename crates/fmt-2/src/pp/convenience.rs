@@ -116,15 +116,8 @@ impl Printer {
     fn token_has_non_whitespace_content(token: &Token) -> bool {
         match token {
             Token::String(s) => !s.trim().is_empty(),
-            Token::Break(bt) => {
-                if let Some(char) = bt.pre_break {
-                    !char.is_whitespace()
-                } else {
-                    false
-                }
-            }
-            Token::Begin(_) => false,
-            Token::End => false,
+            Token::Break(BreakToken { pre_break: Some(s), .. }) => !s.trim().is_empty(),
+            _ => false,
         }
     }
 
@@ -163,7 +156,7 @@ impl Printer {
         if is_last {
             self.scan_break(BreakToken {
                 blank_space: 1,
-                pre_break: Some(','),
+                pre_break: Some(","),
                 ..BreakToken::default()
             });
         } else {

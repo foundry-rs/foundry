@@ -128,14 +128,77 @@ impl<'sess> State<'sess, '_> {
         last_style
     }
 
-    fn print_comment(&mut self, mut cmnt: Comment, config: CommentConfig) {
-        // DEBUG
-        if !cmnt.style.is_blank() {
-            println!("{cmnt:?}");
-            println!(" > BOL? {}\n", self.is_bol_or_only_ind());
+    /// Prints a line, wrapping it if it starts with the given prefix.
+    fn print_wrapped_line(
+        &mut self,
+        line: &str,
+        prefix: &'static str,
+        break_offset: isize,
+        is_doc: bool,
+    ) {
+        if !line.starts_with(prefix) {
+            self.word(line.to_owned());
+            return;
         }
+
+        let post_break_prefix = |prefix: &'static str, line_len: usize| -> &'static str {
+            match prefix {
+                "///" if line_len > 3 => "/// ",
+                "//" if line_len > 2 => "// ",
+                "/*" if line_len > 2 => "/* ",
+                " *" if line_len > 2 => " * ",
+                _ => prefix,
+            }
+        };
+
+        self.ibox(0);
+        let (prefix, content) = if is_doc {
+            // Doc comments preserve leading whitespaces (right after the prefix).
+            self.word(prefix);
+            let content = &line[prefix.len()..];
+            let (leading_ws, rest) =
+                content.split_at(content.chars().take_while(|&c| c.is_whitespace()).count());
+            if !leading_ws.is_empty() {
+                self.word(leading_ws.to_owned());
+            }
+            let prefix = post_break_prefix(prefix, rest.len());
+            (prefix, rest)
+        } else {
+            let content = line[prefix.len()..].trim();
+            let prefix = post_break_prefix(prefix, content.len());
+            self.word(prefix);
+            (prefix, content)
+        };
+
+        // Split the rest of the content into words.
+        let mut words = content.split_whitespace().peekable();
+        while let Some(word) = words.next() {
+            self.word(word.to_owned());
+            if let Some(next_word) = words.peek() {
+                if *next_word == "*/" {
+                    self.nbsp();
+                } else {
+                    self.s.scan_break(BreakToken {
+                        offset: break_offset,
+                        blank_space: 1,
+                        post_break: if matches!(prefix, "/* ") { None } else { Some(prefix) },
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+        self.end();
+    }
+
+    fn print_comment(&mut self, mut cmnt: Comment, mut config: CommentConfig) {
+        // // DEBUG
+        // if !cmnt.style.is_blank() {
+        //     println!("{cmnt:?}");
+        //     println!(" > BOL? {}\n", self.is_bol_or_only_ind());
+        // }
         match cmnt.style {
             CommentStyle::Mixed => {
+                let Some(prefix) = cmnt.prefix() else { return };
                 let never_break = self.last_token_is_neverbreak();
                 if !self.is_bol_or_only_ind() {
                     match (never_break || config.mixed_no_break, config.mixed_prev_space) {
@@ -145,57 +208,97 @@ impl<'sess> State<'sess, '_> {
                         (true, false) => (),
                     };
                 }
-                if let Some(last) = cmnt.lines.pop() {
-                    self.ibox(0);
-                    for line in cmnt.lines {
+                for (pos, line) in cmnt.lines.into_iter().delimited() {
+                    if self.config.wrap_comments {
+                        self.print_wrapped_line(&line, prefix, 0, cmnt.is_doc);
+                    } else {
                         self.word(line);
-                        config.hardbreak(&mut self.s);
                     }
-                    self.word(last);
-                    if config.mixed_post_nbsp {
-                        self.nbsp();
-                    } else if !config.mixed_no_break {
-                        config.space(&mut self.s);
+                    if !pos.is_last {
+                        self.hardbreak();
                     }
-                    self.end();
+                }
+                if config.mixed_post_nbsp {
+                    config.nbsp_or_space(self.config.wrap_comments, &mut self.s);
+                } else if !config.mixed_no_break {
+                    config.space(&mut self.s);
                 }
             }
             CommentStyle::Isolated => {
+                let Some(mut prefix) = cmnt.prefix() else { return };
                 config.hardbreak_if_not_bol(self.is_bol_or_only_ind(), &mut self.s);
-                for line in cmnt.lines {
-                    // Don't print empty lines because they will end up as trailing
-                    // whitespace.
-                    if !line.is_empty() {
+                for (pos, line) in cmnt.lines.into_iter().delimited() {
+                    if line.is_empty() {
+                        self.hardbreak();
+                        continue;
+                    }
+                    if pos.is_first {
+                        self.ibox(config.offset);
+                        if self.config.wrap_comments && cmnt.is_doc {
+                            if matches!(prefix, "/**") {
+                                self.word(prefix);
+                                self.hardbreak();
+                                prefix = " * ";
+                                continue;
+                            }
+                        }
+                    }
+
+                    if self.config.wrap_comments {
+                        self.print_wrapped_line(&line, prefix, 0, cmnt.is_doc);
+                    } else {
                         self.word(line);
                     }
-                    // Break without the configured comment indentation
+                    if pos.is_last {
+                        self.end();
+                    }
                     self.hardbreak();
                 }
             }
             CommentStyle::Trailing => {
+                let Some(prefix) = cmnt.prefix() else { return };
+                self.neverbreak();
                 if !self.is_bol_or_only_ind() {
                     self.nbsp();
                 }
-                if cmnt.lines.len() == 1 {
+
+                if !self.config.wrap_comments && cmnt.lines.len() == 1 {
                     self.word(cmnt.lines.pop().unwrap());
-                    if !config.trailing_no_break {
-                        // Break without the configured comment indentation
-                        self.hardbreak();
-                    }
                 } else {
-                    self.visual_align();
-                    for line in cmnt.lines {
-                        if !line.is_empty() {
-                            self.word(line);
+                    if self.config.wrap_comments {
+                        config.offset = self.ind;
+                        for (lpos, line) in cmnt.lines.into_iter().delimited() {
+                            if !line.is_empty() {
+                                self.print_wrapped_line(
+                                    &line,
+                                    prefix,
+                                    if cmnt.is_doc { 0 } else { config.offset },
+                                    cmnt.is_doc,
+                                );
+                            }
+                            if !lpos.is_last {
+                                config.hardbreak(&mut self.s);
+                            }
                         }
-                        if !config.trailing_no_break {
-                            // Break without the configured comment indentation
-                            self.hardbreak();
+                    } else {
+                        self.visual_align();
+                        for (pos, line) in cmnt.lines.into_iter().delimited() {
+                            if !line.is_empty() {
+                                self.word(line);
+                                if !pos.is_last {
+                                    self.hardbreak();
+                                }
+                            }
                         }
+                        self.end();
                     }
-                    self.end();
+                }
+
+                if !config.trailing_no_break {
+                    self.hardbreak();
                 }
             }
+
             CommentStyle::BlankLine => {
                 // We need to do at least one, possibly two hardbreaks.
                 let twice = match self.last_token() {
@@ -1572,7 +1675,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_array(exprs, expr.span, |this, e| this.print_expr(e), get_span!())
             }
             ast::ExprKind::Assign(lhs, None, rhs) => {
-                self.s.ibox(self.ind);
+                self.s.ibox(if has_complex_succesor(&rhs.kind, false) { 0 } else { self.ind });
                 self.print_expr(lhs);
                 self.word(" = ");
                 self.neverbreak();
@@ -2313,7 +2416,7 @@ impl<'ast> State<'_, 'ast> {
         if block_format.attempt_single_line() && block.len() == 1 {
             self.s.cbox(self.ind);
             if matches!(block_format, BlockFormat::Compact(true)) {
-                self.scan_break(BreakToken { pre_break: Some('{'), ..Default::default() });
+                self.scan_break(BreakToken { pre_break: Some("{"), ..Default::default() });
             } else {
                 self.word("{");
                 self.space();
@@ -2321,7 +2424,7 @@ impl<'ast> State<'_, 'ast> {
             print(self, &block[0]);
             self.print_comments(get_block_span(&block[0]).hi(), CommentConfig::default());
             if matches!(block_format, BlockFormat::Compact(true)) {
-                self.s.scan_break(BreakToken { post_break: Some('}'), ..Default::default() });
+                self.s.scan_break(BreakToken { post_break: Some("}"), ..Default::default() });
                 self.s.offset(-self.ind);
             } else {
                 self.space_if_not_bol();
@@ -2372,31 +2475,6 @@ impl<'ast> State<'_, 'ast> {
                 if block_format.with_braces() {
                     self.word("}");
                 }
-                // } else {
-                //     if let BlockFormat::NoBraces(offset) = block_format {
-                //         match offset {
-                //             Some(offset) => self.s.cbox(offset),
-                //             None => self.cbox(0),
-                //         }
-                //     } else {
-                //         self.word("{");
-                //         self.s.cbox(self.ind);
-                //     }
-                //     self.print_comments(
-                //         pos_hi,
-                //         CommentConfig::skip_ws().mixed_no_break().mixed_prev_space().
-                // mixed_post_nbsp(),     );
-                //     // manually adjust offset to ensure that the closing brace is properly
-                // indented.     // if the last cmnt was breaking, we replace offset
-                // to avoid e a double break.     if self.is_bol_or_only_ind() {
-                //         self.break_offset_if_not_bol(0, -self.ind, false);
-                //     } else {
-                //         self.s.break_offset(0, -self.ind);
-                //     }
-                //     self.end();
-                //     if block_format.with_braces() {
-                //         self.word("}");
-                // }
             }
             return;
         }
@@ -3199,21 +3277,15 @@ impl CommentConfig {
         p.break_offset(1, self.offset);
     }
 
+    fn nbsp_or_space(&self, breaks: bool, p: &mut pp::Printer) {
+        if breaks {
+            self.space(p);
+        } else {
+            p.nbsp();
+        }
+    }
+
     fn zerobreak(&self, p: &mut pp::Printer) {
         p.break_offset(0, self.offset);
     }
 }
-
-// NOTE(rusowsky): not needed as solar forces constants to be initialized
-// fn is_default_literal(expr: &ast::ExprKind<'_>) -> bool {
-//     if let ast::ExprKind::Lit(lit, ..) = expr {
-//         return match lit.kind {
-//             ast::LitKind::Bool(is_true) => !is_true,
-//             ast::LitKind::Address(addr) => addr == alloy_primitives::Address::ZERO,
-//             ast::LitKind::Number(_) => lit.symbol.as_str() == "0",
-//             _ => false,
-//         }
-//     }
-
-//     false
-// }
