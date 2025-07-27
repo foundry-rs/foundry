@@ -3,12 +3,12 @@ use alloy_primitives::Address;
 use clap::Parser;
 use foundry_cli::{opts::EthereumOpts, utils::LoadConfig};
 use foundry_config::{
-    figment,
+    Config, figment,
     figment::{
-        value::{Dict, Map},
         Metadata, Profile,
+        value::{Dict, Map},
     },
-    merge_impl_figment_convert, Config,
+    merge_impl_figment_convert,
 };
 
 merge_impl_figment_convert!(NameArgs, eth);
@@ -18,7 +18,7 @@ merge_impl_figment_convert!(NameArgs, eth);
 pub struct NameArgs {
     /// The ENS name to set.
     #[arg(long)]
-    pub ens_name: Option<String>,
+    pub ens_name: String,
 
     /// The address of the contract.
     #[arg(long)]
@@ -74,6 +74,6 @@ mod tests {
             args.contract_address,
             "0x3fAB184622Dc19b6109349B94811493BF2a45362".parse::<Address>().unwrap()
         );
-        assert_eq!(args.ens_name, Some("test.abhi.eth".to_owned()));
+        assert_eq!(args.ens_name, "test.abhi.eth".to_owned());
     }
 }

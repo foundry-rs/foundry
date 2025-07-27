@@ -4,8 +4,8 @@ use crate::{
     sequence::{ScriptSequenceKind, get_commit_hash},
 };
 use alloy_network::EthereumWallet;
-use alloy_primitives::{hex, Address};
-use eyre::{eyre, Result};
+use alloy_primitives::{Address, hex};
+use eyre::{Result, eyre};
 use forge_script_sequence::{AdditionalContract, ScriptSequence};
 use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs, provider::VerificationProviderType};
 use foundry_cli::opts::{EtherscanOpts, ProjectPathOpts};

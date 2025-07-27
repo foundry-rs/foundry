@@ -59,7 +59,7 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 [[package]]
 name = "alloy-chains"
 version = "0.2.4"
-source = "git+https://github.com/alloy-rs/chains?rev=45c5269bc8b937b2c79fca82fd5eb2aca8613b35#45c5269bc8b937b2c79fca82fd5eb2aca8613b35"
+source = "git+https://github.com/alloy-rs/chains?rev=38beae38aa486ea2fa5d94f0b7b91f4e34ef0024#38beae38aa486ea2fa5d94f0b7b91f4e34ef0024"
 dependencies = [
  "alloy-primitives",
  "num_enum",
@@ -3547,7 +3547,6 @@ dependencies = [
  "foundry-cli",
  "foundry-common",
  "foundry-config",
- "names",
  "tokio",
 ]
 
@@ -3850,6 +3849,7 @@ dependencies = [
  "forge-sol-macro-gen",
  "forge-verify",
  "foundry-block-explorers",
+ "foundry-cheatcodes-spec",
  "foundry-cli",
  "foundry-common",
  "foundry-compilers",
@@ -6220,15 +6220,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.104",
-]
-
-[[package]]
-name = "names"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7bddcd3bf5144b6392de80e04c347cd7fab2508f6df16a85fc496ecd5cec39bc"
-dependencies = [
- "rand 0.8.5",
 ]
 
 [[package]]

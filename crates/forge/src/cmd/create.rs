@@ -88,11 +88,7 @@ pub struct CreateArgs {
     // pub naming: NameArgs,
     /// The ENS name to set for the contract.
     #[arg(long)]
-    pub ens_name: Option<String>,
-
-    /// Whether an auto-generated ENS name should be set.
-    #[arg(long)]
-    pub auto_name: bool,
+    pub ens_name: String,
 
     /// Whether the contract is ReverseSetter or not.
     #[arg(long, requires = "ens_name")]
@@ -414,7 +410,7 @@ impl CreateArgs {
             sh_println!("Transaction hash: {:?}", receipt.transaction_hash)?;
         };
 
-        if self.ens_name.is_some() || self.auto_name {
+        if !self.ens_name.is_empty() {
             let config = self.load_config()?;
             let signer = self.eth.wallet.signer().await?;
             enscribe::set_primary_name(
@@ -722,6 +718,6 @@ mod tests {
             "test.abhi.eth",
         ]);
 
-        assert_eq!(args.ens_name, Some("test.abhi.eth".to_owned()));
+        assert_eq!(args.ens_name, "test.abhi.eth".to_owned());
     }
 }
