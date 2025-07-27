@@ -3,9 +3,10 @@ use crate::{
     fork::fork_config,
     utils::http_provider_with_signer,
 };
+use alloy_consensus::SignableTransaction;
 use alloy_eips::BlockId;
 use alloy_hardforks::EthereumHardfork;
-use alloy_network::{EthereumWallet, TransactionBuilder};
+use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
 use alloy_primitives::{
     Address, Bytes, U256,
     hex::{self, FromHex},
@@ -1008,3 +1009,61 @@ fault: function(log) {}
 
     assert_eq!(actual, expected);
 }
+
+// #[tokio::test(flavor = "multi_thread")]
+// async fn test_debug_trace_transaction_js_tracer() {
+//     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+//     let (api, handle) = spawn(node_config).await;
+//     let provider = crate::utils::http_provider(&handle.http_endpoint());
+
+//     let wallets = handle.dev_wallets().collect::<Vec<_>>();
+//     let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
+
+//     let from = wallets[0].address();
+//     // Fund both accounts *before* signing
+//     api.anvil_add_balance(from, U256::MAX).await.unwrap();
+//     api.anvil_add_balance(wallets[1].address(), U256::MAX).await.unwrap();
+
+//     let mut tx = alloy_consensus::TxEip1559 {
+//         max_fee_per_gas: eip1559_est.max_fee_per_gas,
+//         max_priority_fee_per_gas: eip1559_est.max_priority_fee_per_gas,
+//         gas_limit: 100000,
+//         chain_id: 31337,
+//         to: alloy_primitives::TxKind::Call(from),
+//         input: alloy_primitives::bytes!("11112222"),
+//         ..Default::default()
+//     };
+//     let signature = wallets[1].sign_transaction_sync(&mut tx).unwrap();
+
+//     let tx = tx.into_signed(signature);
+//     let mut encoded = Vec::new();
+//     tx.eip2718_encode(&mut encoded);
+
+//     let receipt = api.send_raw_transaction_sync(encoded.into()).await.unwrap();
+//     let js_tracer_code = r#"
+// {
+// data: [],
+// step: function(log) {
+//     var op = log.op.toString();
+//     if (op === "SLOAD") {
+//     this.data.push(log.getPC() + ": SLOAD " + log.contract.getAddress() + ":" +
+// log.stack.peek(0));     this.data.push("    Result: " + log.stack.peek(0));
+//     } else if (op === "SSTORE") {
+//     this.data.push(log.getPC() + ": SSTORE " + log.contract.getAddress() + ":" +
+// log.stack.peek(1) + " <- " + log.stack.peek(0));     }
+// },
+// result: function() {
+//     return this.data;
+// },
+// fault: function(log) {}
+// }
+// "#;
+
+//     let result = api
+//         .debug_trace_transaction(
+//             receipt.transaction_hash,
+//             GethDebugTracingOptions::js_tracer(js_tracer_code),
+//         )
+//         .await
+//         .unwrap();
+// }
