@@ -1,7 +1,7 @@
 use crate::{
     comment::{Comment, CommentStyle},
     comments::Comments,
-    iter::{IterDelimited, IteratorPosition},
+    iter::IterDelimited,
     pp::{self, BreakToken, Token, SIZE_INFINITY},
     FormatterConfig, InlineConfig,
 };
@@ -12,7 +12,11 @@ use solar_parse::{
     interface::{BytePos, SourceMap},
     Cursor,
 };
-use std::{borrow::Cow, collections::HashMap, fmt::Debug};
+use std::{
+    borrow::Cow,
+    collections::{BTreeSet, HashMap},
+    fmt::Debug,
+};
 
 pub(super) struct State<'sess, 'ast> {
     pub(crate) s: pp::Printer,
@@ -338,6 +342,11 @@ impl<'sess> State<'sess, '_> {
             .take_while(|c| pos_lo < c.pos() && c.pos() < pos_hi)
             .find(|c| !c.style.is_blank())
     }
+
+    fn has_comment_between(&self, start_pos: BytePos, end_pos: BytePos) -> bool {
+        self.comments.iter().filter(|c| c.pos() > start_pos && c.pos() < end_pos).any(|_| true)
+    }
+
     fn next_comment(&mut self) -> Option<Comment> {
         self.comments.next()
     }
@@ -664,14 +673,48 @@ impl<'ast> State<'_, 'ast> {
         let mut items = source_unit.items.iter().peekable();
         let mut is_first = true;
         while let Some(item) = items.next() {
-            self.print_item(item, is_first);
-            is_first = false;
+            // If imports shouldn't be sorted, or if the item is not an import, print it directly.
+            if !self.config.sort_imports || !matches!(item.kind, ast::ItemKind::Import(_)) {
+                self.print_item(item, is_first);
+                is_first = false;
+                if let Some(next_item) = items.peek() {
+                    self.separate_items(next_item);
+                }
+                continue;
+            }
 
+            // Otherwise, collect a group of consecutive imports and sort them before printing.
+            let mut import_group = vec![item];
+            while let Some(next_item) = items.peek() {
+                // Groups end when the next item is not an import or when there is a blank line.
+                if !matches!(next_item.kind, ast::ItemKind::Import(_)) ||
+                    self.has_comment_between(item.span.hi(), next_item.span.lo())
+                {
+                    break;
+                }
+                import_group.push(items.next().unwrap());
+            }
+
+            import_group.sort_by_key(|item| {
+                if let ast::ItemKind::Import(import) = &item.kind {
+                    import.path.value.as_str()
+                } else {
+                    unreachable!("Expected an import item")
+                }
+            });
+
+            for (pos, group_item) in import_group.iter().delimited() {
+                self.print_item(group_item, is_first);
+                is_first = false;
+
+                if !pos.is_last {
+                    self.hardbreak_if_not_bol();
+                }
+            }
             if let Some(next_item) = items.peek() {
                 self.separate_items(next_item);
             }
         }
-        self.print_remaining_comments();
     }
 
     fn separate_items(&mut self, next_item: &'ast ast::Item<'ast>) {
@@ -737,6 +780,24 @@ impl<'ast> State<'_, 'ast> {
         self.word(";");
     }
 
+    fn print_commasep_aliases<'a, I>(&mut self, aliases: I)
+    where
+        I: Iterator<Item = &'a (ast::Ident, Option<ast::Ident>)>,
+        'ast: 'a,
+    {
+        for (pos, (ident, alias)) in aliases.delimited() {
+            self.print_ident(ident);
+            if let Some(alias) = alias {
+                self.word(" as ");
+                self.print_ident(alias);
+            }
+            if !pos.is_last {
+                self.word(",");
+                self.space();
+            }
+        }
+    }
+
     fn print_import(&mut self, import: &'ast ast::ImportDirective<'ast>) {
         let ast::ImportDirective { path, items } = import;
         self.word("import ");
@@ -748,21 +809,20 @@ impl<'ast> State<'_, 'ast> {
                     self.print_ident(&ident);
                 }
             }
+
             ast::ImportItems::Aliases(aliases) => {
                 self.s.cbox(self.ind);
                 self.word("{");
                 self.braces_break();
-                for (pos, (ident, alias)) in aliases.iter().delimited() {
-                    self.print_ident(ident);
-                    if let Some(alias) = alias {
-                        self.word(" as ");
-                        self.print_ident(alias);
-                    }
-                    if !pos.is_last {
-                        self.word(",");
-                        self.space();
-                    }
-                }
+
+                if self.config.sort_imports {
+                    let mut sorted: Vec<_> = aliases.iter().collect();
+                    sorted.sort_by_key(|(ident, _alias)| ident.name.as_str());
+                    self.print_commasep_aliases(sorted.into_iter());
+                } else {
+                    self.print_commasep_aliases(aliases.iter());
+                };
+
                 self.braces_break();
                 self.s.offset(-self.ind);
                 self.word("}");
@@ -2288,6 +2348,7 @@ impl<'ast> State<'_, 'ast> {
             ast::StmtKind::Placeholder => self.word("_"),
         }
         if stmt_needs_semi(kind) {
+            self.neverbreak(); // semicolon shouldn't account for linebreaks
             self.word(";");
         }
         // print comments without breaks, as those are handled by the caller.

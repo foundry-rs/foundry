@@ -190,7 +190,7 @@ fmt_tests! {
     RevertNamedArgsStatement, // OK? is it acceptable? (properly break long calls?)
     RevertStatement, // OK
     SimpleComments, // OK
-    SortedImports, // FIX: sorting order
+    SortedImports, // OK
     StatementBlock, // OK
     StructDefinition, // OK
     ThisExpression, // OK
