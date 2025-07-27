@@ -1603,6 +1603,73 @@ casttest!(mktx_raw_unsigned, |_prj, cmd| {
     ]]);
 });
 
+casttest!(mktx_raw_unsigned_no_from_missing_chain, async |_prj, cmd| {
+    // As chain is not provided, a query is made to the provider to get the chain id, before the tx
+    // is built. Anvil is configured to use chain id 1 so that the produced tx will be the same
+    // as in the `mktx_raw_unsigned` test.
+    let (_, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
+    cmd.args([
+        "mktx",
+        "--nonce",
+        "0",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "0x0000000000000000000000000000000000000001",
+        "--raw-unsigned",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[
+        r#"0x02e80180843b9aca008502540be4008252089400000000000000000000000000000000000000018080c0
+
+"#
+    ]]);
+});
+
+casttest!(mktx_raw_unsigned_no_from_missing_gas_pricing, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    cmd.args([
+        "mktx",
+        "--nonce",
+        "0",
+        "0x0000000000000000000000000000000000000001",
+        "--raw-unsigned",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[
+        r#"0x02e5827a69800184773594018252089400000000000000000000000000000000000000018080c0
+
+"#
+    ]]);
+});
+
+casttest!(mktx_raw_unsigned_no_from_missing_nonce, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--chain",
+        "1",
+        "--gas-limit",
+        "21000", 
+        "--gas-price",
+        "20000000000",
+        "0x742d35Cc6634C0532925a3b8D6Ac6F67C9c2b7FD",
+        "--raw-unsigned",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[
+        r#"Error: Missing required parameters for raw unsigned transaction. When --from is not provided, you must specify: --nonce
+
+"#
+    ]]);
+});
+
 casttest!(mktx_ethsign, async |_prj, cmd| {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
