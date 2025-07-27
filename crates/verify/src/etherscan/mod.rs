@@ -108,6 +108,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     if resp.result.starts_with("Unable to locate ContractCode at")
                         || resp.result.starts_with("The address is not a smart contract")
                     {
+                        warn!("{}", resp.result);
                         return Err(eyre!("Could not detect deployment: {}", resp.result));
                     }
 
@@ -116,6 +117,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                         resp.message,
                         resp.result
                     )?;
+                    warn!("Failed verify submission: {:?}", resp);
                     std::process::exit(1);
                 }
 
