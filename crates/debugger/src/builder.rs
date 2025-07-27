@@ -25,7 +25,7 @@ impl DebuggerBuilder {
         Self::default()
     }
 
-    /// Extends the debug arena.
+    /// Processes traces and extends the debug arena.
     #[inline]
     pub fn traces(mut self, traces: Traces) -> Self {
         for (_, arena) in traces {
@@ -50,7 +50,7 @@ impl DebuggerBuilder {
         self
     }
 
-    /// Extends the identified contracts from a decoder.
+    /// Replaces the identified contracts from a decoder.
     #[inline]
     pub fn decoder(self, decoder: &CallTraceDecoder) -> Self {
         let c = decoder.contracts.iter().map(|(k, v)| (*k, get_contract_name(v).to_string()));
@@ -67,7 +67,7 @@ impl DebuggerBuilder {
         self
     }
 
-    /// Sets the sources for the debugger.
+    /// Replaces the sources for the debugger.
     #[inline]
     pub fn sources(mut self, sources: ContractSources) -> Self {
         self.sources = sources;
