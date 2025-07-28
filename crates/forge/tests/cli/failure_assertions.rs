@@ -233,9 +233,16 @@ forgetest!(expect_emit_params_tests_should_fail, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
 
+    let expect_emit_failure_src = include_str!("../fixtures/ExpectEmitParamHarness.sol");
     let expect_emit_failure_tests = include_str!("../fixtures/ExpectEmitParamFailures.t.sol");
 
+    prj.add_source("ExpectEmitParamHarness.sol", expect_emit_failure_src).unwrap();
     prj.add_source("ExpectEmitParamFailures.sol", expect_emit_failure_tests).unwrap();
+
+    // Read all paths in the project
+    foundry_common::fs::files_with_ext(prj.root(), "sol").for_each(|p| {
+        println!("Found file: {}", p.display());
+    });
 
     cmd.forge_fuse().args(["test", "--mc", "ExpectEmitParamFailures"]).assert_failure().stdout_eq(
         r#"[COMPILING_FILES] with [SOLC_VERSION]
