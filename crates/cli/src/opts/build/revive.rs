@@ -53,6 +53,15 @@ pub struct ResolcOpts {
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stack_size: Option<u32>,
+
+    /// Generate source based debug information in the output code file.
+    #[arg(
+        long = "debug-info",
+        help = "Generate source based debug information in the output code file",
+        action = clap::ArgAction::SetTrue
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub debug_information: Option<bool>,
 }
 
 impl ResolcOpts {
@@ -79,6 +88,10 @@ impl ResolcOpts {
         );
         set_if_some!(self.heap_size, resolc.heap_size);
         set_if_some!(self.stack_size, resolc.stack_size);
+        set_if_some!(
+            self.debug_information.and_then(|v| if v { Some(true) } else { None }),
+            resolc.debug_information
+        );
 
         resolc
     }

@@ -1313,7 +1313,8 @@ exclude = []
     "resolc": null,
     "optimizer_mode": null,
     "heap_size": null,
-    "stack_size": null
+    "stack_size": null,
+    "debug_information": null
   }
 }
 

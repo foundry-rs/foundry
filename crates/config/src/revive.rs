@@ -28,6 +28,9 @@ pub struct ResolcConfig {
 
     /// The contracts total stack size in bytes
     pub stack_size: Option<u32>,
+
+    /// Generate source based debug information in the output code file
+    pub debug_information: Option<bool>,
 }
 
 impl ResolcConfig {
@@ -55,7 +58,7 @@ impl ResolcConfig {
                 config.resolc.optimizer_mode,
                 config.resolc.heap_size,
                 config.resolc.stack_size,
-                None,
+                config.resolc.debug_information,
             );
             s
         })

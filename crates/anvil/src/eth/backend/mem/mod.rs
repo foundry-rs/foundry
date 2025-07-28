@@ -1794,7 +1794,7 @@ impl Backend {
                         GethDebugBuiltInTracerType::CallTracer => {
                             let call_config = tracer_config
                                 .into_call_config()
-                                .map_err(|e| (RpcError::invalid_params(e.to_string())))?;
+                                .map_err(|e| RpcError::invalid_params(e.to_string()))?;
 
                             let mut inspector = self.build_inspector().with_tracing_config(
                                 TracingInspectorConfig::from_geth_call_config(&call_config),
