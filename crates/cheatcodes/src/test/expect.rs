@@ -1072,15 +1072,10 @@ fn decode_event(
     // Try to identify the event
     let event = foundry_common::block_on(identifier.identify_event(t0))?;
 
-    // Check if event already has correct indexed flags
-    let indexed_count = event.inputs.iter().filter(|p| p.indexed).count();
-    let expected_topics = if event.anonymous { indexed_count } else { indexed_count + 1 };
-    // Don't use get_indexed_event if the event already has correct indexing
-    let indexed_event = if indexed_count > 0 && expected_topics == log.topics().len() {
-        event
-    } else {
-        get_indexed_event(event, log)
-    };
+    // Check if event already has indexed information from signatures
+    let has_indexed_info = event.inputs.iter().any(|p| p.indexed);
+    // Only use get_indexed_event if the event doesn't have indexing info
+    let indexed_event = if has_indexed_info { event } else { get_indexed_event(event, log) };
 
     // Try to decode the event
     if let Ok(decoded) = indexed_event.decode_log(log) {
@@ -1202,13 +1197,6 @@ pub(crate) fn get_emit_mismatch_message(
                 format!(
                     "{} param mismatch",
                     expected_dec.name.as_ref().unwrap_or(&"log".to_string())
-                )
-            }
-            (Some(expected_dec), Some(actual_dec)) => {
-                format!(
-                    "Expected event `{}` but got `{}`",
-                    expected_dec.name.as_ref().unwrap_or(&"Unknown".to_string()),
-                    actual_dec.name.as_ref().unwrap_or(&"Unknown".to_string())
                 )
             }
             _ => {
