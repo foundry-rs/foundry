@@ -122,7 +122,7 @@ impl SolidityLinter {
             .into_iter()
             .fold((Vec::new(), Vec::new()), |(mut passes, mut ids), (pass, lints)| {
                 let included_ids: Vec<_> = lints
-                    .into_iter()
+                    .iter()
                     .filter_map(|lint| if self.include_lint(*lint) { Some(lint.id) } else { None })
                     .collect();
 
@@ -173,7 +173,7 @@ impl SolidityLinter {
             .into_iter()
             .fold((Vec::new(), Vec::new()), |(mut passes, mut ids), (pass, lints)| {
                 let included_ids: Vec<_> = lints
-                    .into_iter()
+                    .iter()
                     .filter_map(|lint| if self.include_lint(*lint) { Some(lint.id) } else { None })
                     .collect();
 
