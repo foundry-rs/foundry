@@ -1,8 +1,7 @@
 use std::{env, error::Error};
 
 use chrono::DateTime;
-use vergen::{BuildBuilder, CargoBuilder, Emitter};
-use vergen_git2::Git2Builder;
+use vergen::EmitBuilder;
 
 #[expect(clippy::disallowed_macros)]
 fn main() -> Result<(), Box<dyn Error>> {
@@ -12,22 +11,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-env-changed=TAG_NAME");
     println!("cargo:rerun-if-env-changed=PROFILE");
 
-    let mut emitter = Emitter::default();
-
-    let build_builder = BuildBuilder::default().build_timestamp(true).build()?;
-
-    emitter.add_instructions(&build_builder)?;
-
-    let cargo_builder = CargoBuilder::default().features(true).target_triple(true).build()?;
-
-    emitter.add_instructions(&cargo_builder)?;
-
-    let git_builder =
-        Git2Builder::default().describe(false, true, None).dirty(true).sha(false).build()?;
-
-    emitter.add_instructions(&git_builder)?;
-
-    emitter.emit_and_set()?;
+    EmitBuilder::builder()
+        .build_date()
+        .build_timestamp()
+        .git_describe(false, true, None)
+        .git_sha(false)
+        .emit_and_set()?;
 
     // Set the Git SHA of the latest commit.
     let sha = env::var("VERGEN_GIT_SHA")?;
