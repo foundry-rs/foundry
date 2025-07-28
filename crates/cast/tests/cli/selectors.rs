@@ -14,12 +14,8 @@ ValueTooHigh(uint256,uint256)
 "#]]);
 
     // Read cache to ensure the error is cached
-    let cache = Config::foundry_cache_dir().unwrap().join("signatures");
-    let json: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(cache).unwrap()).unwrap();
-    let errors = json.get("errors").unwrap_or(&serde_json::Value::Null);
     assert_eq!(
-        errors.get("0x7a0e1985"),
+        read_error_cache().get("0x7a0e1985"),
         Some(&serde_json::Value::String("ValueTooHigh(uint256,uint256)".to_string())),
         "Selector should be cached"
     );
@@ -36,12 +32,16 @@ Error: No matching error signature found for selector `37d01491`
 "#]]);
 
     // Read cache to ensure the error is not cached
-    let cache = Config::foundry_cache_dir().unwrap().join("signatures");
-    let json: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(cache).unwrap()).unwrap();
-    let errors = json.get("errors").unwrap_or(&serde_json::Value::Null);
-    assert_eq!(errors.get("0x37d01491"), None, "Selector should not be cached");
+    assert_eq!(read_error_cache().get("0x37d01491"), None, "Selector should not be cached");
 });
+
+/// Read the errors section from the signatures cache in the global foundry cache directory.
+fn read_error_cache() -> serde_json::Value {
+    let cache = Config::foundry_cache_dir().unwrap().join("signatures");
+    let contents = std::fs::read_to_string(cache).unwrap();
+    let cache_json: serde_json::Value = serde_json::from_str(&contents).unwrap();
+    cache_json.get("errors").cloned().unwrap_or_default()
+}
 
 casttest!(fourbyte, |_prj, cmd| {
     cmd.args(["4byte", "0xa9059cbb"]).assert_success().stdout_eq(str![[r#"
