@@ -3,10 +3,9 @@ use crate::{
     fork::fork_config,
     utils::http_provider_with_signer,
 };
-use alloy_consensus::SignableTransaction;
 use alloy_eips::BlockId;
 use alloy_hardforks::EthereumHardfork;
-use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
+use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{
     Address, Bytes, U256,
     hex::{self, FromHex},
@@ -1010,60 +1009,98 @@ fault: function(log) {}
     assert_eq!(actual, expected);
 }
 
-// #[tokio::test(flavor = "multi_thread")]
-// async fn test_debug_trace_transaction_js_tracer() {
-//     let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
-//     let (api, handle) = spawn(node_config).await;
-//     let provider = crate::utils::http_provider(&handle.http_endpoint());
+#[cfg(feature = "js-tracer")]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_transaction_js_tracer() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(node_config).await;
+    let provider = crate::utils::http_provider(&handle.http_endpoint());
 
-//     let wallets = handle.dev_wallets().collect::<Vec<_>>();
-//     let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let from = wallets[0].address();
+    api.anvil_add_balance(from, U256::MAX).await.unwrap();
+    api.anvil_add_balance(wallets[1].address(), U256::MAX).await.unwrap();
 
-//     let from = wallets[0].address();
-//     // Fund both accounts *before* signing
-//     api.anvil_add_balance(from, U256::MAX).await.unwrap();
-//     api.anvil_add_balance(wallets[1].address(), U256::MAX).await.unwrap();
+    let multicall_contract = Multicall::deploy(&provider).await.unwrap();
+    let simple_storage_contract =
+        SimpleStorage::deploy(&provider, "init value".to_string()).await.unwrap();
 
-//     let mut tx = alloy_consensus::TxEip1559 {
-//         max_fee_per_gas: eip1559_est.max_fee_per_gas,
-//         max_priority_fee_per_gas: eip1559_est.max_priority_fee_per_gas,
-//         gas_limit: 100000,
-//         chain_id: 31337,
-//         to: alloy_primitives::TxKind::Call(from),
-//         input: alloy_primitives::bytes!("11112222"),
-//         ..Default::default()
-//     };
-//     let signature = wallets[1].sign_transaction_sync(&mut tx).unwrap();
+    let set_value = simple_storage_contract.setValue("bar".to_string());
+    let set_value_calldata = set_value.calldata();
 
-//     let tx = tx.into_signed(signature);
-//     let mut encoded = Vec::new();
-//     tx.eip2718_encode(&mut encoded);
+    let internal_call_tx_builder = multicall_contract.aggregate(vec![Multicall::Call {
+        target: *simple_storage_contract.address(),
+        callData: set_value_calldata.to_owned(),
+    }]);
 
-//     let receipt = api.send_raw_transaction_sync(encoded.into()).await.unwrap();
-//     let js_tracer_code = r#"
-// {
-// data: [],
-// step: function(log) {
-//     var op = log.op.toString();
-//     if (op === "SLOAD") {
-//     this.data.push(log.getPC() + ": SLOAD " + log.contract.getAddress() + ":" +
-// log.stack.peek(0));     this.data.push("    Result: " + log.stack.peek(0));
-//     } else if (op === "SSTORE") {
-//     this.data.push(log.getPC() + ": SSTORE " + log.contract.getAddress() + ":" +
-// log.stack.peek(1) + " <- " + log.stack.peek(0));     }
-// },
-// result: function() {
-//     return this.data;
-// },
-// fault: function(log) {}
-// }
-// "#;
+    let internal_call_tx_calldata = internal_call_tx_builder.calldata().to_owned();
 
-//     let result = api
-//         .debug_trace_transaction(
-//             receipt.transaction_hash,
-//             GethDebugTracingOptions::js_tracer(js_tracer_code),
-//         )
-//         .await
-//         .unwrap();
-// }
+    let internal_call_tx = TransactionRequest::default()
+        .from(wallets[1].address())
+        .to(*multicall_contract.address())
+        .with_input(internal_call_tx_calldata)
+        .with_gas_limit(1_000_000)
+        .with_max_fee_per_gas(1_000_000_00000)
+        .with_max_priority_fee_per_gas(1_000_000_00000);
+
+    let receipt = provider
+        .send_transaction(internal_call_tx.into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let js_tracer_code = r#"
+{
+data: [],
+step: function(log) {
+    var op = log.op.toString();
+    var pc = log.getPC();
+    var addr = log.contract.getAddress();
+
+    if (op === "SLOAD") {
+        this.data.push(pc + ": SLOAD " + addr + ":" + log.stack.peek(0));
+        this.data.push("    Result: " + log.stack.peek(0));
+    } else if (op === "SSTORE") {
+        this.data.push(pc + ": SSTORE " + addr + ":" + log.stack.peek(1) + " <- " + log.stack.peek(0));
+    } 
+},
+result: function() {
+    return this.data;
+},
+fault: function(log) {}
+}
+"#;
+
+    let expected = vec![
+    "547: SLOAD 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:0".to_string(),
+    "    Result: 0".to_string(),
+    "1907: SLOAD 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:1".to_string(),
+    "    Result: 1".to_string(),
+    "772: SLOAD 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:1".to_string(),
+    "    Result: 1".to_string(),
+    "835: SSTORE 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:4.4498830125527143e+76 <- 1".to_string(),
+    "919: SSTORE 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:0 <- 8.008442285988055e+76".to_string(),
+    "712: SLOAD 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:0".to_string(),
+    "    Result: 0".to_string(),
+    "765: SSTORE 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:5.465844868464591e+47 <- 0".to_string(),
+];
+    let result = api
+        .debug_trace_transaction(
+            receipt.transaction_hash,
+            GethDebugTracingOptions::js_tracer(js_tracer_code),
+        )
+        .await
+        .unwrap();
+
+    let actual: Vec<String> = result
+        .try_into_json_value()
+        .ok()
+        .and_then(|val| val.as_array().cloned())
+        .map(|arr| arr.into_iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+
+    assert_eq!(actual, expected);
+
+    assert_eq!(actual, expected);
+}

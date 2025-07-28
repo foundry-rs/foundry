@@ -2615,11 +2615,12 @@ impl Backend {
         hash: B256,
         opts: GethDebugTracingOptions,
     ) -> Result<GethTrace, BlockchainError> {
+        #[cfg(feature = "js-tracer")]
         if let Some(tracer_type) = opts.clone().tracer {
-            println!("inside js");
             if tracer_type.is_js() {
-                self.trace_tx_with_js_tracer(hash, tracer_type.as_str().to_string(), opts.clone())
-                    .await?;
+                return self
+                    .trace_tx_with_js_tracer(hash, tracer_type.as_str().to_string(), opts.clone())
+                    .await;
             }
         }
 
@@ -2634,6 +2635,7 @@ impl Backend {
         Ok(GethTrace::Default(Default::default()))
     }
 
+    #[cfg(feature = "js-tracer")]
     pub async fn trace_tx_with_js_tracer(
         &self,
         hash: B256,
@@ -2642,7 +2644,6 @@ impl Backend {
     ) -> Result<GethTrace, BlockchainError> {
         let GethDebugTracingOptions { tracer_config, .. } = opts;
 
-        // Step 1: Lookup transaction and block
         let (info, block) = {
             let storage = self.blockchain.storage.read();
             let MinedTransaction { info, block_hash, .. } =
@@ -2660,7 +2661,6 @@ impl Backend {
         let parent = self.get_block_by_hash(block.header.parent_hash).unwrap();
         let parent_number = parent.header.number();
 
-        // Step 2: Prepare prior txs for execution (up to target)
         let prior_txs = &block.transactions[..index];
         let pool_txs: Vec<Arc<PoolTransaction>> = prior_txs
             .iter()
@@ -2676,11 +2676,11 @@ impl Backend {
             })
             .collect();
 
-        // Step 3: Use parent state as base, replay prior txs, then trace the target
-        let result = self
-            .with_database_at(Some(BlockRequest::Number(parent_number)), |db, block_env| {
-                Box::pin(async move {
-                    let db = self.db.read().await;
+        let db = self.db.read().await;
+        let result = {
+            self.with_database_at(
+                Some(BlockRequest::Number(parent_number)),
+                |_state_db, block_env| {
                     let mut cache_db = CacheDB::new(Box::new(&*db));
 
                     let executor = TransactionExecutor {
@@ -2713,7 +2713,6 @@ impl Backend {
                     );
 
                     let request = TransactionRequest::from_transaction(built_tx.clone());
-
                     let call_env = self.build_call_env(
                         WithOtherFields::new(request.clone()),
                         FeeDetails::new(
@@ -2725,15 +2724,21 @@ impl Backend {
                         .unwrap(),
                         block_env.clone(),
                     );
-
+                    let sender = call_env.tx.base.caller;
+                    cache_db.insert_account_info(
+                        sender,
+                        AccountInfo { balance: U256::from(10u64.pow(18)), ..Default::default() },
+                    );
                     let config = tracer_config.clone().into_json();
                     let mut inspector =
                         revm_inspectors::tracing::js::JsInspector::new(code.clone(), config)
                             .unwrap();
-
                     let mut evm =
                         self.new_evm_with_inspector_ref(&cache_db, &call_env, &mut inspector);
-                    let result = evm.transact(call_env.tx.clone()).unwrap();
+
+                    let result = evm
+                        .transact(call_env.tx.clone())
+                        .map_err(|err| BlockchainError::Message(err.to_string()))?;
 
                     inspector
                         .json_result(
@@ -2743,12 +2748,11 @@ impl Backend {
                             &cache_db,
                         )
                         .map_err(|e| BlockchainError::Message(e.to_string()))
-                })
-            })
-            .await?;
-
-        println!("Res: {:?}", result.await);
-        Ok(GethTrace::default())
+                },
+            )
+            .await?
+        }?;
+        Ok(GethTrace::JS(result))
     }
 
     /// Returns code by its hash
