@@ -521,7 +521,7 @@ impl TestArgs {
                     dbg!("compile");
 
                     if compile_output.is_err() {
-                        mutation_summary.update_invalid_mutant();
+                        mutation_summary.update_invalid_mutant(mutant.clone());
                     } else {
                         let mut runner = MultiContractRunnerBuilder::new(config.clone())
                             .set_debug(false)
@@ -540,7 +540,7 @@ impl TestArgs {
                         dbg!("test");
 
                         let outcome = TestOutcome::new(results, self.allow_failure);
-                        mutation_summary.update_valid_mutant(&outcome);
+                        mutation_summary.update_valid_mutant(&outcome, mutant.clone());
                     }
                 }
 

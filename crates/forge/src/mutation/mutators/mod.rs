@@ -6,9 +6,9 @@ pub mod unary_op_mutator;
 
 pub mod mutator_registry;
 
-use solar_parse::ast::{Expr, Span, VariableDefinition};
-
 use eyre::Result;
+use solar_parse::ast::{Expr, Span, VariableDefinition};
+use std::path::PathBuf;
 
 use crate::mutation::Mutant;
 
@@ -21,6 +21,7 @@ pub trait Mutator {
 
 #[derive(Debug)]
 pub struct MutationContext<'a> {
+    pub path: PathBuf,
     pub span: Span,
     /// The expression to mutate
     pub expr: Option<&'a Expr<'a>>,
@@ -35,6 +36,7 @@ impl<'a> MutationContext<'a> {
 }
 
 pub struct MutationContextBuilder<'a> {
+    path: Option<PathBuf>,
     span: Option<Span>,
     expr: Option<&'a Expr<'a>>,
     var_definition: Option<&'a VariableDefinition<'a>>,
@@ -43,7 +45,13 @@ pub struct MutationContextBuilder<'a> {
 impl<'a> MutationContextBuilder<'a> {
     // Create a new empty builder
     pub fn new() -> Self {
-        MutationContextBuilder { span: None, expr: None, var_definition: None }
+        MutationContextBuilder { path: None, span: None, expr: None, var_definition: None }
+    }
+
+    // Required
+    pub fn with_path(mut self, path: PathBuf) -> Self {
+        self.path = Some(path);
+        self
     }
 
     // Required
@@ -66,8 +74,9 @@ impl<'a> MutationContextBuilder<'a> {
 
     pub fn build(self) -> Result<MutationContext<'a>, &'static str> {
         let span = self.span.ok_or("Span is required for MutationContext")?;
+        let path = self.path.ok_or("Path is required for MutationContext")?;
 
-        Ok(MutationContext { span, expr: self.expr, var_definition: self.var_definition })
+        Ok(MutationContext { path, span, expr: self.expr, var_definition: self.var_definition })
     }
 }
 

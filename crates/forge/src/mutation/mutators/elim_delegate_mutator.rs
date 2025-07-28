@@ -12,7 +12,7 @@ impl Mutator for ElimDelegateMutator {
         Ok(vec![Mutant {
             span: context.span,
             mutation: MutationType::ElimDelegate,
-            path: PathBuf::default(),
+            path: context.path.clone(),
         }])
     }
 

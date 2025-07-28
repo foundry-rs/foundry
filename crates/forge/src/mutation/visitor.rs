@@ -1,10 +1,10 @@
 use crate::mutation::mutators::Mutator;
-use solar_parse::ast::{visit::Visit, Expr, LitKind, SourceUnit, VariableDefinition};
-use std::ops::ControlFlow;
+use solar_parse::ast::{Expr, LitKind, SourceUnit, VariableDefinition, visit::Visit};
+use std::{ops::ControlFlow, path::PathBuf};
 
 use crate::mutation::{
     mutant::Mutant,
-    mutators::{mutator_registry::MutatorRegistry, MutationContext},
+    mutators::{MutationContext, mutator_registry::MutatorRegistry},
 };
 
 #[derive(Debug, Clone)]
@@ -18,19 +18,21 @@ pub enum AssignVarTypes {
 pub struct MutantVisitor {
     pub mutation_to_conduct: Vec<Mutant>,
     pub mutator_registry: MutatorRegistry,
+    pub path: PathBuf,
 }
 
 impl MutantVisitor {
     /// Use all mutator from registry::default
-    pub fn default() -> Self {
-        Self { mutation_to_conduct: Vec::new(), mutator_registry: MutatorRegistry::default() }
+    pub fn default(path: PathBuf) -> Self {
+        Self { mutation_to_conduct: Vec::new(), mutator_registry: MutatorRegistry::default(), path }
     }
 
     /// Use only a set of mutators
-    pub fn new_with_mutators(mutators: Vec<Box<dyn Mutator>>) -> Self {
+    pub fn new_with_mutators(path: PathBuf, mutators: Vec<Box<dyn Mutator>>) -> Self {
         Self {
             mutation_to_conduct: Vec::new(),
             mutator_registry: MutatorRegistry::new_with_mutators(mutators),
+            path,
         }
     }
 }
@@ -43,6 +45,7 @@ impl<'ast> Visit<'ast> for MutantVisitor {
         var: &'ast VariableDefinition<'ast>,
     ) -> ControlFlow<Self::BreakValue> {
         let context = MutationContext::builder()
+            .with_path(self.path.clone())
             .with_span(var.span)
             .with_var_definition(var)
             .build()
@@ -53,8 +56,12 @@ impl<'ast> Visit<'ast> for MutantVisitor {
     }
 
     fn visit_expr(&mut self, expr: &'ast Expr<'ast>) -> ControlFlow<Self::BreakValue> {
-        let context =
-            MutationContext::builder().with_span(expr.span).with_expr(expr).build().unwrap();
+        let context = MutationContext::builder()
+            .with_path(self.path.clone())
+            .with_span(expr.span)
+            .with_expr(expr)
+            .build()
+            .unwrap();
 
         self.mutation_to_conduct.extend(self.mutator_registry.generate_mutations(&context));
         self.walk_expr(expr)

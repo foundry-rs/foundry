@@ -24,7 +24,7 @@ impl Mutator for AssignmentMutator {
                     mutation: MutationType::Assignment(AssignVarTypes::Literal(LitKind::Bool(
                         !val,
                     ))),
-                    path: PathBuf::default(),
+                    path: context.path.clone(),
                 }]),
                 LitKind::Number(val) => Ok(vec![
                     Mutant {
@@ -32,14 +32,14 @@ impl Mutator for AssignmentMutator {
                         mutation: MutationType::Assignment(AssignVarTypes::Literal(
                             LitKind::Number(num_bigint::BigInt::ZERO),
                         )),
-                        path: PathBuf::default(),
+                        path: context.path.clone(),
                     },
                     Mutant {
                         span: replacement_span,
                         mutation: MutationType::Assignment(AssignVarTypes::Literal(
                             LitKind::Number(-val),
                         )),
-                        path: PathBuf::default(),
+                        path: context.path.clone(),
                     },
                 ]),
                 _ => {
@@ -52,14 +52,14 @@ impl Mutator for AssignmentMutator {
                     mutation: MutationType::Assignment(AssignVarTypes::Literal(LitKind::Number(
                         num_bigint::BigInt::ZERO,
                     ))),
-                    path: PathBuf::default(),
+                    path: context.path.clone(),
                 },
                 Mutant {
                     span: replacement_span,
                     mutation: MutationType::Assignment(AssignVarTypes::Identifier(format!(
                         "-{ident}"
                     ))),
-                    path: PathBuf::default(),
+                    path: context.path.clone(),
                 },
             ]),
         }

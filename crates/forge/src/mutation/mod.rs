@@ -24,45 +24,54 @@ use std::path::{Path, PathBuf};
 
 pub struct MutationsSummary {
     total: usize,
-    dead: usize,
-    survived: usize,
-    invalid: usize,
+    dead: Vec<Mutant>,
+    survived: Vec<Mutant>,
+    invalid: Vec<Mutant>,
 }
 
 impl MutationsSummary {
     pub fn new() -> Self {
-        Self { total: 0, dead: 0, survived: 0, invalid: 0 }
+        Self { total: 0, dead: vec![], survived: vec![], invalid: vec![] }
     }
 
-    pub fn update_valid_mutant(&mut self, outcome: &TestOutcome) {
-        self.total += 1;
-
+    pub fn update_valid_mutant(&mut self, outcome: &TestOutcome, mutant: Mutant) {
         if outcome.failures().count() > 0 {
-            self.dead += 1;
+            self.dead.push(mutant);
         } else {
-            self.survived += 1;
+            self.survived.push(mutant);
         }
     }
 
-    pub fn update_invalid_mutant(&mut self) {
-        self.total += 1;
-        self.invalid += 1;
+    pub fn update_invalid_mutant(&mut self, mutant: Mutant) {
+        self.invalid.push(mutant);
     }
 
-    pub fn total(&self) -> usize {
-        self.total
+    pub fn total_mutants(&self) -> usize {
+        self.dead.len() + self.survived.len() + self.invalid.len()
     }
 
-    pub fn dead(&self) -> usize {
-        self.dead
+    pub fn total_dead(&self) -> usize {
+        self.dead.len()
     }
 
-    pub fn survived(&self) -> usize {
-        self.survived
+    pub fn total_survived(&self) -> usize {
+        self.survived.len()
     }
 
-    pub fn invalid(&self) -> usize {
-        self.invalid
+    pub fn total_invalid(&self) -> usize {
+        self.invalid.len()
+    }
+
+    pub fn dead(&self) -> String {
+        self.dead.iter().map(|m| m.to_string()).collect::<Vec<String>>().join("\n")
+    }
+
+    pub fn survived(&self) -> String {
+        self.survived.iter().map(|m| m.to_string()).collect::<Vec<String>>().join("\n")
+    }
+
+    pub fn invalid(&self) -> String {
+        self.invalid.iter().map(|m| m.to_string()).collect::<Vec<String>>().join("\n")
     }
 }
 
@@ -85,8 +94,6 @@ impl MutationHandler {
         }
     }
 
-    /// Keep the source contract in memory (in the hashmap), as we'll use it to create the mutants
-    /// in spooled tmp files
     pub fn read_source_contract(&mut self) -> Result<(), std::io::Error> {
         let content = std::fs::read_to_string(&self.contract_to_mutate)?;
         self.src = Arc::new(content);
@@ -109,7 +116,7 @@ impl MutationHandler {
 
             let ast = parser.parse_file().map_err(|e| e.emit())?;
 
-            let mut mutant_visitor = MutantVisitor::default();
+            let mut mutant_visitor = MutantVisitor::default(path.clone());
             mutant_visitor.visit_source_unit(&ast);
             self.mutations.extend(mutant_visitor.mutation_to_conduct);
             Ok(())
@@ -139,6 +146,8 @@ impl MutationHandler {
         });
     }
 
+    // @todo src should be in a tmp dir for safety!
+    /// Restore the original source contract to the target file (end of mutation tests)
     pub fn restore_original_source(&self) {
         std::fs::write(&self.contract_to_mutate, &*self.src).unwrap_or_else(|_| {
             panic!("Failed to write to target file {:?}", &self.contract_to_mutate)

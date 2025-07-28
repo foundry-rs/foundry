@@ -24,9 +24,9 @@ impl Mutator for BinaryOpMutator {
             BinOpKind::Or,
             BinOpKind::And,
         ]; // this cover the "if" mutations, as every other mutant is tested, at least once
-           // @todo to optimize -> replace whole stmt (need new visitor override for visit_stmt tho)
-           // with true/false and skip operations_bools here (mayve some "level"/depth of
-           // mutation as param?)
+        // @todo to optimize -> replace whole stmt (need new visitor override for visit_stmt tho)
+        // with true/false and skip operations_bools here (mayve some "level"/depth of
+        // mutation as param?)
 
         let operations_num_bitwise = vec![
             // Arithm
@@ -53,7 +53,7 @@ impl Mutator for BinaryOpMutator {
             .map(|kind| Mutant {
                 span: context.span,
                 mutation: MutationType::BinaryOp(kind),
-                path: PathBuf::default(),
+                path: context.path.clone(),
             })
             .collect())
     }

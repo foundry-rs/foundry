@@ -3898,6 +3898,7 @@ dependencies = [
  "serde_json",
  "similar",
  "similar-asserts",
+ "solar-interface",
  "solar-parse",
  "solar-sema",
  "soldeer-commands",

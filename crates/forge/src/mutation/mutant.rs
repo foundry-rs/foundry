@@ -1,11 +1,12 @@
 // Generate mutants then run tests (reuse the whole unit test flow for now, including compilation to
 // select mutants) Use Solar:
 use super::visitor::AssignVarTypes;
+use solar_interface::SourceMap;
 use solar_parse::ast::{BinOpKind, LitKind, Span, UnOpKind};
 use std::{fmt::Display, path::PathBuf};
 
 /// Wraps an unary operator mutated, to easily store pre/post-fix op swaps
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UnaryOpMutated {
     /// String containing the whole new expression (operator and its target)
     /// eg `a++`
@@ -29,7 +30,7 @@ impl Display for UnaryOpMutated {
 
 // @todo add a mutation from universalmutator: line swap (swap two lines of code, as it
 // could theoretically uncover untested reentrancies
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum MutationType {
     // @todo Solar doesn't differentiate numeric type in LitKind (only on declaration?) -> for
     // now, planket and let solc filter out the invalid mutants -> we might/should add a
@@ -150,22 +151,25 @@ pub enum MutationResult {
 }
 
 /// A given mutation
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Mutant {
+    /// TODO: initialize the path (from the context, cf registry)
+
     /// The path to the project root where this mutant (tries to) live
     pub path: PathBuf,
     pub span: Span,
     pub mutation: MutationType,
 }
 
-impl Mutant {
-    /// Get a temp folder name based on the span and the mutation to conduct
-    pub fn get_unique_id(&self) -> String {
-        format!(
-            "{}_{}_{}",
-            self.span.hi().to_u32(),
-            self.span.lo().to_u32(),
-            self.mutation.get_name()
+impl Display for Mutant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}:{}-{}:{}",
+            self.path.display(),
+            self.span.lo().0,
+            self.span.hi().0,
+            self.mutation
         )
     }
 }

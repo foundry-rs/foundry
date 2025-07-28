@@ -56,7 +56,7 @@ impl Mutator for UnaryOperatorMutator {
                     target_content.to_string(),
                     UnOpKind::Not,
                 )),
-                path: PathBuf::default(),
+                path: context.path.clone(),
             }]);
         }
 
@@ -73,7 +73,7 @@ impl Mutator for UnaryOperatorMutator {
                 Mutant {
                     span: expr.span,
                     mutation: MutationType::UnaryOperator(mutated),
-                    path: PathBuf::default(),
+                    path: context.path.clone(),
                 }
             })
             .collect();
@@ -87,7 +87,7 @@ impl Mutator for UnaryOperatorMutator {
                 Mutant {
                     span: expr.span,
                     mutation: MutationType::UnaryOperator(mutated),
-                    path: PathBuf::default(),
+                    path: context.path.clone(),
                 }
             },
         ));
