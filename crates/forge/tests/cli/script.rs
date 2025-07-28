@@ -3290,52 +3290,50 @@ contract HelloWorld is Ownable {
     }
 }
 
-contract HelloWorldScript is Script {
-    ENSRegistry ens;
-    BaseRegistrarImplementation baseRegistrar;
-    ReverseRegistrar reverseRegistrar;
-    NameWrapper nameWrapper;
-    DummyOracle dummyOracle;
-    StablePriceOracle priceOracle;
-    ETHRegistrarController controller;
-    PublicResolver publicResolver;
-
-    address public deployer = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
-    address constant ENS_REGISTRY = 0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e;
-
-    function run() public {
-        vm.startBroadcast();
-
-        ens = new ENSRegistry();
-        // bytes memory code = address(ens).code;
-        // vm.etch(ENS_REGISTRY, code);
-        // ens = ENSRegistry(ENS_REGISTRY);
-
-        baseRegistrar = new BaseRegistrarImplementation(ens, 0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae); //namehash(eth)
-
-        reverseRegistrar = new ReverseRegistrar(ens);
+contract DeployCore {
+    function deploy(address deployer) external returns (ENSRegistry, BaseRegistrarImplementation, ReverseRegistrar) {
+        ENSRegistry ens = new ENSRegistry();
+        BaseRegistrarImplementation baseRegistrar = new BaseRegistrarImplementation(
+            ens,
+            0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae // namehash("eth")
+        );
+        ReverseRegistrar reverseRegistrar = new ReverseRegistrar(ens);
 
         ens.setSubnodeOwner(bytes32(0), keccak256("reverse"), deployer);
-        
-        // namehash(reverse)
-        ens.setSubnodeOwner(0xa097f6721ce401e757d1223a763fef49b8b5f90bb18567ddb86fd205dff71d34, keccak256("addr"), address(reverseRegistrar));
-
-        nameWrapper = new NameWrapper(ens, baseRegistrar, IMetadataService(address(deployer)));
-
+        ens.setSubnodeOwner(
+            0xa097f6721ce401e757d1223a763fef49b8b5f90bb18567ddb86fd205dff71d34,
+            keccak256("addr"),
+            address(reverseRegistrar)
+        );
         ens.setSubnodeOwner(bytes32(0), keccak256("eth"), address(baseRegistrar));
 
-        dummyOracle = new DummyOracle(100000000);
+        return (ens, baseRegistrar, reverseRegistrar);
+    }
+}
 
-        uint256[] memory priceTiers = new uint256[](5);
+contract DeployWrapperAndController {
+    function deploy(
+        ENSRegistry ens,
+        BaseRegistrarImplementation baseRegistrar,
+        ReverseRegistrar reverseRegistrar,
+        address deployer
+    )
+        external
+        returns (NameWrapper, DummyOracle, StablePriceOracle, ETHRegistrarController, PublicResolver)
+    {
+        NameWrapper nameWrapper = new NameWrapper(ens, baseRegistrar, IMetadataService(deployer));
+        DummyOracle dummyOracle = new DummyOracle(100000000);
+
+        uint256 ;
         priceTiers[0] = 0;
         priceTiers[1] = 0;
         priceTiers[2] = 4;
         priceTiers[3] = 2;
         priceTiers[4] = 1;
 
-        priceOracle = new StablePriceOracle(AggregatorInterface(address(dummyOracle)), priceTiers);
+        StablePriceOracle priceOracle = new StablePriceOracle(AggregatorInterface(address(dummyOracle)), priceTiers);
 
-        controller = new ETHRegistrarController(
+        ETHRegistrarController controller = new ETHRegistrarController(
             baseRegistrar,
             priceOracle,
             600,
@@ -3349,7 +3347,7 @@ contract HelloWorldScript is Script {
         baseRegistrar.addController(address(nameWrapper));
         reverseRegistrar.setController(address(controller), true);
 
-        publicResolver = new PublicResolver(
+        PublicResolver publicResolver = new PublicResolver(
             ens,
             nameWrapper,
             address(controller),
@@ -3359,32 +3357,48 @@ contract HelloWorldScript is Script {
         baseRegistrar.addController(address(controller));
         baseRegistrar.addController(deployer);
 
+        return (nameWrapper, dummyOracle, priceOracle, controller, publicResolver);
+    }
+}
+
+contract HelloWorldScript is Script {
+    address public deployer = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+
+    function run() public {
+        vm.startBroadcast(deployer);
+
+        // Step 1: Deploy core ENS contracts
+        (ENSRegistry ens, BaseRegistrarImplementation baseRegistrar, ReverseRegistrar reverseRegistrar) =
+            new DeployCore().deploy(deployer);
+
+        // Step 2: Deploy wrapper, oracle, controller, resolver
+        (NameWrapper nameWrapper, DummyOracle dummyOracle, StablePriceOracle priceOracle,
+            ETHRegistrarController controller, PublicResolver publicResolver) =
+            new DeployWrapperAndController().deploy(ens, baseRegistrar, reverseRegistrar, deployer);
+
+        // Step 3: Register a name
         bytes32 commitment = controller.makeCommitment(
             "forge",
             deployer,
             365 days,
             bytes32(0),
             address(publicResolver),
-            new bytes[](0),
+            new bytes ,
             false,
             0
         );
 
         controller.commit(commitment);
-
-        // simulate block time passing
         vm.warp(block.timestamp + controller.minCommitmentAge());
 
         IPriceOracle.Price memory price = controller.rentPrice("forge", 365 days);
-
-        // bytes[] memory emptyData = new bytes;
         controller.register{value: price.base + price.premium}(
             "forge",
             deployer,
             365 days,
             bytes32(0),
             address(publicResolver),
-            new bytes[](0),
+            new bytes ,
             false,
             0
         );
@@ -3393,8 +3407,7 @@ contract HelloWorldScript is Script {
 
         vm.stopBroadcast();
     }
-}
-   "#,
+}   "#,
         )
         .unwrap();
 
