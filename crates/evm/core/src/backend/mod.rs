@@ -770,7 +770,7 @@ impl Backend {
     pub fn inspect<I: InspectorExt>(
         &mut self,
         env: &mut Env,
-        inspector: &mut I,
+        inspector: I,
     ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
         let mut evm = crate::evm::new_evm_with_inspector(self, env.to_owned(), inspector);
