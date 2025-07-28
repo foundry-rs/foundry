@@ -35,8 +35,8 @@ impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
 // Returns the suggested fix based on the unsafe typecast expression
 fn get_suggestion() -> Snippet {
     Snippet::Block {
-        desc: Some("Consider disabling this lint only if you're certain the cast is safe:"),
-        code: "// Ensure the value fits in the target type before casting\n// forge-lint: disable-next-line(unsafe-typecast)\n// Cast is safe because [explain why]".to_string(),
+        desc: Some("Consider disabling this lint if you're certain the cast is safe:"),
+        code: "// Cast is safe because [explain why]".to_string()\n// forge-lint: disable-next-line(unsafe-typecast),
     }
 }
 
