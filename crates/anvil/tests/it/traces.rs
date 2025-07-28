@@ -1040,8 +1040,8 @@ async fn test_debug_trace_transaction_js_tracer() {
         .to(*multicall_contract.address())
         .with_input(internal_call_tx_calldata)
         .with_gas_limit(1_000_000)
-        .with_max_fee_per_gas(1_000_000_00000)
-        .with_max_priority_fee_per_gas(1_000_000_00000);
+        .with_max_fee_per_gas(100_000_000_000)
+        .with_max_priority_fee_per_gas(100_000_000_000);
 
     let receipt = provider
         .send_transaction(internal_call_tx.into())
