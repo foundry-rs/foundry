@@ -19,6 +19,7 @@ use solar_sema::{
     hir::{self, Visit as VisitHIR},
 };
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
 };
@@ -115,17 +116,19 @@ impl SolidityLinter {
         }
 
         // Filter passes based on linter config
-        let mut passes: Vec<Box<dyn EarlyLintPass<'_>>> = passes_and_lints
+        let (mut passes, lints): (Vec<Box<dyn EarlyLintPass<'_>>>, HashSet<_>) = passes_and_lints
             .into_iter()
-            .filter_map(|(pass, lint)| if self.include_lint(lint) { Some(pass) } else { None })
-            .collect();
+            .filter_map(
+                |(pass, lint)| if self.include_lint(lint) { Some((pass, lint.id)) } else { None },
+            )
+            .unzip();
 
         // Process the inline-config
         let comments = Comments::new(file);
         let inline_config = parse_inline_config(sess, &comments, InlineConfigSource::Ast(ast));
 
         // Initialize and run the early lint visitor
-        let ctx = LintContext::new(sess, self.with_description, inline_config);
+        let ctx = LintContext::new(sess, self.with_description, inline_config, lints);
         let mut early_visitor = EarlyLintVisitor::new(&ctx, &mut passes);
         _ = early_visitor.visit_source_unit(ast);
         early_visitor.post_source_unit(ast);
@@ -154,10 +157,12 @@ impl SolidityLinter {
         }
 
         // Filter passes based on config
-        let mut passes: Vec<Box<dyn LateLintPass<'_>>> = passes_and_lints
+        let (mut passes, lints): (Vec<Box<dyn LateLintPass<'_>>>, HashSet<_>) = passes_and_lints
             .into_iter()
-            .filter_map(|(pass, lint)| if self.include_lint(lint) { Some(pass) } else { None })
-            .collect();
+            .filter_map(
+                |(pass, lint)| if self.include_lint(lint) { Some((pass, lint.id)) } else { None },
+            )
+            .unzip();
 
         // Process the inline-config
         let comments = Comments::new(file);
@@ -165,7 +170,7 @@ impl SolidityLinter {
             parse_inline_config(sess, &comments, InlineConfigSource::Hir((&gcx.hir, source_id)));
 
         // Run late lint visitor
-        let ctx = LintContext::new(sess, self.with_description, inline_config);
+        let ctx = LintContext::new(sess, self.with_description, inline_config, lints);
         let mut late_visitor = LateLintVisitor::new(&ctx, &mut passes, &gcx.hir);
 
         // Visit this specific source
