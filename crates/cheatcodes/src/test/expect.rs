@@ -1141,6 +1141,20 @@ pub(crate) fn get_emit_mismatch_message(
         return name_mismatched_logs(expected_decoded, actual_decoded);
     }
 
+    // 3. Check data
+    if checks[4] && expected.data.as_ref() != actual.data.as_ref() {
+        let expected_bytes = expected.data.as_ref();
+        let actual_bytes = actual.data.as_ref();
+
+        // Different lengths or not ABI-encoded
+        if expected_bytes.len() != actual_bytes.len()
+            || expected_bytes.len().is_multiple_of(32)
+            || expected_bytes.is_empty()
+        {
+            return name_mismatched_logs(expected_decoded, actual_decoded);
+        }
+    }
+
     // expected and actual events are the same, so check individual parameters
     let mut mismatches = Vec::new();
 
