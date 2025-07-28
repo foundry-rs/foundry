@@ -258,18 +258,18 @@ alloy-rlp = "0.3"
 alloy-trie = "0.9"
 
 ## op-alloy
-op-alloy-consensus = "0.17.2"
-op-alloy-rpc-types = "0.17.2"
+op-alloy-consensus = "0.18.13"
+op-alloy-rpc-types = "0.18.13"
 op-alloy-flz = "0.13.1"
 
 ## revm
 revm = { version = "27.1.0", default-features = false }
-revm-inspectors = { version = "0.26.5", features = ["serde"] }
+revm-inspectors = { version = "0.27.1", features = ["serde"] }
 op-revm = { version = "8.1.0", default-features = false }
 
 ## alloy-evm
-alloy-evm = "0.15.0"
-alloy-op-evm = "0.15.0"
+alloy-evm = "0.16.0"
+alloy-op-evm = "0.16.0"
 
 ## cli
 anstream = "0.6"
@@ -313,7 +313,7 @@ eyre = "0.6"
 figment = "0.10"
 futures = "0.3"
 hyper = "1.6"
-indicatif = "0.17"
+indicatif = "0.18"
 itertools = "0.14"
 jsonpath_lib = "0.3"
 k256 = "0.13"
@@ -346,7 +346,6 @@ tower-http = "0.6"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 url = "2"
-vergen = { version = "8", default-features = false }
 yansi = { version = "1.0", features = ["detect-tty", "detect-env"] }
 path-slash = "0.2"
 jiff = "0.2"
@@ -359,7 +358,7 @@ flate2 = "1.1"
 # Use unicode-rs which has a smaller binary size than the default ICU4X as the IDNA backend, used
 # by the `url` crate.
 # See the `idna_adapter` README.md for more details: https://docs.rs/crate/idna_adapter/latest
-idna_adapter = "=1.1.0"
+idna_adapter = "=1.2.1"
 
 [patch.crates-io]
 ## alloy-core
