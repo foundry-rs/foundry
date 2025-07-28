@@ -38,11 +38,11 @@ use revm::{
     primitives::hardfork::SpecId,
 };
 
-pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
+pub fn new_evm_with_inspector<'db, I: InspectorExt>(
     db: &'db mut dyn DatabaseExt,
     env: Env,
-    inspector: &'i mut I,
-) -> FoundryEvm<'db, &'i mut I> {
+    inspector: I,
+) -> FoundryEvm<'db, I> {
     let mut ctx = EthEvmContext {
         journaled_state: {
             let mut journal = Journal::new(db);
