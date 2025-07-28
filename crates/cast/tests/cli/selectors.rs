@@ -1,15 +1,47 @@
+use foundry_config::Config;
 use foundry_test_utils::util::OutputExt;
 use std::path::Path;
 
+// <https://github.com/foundry-rs/foundry/issues/11125>
 casttest!(error_decode_with_openchain, |prj, cmd| {
     prj.clear_cache();
+
     cmd.args(["decode-error", "0x7a0e198500000000000000000000000000000000000000000000000000000000000000650000000000000000000000000000000000000000000000000000000000000064"]).assert_success().stdout_eq(str![[r#"
 ValueTooHigh(uint256,uint256)
 101
 100
 
 "#]]);
+
+    // Read cache to ensure the error is cached
+    assert_eq!(
+        read_error_cache().get("0x7a0e1985"),
+        Some(&serde_json::Value::String("ValueTooHigh(uint256,uint256)".to_string())),
+        "Selector should be cached"
+    );
 });
+
+// <https://github.com/foundry-rs/foundry/issues/11125>
+// NOTE: if a user does happen to mine and submit 0x37d01491 this is expected to fail.
+casttest!(error_decode_with_openchain_nonexistent, |prj, cmd| {
+    prj.clear_cache();
+
+    cmd.args(["decode-error", "0x37d0149100000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002"]).assert_failure().stderr_eq(str![[r#"
+Error: No matching error signature found for selector `37d01491`
+
+"#]]);
+
+    // Read cache to ensure the error is not cached
+    assert_eq!(read_error_cache().get("0x37d01491"), None, "Selector should not be cached");
+});
+
+/// Read the errors section from the signatures cache in the global foundry cache directory.
+fn read_error_cache() -> serde_json::Value {
+    let cache = Config::foundry_cache_dir().unwrap().join("signatures");
+    let contents = std::fs::read_to_string(cache).unwrap();
+    let cache_json: serde_json::Value = serde_json::from_str(&contents).unwrap();
+    cache_json.get("errors").cloned().unwrap_or_default()
+}
 
 casttest!(fourbyte, |_prj, cmd| {
     cmd.args(["4byte", "0xa9059cbb"]).assert_success().stdout_eq(str![[r#"
