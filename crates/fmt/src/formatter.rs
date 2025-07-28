@@ -590,81 +590,35 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// Returns false if line starts new semantic block (NatSpec, markdown, etc.)
     fn should_merge_comment_line(line: &str) -> bool {
         let trimmed = line.trim();
-        
+
         // Don't merge NatSpec tags
         if trimmed.starts_with('@') {
             return false;
         }
-        
+
         // Don't merge markdown structure
-        if trimmed.starts_with("- ") ||
-           trimmed.starts_with("* ") ||
-           trimmed.starts_with("> ") ||
-           trimmed.starts_with("+ ") {
+        if trimmed.starts_with("- ")
+            || trimmed.starts_with("* ")
+            || trimmed.starts_with("> ")
+            || trimmed.starts_with("+ ")
+        {
             return false;
         }
-        
+
         // Don't merge numbered lists
-        if let Some(first_word) = trimmed.split_whitespace().next() {
-            if first_word.ends_with('.') && 
-               first_word[..first_word.len()-1].chars().all(|c| c.is_ascii_digit()) {
-                return false;
-            }
+        if let Some(first_word) = trimmed.split_whitespace().next()
+            && first_word.ends_with('.')
+            && first_word[..first_word.len() - 1].chars().all(|c| c.is_ascii_digit())
+        {
+            return false;
         }
-        
+
         // Don't merge empty lines
         if trimmed.is_empty() {
             return false;
         }
-        
-        true
-    }
 
-    /// Merge consecutive DocLine comments into single logical block
-    fn merge_consecutive_doc_comments(
-        comments: Vec<&CommentWithMetadata>
-    ) -> Vec<CommentWithMetadata> {
-        let mut result = Vec::new();
-        let mut i = 0;
-        
-        while i < comments.len() {
-            let current_comment = comments[i];
-            
-            if current_comment.ty == CommentType::DocLine {
-                let mut j = i + 1;
-                let mut should_merge_group = false;
-                
-                // Look ahead for consecutive DocLine comments
-                while j < comments.len() && 
-                      comments[j].ty == CommentType::DocLine &&
-                      Self::should_merge_comment_line(comments[j].contents()) {
-                    should_merge_group = true;
-                    j += 1;
-                }
-                
-                if should_merge_group {
-                    let mut merged_content = current_comment.contents().to_string();
-                    for k in (i + 1)..j {
-                        merged_content.push(' ');
-                        merged_content.push_str(comments[k].contents());
-                    }
-                    
-                    let mut merged_comment = current_comment.clone();
-                    merged_comment.comment = format!("/// {}", merged_content);
-                    result.push(merged_comment);
-                    
-                    i = j;
-                } else {
-                    result.push(current_comment.clone());
-                    i += 1;
-                }
-            } else {
-                result.push(current_comment.clone());
-                i += 1;
-            }
-        }
-        
-        result
+        true
     }
 
     /// Write a comment line that might potentially overflow the maximum line length
@@ -702,20 +656,11 @@ impl<'a, W: Write> Formatter<'a, W> {
             if let Some(next) = words.peek() {
                 if !word.is_empty() && !self.will_it_fit(next) {
                     let remaining_text = words.join(" ");
-                    // Check if remaining text should be merged for wrapping
-                    if Self::should_merge_comment_line(&remaining_text) {
-                        // Wrap within same semantic block
-                        self.write_whitespace_separator(true)?;
-                        write!(self.buf(), "{}", comment.wrap_token())?;
-                        self.write_comment_line(comment, &remaining_text)?;
-                        return Ok(true);
-                    } else {
-                        // Don't merge - treat as separate semantic block  
-                        self.write_whitespace_separator(true)?;
-                        write!(self.buf(), "{}", comment.wrap_token())?;
-                        self.write_comment_line(comment, &remaining_text)?;
-                        return Ok(true);
-                    }
+                    // Wrap remaining text on next line
+                    self.write_whitespace_separator(true)?;
+                    write!(self.buf(), "{}", comment.wrap_token())?;
+                    self.write_comment_line(comment, &remaining_text)?;
+                    return Ok(true);
                 }
 
                 self.write_whitespace_separator(false)?;
@@ -740,23 +685,24 @@ impl<'a, W: Write> Formatter<'a, W> {
         &mut self,
         comments: impl IntoIterator<Item = &'b CommentWithMetadata>,
     ) -> Result<()> {
-        let mut comments: Vec<_> = comments.into_iter().collect();
-        
+        let comments: Vec<_> = comments.into_iter().collect();
+
         let mut i = 0;
         while i < comments.len() {
             let comment = comments[i];
-            
+
             if comment.ty == CommentType::DocLine && self.config.wrap_comments {
                 let mut continuation_comments = vec![comment];
                 let mut j = i + 1;
-                
-                while j < comments.len() 
-                    && comments[j].ty == CommentType::DocLine 
-                    && Self::should_merge_comment_line(comments[j].contents()) {
+
+                while j < comments.len()
+                    && comments[j].ty == CommentType::DocLine
+                    && Self::should_merge_comment_line(comments[j].contents())
+                {
                     continuation_comments.push(comments[j]);
                     j += 1;
                 }
-                
+
                 self.write_comment_with_overflow_handling(&continuation_comments)?;
                 i = j;
             } else {
@@ -769,76 +715,75 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Write comment with overflow to continuation lines
     fn write_comment_with_overflow_handling(
-        &mut self, 
-        comments: &[&CommentWithMetadata]
+        &mut self,
+        comments: &[&CommentWithMetadata],
     ) -> Result<()> {
         if comments.is_empty() {
             return Ok(());
         }
-        
+
         let first_comment = comments[0];
-        
+
         // Collect text from continuation comments
         let mut all_text = first_comment.contents().to_string();
         for &comment in &comments[1..] {
             all_text.push(' ');
             all_text.push_str(comment.contents());
         }
-        
+
         // Create merged comment for wrapping
         let mut merged_comment = first_comment.clone();
-        merged_comment.comment = format!("/// {}", all_text);
-        
+        merged_comment.comment = format!("/// {all_text}");
+
         self.write_comment_with_strategic_wrapping(&merged_comment)?;
         Ok(())
     }
 
     /// Write comment with wrapping to prevent orphaned words
-    fn write_comment_with_strategic_wrapping(&mut self, comment: &CommentWithMetadata) -> Result<()> {
-        if comment.is_line() {
-            if comment.has_newline_before && !self.is_beginning_of_line() {
-                self.write_whitespace_separator(true)?;
-            }
+    fn write_comment_with_strategic_wrapping(
+        &mut self,
+        comment: &CommentWithMetadata,
+    ) -> Result<()> {
+        if comment.is_line() && comment.has_newline_before && !self.is_beginning_of_line() {
+            self.write_whitespace_separator(true)?;
         }
 
         let content = comment.contents();
         let prefix = comment.start_token();
-        
+
         // Break text into words for optimal line distribution
         let words: Vec<&str> = content.split_whitespace().collect();
         if words.is_empty() {
             write!(self.buf(), "{}", comment.comment)?;
             return Ok(());
         }
-        
+
         let mut current_line = String::new();
         let mut word_index = 0;
         let mut is_first_line = true;
-        
+
         while word_index < words.len() {
-            let line_prefix = if is_first_line { 
-                format!("{} ", prefix) 
-            } else { 
+            let line_prefix = if is_first_line {
+                format!("{prefix} ")
+            } else {
                 format!("{} ", comment.wrap_token())
             };
-            
+
             // Calculate available width for this line
-            let available_width = self.config.line_length.saturating_sub(
-                if is_first_line { 
-                    self.buf.current_indent_len() + line_prefix.len()
-                } else { 
-                    self.buf.current_indent_len() + comment.wrap_token().len()
-                }
-            );
-            
+            let available_width = self.config.line_length.saturating_sub(if is_first_line {
+                self.buf.current_indent_len() + line_prefix.len()
+            } else {
+                self.buf.current_indent_len() + comment.wrap_token().len()
+            });
+
             current_line.clear();
             let mut line_len = 0;
-            
+
             while word_index < words.len() {
                 let word = words[word_index];
                 let space_needed = if current_line.is_empty() { 0 } else { 1 };
                 let word_len = word.len();
-                
+
                 if line_len + space_needed + word_len <= available_width {
                     // Word fits on current line
                     if !current_line.is_empty() {
@@ -853,50 +798,20 @@ impl<'a, W: Write> Formatter<'a, W> {
                     break;
                 }
             }
-            
+
             if is_first_line {
-                write!(self.buf(), "{}{}", line_prefix, current_line)?;
+                write!(self.buf(), "{line_prefix}{current_line}")?;
                 is_first_line = false;
             } else {
                 self.write_whitespace_separator(true)?;
-                write!(self.buf(), "{}{}", comment.wrap_token(), current_line)?;
+                write!(self.buf(), "{}{current_line}", comment.wrap_token())?;
             }
         }
-        
+
         if comment.is_line() {
             self.write_whitespace_separator(true)?;
         }
-        
-        Ok(())
-    }
 
-    /// Write multiple comments individually
-    fn write_comments_individual<'b>(
-        &mut self,
-        comments: impl IntoIterator<Item = &'b CommentWithMetadata>,
-    ) -> Result<()> {
-        let mut comments = comments.into_iter().peekable();
-        let mut last_byte_written = match comments.peek() {
-            Some(comment) => comment.loc.start(),
-            None => return Ok(()),
-        };
-        let mut is_first = true;
-        for comment in comments {
-            let unwritten_whitespace_loc =
-                Loc::File(comment.loc.file_no(), last_byte_written, comment.loc.start());
-            if self.inline_config.is_disabled(unwritten_whitespace_loc) {
-                self.write_raw(&self.source[unwritten_whitespace_loc.range()])?;
-                self.write_raw_comment(comment)?;
-                last_byte_written = if comment.is_line() {
-                    self.find_next_line(comment.loc.end()).unwrap_or_else(|| comment.loc.end())
-                } else {
-                    comment.loc.end()
-                };
-            } else {
-                self.write_comment(comment, is_first)?;
-            }
-            is_first = false;
-        }
         Ok(())
     }
 
