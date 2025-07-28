@@ -1147,7 +1147,7 @@ pub(crate) fn get_emit_mismatch_message(
 
     // 1. Different number of topics
     if actual.topics().len() != expected.topics().len() {
-        return "log != expected log".to_string();
+        return name_mismatched_logs(expected_decoded, actual_decoded);
     }
 
     // 2. Different event signatures (for non-anonymous events)
@@ -1156,7 +1156,7 @@ pub(crate) fn get_emit_mismatch_message(
         && (!expected.topics().is_empty() && !actual.topics().is_empty())
         && expected.topics()[0] != actual.topics()[0]
     {
-        return "log != expected log".to_string();
+        return name_mismatched_logs(expected_decoded, actual_decoded);
     }
 
     // 3. Check data
@@ -1169,7 +1169,7 @@ pub(crate) fn get_emit_mismatch_message(
             || !expected_bytes.len().is_multiple_of(32)
             || expected_bytes.is_empty()
         {
-            return "log != expected log".to_string();
+            return name_mismatched_logs(expected_decoded, actual_decoded);
         }
     }
 
@@ -1224,7 +1224,7 @@ pub(crate) fn get_emit_mismatch_message(
     }
 
     if mismatches.is_empty() {
-        "log != expected log".to_string()
+        name_mismatched_logs(expected_decoded, actual_decoded)
     } else {
         // Build the error message with event names if available
         let event_prefix = match (expected_decoded, actual_decoded) {
@@ -1287,6 +1287,24 @@ pub(crate) fn get_emit_mismatch_message(
 
         format!("{} at {}", event_prefix, detailed_mismatches.join(", "))
     }
+}
+
+/// Formats the generic mismatch message: "log != expected log" to include event names if available
+fn name_mismatched_logs(
+    expected_decoded: Option<&DecodedCallLog>,
+    actual_decoded: Option<&DecodedCallLog>,
+) -> String {
+    let expected_name = if let Some(expected) = expected_decoded {
+        expected.name.as_deref().unwrap_or("log")
+    } else {
+        "log"
+    };
+    let actual_name = if let Some(actual) = actual_decoded {
+        actual.name.as_deref().unwrap_or("log")
+    } else {
+        "log"
+    };
+    format!("{actual_name} != expected {expected_name}")
 }
 
 fn expect_safe_memory(state: &mut Cheatcodes, start: u64, end: u64, depth: u64) -> Result {
