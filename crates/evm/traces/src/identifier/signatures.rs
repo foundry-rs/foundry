@@ -250,7 +250,9 @@ impl SignaturesIdentifier {
                 let mut cache_w = self.cache.write().await;
                 if let Ok(res) = client.decode_selectors(&query).await {
                     for (selector, signatures) in std::iter::zip(query, res) {
-                        cache_w.signatures.insert(selector, signatures.into_iter().next());
+                        if !signatures.is_empty() {
+                            cache_w.signatures.insert(selector, signatures.into_iter().next());
+                        }
                     }
                 }
                 drop(cache_w);
