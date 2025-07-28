@@ -1075,29 +1075,37 @@ fn decode_single_event(
     if topics.is_empty() {
         return None;
     }
-
-    let t0 = topics[0];
-    tracing::info!("t0 {t0}");
-
+    let t0 = topics[0]; // event sig
     // Try to identify the event
     let event = foundry_common::block_on(identifier.identify_event(t0))?;
 
-    tracing::info!("Decoded Event {event:#?}");
-    let indexed_event = get_indexed_event(event, log);
+    // Check if event already has correct indexed flags
+    let indexed_count = event.inputs.iter().filter(|p| p.indexed).count();
+    let expected_topics = if event.anonymous { indexed_count } else { indexed_count + 1 };
+    // Don't use get_indexed_event if the event already has correct indexing
+    let indexed_event = if indexed_count > 0 && expected_topics == log.topics().len() {
+        event.clone()
+    } else {
+        get_indexed_event(event, log)
+    };
 
     // Try to decode the event
     if let Ok(decoded) = indexed_event.decode_log(log) {
         let params = reconstruct_params(&indexed_event, &decoded);
 
+        let decoded_params = params
+            .into_iter()
+            .zip(indexed_event.inputs.iter())
+            .map(|(param, input)| {
+                let formatted = format_value(&param);
+                tracing::info!("Decoded param {}: {} = {}", input.name, input.ty, formatted);
+                (input.name.clone(), formatted)
+            })
+            .collect();
+
         return Some(DecodedCallLog {
             name: Some(indexed_event.name.clone()),
-            params: Some(
-                params
-                    .into_iter()
-                    .zip(indexed_event.inputs.iter())
-                    .map(|(param, input)| (input.name.clone(), format_value(&param)))
-                    .collect(),
-            ),
+            params: Some(decoded_params),
         });
     }
 
@@ -1219,6 +1227,9 @@ pub(crate) fn get_emit_mismatch_message(
         "log != expected log".to_string()
     } else {
         // Build the error message with event names if available
+        tracing::info!("Expected decoded: {:?}", expected_decoded);
+        tracing::info!("Actual decoded: {:?}", actual_decoded);
+
         let event_prefix = match (expected_decoded, actual_decoded) {
             (Some(expected_dec), Some(actual_dec)) if expected_dec.name == actual_dec.name => {
                 format!(
