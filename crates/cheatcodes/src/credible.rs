@@ -129,13 +129,17 @@ pub fn execute_assertion(
         AssertionState::new_active(assertion.create_data.clone().into(), &config)
             .expect("Failed to create assertion state");
 
+    let mut trigger_types_to_remove = Vec::new();
     // Filter triggers for one fn selector
-    for fn_selectors in assertion_state.trigger_recorder.triggers.values_mut() {
+    for (trigger_type, fn_selectors) in assertion_state.trigger_recorder.triggers.iter_mut() {
         if fn_selectors.contains(&assertion.fn_selector) {
             *fn_selectors = HashSet::from_iter([assertion.fn_selector]);
         } else {
-            *fn_selectors = HashSet::new();
+            trigger_types_to_remove.push(trigger_type.clone());
         }
+    }
+    for trigger_type in trigger_types_to_remove {
+        assertion_state.trigger_recorder.triggers.remove(&trigger_type);
     }
 
     store.insert(assertion.adopter, assertion_state).expect("Failed to store assertions");
