@@ -4,10 +4,14 @@ use std::{
 };
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Error, Result, Vm::*};
+use alloy_dyn_abi::{DynSolValue, EventExt};
+use alloy_json_abi::Event;
 use alloy_primitives::{
     Address, Bytes, LogData as RawLog, U256, hex,
     map::{AddressHashMap, HashMap, hash_map::Entry},
 };
+use foundry_common::{abi::get_indexed_event, fmt::format_token};
+use foundry_evm_traces::DecodedCallLog;
 use revm::{
     context::JournalTr,
     interpreter::{
@@ -868,11 +872,22 @@ pub(crate) fn handle_expect_emit(
     event_to_fill_or_check.found = || -> bool {
         if !checks_topics_and_data(event_to_fill_or_check.checks, expected, log) {
             // Store detailed mismatch information
+
+            // Try to decode the events if we have a signature identifier
+            let (expected_decoded, actual_decoded) =
+                if let Some(signatures_identifier) = &state.signatures_identifier {
+                    tracing::info!("Decoding..events..");
+                    decode_events_with_identifier(signatures_identifier, expected, log)
+                } else {
+                    (None, None)
+                };
             event_to_fill_or_check.mismatch_error = Some(get_emit_mismatch_message(
                 event_to_fill_or_check.checks,
                 expected,
                 log,
                 event_to_fill_or_check.anonymous,
+                expected_decoded.as_ref(),
+                actual_decoded.as_ref(),
             ));
             return false;
         }
@@ -1041,12 +1056,84 @@ fn checks_topics_and_data(checks: [bool; 5], expected: &RawLog, log: &RawLog) ->
     true
 }
 
+/// Decodes events using the SignaturesIdentifier
+fn decode_events_with_identifier(
+    identifier: &foundry_evm_traces::identifier::SignaturesIdentifier,
+    expected: &RawLog,
+    actual: &RawLog,
+) -> (Option<DecodedCallLog>, Option<DecodedCallLog>) {
+    let expected_decoded = decode_single_event(identifier, expected);
+    let actual_decoded = decode_single_event(identifier, actual);
+    (expected_decoded, actual_decoded)
+}
+
+fn decode_single_event(
+    identifier: &foundry_evm_traces::identifier::SignaturesIdentifier,
+    log: &RawLog,
+) -> Option<DecodedCallLog> {
+    let topics = log.topics();
+    if topics.is_empty() {
+        return None;
+    }
+
+    let t0 = topics[0];
+    tracing::info!("t0 {t0}");
+
+    // Try to identify the event
+    let event = foundry_common::block_on(identifier.identify_event(t0))?;
+
+    tracing::info!("Decoded Event {event:#?}");
+    let indexed_event = get_indexed_event(event, log);
+
+    // Try to decode the event
+    if let Ok(decoded) = indexed_event.decode_log(log) {
+        let params = reconstruct_params(&indexed_event, &decoded);
+
+        return Some(DecodedCallLog {
+            name: Some(indexed_event.name.clone()),
+            params: Some(
+                params
+                    .into_iter()
+                    .zip(indexed_event.inputs.iter())
+                    .map(|(param, input)| (input.name.clone(), format_value(&param)))
+                    .collect(),
+            ),
+        });
+    }
+
+    None
+}
+
+/// Formats a value for display
+fn format_value(value: &DynSolValue) -> String {
+    format_token(value)
+}
+
+/// Restore the order of the params of a decoded event
+fn reconstruct_params(event: &Event, decoded: &alloy_dyn_abi::DecodedEvent) -> Vec<DynSolValue> {
+    let mut indexed = 0;
+    let mut unindexed = 0;
+    let mut inputs = vec![];
+    for input in &event.inputs {
+        if input.indexed && indexed < decoded.indexed.len() {
+            inputs.push(decoded.indexed[indexed].clone());
+            indexed += 1;
+        } else if unindexed < decoded.body.len() {
+            inputs.push(decoded.body[unindexed].clone());
+            unindexed += 1;
+        }
+    }
+    inputs
+}
+
 /// Gets a detailed mismatch message for emit assertions
 pub(crate) fn get_emit_mismatch_message(
     checks: [bool; 5],
     expected: &RawLog,
     actual: &RawLog,
     is_anonymous: bool,
+    expected_decoded: Option<&DecodedCallLog>,
+    actual_decoded: Option<&DecodedCallLog>,
 ) -> String {
     // Early return for completely different events or incompatible structures
 
@@ -1131,12 +1218,73 @@ pub(crate) fn get_emit_mismatch_message(
     if mismatches.is_empty() {
         "log != expected log".to_string()
     } else {
-        if is_anonymous {
-            // For anon logs - param 0  is also checked.
-            return format!("anonymous log mismatch at {}", mismatches.join(", "));
-        }
-        // For non-anon logs - param 0 / topic[0] is the event sig.
-        format!("log mismatch at {}", mismatches.join(", "))
+        // Build the error message with event names if available
+        let event_prefix = match (expected_decoded, actual_decoded) {
+            (Some(expected_dec), Some(actual_dec)) if expected_dec.name == actual_dec.name => {
+                format!(
+                    "{} param mismatch",
+                    expected_dec.name.as_ref().unwrap_or(&"log".to_string())
+                )
+            }
+            (Some(expected_dec), Some(actual_dec)) => {
+                format!(
+                    "Expected event `{}` but got `{}`",
+                    expected_dec.name.as_ref().unwrap_or(&"Unknown".to_string()),
+                    actual_dec.name.as_ref().unwrap_or(&"Unknown".to_string())
+                )
+            }
+            _ => {
+                if is_anonymous {
+                    "anonymous log mismatch".to_string()
+                } else {
+                    "log mismatch".to_string()
+                }
+            }
+        };
+
+        // Add parameter details if available from decoded events
+        let detailed_mismatches = if let (Some(expected_dec), Some(actual_dec)) =
+            (expected_decoded, actual_decoded)
+        {
+            if let (Some(expected_params), Some(actual_params)) =
+                (&expected_dec.params, &actual_dec.params)
+            {
+                mismatches
+                    .into_iter()
+                    .enumerate()
+                    .map(|(_i, basic_mismatch)| {
+                        // Try to find the parameter name and decoded value
+                        if let Some(param_idx) = basic_mismatch
+                            .split(' ')
+                            .nth(1)
+                            .and_then(|s| s.trim_end_matches(':').parse::<usize>().ok())
+                        {
+                            if param_idx < expected_params.len() && param_idx < actual_params.len()
+                            {
+                                let (expected_name, expected_value) = &expected_params[param_idx];
+                                let (_actual_name, actual_value) = &actual_params[param_idx];
+                                let param_name = if !expected_name.is_empty() {
+                                    expected_name
+                                } else {
+                                    &format!("param{}", param_idx)
+                                };
+                                return format!(
+                                    "{}: expected={}, got={}",
+                                    param_name, expected_value, actual_value
+                                );
+                            }
+                        }
+                        basic_mismatch
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                mismatches
+            }
+        } else {
+            mismatches
+        };
+
+        format!("{} at {}", event_prefix, detailed_mismatches.join(", "))
     }
 }
 

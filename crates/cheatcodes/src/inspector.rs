@@ -41,7 +41,9 @@ use foundry_evm_core::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     evm::{FoundryEvm, new_evm_with_existing_context},
 };
-use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
+use foundry_evm_traces::{
+    TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
+};
 use foundry_wallets::multi_wallet::MultiWallet;
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
@@ -493,6 +495,8 @@ pub struct Cheatcodes {
     pub deprecated: HashMap<&'static str, Option<&'static str>>,
     /// Unlocked wallets used in scripts and testing of scripts.
     pub wallets: Option<Wallets>,
+    /// Signatures identifier for decoding events and functions
+    pub signatures_identifier: Option<SignaturesIdentifier>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -547,6 +551,7 @@ impl Cheatcodes {
             arbitrary_storage: Default::default(),
             deprecated: Default::default(),
             wallets: Default::default(),
+            signatures_identifier: SignaturesIdentifier::new(true).ok(),
         }
     }
 
