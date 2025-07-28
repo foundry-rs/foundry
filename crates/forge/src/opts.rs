@@ -62,7 +62,7 @@ pub enum ForgeSubcommand {
     /// Install one or multiple dependencies.
     ///
     /// If no arguments are provided, then existing dependencies will be installed.
-    #[command(visible_alias = "i")]
+    #[command(visible_aliases = ["i", "add"])]
     Install(InstallArgs),
 
     /// Remove one or multiple dependencies.
