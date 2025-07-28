@@ -874,13 +874,14 @@ pub(crate) fn handle_expect_emit(
             // Store detailed mismatch information
 
             // Try to decode the events if we have a signature identifier
-            let (expected_decoded, actual_decoded) =
-                if let Some(signatures_identifier) = &state.signatures_identifier {
-                    tracing::info!("Decoding..events..");
-                    decode_events_with_identifier(signatures_identifier, expected, log)
-                } else {
-                    (None, None)
-                };
+            let (expected_decoded, actual_decoded) = if let Some(signatures_identifier) =
+                &state.signatures_identifier
+                && !event_to_fill_or_check.anonymous
+            {
+                decode_events_with_identifier(signatures_identifier, expected, log)
+            } else {
+                (None, None)
+            };
             event_to_fill_or_check.mismatch_error = Some(get_emit_mismatch_message(
                 event_to_fill_or_check.checks,
                 expected,
