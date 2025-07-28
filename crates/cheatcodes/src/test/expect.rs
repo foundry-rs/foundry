@@ -1063,12 +1063,12 @@ fn decode_events_with_identifier(
     expected: &RawLog,
     actual: &RawLog,
 ) -> (Option<DecodedCallLog>, Option<DecodedCallLog>) {
-    let expected_decoded = decode_single_event(identifier, expected);
-    let actual_decoded = decode_single_event(identifier, actual);
+    let expected_decoded = decode_event(identifier, expected);
+    let actual_decoded = decode_event(identifier, actual);
     (expected_decoded, actual_decoded)
 }
 
-fn decode_single_event(
+fn decode_event(
     identifier: &foundry_evm_traces::identifier::SignaturesIdentifier,
     log: &RawLog,
 ) -> Option<DecodedCallLog> {
