@@ -322,6 +322,19 @@ impl ProjectCompiler {
 
             sh_println!("{size_report}")?;
 
+            if report_kind() == ReportKind::Text {
+                // If we are in JSON mode, we don't need to check the size limits
+                let dev_contract_count = size_report.contracts.values()
+                    .filter(|contract| contract.is_dev_contract)
+                    .count();            
+
+                let total_contract_count = size_report.contracts.len();
+
+                if dev_contract_count > 0 {
+                    sh_println!("{dev_contract_count} development and testing contracts excluded from {total_contract_count} total contracts in the size report.")?;
+                }
+            }
+
             eyre::ensure!(
                 !size_report.exceeds_runtime_size_limit(),
                 "some contracts exceed the runtime size limit \
