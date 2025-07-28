@@ -1148,7 +1148,7 @@ pub(crate) fn get_emit_mismatch_message(
 
         // Different lengths or not ABI-encoded
         if expected_bytes.len() != actual_bytes.len()
-            || expected_bytes.len().is_multiple_of(32)
+            || !expected_bytes.len().is_multiple_of(32)
             || expected_bytes.is_empty()
         {
             return name_mismatched_logs(expected_decoded, actual_decoded);
