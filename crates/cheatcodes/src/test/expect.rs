@@ -1085,7 +1085,7 @@ fn decode_event(
     let expected_topics = if event.anonymous { indexed_count } else { indexed_count + 1 };
     // Don't use get_indexed_event if the event already has correct indexing
     let indexed_event = if indexed_count > 0 && expected_topics == log.topics().len() {
-        event.clone()
+        event
     } else {
         get_indexed_event(event, log)
     };
@@ -1099,13 +1099,12 @@ fn decode_event(
             .zip(indexed_event.inputs.iter())
             .map(|(param, input)| {
                 let formatted = format_value(&param);
-                tracing::info!("Decoded param {}: {} = {}", input.name, input.ty, formatted);
                 (input.name.clone(), formatted)
             })
             .collect();
 
         return Some(DecodedCallLog {
-            name: Some(indexed_event.name.clone()),
+            name: Some(indexed_event.name),
             params: Some(decoded_params),
         });
     }
@@ -1228,9 +1227,6 @@ pub(crate) fn get_emit_mismatch_message(
         "log != expected log".to_string()
     } else {
         // Build the error message with event names if available
-        tracing::info!("Expected decoded: {:?}", expected_decoded);
-        tracing::info!("Actual decoded: {:?}", actual_decoded);
-
         let event_prefix = match (expected_decoded, actual_decoded) {
             (Some(expected_dec), Some(actual_dec)) if expected_dec.name == actual_dec.name => {
                 format!(
@@ -1257,41 +1253,34 @@ pub(crate) fn get_emit_mismatch_message(
         // Add parameter details if available from decoded events
         let detailed_mismatches = if let (Some(expected_dec), Some(actual_dec)) =
             (expected_decoded, actual_decoded)
-        {
-            if let (Some(expected_params), Some(actual_params)) =
+            && let (Some(expected_params), Some(actual_params)) =
                 (&expected_dec.params, &actual_dec.params)
-            {
-                mismatches
-                    .into_iter()
-                    .enumerate()
-                    .map(|(_i, basic_mismatch)| {
-                        // Try to find the parameter name and decoded value
-                        if let Some(param_idx) = basic_mismatch
-                            .split(' ')
-                            .nth(1)
-                            .and_then(|s| s.trim_end_matches(':').parse::<usize>().ok())
-                        {
-                            if param_idx < expected_params.len() && param_idx < actual_params.len()
-                            {
-                                let (expected_name, expected_value) = &expected_params[param_idx];
-                                let (_actual_name, actual_value) = &actual_params[param_idx];
-                                let param_name = if !expected_name.is_empty() {
-                                    expected_name
-                                } else {
-                                    &format!("param{}", param_idx)
-                                };
-                                return format!(
-                                    "{}: expected={}, got={}",
-                                    param_name, expected_value, actual_value
-                                );
-                            }
-                        }
-                        basic_mismatch
-                    })
-                    .collect::<Vec<_>>()
-            } else {
-                mismatches
-            }
+        {
+            mismatches
+                .into_iter()
+                .map(|basic_mismatch| {
+                    // Try to find the parameter name and decoded value
+                    if let Some(param_idx) = basic_mismatch
+                        .split(' ')
+                        .nth(1)
+                        .and_then(|s| s.trim_end_matches(':').parse::<usize>().ok())
+                        && param_idx < expected_params.len()
+                        && param_idx < actual_params.len()
+                    {
+                        let (expected_name, expected_value) = &expected_params[param_idx];
+                        let (_actual_name, actual_value) = &actual_params[param_idx];
+                        let param_name = if !expected_name.is_empty() {
+                            expected_name
+                        } else {
+                            &format!("param{param_idx}")
+                        };
+                        return format!(
+                            "{param_name}: expected={expected_value}, got={actual_value}",
+                        );
+                    }
+                    basic_mismatch
+                })
+                .collect::<Vec<_>>()
         } else {
             mismatches
         };
