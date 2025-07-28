@@ -2616,12 +2616,12 @@ impl Backend {
         opts: GethDebugTracingOptions,
     ) -> Result<GethTrace, BlockchainError> {
         #[cfg(feature = "js-tracer")]
-        if let Some(tracer_type) = opts.clone().tracer {
-            if tracer_type.is_js() {
-                return self
-                    .trace_tx_with_js_tracer(hash, tracer_type.as_str().to_string(), opts.clone())
-                    .await;
-            }
+        if let Some(tracer_type) = opts.clone().tracer
+            && tracer_type.is_js()
+        {
+            return self
+                .trace_tx_with_js_tracer(hash, tracer_type.as_str().to_string(), opts.clone())
+                .await;
         }
 
         if let Some(trace) = self.mined_geth_trace_transaction(hash, opts.clone()) {
@@ -2712,7 +2712,7 @@ impl Backend {
                         block.header.base_fee_per_gas,
                     );
 
-                    let request = TransactionRequest::from_transaction(built_tx.clone());
+                    let request = TransactionRequest::from_transaction(built_tx);
                     let call_env = self.build_call_env(
                         WithOtherFields::new(request.clone()),
                         FeeDetails::new(
