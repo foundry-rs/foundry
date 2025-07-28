@@ -878,7 +878,10 @@ pub(crate) fn handle_expect_emit(
                 &state.signatures_identifier
                 && !event_to_fill_or_check.anonymous
             {
-                decode_events_with_identifier(signatures_identifier, expected, log)
+                (
+                    decode_event(signatures_identifier, expected),
+                    decode_event(signatures_identifier, log),
+                )
             } else {
                 (None, None)
             };
@@ -1057,17 +1060,6 @@ fn checks_topics_and_data(checks: [bool; 5], expected: &RawLog, log: &RawLog) ->
     true
 }
 
-/// Decodes events using the SignaturesIdentifier
-fn decode_events_with_identifier(
-    identifier: &foundry_evm_traces::identifier::SignaturesIdentifier,
-    expected: &RawLog,
-    actual: &RawLog,
-) -> (Option<DecodedCallLog>, Option<DecodedCallLog>) {
-    let expected_decoded = decode_event(identifier, expected);
-    let actual_decoded = decode_event(identifier, actual);
-    (expected_decoded, actual_decoded)
-}
-
 fn decode_event(
     identifier: &foundry_evm_traces::identifier::SignaturesIdentifier,
     log: &RawLog,
@@ -1097,10 +1089,7 @@ fn decode_event(
         let decoded_params = params
             .into_iter()
             .zip(indexed_event.inputs.iter())
-            .map(|(param, input)| {
-                let formatted = format_value(&param);
-                (input.name.clone(), formatted)
-            })
+            .map(|(param, input)| (input.name.clone(), format_token(&param)))
             .collect();
 
         return Some(DecodedCallLog {
@@ -1110,11 +1099,6 @@ fn decode_event(
     }
 
     None
-}
-
-/// Formats a value for display
-fn format_value(value: &DynSolValue) -> String {
-    format_token(value)
 }
 
 /// Restore the order of the params of a decoded event
@@ -1159,20 +1143,6 @@ pub(crate) fn get_emit_mismatch_message(
         return name_mismatched_logs(expected_decoded, actual_decoded);
     }
 
-    // 3. Check data
-    if checks[4] && expected.data.as_ref() != actual.data.as_ref() {
-        let expected_bytes = expected.data.as_ref();
-        let actual_bytes = actual.data.as_ref();
-
-        // Different lengths or not ABI-encoded
-        if expected_bytes.len() != actual_bytes.len()
-            || !expected_bytes.len().is_multiple_of(32)
-            || expected_bytes.is_empty()
-        {
-            return name_mismatched_logs(expected_decoded, actual_decoded);
-        }
-    }
-
     // expected and actual events are the same, so check individual parameters
     let mut mismatches = Vec::new();
 
@@ -1197,7 +1167,7 @@ pub(crate) fn get_emit_mismatch_message(
         }
     }
 
-    // Check data (non-indexed parameters) - we already verified compatibility above
+    // Check data (non-indexed parameters)
     if checks[4] && expected.data.as_ref() != actual.data.as_ref() {
         let expected_bytes = expected.data.as_ref();
         let actual_bytes = actual.data.as_ref();
@@ -1294,16 +1264,8 @@ fn name_mismatched_logs(
     expected_decoded: Option<&DecodedCallLog>,
     actual_decoded: Option<&DecodedCallLog>,
 ) -> String {
-    let expected_name = if let Some(expected) = expected_decoded {
-        expected.name.as_deref().unwrap_or("log")
-    } else {
-        "log"
-    };
-    let actual_name = if let Some(actual) = actual_decoded {
-        actual.name.as_deref().unwrap_or("log")
-    } else {
-        "log"
-    };
+    let expected_name = expected_decoded.and_then(|d| d.name.as_deref()).unwrap_or("log");
+    let actual_name = actual_decoded.and_then(|d| d.name.as_deref()).unwrap_or("log");
     format!("{actual_name} != expected {expected_name}")
 }
 
