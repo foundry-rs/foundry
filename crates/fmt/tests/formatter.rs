@@ -238,6 +238,7 @@ test_directories! {
     BlockComments,
     BlockCommentsFunction,
     EnumVariants,
+    WrapCommentOverflow,
 }
 
 test_dir!(SortedImports, TestConfig::skip_compare_ast_eq());
