@@ -19,7 +19,6 @@ use solar_sema::{
     hir::{self, Visit as VisitHIR},
 };
 use std::{
-    collections::HashSet,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
 };
@@ -116,12 +115,21 @@ impl SolidityLinter {
         }
 
         // Filter passes based on linter config
-        let (mut passes, lints): (Vec<Box<dyn EarlyLintPass<'_>>>, HashSet<_>) = passes_and_lints
+        let (mut passes, lints): (Vec<Box<dyn EarlyLintPass<'_>>>, Vec<_>) = passes_and_lints
             .into_iter()
-            .filter_map(
-                |(pass, lint)| if self.include_lint(lint) { Some((pass, lint.id)) } else { None },
-            )
-            .unzip();
+            .fold((Vec::new(), Vec::new()), |(mut passes, mut ids), (pass, lints)| {
+                let included_ids: Vec<_> = lints
+                    .into_iter()
+                    .filter_map(|lint| if self.include_lint(*lint) { Some(lint.id) } else { None })
+                    .collect();
+
+                if !included_ids.is_empty() {
+                    passes.push(pass);
+                    ids.extend(included_ids);
+                }
+
+                (passes, ids)
+            });
 
         // Process the inline-config
         let comments = Comments::new(file);
@@ -157,12 +165,21 @@ impl SolidityLinter {
         }
 
         // Filter passes based on config
-        let (mut passes, lints): (Vec<Box<dyn LateLintPass<'_>>>, HashSet<_>) = passes_and_lints
+        let (mut passes, lints): (Vec<Box<dyn LateLintPass<'_>>>, Vec<_>) = passes_and_lints
             .into_iter()
-            .filter_map(
-                |(pass, lint)| if self.include_lint(lint) { Some((pass, lint.id)) } else { None },
-            )
-            .unzip();
+            .fold((Vec::new(), Vec::new()), |(mut passes, mut ids), (pass, lints)| {
+                let included_ids: Vec<_> = lints
+                    .into_iter()
+                    .filter_map(|lint| if self.include_lint(*lint) { Some(lint.id) } else { None })
+                    .collect();
+
+                if !included_ids.is_empty() {
+                    passes.push(pass);
+                    ids.extend(included_ids);
+                }
+
+                (passes, ids)
+            });
 
         // Process the inline-config
         let comments = Comments::new(file);

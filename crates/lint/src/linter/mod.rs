@@ -11,7 +11,7 @@ use solar_interface::{
     diagnostics::{DiagBuilder, DiagId, DiagMsg, MultiSpan, Style},
 };
 use solar_sema::ParsingContext;
-use std::{collections::HashSet, path::PathBuf};
+use std::path::PathBuf;
 
 use crate::inline_config::InlineConfig;
 
@@ -49,7 +49,7 @@ pub struct LintContext<'s> {
     sess: &'s Session,
     with_description: bool,
     pub inline_config: InlineConfig,
-    active_lints: HashSet<&'static str>,
+    active_lints: Vec<&'static str>,
 }
 
 impl<'s> LintContext<'s> {
@@ -57,7 +57,7 @@ impl<'s> LintContext<'s> {
         sess: &'s Session,
         with_description: bool,
         config: InlineConfig,
-        active_lints: HashSet<&'static str>,
+        active_lints: Vec<&'static str>,
     ) -> Self {
         Self { sess, with_description, inline_config: config, active_lints }
     }
@@ -71,7 +71,7 @@ impl<'s> LintContext<'s> {
     // For performance reasons, some passes check several lints at once. Thus, this method is
     // required to avoid unintended warnings.
     pub fn is_lint_enabled(&self, id: &'static str) -> bool {
-        self.active_lints.contains(id)
+        self.active_lints.contains(&id)
     }
 
     /// Helper method to emit diagnostics easily from passes
