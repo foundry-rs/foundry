@@ -268,8 +268,8 @@ revm-inspectors = { version = "0.26.5", features = ["serde"] }
 op-revm = { version = "8.0.3", default-features = false }
 
 ## alloy-evm
-alloy-evm = "0.14.0"
-alloy-op-evm = "0.14.0"
+alloy-evm = "0.15.0"
+alloy-op-evm = "0.15.0"
 
 ## cli
 anstream = "0.6"
@@ -335,12 +335,12 @@ semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 similar-asserts = "1.7"
-soldeer-commands = "=0.5.4"
-soldeer-core = { version = "=0.5.4", features = ["serde"] }
+soldeer-commands = "=0.6.1"
+soldeer-core = { version = "=0.6.1", features = ["serde"] }
 strum = "0.27"
 tempfile = "3.20"
 tokio = "1"
-toml = "0.8"
+toml = "0.9"
 tower = "0.5"
 tower-http = "0.6"
 tracing = "0.1"
@@ -360,8 +360,6 @@ flate2 = "1.1"
 # by the `url` crate.
 # See the `idna_adapter` README.md for more details: https://docs.rs/crate/idna_adapter/latest
 idna_adapter = "=1.1.0"
-# Avoid duplicating `zip 2` and `zip 3`. Remove once all `zip` dependencies are updated to `zip 3`.
-zip-extract = "=0.2.1"
 
 [patch.crates-io]
 ## alloy-core

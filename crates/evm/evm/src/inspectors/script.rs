@@ -28,7 +28,6 @@ where
     CTX: ContextTr<Db = D>,
     CTX::Journal: JournalExt,
 {
-    #[inline]
     fn step(&mut self, interpreter: &mut Interpreter, _ecx: &mut CTX) {
         // Check if both target and bytecode address are the same as script contract address
         // (allow calling external libraries when bytecode address is different).
@@ -42,8 +41,5 @@ where
                 interpreter.gas,
             ));
         }
-        // Note: We don't return anything here as step returns void.
-        // The original check returned InstructionResult::Continue, but that's the default
-        // behavior.
     }
 }

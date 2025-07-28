@@ -7,7 +7,7 @@ use crate::{
 use alloy_consensus::{SignableTransaction, Transaction, TxEip1559};
 use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
 use alloy_primitives::{
-    Address, B256, ChainId, U256, bytes,
+    Address, B256, ChainId, U256, b256, bytes,
     map::{AddressHashMap, B256HashMap, HashMap},
 };
 use alloy_provider::Provider;
@@ -17,6 +17,7 @@ use alloy_rpc_types::{
 };
 use alloy_serde::WithOtherFields;
 use anvil::{CHAIN_ID, EthereumHardfork, NodeConfig, eth::api::CLIENT_VERSION, spawn};
+use foundry_test_utils::rpc;
 use futures::join;
 use std::time::Duration;
 
@@ -452,4 +453,16 @@ async fn can_send_tx_sync() {
 
     let receipt = api.send_transaction_sync(WithOtherFields::new(tx)).await.unwrap();
     assert_eq!(receipt.from, wallets[0].address());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_code_by_hash() {
+    let (api, _) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))).await;
+
+    // The code hash for DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE
+    let code_hash = b256!("2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989");
+
+    let code = api.debug_code_by_hash(code_hash, None).await.unwrap();
+    assert_eq!(&code.unwrap(), foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE);
 }

@@ -397,6 +397,14 @@ impl ClientFork {
         Ok(trace)
     }
 
+    pub async fn debug_code_by_hash(
+        &self,
+        code_hash: B256,
+        block_id: Option<BlockId>,
+    ) -> Result<Option<Bytes>, TransportError> {
+        self.provider().debug_code_by_hash(code_hash, block_id).await
+    }
+
     pub async fn trace_block(&self, number: u64) -> Result<Vec<Trace>, TransportError> {
         if let Some(traces) = self.storage_read().block_traces.get(&number).cloned() {
             return Ok(traces);
