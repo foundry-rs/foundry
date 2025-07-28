@@ -87,8 +87,7 @@ codegen-units = 16
 [profile.profiling]
 inherits = "release"
 debug = "full"
-split-debuginfo = "unpacked"
-strip = false
+strip = "none"
 
 [profile.bench]
 inherits = "profiling"
@@ -287,7 +286,6 @@ thiserror = "2"
 # allocators
 mimalloc = "0.1"
 tikv-jemallocator = "0.6"
-tracy-client = "0.18"
 
 # misc
 auto_impl = "1"

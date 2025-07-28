@@ -4390,7 +4390,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber 0.3.19",
  "tracing-tracy",
- "tracy-client",
  "yansi",
 ]
 
