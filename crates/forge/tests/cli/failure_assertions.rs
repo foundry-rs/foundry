@@ -191,20 +191,22 @@ forgetest!(expect_emit_tests_should_fail, |prj, cmd| {
 
     prj.add_source("ExpectEmitFailures.sol", expect_emit_failure_tests).unwrap();
 
-    cmd.forge_fuse().args(["test", "--mc", "ExpectEmitFailureTest"]).assert_failure().stdout_eq(str![[r#"
+    cmd.forge_fuse().arg("build").assert_success();
+
+    cmd.forge_fuse().args(["test", "--mc", "ExpectEmitFailureTest"]).assert_failure().stdout_eq(str![[r#"No files changed, compilation skipped
 ...
-[FAIL: log != expected log] testShouldFailCanMatchConsecutiveEvents() ([GAS])
-[FAIL: log != expected log] testShouldFailDifferentIndexedParameters() ([GAS])
+[FAIL: E != expected A] testShouldFailCanMatchConsecutiveEvents() ([GAS])
+[FAIL: log != expected SomethingElse] testShouldFailDifferentIndexedParameters() ([GAS])
 [FAIL: log != expected log] testShouldFailEmitOnlyAppliesToNextCall() ([GAS])
 [FAIL: next call did not revert as expected] testShouldFailEmitWindowWithRevertDisallowed() ([GAS])
-[FAIL: log != expected log] testShouldFailEventsOnTwoCalls() ([GAS])
-[FAIL: log != expected log; counterexample: calldata=[..] args=[..]] testShouldFailExpectEmit(bool,bool,bool,bool,uint128,uint128,uint128,uint128) (runs: 0, [AVG_GAS])
-[FAIL: log != expected log] testShouldFailExpectEmitAddress() ([GAS])
-[FAIL: log != expected log] testShouldFailExpectEmitAddressWithArgs() ([GAS])
-[FAIL: log != expected log] testShouldFailExpectEmitCanMatchWithoutExactOrder() ([GAS])
+[FAIL: E != expected A] testShouldFailEventsOnTwoCalls() ([GAS])
+[FAIL: Something param mismatch at [..]: expected=[..], got=[..]; counterexample: calldata=[..] args=[..]] testShouldFailExpectEmit(bool,bool,bool,bool,uint128,uint128,uint128,uint128) (runs: 0, [AVG_GAS])
+[FAIL: log emitter mismatch: expected=[..], got=[..]] testShouldFailExpectEmitAddress() ([GAS])
+[FAIL: log emitter mismatch: expected=[..], got=[..]] testShouldFailExpectEmitAddressWithArgs() ([GAS])
+[FAIL: Something != expected SomethingElse] testShouldFailExpectEmitCanMatchWithoutExactOrder() ([GAS])
 [FAIL: expected an emit, but no logs were emitted afterwards. you might have mismatched events or not enough events were emitted] testShouldFailExpectEmitDanglingNoReference() ([GAS])
 [FAIL: expected an emit, but no logs were emitted afterwards. you might have mismatched events or not enough events were emitted] testShouldFailExpectEmitDanglingWithReference() ([GAS])
-[FAIL: log != expected log; counterexample: calldata=[..] args=[..]] testShouldFailExpectEmitNested(bool,bool,bool,bool,uint128,uint128,uint128,uint128) (runs: 0, [AVG_GAS])
+[FAIL: Something param mismatch at [..]: expected=[..], got=[..]; counterexample: calldata=[..] args=[..]] testShouldFailExpectEmitNested(bool,bool,bool,bool,uint128,uint128,uint128,uint128) (runs: 0, [AVG_GAS])
 [FAIL: log != expected log] testShouldFailLowLevelWithoutEmit() ([GAS])
 [FAIL: log != expected log] testShouldFailMatchRepeatedEventsOutOfOrder() ([GAS])
 [FAIL: log != expected log] testShouldFailNoEmitDirectlyOnNextCall() ([GAS])
@@ -220,13 +222,46 @@ Suite result: FAILED. 0 passed; 15 failed; 0 skipped; [ELAPSED]
 ...
 [FAIL: log != expected log] testShouldFailCountEmitsFromAddress() ([GAS])
 [FAIL: log != expected log] testShouldFailCountLessEmits() ([GAS])
-[FAIL: log != expected log] testShouldFailEmitSomethingElse() ([GAS])
+[FAIL: log != expected Something] testShouldFailEmitSomethingElse() ([GAS])
 [FAIL: log emitted 1 times, expected 0] testShouldFailNoEmit() ([GAS])
 [FAIL: log emitted 1 times, expected 0] testShouldFailNoEmitFromAddress() ([GAS])
 Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
 ...
 "#,
         );
+});
+
+forgetest!(expect_emit_params_tests_should_fail, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_vm();
+
+    let expect_emit_failure_src = include_str!("../fixtures/ExpectEmitParamHarness.sol");
+    let expect_emit_failure_tests = include_str!("../fixtures/ExpectEmitParamFailures.t.sol");
+
+    prj.add_source("ExpectEmitParamHarness.sol", expect_emit_failure_src).unwrap();
+    prj.add_source("ExpectEmitParamFailures.sol", expect_emit_failure_tests).unwrap();
+
+    cmd.forge_fuse().arg("build").assert_success();
+
+    cmd.forge_fuse().args(["test", "--mc", "ExpectEmitParamFailures"]).assert_failure().stdout_eq(
+        r#"No files changed, compilation skipped
+...
+[PASS] testSelectiveChecks() ([GAS])
+Suite result: FAILED. 1 passed; 8 failed; 0 skipped; [ELAPSED]
+...
+[FAIL: anonymous log mismatch at param 0: expected=0x0000000000000000000000000000000000000000000000000000000000000064, got=0x00000000000000000000000000000000000000000000000000000000000003e7] testAnonymousEventMismatch() ([GAS])
+[FAIL: ComplexEvent != expected SimpleEvent] testCompletelyDifferentEvent() ([GAS])
+[FAIL: SimpleEvent param mismatch at b: expected=200, got=999] testIndexedParamMismatch() ([GAS])
+[FAIL: ManyParams param mismatch at a: expected=100, got=111, b: expected=200, got=222, c: expected=300, got=333, d: expected=400, got=444, e: expected=500, got=555] testManyParameterMismatches() ([GAS])
+[FAIL: SimpleEvent param mismatch at c: expected=300, got=999] testMixedEventNonIndexedMismatch() ([GAS])
+[FAIL: SimpleEvent param mismatch at a: expected=100, got=999, b: expected=200, got=888, c: expected=300, got=777] testMultipleMismatches() ([GAS])
+[FAIL: SimpleEvent param mismatch at c: expected=300, got=999] testNonIndexedParamMismatch() ([GAS])
+[FAIL: MixedEventNumbering param mismatch at param2: expected=300, got=999] testParameterNumbering() ([GAS])
+
+Encountered a total of 8 failing tests, 1 tests succeeded
+...
+"#,
+    );
 });
 
 forgetest!(mem_safety_test_should_fail, |prj, cmd| {
