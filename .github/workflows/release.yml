@@ -159,7 +159,7 @@ jobs:
         run: |
           set -eo pipefail
           flags=(--target $TARGET --profile $PROFILE --bins
-            --no-default-features --features aws-kms,gcp-kms,cli,asm-keccak)
+            --no-default-features --features aws-kms,gcp-kms,cli,asm-keccak,js-tracer)
 
           # `jemalloc` is not fully supported on MSVC or aarch64 Linux.
           if [[ "$TARGET" != *msvc* && "$TARGET" != "aarch64-unknown-linux-gnu" ]]; then
