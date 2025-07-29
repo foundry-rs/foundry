@@ -41,6 +41,7 @@ pub struct InspectArgs {
     #[arg(long, short, help_heading = "Display options")]
     pub strip_yul_comments: bool,
 
+    /// Whether to wrap the table to the terminal width.
     #[arg(long, short, help_heading = "Display options")]
     pub wrap: bool,
 }
