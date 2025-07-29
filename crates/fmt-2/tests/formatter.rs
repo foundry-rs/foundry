@@ -152,7 +152,7 @@ macro_rules! fmt_tests {
 fmt_tests! {
     #[ignore = "annotations are not valid Solidity"]
     Annotation,
-    ArrayExpressions, // TODO: print cmnt before memory kw once span is available (solar). Is the rest acceptable?
+    ArrayExpressions, // OK? Is it acceptable?
     BlockComments, // OK
     BlockCommentsFunction, // OK
     ConditionalOperatorExpression, //OK
@@ -167,9 +167,9 @@ fmt_tests! {
     ErrorDefinition, // OK
     EventDefinition, // OK
     ForStatement, // OK (works if we use one less digit + breaks as it should)
-    FunctionCall, // OK: TODO: enhance PP so that trailing comments aren't accounted for when breaking lines after a simcolon?
+    FunctionCall, // OK
     FunctionCallArgsStatement, // OK? Is it acceptable?
-    FunctionDefinition, // OK? Is it acceptable?
+    FunctionDefinition, // OK? Is it acceptable? TODO: support all configs
     FunctionDefinitionWithFunctionReturns, // OK
     FunctionType, // OK? is it acceptable?
     HexUnderscore, // OK
@@ -197,7 +197,7 @@ fmt_tests! {
     TrailingComma, // OK (solar error)
     TryStatement, // OK? is it acceptable?
     TypeDefinition, // OK
-    UnitExpression, // OKish. TODO: print cmnt before subdomain once span is available (solar).
+    UnitExpression, // OK
     UsingDirective, // OK
     VariableAssignment, // OK? is it acceptable?
     VariableDefinition, // OK? is it acceptable? (solar forces constants to be initialized)

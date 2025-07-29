@@ -285,7 +285,6 @@ impl<'sess> State<'sess, '_> {
                             }
                         }
                     } else {
-                        self.visual_align();
                         for (pos, line) in cmnt.lines.into_iter().delimited() {
                             if !line.is_empty() {
                                 self.word(line);
@@ -294,7 +293,6 @@ impl<'sess> State<'sess, '_> {
                                 }
                             }
                         }
-                        self.end();
                     }
                 }
 
@@ -715,6 +713,8 @@ impl<'ast> State<'_, 'ast> {
                 self.separate_items(next_item);
             }
         }
+
+        self.print_remaining_comments();
     }
 
     fn separate_items(&mut self, next_item: &'ast ast::Item<'ast>) {
@@ -1109,9 +1109,9 @@ impl<'ast> State<'_, 'ast> {
             self.word(";");
         }
 
-        if self.peek_trailing_comment(body_span.hi(), None).is_some() {
-            // trailing comments after the fn body are isolated
-            if self.config.wrap_comments {
+        if let Some(cmnt) = self.peek_trailing_comment(body_span.hi(), None) {
+            if cmnt.is_doc {
+                // trailing doc comments after the fn body are isolated
                 self.hardbreak();
                 self.hardbreak();
             }
@@ -1210,8 +1210,15 @@ impl<'ast> State<'_, 'ast> {
             pre_init_size += mutability.to_str().len() + 1;
         }
         if let Some(data_location) = data_location {
-            // TODO(rusowsky): make `Spanned` and print comments up to the span
-            self.space_or_nbsp(is_var_def);
+            if self
+                .print_comments(
+                    data_location.span.lo(),
+                    CommentConfig::skip_ws().mixed_prev_space(),
+                )
+                .is_none()
+            {
+                self.space_or_nbsp(is_var_def);
+            }
             self.word(data_location.to_str());
             pre_init_size += data_location.to_str().len() + 1;
         }
@@ -1883,8 +1890,12 @@ impl<'ast> State<'_, 'ast> {
             ast::ExprKind::Lit(lit, unit) => {
                 self.print_lit(lit);
                 if let Some(unit) = unit {
-                    // TODO(rusowsky): turn into solar Spanned<T> and print comments
-                    self.nbsp();
+                    if self
+                        .print_comments(unit.span.lo(), CommentConfig::skip_ws().mixed_prev_space())
+                        .is_none()
+                    {
+                        self.nbsp();
+                    }
                     self.word(unit.to_str());
                 }
             }
