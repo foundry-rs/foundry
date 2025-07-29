@@ -9,7 +9,7 @@ declare_forge_lint!(
     UNSAFE_TYPECAST,
     Severity::Med,
     "unsafe-typecast",
-    "typecasts that can truncate values should be avoided"
+    "typecasts that can truncate values should be checked"
 );
 
 impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
@@ -36,7 +36,7 @@ impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
 fn get_suggestion() -> Snippet {
     Snippet::Block {
         desc: Some("Consider disabling this lint if you're certain the cast is safe:"),
-        code: "// Cast is safe because [explain why]".to_string()\n// forge-lint: disable-next-line(unsafe-typecast),
+        code: "// Cast is safe because [explain why]\n// forge-lint: disable-next-line(unsafe-typecast)".to_string(),
     }
 }
 
@@ -62,12 +62,14 @@ fn is_unsafe_typecast_hir(
 /// Infers the elementary type of a source expression.
 /// For cast chains, returns the ultimate source type, not intermediate cast results.
 fn infer_source_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::ElementaryType> {
+    use hir::{ElementaryType, ExprKind, ItemId, Lit as HirLit, Res, TypeKind};
+    use solar_ast::LitKind;
+
     match &expr.kind {
-        // Type cast: Type(value) - recursively check the inner value
+        // Recursive cast: Type(val)
         ExprKind::Call(call_expr, args, _) => {
             if let ExprKind::Type(ty) = &call_expr.kind
                 && args.len() == 1
-                && let TypeKind::Elementary(_elem_type) = &ty.kind
                 && let Some(first_arg) = args.exprs().next()
             {
                 return infer_source_type(hir, first_arg);
@@ -75,18 +77,9 @@ fn infer_source_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::El
             None
         }
 
-        ExprKind::Lit(_) => {
-            // Return None for all literal types since the compiler performs type checking
-            // during assignment.
-            // For example, assigning `uint8 foo = 300;` will fail with
-            // "value 300 does not fit into type uint8" since uint8 max is 255.
-            // This eliminates the need for runtime literal type inference and the bigint
-            // dependency. ref: https://solang.readthedocs.io/en/latest/language/types.html
-            None
-        }
-
+        // Identifiers (variables)
         ExprKind::Ident(resolutions) => {
-            if let Some(hir::Res::Item(hir::ItemId::Variable(var_id))) = resolutions.first() {
+            if let Some(Res::Item(ItemId::Variable(var_id))) = resolutions.first() {
                 let variable = hir.variable(*var_id);
                 if let TypeKind::Elementary(elem_type) = &variable.ty.kind {
                     return Some(*elem_type);
@@ -95,11 +88,29 @@ fn infer_source_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::El
             None
         }
 
+        // Handle literal strings/hex
+        ExprKind::Lit(HirLit { kind, .. }) => match kind {
+            LitKind::Str(_, bytes, _) => {
+                let byte_len = bytes.len().try_into().unwrap();
+                Some(ElementaryType::FixedBytes(solar_ast::TypeSize::new_fb_bytes(byte_len)))
+            }
+
+            LitKind::Address(_) => Some(ElementaryType::Address(false)),
+
+            LitKind::Bool(_) => Some(ElementaryType::Bool),
+
+            // Treat number literals as wide unsigned ints (won’t trigger linter)
+            LitKind::Number(_) => None,
+            LitKind::Rational(_) => None,
+            LitKind::Err(_) => None,
+        },
+
+        // Unary operations (e.g. -x)
         ExprKind::Unary(op, inner_expr) => match op.kind {
             solar_ast::UnOpKind::Neg => match infer_source_type(hir, inner_expr) {
-                Some(hir::ElementaryType::UInt(size)) => Some(hir::ElementaryType::Int(size)),
-                Some(signed_type @ hir::ElementaryType::Int(_)) => Some(signed_type),
-                _ => Some(hir::ElementaryType::Int(solar_ast::TypeSize::ZERO)),
+                Some(ElementaryType::UInt(size)) => Some(ElementaryType::Int(size)),
+                Some(signed_type @ ElementaryType::Int(_)) => Some(signed_type),
+                _ => Some(ElementaryType::Int(solar_ast::TypeSize::ZERO)),
             },
             _ => infer_source_type(hir, inner_expr),
         },
