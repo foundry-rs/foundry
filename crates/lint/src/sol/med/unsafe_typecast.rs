@@ -62,13 +62,13 @@ fn is_unsafe_typecast_hir(
 /// Infers the elementary type of a source expression.
 /// For cast chains, returns the ultimate source type, not intermediate cast results.
 fn infer_source_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::ElementaryType> {
-    use hir::{ElementaryType, ExprKind, ItemId, Lit as HirLit, Res, TypeKind};
+    use hir::{ElementaryType, ItemId, Lit as HirLit, Res};
     use solar_ast::LitKind;
 
     match &expr.kind {
         // Recursive cast: Type(val)
         ExprKind::Call(call_expr, args, _) => {
-            if let ExprKind::Type(ty) = &call_expr.kind
+            if let ExprKind::Type(_ty) = &call_expr.kind
                 && args.len() == 1
                 && let Some(first_arg) = args.exprs().next()
             {
