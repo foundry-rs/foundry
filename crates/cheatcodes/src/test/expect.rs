@@ -1141,15 +1141,15 @@ pub(crate) fn get_emit_mismatch_message(
         return name_mismatched_logs(expected_decoded, actual_decoded);
     }
 
-    // 3. Check data
-    if checks[4] && expected.data.as_ref() != actual.data.as_ref() {
-        let expected_bytes = expected.data.as_ref();
-        let actual_bytes = actual.data.as_ref();
+    let expected_data = expected.data.as_ref();
+    let actual_data = actual.data.as_ref();
 
+    // 3. Check data
+    if checks[4] && expected_data != actual_data {
         // Different lengths or not ABI-encoded
-        if expected_bytes.len() != actual_bytes.len()
-            || !expected_bytes.len().is_multiple_of(32)
-            || expected_bytes.is_empty()
+        if expected_data.len() != actual_data.len()
+            || !expected_data.len().is_multiple_of(32)
+            || expected_data.is_empty()
         {
             return name_mismatched_logs(expected_decoded, actual_decoded);
         }
@@ -1180,10 +1180,7 @@ pub(crate) fn get_emit_mismatch_message(
     }
 
     // Check data (non-indexed parameters)
-    if checks[4] && expected.data.as_ref() != actual.data.as_ref() {
-        let expected_bytes = expected.data.as_ref();
-        let actual_bytes = actual.data.as_ref();
-
+    if checks[4] && expected_data != actual_data {
         let num_indexed_params = if is_anonymous {
             expected.topics().len()
         } else {
@@ -1191,7 +1188,7 @@ pub(crate) fn get_emit_mismatch_message(
         };
 
         for (i, (expected_chunk, actual_chunk)) in
-            expected_bytes.chunks(32).zip(actual_bytes.chunks(32)).enumerate()
+            expected_data.chunks(32).zip(actual_data.chunks(32)).enumerate()
         {
             if expected_chunk != actual_chunk {
                 let param_idx = num_indexed_params + i;
