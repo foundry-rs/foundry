@@ -1,15 +1,15 @@
 use crate::{
-    ScriptArgs, ScriptConfig,
-    build::LinkedBuildData,
-    sequence::{ScriptSequenceKind, get_commit_hash},
+    build::LinkedBuildData, sequence::{get_commit_hash, ScriptSequenceKind},
+    ScriptArgs,
+    ScriptConfig,
 };
-use alloy_primitives::{Address, hex};
-use eyre::{Result, eyre};
+use alloy_primitives::{hex, Address};
+use eyre::{eyre, Result};
 use forge_script_sequence::{AdditionalContract, ScriptSequence};
-use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs, provider::VerificationProviderType};
+use forge_verify::{provider::VerificationProviderType, RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::opts::{EtherscanOpts, ProjectPathOpts};
 use foundry_common::ContractsByArtifact;
-use foundry_compilers::{Project, artifacts::EvmVersion, info::ContractInfo};
+use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo, Project};
 use foundry_config::{Chain, Config};
 use semver::Version;
 

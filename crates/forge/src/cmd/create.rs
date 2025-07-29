@@ -16,8 +16,18 @@ use foundry_cli::{
     opts::{BuildOpts, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
-use foundry_common::{compile::{self}, find_rust_contracts, fmt::parse_tokens, shell};
-use foundry_compilers::{artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize, ArtifactFile, ArtifactId, Compiler};
+use foundry_common::{
+    compile::{self},
+    find_rust_contracts,
+    fmt::parse_tokens,
+    shell,
+};
+use foundry_compilers::{
+    artifacts::{BytecodeObject, CompactBytecode}, info::ContractInfo,
+    utils::canonicalize,
+    ArtifactId,
+    Compiler,
+};
 use foundry_config::{
     figment::{
         self, value::{Dict, Map}, Metadata,
@@ -26,17 +36,12 @@ use foundry_config::{
     merge_impl_figment_convert,
     Config,
 };
+use rand::{distributions::Alphanumeric, Rng};
 use serde_json::json;
 use std::{borrow::Borrow, fs, marker::PhantomData, path::PathBuf, sync::Arc, time::Duration};
-use foundry_compilers::artifacts::CompactBytecode;
-use rand::{distributions::Alphanumeric, Rng};
 
 fn generate_build_id() -> String {
-    rand::thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(8)
-        .map(char::from)
-        .collect()
+    rand::thread_rng().sample_iter(&Alphanumeric).take(8).map(char::from).collect()
 }
 
 merge_impl_figment_convert!(CreateArgs, build, eth);
@@ -119,7 +124,8 @@ impl CreateArgs {
         let project = config.project()?;
 
         // Check if the contract is rust
-        // TODO(d1r1): after move compilation logic into Founry compiler - we can simplify this flow completely
+        // TODO(d1r1): after move compilation logic into Founry compiler - we can simplify this flow
+        // completely
         let rust_contracts = find_rust_contracts(&project.paths.sources)?;
 
         let target_path = if let Some(ref mut path) = self.contract.path {
@@ -134,16 +140,14 @@ impl CreateArgs {
 
         let (abi, bin, id) = if rust_contracts.contains_key(&self.contract.name) {
             let artifact_dir = project.artifacts_path().join(&self.contract.name);
-            let artifact: serde_json::Value = serde_json::from_str(
-                &fs::read_to_string(&artifact_dir.join("foundry.json"))?,
-            )?;
+            let artifact: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(&artifact_dir.join("foundry.json"))?)?;
 
             // Extract ABI
             let abi: JsonAbi = serde_json::from_value(artifact["abi"].clone())?;
 
             // Extract Bytecode
-            let bin: CompactBytecode  = serde_json::from_value(artifact["bytecode"].clone())?;
-            
+            let bin: CompactBytecode = serde_json::from_value(artifact["bytecode"].clone())?;
 
             // Create ArtifactId
             let id = ArtifactId {
@@ -159,7 +163,6 @@ impl CreateArgs {
         } else {
             remove_contract(output, &target_path, &self.contract.name)?
         };
-
 
         let bin = match bin.object {
             BytecodeObject::Bytecode(_) => bin.object,
@@ -200,7 +203,6 @@ impl CreateArgs {
             provider.get_chain_id().await?
         };
 
-
         // Whether to broadcast the transaction or not
         let dry_run = !self.broadcast;
 
@@ -218,7 +220,7 @@ impl CreateArgs {
                 id,
                 dry_run,
             )
-                .await
+            .await
         } else {
             // Deploy with signer
             let signer = self.eth.wallet.signer().await?;
@@ -237,7 +239,7 @@ impl CreateArgs {
                 id,
                 dry_run,
             )
-                .await
+            .await
         }
     }
 
@@ -294,10 +296,13 @@ impl CreateArgs {
         let config = verify.load_config()?;
         verify.etherscan.key =
             config.get_etherscan_config_with_chain(Some(chain.into()))?.map(|c| c.key);
-
-        let context = verify.resolve_context().await?;
-
-        verify.verification_provider()?.preflight_verify_check(verify, context).await?;
+        if self.verifier.wasm {
+            // TODO(d1r1): add actual checks - for now just return Ok(())
+            return Ok(())
+        } else {
+            let context = verify.resolve_context().await?;
+            verify.verification_provider()?.preflight_verify_check(verify, context).await?;
+        }
         Ok(())
     }
 
@@ -352,14 +357,10 @@ impl CreateArgs {
         }
 
         deployer.tx.set_gas_limit(if let Some(gas_limit) = self.tx.gas_limit {
-            println!("DEBUG: using gas limit: {:?}", gas_limit);
             Ok(gas_limit.to())
         } else {
-            println!("DEBUG: estimate_gas");
             provider.estimate_gas(deployer.tx.clone()).await
         }?);
-        println!("DEBUG:2  create/deploy");
-
 
         if is_legacy {
             let gas_price = if let Some(gas_price) = self.tx.gas_price {
@@ -384,7 +385,6 @@ impl CreateArgs {
             deployer.tx.set_max_fee_per_gas(max_fee);
             deployer.tx.set_max_priority_fee_per_gas(priority_fee);
         }
-        println!("DEBUG:3 create/deploy");
 
         // Before we actually deploy the contract we try check if the verify settings are valid
         let mut constructor_args = None;
@@ -507,8 +507,6 @@ impl CreateArgs {
         let params = params.iter().map(|(ty, arg)| (ty, arg.as_str()));
         parse_tokens(params).map_err(Into::into)
     }
-
-
 }
 
 impl figment::Provider for CreateArgs {

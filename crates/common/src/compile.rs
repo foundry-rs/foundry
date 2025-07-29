@@ -289,7 +289,8 @@ impl ProjectCompiler {
                     FluentArtifact::Wat,
                     FluentArtifact::Metadata,
                 ],
-                docker: false,
+                docker: true,
+                mount_dir: Some(project.root().to_path_buf()),
                 output: Some(project.artifacts_path().to_path_buf()),
                 ..Default::default()
             };

@@ -5,7 +5,6 @@
 
 #[macro_use]
 extern crate foundry_common;
-
 #[macro_use]
 extern crate tracing;
 
@@ -26,4 +25,5 @@ pub use verify::{VerifierArgs, VerifyArgs, VerifyCheckArgs};
 
 mod types;
 
+mod fluent;
 mod utils;

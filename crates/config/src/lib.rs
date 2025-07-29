@@ -541,6 +541,9 @@ pub struct Config {
     #[doc(hidden)]
     #[serde(skip)]
     pub _non_exhaustive: (),
+
+    /// Wether the contract is wasm
+    pub wasm: bool,
 }
 
 /// Mapping of fallback standalone sections. See [`FallbackProfileProvider`].
@@ -2438,6 +2441,7 @@ impl Default for Config {
             compilation_restrictions: Default::default(),
             script_execution_protection: true,
             _non_exhaustive: (),
+            wasm: false,
         }
     }
 }
