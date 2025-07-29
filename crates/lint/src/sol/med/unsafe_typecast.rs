@@ -98,7 +98,7 @@ fn infer_source_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::El
 
             LitKind::Bool(_) => Some(ElementaryType::Bool),
 
-            // Treat number literals as wide unsigned ints (won’t trigger linter)
+            // Unnecessary check, as assigning literal values which cannot fit into a type throws a compiler error. <https://solang.readthedocs.io/en/latest/language/types.html>
             LitKind::Number(_) => None,
             LitKind::Rational(_) => None,
             LitKind::Err(_) => None,

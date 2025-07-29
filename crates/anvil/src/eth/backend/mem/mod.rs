@@ -1722,11 +1722,10 @@ impl Backend {
                     cache_db.commit(state);
                     gas_used += result.gas_used();
 
-                    // TODO: this is likely incomplete
                     // create the transaction from a request
                     let from = request.from.unwrap_or_default();
-                    let request =
-                        transaction_request_to_typed(WithOtherFields::new(request)).unwrap();
+                    let request = transaction_request_to_typed(WithOtherFields::new(request))
+                        .ok_or(BlockchainError::MissingRequiredFields)?;
                     let tx = build_typed_transaction(
                         request,
                         Signature::new(Default::default(), Default::default(), false),
@@ -1936,9 +1935,31 @@ impl Backend {
                             Err(RpcError::invalid_params("unsupported tracer type").into())
                         }
                     },
-
-                    GethDebugTracerType::JsTracer(_code) => {
+                    #[cfg(not(feature = "js-tracer"))]
+                    GethDebugTracerType::JsTracer(_) => {
                         Err(RpcError::invalid_params("unsupported tracer type").into())
+                    }
+                    #[cfg(feature = "js-tracer")]
+                    GethDebugTracerType::JsTracer(code) => {
+                        use alloy_evm::IntoTxEnv;
+                        let config = tracer_config.into_json();
+                        let mut inspector =
+                            revm_inspectors::tracing::js::JsInspector::new(code, config)
+                                .map_err(|err| BlockchainError::Message(err.to_string()))?;
+
+                        let env = self.build_call_env(request, fee_details, block.clone());
+                        let mut evm = self.new_evm_with_inspector_ref(
+                            &cache_db as &dyn DatabaseRef,
+                            &env,
+                            &mut inspector,
+                        );
+                        let result = evm.transact(env.tx.clone())?;
+                        let res = evm
+                            .inspector_mut()
+                            .json_result(result, &env.tx.into_tx_env(), &block, &cache_db)
+                            .map_err(|err| BlockchainError::Message(err.to_string()))?;
+
+                        Ok(GethTrace::JS(res))
                     }
                 };
             }
