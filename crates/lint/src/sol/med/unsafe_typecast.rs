@@ -26,16 +26,15 @@ impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
             && let Some(first_arg) = args.exprs().next()
             && is_unsafe_typecast_hir(hir, first_arg, target_type)
         {
-            ctx.emit_with_fix(&UNSAFE_TYPECAST, expr.span, get_suggestion());
+            ctx.emit_with_fix(
+                &UNSAFE_TYPECAST,
+                expr.span,
+                Snippet::Block {
+                    desc: Some("Consider disabling this lint if you're certain the cast is safe:"),
+                    code: "// Cast is safe because [explain why]\n// forge-lint: disable-next-line(unsafe-typecast)".into()
+                }
+            );
         }
-    }
-}
-
-// Returns the suggested fix based on the unsafe typecast expression
-fn get_suggestion() -> Snippet {
-    Snippet::Block {
-        desc: Some("Consider disabling this lint if you're certain the cast is safe:"),
-        code: "// Cast is safe because [explain why]\n// forge-lint: disable-next-line(unsafe-typecast)".to_string(),
     }
 }
 
@@ -93,18 +92,15 @@ fn infer_source_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::El
                 let byte_len = bytes.len().try_into().unwrap();
                 Some(ElementaryType::FixedBytes(solar_ast::TypeSize::new_fb_bytes(byte_len)))
             }
-
             LitKind::Address(_) => Some(ElementaryType::Address(false)),
-
             LitKind::Bool(_) => Some(ElementaryType::Bool),
 
-            // Unnecessary check, as assigning literal values which cannot fit into a type throws a compiler error. <https://solang.readthedocs.io/en/latest/language/types.html>
-            LitKind::Number(_) => None,
-            LitKind::Rational(_) => None,
-            LitKind::Err(_) => None,
+            // Unnecessary to check numbers as assigning literal values which cannot fit into a type
+            // throws a compiler error. Reference: <https://solang.readthedocs.io/en/latest/language/types.html>
+            _ => None,
         },
 
-        // Unary operations (e.g. -x)
+        // Unary operations
         ExprKind::Unary(op, inner_expr) => match op.kind {
             solar_ast::UnOpKind::Neg => match infer_source_type(hir, inner_expr) {
                 Some(ElementaryType::UInt(size)) => Some(ElementaryType::Int(size)),
