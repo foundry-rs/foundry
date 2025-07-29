@@ -3289,13 +3289,19 @@ contract HelloWorld is Ownable {
         return greetings;
     }
 }
+contract CoreDeployer {
+    function deploy() external returns (
+        ENSRegistry ens,
+        BaseRegistrarImplementation base,
+        ReverseRegistrar reverse
+    ) {
+        ens = new ENSRegistry();
+        base = new BaseRegistrarImplementation(ens, 0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae);
+        reverse = new ReverseRegistrar(ens);
 
-// contract DeployCore {
-//     function deploy(address deployer) external returns (ENSRegistry, BaseRegistrarImplementation, ReverseRegistrar) {
-//
-//     }
-// }
-
+        return (ens, base, reverse);
+    }
+}
 contract HelloWorldScript is Script {
     address public deployer = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
 
@@ -3303,15 +3309,15 @@ contract HelloWorldScript is Script {
         vm.startBroadcast(deployer);
 
         // Step 1: Deploy core ENS contracts
-        // (ENSRegistry ens, BaseRegistrarImplementation baseRegistrar, ReverseRegistrar reverseRegistrar) =
-        //     new DeployCore().deploy(deployer);
-
-        ENSRegistry ens = new ENSRegistry();
-        BaseRegistrarImplementation baseRegistrar = new BaseRegistrarImplementation(
-            ens,
-            0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae
-        );
-        ReverseRegistrar reverseRegistrar = new ReverseRegistrar(ens);
+        CoreDeployer core = new CoreDeployer();
+        (ENSRegistry ens, BaseRegistrarImplementation base, ReverseRegistrar reverse) = core.deploy();
+        
+        // ENSRegistry ens = new ENSRegistry();
+        // BaseRegistrarImplementation baseRegistrar = new BaseRegistrarImplementation(
+        //     ens,
+        //     0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae
+        // );
+        // ReverseRegistrar reverseRegistrar = new ReverseRegistrar(ens);
 
         ens.setSubnodeOwner(bytes32(0), keccak256("reverse"), deployer);
         ens.setSubnodeOwner(
@@ -3321,7 +3327,7 @@ contract HelloWorldScript is Script {
         );
 
         ens.setSubnodeOwner(bytes32(0), keccak256("eth"), address(baseRegistrar));
-        
+
         // Step 2: Deploy wrapper, oracle, controller, resolver
         NameWrapper nameWrapper = new NameWrapper(ens, baseRegistrar, IMetadataService(deployer));
         DummyOracle dummyOracle = new DummyOracle(100000000);
@@ -3354,10 +3360,10 @@ contract HelloWorldScript is Script {
         nameWrapper.setController(address(controller), true);
         baseRegistrar.addController(address(nameWrapper));
         reverseRegistrar.setController(address(controller), true);
-        
+
         baseRegistrar.addController(address(controller));
         baseRegistrar.addController(deployer);
-        
+
         // Step 3: Register a name
         bytes32 commitment = controller.makeCommitment(
             "forge",
