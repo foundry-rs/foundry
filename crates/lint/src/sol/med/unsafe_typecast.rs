@@ -26,8 +26,7 @@ impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
             && let Some(first_arg) = args.exprs().next()
             && is_unsafe_typecast_hir(hir, first_arg, target_type)
         {
-            let suggestion = get_suggestion();
-            ctx.emit_with_fix(&UNSAFE_TYPECAST, expr.span, suggestion);
+            ctx.emit_with_fix(&UNSAFE_TYPECAST, expr.span, get_suggestion());
         }
     }
 }

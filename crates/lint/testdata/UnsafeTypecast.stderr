@@ -1,223 +1,7 @@
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-170 |         uint248 a_u248 = uint248(a);
-    |                 ------
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-171 |         uint240 a_u240 = uint240(a);
-    |                 ------
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-172 |         uint224 a_u224 = uint224(a);
-    |                 ------
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-173 |         uint192 a_u192 = uint192(a);
-    |                 ------
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-174 |         uint160 a_u160 = uint160(a);
-    |                 ------
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-175 |         uint128 a_u128 = uint128(a);
-    |                 ------
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-176 |         uint64 a_u64 = uint64(a);
-    |                -----
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-177 |         uint32 a_u32 = uint32(a);
-    |                -----
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-178 |         uint16 a_u16 = uint16(a);
-    |                -----
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-179 |         uint8 a_u8 = uint8(a);
-    |               ----
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-182 |         int248 i_i248 = int248(i);
-    |                ------
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-183 |         int240 i_i240 = int240(i);
-    |                ------
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-184 |         int224 i_i224 = int224(i);
-    |                ------
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-185 |         int192 i_i192 = int192(i);
-    |                ------
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-186 |         int160 i_i160 = int160(i);
-    |                ------
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-187 |         int128 i_i128 = int128(i);
-    |                ------
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-188 |         int64 i_i64 = int64(i);
-    |               -----
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-189 |         int32 i_i32 = int32(i);
-    |               -----
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-190 |         int16 i_i16 = int16(i);
-    |               -----
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-191 |         int8 i_i8 = int8(i);
-    |              ----
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-198 |         uint128 s_u128 = 1234;
-    |                 ------
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-199 |         uint256 s_u256 = uint256(s_u128); // Safe
-    |                 ------
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-201 |         int128 s_i128 = -1234;
-    |                ------
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-202 |         int256 s_i256 = int256(s_i128); // Safe
-    |                ------
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-204 |         uint256 s_u256_copy = uint256(a);
-    |                 -----------
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-205 |         int256 s_i256_copy = int256(i);
-    |                -----------
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
-note[mixed-case-variable]: mutable variables should use mixedCase
-   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-    |
-244 |         uint128 u_safe = uint128(safePos);
-    |                 ------
-    |
-    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
-
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-74 |         uint248 b = uint248(a);
+75 |         uint248 b = uint248(a);
    |                     ----------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -230,7 +14,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-75 |         uint240 c = uint240(b);
+76 |         uint240 c = uint240(b);
    |                     ----------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -243,7 +27,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-76 |         uint232 d = uint232(c);
+77 |         uint232 d = uint232(c);
    |                     ----------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -256,7 +40,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-77 |         uint224 e = uint224(d);
+78 |         uint224 e = uint224(d);
    |                     ----------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -269,7 +53,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-78 |         uint216 f = uint216(e);
+79 |         uint216 f = uint216(e);
    |                     ----------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -282,7 +66,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-79 |         uint208 g = uint208(f);
+80 |         uint208 g = uint208(f);
    |                     ----------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -295,7 +79,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-80 |         uint200 h = uint200(g);
+81 |         uint200 h = uint200(g);
    |                     ----------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -308,7 +92,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-81 |         uint192 i = uint192(h);
+82 |         uint192 i = uint192(h);
    |                     ----------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -321,7 +105,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-82 |         uint184 j = uint184(i);
+83 |         uint184 j = uint184(i);
    |                     ----------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -334,7 +118,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-83 |         uint176 k = uint176(j);
+84 |         uint176 k = uint176(j);
    |                     ----------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -347,7 +131,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-84 |         uint168 l = uint168(k);
+85 |         uint168 l = uint168(k);
    |                     ----------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -360,7 +144,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-85 |         uint160 m = uint160(l);
+86 |         uint160 m = uint160(l);
    |                     ----------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -373,7 +157,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-86 |         uint152 n = uint152(m);
+87 |         uint152 n = uint152(m);
    |                     ----------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -386,7 +170,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-87 |         uint144 o = uint144(n);
+88 |         uint144 o = uint144(n);
    |                     ----------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -399,7 +183,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-88 |         uint136 p = uint136(o);
+89 |         uint136 p = uint136(o);
    |                     ----------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -412,7 +196,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-89 |         uint128 q = uint128(p);
+90 |         uint128 q = uint128(p);
    |                     ----------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -425,7 +209,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-90 |         uint120 r = uint120(q);
+91 |         uint120 r = uint120(q);
    |                     ----------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -438,7 +222,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-91 |         uint112 s = uint112(r);
+92 |         uint112 s = uint112(r);
    |                     ----------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -451,7 +235,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-92 |         uint104 t = uint104(s);
+93 |         uint104 t = uint104(s);
    |                     ----------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -464,7 +248,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-93 |         uint96 u = uint96(t);
+94 |         uint96 u = uint96(t);
    |                    ---------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -477,7 +261,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-94 |         uint88 v = uint88(u);
+95 |         uint88 v = uint88(u);
    |                    ---------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -490,7 +274,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-95 |         uint80 w = uint80(v);
+96 |         uint80 w = uint80(v);
    |                    ---------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -503,7 +287,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-96 |         uint72 x = uint72(w);
+97 |         uint72 x = uint72(w);
    |                    ---------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -516,7 +300,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-97 |         uint64 y = uint64(x);
+98 |         uint64 y = uint64(x);
    |                    ---------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -529,20 +313,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
    |
-98 |         uint56 z = uint56(y);
-   |                    ---------
-   |
-   = note: Consider disabling this lint if you're certain the cast is safe:
-           
-           - // Cast is safe because [explain why]
-           - // forge-lint: disable-next-line(unsafe-typecast)
-           
-   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
-
-warning[unsafe-typecast]: typecasts that can truncate values should be checked
-  --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
-   |
-99 |         uint48 A = uint48(z);
+99 |         uint56 z = uint56(y);
    |                    ---------
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
@@ -555,7 +326,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-100 |         uint40 B = uint40(A);
+100 |         uint48 A = uint48(z);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -568,7 +339,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-101 |         uint32 C = uint32(B);
+101 |         uint40 B = uint40(A);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -581,7 +352,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-102 |         uint24 D = uint24(C);
+102 |         uint32 C = uint32(B);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -594,7 +365,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-103 |         uint16 E = uint16(D);
+103 |         uint24 D = uint24(C);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -607,7 +378,20 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-104 |         uint8 F = uint8(E);
+104 |         uint16 E = uint16(D);
+    |                    ---------
+    |
+    = note: Consider disabling this lint if you're certain the cast is safe:
+            
+            - // Cast is safe because [explain why]
+            - // forge-lint: disable-next-line(unsafe-typecast)
+            
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+   --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
+    |
+105 |         uint8 F = uint8(E);
     |                   --------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -620,7 +404,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-109 |         int248 b = int248(a);
+110 |         int248 b = int248(a);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -633,7 +417,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-110 |         int240 c = int240(b);
+111 |         int240 c = int240(b);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -646,7 +430,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-111 |         int232 d = int232(c);
+112 |         int232 d = int232(c);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -659,7 +443,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-112 |         int224 e = int224(d);
+113 |         int224 e = int224(d);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -672,7 +456,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-113 |         int216 f = int216(e);
+114 |         int216 f = int216(e);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -685,7 +469,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-114 |         int208 g = int208(f);
+115 |         int208 g = int208(f);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -698,7 +482,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-115 |         int200 h = int200(g);
+116 |         int200 h = int200(g);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -711,7 +495,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-116 |         int192 i = int192(h);
+117 |         int192 i = int192(h);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -724,7 +508,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-117 |         int184 j = int184(i);
+118 |         int184 j = int184(i);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -737,7 +521,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-118 |         int176 k = int176(j);
+119 |         int176 k = int176(j);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -750,7 +534,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-119 |         int168 l = int168(k);
+120 |         int168 l = int168(k);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -763,7 +547,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-120 |         int160 m = int160(l);
+121 |         int160 m = int160(l);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -776,7 +560,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-121 |         int152 n = int152(m);
+122 |         int152 n = int152(m);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -789,7 +573,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-122 |         int144 o = int144(n);
+123 |         int144 o = int144(n);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -802,7 +586,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-123 |         int136 p = int136(o);
+124 |         int136 p = int136(o);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -815,7 +599,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-124 |         int128 q = int128(p);
+125 |         int128 q = int128(p);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -828,7 +612,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-125 |         int120 r = int120(q);
+126 |         int120 r = int120(q);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -841,7 +625,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-126 |         int112 s = int112(r);
+127 |         int112 s = int112(r);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -854,7 +638,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-127 |         int104 t = int104(s);
+128 |         int104 t = int104(s);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -867,7 +651,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-128 |         int96 u = int96(t);
+129 |         int96 u = int96(t);
     |                   --------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -880,7 +664,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-129 |         int88 v = int88(u);
+130 |         int88 v = int88(u);
     |                   --------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -893,7 +677,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-130 |         int80 w = int80(v);
+131 |         int80 w = int80(v);
     |                   --------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -906,7 +690,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-131 |         int72 x = int72(w);
+132 |         int72 x = int72(w);
     |                   --------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -919,7 +703,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-132 |         int64 y = int64(x);
+133 |         int64 y = int64(x);
     |                   --------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -932,7 +716,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-133 |         int56 z = int56(y);
+134 |         int56 z = int56(y);
     |                   --------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -945,7 +729,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-134 |         int48 A = int48(z);
+135 |         int48 A = int48(z);
     |                   --------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -958,7 +742,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-135 |         int40 B = int40(A);
+136 |         int40 B = int40(A);
     |                   --------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -971,7 +755,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-136 |         int32 C = int32(B);
+137 |         int32 C = int32(B);
     |                   --------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -984,7 +768,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-137 |         int24 D = int24(C);
+138 |         int24 D = int24(C);
     |                   --------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -997,7 +781,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-138 |         int16 E = int16(D);
+139 |         int16 E = int16(D);
     |                   --------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1010,7 +794,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-139 |         int8 F = int8(E);
+140 |         int8 F = int8(E);
     |                  -------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1023,7 +807,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-170 |         uint248 a_u248 = uint248(a);
+171 |         uint248 a_u248 = uint248(a);
     |                          ----------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1036,7 +820,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-171 |         uint240 a_u240 = uint240(a);
+172 |         uint240 a_u240 = uint240(a);
     |                          ----------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1049,7 +833,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-172 |         uint224 a_u224 = uint224(a);
+173 |         uint224 a_u224 = uint224(a);
     |                          ----------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1062,7 +846,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-173 |         uint192 a_u192 = uint192(a);
+174 |         uint192 a_u192 = uint192(a);
     |                          ----------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1075,7 +859,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-174 |         uint160 a_u160 = uint160(a);
+175 |         uint160 a_u160 = uint160(a);
     |                          ----------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1088,7 +872,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-175 |         uint128 a_u128 = uint128(a);
+176 |         uint128 a_u128 = uint128(a);
     |                          ----------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1101,7 +885,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-176 |         uint64 a_u64 = uint64(a);
+177 |         uint64 a_u64 = uint64(a);
     |                        ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1114,7 +898,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-177 |         uint32 a_u32 = uint32(a);
+178 |         uint32 a_u32 = uint32(a);
     |                        ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1127,7 +911,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-178 |         uint16 a_u16 = uint16(a);
+179 |         uint16 a_u16 = uint16(a);
     |                        ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1140,7 +924,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-179 |         uint8 a_u8 = uint8(a);
+180 |         uint8 a_u8 = uint8(a);
     |                      --------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1153,7 +937,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-182 |         int248 i_i248 = int248(i);
+183 |         int248 i_i248 = int248(i);
     |                         ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1166,7 +950,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-183 |         int240 i_i240 = int240(i);
+184 |         int240 i_i240 = int240(i);
     |                         ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1179,7 +963,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-184 |         int224 i_i224 = int224(i);
+185 |         int224 i_i224 = int224(i);
     |                         ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1192,7 +976,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-185 |         int192 i_i192 = int192(i);
+186 |         int192 i_i192 = int192(i);
     |                         ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1205,7 +989,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-186 |         int160 i_i160 = int160(i);
+187 |         int160 i_i160 = int160(i);
     |                         ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1218,7 +1002,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-187 |         int128 i_i128 = int128(i);
+188 |         int128 i_i128 = int128(i);
     |                         ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1231,7 +1015,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-188 |         int64 i_i64 = int64(i);
+189 |         int64 i_i64 = int64(i);
     |                       --------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1244,7 +1028,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-189 |         int32 i_i32 = int32(i);
+190 |         int32 i_i32 = int32(i);
     |                       --------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1257,7 +1041,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-190 |         int16 i_i16 = int16(i);
+191 |         int16 i_i16 = int16(i);
     |                       --------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1270,7 +1054,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-191 |         int8 i_i8 = int8(i);
+192 |         int8 i_i8 = int8(i);
     |                     -------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1283,7 +1067,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-211 |         bytes31 b = bytes31(a);
+212 |         bytes31 b = bytes31(a);
     |                     ----------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1296,7 +1080,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-212 |         bytes30 c = bytes30(b);
+213 |         bytes30 c = bytes30(b);
     |                     ----------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1309,7 +1093,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-213 |         bytes28 d = bytes28(c);
+214 |         bytes28 d = bytes28(c);
     |                     ----------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1322,7 +1106,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-214 |         bytes24 e = bytes24(d);
+215 |         bytes24 e = bytes24(d);
     |                     ----------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1335,7 +1119,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-215 |         bytes20 f = bytes20(e);
+216 |         bytes20 f = bytes20(e);
     |                     ----------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1348,7 +1132,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-216 |         bytes16 g = bytes16(f);
+217 |         bytes16 g = bytes16(f);
     |                     ----------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1361,7 +1145,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-217 |         bytes12 h = bytes12(g);
+218 |         bytes12 h = bytes12(g);
     |                     ----------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1374,7 +1158,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-218 |         bytes8 i = bytes8(h);
+219 |         bytes8 i = bytes8(h);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1387,7 +1171,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-219 |         bytes4 j = bytes4(i);
+220 |         bytes4 j = bytes4(i);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1400,7 +1184,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-220 |         bytes2 k = bytes2(j);
+221 |         bytes2 k = bytes2(j);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1413,7 +1197,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-221 |         bytes1 l = bytes1(k);
+222 |         bytes1 l = bytes1(k);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1426,7 +1210,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-224 |         bytes32 fromDyn = bytes32(dyn);
+225 |         bytes32 fromDyn = bytes32(dyn);
     |                           ------------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1439,7 +1223,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-227 |         bytes32 fromStr = bytes32(bytes(s));
+228 |         bytes32 fromStr = bytes32(bytes(s));
     |                           -----------------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1452,7 +1236,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-232 |         uint256 b = uint256(a);
+233 |         uint256 b = uint256(a);
     |                     ----------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1465,7 +1249,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-235 |         uint128 b128 = uint128(a128);
+236 |         uint128 b128 = uint128(a128);
     |                        -------------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1478,7 +1262,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-238 |         int256 d = int256(c);
+239 |         int256 d = int256(c);
     |                    ---------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1491,7 +1275,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-241 |         int128 d128 = int128(c128);
+242 |         int128 d128 = int128(c128);
     |                       ------------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1504,7 +1288,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-244 |         uint128 u_safe = uint128(safePos);
+245 |         uint128 u_safe = uint128(safePos);
     |                          ----------------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1517,7 +1301,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-247 |         int8 signedSmall = int8(small);
+248 |         int8 signedSmall = int8(small);
     |                            -----------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1530,7 +1314,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-264 |         uint152 b = uint152(base);
+265 |         uint152 b = uint152(base);
     |                     -------------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1543,7 +1327,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-265 |         uint144 c = uint144(base);
+266 |         uint144 c = uint144(base);
     |                     -------------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1556,7 +1340,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-266 |         uint136 d = uint136(base);
+267 |         uint136 d = uint136(base);
     |                     -------------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1569,7 +1353,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-267 |         uint128 e = uint128(base);
+268 |         uint128 e = uint128(base);
     |                     -------------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1582,7 +1366,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-268 |         uint120 f = uint120(base);
+269 |         uint120 f = uint120(base);
     |                     -------------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1595,7 +1379,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-269 |         uint112 g = uint112(base);
+270 |         uint112 g = uint112(base);
     |                     -------------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1608,7 +1392,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-270 |         uint104 h = uint104(base);
+271 |         uint104 h = uint104(base);
     |                     -------------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1621,7 +1405,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-271 |         uint96 i = uint96(base);
+272 |         uint96 i = uint96(base);
     |                    ------------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1634,7 +1418,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-272 |         uint88 j = uint88(base);
+273 |         uint88 j = uint88(base);
     |                    ------------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1647,7 +1431,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-279 |         uint80 k = uint80(base);
+280 |         uint80 k = uint80(base);
     |                    ------------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1660,7 +1444,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-280 |         uint72 l = uint72(base);
+281 |         uint72 l = uint72(base);
     |                    ------------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1673,7 +1457,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-281 |         uint64 m = uint64(base);
+282 |         uint64 m = uint64(base);
     |                    ------------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1686,7 +1470,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-282 |         uint56 n = uint56(base);
+283 |         uint56 n = uint56(base);
     |                    ------------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1699,7 +1483,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-283 |         uint48 o = uint48(base);
+284 |         uint48 o = uint48(base);
     |                    ------------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1712,7 +1496,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-284 |         uint40 p = uint40(base);
+285 |         uint40 p = uint40(base);
     |                    ------------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1725,7 +1509,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-285 |         uint32 q = uint32(base);
+286 |         uint32 q = uint32(base);
     |                    ------------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1738,7 +1522,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-286 |         uint24 r = uint24(base);
+287 |         uint24 r = uint24(base);
     |                    ------------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1751,7 +1535,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-287 |         uint16 s = uint16(base);
+288 |         uint16 s = uint16(base);
     |                    ------------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
@@ -1764,7 +1548,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    --> ROOT/testdata/UnsafeTypecast.sol:LL:CC
     |
-288 |         uint8 t = uint8(base);
+289 |         uint8 t = uint8(base);
     |                   -----------
     |
     = note: Consider disabling this lint if you're certain the cast is safe:

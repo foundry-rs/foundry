@@ -1,3 +1,4 @@
+/// forge-lint: disable-start(mixed-case-variable)
 contract UnsafeTypecast {
     function upcastSafeUint() public pure {
         uint8 a = type(uint8).max;
@@ -288,3 +289,4 @@ contract UnsafeTypecast {
         uint8 t = uint8(base);     //~WARN: typecasts that can truncate values should be checked
     }
 }
+/// forge-lint: disable-end(mixed-case-variable)
