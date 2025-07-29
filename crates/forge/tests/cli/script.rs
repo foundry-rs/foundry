@@ -3256,21 +3256,9 @@ Warning: Target directory is not empty, but `--force` was specified
     assert!(exists);
     */
 
-    let script = prj
-        .add_script(
-            "ENSNameSetting.s.sol",
-            r#"
-import "forge-std/Script.sol";
+    prj.add_source("HelloWorld.sol",
+        r#"
 import "@openzeppelin/openzeppelin-contracts/contracts/access/Ownable.sol";
-import '@ensdomains/ens-contracts/contracts/registry/ENSRegistry.sol';
-import '@ensdomains/ens-contracts/contracts/ethregistrar/BaseRegistrarImplementation.sol';
-import '@ensdomains/ens-contracts/contracts/reverseRegistrar/ReverseRegistrar.sol';
-import '@ensdomains/ens-contracts/contracts/ethregistrar/DummyOracle.sol';
-import '@ensdomains/ens-contracts/contracts/ethregistrar/StablePriceOracle.sol';
-import {NameWrapper} from '@ensdomains/ens-contracts/contracts/wrapper/NameWrapper.sol';
-import {IMetadataService} from '@ensdomains/ens-contracts/contracts/wrapper/IMetadataService.sol';
-import {ETHRegistrarController} from '@ensdomains/ens-contracts/contracts/ethregistrar/ETHRegistrarController.sol';
-import {PublicResolver} from '@ensdomains/ens-contracts/contracts/resolvers/PublicResolver.sol';
 
 contract HelloWorld is Ownable {
     string greetings;
@@ -3288,36 +3276,69 @@ contract HelloWorld is Ownable {
     function retrieve() public view returns (string memory) {
         return greetings;
     }
-}
-contract CoreDeployer {
-    function deploy() external returns (
-        ENSRegistry ens,
-        BaseRegistrarImplementation base,
-        ReverseRegistrar reverse
-    ) {
-        ens = new ENSRegistry();
-        base = new BaseRegistrarImplementation(ens, 0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae);
-        reverse = new ReverseRegistrar(ens);
+}"#
+        );
 
-        return (ens, base, reverse);
+    prj.add_source("DeployOracle.sol",
+    r#"
+import '@ensdomains/ens-contracts/contracts/ethregistrar/DummyOracle.sol';
+import '@ensdomains/ens-contracts/contracts/ethregistrar/StablePriceOracle.sol';
+
+contract DeployOracle {
+    function deploy() public returns (StablePriceOracle) {
+        DummyOracle dummyOracle = new DummyOracle(100000000);
+
+        uint256[] memory priceTiers = new uint256[](5);
+        priceTiers[0] = 0;
+        priceTiers[1] = 0;
+        priceTiers[2] = 4;
+        priceTiers[3] = 2;
+        priceTiers[4] = 1;
+
+        StablePriceOracle priceOracle = new StablePriceOracle(AggregatorInterface(address(dummyOracle)), priceTiers);
+
+        return priceOracle;
     }
 }
+
+    "#);
+
+    let script = prj
+        .add_script(
+            "ENSNameSetting.s.sol",
+            r#"
+import "forge-std/Script.sol";
+import '@ensdomains/ens-contracts/contracts/registry/ENSRegistry.sol';
+import '@ensdomains/ens-contracts/contracts/ethregistrar/BaseRegistrarImplementation.sol';
+import '@ensdomains/ens-contracts/contracts/reverseRegistrar/ReverseRegistrar.sol';
+import {NameWrapper} from '@ensdomains/ens-contracts/contracts/wrapper/NameWrapper.sol';
+import {IMetadataService} from '@ensdomains/ens-contracts/contracts/wrapper/IMetadataService.sol';
+// import {ETHRegistrarController} from '@ensdomains/ens-contracts/contracts/ethregistrar/ETHRegistrarController.sol';
+// import {PublicResolver} from '@ensdomains/ens-contracts/contracts/resolvers/PublicResolver.sol';
+import {HelloWorld} from '../src/HelloWorld.sol';
+import {DeployOracle} from '../src/DeployOracle.sol';
+
 contract HelloWorldScript is Script {
     address public deployer = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
-
+    address constant ENS_REGISTRY = 0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e;
+    
     function run() public {
         vm.startBroadcast(deployer);
 
         // Step 1: Deploy core ENS contracts
-        CoreDeployer core = new CoreDeployer();
-        (ENSRegistry ens, BaseRegistrarImplementation base, ReverseRegistrar reverse) = core.deploy();
+        // (ENSRegistry ens, BaseRegistrarImplementation baseRegistrar, ReverseRegistrar reverseRegistrar) =
+        //     new DeployCore().deploy(deployer);
+
+        ENSRegistry ens = new ENSRegistry();
+        bytes memory code = address(ens).code;
+        vm.etch(ENS_REGISTRY, code);
+        ens = ENSRegistry(ENS_REGISTRY);
         
-        // ENSRegistry ens = new ENSRegistry();
-        // BaseRegistrarImplementation baseRegistrar = new BaseRegistrarImplementation(
-        //     ens,
-        //     0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae
-        // );
-        // ReverseRegistrar reverseRegistrar = new ReverseRegistrar(ens);
+        BaseRegistrarImplementation baseRegistrar = new BaseRegistrarImplementation(
+            ens,
+            0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae
+        );
+        ReverseRegistrar reverseRegistrar = new ReverseRegistrar(ens);
 
         ens.setSubnodeOwner(bytes32(0), keccak256("reverse"), deployer);
         ens.setSubnodeOwner(
@@ -3330,16 +3351,10 @@ contract HelloWorldScript is Script {
 
         // Step 2: Deploy wrapper, oracle, controller, resolver
         NameWrapper nameWrapper = new NameWrapper(ens, baseRegistrar, IMetadataService(deployer));
-        DummyOracle dummyOracle = new DummyOracle(100000000);
 
-        uint256[] memory priceTiers = new uint256[](5);
-        priceTiers[0] = 0;
-        priceTiers[1] = 0;
-        priceTiers[2] = 4;
-        priceTiers[3] = 2;
-        priceTiers[4] = 1;
-
-        StablePriceOracle priceOracle = new StablePriceOracle(AggregatorInterface(address(dummyOracle)), priceTiers);
+        /*
+        DeployOracle deployOracle = new DeployOracle();
+        StablePriceOracle priceOracle = deployOracle.deploy();
 
         ETHRegistrarController controller = new ETHRegistrarController(
             baseRegistrar,
@@ -3390,6 +3405,7 @@ contract HelloWorldScript is Script {
             false,
             0
         );
+        */
 
         new HelloWorld("hi forge!", 0);
 
@@ -3437,6 +3453,8 @@ Installing buffer in [..] (url: Some("https://github.com/ensdomains/buffer"), ta
 
 "#]],
             );
+
+    cmd.forge_fuse().args(["build", "--sizes"]).assert_success();
 
     let cmd = cmd.forge_fuse().arg("script").arg(script).args([
         "--ens-name",
