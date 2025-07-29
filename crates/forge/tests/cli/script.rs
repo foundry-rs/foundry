@@ -3290,12 +3290,26 @@ contract HelloWorld is Ownable {
     }
 }
 
-contract DeployCore {
-    function deploy(address deployer) external returns (ENSRegistry, BaseRegistrarImplementation, ReverseRegistrar) {
+// contract DeployCore {
+//     function deploy(address deployer) external returns (ENSRegistry, BaseRegistrarImplementation, ReverseRegistrar) {
+//
+//     }
+// }
+
+contract HelloWorldScript is Script {
+    address public deployer = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+
+    function run() public {
+        vm.startBroadcast(deployer);
+
+        // Step 1: Deploy core ENS contracts
+        // (ENSRegistry ens, BaseRegistrarImplementation baseRegistrar, ReverseRegistrar reverseRegistrar) =
+        //     new DeployCore().deploy(deployer);
+
         ENSRegistry ens = new ENSRegistry();
         BaseRegistrarImplementation baseRegistrar = new BaseRegistrarImplementation(
             ens,
-            0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae // namehash("eth")
+            0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae
         );
         ReverseRegistrar reverseRegistrar = new ReverseRegistrar(ens);
 
@@ -3305,26 +3319,14 @@ contract DeployCore {
             keccak256("addr"),
             address(reverseRegistrar)
         );
+
         ens.setSubnodeOwner(bytes32(0), keccak256("eth"), address(baseRegistrar));
-
-        return (ens, baseRegistrar, reverseRegistrar);
-    }
-}
-
-contract DeployWrapperAndController {
-    function deploy(
-        ENSRegistry ens,
-        BaseRegistrarImplementation baseRegistrar,
-        ReverseRegistrar reverseRegistrar,
-        address deployer
-    )
-        external
-        returns (NameWrapper, DummyOracle, StablePriceOracle, ETHRegistrarController, PublicResolver)
-    {
+        
+        // Step 2: Deploy wrapper, oracle, controller, resolver
         NameWrapper nameWrapper = new NameWrapper(ens, baseRegistrar, IMetadataService(deployer));
         DummyOracle dummyOracle = new DummyOracle(100000000);
 
-        uint256 ;
+        uint256[] memory priceTiers = new uint256[](5);
         priceTiers[0] = 0;
         priceTiers[1] = 0;
         priceTiers[2] = 4;
@@ -3343,39 +3345,19 @@ contract DeployWrapperAndController {
             ens
         );
 
-        nameWrapper.setController(address(controller), true);
-        baseRegistrar.addController(address(nameWrapper));
-        reverseRegistrar.setController(address(controller), true);
-
         PublicResolver publicResolver = new PublicResolver(
             ens,
             nameWrapper,
             address(controller),
             address(reverseRegistrar)
         );
-
+        nameWrapper.setController(address(controller), true);
+        baseRegistrar.addController(address(nameWrapper));
+        reverseRegistrar.setController(address(controller), true);
+        
         baseRegistrar.addController(address(controller));
         baseRegistrar.addController(deployer);
-
-        return (nameWrapper, dummyOracle, priceOracle, controller, publicResolver);
-    }
-}
-
-contract HelloWorldScript is Script {
-    address public deployer = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
-
-    function run() public {
-        vm.startBroadcast(deployer);
-
-        // Step 1: Deploy core ENS contracts
-        (ENSRegistry ens, BaseRegistrarImplementation baseRegistrar, ReverseRegistrar reverseRegistrar) =
-            new DeployCore().deploy(deployer);
-
-        // Step 2: Deploy wrapper, oracle, controller, resolver
-        (NameWrapper nameWrapper, DummyOracle dummyOracle, StablePriceOracle priceOracle,
-            ETHRegistrarController controller, PublicResolver publicResolver) =
-            new DeployWrapperAndController().deploy(ens, baseRegistrar, reverseRegistrar, deployer);
-
+        
         // Step 3: Register a name
         bytes32 commitment = controller.makeCommitment(
             "forge",
@@ -3383,7 +3365,7 @@ contract HelloWorldScript is Script {
             365 days,
             bytes32(0),
             address(publicResolver),
-            new bytes ,
+            new bytes[](0),
             false,
             0
         );
@@ -3398,7 +3380,7 @@ contract HelloWorldScript is Script {
             365 days,
             bytes32(0),
             address(publicResolver),
-            new bytes ,
+            new bytes[](0),
             false,
             0
         );
