@@ -1722,11 +1722,10 @@ impl Backend {
                     cache_db.commit(state);
                     gas_used += result.gas_used();
 
-                    // TODO: this is likely incomplete
                     // create the transaction from a request
                     let from = request.from.unwrap_or_default();
-                    let request =
-                        transaction_request_to_typed(WithOtherFields::new(request)).unwrap();
+                    let request = transaction_request_to_typed(WithOtherFields::new(request))
+                        .ok_or(BlockchainError::MissingRequiredFields)?;
                     let tx = build_typed_transaction(
                         request,
                         Signature::new(Default::default(), Default::default(), false),
