@@ -3,7 +3,7 @@ pragma solidity ^0.8.13;
 
 import {Test} from "forge-std/Test.sol";
 import {Counter} from "../src/Counter.sol";
-import {IPowerCalculator} from "../out/PowerCalculator/interface.sol";
+import {IPowerCalculator} from "../out/PowerCalculator.wasm/interface.sol";
 
 contract CounterTest is Test {
     Counter public counter;
@@ -12,7 +12,7 @@ contract CounterTest is Test {
     function setUp() public {
         // lslslsl
         powerCalculator = vm.deployCode(
-            "out/PowerCalculator/PowerCalculator.json"
+            "out/PowerCalculator.wasm/foundry.json"
         );
 
         // Deploy Counter with the PowerCalculator address

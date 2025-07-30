@@ -3,7 +3,7 @@ pragma solidity ^0.8.13;
 
 import {Script, console} from "forge-std/Script.sol";
 import {Counter} from "../src/Counter.sol";
-import {IPowerCalculator} from "../out/PowerCalculator/interface.sol";
+import {IPowerCalculator} from "../out/PowerCalculator.wasm/interface.sol";
 
 contract Deploy is Script {
     function run() external {
@@ -11,7 +11,7 @@ contract Deploy is Script {
 
         // Deploy WASM PowerCalculator
         bytes memory wasmBytecode = vm.getCode(
-            "out/PowerCalculator/PowerCalculator.json"
+            "out/PowerCalculator.wasm/foundry.json"
         );
         console.log("WASM bytecode size:", wasmBytecode.length);
 
