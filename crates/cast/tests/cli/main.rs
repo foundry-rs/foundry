@@ -1730,7 +1730,7 @@ casttest!(tx_raw, |_prj, cmd| {
 "#]]);
 });
 
-casttest!(tx_to_request, |_prj, cmd| {
+casttest!(tx_to_request_json, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
 
     // <https://etherscan.io/getRawTx?tx=0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e>
@@ -1743,31 +1743,17 @@ casttest!(tx_to_request, |_prj, cmd| {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-from                 0x199D5ED7F45F4eE35960cF22EAde2076e95B253F
-to                   0x91da5bf3F8Eb72724E6f50Ec6C3D199C6355c59c
-gasPrice             10539984136
-gasLimit             30000
-value                45219886169449676
-nonce                19540
-chainId              1
-type                 0
-
-"#]]);
-});
-
-casttest!(tx_to_request_json, |_prj, cmd| {
-    let rpc = next_http_rpc_endpoint();
-
-    // <https://etherscan.io/getRawTx?tx=0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e>
-    cmd.args([
-        "tx",
-        "0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e",
-        "--to-request",
-        "--json",
-        "--rpc-url",
-        rpc.as_str(),
-    ]).assert_success().stdout_eq(str![[r#"
-{"type":"0x0","chainId":"0x1","nonce":"0x4c54","gasPrice":"0x2743b6508","gas":"0x7530","to":"0x91da5bf3f8eb72724e6f50ec6c3d199c6355c59c","value":"0xa0a73f33e9e4cc","input":"0x","r":"0x428518b1748a08bbeb2392ea055b418538944d30adfc2accbbfa8362a401d3a4","s":"0x7d6093ab2580efd17c11b277de7664fce56e6953cae8e925bec3313399860470","v":"0x25","hash":"0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e","blockHash":"0x2cfe65be49863676b6dbc04d58176a14f39b123f1e2f4fea0383a2d82c2c50d0","blockNumber":"0xf7cad3","transactionIndex":"0x74","from":"0x199d5ed7f45f4ee35960cf22eade2076e95b253f"}
+{
+  "from": "0x199d5ed7f45f4ee35960cf22eade2076e95b253f",
+  "to": "0x91da5bf3f8eb72724e6f50ec6c3d199c6355c59c",
+  "gasPrice": "0x2743b6508",
+  "gas": "0x7530",
+  "value": "0xa0a73f33e9e4cc",
+  "input": "0x",
+  "nonce": "0x4c54",
+  "chainId": "0x1",
+  "type": "0x0"
+}
 
 "#]]);
 });

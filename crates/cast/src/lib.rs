@@ -763,13 +763,11 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let tx =
-    ///     cast.transaction(Some(tx_hash.to_string()), None, None, None, false, false, false).await?;
+    /// let tx = cast.transaction(Some(tx_hash.to_string()), None, None, None, false, false).await?;
     /// println!("{}", tx);
     /// # Ok(())
     /// # }
     /// ```
-    #[allow(clippy::too_many_arguments)]
     pub async fn transaction(
         &self,
         tx_hash: Option<String>,
@@ -778,7 +776,6 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         field: Option<String>,
         raw: bool,
         to_request: bool,
-        json: bool,
     ) -> Result<String> {
         let tx = if let Some(tx_hash) = tx_hash {
             let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
@@ -816,13 +813,9 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
             // to_value first to sort json object keys
             serde_json::to_value(&tx)?.to_string()
         } else if to_request {
-            if json {
-                serde_json::to_string_pretty(&TransactionRequest::from_recovered_transaction(
-                    tx.into(),
-                ))?
-            } else {
-                TransactionRequest::from_recovered_transaction(tx.into()).pretty()
-            }
+            serde_json::to_string_pretty(&TransactionRequest::from_recovered_transaction(
+                tx.into(),
+            ))?
         } else {
             tx.pretty()
         })
