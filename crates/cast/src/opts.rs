@@ -500,6 +500,10 @@ pub enum CastSubcommand {
 
         #[command(flatten)]
         rpc: RpcOpts,
+
+        /// If specified, the transaction will be converted to a TransactionRequest JSON format.
+        #[arg(long)]
+        to_request: bool,
     },
 
     /// Get the transaction receipt for a transaction.
