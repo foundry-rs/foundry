@@ -149,10 +149,25 @@ pub enum CastSubcommand {
     ToBytes32 {
         /// The hex data to convert.
         bytes: Option<String>,
+    },
 
-        /// Left-pad the data instead of right-pad.
+    /// Pads hex data to a specified length.
+    #[command(visible_aliases = &["pd"])]
+    Pad {
+        /// The hex data to pad.
+        data: Option<String>,
+
+        /// Left-pad the data (instead of right-pad).
         #[arg(long)]
         left: bool,
+
+        /// Right-pad the data (default).
+        #[arg(long, conflicts_with = "left")]
+        right: bool,
+
+        /// Target length in bytes (default: 32).
+        #[arg(long, default_value = "32")]
+        len: usize,
     },
 
     /// Convert an integer into a fixed point number.

@@ -1629,6 +1629,48 @@ impl SimpleCast {
         Ok(hex::encode_prefixed(bytes32))
     }
 
+    /// Pads hex data to a specified length
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// let padded = Cast::pad("abcd", false, 20)?;
+    /// assert_eq!(padded, "0xabcd000000000000000000000000000000000000");
+    ///
+    /// let padded = Cast::pad("abcd", true, 20)?;
+    /// assert_eq!(padded, "0x000000000000000000000000000000000000abcd");
+    ///
+    /// let padded = Cast::pad("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", false, 32)?;
+    /// assert_eq!(padded, "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2000000000000000000000000");
+    ///
+    /// let padded = Cast::pad("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", true, 32)?;
+    /// assert_eq!(padded, "0x000000000000000000000000C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    ///
+    /// let err = Cast::pad("1234", false, 1).unwrap_err();
+    /// assert_eq!(err.to_string(), "input length exceeds target length");
+    ///
+    /// let err = Cast::pad("foobar", false, 32).unwrap_err();
+    /// assert_eq!(err.to_string(), "input is not a valid hex");
+    ///
+    /// # Ok::<_, eyre::Report>(())
+    /// ```
+    pub fn pad(s: &str, left: bool, len: usize) -> Result<String> {
+        let s = strip_0x(s);
+        let hex_len = len * 2;
+
+        // Validate input
+        if s.len() > hex_len {
+            eyre::bail!("input length exceeds target length");
+        }
+        if !s.chars().all(|c| c.is_ascii_hexdigit()) {
+            eyre::bail!("input is not a valid hex");
+        }
+
+        Ok(if left { format!("0x{s:0>hex_len$}") } else { format!("0x{s:0<hex_len$}") })
+    }
+
     /// Decodes string from bytes32 value
     pub fn parse_bytes32_string(s: &str) -> Result<String> {
         let bytes = hex::decode(s)?;
