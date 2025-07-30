@@ -3,7 +3,8 @@ use crate::{
     linter::{LateLintPass, LintContext, Snippet},
     sol::{Severity, SolLint},
 };
-use solar_sema::hir::{self, ExprKind, TypeKind};
+use solar_ast::{LitKind, StrKind};
+use solar_sema::hir::{self, ElementaryType, ExprKind, ItemId, Res, TypeKind};
 
 declare_forge_lint!(
     UNSAFE_TYPECAST,
@@ -59,10 +60,7 @@ fn is_unsafe_typecast_hir(
 
 /// Infers the elementary type of a source expression.
 /// For cast chains, returns the ultimate source type, not intermediate cast results.
-fn infer_source_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::ElementaryType> {
-    use hir::{ElementaryType, ItemId, Lit as HirLit, Res};
-    use solar_ast::LitKind;
-
+fn infer_source_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<ElementaryType> {
     match &expr.kind {
         // Recursive cast: Type(val)
         ExprKind::Call(call_expr, args, _) => {
@@ -114,11 +112,9 @@ fn infer_source_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::El
 
 /// Checks if a type cast from source_type to target_type is unsafe.
 fn is_unsafe_elementary_typecast(
-    source_type: &hir::ElementaryType,
-    target_type: &hir::ElementaryType,
+    source_type: &ElementaryType,
+    target_type: &ElementaryType,
 ) -> bool {
-    use hir::ElementaryType;
-
     match (source_type, target_type) {
         // Numeric downcasts (smaller target size)
         (ElementaryType::UInt(source_size), ElementaryType::UInt(target_size))
