@@ -10,7 +10,7 @@ extern crate tracing;
 
 use alloy_primitives::{
     Bytes,
-    map::{B256HashMap, HashMap},
+    map::{B256HashMap, HashMap, rustc_hash::FxHashMap},
 };
 use analysis::SourceAnalysis;
 use eyre::Result;
@@ -208,8 +208,8 @@ impl DerefMut for HitMaps {
 /// Contains low-level data about hit counters for the instructions in the bytecode of a contract.
 #[derive(Clone, Debug)]
 pub struct HitMap {
+    hits: FxHashMap<u32, u32>,
     bytecode: Bytes,
-    hits: HashMap<u32, u32>,
 }
 
 impl HitMap {
