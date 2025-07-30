@@ -809,14 +809,14 @@ impl UIfmt for TransactionRequest {
         if let Some(value) = &self.value {
             out.push_str(&format!("value                {value}\n"));
         }
-        if let Some(bytes) = &self.input.input {
-            if !bytes.0.is_empty() {
-                out.push_str(&format!("input                {bytes}\n"));
-            }
-        } else if let Some(bytes) = &self.input.data {
-            if !bytes.0.is_empty() {
-                out.push_str(&format!("data                 {bytes}\n"));
-            }
+        if let Some(bytes) = &self.input.input
+            && !bytes.0.is_empty()
+        {
+            out.push_str(&format!("input                {bytes}\n"));
+        } else if let Some(bytes) = &self.input.data
+            && !bytes.0.is_empty()
+        {
+            out.push_str(&format!("data                 {bytes}\n"));
         }
         if let Some(nonce) = &self.nonce {
             out.push_str(&format!("nonce                {nonce}\n"));
