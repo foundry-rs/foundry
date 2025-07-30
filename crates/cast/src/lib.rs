@@ -775,6 +775,8 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         nonce: Option<u64>,
         field: Option<String>,
         raw: bool,
+        to_request: bool,
+        json: bool,
     ) -> Result<String> {
         let tx = if let Some(tx_hash) = tx_hash {
             let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
@@ -811,6 +813,14 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         } else if shell::is_json() {
             // to_value first to sort json object keys
             serde_json::to_value(&tx)?.to_string()
+        } else if to_request {
+            if json {
+                serde_json::to_string_pretty(&TransactionRequest::from_recovered_transaction(
+                    tx.into(),
+                ))?
+            } else {
+                TransactionRequest::from_recovered_transaction(tx.into()).pretty()
+            }
         } else {
             tx.pretty()
         })

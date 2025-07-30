@@ -7,9 +7,10 @@ use alloy_network::{
     AnyHeader, AnyReceiptEnvelope, AnyRpcBlock, AnyRpcTransaction, AnyTransactionReceipt,
     AnyTxEnvelope, ReceiptResponse,
 };
-use alloy_primitives::{Address, Bloom, Bytes, FixedBytes, I256, U8, U64, U256, Uint, hex};
+use alloy_primitives::{Address, Bloom, Bytes, FixedBytes, I256, TxKind, U8, U64, U256, Uint, hex};
 use alloy_rpc_types::{
     AccessListItem, Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt,
+    TransactionRequest,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
 use revm::context_interface::transaction::SignedAuthorization;
@@ -768,6 +769,81 @@ impl UIfmt for AnyRpcBlock {
 impl UIfmt for AnyRpcTransaction {
     fn pretty(&self) -> String {
         self.0.pretty()
+    }
+}
+
+impl UIfmt for TxKind {
+    fn pretty(&self) -> String {
+        match self {
+            TxKind::Create => "create".to_string(),
+            TxKind::Call(to) => format!("{}", to.pretty()),
+        }
+    }
+}
+
+impl UIfmt for TransactionRequest {
+    fn pretty(&self) -> String {
+        let mut out = String::new();
+
+        if let Some(from) = &self.from {
+            out.push_str(&format!("from                 {}\n", from.pretty()));
+        }
+        if let Some(to) = &self.to {
+            out.push_str(&format!("to                   {}\n", to.pretty()));
+        }
+        if let Some(gas_price) = &self.gas_price {
+            out.push_str(&format!("gasPrice             {}\n", gas_price));
+        }
+        if let Some(max_fee) = &self.max_fee_per_gas {
+            out.push_str(&format!("maxFeePerGas         {}\n", max_fee));
+        }
+        if let Some(priority_fee) = &self.max_priority_fee_per_gas {
+            out.push_str(&format!("maxPriorityFeePerGas {}\n", priority_fee));
+        }
+        if let Some(blob_fee) = &self.max_fee_per_blob_gas {
+            out.push_str(&format!("maxFeePerBlobGas     {}\n", blob_fee));
+        }
+        if let Some(gas) = &self.gas {
+            out.push_str(&format!("gasLimit             {}\n", gas));
+        }
+        if let Some(value) = &self.value {
+            out.push_str(&format!("value                {}\n", value));
+        }
+        if let Some(bytes) = &self.input.input {
+            if !bytes.0.is_empty() {
+                out.push_str(&format!("input                {}\n", bytes));
+            }
+        } else if let Some(bytes) = &self.input.data {
+            if !bytes.0.is_empty() {
+                out.push_str(&format!("data                 {}\n", bytes));
+            }
+        }
+        if let Some(nonce) = &self.nonce {
+            out.push_str(&format!("nonce                {}\n", nonce));
+        }
+        if let Some(chain_id) = &self.chain_id {
+            out.push_str(&format!("chainId              {}\n", chain_id));
+        }
+        if let Some(access_list) = &self.access_list {
+            out.push_str(&format!("accessList           {:?}\n", access_list));
+        }
+        if let Some(tx_type) = &self.transaction_type {
+            out.push_str(&format!("type                 {}\n", tx_type));
+        }
+        if let Some(hashes) = &self.blob_versioned_hashes {
+            out.push_str(&format!(
+                "blobVersionedHashes  [{}]\n",
+                hashes.iter().map(|h| h.pretty()).collect::<Vec<_>>().join(", ")
+            ));
+        }
+        if let Some(sidecar) = &self.sidecar {
+            out.push_str(&format!("sidecar              {:?}\n", sidecar));
+        }
+        if let Some(auth_list) = &self.authorization_list {
+            out.push_str(&format!("authorizationList    [{}]\n", auth_list.len()));
+        }
+
+        out.trim_end().to_string()
     }
 }
 
