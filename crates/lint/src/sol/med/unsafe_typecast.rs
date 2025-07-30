@@ -87,11 +87,9 @@ fn infer_source_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::El
         }
 
         // Handle literal strings/hex
-        ExprKind::Lit(HirLit { kind, .. }) => match kind {
-            LitKind::Str(_, bytes, _) => {
-                let byte_len = bytes.len().try_into().unwrap();
-                Some(ElementaryType::FixedBytes(solar_ast::TypeSize::new_fb_bytes(byte_len)))
-            }
+        ExprKind::Lit(hir::Lit { kind, .. }) => match kind {
+            LitKind::Str(StrKind::Hex, ..) => Some(ElementaryType::Bytes),
+            LitKind::Str(..) => Some(ElementaryType::String),
             LitKind::Address(_) => Some(ElementaryType::Address(false)),
             LitKind::Bool(_) => Some(ElementaryType::Bool),
 
