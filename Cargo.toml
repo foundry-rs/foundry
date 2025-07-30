@@ -364,10 +364,10 @@ idna_adapter = "=1.1.0"
 zip-extract = "=0.2.1"
 
 [patch.crates-io]
-solar-parse = { git = "https://github.com/0xrusowsky/solar", branch = "rusowsky/more-spans" }
-solar-sema = { git = "https://github.com/0xrusowsky/solar", branch = "rusowsky/more-spans" }
-solar-ast = { git = "https://github.com/0xrusowsky/solar", branch = "rusowsky/more-spans" }
-solar-interface = { git = "https://github.com/0xrusowsky/solar", branch = "rusowsky/more-spans" }
+# solar-parse = { git = "https://github.com/paradigmxyz/solar", branch = "main" }
+# solar-sema = { git = "https://github.com/paradigmxyz/solar", branch = "main" }
+# solar-ast = { git = "https://github.com/paradigmxyz/solar", branch = "main" }
+# solar-interface = { git = "https://github.com/paradigmxyz/solar", branch = "main" }
 
 figment = { git = "https://github.com/DaniPopes/Figment", branch = "less-mono" }
 

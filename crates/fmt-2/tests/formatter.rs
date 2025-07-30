@@ -152,7 +152,7 @@ macro_rules! fmt_tests {
 fmt_tests! {
     #[ignore = "annotations are not valid Solidity"]
     Annotation,
-    ArrayExpressions, // OK? Is it acceptable?
+    ArrayExpressions, // OK? Is it acceptable? (data loc keyword won't have a span in solar)
     BlockComments, // OK
     BlockCommentsFunction, // OK
     ConditionalOperatorExpression, //OK
@@ -197,7 +197,7 @@ fmt_tests! {
     TrailingComma, // OK (solar error)
     TryStatement, // OK? is it acceptable?
     TypeDefinition, // OK
-    UnitExpression, // OK
+    UnitExpression, // OK (subdenom word won't have a span in solar)
     UsingDirective, // OK
     VariableAssignment, // OK? is it acceptable?
     VariableDefinition, // OK? is it acceptable? (solar forces constants to be initialized)

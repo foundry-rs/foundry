@@ -12,11 +12,7 @@ use solar_parse::{
     interface::{BytePos, SourceMap},
     Cursor,
 };
-use std::{
-    borrow::Cow,
-    collections::{BTreeSet, HashMap},
-    fmt::Debug,
-};
+use std::{borrow::Cow, collections::HashMap, fmt::Debug};
 
 pub(super) struct State<'sess, 'ast> {
     pub(crate) s: pp::Printer,
@@ -1210,19 +1206,17 @@ impl<'ast> State<'_, 'ast> {
             pre_init_size += mutability.to_str().len() + 1;
         }
         if let Some(data_location) = data_location {
-            if self
-                .print_comments(
-                    data_location.span.lo(),
-                    CommentConfig::skip_ws().mixed_prev_space(),
-                )
-                .is_none()
-            {
-                self.space_or_nbsp(is_var_def);
-            }
+            self.space_or_nbsp(is_var_def);
             self.word(data_location.to_str());
             pre_init_size += data_location.to_str().len() + 1;
         }
         if let Some(override_) = override_ {
+            if self
+                .print_comments(override_.span.lo(), CommentConfig::skip_ws().mixed_prev_space())
+                .is_none()
+            {
+                self.space_or_nbsp(is_var_def);
+            }
             self.space_or_nbsp(is_var_def);
             self.ibox(0);
             self.print_override(override_);
@@ -1890,12 +1884,7 @@ impl<'ast> State<'_, 'ast> {
             ast::ExprKind::Lit(lit, unit) => {
                 self.print_lit(lit);
                 if let Some(unit) = unit {
-                    if self
-                        .print_comments(unit.span.lo(), CommentConfig::skip_ws().mixed_prev_space())
-                        .is_none()
-                    {
-                        self.nbsp();
-                    }
+                    self.nbsp();
                     self.word(unit.to_str());
                 }
             }
