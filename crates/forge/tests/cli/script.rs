@@ -2,14 +2,14 @@
 
 use crate::constants::TEMPLATE_CONTRACT;
 use alloy_hardforks::EthereumHardfork;
-use alloy_primitives::{address, hex, Address, Bytes};
-use anvil::{spawn, NodeConfig};
+use alloy_primitives::{Address, Bytes, address, hex};
+use anvil::{NodeConfig, spawn};
 use forge_script_sequence::ScriptSequence;
 use foundry_test_utils::{
+    ScriptOutcome, ScriptTester,
     rpc::{self, next_http_archive_rpc_url},
     snapbox::IntoData,
     util::{OTHER_SOLC_VERSION, SOLC_VERSION},
-    ScriptOutcome, ScriptTester,
 };
 use regex::Regex;
 use serde_json::Value;
@@ -902,7 +902,7 @@ forgetest_async!(can_deploy_with_custom_create2_notmatched_bytecode, |prj, cmd| 
         .broadcast(ScriptOutcome::ScriptFailed);
 });
 
-forgetest_async!(canot_deploy_with_nonexist_create2, |prj, cmd| {
+forgetest_async!(cannot_deploy_with_nonexist_create2, |prj, cmd| {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
     let create2 = address!("0x0000000000000000000000000000000000b4956c");
@@ -1376,7 +1376,7 @@ forgetest_async!(does_script_override_correctly, |prj, cmd| {
     tester.add_sig("CheckOverrides", "run()").simulate(ScriptOutcome::OkNoEndpoint);
 });
 
-forgetest_async!(assert_tx_origin_is_not_overritten, |prj, cmd| {
+forgetest_async!(assert_tx_origin_is_not_overwritten, |prj, cmd| {
     cmd.args(["init", "--force"])
         .arg(prj.root())
         .assert_success()
@@ -2245,11 +2245,12 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 "#]]);
 
-    assert!(!api
-        .get_code(address!("0x4e59b44847b379578588920cA78FbF26c0B4956C"), Default::default())
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        !api.get_code(address!("0x4e59b44847b379578588920cA78FbF26c0B4956C"), Default::default())
+            .await
+            .unwrap()
+            .is_empty()
+    );
 });
 
 forgetest_init!(can_get_script_wallets, |prj, cmd| {
@@ -2292,7 +2293,7 @@ Script ran successfully.
 "#]]);
 });
 
-forgetest_init!(can_remeber_keys, |prj, cmd| {
+forgetest_init!(can_remember_keys, |prj, cmd| {
     let script = prj
         .add_source(
             "Foo",
@@ -2664,10 +2665,7 @@ forgetest_init!(should_revert_on_address_opcode, |prj, cmd| {
     .unwrap();
 
     cmd.arg("script").arg("ScriptWithAddress").assert_failure().stderr_eq(str![[r#"
-...
-Error: Usage of `address(this)` detected in script contract. Script contracts are ephemeral and their addresses should not be relied upon.
-Error: script failed: <empty revert data>
-...
+Error: script failed: Usage of `address(this)` detected in script contract. Script contracts are ephemeral and their addresses should not be relied upon.
 
 "#]]);
 

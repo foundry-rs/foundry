@@ -1,6 +1,5 @@
 use super::{MixedCaseFunction, MixedCaseVariable};
 use crate::{
-    declare_forge_lint,
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
@@ -15,10 +14,10 @@ declare_forge_lint!(
 
 impl<'ast> EarlyLintPass<'ast> for MixedCaseFunction {
     fn check_item_function(&mut self, ctx: &LintContext<'_>, func: &'ast ItemFunction<'ast>) {
-        if let Some(name) = func.header.name {
-            if !is_mixed_case(name.as_str(), true) {
-                ctx.emit(&MIXED_CASE_FUNCTION, name.span);
-            }
+        if let Some(name) = func.header.name
+            && !is_mixed_case(name.as_str(), true)
+        {
+            ctx.emit(&MIXED_CASE_FUNCTION, name.span);
         }
     }
 }
@@ -36,12 +35,11 @@ impl<'ast> EarlyLintPass<'ast> for MixedCaseVariable {
         ctx: &LintContext<'_>,
         var: &'ast VariableDefinition<'ast>,
     ) {
-        if var.mutability.is_none() {
-            if let Some(name) = var.name {
-                if !is_mixed_case(name.as_str(), false) {
-                    ctx.emit(&MIXED_CASE_VARIABLE, name.span);
-                }
-            }
+        if var.mutability.is_none()
+            && let Some(name) = var.name
+            && !is_mixed_case(name.as_str(), false)
+        {
+            ctx.emit(&MIXED_CASE_VARIABLE, name.span);
         }
     }
 }
@@ -57,7 +55,7 @@ pub fn is_mixed_case(s: &str, is_fn: bool) -> bool {
 
     // Remove leading/trailing underscores like `heck` does
     if s.trim_matches('_') == format!("{}", heck::AsLowerCamelCase(s)).as_str() {
-        return true
+        return true;
     }
 
     // Ignore `fn test*`, `fn invariant_*`, and `fn statefulFuzz*` patterns, as they usually contain

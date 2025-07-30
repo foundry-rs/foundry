@@ -522,6 +522,11 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function getBlockTimestamp() external view returns (uint256 timestamp);
 
+    /// Gets the RLP encoded block header for a given block number.
+    /// Returns the block header in the same format as `cast block <block_number> --raw`.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getRawBlockHeader(uint256 blockNumber) external view returns (bytes memory rlpHeader);
+
     /// Sets `block.blobbasefee`
     #[cheatcode(group = Evm, safety = Unsafe)]
     function blobBaseFee(uint256 newBlobBaseFee) external;
@@ -2955,13 +2960,13 @@ impl PartialEq for ForgeContext {
             (_, Self::ScriptGroup) => {
                 matches!(self, Self::ScriptDryRun | Self::ScriptBroadcast | Self::ScriptResume)
             }
-            (Self::Test, Self::Test) |
-            (Self::Snapshot, Self::Snapshot) |
-            (Self::Coverage, Self::Coverage) |
-            (Self::ScriptDryRun, Self::ScriptDryRun) |
-            (Self::ScriptBroadcast, Self::ScriptBroadcast) |
-            (Self::ScriptResume, Self::ScriptResume) |
-            (Self::Unknown, Self::Unknown) => true,
+            (Self::Test, Self::Test)
+            | (Self::Snapshot, Self::Snapshot)
+            | (Self::Coverage, Self::Coverage)
+            | (Self::ScriptDryRun, Self::ScriptDryRun)
+            | (Self::ScriptBroadcast, Self::ScriptBroadcast)
+            | (Self::ScriptResume, Self::ScriptResume)
+            | (Self::Unknown, Self::Unknown) => true,
             _ => false,
         }
     }

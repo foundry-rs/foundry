@@ -186,7 +186,7 @@ Be aware that _how_ you communicate requests and reviews in your feedback can ha
 
 ##### Abandoned or stale pull requests
 
-If a pull request appears to be abandoned or stalled, it is polite to first check with the contributor to see if they intend to continue the work before checking if they would mind if you took it over (especially if it just has nits left). When doing so, it is courteous to give the original contributor credit for the work they started, either by preserving their name and e-mail address in the commit log, or by using the `Author: ` or `Co-authored-by: ` metadata tag in the commits.
+If a pull request appears to be abandoned or stalled, it is polite to first check with the contributor to see if they intend to continue the work before checking if they would mind if you took it over (especially if it just has nits left). When doing so, it is courteous to give the original contributor credit for the work they started, either by preserving their name and e-mail address in the commit log, or by using the `Author:` or `Co-authored-by:` metadata tag in the commits.
 
 _Adapted from the [ethers-rs contributing guide](https://github.com/gakonst/ethers-rs/blob/master/CONTRIBUTING.md)_.
 
@@ -198,9 +198,9 @@ Releases are automatically done by the release workflow when a tag is pushed, ho
 2. Update documentation links
 3. Perform a final audit for breaking changes.
 
-[rust-coc]: https://github.com/rust-lang/rust/blob/master/CODE_OF_CONDUCT.md
+[rust-coc]: https://www.rust-lang.org/policies/code-of-conduct
 [dev-tg]: https://t.me/foundry_rs
 [foundry-book]: https://github.com/foundry-rs/foundry-book
 [support-tg]: https://t.me/foundry_support
 [mcve]: https://stackoverflow.com/help/mcve
-[hiding-a-comment]: https://help.github.com/articles/managing-disruptive-comments/#hiding-a-comment
+[hiding-a-comment]: https://docs.github.com/en/communities/moderating-comments-and-conversations/managing-disruptive-comments

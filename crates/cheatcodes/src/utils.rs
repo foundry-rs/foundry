@@ -1,15 +1,15 @@
 //! Implementations of [`Utilities`](spec::Group::Utilities) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
-use alloy_dyn_abi::{eip712_parser::EncodeType, DynSolType, DynSolValue, Resolver, TypedData};
+use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver, TypedData, eip712_parser::EncodeType};
 use alloy_ens::namehash;
-use alloy_primitives::{aliases::B32, keccak256, map::HashMap, Bytes, B64, U256};
+use alloy_primitives::{B64, Bytes, U256, aliases::B32, keccak256, map::HashMap};
 use alloy_sol_types::SolValue;
-use foundry_common::{fs, TYPE_BINDING_PREFIX};
+use foundry_common::{TYPE_BINDING_PREFIX, fs};
 use foundry_config::fs_permissions::FsAccessKind;
 use foundry_evm_core::constants::DEFAULT_CREATE2_DEPLOYER;
 use proptest::prelude::Strategy;
-use rand::{seq::SliceRandom, Rng, RngCore};
+use rand::{Rng, RngCore, seq::SliceRandom};
 use revm::context::JournalTr;
 use std::path::PathBuf;
 
@@ -157,14 +157,14 @@ impl Cheatcode for pauseTracingCall {
         ccx: &mut crate::CheatsCtxt,
         executor: &mut dyn CheatcodesExecutor,
     ) -> Result {
-        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
+        let Some(tracer) = executor.tracing_inspector() else {
             // No tracer -> nothing to pause
-            return Ok(Default::default())
+            return Ok(Default::default());
         };
 
         // If paused earlier, ignore the call
         if ccx.state.ignored_traces.last_pause_call.is_some() {
-            return Ok(Default::default())
+            return Ok(Default::default());
         }
 
         let cur_node = &tracer.traces().nodes().last().expect("no trace nodes");
@@ -180,14 +180,14 @@ impl Cheatcode for resumeTracingCall {
         ccx: &mut crate::CheatsCtxt,
         executor: &mut dyn CheatcodesExecutor,
     ) -> Result {
-        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
+        let Some(tracer) = executor.tracing_inspector() else {
             // No tracer -> nothing to unpause
-            return Ok(Default::default())
+            return Ok(Default::default());
         };
 
         let Some(start) = ccx.state.ignored_traces.last_pause_call.take() else {
             // Nothing to unpause
-            return Ok(Default::default())
+            return Ok(Default::default());
         };
 
         let node = &tracer.traces().nodes().last().expect("no trace nodes");
@@ -240,7 +240,7 @@ impl Cheatcode for copyStorageCall {
             let from_storage = from_account.storage.clone();
             if let Ok(mut to_account) = ccx.ecx.journaled_state.load_account(*to) {
                 to_account.storage = from_storage;
-                if let Some(ref mut arbitrary_storage) = &mut ccx.state.arbitrary_storage {
+                if let Some(arbitrary_storage) = &mut ccx.state.arbitrary_storage {
                     arbitrary_storage.mark_copy(from, to);
                 }
             }
@@ -291,7 +291,7 @@ fn random_uint(state: &mut Cheatcodes, bits: Option<U256>, bounds: Option<(U256,
             .new_tree(state.test_runner())
             .unwrap()
             .current()
-            .abi_encode())
+            .abi_encode());
     }
 
     if let Some((min, max)) = bounds {
@@ -304,7 +304,7 @@ fn random_uint(state: &mut Cheatcodes, bits: Option<U256>, bounds: Option<(U256,
             random_number %= inclusive_modulo;
         }
         random_number += min;
-        return Ok(random_number.abi_encode())
+        return Ok(random_number.abi_encode());
     }
 
     // Generate random `uint256` value.

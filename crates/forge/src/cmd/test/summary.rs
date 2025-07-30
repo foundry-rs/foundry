@@ -1,6 +1,6 @@
 use crate::cmd::test::TestOutcome;
-use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Color, Row, Table};
-use foundry_common::reports::{report_kind, ReportKind};
+use comfy_table::{Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS};
+use foundry_common::reports::{ReportKind, report_kind};
 use foundry_evm::executors::invariant::InvariantMetrics;
 use itertools::Itertools;
 use serde_json::json;

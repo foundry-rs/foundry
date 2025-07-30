@@ -1,3 +1,4 @@
+use crate::{DepIdentifier, FOUNDRY_LOCK, Lockfile};
 use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use foundry_cli::{
@@ -5,7 +6,7 @@ use foundry_cli::{
     utils::{CommandUtils, Git, LoadConfig},
 };
 use foundry_common::fs;
-use foundry_config::{impl_figment_convert_basic, Config};
+use foundry_config::{Config, impl_figment_convert_basic};
 use regex::Regex;
 use semver::Version;
 use std::{
@@ -115,7 +116,22 @@ impl DependencyInstallOpts {
         let install_lib_dir = config.install_lib_dir();
         let libs = git.root.join(install_lib_dir);
 
-        if dependencies.is_empty() && !self.no_git {
+        let mut lockfile = Lockfile::new(&config.root);
+        if !no_git {
+            lockfile = lockfile.with_git(&git);
+
+            // Check if submodules are uninitialized, if so, we need to fetch all submodules
+            // This is to ensure that foundry.lock syncs successfully and doesn't error out, when
+            // looking for commits/tags in submodules
+            if git.submodules_uninitialized()? {
+                trace!(lib = %libs.display(), "submodules uninitialized");
+                git.submodule_update(false, false, false, true, Some(&libs))?;
+            }
+        }
+
+        let out_of_sync_deps = lockfile.sync(config.install_lib_dir())?;
+
+        if dependencies.is_empty() && !no_git {
             // Use the root of the git repository to look for submodules.
             let root = Git::root_of(git.root)?;
             match git.has_submodules(Some(&root)) {
@@ -124,10 +140,10 @@ impl DependencyInstallOpts {
 
                     // recursively fetch all submodules (without fetching latest)
                     git.submodule_update(false, false, false, true, Some(&libs))?;
+                    lockfile.write()?;
                 }
-
                 Err(err) => {
-                    warn!(?err, "Failed to check for submodules");
+                    sh_err!("Failed to check for submodules: {err}")?;
                 }
                 _ => {
                     // no submodules, nothing to do
@@ -153,6 +169,7 @@ impl DependencyInstallOpts {
 
             // this tracks the actual installed tag
             let installed_tag;
+            let mut dep_id = None;
             if no_git {
                 installed_tag = installer.install_as_folder(&dep, &path)?;
             } else {
@@ -161,15 +178,33 @@ impl DependencyInstallOpts {
                 }
                 installed_tag = installer.install_as_submodule(&dep, &path)?;
 
+                let mut new_insertion = false;
                 // Pin branch to submodule if branch is used
-                if let Some(branch) = &installed_tag {
+                if let Some(tag_or_branch) = &installed_tag {
                     // First, check if this tag has a branch
-                    if git.has_branch(branch, &path)? {
+                    dep_id = Some(DepIdentifier::resolve_type(&git, &path, tag_or_branch)?);
+                    if git.has_branch(tag_or_branch, &path)?
+                        && dep_id.as_ref().is_some_and(|id| id.is_branch())
+                    {
                         // always work with relative paths when directly modifying submodules
                         git.cmd()
-                            .args(["submodule", "set-branch", "-b", branch])
+                            .args(["submodule", "set-branch", "-b", tag_or_branch])
                             .arg(rel_path)
                             .exec()?;
+
+                        let rev = git.get_rev(tag_or_branch, &path)?;
+
+                        dep_id = Some(DepIdentifier::Branch {
+                            name: tag_or_branch.to_string(),
+                            rev,
+                            r#override: false,
+                        });
+                    }
+
+                    trace!(?dep_id, ?tag_or_branch, "resolved dep id");
+                    if let Some(dep_id) = &dep_id {
+                        new_insertion = true;
+                        lockfile.insert(rel_path.to_path_buf(), dep_id.clone());
                     }
 
                     if commit {
@@ -180,14 +215,31 @@ impl DependencyInstallOpts {
                     }
                 }
 
+                if new_insertion
+                    || out_of_sync_deps.as_ref().is_some_and(|o| !o.is_empty())
+                    || !lockfile.exists()
+                {
+                    lockfile.write()?;
+                }
+
                 // commit the installation
                 if commit {
                     let mut msg = String::with_capacity(128);
                     msg.push_str("forge install: ");
                     msg.push_str(dep.name());
+
                     if let Some(tag) = &installed_tag {
                         msg.push_str("\n\n");
-                        msg.push_str(tag);
+
+                        if let Some(dep_id) = &dep_id {
+                            msg.push_str(dep_id.to_string().as_str());
+                        } else {
+                            msg.push_str(tag);
+                        }
+                    }
+
+                    if !lockfile.is_empty() {
+                        git.root(&config.root).add(Some(FOUNDRY_LOCK))?;
                     }
                     git.commit(&msg)?;
                 }
@@ -196,7 +248,12 @@ impl DependencyInstallOpts {
             let mut msg = format!("    {} {}", "Installed".green(), dep.name);
             if let Some(tag) = dep.tag.or(installed_tag) {
                 msg.push(' ');
-                msg.push_str(tag.as_str());
+
+                if let Some(dep_id) = dep_id {
+                    msg.push_str(dep_id.to_string().as_str());
+                } else {
+                    msg.push_str(tag.as_str());
+                }
             }
             sh_println!("{msg}")?;
         }
@@ -206,6 +263,7 @@ impl DependencyInstallOpts {
             config.libs.push(install_lib_dir.to_path_buf());
             config.update_libs()?;
         }
+
         Ok(())
     }
 }
@@ -306,7 +364,7 @@ impl Installer<'_> {
             for &prefix in common_prefixes {
                 if let Some(rem) = tag.strip_prefix(prefix) {
                     maybe_semver = rem;
-                    break
+                    break;
                 }
             }
             match Version::parse(maybe_semver) {
@@ -362,21 +420,17 @@ impl Installer<'_> {
             if e.to_string().contains("did not match any file(s) known to git") {
                 e = eyre::eyre!("Tag: \"{tag}\" not found for repo \"{url}\"!")
             }
-            return Err(e)
+            return Err(e);
         }
 
-        if is_branch {
-            Ok(tag)
-        } else {
-            Ok(String::new())
-        }
+        if is_branch { Ok(tag) } else { Ok(String::new()) }
     }
 
     /// disambiguate tag if it is a version tag
     fn match_tag(self, tag: &str, path: &Path) -> Result<String> {
         // only try to match if it looks like a version tag
         if !DEPENDENCY_VERSION_TAG_REGEX.is_match(tag) {
-            return Ok(tag.into())
+            return Ok(tag.into());
         }
 
         // generate candidate list by filtering `git tag` output, valid ones are those "starting
@@ -394,13 +448,13 @@ impl Installer<'_> {
 
         // no match found, fall back to the user-provided tag
         if candidates.is_empty() {
-            return Ok(tag.into())
+            return Ok(tag.into());
         }
 
         // have exact match
         for candidate in &candidates {
             if candidate == tag {
-                return Ok(tag.into())
+                return Ok(tag.into());
             }
         }
 
@@ -410,7 +464,7 @@ impl Installer<'_> {
             let input = prompt!(
                 "Found a similar version tag: {matched_tag}, do you want to use this instead? [Y/n] "
             )?;
-            return if match_yn(input) { Ok(matched_tag.clone()) } else { Ok(tag.into()) }
+            return if match_yn(input) { Ok(matched_tag.clone()) } else { Ok(tag.into()) };
         }
 
         // multiple candidates, ask the user to choose one or skip
@@ -433,7 +487,7 @@ impl Installer<'_> {
                 Ok(i) if (1..=n_candidates).contains(&i) => {
                     let c = &candidates[i];
                     sh_println!("[{i}] {c} selected")?;
-                    return Ok(c.clone())
+                    return Ok(c.clone());
                 }
                 _ => continue,
             }
@@ -456,13 +510,13 @@ impl Installer<'_> {
 
         // no match found, fall back to the user-provided tag
         if candidates.is_empty() {
-            return Ok(None)
+            return Ok(None);
         }
 
         // have exact match
         for candidate in &candidates {
             if candidate == tag {
-                return Ok(Some(tag.to_string()))
+                return Ok(Some(tag.to_string()));
             }
         }
 
@@ -472,7 +526,7 @@ impl Installer<'_> {
             let input = prompt!(
                 "Found a similar branch: {matched_tag}, do you want to use this instead? [Y/n] "
             )?;
-            return if match_yn(input) { Ok(Some(matched_tag.clone())) } else { Ok(None) }
+            return if match_yn(input) { Ok(Some(matched_tag.clone())) } else { Ok(None) };
         }
 
         // multiple candidates, ask the user to choose one or skip
@@ -492,7 +546,7 @@ impl Installer<'_> {
         // default selection, return None
         if input.is_empty() {
             sh_println!("Canceled branch matching")?;
-            return Ok(None)
+            return Ok(None);
         }
 
         // match user input, 0 indicates skipping and use original tag

@@ -1,6 +1,6 @@
 //! Visitor helpers to traverse the [solang Solidity Parse Tree](solang_parser::pt).
 
-use crate::solang_ext::{pt::*, CodeLocationExt};
+use crate::solang_ext::{CodeLocationExt, pt::*};
 
 /// A trait that is invoked while traversing the Solidity Parse Tree.
 /// Each method of the [Visitor] trait is a hook that can be potentially overridden.
@@ -412,11 +412,7 @@ where
     where
         V: Visitor,
     {
-        if let Some(inner) = self.as_mut() {
-            inner.visit(v)
-        } else {
-            Ok(())
-        }
+        if let Some(inner) = self.as_mut() { inner.visit(v) } else { Ok(()) }
     }
 }
 

@@ -1,20 +1,21 @@
 //! Implementations of [`Evm`](spec::Group::Evm) cheatcodes.
 
 use crate::{
-    inspector::{Ecx, RecordDebugStepInfo},
     BroadcastableTransaction, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Error, Result,
     Vm::*,
+    inspector::{Ecx, RecordDebugStepInfo},
 };
 use alloy_consensus::TxEnvelope;
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{map::HashMap, Address, Bytes, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, map::HashMap};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use foundry_common::fs::{read_json_file, write_json_file};
 use foundry_evm_core::{
+    ContextExt,
     backend::{DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
-    ContextExt,
+    utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
 use foundry_evm_traces::StackSnapshotType;
 use itertools::Itertools;
@@ -22,11 +23,11 @@ use rand::Rng;
 use revm::{
     bytecode::Bytecode,
     context::{Block, JournalTr},
-    primitives::{hardfork::SpecId, KECCAK_EMPTY},
+    primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::Account,
 };
 use std::{
-    collections::{btree_map::Entry, BTreeMap},
+    collections::{BTreeMap, btree_map::Entry},
     fmt::Display,
     path::Path,
 };
@@ -133,14 +134,14 @@ impl Display for AccountStateDiffs {
             writeln!(f, "label: {label}")?;
         }
         // Print balance diff if changed.
-        if let Some(balance_diff) = &self.balance_diff {
-            if balance_diff.previous_value != balance_diff.new_value {
-                writeln!(
-                    f,
-                    "- balance diff: {} → {}",
-                    balance_diff.previous_value, balance_diff.new_value
-                )?;
-            }
+        if let Some(balance_diff) = &self.balance_diff
+            && balance_diff.previous_value != balance_diff.new_value
+        {
+            writeln!(
+                f,
+                "- balance diff: {} → {}",
+                balance_diff.previous_value, balance_diff.new_value
+            )?;
         }
         // Print state diff if any.
         if !&self.state_diff.is_empty() {
@@ -263,13 +264,13 @@ impl Cheatcode for dumpStateCall {
 
         // Do not include system account or empty accounts in the dump.
         let skip = |key: &Address, val: &Account| {
-            key == &CHEATCODE_ADDRESS ||
-                key == &CALLER ||
-                key == &HARDHAT_CONSOLE_ADDRESS ||
-                key == &TEST_CONTRACT_ADDRESS ||
-                key == &ccx.caller ||
-                key == &ccx.state.config.evm_opts.sender ||
-                val.is_empty()
+            key == &CHEATCODE_ADDRESS
+                || key == &CALLER
+                || key == &HARDHAT_CONSOLE_ADDRESS
+                || key == &TEST_CONTRACT_ADDRESS
+                || key == &ccx.caller
+                || key == &ccx.state.config.evm_opts.sender
+                || val.is_empty()
         };
 
         let alloc = ccx
@@ -455,8 +456,7 @@ impl Cheatcode for getBlobhashesCall {
 impl Cheatcode for rollCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newHeight } = self;
-        ensure!(*newHeight <= U256::from(u64::MAX), "block height must be less than 2^64 - 1");
-        ccx.ecx.block.number = newHeight.saturating_to();
+        ccx.ecx.block.number = *newHeight;
         Ok(Default::default())
     }
 }
@@ -480,8 +480,7 @@ impl Cheatcode for txGasPriceCall {
 impl Cheatcode for warpCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { newTimestamp } = self;
-        ensure!(*newTimestamp <= U256::from(u64::MAX), "timestamp must be less than 2^64 - 1");
-        ccx.ecx.block.timestamp = newTimestamp.saturating_to();
+        ccx.ecx.block.timestamp = *newTimestamp;
         Ok(Default::default())
     }
 }
@@ -501,8 +500,11 @@ impl Cheatcode for blobBaseFeeCall {
             "`blobBaseFee` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
-        let is_prague = ccx.ecx.cfg.spec >= SpecId::PRAGUE;
-        ccx.ecx.block.set_blob_excess_gas_and_price((*newBlobBaseFee).to(), is_prague);
+
+        ccx.ecx.block.set_blob_excess_gas_and_price(
+            (*newBlobBaseFee).to(),
+            get_blob_base_fee_update_fraction_by_spec_id(ccx.ecx.cfg.spec),
+        );
         Ok(Default::default())
     }
 }
@@ -872,8 +874,8 @@ impl Cheatcode for setBlockhashCall {
 
 impl Cheatcode for startDebugTraceRecordingCall {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
-        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_mut()) else {
-            return Err(Error::from("no tracer initiated, consider adding -vvv flag"))
+        let Some(tracer) = executor.tracing_inspector() else {
+            return Err(Error::from("no tracer initiated, consider adding -vvv flag"));
         };
 
         let mut info = RecordDebugStepInfo {
@@ -903,12 +905,12 @@ impl Cheatcode for startDebugTraceRecordingCall {
 
 impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
-        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_mut()) else {
-            return Err(Error::from("no tracer initiated, consider adding -vvv flag"))
+        let Some(tracer) = executor.tracing_inspector() else {
+            return Err(Error::from("no tracer initiated, consider adding -vvv flag"));
         };
 
         let Some(record_info) = ccx.state.record_debug_steps_info else {
-            return Err(Error::from("nothing recorded"))
+            return Err(Error::from("nothing recorded"));
         };
 
         // Use the trace nodes to flatten the call trace
@@ -1076,10 +1078,11 @@ fn inner_stop_gas_snapshot(
             .retain(|record| record.group != group && record.name != name);
 
         // Clear last snapshot cache if we have an exact match.
-        if let Some((snapshot_group, snapshot_name)) = &ccx.state.gas_metering.active_gas_snapshot {
-            if snapshot_group == &group && snapshot_name == &name {
-                ccx.state.gas_metering.active_gas_snapshot = None;
-            }
+        if let Some((snapshot_group, snapshot_name)) = &ccx.state.gas_metering.active_gas_snapshot
+            && snapshot_group == &group
+            && snapshot_name == &name
+        {
+            ccx.state.gas_metering.active_gas_snapshot = None;
         }
 
         Ok(value.abi_encode())
@@ -1200,8 +1203,8 @@ fn get_recorded_state_diffs(state: &mut Cheatcodes) -> BTreeMap<Address, Account
             .iter()
             .flatten()
             .filter(|account_access| {
-                !account_access.storageAccesses.is_empty() ||
-                    account_access.oldBalance != account_access.newBalance
+                !account_access.storageAccesses.is_empty()
+                    || account_access.oldBalance != account_access.newBalance
             })
             .for_each(|account_access| {
                 // Record account balance diffs.
@@ -1254,9 +1257,9 @@ fn get_recorded_state_diffs(state: &mut Cheatcodes) -> BTreeMap<Address, Account
 
 /// Helper function to set / unset cold storage slot of the target address.
 fn set_cold_slot(ccx: &mut CheatsCtxt, target: Address, slot: U256, cold: bool) {
-    if let Some(account) = ccx.ecx.journaled_state.state.get_mut(&target) {
-        if let Some(storage_slot) = account.storage.get_mut(&slot) {
-            storage_slot.is_cold = cold;
-        }
+    if let Some(account) = ccx.ecx.journaled_state.state.get_mut(&target)
+        && let Some(storage_slot) = account.storage.get_mut(&slot)
+    {
+        storage_slot.is_cold = cold;
     }
 }

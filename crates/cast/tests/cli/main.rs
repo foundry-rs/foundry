@@ -3,7 +3,7 @@
 use alloy_chains::NamedChain;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{TransactionBuilder, TransactionResponse};
-use alloy_primitives::{address, b256, Bytes, B256};
+use alloy_primitives::{B256, Bytes, address, b256, hex};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::{BlockNumberOrTag, Index, TransactionRequest};
 use anvil::NodeConfig;
@@ -12,6 +12,7 @@ use foundry_test_utils::{
         next_etherscan_api_key, next_http_archive_rpc_url, next_http_rpc_endpoint,
         next_rpc_endpoint, next_ws_rpc_endpoint,
     },
+    snapbox::IntoData as _,
     str,
     util::OutputExt,
 };
@@ -89,7 +90,7 @@ Display options:
           - 4 (-vvvv): Print execution traces for all tests, and setup traces for failing tests.
           - 5 (-vvvvv): Print execution and setup traces for all tests, including storage changes.
 
-Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html
+Find more information in the book: https://getfoundry.sh/cast/overview
 
 "#]]);
 });
@@ -141,6 +142,28 @@ transactions:        [
 "#]]);
 });
 
+casttest!(block_raw, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    let output = cmd
+        .args(["block", "22934900", "--rpc-url", eth_rpc_url.as_str(), "--raw"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string();
+
+    // Hash the output with keccak256
+    let hash = alloy_primitives::keccak256(hex::decode(output).unwrap());
+
+    // Verify the Mainnet's block #22934900 header hash equals the expected value
+    // obtained with go-ethereum's `block.Header().Hash()` method
+    assert_eq!(
+        hash.to_string(),
+        "0x49fd7f3b9ba5d67fa60197027f09454d4cac945e8f271edcc84c3fd5872446d3"
+    );
+});
+
 // tests that the `cast find-block` command works correctly
 casttest!(finds_block, |_prj, cmd| {
     // Construct args
@@ -157,6 +180,60 @@ casttest!(finds_block, |_prj, cmd| {
 "#]]);
 });
 
+// tests that we can create a new wallet
+casttest!(new_wallet, |_prj, cmd| {
+    cmd.args(["wallet", "new"]).assert_success().stdout_eq(str![[r#"
+Successfully created new keypair.
+[ADDRESS]
+[PRIVATE_KEY]
+
+"#]]);
+});
+
+// tests that we can create a new wallet (verbose variant)
+casttest!(new_wallet_verbose, |_prj, cmd| {
+    cmd.args(["wallet", "new", "-v"]).assert_success().stdout_eq(str![[r#"
+Successfully created new keypair.
+[ADDRESS]
+[PUBLIC_KEY]
+[PRIVATE_KEY]
+
+"#]]);
+});
+
+// tests that we can create a new wallet with json output
+casttest!(new_wallet_json, |_prj, cmd| {
+    cmd.args(["wallet", "new", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "address": "{...}",
+    "private_key": "{...}"
+  }
+]
+
+"#]]
+        .is_json(),
+    );
+});
+
+// tests that we can create a new wallet with json output (verbose variant)
+casttest!(new_wallet_json_verbose, |_prj, cmd| {
+    cmd.args(["wallet", "new", "--json", "-v"]).assert_success().stdout_eq(
+        str![[r#"
+[
+  {
+    "address": "{...}",
+    "public_key": "{...}",
+    "private_key": "{...}"
+  }
+]
+
+"#]]
+        .is_json(),
+    );
+});
+
 // tests that we can create a new wallet with keystore
 casttest!(new_wallet_keystore_with_password, |_prj, cmd| {
     cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test"])
@@ -164,6 +241,18 @@ casttest!(new_wallet_keystore_with_password, |_prj, cmd| {
         .stdout_eq(str![[r#"
 Created new encrypted keystore file: [..]
 [ADDRESS]
+
+"#]]);
+});
+
+// tests that we can create a new wallet with keystore (verbose variant)
+casttest!(new_wallet_keystore_with_password_verbose, |_prj, cmd| {
+    cmd.args(["wallet", "new", ".", "test-account", "--unsafe-password", "test", "-v"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Created new encrypted keystore file: [..]
+[ADDRESS]
+[PUBLIC_KEY]
 
 "#]]);
 });
@@ -387,6 +476,84 @@ casttest!(wallet_sign_typed_data_file, |_prj, cmd| {
 "#]]);
 });
 
+// tests that `cast wallet sign typed-data` passes with type names containing colons
+//  <https://github.com/foundry-rs/foundry/issues/10765>
+casttest!(wallet_sign_typed_data_with_colon_succeeds, |_prj, cmd| {
+    let typed_data_with_colon = r#"{
+        "types": {
+            "EIP712Domain": [
+                {"name": "name", "type": "string"},
+                {"name": "version", "type": "string"},
+                {"name": "chainId", "type": "uint256"},
+                {"name": "verifyingContract", "type": "address"}
+            ],
+            "Test:Message": [
+                {"name": "content", "type": "string"}
+            ]
+        },
+        "primaryType": "Test:Message",
+        "domain": {
+            "name": "TestDomain",
+            "version": "1",
+            "chainId": 1,
+            "verifyingContract": "0x0000000000000000000000000000000000000000"
+        },
+        "message": {
+            "content": "Hello"
+        }
+    }"#;
+
+    cmd.args([
+        "wallet",
+        "sign",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--data",
+        typed_data_with_colon,
+    ]).assert_success().stdout_eq(str![[r#"
+0xf91c67e845a4d468d1f876f457ffa01e65468641fc121453705242d21de39b266c278592b085814ab1e9adc938cc26b1d64bb61f80b437df077777c4283612291b
+
+"#]]);
+});
+
+// tests that the same data without colon works correctly
+// <https://github.com/foundry-rs/foundry/issues/10765>
+casttest!(wallet_sign_typed_data_without_colon_works, |_prj, cmd| {
+    let typed_data_without_colon = r#"{
+        "types": {
+            "EIP712Domain": [
+                {"name": "name", "type": "string"},
+                {"name": "version", "type": "string"},
+                {"name": "chainId", "type": "uint256"},
+                {"name": "verifyingContract", "type": "address"}
+            ],
+            "TestMessage": [
+                {"name": "content", "type": "string"}
+            ]
+        },
+        "primaryType": "TestMessage",
+        "domain": {
+            "name": "TestDomain",
+            "version": "1",
+            "chainId": 1,
+            "verifyingContract": "0x0000000000000000000000000000000000000000"
+        },
+        "message": {
+            "content": "Hello"
+        }
+    }"#;
+
+    cmd.args([
+        "wallet",
+        "sign",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "--data",
+        typed_data_without_colon,
+    ])
+    .assert_success();
+});
+
 // tests that `cast wallet sign-auth message` outputs the expected signature
 casttest!(wallet_sign_auth, |_prj, cmd| {
     cmd.args([
@@ -473,7 +640,8 @@ casttest!(wallet_mnemonic_from_entropy, |_prj, cmd| {
         "0xdf9bf37e6fcdf9bf37e6fcdf9bf37e3c",
     ])
     .assert_success()
-    .stdout_eq(str![[r#"
+    .stdout_eq(
+        str![[r#"
 Generating mnemonic from provided entropy...
 Successfully generated a new mnemonic.
 Phrase:
@@ -493,7 +661,50 @@ Address:     0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
 Private key: 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
 
 
-"#]]);
+"#]]
+        .raw(),
+    );
+});
+
+// tests that `cast wallet new-mnemonic --entropy` outputs the expected mnemonic (verbose variant)
+casttest!(wallet_mnemonic_from_entropy_verbose, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "new-mnemonic",
+        "--accounts",
+        "3",
+        "--entropy",
+        "0xdf9bf37e6fcdf9bf37e6fcdf9bf37e3c",
+        "-v",
+    ])
+    .assert_success()
+    .stdout_eq(
+        str![[r#"
+Generating mnemonic from provided entropy...
+Successfully generated a new mnemonic.
+Phrase:
+test test test test test test test test test test test junk
+
+Accounts:
+- Account 0:
+Address:     0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Public key:  0x8318535b54105d4a7aae60c08fc45f9687181b4fdfc625bd1a753fa7397fed753547f11ca8696646f2f3acb08e31016afac23e630c5d11f59f61fef57b0d2aa5
+Private key: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+
+- Account 1:
+Address:     0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+Public key:  0xba5734d8f7091719471e7f7ed6b9df170dc70cc661ca05e688601ad984f068b0d67351e5f06073092499336ab0839ef8a521afd334e53807205fa2f08eec74f4
+Private key: 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+
+- Account 2:
+Address:     0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
+Public key:  0x9d9031e97dd78ff8c15aa86939de9b1e791066a0224e331bc962a2099a7b1f0464b8bbafe1535f2301c72c2cb3535b172da30b02686ab0393d348614f157fbdb
+Private key: 0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a
+
+
+"#]]
+        .raw(),
+    );
 });
 
 // tests that `cast wallet new-mnemonic --json` outputs the expected mnemonic
@@ -522,6 +733,44 @@ casttest!(wallet_mnemonic_from_entropy_json, |_prj, cmd| {
     },
     {
       "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+      "private_key": "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
+    }
+  ]
+}
+
+"#]]);
+});
+
+// tests that `cast wallet new-mnemonic --json` outputs the expected mnemonic (verbose variant)
+casttest!(wallet_mnemonic_from_entropy_json_verbose, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "new-mnemonic",
+        "--accounts",
+        "3",
+        "--entropy",
+        "0xdf9bf37e6fcdf9bf37e6fcdf9bf37e3c",
+        "--json",
+        "-v",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+{
+  "mnemonic": "test test test test test test test test test test test junk",
+  "accounts": [
+    {
+      "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "public_key": "0x8318535b54105d4a7aae60c08fc45f9687181b4fdfc625bd1a753fa7397fed753547f11ca8696646f2f3acb08e31016afac23e630c5d11f59f61fef57b0d2aa5",
+      "private_key": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+    },
+    {
+      "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      "public_key": "0xba5734d8f7091719471e7f7ed6b9df170dc70cc661ca05e688601ad984f068b0d67351e5f06073092499336ab0839ef8a521afd334e53807205fa2f08eec74f4",
+      "private_key": "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+    },
+    {
+      "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+      "public_key": "0x9d9031e97dd78ff8c15aa86939de9b1e791066a0224e331bc962a2099a7b1f0464b8bbafe1535f2301c72c2cb3535b172da30b02686ab0393d348614f157fbdb",
       "private_key": "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
     }
   ]
@@ -901,6 +1150,38 @@ casttest!(rpc_with_args, |_prj, cmd| {
     cmd.args(["rpc", "--rpc-url", eth_rpc_url.as_str(), "eth_getBlockByNumber", "0x123", "false"])
     .assert_json_stdout(str![[r#"
 {"number":"0x123","hash":"0xc5dab4e189004a1312e9db43a40abb2de91ad7dd25e75880bf36016d8e9df524","transactions":[],"logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","receiptsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","extraData":"0x476574682f4c5649562f76312e302e302f6c696e75782f676f312e342e32","nonce":"0x29d6547c196e00e0","miner":"0xbb7b8287f3f0a933474a79eae42cbca977791171","difficulty":"0x494433b31","gasLimit":"0x1388","gasUsed":"0x0","uncles":[],"sha3Uncles":"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347","size":"0x220","transactionsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","stateRoot":"0x3fe6bd17aa85376c7d566df97d9f2e536f37f7a87abb3a6f9e2891cf9442f2e4","mixHash":"0x943056aa305aa6d22a3c06110942980342d1f4d4b11c17711961436a0f963ea0","parentHash":"0x7abfd11e862ccde76d6ea8ee20978aac26f4bcb55de1188cc0335be13e817017","timestamp":"0x55ba4564"}
+
+"#]]);
+});
+
+// test for cast_rpc with arguments
+casttest!(rpc_format_as_json, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    // Call `cast rpc eth_getBlockByNumber 0x123 false`
+    cmd.args(["rpc", "--rpc-url", eth_rpc_url.as_str(), "eth_getBlockByNumber", "0x123", "false", "--json"])
+    .assert_json_stdout(str![[r#"
+{
+  "hash": "0xc5dab4e189004a1312e9db43a40abb2de91ad7dd25e75880bf36016d8e9df524",
+  "parentHash": "0x7abfd11e862ccde76d6ea8ee20978aac26f4bcb55de1188cc0335be13e817017",
+  "sha3Uncles": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+  "miner": "0xbb7b8287f3f0a933474a79eae42cbca977791171",
+  "stateRoot": "0x3fe6bd17aa85376c7d566df97d9f2e536f37f7a87abb3a6f9e2891cf9442f2e4",
+  "transactionsRoot": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+  "receiptsRoot": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+  "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+  "difficulty": "0x494433b31",
+  "number": "0x123",
+  "gasLimit": "0x1388",
+  "gasUsed": "0x0",
+  "timestamp": "0x55ba4564",
+  "extraData": "0x476574682f4c5649562f76312e302e302f6c696e75782f676f312e342e32",
+  "mixHash": "0x943056aa305aa6d22a3c06110942980342d1f4d4b11c17711961436a0f963ea0",
+  "nonce": "0x29d6547c196e00e0",
+  "size": "0x220",
+  "uncles": [],
+  "transactions": []
+}
 
 "#]]);
 });
@@ -1317,6 +1598,73 @@ casttest!(mktx_raw_unsigned, |_prj, cmd| {
     .assert_success()
     .stdout_eq(str![[
         r#"0x02e80180843b9aca008502540be4008252089400000000000000000000000000000000000000018080c0
+
+"#
+    ]]);
+});
+
+casttest!(mktx_raw_unsigned_no_from_missing_chain, async |_prj, cmd| {
+    // As chain is not provided, a query is made to the provider to get the chain id, before the tx
+    // is built. Anvil is configured to use chain id 1 so that the produced tx will be the same
+    // as in the `mktx_raw_unsigned` test.
+    let (_, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
+    cmd.args([
+        "mktx",
+        "--nonce",
+        "0",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "0x0000000000000000000000000000000000000001",
+        "--raw-unsigned",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[
+        r#"0x02e80180843b9aca008502540be4008252089400000000000000000000000000000000000000018080c0
+
+"#
+    ]]);
+});
+
+casttest!(mktx_raw_unsigned_no_from_missing_gas_pricing, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    cmd.args([
+        "mktx",
+        "--nonce",
+        "0",
+        "0x0000000000000000000000000000000000000001",
+        "--raw-unsigned",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[
+        r#"0x02e5827a69800184773594018252089400000000000000000000000000000000000000018080c0
+
+"#
+    ]]);
+});
+
+casttest!(mktx_raw_unsigned_no_from_missing_nonce, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--chain",
+        "1",
+        "--gas-limit",
+        "21000", 
+        "--gas-price",
+        "20000000000",
+        "0x742d35Cc6634C0532925a3b8D6Ac6F67C9c2b7FD",
+        "--raw-unsigned",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[
+        r#"Error: Missing required parameters for raw unsigned transaction. When --from is not provided, you must specify: --nonce
 
 "#
     ]]);
@@ -2384,6 +2732,108 @@ forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
         .assert_success();
 });
 
+// https://github.com/foundry-rs/foundry/issues/10848
+forgetest_async!(cast_call_disable_labels, |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "Counter",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function getBalance(address target) public returns (uint256) {
+        return target.balance;
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    // Deploy counter contract.
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "CounterScript",
+    ])
+    .assert_success();
+
+    // Override state, `number()` should return overridden value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-state",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x1234",
+            "number()(uint256)",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+4660
+
+"#]]);
+
+    // Override state, `number()` should return overridden value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--labels",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:WETH",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-state",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x1234",
+            "number()(uint256)",
+            "--trace",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [2402] WETH::number()
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000001234
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+
+    // Override state, `number()` with `disable_labels`.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--labels",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:WETH",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-state",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x1234",
+            "number()(uint256)",
+            "--trace",
+            "--disable-labels",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [2402] 0x5FbDB2315678afecb367f032d93F642f64180aa3::number()
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000001234
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
 // https://github.com/foundry-rs/foundry/issues/10189
 forgetest_async!(cast_call_custom_override, |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
@@ -2432,6 +2882,30 @@ contract Counter {
 
 "#]]);
 
+    // Override state, `number()` should return overridden value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-state",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x1234",
+            "number()(uint256)",
+            "--trace",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [2402] 0x5FbDB2315678afecb367f032d93F642f64180aa3::number()
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000001234
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+
     // Override balance, `getBalance()` should return overridden value.
     cmd.cast_fuse()
         .args([
@@ -2447,6 +2921,31 @@ contract Counter {
         .assert_success()
         .stdout_eq(str![[r#"
 4369
+
+"#]]);
+
+    // Override balance, `getBalance()` should return overridden value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-balance",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x1111",
+            "getBalance(address)(uint256)",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--trace",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [747] 0x5FbDB2315678afecb367f032d93F642f64180aa3::getBalance(0x5FbDB2315678afecb367f032d93F642f64180aa3)
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000001111
+
+
+Transaction successfully executed.
+[GAS]
 
 "#]]);
 
@@ -2468,6 +2967,28 @@ contract Counter {
         .assert_failure()
         .stderr_eq(str![[r#"
 Error: server returned an error response: error code 3: execution reverted, data: "0x"
+
+"#]]);
+
+    // Override code with
+    // contract Counter {
+    //     uint256 public number1;
+    // }
+    // Calling `number()` should revert.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-code",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063c223a39e14602a575b5f5ffd5b60306044565b604051603b9190605f565b60405180910390f35b5f5481565b5f819050919050565b6059816049565b82525050565b5f60208201905060705f8301846052565b9291505056fea26469706673582212202a0acfb9083efed3e0e9f27177b090731d4392cf196d58e27e05088f59008d0964736f6c634300081d0033",
+            "number()(uint256)",
+            "--trace"
+        ])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Error: Transaction failed.
 
 "#]]);
 
@@ -2499,6 +3020,32 @@ Error: server returned an error response: error code 3: execution reverted, data
             &handle.http_endpoint(),
             "--override-code",
             "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063c223a39e14602a575b5f5ffd5b60306044565b604051603b9190605f565b60405180910390f35b5f5481565b5f819050919050565b6059816049565b82525050565b5f60208201905060705f8301846052565b9291505056fea26469706673582212202a0acfb9083efed3e0e9f27177b090731d4392cf196d58e27e05088f59008d0964736f6c634300081d0033",
+            "--override-state",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x2222",
+            "number1()(uint256)",
+            "--trace"
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [2402] 0x5FbDB2315678afecb367f032d93F642f64180aa3::number1()
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000002222
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+
+    // Calling `number1()` with overridden state should return new value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-code",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063c223a39e14602a575b5f5ffd5b60306044565b604051603b9190605f565b60405180910390f35b5f5481565b5f819050919050565b6059816049565b82525050565b5f60208201905060705f8301846052565b9291505056fea26469706673582212202a0acfb9083efed3e0e9f27177b090731d4392cf196d58e27e05088f59008d0964736f6c634300081d0033",
             "--override-state-diff",
             "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x2222",
             "number1()(uint256)",
@@ -2506,6 +3053,32 @@ Error: server returned an error response: error code 3: execution reverted, data
         .assert_success()
         .stdout_eq(str![[r#"
 8738
+
+"#]]);
+
+    // Calling `number1()` with overridden state should return new value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-code",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063c223a39e14602a575b5f5ffd5b60306044565b604051603b9190605f565b60405180910390f35b5f5481565b5f819050919050565b6059816049565b82525050565b5f60208201905060705f8301846052565b9291505056fea26469706673582212202a0acfb9083efed3e0e9f27177b090731d4392cf196d58e27e05088f59008d0964736f6c634300081d0033",
+            "--override-state-diff",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x2222",
+            "number1()(uint256)",
+            "--trace",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [2402] 0x5FbDB2315678afecb367f032d93F642f64180aa3::number1()
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000002222
+
+
+Transaction successfully executed.
+[GAS]
 
 "#]]);
 });
@@ -2746,10 +3319,36 @@ Estimated data availability size for block 30558838 with 225 transactions: 52916
 
 // <https://github.com/foundry-rs/foundry/issues/10705>
 casttest!(cast_call_return_array_of_tuples, |_prj, cmd| {
-    cmd.args(["call", "0x198FC70Dfe05E755C81e54bd67Bff3F729344B9b", "facets() returns ((address,bytes4[])[])", "--rpc-url", "https://rpc.viction.xyz"])
-        .assert_success()
-        .stdout_eq(str![[r#"
-[(0x9640977264aec6d4e9af381F548eee11b9e27aAe, [0x1f931c1c]), (0x395db83A04cC3d3F6C5eFc73896929Cf10D0F301, [0xcdffacc6, 0x52ef6b2c, 0xadfca15e, 0x7a0ed627, 0x01ffc9a7]), (0xC6F7b47F870024B0E2DF6DFd551E10c4A37A1cEa, [0x23452b9c, 0x7200b829, 0x8da5cb5b, 0xf2fde38b]), (0xc1f27c1f6c87e73e089Ffac23C236Fc4A9E3fccc, [0x1458d7ad, 0xd9caed12]), (0x70e272A93bc8344277a1f4390Ea6153A1D5fe450, [0x536db266, 0xfbb2d381, 0xfcd8e49e, 0x9afc19c7, 0x44e2b18c, 0x2d2506a9, 0x124f1ead, 0xc3a6a96b]), (0x662BCADB7A2CBb22367b2471d8A91E5b13FCe96B, [0x612ad9cb, 0xa4c3366e]), (0x190e03D49Ce76DDabC634a98629EDa6246aB5196, [0xa516f0f3, 0x5c2ed36a]), (0xAF69C0E3BBBf6AdE78f1466f86DfF86d64C8dA2A, [0x4630a0d8]), (0xD1317DA862AC5C145519E60D24372dc186EF7426, [0xd5bcb610, 0x5fd9ae2e, 0x2c57e884, 0x736eac0b, 0x4666fc80, 0x733214a3, 0xaf7060fd]), (0x176f558949e2a7C5217dD9C27Bf7A43c6783ee28, [0x7f99d7af, 0x103c5200, 0xc318eeda, 0xee0aa320, 0xdf1c3a5b, 0x070e81f1, 0xd53482cf, 0xf58ae2ce]), (0x531d69A3fAb6CB56A77B8402E6c217cB9cC902A9, [0xf86368ae, 0x5ad317a4, 0x0340e905, 0x2fc487ae])]
+    cmd.args([
+        "call",
+        "0x198FC70Dfe05E755C81e54bd67Bff3F729344B9b",
+        "facets() returns ((address,bytes4[])[])",
+        "--rpc-url",
+        "https://rpc.viction.xyz",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[[..]]
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/7541>
+casttest!(cast_call_on_contract_with_no_code_prints_warning, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+    cmd.args([
+        "call",
+        "0x0000000000000000000000000000000000000000",
+        "--rpc-url",
+        eth_rpc_url.as_str(),
+    ])
+    .assert_success()
+    .stderr_eq(str![[r#"
+Warning: Contract code is empty
+
+"#]])
+    .stdout_eq(str![[r#"
+0x
 
 "#]]);
 });
@@ -2765,6 +3364,352 @@ casttest!(tx_raw_opstack_deposit, |_prj, cmd| {
     ]).assert_success()
             .stdout_eq(str![[r#"
 0x7ef90207a0cbde10ec697aff886f95d2514bab434e455620627b9bb8ba33baaaa4d537d62794d45955f4de64f1840e5686e64278da901e263031944200000000000000000000000000000000000007872386f26fc10000872386f26fc1000083096c4980b901a4d764ad0b0001000000000000000000000000000000000000000000000000000000065132000000000000000000000000fd0bf71f60660e2f608ed56e1659c450eb1131200000000000000000000000004200000000000000000000000000000000000010000000000000000000000000000000000000000000000000002386f26fc1000000000000000000000000000000000000000000000000000000000000000493e000000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000000a41635f5fd000000000000000000000000ca11bde05977b3631167028862be2a173976ca110000000000000000000000005703b26fe5a7be820db1bf34c901a79da1a46ba4000000000000000000000000000000000000000000000000002386f26fc100000000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+
+"#]]);
+});
+
+// Test that cast send --create works correctly with constructor arguments
+// <https://github.com/foundry-rs/foundry/issues/10947>
+forgetest_async!(cast_send_create_with_constructor_args, |prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    // Deploy a simple contract with constructor arguments
+    // Contract source that takes constructor args
+    prj.add_source(
+        "ConstructorContract",
+        r#"
+contract ConstructorContract {
+    uint256 public value;
+    string public name;
+    
+    constructor(uint256 _value, string memory _name) {
+        value = _value;
+        name = _name;
+    }
+    
+    function getValue() public view returns (uint256) {
+        return value;
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    // Compile to get bytecode
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    // Get the compiled bytecode
+    let bytecode_path = prj.root().join("out/ConstructorContract.sol/ConstructorContract.json");
+    let contract_json = std::fs::read_to_string(bytecode_path).unwrap();
+    let contract_data: serde_json::Value = serde_json::from_str(&contract_json).unwrap();
+    let bytecode = contract_data["bytecode"]["object"].as_str().unwrap();
+
+    // Use cast send --create with constructor arguments
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+            "--create",
+            bytecode,
+            "constructor(uint256,string)",
+            "42",
+            "TestContract",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Extract the deployed contract address from output
+    let lines: Vec<&str> = output.lines().collect();
+    let mut address = None;
+    for line in lines {
+        if line.contains("contractAddress") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            address = Some(parts[1]);
+            break;
+        }
+    }
+    let address = address.expect("Contract address not found in output");
+
+    // Verify the contract was deployed correctly by calling getValue()
+    let value_output = cmd
+        .cast_fuse()
+        .args(["call", address, "getValue()", "--rpc-url", &endpoint])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // The value should be 42 (0x2a in hex)
+    assert!(
+        value_output.contains("0x000000000000000000000000000000000000000000000000000000000000002a")
+    );
+});
+
+// Test that cast estimate --create works correctly with constructor arguments
+// <https://github.com/foundry-rs/foundry/issues/10947>
+casttest!(cast_estimate_create_with_constructor_args, |prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    // Add a simple contract with constructor arguments
+    prj.add_source(
+        "EstimateContract",
+        r#"
+contract EstimateContract {
+    uint256 public value;
+    string public name;
+    
+    constructor(uint256 _value, string memory _name) {
+        value = _value;
+        name = _name;
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    // Compile to get bytecode
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    // Get the compiled bytecode
+    let bytecode_path = prj.root().join("out/EstimateContract.sol/EstimateContract.json");
+    let contract_json = std::fs::read_to_string(bytecode_path).unwrap();
+    let contract_data: serde_json::Value = serde_json::from_str(&contract_json).unwrap();
+    let bytecode = contract_data["bytecode"]["object"].as_str().unwrap();
+
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "estimate",
+            "--rpc-url",
+            eth_rpc_url.as_str(),
+            "--create",
+            bytecode,
+            "constructor(uint256,string)",
+            "100",
+            "TestContract",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Parse the gas estimate
+    let gas_estimate = output.trim().parse::<u64>().expect("Failed to parse gas estimate");
+
+    // Gas estimate should be positive and reasonable for contract deployment
+    assert!(gas_estimate > 50000, "Gas estimate too low for contract deployment");
+    assert!(gas_estimate < 5000000, "Gas estimate unreasonably high");
+});
+
+// Test edge case: empty constructor arguments
+// <https://github.com/foundry-rs/foundry/issues/10947>
+forgetest_async!(cast_send_create_empty_constructor, |prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    // Simple contract with no constructor arguments
+    prj.add_source(
+        "SimpleContract",
+        r#"
+contract SimpleContract {
+    uint256 public constant VALUE = 42;
+}
+"#,
+    )
+    .unwrap();
+
+    // Compile
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    // Get bytecode
+    let bytecode_path = prj.root().join("out/SimpleContract.sol/SimpleContract.json");
+    let contract_json = std::fs::read_to_string(bytecode_path).unwrap();
+    let contract_data: serde_json::Value = serde_json::from_str(&contract_json).unwrap();
+    let bytecode = contract_data["bytecode"]["object"].as_str().unwrap();
+
+    // Deploy with empty constructor
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+            "--create",
+            bytecode,
+            "constructor()",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Verify deployment succeeded
+    assert!(output.contains("contractAddress"));
+});
+
+// Test complex constructor arguments (multiple types)
+// <https://github.com/foundry-rs/foundry/issues/10947>
+forgetest_async!(cast_send_create_complex_constructor, |prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    // Contract with complex constructor
+    prj.add_source(
+        "ComplexContract",
+        r#"
+contract ComplexContract {
+    address public owner;
+    uint256[] public values;
+    bool public active;
+    
+    constructor(address _owner, uint256[] memory _values, bool _active) {
+        owner = _owner;
+        values = _values;
+        active = _active;
+    }
+    
+    function getValuesLength() public view returns (uint256) {
+        return values.length;
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    // Compile
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    // Get bytecode
+    let bytecode_path = prj.root().join("out/ComplexContract.sol/ComplexContract.json");
+    let contract_json = std::fs::read_to_string(bytecode_path).unwrap();
+    let contract_data: serde_json::Value = serde_json::from_str(&contract_json).unwrap();
+    let bytecode = contract_data["bytecode"]["object"].as_str().unwrap();
+
+    // Deploy with complex arguments
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+            "--create",
+            bytecode,
+            "constructor(address,uint256[],bool)",
+            "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+            "[1,2,3,4,5]",
+            "true",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Extract deployed address
+    let lines: Vec<&str> = output.lines().collect();
+    let mut address = None;
+    for line in lines {
+        if line.contains("contractAddress") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                address = Some(parts[1]);
+                break;
+            }
+        }
+    }
+    let address = address.expect("Contract address not found in output");
+
+    // Verify the array length was set correctly
+    let length_output = cmd
+        .cast_fuse()
+        .args(["call", address, "getValuesLength()", "--rpc-url", &endpoint])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    // Should return 5 (0x5 in hex)
+    assert!(
+        length_output
+            .contains("0x0000000000000000000000000000000000000000000000000000000000000005")
+    );
+});
+
+casttest!(recover_authority, |_prj, cmd| {
+    let auth = r#"{
+        "chainId": "0x1",
+        "address": "0xb684710e6d5914ad6e64493de2a3c424cc43e970",
+        "nonce": "0x3dc1",
+        "yParity": "0x1",
+        "r": "0x2f15ba55009fcd3682cd0f9c9645dd94e616f9a969ba3f1a5a2d871f9fe0f2b4",
+        "s": "0x53c332a83312d0b17dd4c16eeb15b1ff5223398b14e0a55c70762e8f3972b7a5"
+    }"#;
+    cmd.args(["recover-authority", auth]).assert_success().stdout_eq(str![[r#"
+0x17816E9A858b161c3E37016D139cf618056CaCD4
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10945>
+// tests `cast code --disassemble`
+casttest!(can_disassemble_contract_code, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Mainnet);
+    cmd.args([
+        "code",
+        "--disassemble",
+        "--rpc-url",
+        rpc.as_str(),
+        "0x1F573D6Fb3F13d689FF844B4cE37794d79a7FF1C",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+00000000: PUSH1 0x60
+00000002: PUSH1 0x40
+00000004: MSTORE
+00000005: CALLDATASIZE
+00000006: ISZERO
+00000007: PUSH2 0x010f
+0000000a: JUMPI
+0000000b: PUSH4 0xffffffff
+00000010: PUSH29 0x0100000000000000000000000000000000000000000000000000000000
+0000002e: PUSH1 0x00
+...
+"#]]);
+});
+
+// tests that cast call properly applies state diff override
+// <https://github.com/foundry-rs/foundry/issues/10930>
+casttest!(cast_call_can_override_state_diff, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Sepolia);
+    cmd.args([
+        "call",
+        "--rpc-url",
+        rpc.as_str(),
+        "--data",
+        "0x",
+        "0x1EA77b250eF79e917A5A637D5BB82D0980653F1B",
+        "--override-state-diff",
+        "0x1EA77b250eF79e917A5A637D5BB82D0980653F1B:1:1",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x1337
+
+"#]]);
+    cmd.args(["--trace"]).assert_success().stdout_eq(str![[r#"
+Traces:
+  [7281] 0x1EA77b250eF79e917A5A637D5BB82D0980653F1B::fallback()
+    ├─ [2275] 0xe537cb8a46Bd179c0C36aB7E3Fdecd759C8B80fc::fallback() [delegatecall]
+    │   └─ ← [Return] 0x1337
+    └─ ← [Return] 0x1337
+
+
+Transaction successfully executed.
+[GAS]
 
 "#]]);
 });

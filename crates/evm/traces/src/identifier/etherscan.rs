@@ -8,7 +8,7 @@ use foundry_block_explorers::{
 use foundry_common::compile::etherscan_project;
 use foundry_config::{Chain, Config};
 use futures::{
-    future::{join_all, Future},
+    future::join_all,
     stream::{FuturesUnordered, Stream, StreamExt},
     task::{Context, Poll},
 };
@@ -18,8 +18,8 @@ use std::{
     collections::BTreeMap,
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
 use tokio::time::{Duration, Interval};
@@ -114,7 +114,7 @@ impl EtherscanIdentifier {
 impl TraceIdentifier for EtherscanIdentifier {
     fn identify_addresses(&mut self, nodes: &[&CallTraceNode]) -> Vec<IdentifiedAddress<'_>> {
         if self.invalid_api_key.load(Ordering::Relaxed) || nodes.is_empty() {
-            return Vec::new()
+            return Vec::new();
         }
 
         trace!(target: "evm::traces::etherscan", "identify {} addresses", nodes.len());
@@ -216,11 +216,11 @@ impl Stream for EtherscanFetcher {
         let pin = self.get_mut();
 
         loop {
-            if let Some(mut backoff) = pin.backoff.take() {
-                if backoff.poll_tick(cx).is_pending() {
-                    pin.backoff = Some(backoff);
-                    return Poll::Pending
-                }
+            if let Some(mut backoff) = pin.backoff.take()
+                && backoff.poll_tick(cx).is_pending()
+            {
+                pin.backoff = Some(backoff);
+                return Poll::Pending;
             }
 
             pin.queue_next_reqs();
@@ -234,7 +234,7 @@ impl Stream for EtherscanFetcher {
                     match res {
                         Ok(mut metadata) => {
                             if let Some(item) = metadata.items.pop() {
-                                return Poll::Ready(Some((addr, item)))
+                                return Poll::Ready(Some((addr, item)));
                             }
                         }
                         Err(EtherscanError::RateLimitExceeded) => {
@@ -246,13 +246,13 @@ impl Stream for EtherscanFetcher {
                             warn!(target: "traces::etherscan", "invalid api key");
                             // mark key as invalid
                             pin.invalid_api_key.store(true, Ordering::Relaxed);
-                            return Poll::Ready(None)
+                            return Poll::Ready(None);
                         }
                         Err(EtherscanError::BlockedByCloudflare) => {
                             warn!(target: "traces::etherscan", "blocked by cloudflare");
                             // mark key as invalid
                             pin.invalid_api_key.store(true, Ordering::Relaxed);
-                            return Poll::Ready(None)
+                            return Poll::Ready(None);
                         }
                         Err(err) => {
                             warn!(target: "traces::etherscan", "could not get etherscan info: {:?}", err);
@@ -262,7 +262,7 @@ impl Stream for EtherscanFetcher {
             }
 
             if !made_progress_this_iter {
-                return Poll::Pending
+                return Poll::Pending;
             }
         }
     }

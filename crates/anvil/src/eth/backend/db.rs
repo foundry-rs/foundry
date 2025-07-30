@@ -2,7 +2,7 @@
 
 use crate::mem::storage::MinedTransaction;
 use alloy_consensus::Header;
-use alloy_primitives::{keccak256, map::HashMap, Address, Bytes, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, keccak256, map::HashMap};
 use alloy_rpc_types::BlockId;
 use anvil_core::eth::{
     block::Block,
@@ -13,21 +13,25 @@ use foundry_evm::backend::{
     BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertStateSnapshotAction, StateSnapshot,
 };
 use revm::{
+    Database, DatabaseCommit,
     bytecode::Bytecode,
     context::BlockEnv,
     database::{CacheDB, DatabaseRef, DbAccount},
     primitives::KECCAK_EMPTY,
     state::AccountInfo,
-    Database, DatabaseCommit,
 };
 use serde::{
-    de::{MapAccess, Visitor},
     Deserialize, Deserializer, Serialize,
+    de::{MapAccess, Visitor},
 };
-use std::{collections::BTreeMap, fmt, path::Path};
+use std::{
+    collections::BTreeMap,
+    fmt::{self, Debug},
+    path::Path,
+};
 
 /// Helper trait get access to the full state data of the database
-pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> {
+pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> + Debug {
     /// Returns a reference to the database as a `dyn DatabaseRef`.
     // TODO: Required until trait upcasting is stabilized: <https://github.com/rust-lang/rust/issues/65991>
     fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError>;
@@ -115,7 +119,7 @@ pub trait Db:
         Ok(())
     }
 
-    /// Sets the balance of the given address
+    /// Sets the code of the given address
     fn set_code(&mut self, address: Address, code: Bytes) -> DatabaseResult<()> {
         let mut info = self.basic(address)?.unwrap_or_default();
         let code_hash = if code.as_ref().is_empty() {
@@ -129,7 +133,7 @@ pub trait Db:
         Ok(())
     }
 
-    /// Sets the balance of the given address
+    /// Sets the storage value at the given slot for the address
     fn set_storage_at(&mut self, address: Address, slot: B256, val: B256) -> DatabaseResult<()>;
 
     /// inserts a blockhash for the given number
@@ -242,7 +246,7 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
     }
 }
 
-impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
+impl<T: DatabaseRef<Error = DatabaseError> + Debug> MaybeFullDatabase for CacheDB<T> {
     fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
         self
     }
@@ -321,6 +325,7 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeForkedDatabase for CacheDB<T> {
 }
 
 /// Represents a state at certain point
+#[derive(Debug)]
 pub struct StateDb(pub(crate) Box<dyn MaybeFullDatabase + Send + Sync>);
 
 impl StateDb {

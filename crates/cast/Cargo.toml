@@ -53,6 +53,7 @@ alloy-signer.workspace = true
 alloy-sol-types.workspace = true
 alloy-transport.workspace = true
 alloy-ens = { workspace = true, features = ["provider"] }
+alloy-eips.workspace = true
 
 op-alloy-flz.workspace = true
 op-alloy-consensus = { workspace = true, features = ["alloy-compat"] }
@@ -60,7 +61,7 @@ op-alloy-consensus = { workspace = true, features = ["alloy-compat"] }
 chrono.workspace = true
 eyre.workspace = true
 futures.workspace = true
-revm.workspace = true
+revm = { workspace = true, features = ["optional_balance_check"] }
 rand.workspace = true
 rand_08.workspace = true
 rayon.workspace = true
