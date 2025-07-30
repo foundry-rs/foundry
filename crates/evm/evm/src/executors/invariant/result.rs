@@ -9,8 +9,8 @@ use foundry_config::InvariantConfig;
 use foundry_evm_core::utils::StateChangeset;
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
-    FuzzedCases,
-    invariant::{BasicTxDetails, FuzzRunIdentifiedContracts, InvariantContract},
+    BasicTxDetails, FuzzedCases,
+    invariant::{FuzzRunIdentifiedContracts, InvariantContract},
 };
 use revm_inspectors::tracing::CallTraceArena;
 use std::{borrow::Cow, collections::HashMap};

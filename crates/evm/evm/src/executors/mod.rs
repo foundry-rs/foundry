@@ -57,6 +57,8 @@ pub mod invariant;
 pub use invariant::InvariantExecutor;
 
 mod trace;
+mod corpus;
+
 pub use trace::TracingExecutor;
 
 const COVERAGE_MAP_SIZE: usize = 65536;

@@ -1,7 +1,7 @@
 use super::{fuzz_calldata, fuzz_param_from_state};
 use crate::{
-    FuzzFixtures,
-    invariant::{BasicTxDetails, CallDetails, FuzzRunIdentifiedContracts, SenderFilters},
+    BasicTxDetails, CallDetails, FuzzFixtures,
+    invariant::{FuzzRunIdentifiedContracts, SenderFilters},
     strategies::{EvmFuzzState, fuzz_calldata_from_state, fuzz_param},
 };
 use alloy_json_abi::Function;

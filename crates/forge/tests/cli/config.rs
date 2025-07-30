@@ -7,8 +7,8 @@ use foundry_compilers::{
     solc::Solc,
 };
 use foundry_config::{
-    CompilationRestrictions, Config, FsPermissions, FuzzConfig, InvariantConfig, SettingsOverrides,
-    SolcReq,
+    CompilationRestrictions, Config, FsPermissions, FuzzConfig, FuzzCorpusConfig, InvariantConfig,
+    SettingsOverrides, SolcReq,
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     filter::GlobMatcher,
     fs_permissions::{FsAccessPermission, PathPermission},
@@ -90,7 +90,10 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         invariant: InvariantConfig {
             runs: 256,
             failure_persist_dir: Some("test-cache/fuzz".into()),
-            corpus_dir: Some("cache/invariant/corpus".into()),
+            corpus: FuzzCorpusConfig {
+                corpus_dir: Some("cache/invariant/corpus".into()),
+                ..Default::default()
+            },
             ..Default::default()
         },
         ffi: true,

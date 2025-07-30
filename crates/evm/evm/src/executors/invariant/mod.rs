@@ -14,10 +14,10 @@ use foundry_evm_core::{
     precompiles::PRECOMPILES,
 };
 use foundry_evm_fuzz::{
-    FuzzCase, FuzzFixtures, FuzzedCases,
+    BasicTxDetails, FuzzCase, FuzzFixtures, FuzzedCases,
     invariant::{
-        ArtifactFilters, BasicTxDetails, FuzzRunIdentifiedContracts, InvariantContract,
-        RandomCallGenerator, SenderFilters, TargetedContract, TargetedContracts,
+        ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, RandomCallGenerator,
+        SenderFilters, TargetedContract, TargetedContracts,
     },
     strategies::{EvmFuzzState, invariant_strat, override_call_strat},
 };
@@ -47,14 +47,12 @@ pub use result::InvariantFuzzTestResult;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-mod corpus;
-
 mod shrink;
 use crate::executors::{
     COVERAGE_MAP_SIZE, DURATION_BETWEEN_METRICS_REPORT, EvmError, FuzzTestTimer,
-    invariant::corpus::TxCorpusManager,
 };
 pub use shrink::check_sequence;
+use crate::executors::corpus::CorpusManager;
 
 sol! {
     interface IInvariantTest {
@@ -351,11 +349,14 @@ impl<'a> InvariantExecutor<'a> {
         };
 
         // Invariant runs with edge coverage if corpus dir is set or showing edge coverage.
-        let edge_coverage_enabled =
-            self.config.corpus_dir.is_some() || self.config.show_edge_coverage;
+        let edge_coverage_enabled = self.config.show_edge_coverage();
 
         'stop: while continue_campaign(runs) {
-            let initial_seq = corpus_manager.new_sequence(&mut invariant_test)?;
+            let initial_seq = corpus_manager.new_inputs(
+                &mut invariant_test.test_data.branch_runner,
+                &invariant_test.fuzz_state,
+                &invariant_test.targeted_contracts,
+            )?;
 
             // Create current invariant run data.
             let mut current_run = InvariantTestRun::new(
@@ -488,7 +489,7 @@ impl<'a> InvariantExecutor<'a> {
                 }
 
                 current_run.inputs.push(corpus_manager.generate_next_input(
-                    &mut invariant_test,
+                    &mut invariant_test.test_data.branch_runner,
                     &initial_seq,
                     discarded,
                     current_run.depth as usize,
@@ -496,7 +497,7 @@ impl<'a> InvariantExecutor<'a> {
             }
 
             // Extend corpus with current run data.
-            corpus_manager.collect_inputs(&current_run);
+            corpus_manager.process_inputs(current_run.inputs.clone(), current_run.new_coverage);
 
             // Call `afterInvariant` only if it is declared and test didn't fail already.
             if invariant_contract.call_after_invariant && !invariant_test.has_errors() {
@@ -560,7 +561,7 @@ impl<'a> InvariantExecutor<'a> {
         invariant_contract: &InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
         deployed_libs: &[Address],
-    ) -> Result<(InvariantTest, TxCorpusManager)> {
+    ) -> Result<(InvariantTest, CorpusManager)> {
         // Finds out the chosen deployed contracts and/or senders.
         self.select_contract_artifacts(invariant_contract.address)?;
         let (targeted_senders, targeted_contracts) =
@@ -625,9 +626,10 @@ impl<'a> InvariantExecutor<'a> {
             return Err(eyre!(error.revert_reason().unwrap_or_default()));
         }
 
-        let corpus_manager = TxCorpusManager::new(
-            &self.config,
-            &invariant_contract.invariant_function.name,
+        let mut corpus_config = self.config.corpus.clone();
+        corpus_config.with_test_name(&invariant_contract.invariant_function.name);
+        let corpus_manager = CorpusManager::new(
+            corpus_config,
             &targeted_contracts,
             strategy.boxed(),
             &self.executor,

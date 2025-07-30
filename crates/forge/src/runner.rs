@@ -2,7 +2,7 @@
 
 use crate::{
     MultiContractRunner, TestFilter,
-    fuzz::{BaseCounterExample, invariant::BasicTxDetails},
+    fuzz::BaseCounterExample,
     multi_runner::{TestContract, TestRunnerConfig, is_matching_test},
     progress::{TestsProgress, start_fuzz_progress},
     result::{SuiteResult, TestResult, TestSetup},
@@ -25,8 +25,8 @@ use foundry_evm::{
         },
     },
     fuzz::{
-        CounterExample, FuzzFixtures, fixture_name,
-        invariant::{CallDetails, InvariantContract},
+        BasicTxDetails, CallDetails, CounterExample, FuzzFixtures, fixture_name,
+        invariant::InvariantContract,
     },
     traces::{TraceKind, TraceMode, load_contracts},
 };
@@ -706,9 +706,7 @@ impl<'a> FunctionRunner<'a> {
         let mut executor = self.clone_executor();
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
         // metrics (useful for benchmarking the fuzzer).
-        executor.inspector_mut().collect_edge_coverage(
-            invariant_config.corpus_dir.is_some() || invariant_config.show_edge_coverage,
-        );
+        executor.inspector_mut().collect_edge_coverage(invariant_config.show_edge_coverage());
 
         let mut evm = InvariantExecutor::new(
             executor,

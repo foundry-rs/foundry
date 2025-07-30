@@ -93,3 +93,31 @@ impl Default for FuzzDictionaryConfig {
         }
     }
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FuzzCorpusConfig {
+    // Path to corpus directory, enabled coverage guided fuzzing mode.
+    // If not set then sequences producing new coverage are not persisted and mutated.
+    pub corpus_dir: Option<PathBuf>,
+    // Whether corpus to use gzip file compression and decompression.
+    pub corpus_gzip: bool,
+    // Number of mutations until entry marked as eligible to be flushed from in-memory corpus.
+    // Mutations will be performed at least `corpus_min_mutations` times.
+    pub corpus_min_mutations: usize,
+    // Number of corpus that won't be evicted from memory.
+    pub corpus_min_size: usize,
+}
+
+impl FuzzCorpusConfig {
+    pub fn with_test_name(&mut self, test_name: &String) {
+        if let Some(corpus_dir) = &self.corpus_dir {
+            self.corpus_dir = Some(corpus_dir.join(test_name));
+        }
+    }
+}
+
+impl Default for FuzzCorpusConfig {
+    fn default() -> Self {
+        Self { corpus_dir: None, corpus_gzip: true, corpus_min_mutations: 5, corpus_min_size: 0 }
+    }
+}
