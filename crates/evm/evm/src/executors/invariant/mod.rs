@@ -357,6 +357,10 @@ impl<'a> InvariantExecutor<'a> {
             runs < self.config.runs
         };
 
+        // Invariant runs with edge coverage if corpus dir is set or showing edge coverage.
+        let edge_coverage_enabled =
+            self.config.corpus_dir.is_some() || self.config.show_edge_coverage;
+
         'stop: while continue_campaign(runs) {
             let initial_seq = corpus_manager.new_sequence(&invariant_test)?;
 
@@ -407,9 +411,9 @@ impl<'a> InvariantExecutor<'a> {
 
                 // Collect line coverage from last fuzzed call.
                 invariant_test.merge_coverage(call_result.line_coverage.clone());
-                // If coverage guided fuzzing is enabled then merge edge count with current history
+                // If running with edge coverage then merge edge count with the current history
                 // map and set new coverage in current run.
-                if self.config.corpus_dir.is_some() {
+                if edge_coverage_enabled {
                     let (new_coverage, is_edge) =
                         call_result.merge_edge_coverage(&mut self.history_map);
                     if new_coverage {
@@ -514,15 +518,14 @@ impl<'a> InvariantExecutor<'a> {
 
             // End current invariant test run.
             invariant_test.end_run(current_run, self.config.gas_report_samples as usize);
-
             if let Some(progress) = progress {
                 // If running with progress then increment completed runs.
                 progress.inc(1);
                 // Display metrics in progress bar.
-                if self.config.corpus_dir.is_some() {
+                if edge_coverage_enabled {
                     progress.set_message(format!("{}", &corpus_manager.metrics));
                 }
-            } else if self.config.corpus_dir.is_some()
+            } else if edge_coverage_enabled
                 && last_metrics_report.elapsed() > DURATION_BETWEEN_METRICS_REPORT
             {
                 // Display metrics inline if corpus dir set.
@@ -606,8 +609,11 @@ impl<'a> InvariantExecutor<'a> {
             ));
         }
 
-        self.executor.inspector_mut().fuzzer =
-            Some(Fuzzer { call_generator, fuzz_state: fuzz_state.clone(), collect: true });
+        self.executor.inspector_mut().set_fuzzer(Fuzzer {
+            call_generator,
+            fuzz_state: fuzz_state.clone(),
+            collect: true,
+        });
 
         // Let's make sure the invariant is sound before actually starting the run:
         // We'll assert the invariant in its initial state, and if it fails, we'll

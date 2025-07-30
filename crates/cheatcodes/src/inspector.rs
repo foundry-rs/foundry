@@ -41,7 +41,9 @@ use foundry_evm_core::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     evm::{FoundryEvm, new_evm_with_existing_context},
 };
-use foundry_evm_traces::{TracingInspector, TracingInspectorConfig};
+use foundry_evm_traces::{
+    TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
+};
 use foundry_wallets::multi_wallet::MultiWallet;
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
@@ -111,7 +113,7 @@ pub trait CheatcodesExecutor {
     }
 
     /// Returns a mutable reference to the tracing inspector if it is available.
-    fn tracing_inspector(&mut self) -> Option<&mut Option<TracingInspector>> {
+    fn tracing_inspector(&mut self) -> Option<&mut TracingInspector> {
         None
     }
 }
@@ -493,6 +495,8 @@ pub struct Cheatcodes {
     pub deprecated: HashMap<&'static str, Option<&'static str>>,
     /// Unlocked wallets used in scripts and testing of scripts.
     pub wallets: Option<Wallets>,
+    /// Signatures identifier for decoding events and functions
+    pub signatures_identifier: Option<SignaturesIdentifier>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -547,6 +551,7 @@ impl Cheatcodes {
             arbitrary_storage: Default::default(),
             deprecated: Default::default(),
             wallets: Default::default(),
+            signatures_identifier: SignaturesIdentifier::new(true).ok(),
         }
     }
 
@@ -664,7 +669,7 @@ impl Cheatcodes {
         &mut self,
         ecx: Ecx,
         call: &mut CallInputs,
-        executor: &mut impl CheatcodesExecutor,
+        executor: &mut dyn CheatcodesExecutor,
     ) -> Option<CallOutcome> {
         let gas = Gas::new(call.gas_limit);
         let curr_depth = ecx.journaled_state.depth();
@@ -1061,7 +1066,6 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         }
     }
 
-    #[inline]
     fn step(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
         self.pc = interpreter.bytecode.pc();
 
@@ -1104,7 +1108,6 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
         }
     }
 
-    #[inline]
     fn step_end(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
         if self.gas_metering.paused {
             self.meter_gas_end(interpreter);
@@ -1383,10 +1386,14 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                 .collect::<Vec<_>>();
 
             // Revert if not all emits expected were matched.
-            if self.expected_emits.iter().any(|(expected, _)| !expected.found && expected.count > 0)
+            if let Some((expected, _)) = self
+                .expected_emits
+                .iter()
+                .find(|(expected, _)| !expected.found && expected.count > 0)
             {
                 outcome.result.result = InstructionResult::Revert;
-                outcome.result.output = "log != expected log".abi_encode().into();
+                let error_msg = expected.mismatch_error.as_deref().unwrap_or("log != expected log");
+                outcome.result.output = error_msg.abi_encode().into();
                 return;
             }
 

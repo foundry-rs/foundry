@@ -705,8 +705,15 @@ impl<'a> FunctionRunner<'a> {
         let runner = self.invariant_runner();
         let invariant_config = &self.config.invariant;
 
+        let mut executor = self.clone_executor();
+        // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
+        // metrics (useful for benchmarking the fuzzer).
+        executor.inspector_mut().collect_edge_coverage(
+            invariant_config.corpus_dir.is_some() || invariant_config.show_edge_coverage,
+        );
+
         let mut evm = InvariantExecutor::new(
-            self.clone_executor(),
+            executor,
             runner,
             invariant_config.clone(),
             identified_contracts,
