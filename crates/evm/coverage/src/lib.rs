@@ -10,7 +10,7 @@ extern crate tracing;
 
 use alloy_primitives::{
     Bytes,
-    map::{B256HashMap, HashMap, rustc_hash::FxHashMap},
+    map::{B256HashMap, HashMap},
 };
 use analysis::SourceAnalysis;
 use eyre::Result;
@@ -19,7 +19,7 @@ use semver::Version;
 use std::{
     collections::BTreeMap,
     fmt::Display,
-    num::NonZeroU32,
+    num::NonZero,
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
     sync::Arc,
@@ -203,20 +203,22 @@ impl DerefMut for HitMaps {
     }
 }
 
+type Hit = u32;
+
 /// Hit data for an address.
 ///
 /// Contains low-level data about hit counters for the instructions in the bytecode of a contract.
 #[derive(Clone, Debug)]
 pub struct HitMap {
-    hits: FxHashMap<u32, u32>,
+    hits: Box<[Hit]>,
     bytecode: Bytes,
 }
 
 impl HitMap {
-    /// Create a new hitmap with the given bytecode.
+    /// Create a new hitmap for the given bytecode.
     #[inline]
     pub fn new(bytecode: Bytes) -> Self {
-        Self { bytecode, hits: HashMap::with_capacity_and_hasher(1024, Default::default()) }
+        Self { hits: vec![0; bytecode.len() as usize].into(), bytecode }
     }
 
     /// Returns the bytecode.
@@ -227,8 +229,8 @@ impl HitMap {
 
     /// Returns the number of hits for the given program counter.
     #[inline]
-    pub fn get(&self, pc: u32) -> Option<NonZeroU32> {
-        NonZeroU32::new(self.hits.get(&pc).copied().unwrap_or(0))
+    pub fn get(&self, pc: u32) -> Option<NonZero<Hit>> {
+        NonZero::new(self.hits.get(pc as usize).copied().unwrap_or(0))
     }
 
     /// Increase the hit counter by 1 for the given program counter.
@@ -239,22 +241,34 @@ impl HitMap {
 
     /// Increase the hit counter by `hits` for the given program counter.
     #[inline]
-    pub fn hits(&mut self, pc: u32, hits: u32) {
-        *self.hits.entry(pc).or_default() += hits;
+    pub fn hits(&mut self, pc: u32, hits: Hit) {
+        self.hits[pc as usize] += hits;
     }
 
     /// Merge another hitmap into this, assuming the bytecode is consistent
     pub fn merge(&mut self, other: &Self) {
-        self.hits.reserve(other.len());
-        for (pc, hits) in other.iter() {
-            self.hits(pc, hits);
+        fn sum(a: &mut [Hit], b: &[Hit]) {
+            let len = usize::min(a.len(), b.len());
+            let a = &mut a[..len];
+            let b = &b[..len];
+            for i in 0..len {
+                a[i] += b[i];
+            }
         }
+
+        debug_assert_eq!(self.bytecode, other.bytecode, "hitmap bytecode mismatch");
+        debug_assert_eq!(self.hits.len(), other.hits.len(), "hitmap length mismatch");
+        sum(&mut self.hits, &other.hits);
     }
 
     /// Returns an iterator over all the program counters and their hit counts.
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
-        self.hits.iter().map(|(&pc, &hits)| (pc, hits))
+    pub fn iter(&self) -> impl Iterator<Item = (u32, Hit)> + '_ {
+        self.hits
+            .iter()
+            .enumerate()
+            .filter(|(_, hits)| **hits > 0)
+            .map(|(pc, &hits)| (pc as u32, hits))
     }
 
     /// Returns the number of program counters hit in the hitmap.
