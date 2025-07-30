@@ -776,7 +776,7 @@ impl UIfmt for TxKind {
     fn pretty(&self) -> String {
         match self {
             Self::Create => "create".to_string(),
-            Self::Call(to) => to.pretty().to_string(),
+            Self::Call(to) => to.pretty(),
         }
     }
 }
