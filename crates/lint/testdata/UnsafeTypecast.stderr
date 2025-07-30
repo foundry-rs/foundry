@@ -6,7 +6,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint248' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -19,7 +19,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint240' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -32,7 +32,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint232' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -45,7 +45,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint224' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -58,7 +58,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint216' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -71,7 +71,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint208' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -84,7 +84,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint200' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -97,7 +97,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint192' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -110,7 +110,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint184' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -123,7 +123,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint176' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -136,7 +136,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint168' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -149,7 +149,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint160' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -162,7 +162,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint152' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -175,7 +175,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint144' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -188,7 +188,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint136' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -201,7 +201,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint128' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -214,7 +214,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint120' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -227,7 +227,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint112' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -240,7 +240,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint104' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -253,7 +253,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint96' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -266,7 +266,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint88' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -279,7 +279,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint80' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -292,7 +292,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint72' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -305,7 +305,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint64' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -318,7 +318,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
    |
    = note: Consider disabling this lint if you're certain the cast is safe:
            
-           // Cast is safe because [explain why]
+           // casting to 'uint56' is safe because [explain why]
            // forge-lint: disable-next-line(unsafe-typecast)
            
    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -331,7 +331,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint48' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -344,7 +344,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint40' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -357,7 +357,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint32' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -370,7 +370,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint24' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -383,7 +383,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint16' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -396,7 +396,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint8' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -409,7 +409,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int248' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -422,7 +422,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int240' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -435,7 +435,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int232' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -448,7 +448,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int224' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -461,7 +461,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int216' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -474,7 +474,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int208' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -487,7 +487,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int200' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -500,7 +500,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int192' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -513,7 +513,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int184' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -526,7 +526,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int176' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -539,7 +539,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int168' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -552,7 +552,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int160' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -565,7 +565,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int152' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -578,7 +578,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int144' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -591,7 +591,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int136' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -604,7 +604,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int128' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -617,7 +617,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int120' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -630,7 +630,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int112' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -643,7 +643,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int104' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -656,7 +656,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int96' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -669,7 +669,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int88' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -682,7 +682,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int80' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -695,7 +695,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int72' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -708,7 +708,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int64' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -721,7 +721,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int56' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -734,7 +734,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int48' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -747,7 +747,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int40' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -760,7 +760,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int32' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -773,7 +773,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int24' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -786,7 +786,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int16' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -799,7 +799,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int8' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -812,7 +812,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint248' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -825,7 +825,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint240' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -838,7 +838,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint224' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -851,7 +851,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint192' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -864,7 +864,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint160' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -877,7 +877,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint128' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -890,7 +890,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint64' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -903,7 +903,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint32' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -916,7 +916,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint16' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -929,7 +929,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint8' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -942,7 +942,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int248' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -955,7 +955,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int240' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -968,7 +968,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int224' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -981,7 +981,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int192' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -994,7 +994,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int160' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1007,7 +1007,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int128' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1020,7 +1020,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int64' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1033,7 +1033,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int32' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1046,7 +1046,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int16' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1059,7 +1059,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int8' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1072,7 +1072,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'bytes31' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1085,7 +1085,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'bytes30' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1098,7 +1098,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'bytes28' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1111,7 +1111,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'bytes24' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1124,7 +1124,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'bytes20' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1137,7 +1137,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'bytes16' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1150,7 +1150,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'bytes12' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1163,7 +1163,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'bytes8' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1176,7 +1176,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'bytes4' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1189,7 +1189,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'bytes2' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1202,7 +1202,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'bytes1' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1215,7 +1215,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'bytes32' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1228,7 +1228,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'bytes32' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1241,7 +1241,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint256' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1254,7 +1254,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint128' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1267,7 +1267,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int256' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1280,7 +1280,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int128' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1293,7 +1293,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint128' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1306,7 +1306,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'int8' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1319,7 +1319,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint152' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1332,7 +1332,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint144' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1345,7 +1345,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint136' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1358,7 +1358,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint128' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1371,7 +1371,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint120' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1384,7 +1384,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint112' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1397,7 +1397,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint104' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1410,7 +1410,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint96' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1423,7 +1423,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint88' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1436,7 +1436,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint80' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1449,7 +1449,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint72' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1462,7 +1462,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint64' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1475,7 +1475,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint56' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1488,7 +1488,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint48' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1501,7 +1501,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint40' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1514,7 +1514,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint32' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1527,7 +1527,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint24' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1540,7 +1540,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint16' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
@@ -1553,7 +1553,7 @@ warning[unsafe-typecast]: typecasts that can truncate values should be checked
     |
     = note: Consider disabling this lint if you're certain the cast is safe:
             
-            // Cast is safe because [explain why]
+            // casting to 'uint8' is safe because [explain why]
             // forge-lint: disable-next-line(unsafe-typecast)
             
     = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast

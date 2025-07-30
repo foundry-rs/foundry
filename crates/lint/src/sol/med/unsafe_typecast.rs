@@ -21,18 +21,21 @@ impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
         expr: &'hir hir::Expr<'hir>,
     ) {
         // Check for type cast expressions: Type(value)
-        if let ExprKind::Call(call_expr, args, _) = &expr.kind
-            && let ExprKind::Type(target_type) = &call_expr.kind
+        if let ExprKind::Call(call, args, _) = &expr.kind
+            && let ExprKind::Type(hir::Type { kind: TypeKind::Elementary(ty), .. }) = &call.kind
             && args.len() == 1
-            && let Some(first_arg) = args.exprs().next()
-            && is_unsafe_typecast_hir(hir, first_arg, target_type)
+            && let Some(call_arg) = args.exprs().next()
+            && is_unsafe_typecast_hir(hir, call_arg, ty)
         {
             ctx.emit_with_fix(
                 &UNSAFE_TYPECAST,
                 expr.span,
                 Snippet::Block {
                     desc: Some("Consider disabling this lint if you're certain the cast is safe:"),
-                    code: "// Cast is safe because [explain why]\n// forge-lint: disable-next-line(unsafe-typecast)".into()
+                    code: format!(
+                        "// casting to '{abi_ty}' is safe because [explain why]\n// forge-lint: disable-next-line(unsafe-typecast)",
+                        abi_ty = ty.to_abi_str()
+                    )
                 }
             );
         }
@@ -43,19 +46,14 @@ impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
 fn is_unsafe_typecast_hir(
     hir: &hir::Hir<'_>,
     source_expr: &hir::Expr<'_>,
-    target_type: &hir::Type<'_>,
+    target_type: &hir::ElementaryType,
 ) -> bool {
-    // Get target elementary type
-    let TypeKind::Elementary(target_elem_type) = &target_type.kind else {
-        return false;
-    };
-
     // Determine source type from the expression
     let Some(source_elem_type) = infer_source_type(hir, source_expr) else {
         return false;
     };
 
-    is_unsafe_elementary_typecast(&source_elem_type, target_elem_type)
+    is_unsafe_elementary_typecast(&source_elem_type, target_type)
 }
 
 /// Infers the elementary type of a source expression.
