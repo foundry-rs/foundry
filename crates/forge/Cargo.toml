@@ -82,7 +82,7 @@ solar-sema.workspace = true
 strum = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
-toml_edit = "0.22"
+toml_edit = "0.23"
 watchexec = "8.0"
 watchexec-events = "6.0"
 watchexec-signals = "5.0"
@@ -93,7 +93,7 @@ path-slash.workspace = true
 # doc server
 axum = { workspace = true, features = ["ws"] }
 tower-http = { workspace = true, features = ["fs"] }
-opener = "0.7"
+opener = "0.8"
 
 # soldeer
 soldeer-commands.workspace = true
