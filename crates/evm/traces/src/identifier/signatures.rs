@@ -83,7 +83,7 @@ impl Serialize for SignaturesCache {
 
 impl SignaturesCache {
     /// Loads the cache from a file.
-    #[instrument(target = "evm::traces")]
+    #[instrument(target = "evm::traces", name = "SignaturesCache::load")]
     pub fn load(path: &Path) -> Self {
         trace!(target: "evm::traces", ?path, "reading signature cache");
         fs::read_json_file(path)
@@ -94,7 +94,7 @@ impl SignaturesCache {
     }
 
     /// Saves the cache to a file.
-    #[instrument(target = "evm::traces", skip(self))]
+    #[instrument(target = "evm::traces", name = "SignaturesCache::save", skip(self))]
     pub fn save(&self, path: &Path) {
         if let Some(parent) = path.parent()
             && let Err(err) = std::fs::create_dir_all(parent)
