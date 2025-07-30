@@ -1,5 +1,6 @@
 crates/cheatcodes/assets/*.json linguist-generated
 testdata/cheats/Vm.sol linguist-generated
+bun.lock linguist-generated
 
 # See <https://git-scm.com/docs/gitattributes#_defining_a_custom_hunk_header>
 *.rs diff=rust
