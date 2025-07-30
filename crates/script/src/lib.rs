@@ -212,7 +212,7 @@ pub struct ScriptArgs {
 
     /// The ens name to set for the contract.
     #[arg(long)]
-    pub ens_name: String,
+    pub ens_name: Option<String>,
 
     /// Whether the contract is ReverseSetter or not.
     #[arg(long, requires = "ens_name")]
@@ -345,7 +345,7 @@ impl ScriptArgs {
         let mut broadcasted = bundled.wait_for_pending().await?.broadcast().await?;
 
         // check if we have to set a name for the deployed contract
-        if !broadcasted.args.ens_name.is_empty() {
+        if broadcasted.args.ens_name.is_some() {
             broadcasted.set_ens_name(&config).await?;
         }
 
@@ -791,7 +791,7 @@ mod tests {
             "--ens-name",
             "test.abhi.eth",
         ]);
-        assert_eq!(args.ens_name, "test.abhi.eth".to_owned());
+        assert_eq!(args.ens_name, Some("test.abhi.eth".to_owned()));
     }
 
     #[test]

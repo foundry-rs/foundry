@@ -71,7 +71,7 @@ impl BroadcastedState {
                     config,
                     wallet,
                     receipt.contract_address.unwrap(),
-                    self.args.ens_name.clone(),
+                    self.args.ens_name.clone().unwrap(),
                     self.args.reverse_setter,
                 )
                 .await?;

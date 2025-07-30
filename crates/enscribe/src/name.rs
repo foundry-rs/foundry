@@ -35,9 +35,7 @@ pub async fn set_primary_name(
     let chain_id = provider.get_chain_id().await?;
     let ens_registry_addr: Address = alloy_ens::ENS_ADDRESS;
     let reverse_registrar_addr: Address = get_reverse_registrar(&provider).await?;
-    sh_println!("rev registrar addr: {reverse_registrar_addr}")?;
     let public_resolver_addr: Address = get_public_resolver(&provider, &name).await?;
-    sh_println!("pub resolver: {public_resolver_addr}")?;
     let name_wrapper_addr: Address = get_name_wrapper(chain_id).await?;
     let is_ownable = is_contract_ownable(&provider, contract_addr).await;
     let is_reverse_claimer =

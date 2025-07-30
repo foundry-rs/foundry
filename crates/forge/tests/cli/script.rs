@@ -3049,9 +3049,187 @@ Warning: Target directory is not empty, but `--force` was specified
         .build_with_wallet(signer)
         .expect("failed to build Alloy HTTP provider with signer");
 
-    /*
+
+    prj.add_source("HelloWorld.sol",
+        r#"
+import "@openzeppelin/openzeppelin-contracts/contracts/access/Ownable.sol";
+
+contract HelloWorld is Ownable {
+    string greetings;
+    uint256 count;
+
+    constructor(string memory greet, uint256 initialCount) Ownable () {
+        greetings = greet;
+        count = initialCount;
+    }
+
+    function set(string memory greet) public {
+        greetings = greet;
+    }
+
+    function retrieve() public view returns (string memory) {
+        return greetings;
+    }
+}"#
+        );
+
+    prj.add_source("DeployOracle.sol",
+    r#"
+import '@ensdomains/ens-contracts/contracts/ethregistrar/DummyOracle.sol';
+import '@ensdomains/ens-contracts/contracts/ethregistrar/StablePriceOracle.sol';
+
+contract DeployOracle {
+    function deploy() public returns (StablePriceOracle) {
+        DummyOracle dummyOracle = new DummyOracle(100000000);
+
+        uint256[] memory priceTiers = new uint256[](5);
+        priceTiers[0] = 0;
+        priceTiers[1] = 0;
+        priceTiers[2] = 4;
+        priceTiers[3] = 2;
+        priceTiers[4] = 1;
+
+        StablePriceOracle priceOracle = new StablePriceOracle(AggregatorInterface(address(dummyOracle)), priceTiers);
+
+        return priceOracle;
+    }
+}
+    "#);
+
+    let hello_world_script = prj.add_script(
+            "HelloWorldScript.s.sol",
+            r#"
+import "forge-std/Script.sol";
+import {HelloWorld} from '../src/HelloWorld.sol';
+
+contract HelloWorldScript is Script {
+    address public deployer = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+
+    function run() public {
+        vm.startBroadcast(deployer);
+
+        new HelloWorld("hi forge!", 0);
+
+        vm.stopBroadcast();
+    }
+}
+            "#).unwrap();
+
+    let script = prj
+        .add_script(
+            "ENSRegistryDeployment.s.sol",
+            r#"
+import "forge-std/Script.sol";
+import '@ensdomains/ens-contracts/contracts/registry/ENSRegistry.sol';
+
+contract ENSRegistryDeployScript is Script {
+    address public deployer = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+    address constant ENS_REGISTRY = 0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e;
+
+    function run() public {
+        vm.startBroadcast(deployer);
+
+        // Step 1: Deploy core ENS contracts
+        // (ENSRegistry ens, BaseRegistrarImplementation baseRegistrar, ReverseRegistrar reverseRegistrar) =
+        //     new DeployCore().deploy(deployer);
+
+        ENSRegistry temp = new ENSRegistry();
+        temp.setOwner(bytes32(0), deployer);
+        vm.etch(ENS_REGISTRY, address(temp).code);
+
+        // ENSRegistry ens = ENSRegistry(ENS_REGISTRY);
+
+        vm.stopBroadcast();
+    }
+}   "#,
+        )
+        .unwrap();
+
+    prj.create_file(
+        "foundry.toml",
+        r#"
+        [profile.default]
+        via_ir = true
+        src = "src"
+        out = "out"
+        libs = ["lib"]
+        remappings = [
+            '@openzeppelin/openzeppelin-contracts/=lib/openzeppelin-contracts/',
+            '@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/',
+            '@ensdomains/ens-contracts/=lib/ens-contracts/',
+            '@ensdomains/buffer/=lib/buffer/'
+        ]
+        "#,
+    );
+
+    cmd.forge_fuse().args(["install", "openzeppelin/openzeppelin-contracts@v4.9.6"]).assert_success().stdout_eq(
+                str![[r#"
+Installing openzeppelin-contracts in [..] (url: Some("https://github.com/openzeppelin/openzeppelin-contracts"), tag: Some("v4.9.6"))
+    Installed openzeppelin-contracts [..]
+
+"#]],
+            );
+    cmd.forge_fuse().args(["install", "ensdomains/ens-contracts"]).assert_success().stdout_eq(
+                str![[r#"
+Installing ens-contracts in [..] (url: Some("https://github.com/ensdomains/ens-contracts"), tag: None)
+    Installed ens-contracts [..]
+
+"#]],
+        );
+    cmd.forge_fuse().args(["install", "ensdomains/buffer"]).assert_success().stdout_eq(
+                str![[r#"
+Installing buffer in [..] (url: Some("https://github.com/ensdomains/buffer"), tag: None)
+    Installed buffer
+
+"#]],
+            );
+
+    cmd.forge_fuse().args(["build", "--sizes"]).assert_success();
+
+    let cmd = cmd.forge_fuse().arg("script").arg(script).args([
+        "--tc",
+        "ENSRegistryDeployScript",
+        "--sender",
+        account.to_string().as_str(),
+        "--rpc-url",
+        handle.http_endpoint().as_str(),
+        "--broadcast",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ]);
+
+    cmd.assert_success().stdout_eq(str![[r#"
+No files changed, compilation skipped
+Script ran successfully.
+
+## Setting up 1 EVM.
+
+==========================
+
+Chain 31337
+
+[ESTIMATED_GAS_PRICE]
+
+[ESTIMATED_TOTAL_GAS_USED]
+
+[ESTIMATED_AMOUNT_REQUIRED]
+
+==========================
+
+
+==========================
+
+ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
+
+[SAVED_TRANSACTIONS]
+
+[SAVED_SENSITIVE_VALUES]
+
+
+"#]]);
+
     // deploy ENSRegistry
-    let ens_registry = ENSRegistry::deploy(&provider).await.unwrap();
+    let ens_registry = ENSRegistry::new(address!("0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e"), &provider);
 
     let eth_namehash = namehash("eth");
     // Deploy BaseRegistrarImplementation & set owner of eth tld to base-registrar via the ens
@@ -3064,6 +3242,14 @@ Warning: Target directory is not empty, but `--force` was specified
     .await
     .unwrap();
 
+    println!("ens registry addr: {}", ens_registry.address().to_owned());
+
+    let _receipt = ens_registry
+        .setSubnodeOwner(B256::ZERO, keccak256("reverse"), account)
+        .send()
+        .await
+        .unwrap();
+
     // Deploy ReverseRegistrar
     let rev_registrar =
         match ReverseRegistrar::deploy(&provider, ens_registry.address().to_owned()).await {
@@ -3071,11 +3257,6 @@ Warning: Target directory is not empty, but `--force` was specified
             Err(e) => panic!("failed to deploy ReverseRegistrar: {e}"),
         };
 
-    let _receipt = ens_registry
-        .setSubnodeOwner(B256::ZERO, keccak256("reverse"), account)
-        .send()
-        .await
-        .unwrap();
     let _receipt = ens_registry
         .setSubnodeOwner(namehash("reverse"), keccak256("addr"), rev_registrar.address().to_owned())
         .send()
@@ -3254,209 +3435,8 @@ Warning: Target directory is not empty, but `--force` was specified
 
     let exists = ens_registry.recordExists(namehash("forge.eth")).call().await.unwrap();
     assert!(exists);
-    */
 
-    prj.add_source("HelloWorld.sol",
-        r#"
-import "@openzeppelin/openzeppelin-contracts/contracts/access/Ownable.sol";
-
-contract HelloWorld is Ownable {
-    string greetings;
-    uint256 count;
-
-    constructor(string memory greet, uint256 initialCount) Ownable () {
-        greetings = greet;
-        count = initialCount;
-    }
-
-    function set(string memory greet) public {
-        greetings = greet;
-    }
-
-    function retrieve() public view returns (string memory) {
-        return greetings;
-    }
-}"#
-        );
-
-    prj.add_source("DeployOracle.sol",
-    r#"
-import '@ensdomains/ens-contracts/contracts/ethregistrar/DummyOracle.sol';
-import '@ensdomains/ens-contracts/contracts/ethregistrar/StablePriceOracle.sol';
-
-contract DeployOracle {
-    function deploy() public returns (StablePriceOracle) {
-        DummyOracle dummyOracle = new DummyOracle(100000000);
-
-        uint256[] memory priceTiers = new uint256[](5);
-        priceTiers[0] = 0;
-        priceTiers[1] = 0;
-        priceTiers[2] = 4;
-        priceTiers[3] = 2;
-        priceTiers[4] = 1;
-
-        StablePriceOracle priceOracle = new StablePriceOracle(AggregatorInterface(address(dummyOracle)), priceTiers);
-
-        return priceOracle;
-    }
-}
-
-    "#);
-
-    let script = prj
-        .add_script(
-            "ENSNameSetting.s.sol",
-            r#"
-import "forge-std/Script.sol";
-import '@ensdomains/ens-contracts/contracts/registry/ENSRegistry.sol';
-import '@ensdomains/ens-contracts/contracts/ethregistrar/BaseRegistrarImplementation.sol';
-import '@ensdomains/ens-contracts/contracts/reverseRegistrar/ReverseRegistrar.sol';
-import {NameWrapper} from '@ensdomains/ens-contracts/contracts/wrapper/NameWrapper.sol';
-import {IMetadataService} from '@ensdomains/ens-contracts/contracts/wrapper/IMetadataService.sol';
-// import {ETHRegistrarController} from '@ensdomains/ens-contracts/contracts/ethregistrar/ETHRegistrarController.sol';
-// import {PublicResolver} from '@ensdomains/ens-contracts/contracts/resolvers/PublicResolver.sol';
-import {HelloWorld} from '../src/HelloWorld.sol';
-import {DeployOracle} from '../src/DeployOracle.sol';
-
-contract HelloWorldScript is Script {
-    address public deployer = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
-    address constant ENS_REGISTRY = 0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e;
-    
-    function run() public {
-        vm.startBroadcast(deployer);
-
-        // Step 1: Deploy core ENS contracts
-        // (ENSRegistry ens, BaseRegistrarImplementation baseRegistrar, ReverseRegistrar reverseRegistrar) =
-        //     new DeployCore().deploy(deployer);
-
-        ENSRegistry ens = new ENSRegistry();
-        bytes memory code = address(ens).code;
-        vm.etch(ENS_REGISTRY, code);
-        ens = ENSRegistry(ENS_REGISTRY);
-        
-        BaseRegistrarImplementation baseRegistrar = new BaseRegistrarImplementation(
-            ens,
-            0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae
-        );
-        ReverseRegistrar reverseRegistrar = new ReverseRegistrar(ens);
-
-        ens.setSubnodeOwner(bytes32(0), keccak256("reverse"), deployer);
-        ens.setSubnodeOwner(
-            0xa097f6721ce401e757d1223a763fef49b8b5f90bb18567ddb86fd205dff71d34,
-            keccak256("addr"),
-            address(reverseRegistrar)
-        );
-
-        ens.setSubnodeOwner(bytes32(0), keccak256("eth"), address(baseRegistrar));
-
-        // Step 2: Deploy wrapper, oracle, controller, resolver
-        NameWrapper nameWrapper = new NameWrapper(ens, baseRegistrar, IMetadataService(deployer));
-
-        /*
-        DeployOracle deployOracle = new DeployOracle();
-        StablePriceOracle priceOracle = deployOracle.deploy();
-
-        ETHRegistrarController controller = new ETHRegistrarController(
-            baseRegistrar,
-            priceOracle,
-            600,
-            86400,
-            reverseRegistrar,
-            nameWrapper,
-            ens
-        );
-
-        PublicResolver publicResolver = new PublicResolver(
-            ens,
-            nameWrapper,
-            address(controller),
-            address(reverseRegistrar)
-        );
-        nameWrapper.setController(address(controller), true);
-        baseRegistrar.addController(address(nameWrapper));
-        reverseRegistrar.setController(address(controller), true);
-
-        baseRegistrar.addController(address(controller));
-        baseRegistrar.addController(deployer);
-
-        // Step 3: Register a name
-        bytes32 commitment = controller.makeCommitment(
-            "forge",
-            deployer,
-            365 days,
-            bytes32(0),
-            address(publicResolver),
-            new bytes[](0),
-            false,
-            0
-        );
-
-        controller.commit(commitment);
-        vm.warp(block.timestamp + controller.minCommitmentAge());
-
-        IPriceOracle.Price memory price = controller.rentPrice("forge", 365 days);
-        controller.register{value: price.base + price.premium}(
-            "forge",
-            deployer,
-            365 days,
-            bytes32(0),
-            address(publicResolver),
-            new bytes[](0),
-            false,
-            0
-        );
-        */
-
-        new HelloWorld("hi forge!", 0);
-
-        vm.stopBroadcast();
-    }
-}   "#,
-        )
-        .unwrap();
-
-    prj.create_file(
-        "foundry.toml",
-        r#"
-        [profile.default]
-        via_ir = true
-        src = "src"
-        out = "out"
-        libs = ["lib"]
-        remappings = [
-            '@openzeppelin/openzeppelin-contracts/=lib/openzeppelin-contracts/',
-            '@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/',
-            '@ensdomains/ens-contracts/=lib/ens-contracts/',
-            '@ensdomains/buffer/=lib/buffer/'
-        ]
-        "#,
-    );
-
-    cmd.forge_fuse().args(["install", "openzeppelin/openzeppelin-contracts@v4.9.6"]).assert_success().stdout_eq(
-                str![[r#"
-Installing openzeppelin-contracts in [..] (url: Some("https://github.com/openzeppelin/openzeppelin-contracts"), tag: Some("v4.9.6"))
-    Installed openzeppelin-contracts [..]
-
-"#]],
-            );
-    cmd.forge_fuse().args(["install", "ensdomains/ens-contracts"]).assert_success().stdout_eq(
-                str![[r#"
-Installing ens-contracts in [..] (url: Some("https://github.com/ensdomains/ens-contracts"), tag: None)
-    Installed ens-contracts [..]
-
-"#]],
-        );
-    cmd.forge_fuse().args(["install", "ensdomains/buffer"]).assert_success().stdout_eq(
-                str![[r#"
-Installing buffer in [..] (url: Some("https://github.com/ensdomains/buffer"), tag: None)
-    Installed buffer
-
-"#]],
-            );
-
-    cmd.forge_fuse().args(["build", "--sizes"]).assert_success();
-
-    let cmd = cmd.forge_fuse().arg("script").arg(script).args([
+    let cmd = cmd.forge_fuse().arg("script").arg(hello_world_script).args([
         "--ens-name",
         "test.forge.eth",
         "--tc",
@@ -3469,6 +3449,7 @@ Installing buffer in [..] (url: Some("https://github.com/ensdomains/buffer"), ta
         "--private-key",
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
     ]);
+
     cmd.assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
