@@ -28,6 +28,17 @@ enum AssertionKind {
 }
 
 impl AssertionKind {
+    fn inverse(self) -> Self {
+        match self {
+            Self::Eq => Self::Ne,
+            Self::Ne => Self::Eq,
+            Self::Gt => Self::Le,
+            Self::Ge => Self::Lt,
+            Self::Lt => Self::Ge,
+            Self::Le => Self::Gt,
+        }
+    }
+
     fn to_str(self) -> &'static str {
         match self {
             Self::Eq => "==",
@@ -42,7 +53,7 @@ impl AssertionKind {
 
 impl<T> ComparisonAssertionError<'_, T> {
     fn format_values<D: fmt::Display>(&self, f: impl Fn(&T) -> D) -> String {
-        format!("{} {} {}", f(self.left), self.kind.to_str(), f(self.right))
+        format!("{} {} {}", f(self.left), self.kind.inverse().to_str(), f(self.right))
     }
 }
 
