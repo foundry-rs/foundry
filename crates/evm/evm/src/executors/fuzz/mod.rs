@@ -22,43 +22,12 @@ use proptest::{
     strategy::{Strategy, ValueTree},
     test_runner::{TestCaseError, TestRunner},
 };
-use serde::Serialize;
 use serde_json::json;
-use std::{
-    fmt,
-    time::{Instant, SystemTime, UNIX_EPOCH},
-};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 mod types;
+use crate::executors::corpus::CorpusMetrics;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
-
-#[derive(Serialize, Default)]
-struct FuzzCoverageMetrics {
-    // Number of edges seen during the fuzz test.
-    cumulative_edges_seen: usize,
-    // Number of features (new hitcount bin of previously hit edge) seen during the fuzz test.
-    cumulative_features_seen: usize,
-}
-
-impl fmt::Display for FuzzCoverageMetrics {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f)?;
-        writeln!(f, "        - cumulative edges seen: {}", self.cumulative_edges_seen)?;
-        writeln!(f, "        - cumulative features seen: {}", self.cumulative_features_seen)?;
-        Ok(())
-    }
-}
-
-impl FuzzCoverageMetrics {
-    /// Records number of new edges or features explored during the campaign.
-    pub fn update_seen(&mut self, is_edge: bool) {
-        if is_edge {
-            self.cumulative_edges_seen += 1;
-        } else {
-            self.cumulative_features_seen += 1;
-        }
-    }
-}
 
 /// Contains data collected during fuzz test runs.
 #[derive(Default)]
@@ -80,7 +49,7 @@ struct FuzzTestData {
     // Deprecated cheatcodes mapped to their replacements.
     deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
     // Coverage metrics collected during the fuzz test.
-    coverage_metrics: FuzzCoverageMetrics,
+    coverage_metrics: CorpusMetrics,
     // Runs performed in fuzz test.
     runs: u32,
     // Current assume rejects of the fuzz run.
@@ -170,10 +139,10 @@ impl FuzzedExecutor {
                 if let Some(progress) = progress {
                     progress.inc(1);
                     // Display metrics in progress bar.
-                    if self.config.show_edge_coverage {
+                    if self.config.corpus.collect_edge_coverage() {
                         progress.set_message(format!("{}", &test_data.coverage_metrics));
                     }
-                } else if self.config.show_edge_coverage
+                } else if self.config.corpus.collect_edge_coverage()
                     && last_metrics_report.elapsed() > DURATION_BETWEEN_METRICS_REPORT
                 {
                     // Display metrics inline.
@@ -317,14 +286,14 @@ impl FuzzedExecutor {
         &mut self,
         address: Address,
         calldata: Bytes,
-        coverage_metrics: &mut FuzzCoverageMetrics,
+        coverage_metrics: &mut CorpusMetrics,
     ) -> Result<FuzzOutcome, TestCaseError> {
         let mut call = self
             .executor
             .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
             .map_err(|e| TestCaseError::fail(e.to_string()))?;
 
-        if self.config.show_edge_coverage {
+        if self.config.corpus.collect_edge_coverage() {
             let (new_coverage, is_edge) = call.merge_edge_coverage(&mut self.history_map);
             if new_coverage {
                 coverage_metrics.update_seen(is_edge);

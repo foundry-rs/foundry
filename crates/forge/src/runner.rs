@@ -706,7 +706,9 @@ impl<'a> FunctionRunner<'a> {
         let mut executor = self.clone_executor();
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
         // metrics (useful for benchmarking the fuzzer).
-        executor.inspector_mut().collect_edge_coverage(invariant_config.show_edge_coverage());
+        executor
+            .inspector_mut()
+            .collect_edge_coverage(invariant_config.corpus.collect_edge_coverage());
 
         let mut evm = InvariantExecutor::new(
             executor,
@@ -934,7 +936,7 @@ impl<'a> FunctionRunner<'a> {
         let mut executor = self.executor.into_owned();
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
         // metrics (useful for benchmarking the fuzzer).
-        executor.inspector_mut().collect_edge_coverage(fuzz_config.show_edge_coverage);
+        executor.inspector_mut().collect_edge_coverage(fuzz_config.corpus.collect_edge_coverage());
         // Load persisted counterexample, if any.
         let persisted_failure =
             foundry_common::fs::read_json_file::<BaseCounterExample>(failure_file.as_path()).ok();

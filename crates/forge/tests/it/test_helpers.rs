@@ -126,10 +126,10 @@ impl ForgeTestProfile {
                 max_fuzz_dictionary_values: 10_000,
             },
             gas_report_samples: 256,
+            corpus: FuzzCorpusConfig::default(),
             failure_persist_dir: Some(tempfile::tempdir().unwrap().keep()),
             show_logs: false,
             timeout: None,
-            show_edge_coverage: false,
         };
         config.invariant = InvariantConfig {
             runs: 256,
@@ -157,7 +157,6 @@ impl ForgeTestProfile {
             show_metrics: true,
             timeout: None,
             show_solidity: false,
-            show_edge_coverage: false,
         };
 
         config.sanitized()

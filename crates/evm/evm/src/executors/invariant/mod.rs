@@ -349,7 +349,7 @@ impl<'a> InvariantExecutor<'a> {
         };
 
         // Invariant runs with edge coverage if corpus dir is set or showing edge coverage.
-        let edge_coverage_enabled = self.config.show_edge_coverage();
+        let edge_coverage_enabled = self.config.corpus.collect_edge_coverage();
 
         'stop: while continue_campaign(runs) {
             let initial_seq = corpus_manager.new_inputs(

@@ -24,14 +24,15 @@ pub struct FuzzConfig {
     pub dictionary: FuzzDictionaryConfig,
     /// Number of runs to execute and include in the gas report.
     pub gas_report_samples: u32,
+    /// The fuzz corpus configuration.
+    #[serde(flatten)]
+    pub corpus: FuzzCorpusConfig,
     /// Path where fuzz failures are recorded and replayed.
     pub failure_persist_dir: Option<PathBuf>,
     /// show `console.log` in fuzz test, defaults to `false`
     pub show_logs: bool,
     /// Optional timeout (in seconds) for each property test
     pub timeout: Option<u32>,
-    /// Whether to collect and display edge coverage metrics.
-    pub show_edge_coverage: bool,
 }
 
 impl Default for FuzzConfig {
@@ -43,10 +44,10 @@ impl Default for FuzzConfig {
             seed: None,
             dictionary: FuzzDictionaryConfig::default(),
             gas_report_samples: 256,
+            corpus: FuzzCorpusConfig::default(),
             failure_persist_dir: None,
             show_logs: false,
             timeout: None,
-            show_edge_coverage: false,
         }
     }
 }
@@ -106,6 +107,8 @@ pub struct FuzzCorpusConfig {
     pub corpus_min_mutations: usize,
     // Number of corpus that won't be evicted from memory.
     pub corpus_min_size: usize,
+    /// Whether to collect and display edge coverage metrics.
+    pub show_edge_coverage: bool,
 }
 
 impl FuzzCorpusConfig {
@@ -114,10 +117,21 @@ impl FuzzCorpusConfig {
             self.corpus_dir = Some(corpus_dir.join(test_name));
         }
     }
+
+    /// Whether edge coverage should be collected and displayed.
+    pub fn collect_edge_coverage(&self) -> bool {
+        self.corpus_dir.is_some() || self.show_edge_coverage
+    }
 }
 
 impl Default for FuzzCorpusConfig {
     fn default() -> Self {
-        Self { corpus_dir: None, corpus_gzip: true, corpus_min_mutations: 5, corpus_min_size: 0 }
+        Self {
+            corpus_dir: None,
+            corpus_gzip: true,
+            corpus_min_mutations: 5,
+            corpus_min_size: 0,
+            show_edge_coverage: false,
+        }
     }
 }

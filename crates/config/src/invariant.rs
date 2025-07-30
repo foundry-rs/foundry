@@ -37,8 +37,6 @@ pub struct InvariantConfig {
     pub timeout: Option<u32>,
     /// Display counterexample as solidity calls.
     pub show_solidity: bool,
-    /// Whether to collect and display edge coverage metrics.
-    pub show_edge_coverage: bool,
 }
 
 impl Default for InvariantConfig {
@@ -57,7 +55,6 @@ impl Default for InvariantConfig {
             show_metrics: true,
             timeout: None,
             show_solidity: false,
-            show_edge_coverage: false,
         }
     }
 }
@@ -79,12 +76,6 @@ impl InvariantConfig {
             show_metrics: true,
             timeout: None,
             show_solidity: false,
-            show_edge_coverage: false,
         }
-    }
-
-    /// Whether edge coverage should be displayed.
-    pub fn show_edge_coverage(&self) -> bool {
-        self.corpus.corpus_dir.is_some() || self.show_edge_coverage
     }
 }

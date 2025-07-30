@@ -1100,9 +1100,12 @@ include_push_bytes = true
 max_fuzz_dictionary_addresses = 15728640
 max_fuzz_dictionary_values = 6553600
 gas_report_samples = 256
+corpus_gzip = true
+corpus_min_mutations = 5
+corpus_min_size = 0
+show_edge_coverage = false
 failure_persist_dir = "cache/fuzz"
 show_logs = false
-show_edge_coverage = false
 
 [invariant]
 runs = 256
@@ -1120,10 +1123,10 @@ gas_report_samples = 256
 corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
+show_edge_coverage = false
 failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
-show_edge_coverage = false
 
 [labels]
 
@@ -1212,10 +1215,14 @@ exclude = []
     "max_fuzz_dictionary_addresses": 15728640,
     "max_fuzz_dictionary_values": 6553600,
     "gas_report_samples": 256,
+    "corpus_dir": null,
+    "corpus_gzip": true,
+    "corpus_min_mutations": 5,
+    "corpus_min_size": 0,
+    "show_edge_coverage": false,
     "failure_persist_dir": "cache/fuzz",
     "show_logs": false,
-    "timeout": null,
-    "show_edge_coverage": false
+    "timeout": null
   },
   "invariant": {
     "runs": 256,
@@ -1234,11 +1241,11 @@ exclude = []
     "corpus_gzip": true,
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
+    "show_edge_coverage": false,
     "failure_persist_dir": "cache/invariant",
     "show_metrics": true,
     "timeout": null,
-    "show_solidity": false,
-    "show_edge_coverage": false
+    "show_solidity": false
   },
   "ffi": false,
   "allow_internal_expect_revert": false,
