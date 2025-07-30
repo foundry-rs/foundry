@@ -769,6 +769,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     /// # Ok(())
     /// # }
     /// ```
+    #[allow(clippy::too_many_arguments)]
     pub async fn transaction(
         &self,
         tx_hash: Option<String>,
