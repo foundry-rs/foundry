@@ -50,9 +50,9 @@ use serde_json::json;
 mod shrink;
 use crate::executors::{
     COVERAGE_MAP_SIZE, DURATION_BETWEEN_METRICS_REPORT, EvmError, FuzzTestTimer,
+    corpus::CorpusManager,
 };
 pub use shrink::check_sequence;
-use crate::executors::corpus::CorpusManager;
 
 sol! {
     interface IInvariantTest {

@@ -56,8 +56,8 @@ pub use fuzz::FuzzedExecutor;
 pub mod invariant;
 pub use invariant::InvariantExecutor;
 
-mod trace;
 mod corpus;
+mod trace;
 
 pub use trace::TracingExecutor;
 
