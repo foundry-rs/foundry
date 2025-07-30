@@ -1101,6 +1101,4 @@ fault: function(log) {}
         .unwrap_or_default();
 
     assert_eq!(actual, expected);
-
-    assert_eq!(actual, expected);
 }

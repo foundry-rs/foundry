@@ -2648,7 +2648,9 @@ impl Backend {
             let storage = self.blockchain.storage.read();
             let MinedTransaction { info, block_hash, .. } =
                 storage.transactions.get(&hash).unwrap().clone();
-            let block = storage.blocks.get(&block_hash).cloned().unwrap();
+            let block =
+                storage.blocks.get(&block_hash).cloned().ok_or(BlockchainError::BlockNotFound)?;
+
             (info, block)
         };
 
@@ -2676,12 +2678,11 @@ impl Backend {
             })
             .collect();
 
-        let db = self.db.read().await;
         let result = {
             self.with_database_at(
                 Some(BlockRequest::Number(parent_number)),
-                |_state_db, block_env| {
-                    let mut cache_db = CacheDB::new(Box::new(&*db));
+                |state_db, block_env| {
+                    let mut cache_db = CacheDB::new(Box::new(&state_db));
 
                     let executor = TransactionExecutor {
                         db: &mut cache_db,
@@ -2711,6 +2712,10 @@ impl Backend {
                         Some(info),
                         block.header.base_fee_per_gas,
                     );
+                    let pending_tx = PendingTransaction::new(
+                        TypedTransaction::try_from(built_tx.clone()).unwrap(),
+                    )?;
+                    let tx_env = pending_tx.to_revm_tx_env();
 
                     let request = TransactionRequest::from_transaction(built_tx);
                     let call_env = self.build_call_env(
@@ -2724,11 +2729,7 @@ impl Backend {
                         .unwrap(),
                         block_env.clone(),
                     );
-                    let sender = call_env.tx.base.caller;
-                    cache_db.insert_account_info(
-                        sender,
-                        AccountInfo { balance: U256::from(10u64.pow(18)), ..Default::default() },
-                    );
+
                     let config = tracer_config.clone().into_json();
                     let mut inspector =
                         revm_inspectors::tracing::js::JsInspector::new(code.clone(), config)
@@ -2737,13 +2738,13 @@ impl Backend {
                         self.new_evm_with_inspector_ref(&cache_db, &call_env, &mut inspector);
 
                     let result = evm
-                        .transact(call_env.tx.clone())
+                        .transact(tx_env.clone())
                         .map_err(|err| BlockchainError::Message(err.to_string()))?;
 
                     inspector
                         .json_result(
                             result,
-                            &alloy_evm::IntoTxEnv::into_tx_env(call_env.tx),
+                            &alloy_evm::IntoTxEnv::into_tx_env(tx_env),
                             &block_env,
                             &cache_db,
                         )
