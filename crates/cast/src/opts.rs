@@ -149,6 +149,10 @@ pub enum CastSubcommand {
     ToBytes32 {
         /// The hex data to convert.
         bytes: Option<String>,
+
+        /// Left-pad the data instead of right-pad.
+        #[arg(long)]
+        left: bool,
     },
 
     /// Convert an integer into a fixed point number.
