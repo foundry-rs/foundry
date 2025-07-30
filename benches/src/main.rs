@@ -1,7 +1,7 @@
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_bench::{
-    BENCHMARK_REPOS, FOUNDRY_VERSIONS, RUNS, RepoConfig, get_forge_version,
+    BENCHMARK_REPOS, BenchmarkProject, FOUNDRY_VERSIONS, RUNS, RepoConfig, get_forge_version,
     get_forge_version_details,
     results::{BenchmarkResults, HyperfineResult},
     switch_foundry_version,
@@ -10,12 +10,13 @@ use foundry_common::sh_println;
 use rayon::prelude::*;
 use std::{fs, path::PathBuf, process::Command, sync::Mutex};
 
-const ALL_BENCHMARKS: [&str; 5] = [
+const ALL_BENCHMARKS: [&str; 6] = [
     "forge_test",
     "forge_build_no_cache",
     "forge_build_with_cache",
     "forge_fuzz_test",
     "forge_coverage",
+    "forge_isolate_test",
 ];
 
 /// Foundry Benchmark Runner
@@ -118,6 +119,34 @@ fn main() -> Result<()> {
         results.set_baseline_version(first_version.clone());
     }
 
+    // Setup all projects upfront before version loop
+    sh_println!("📦 Setting up projects to benchmark");
+    let projects: Vec<(RepoConfig, BenchmarkProject)> = repos
+        .par_iter()
+        .map(|repo_config| -> Result<(RepoConfig, BenchmarkProject)> {
+            sh_println!("Setting up {}/{}", repo_config.org, repo_config.repo);
+            let project = BenchmarkProject::setup(repo_config).wrap_err(format!(
+                "Failed to setup project for {}/{}",
+                repo_config.org, repo_config.repo
+            ))?;
+            Ok((repo_config.clone(), project))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    sh_println!("✅ All projects setup complete");
+
+    // Create a list of all benchmark tasks (same for all versions)
+    let benchmark_tasks: Vec<_> = projects
+        .iter()
+        .flat_map(|(repo_config, project)| {
+            benchmarks
+                .iter()
+                .map(move |benchmark| (repo_config.clone(), project, benchmark.clone()))
+        })
+        .collect();
+
+    sh_println!("Will run {} benchmark tasks per version", benchmark_tasks.len());
+
     // Run benchmarks for each version
     for version in &versions {
         sh_println!("🔧 Switching to Foundry version: {version}");
@@ -131,32 +160,12 @@ fn main() -> Result<()> {
         let version_details = get_forge_version_details()?;
         results.add_version_details(version, version_details);
 
-        // Create a list of all benchmark tasks
-        let benchmark_tasks: Vec<_> = repos
-            .iter()
-            .flat_map(|repo| {
-                benchmarks.iter().map(move |benchmark| (repo.clone(), benchmark.clone()))
-            })
-            .collect();
+        sh_println!("Running benchmark tasks for version {version}...");
 
-        sh_println!("Running {} benchmark tasks in parallel...", benchmark_tasks.len());
-
-        // Run all benchmarks in parallel
+        // Run all benchmarks sequentially
         let version_results = benchmark_tasks
-            .par_iter()
-            .map(|(repo_config, benchmark)| -> Result<(String, String, HyperfineResult)> {
-                sh_println!(
-                    "Setting up {}/{} for {}",
-                    repo_config.org,
-                    repo_config.repo,
-                    benchmark
-                );
-
-                // Setup a fresh project for this specific benchmark
-                let project = foundry_bench::BenchmarkProject::setup(repo_config).wrap_err(
-                    format!("Failed to setup project for {}/{}", repo_config.org, repo_config.repo),
-                )?;
-
+            .iter()
+            .map(|(repo_config, project, benchmark)| -> Result<(String, String, HyperfineResult)> {
                 sh_println!("Running {} on {}/{}", benchmark, repo_config.org, repo_config.repo);
 
                 // Determine runs based on benchmark type

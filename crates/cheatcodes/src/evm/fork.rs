@@ -266,6 +266,33 @@ impl Cheatcode for eth_getLogsCall {
     }
 }
 
+impl Cheatcode for getRawBlockHeaderCall {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { blockNumber } = self;
+        let url = ccx
+            .ecx
+            .journaled_state
+            .database
+            .active_fork_url()
+            .ok_or_else(|| fmt_err!("no active fork"))?;
+        let provider = ProviderBuilder::new(&url).build()?;
+        let block_number = u64::try_from(blockNumber)
+            .map_err(|_| fmt_err!("block number must be less than 2^64"))?;
+        let block =
+            foundry_common::block_on(async move { provider.get_block(block_number.into()).await })
+                .map_err(|e| fmt_err!("failed to get block: {e}"))?
+                .ok_or_else(|| fmt_err!("block {block_number} not found"))?;
+
+        let header: alloy_consensus::Header = block
+            .into_inner()
+            .header
+            .inner
+            .try_into_header()
+            .map_err(|e| fmt_err!("failed to convert to header: {e}"))?;
+        Ok(alloy_rlp::encode(&header).abi_encode())
+    }
+}
+
 /// Creates and then also selects the new fork
 fn create_select_fork(ccx: &mut CheatsCtxt, url_or_alias: &str, block: Option<u64>) -> Result {
     check_broadcast(ccx.state)?;
