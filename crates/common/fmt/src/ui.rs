@@ -775,8 +775,8 @@ impl UIfmt for AnyRpcTransaction {
 impl UIfmt for TxKind {
     fn pretty(&self) -> String {
         match self {
-            TxKind::Create => "create".to_string(),
-            TxKind::Call(to) => format!("{}", to.pretty()),
+            Self::Create => "create".to_string(),
+            Self::Call(to) => to.pretty().to_string(),
         }
     }
 }
@@ -792,43 +792,43 @@ impl UIfmt for TransactionRequest {
             out.push_str(&format!("to                   {}\n", to.pretty()));
         }
         if let Some(gas_price) = &self.gas_price {
-            out.push_str(&format!("gasPrice             {}\n", gas_price));
+            out.push_str(&format!("gasPrice             {gas_price}\n"));
         }
         if let Some(max_fee) = &self.max_fee_per_gas {
-            out.push_str(&format!("maxFeePerGas         {}\n", max_fee));
+            out.push_str(&format!("maxFeePerGas         {max_fee}\n"));
         }
         if let Some(priority_fee) = &self.max_priority_fee_per_gas {
-            out.push_str(&format!("maxPriorityFeePerGas {}\n", priority_fee));
+            out.push_str(&format!("maxPriorityFeePerGas {priority_fee}\n"));
         }
         if let Some(blob_fee) = &self.max_fee_per_blob_gas {
-            out.push_str(&format!("maxFeePerBlobGas     {}\n", blob_fee));
+            out.push_str(&format!("maxFeePerBlobGas     {blob_fee}\n"));
         }
         if let Some(gas) = &self.gas {
-            out.push_str(&format!("gasLimit             {}\n", gas));
+            out.push_str(&format!("gasLimit             {gas}\n"));
         }
         if let Some(value) = &self.value {
-            out.push_str(&format!("value                {}\n", value));
+            out.push_str(&format!("value                {value}\n"));
         }
         if let Some(bytes) = &self.input.input {
             if !bytes.0.is_empty() {
-                out.push_str(&format!("input                {}\n", bytes));
+                out.push_str(&format!("input                {bytes}\n"));
             }
         } else if let Some(bytes) = &self.input.data {
             if !bytes.0.is_empty() {
-                out.push_str(&format!("data                 {}\n", bytes));
+                out.push_str(&format!("data                 {bytes}\n"));
             }
         }
         if let Some(nonce) = &self.nonce {
-            out.push_str(&format!("nonce                {}\n", nonce));
+            out.push_str(&format!("nonce                {nonce}\n"));
         }
         if let Some(chain_id) = &self.chain_id {
-            out.push_str(&format!("chainId              {}\n", chain_id));
+            out.push_str(&format!("chainId              {chain_id}\n"));
         }
         if let Some(access_list) = &self.access_list {
-            out.push_str(&format!("accessList           {:?}\n", access_list));
+            out.push_str(&format!("accessList           {access_list:?}\n"));
         }
         if let Some(tx_type) = &self.transaction_type {
-            out.push_str(&format!("type                 {}\n", tx_type));
+            out.push_str(&format!("type                 {tx_type}\n"));
         }
         if let Some(hashes) = &self.blob_versioned_hashes {
             out.push_str(&format!(
@@ -837,7 +837,7 @@ impl UIfmt for TransactionRequest {
             ));
         }
         if let Some(sidecar) = &self.sidecar {
-            out.push_str(&format!("sidecar              {:?}\n", sidecar));
+            out.push_str(&format!("sidecar              {sidecar:?}\n"));
         }
         if let Some(auth_list) = &self.authorization_list {
             out.push_str(&format!("authorizationList    [{}]\n", auth_list.len()));
