@@ -72,7 +72,7 @@ impl LineCoverageCollector {
     #[cold]
     #[inline(never)]
     fn insert_map(&mut self, interpreter: &mut Interpreter) {
-        let hash = interpreter.bytecode.hash().unwrap_or_else(|| eof_panic());
+        let hash = interpreter.bytecode.hash().unwrap();
         self.current_hash = hash;
         // Converts the mutable reference to a `NonNull` pointer.
         self.current_map = self
@@ -89,14 +89,10 @@ impl LineCoverageCollector {
 /// tx) then the hash is calculated from the bytecode.
 #[inline]
 fn get_or_insert_contract_hash(interpreter: &mut Interpreter) -> B256 {
-    if interpreter.bytecode.hash().is_none_or(|h| h.is_zero()) {
-        interpreter.bytecode.regenerate_hash();
-    }
-    interpreter.bytecode.hash().unwrap_or_else(|| eof_panic())
-}
-
-#[cold]
-#[inline(never)]
-fn eof_panic() -> ! {
-    panic!("coverage does not support EOF");
+    // TODO: use just `get_or_calculate_hash`
+    interpreter
+        .bytecode
+        .hash()
+        .filter(|h| !h.is_zero())
+        .unwrap_or_else(|| interpreter.bytecode.regenerate_hash())
 }
