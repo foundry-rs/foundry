@@ -943,14 +943,20 @@ impl<'a> FunctionRunner<'a> {
         // Run fuzz test.
         let mut fuzzed_executor =
             FuzzedExecutor::new(executor, runner, self.tcfg.sender, fuzz_config, persisted_failure);
-        let result = fuzzed_executor.fuzz(
+        let result = match fuzzed_executor.fuzz(
             func,
             &self.setup.fuzz_fixtures,
             &self.setup.deployed_libs,
             self.address,
             &self.cr.mcr.revert_decoder,
             progress.as_ref(),
-        );
+        ) {
+            Ok(x) => x,
+            Err(e) => {
+                self.result.fuzz_setup_fail(e);
+                return self.result;
+            }
+        };
 
         // Record counterexample.
         if let Some(CounterExample::Single(counterexample)) = &result.counterexample {

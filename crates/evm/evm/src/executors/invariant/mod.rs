@@ -49,8 +49,7 @@ use serde_json::json;
 
 mod shrink;
 use crate::executors::{
-    COVERAGE_MAP_SIZE, DURATION_BETWEEN_METRICS_REPORT, EvmError, FuzzTestTimer,
-    corpus::CorpusManager,
+    DURATION_BETWEEN_METRICS_REPORT, EvmError, FuzzTestTimer, corpus::CorpusManager,
 };
 pub use shrink::check_sequence;
 
@@ -205,7 +204,7 @@ impl InvariantTest {
     }
 
     /// Merge current collected line coverage with the new coverage from last fuzzed call.
-    fn merge_coverage(&mut self, new_coverage: Option<HitMaps>) {
+    fn merge_line_coverage(&mut self, new_coverage: Option<HitMaps>) {
         HitMaps::merge_opt(&mut self.test_data.line_coverage, new_coverage);
     }
 
@@ -300,8 +299,6 @@ pub struct InvariantExecutor<'a> {
     project_contracts: &'a ContractsByArtifact,
     /// Filters contracts to be fuzzed through their artifact identifiers.
     artifact_filters: ArtifactFilters,
-    /// History of binned hitcount of edges seen during fuzzing.
-    history_map: Vec<u8>,
 }
 
 impl<'a> InvariantExecutor<'a> {
@@ -320,7 +317,6 @@ impl<'a> InvariantExecutor<'a> {
             setup_contracts,
             project_contracts,
             artifact_filters: ArtifactFilters::default(),
-            history_map: vec![0u8; COVERAGE_MAP_SIZE],
         }
     }
 
@@ -404,16 +400,10 @@ impl<'a> InvariantExecutor<'a> {
                 }
 
                 // Collect line coverage from last fuzzed call.
-                invariant_test.merge_coverage(call_result.line_coverage.clone());
-                // If running with edge coverage then merge edge count with the current history
-                // map and set new coverage in current run.
-                if edge_coverage_enabled {
-                    let (new_coverage, is_edge) =
-                        call_result.merge_edge_coverage(&mut self.history_map);
-                    if new_coverage {
-                        current_run.new_coverage = true;
-                        corpus_manager.update_seen_metrics(is_edge);
-                    }
+                invariant_test.merge_line_coverage(call_result.line_coverage.clone());
+                // Collect edge coverage and set the flag in the current run.
+                if corpus_manager.merge_edge_coverage(&mut call_result) {
+                    current_run.new_coverage = true;
                 }
 
                 if discarded {
@@ -497,7 +487,7 @@ impl<'a> InvariantExecutor<'a> {
             }
 
             // Extend corpus with current run data.
-            corpus_manager.process_inputs(current_run.inputs.clone(), current_run.new_coverage);
+            corpus_manager.process_inputs(&current_run.inputs, current_run.new_coverage);
 
             // Call `afterInvariant` only if it is declared and test didn't fail already.
             if invariant_contract.call_after_invariant && !invariant_test.has_errors() {
@@ -626,16 +616,13 @@ impl<'a> InvariantExecutor<'a> {
             return Err(eyre!(error.revert_reason().unwrap_or_default()));
         }
 
-        let mut corpus_config = self.config.corpus.clone();
-        corpus_config.with_test_name(&invariant_contract.invariant_function.name);
         let corpus_manager = CorpusManager::new(
-            corpus_config,
-            &targeted_contracts,
+            &self.config.corpus,
+            &invariant_contract.invariant_function.name,
             strategy.boxed(),
             &self.executor,
-            &mut self.history_map,
+            None,
         )?;
-
         let invariant_test = InvariantTest::new(
             fuzz_state,
             targeted_contracts,

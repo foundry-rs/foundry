@@ -1,6 +1,7 @@
-use crate::executors::Executor;
+use crate::executors::{Executor, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_primitives::U256;
+use alloy_json_abi::Function;
+use alloy_primitives::{Bytes, U256};
 use eyre::eyre;
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_fuzz::{
@@ -25,6 +26,7 @@ use uuid::Uuid;
 const METADATA_SUFFIX: &str = "metadata.json";
 const JSON_EXTENSION: &str = ".json";
 const FAVORABILITY_THRESHOLD: f64 = 0.3;
+const COVERAGE_MAP_SIZE: usize = 65536;
 
 /// Possible mutation strategies to apply on a call sequence.
 #[derive(Debug, Clone)]
@@ -72,12 +74,12 @@ impl CorpusEntry {
     }
 
     /// New corpus with given call sequence and new uuid.
-    pub fn from_tx_seq(tx_seq: Vec<BasicTxDetails>) -> Self {
+    pub fn from_tx_seq(tx_seq: &[BasicTxDetails]) -> Self {
         Self {
             uuid: Uuid::new_v4(),
             total_mutations: 0,
             new_finds_produced: 0,
-            tx_seq,
+            tx_seq: tx_seq.into(),
             is_favored: false,
         }
     }
@@ -127,7 +129,7 @@ impl CorpusMetrics {
 }
 
 /// Fuzz corpus manager, used in coverage guided fuzzing mode by both stateless and stateful tests.
-pub struct CorpusManager {
+pub(crate) struct CorpusManager {
     // Fuzzed calls generator.
     tx_generator: BoxedStrategy<BasicTxDetails>,
     // Call sequence mutation strategy type generator.
@@ -141,18 +143,23 @@ pub struct CorpusManager {
     current_mutated: Option<Uuid>,
     // Number of failed replays from persisted corpus.
     failed_replays: usize,
+    // History of binned hitcount of edges seen during fuzzing.
+    history_map: Vec<u8>,
     // Corpus metrics.
     pub(crate) metrics: CorpusMetrics,
 }
 
 impl CorpusManager {
     pub fn new(
-        config: FuzzCorpusConfig,
-        fuzzed_contracts: &FuzzRunIdentifiedContracts,
+        config: &FuzzCorpusConfig,
+        func_name: &String,
         tx_generator: BoxedStrategy<BasicTxDetails>,
         executor: &Executor,
-        history_map: &mut [u8],
+        fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
     ) -> eyre::Result<Self> {
+        let mut config = config.clone();
+        config.with_test_name(func_name);
+
         let mutation_generator = prop_oneof![
             Just(MutationType::Splice),
             Just(MutationType::Repeat),
@@ -162,6 +169,8 @@ impl CorpusManager {
             Just(MutationType::Abi),
         ]
         .boxed();
+        let mut history_map = vec![0u8; COVERAGE_MAP_SIZE];
+        let mut metrics = CorpusMetrics::default();
         let mut in_memory_corpus = vec![];
         let mut failed_replays = 0;
 
@@ -174,7 +183,8 @@ impl CorpusManager {
                 in_memory_corpus,
                 current_mutated: None,
                 failed_replays,
-                metrics: CorpusMetrics::default(),
+                history_map,
+                metrics,
             });
         };
 
@@ -183,65 +193,67 @@ impl CorpusManager {
             foundry_common::fs::create_dir_all(corpus_dir)?;
         }
 
-        let fuzzed_contracts = fuzzed_contracts.targets.lock();
-        let mut metrics = CorpusMetrics::default();
-
-        for entry in std::fs::read_dir(corpus_dir)? {
-            let path = entry?.path();
-            if path.is_file()
-                && let Some(name) = path.file_name().and_then(|s| s.to_str())
-            {
-                // Ignore metadata files
-                if name.contains(METADATA_SUFFIX) {
+        if let Some(contracts) = fuzzed_contracts {
+            let fuzzed_contracts = contracts.targets.lock();
+            for entry in std::fs::read_dir(corpus_dir)? {
+                let path = entry?.path();
+                if path.is_file()
+                    && let Some(name) = path.file_name().and_then(|s| s.to_str())
+                    && name.contains(METADATA_SUFFIX)
+                {
+                    // Ignore metadata files
                     continue;
                 }
-            }
-            metrics.corpus_count += 1;
 
-            let read_corpus_result = match path.extension().and_then(|ext| ext.to_str()) {
-                Some("gz") => foundry_common::fs::read_json_gzip_file::<Vec<BasicTxDetails>>(&path),
-                _ => foundry_common::fs::read_json_file::<Vec<BasicTxDetails>>(&path),
-            };
-
-            let Ok(tx_seq) = read_corpus_result else {
-                trace!(target: "corpus", "failed to load corpus from {}", path.display());
-                continue;
-            };
-
-            if !tx_seq.is_empty() {
-                // Warm up history map from loaded sequences.
-                let mut executor = executor.clone();
-                for tx in &tx_seq {
-                    let mut call_result = executor
-                        .call_raw(
-                            tx.sender,
-                            tx.call_details.target,
-                            tx.call_details.calldata.clone(),
-                            U256::ZERO,
-                        )
-                        .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))?;
-
-                    if fuzzed_contracts.can_replay(tx) {
-                        let (new_coverage, is_edge) = call_result.merge_edge_coverage(history_map);
-                        if new_coverage {
-                            metrics.update_seen(is_edge);
-                        }
-
-                        executor.commit(&mut call_result);
-                    } else {
-                        failed_replays += 1;
+                let read_corpus_result = match path.extension().and_then(|ext| ext.to_str()) {
+                    Some("gz") => {
+                        foundry_common::fs::read_json_gzip_file::<Vec<BasicTxDetails>>(&path)
                     }
+                    _ => foundry_common::fs::read_json_file::<Vec<BasicTxDetails>>(&path),
+                };
+
+                let Ok(tx_seq) = read_corpus_result else {
+                    trace!(target: "corpus", "failed to load corpus from {}", path.display());
+                    continue;
+                };
+
+                if !tx_seq.is_empty() {
+                    // Warm up history map from loaded sequences.
+                    let mut executor = executor.clone();
+                    for tx in &tx_seq {
+                        if fuzzed_contracts.can_replay(tx) {
+                            let mut call_result = executor
+                                .call_raw(
+                                    tx.sender,
+                                    tx.call_details.target,
+                                    tx.call_details.calldata.clone(),
+                                    U256::ZERO,
+                                )
+                                .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))?;
+
+                            let (new_coverage, is_edge) =
+                                call_result.merge_edge_coverage(&mut history_map);
+                            if new_coverage {
+                                metrics.update_seen(is_edge);
+                            }
+                            executor.commit(&mut call_result);
+                        } else {
+                            failed_replays += 1;
+                        }
+                    }
+
+                    metrics.corpus_count += 1;
+
+                    trace!(
+                        target: "corpus",
+                        "load sequence with len {} from corpus file {}",
+                        tx_seq.len(),
+                        path.display()
+                    );
+
+                    // Populate in memory corpus with the sequence from corpus file.
+                    in_memory_corpus.push(CorpusEntry::new(tx_seq, path)?);
                 }
-
-                trace!(
-                    target: "corpus",
-                    "load sequence with len {} from corpus file {}",
-                    tx_seq.len(),
-                    path.display()
-                );
-
-                // Populate in memory corpus with sequence from corpus file.
-                in_memory_corpus.push(CorpusEntry::new(tx_seq, path)?);
             }
         }
 
@@ -252,6 +264,7 @@ impl CorpusManager {
             in_memory_corpus,
             current_mutated: None,
             failed_replays,
+            history_map,
             metrics,
         })
     }
@@ -259,7 +272,7 @@ impl CorpusManager {
     /// Updates stats for the given call sequence, if new coverage produced.
     /// Persists the call sequence (if corpus directory is configured and new coverage) and updates
     /// in-memory corpus.
-    pub fn process_inputs(&mut self, inputs: Vec<BasicTxDetails>, new_coverage: bool) {
+    pub fn process_inputs(&mut self, inputs: &[BasicTxDetails], new_coverage: bool) {
         // Early return if corpus dir / coverage guided fuzzing is not configured.
         let Some(corpus_dir) = &self.config.corpus_dir else {
             return;
@@ -327,7 +340,7 @@ impl CorpusManager {
     }
 
     /// Generates new call sequence from in memory corpus. Evicts oldest corpus mutated more than
-    /// configured max mutations value.
+    /// configured max mutations value. Used by invariant test campaigns.
     pub fn new_inputs(
         &mut self,
         test_runner: &mut TestRunner,
@@ -338,38 +351,13 @@ impl CorpusManager {
 
         // Early return with first_input only if corpus dir / coverage guided fuzzing not
         // configured.
-        let Some(corpus_dir) = &self.config.corpus_dir else {
+        if !&self.config.is_coverage_guided() {
             new_seq.push(self.new_tx(test_runner)?);
             return Ok(new_seq);
         };
 
         if !self.in_memory_corpus.is_empty() {
-            // Flush oldest corpus mutated more than configured max mutations unless they are
-            // favored.
-            let should_evict = self.in_memory_corpus.len() > self.config.corpus_min_size.max(1);
-            if should_evict
-                && let Some(index) = self.in_memory_corpus.iter().position(|corpus| {
-                    corpus.total_mutations > self.config.corpus_min_mutations && !corpus.is_favored
-                })
-            {
-                let corpus = self.in_memory_corpus.get(index).unwrap();
-
-                let uuid = corpus.uuid;
-                debug!(target: "corpus", "evict corpus {uuid}");
-
-                // Flush to disk the seed metadata at the time of eviction.
-                let eviction_time = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("Time went backwards")
-                    .as_secs();
-                foundry_common::fs::write_json_file(
-                    corpus_dir.join(format!("{uuid}-{eviction_time}-{METADATA_SUFFIX}")).as_path(),
-                    &corpus,
-                )?;
-
-                // Remove corpus from memory.
-                self.in_memory_corpus.remove(index);
-            }
+            self.evict_oldest_corpus()?;
 
             let mutation_type = self
                 .mutation_generator
@@ -462,62 +450,51 @@ impl CorpusManager {
                         // TODO add call_value to call details and mutate it as well as sender some
                         // of the time
                         if !function.inputs.is_empty() {
-                            let mut new_function = function.clone();
-                            let mut arg_mutation_rounds =
-                                rng.random_range(0..=function.inputs.len()).max(1);
-                            let round_arg_idx: Vec<usize> = if function.inputs.len() <= 1 {
-                                vec![0]
-                            } else {
-                                (0..arg_mutation_rounds)
-                                    .map(|_| {
-                                        test_runner.rng().random_range(0..function.inputs.len())
-                                    })
-                                    .collect()
-                            };
-                            // TODO mutation strategy for individual ABI types
-                            let mut prev_inputs = function
-                                .abi_decode_input(&tx.call_details.calldata[4..])
-                                .expect("fuzzed_artifacts returned wrong sig");
-                            // For now, only new inputs are generated, no existing inputs are
-                            // mutated.
-                            let mut gen_input = |input: &alloy_json_abi::Param| {
-                                fuzz_param_from_state(
-                                    &input.selector_type().parse().unwrap(),
-                                    fuzz_state,
-                                )
-                                .new_tree(test_runner)
-                                .expect("Could not generate case")
-                                .current()
-                            };
-
-                            while arg_mutation_rounds > 0 {
-                                let idx = round_arg_idx[arg_mutation_rounds - 1];
-                                let input = new_function
-                                    .inputs
-                                    .get_mut(idx)
-                                    .expect("Could not get input to mutate");
-                                let new_input = gen_input(input);
-                                prev_inputs[idx] = new_input;
-                                arg_mutation_rounds -= 1;
-                            }
-
-                            tx.call_details.calldata = new_function
-                                .abi_encode_input(&prev_inputs)
-                                .map_err(|e| eyre!(e.to_string()))?
-                                .into();
+                            self.abi_mutate(tx, function, test_runner, fuzz_state)?;
                         }
                     }
                 }
             }
         }
 
-        // Make sure sequence contains at least one tx to start fuzzing from.
+        // Make sure the new sequence contains at least one tx to start fuzzing from.
         if new_seq.is_empty() {
             new_seq.push(self.new_tx(test_runner)?);
         }
         trace!(target: "corpus", "new sequence of {} calls generated", new_seq.len());
 
         Ok(new_seq)
+    }
+
+    /// Generates new input from in memory corpus. Evicts oldest corpus mutated more than
+    /// configured max mutations value. Used by fuzz test campaigns.
+    pub fn new_input(
+        &mut self,
+        test_runner: &mut TestRunner,
+        fuzz_state: &EvmFuzzState,
+        function: &Function,
+    ) -> eyre::Result<Bytes> {
+        // Early return if not running with coverage guided fuzzing.
+        if !&self.config.is_coverage_guided() {
+            return Ok(self.new_tx(test_runner)?.call_details.calldata);
+        };
+
+        let tx = if !self.in_memory_corpus.is_empty() {
+            self.evict_oldest_corpus()?;
+
+            let corpus = &self.in_memory_corpus
+                [test_runner.rng().random_range(0..self.in_memory_corpus.len())];
+            self.current_mutated = Some(corpus.uuid);
+
+            let new_seq = corpus.tx_seq.clone();
+            let mut tx = new_seq.first().unwrap().clone();
+            self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
+            tx
+        } else {
+            self.new_tx(test_runner)?
+        };
+
+        Ok(tx.call_details.calldata)
     }
 
     /// Returns the next call to be used in call sequence.
@@ -563,8 +540,92 @@ impl CorpusManager {
         self.failed_replays
     }
 
-    /// Updates seen edges or features metrics.
-    pub fn update_seen_metrics(&mut self, is_edge: bool) {
-        self.metrics.update_seen(is_edge);
+    /// Collects coverage from call result and updates metrics.
+    pub fn merge_edge_coverage(&mut self, call_result: &mut RawCallResult) -> bool {
+        if !self.config.collect_edge_coverage() {
+            return false;
+        }
+
+        let (new_coverage, is_edge) = call_result.merge_edge_coverage(&mut self.history_map);
+        if new_coverage {
+            self.metrics.update_seen(is_edge);
+        }
+        new_coverage
+    }
+
+    /// Flush the oldest corpus mutated more than configured max mutations unless they are
+    /// favored.
+    fn evict_oldest_corpus(&mut self) -> eyre::Result<()> {
+        if self.in_memory_corpus.len() > self.config.corpus_min_size.max(1)
+            && let Some(index) = self.in_memory_corpus.iter().position(|corpus| {
+                corpus.total_mutations > self.config.corpus_min_mutations && !corpus.is_favored
+            })
+        {
+            let corpus = self.in_memory_corpus.get(index).unwrap();
+
+            let uuid = corpus.uuid;
+            debug!(target: "corpus", "evict corpus {uuid}");
+
+            // Flush to disk the seed metadata at the time of eviction.
+            let eviction_time = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("Time went backwards")
+                .as_secs();
+            foundry_common::fs::write_json_file(
+                self.config
+                    .corpus_dir
+                    .clone()
+                    .unwrap()
+                    .join(format!("{uuid}-{eviction_time}-{METADATA_SUFFIX}"))
+                    .as_path(),
+                &corpus,
+            )?;
+
+            // Remove corpus from memory.
+            self.in_memory_corpus.remove(index);
+        }
+        Ok(())
+    }
+
+    /// Mutates calldata of provided tx by abi decoding current values and randomly selecting the
+    /// inputs to change.
+    fn abi_mutate(
+        &self,
+        tx: &mut BasicTxDetails,
+        function: &Function,
+        test_runner: &mut TestRunner,
+        fuzz_state: &EvmFuzzState,
+    ) -> eyre::Result<()> {
+        let rng = test_runner.rng();
+        let mut arg_mutation_rounds = rng.random_range(0..=function.inputs.len()).max(1);
+        let round_arg_idx: Vec<usize> = if function.inputs.len() <= 1 {
+            vec![0]
+        } else {
+            (0..arg_mutation_rounds).map(|_| rng.random_range(0..function.inputs.len())).collect()
+        };
+        let mut prev_inputs = function
+            .abi_decode_input(&tx.call_details.calldata[4..])
+            .expect("function cannot abi decode input");
+
+        // For now, only new inputs are generated, no existing inputs are
+        // mutated.
+        let mut gen_input = |input: &alloy_json_abi::Param| {
+            fuzz_param_from_state(&input.selector_type().parse().unwrap(), fuzz_state)
+                .new_tree(test_runner)
+                .expect("Could not generate case")
+                .current()
+        };
+
+        while arg_mutation_rounds > 0 {
+            let idx = round_arg_idx[arg_mutation_rounds - 1];
+            let input = &function.inputs.get(idx).expect("Could not get input to mutate");
+            let new_input = gen_input(input);
+            prev_inputs[idx] = new_input;
+            arg_mutation_rounds -= 1;
+        }
+
+        tx.call_details.calldata =
+            function.abi_encode_input(&prev_inputs).map_err(|e| eyre!(e.to_string()))?.into();
+        Ok(())
     }
 }

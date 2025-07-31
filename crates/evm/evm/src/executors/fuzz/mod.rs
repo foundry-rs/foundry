@@ -1,6 +1,4 @@
-use crate::executors::{
-    COVERAGE_MAP_SIZE, DURATION_BETWEEN_METRICS_REPORT, Executor, FuzzTestTimer, RawCallResult,
-};
+use crate::executors::{DURATION_BETWEEN_METRICS_REPORT, Executor, FuzzTestTimer, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, Log, U256, map::HashMap};
@@ -13,20 +11,21 @@ use foundry_evm_core::{
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
-    BaseCounterExample, CounterExample, FuzzCase, FuzzError, FuzzFixtures, FuzzTestResult,
+    BaseCounterExample, BasicTxDetails, CallDetails, CounterExample, FuzzCase, FuzzError,
+    FuzzFixtures, FuzzTestResult,
     strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state},
 };
 use foundry_evm_traces::SparsedTraceArena;
 use indicatif::ProgressBar;
 use proptest::{
-    strategy::{Strategy, ValueTree},
+    strategy::Strategy,
     test_runner::{TestCaseError, TestRunner},
 };
 use serde_json::json;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 mod types;
-use crate::executors::corpus::CorpusMetrics;
+use crate::executors::corpus::CorpusManager;
 pub use types::{CaseOutcome, CounterExampleOutcome, FuzzOutcome};
 
 /// Contains data collected during fuzz test runs.
@@ -48,8 +47,6 @@ struct FuzzTestData {
     logs: Vec<Log>,
     // Deprecated cheatcodes mapped to their replacements.
     deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
-    // Coverage metrics collected during the fuzz test.
-    coverage_metrics: CorpusMetrics,
     // Runs performed in fuzz test.
     runs: u32,
     // Current assume rejects of the fuzz run.
@@ -74,8 +71,6 @@ pub struct FuzzedExecutor {
     config: FuzzConfig,
     /// The persisted counterexample to be replayed, if any.
     persisted_failure: Option<BaseCounterExample>,
-    /// History of binned hitcount of edges seen during fuzzing.
-    history_map: Vec<u8>,
 }
 
 impl FuzzedExecutor {
@@ -87,14 +82,7 @@ impl FuzzedExecutor {
         config: FuzzConfig,
         persisted_failure: Option<BaseCounterExample>,
     ) -> Self {
-        Self {
-            executor,
-            runner,
-            sender,
-            config,
-            persisted_failure,
-            history_map: vec![0u8; COVERAGE_MAP_SIZE],
-        }
+        Self { executor, runner, sender, config, persisted_failure }
     }
 
     /// Fuzzes the provided function, assuming it is available at the contract at `address`
@@ -110,7 +98,7 @@ impl FuzzedExecutor {
         address: Address,
         rd: &RevertDecoder,
         progress: Option<&ProgressBar>,
-    ) -> FuzzTestResult {
+    ) -> Result<FuzzTestResult> {
         // Stores the fuzz test execution data.
         let mut test_data = FuzzTestData::default();
         let state = self.build_fuzz_state(deployed_libs);
@@ -118,9 +106,21 @@ impl FuzzedExecutor {
         let strategy = proptest::prop_oneof![
             100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
             dictionary_weight => fuzz_calldata_from_state(func.clone(), &state),
-        ];
+        ]
+        .prop_map(move |calldata| BasicTxDetails {
+            sender: Default::default(),
+            call_details: CallDetails { target: Default::default(), calldata },
+        });
         // We want to collect at least one trace which will be displayed to user.
         let max_traces_to_collect = std::cmp::max(1, self.config.gas_report_samples) as usize;
+
+        let mut corpus_manager = CorpusManager::new(
+            &self.config.corpus,
+            &func.name,
+            strategy.boxed(),
+            &self.executor,
+            None,
+        )?;
 
         // Start timer for this fuzz test.
         let timer = FuzzTestTimer::new(self.config.timeout);
@@ -140,7 +140,7 @@ impl FuzzedExecutor {
                     progress.inc(1);
                     // Display metrics in progress bar.
                     if self.config.corpus.collect_edge_coverage() {
-                        progress.set_message(format!("{}", &test_data.coverage_metrics));
+                        progress.set_message(format!("{}", &corpus_manager.metrics));
                     }
                 } else if self.config.corpus.collect_edge_coverage()
                     && last_metrics_report.elapsed() > DURATION_BETWEEN_METRICS_REPORT
@@ -148,26 +148,27 @@ impl FuzzedExecutor {
                     // Display metrics inline.
                     let metrics = json!({
                         "timestamp": SystemTime::now()
-                            .duration_since(UNIX_EPOCH).unwrap()
+                            .duration_since(UNIX_EPOCH)?
                             .as_secs(),
                         "test": func.name,
-                        "metrics": &test_data.coverage_metrics,
+                        "metrics": &corpus_manager.metrics,
                     });
-                    let _ = sh_println!("{}", serde_json::to_string(&metrics).unwrap());
+                    let _ = sh_println!("{}", serde_json::to_string(&metrics)?);
                     last_metrics_report = Instant::now();
                 };
 
                 test_data.runs += 1;
 
-                let Ok(strategy) = strategy.new_tree(&mut self.runner) else {
+                let Ok(input) = corpus_manager.new_input(&mut self.runner, &state, func) else {
                     test_data.failure =
                         Some(TestCaseError::fail("no input generated to call fuzzed target"));
                     break 'stop;
                 };
-                strategy.current()
+
+                input
             };
 
-            match self.single_fuzz(address, input, &mut test_data.coverage_metrics) {
+            match self.single_fuzz(address, input, &mut corpus_manager) {
                 Ok(fuzz_outcome) => match fuzz_outcome {
                     FuzzOutcome::Case(case) => {
                         test_data.gas_by_case.push((case.case.gas, case.case.stipend));
@@ -277,7 +278,7 @@ impl FuzzedExecutor {
 
         state.log_stats();
 
-        result
+        Ok(result)
     }
 
     /// Granular and single-step function that runs only one fuzz and returns either a `CaseOutcome`
@@ -286,19 +287,20 @@ impl FuzzedExecutor {
         &mut self,
         address: Address,
         calldata: Bytes,
-        coverage_metrics: &mut CorpusMetrics,
+        coverage_metrics: &mut CorpusManager,
     ) -> Result<FuzzOutcome, TestCaseError> {
         let mut call = self
             .executor
             .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
             .map_err(|e| TestCaseError::fail(e.to_string()))?;
-
-        if self.config.corpus.collect_edge_coverage() {
-            let (new_coverage, is_edge) = call.merge_edge_coverage(&mut self.history_map);
-            if new_coverage {
-                coverage_metrics.update_seen(is_edge);
-            }
-        }
+        let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
+        coverage_metrics.process_inputs(
+            &[BasicTxDetails {
+                sender: self.sender,
+                call_details: CallDetails { target: address, calldata: calldata.clone() },
+            }],
+            new_coverage,
+        );
 
         // Handle `vm.assume`.
         if call.result.as_ref() == MAGIC_ASSUME {

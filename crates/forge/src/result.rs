@@ -577,6 +577,14 @@ impl TestResult {
         self.deprecated_cheatcodes = result.deprecated_cheatcodes;
     }
 
+    /// Returns the fail result for fuzz test setup.
+    pub fn fuzz_setup_fail(&mut self, e: Report) {
+        self.kind =
+            TestKind::Fuzz { first_case: Default::default(), runs: 0, mean_gas: 0, median_gas: 0 };
+        self.status = TestStatus::Failure;
+        self.reason = Some(format!("failed to set up fuzz testing environment: {e}"));
+    }
+
     /// Returns the skipped result for invariant test.
     pub fn invariant_skip(&mut self, reason: SkipReason) {
         self.kind = TestKind::Invariant {
