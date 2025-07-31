@@ -46,20 +46,39 @@ static DRPC_KEYS: LazyLock<Vec<String>> = LazyLock::new(|| {
     keys
 });
 
+/// Returns the fallback hardcoded Etherscan API keys.
+fn fallback_etherscan_keys() -> Vec<String> {
+    vec![
+        "MCAUM7WPE9XP5UQMZPCKIBUJHPM1C24FP6".to_string(),
+        "JW6RWCG2C5QF8TANH4KC7AYIF1CX7RB5D1".to_string(),
+        "ZSMDY6BI2H55MBE3G9CUUQT4XYUDBB6ZSK".to_string(),
+        "4FYHTY429IXYMJNS4TITKDMUKW5QRYDX61".to_string(),
+        "QYKNT5RHASZ7PGQE68FNQWH99IXVTVVD2I".to_string(),
+        "VXMQ117UN58Y4RHWUB8K1UGCEA7UQEWK55".to_string(),
+        "C7I2G4JTA5EPYS42Z8IZFEIMQNI5GXIJEV".to_string(),
+        "A15KZUMZXXCK1P25Y1VP1WGIVBBHIZDS74".to_string(),
+        "3IA6ASNQXN8WKN7PNFX7T72S9YG56X9FPG".to_string(),
+        "ZUB97R31KSYX7NYVW6224Q6EYY6U56H591".to_string(),
+    ]
+}
+
 // List of etherscan keys.
-static ETHERSCAN_KEYS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    shuffled(vec![
-        "MCAUM7WPE9XP5UQMZPCKIBUJHPM1C24FP6",
-        "JW6RWCG2C5QF8TANH4KC7AYIF1CX7RB5D1",
-        "ZSMDY6BI2H55MBE3G9CUUQT4XYUDBB6ZSK",
-        "4FYHTY429IXYMJNS4TITKDMUKW5QRYDX61",
-        "QYKNT5RHASZ7PGQE68FNQWH99IXVTVVD2I",
-        "VXMQ117UN58Y4RHWUB8K1UGCEA7UQEWK55",
-        "C7I2G4JTA5EPYS42Z8IZFEIMQNI5GXIJEV",
-        "A15KZUMZXXCK1P25Y1VP1WGIVBBHIZDS74",
-        "3IA6ASNQXN8WKN7PNFX7T72S9YG56X9FPG",
-        "ZUB97R31KSYX7NYVW6224Q6EYY6U56H591",
-    ])
+static ETHERSCAN_KEYS: LazyLock<Vec<String>> = LazyLock::new(|| {
+    // Fetch from GitHub Actions environment variable (comma-separated) or use fallback
+    let mut keys = std::env::var("ETHERSCAN_API_KEYS")
+        .ok()
+        .map(|env_keys| {
+            env_keys
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<String>>()
+        })
+        .filter(|keys| !keys.is_empty())
+        .unwrap_or_else(fallback_etherscan_keys);
+
+    keys.shuffle(&mut rand::thread_rng());
+    keys
 });
 
 /// Returns the next index to use.
@@ -142,7 +161,7 @@ fn archive_urls(is_ws: bool) -> &'static [String] {
 
 /// Returns the next etherscan api key.
 pub fn next_etherscan_api_key() -> String {
-    let key = next(&ETHERSCAN_KEYS).to_string();
+    let key = next(&ETHERSCAN_KEYS).clone();
     eprintln!("--- next_etherscan_api_key() = {key} ---");
     key
 }
@@ -203,7 +222,7 @@ mod tests {
         let address = address!("0xdAC17F958D2ee523a2206206994597C13D831ec7");
         let mut first_abi = None;
         let mut failed = Vec::new();
-        for (i, &key) in ETHERSCAN_KEYS.iter().enumerate() {
+        for (i, key) in ETHERSCAN_KEYS.iter().enumerate() {
             println!("trying key {i} ({key})");
 
             let client = foundry_block_explorers::Client::builder()
@@ -215,7 +234,7 @@ mod tests {
 
             let mut fail = |e: &str| {
                 eprintln!("key {i} ({key}) failed: {e}");
-                failed.push(key);
+                failed.push(key.as_str());
             };
 
             let abi = match client.contract_abi(address).await {

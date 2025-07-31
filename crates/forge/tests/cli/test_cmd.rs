@@ -2853,7 +2853,7 @@ import {Test} from "forge-std/Test.sol";
 
 contract ScrollForkTest is Test {
     function test_roll_scroll_fork_to_tx() public {
-        vm.createSelectFork("https://scroll-mainnet.chainstacklabs.com/");
+        vm.createSelectFork("https://rpc.scroll.io/");
         bytes32 targetTxHash = 0xf94774a1f69bba76892141190293ffe85dd8d9ac90a0a2e2b114b8c65764014c;
         vm.rollFork(targetTxHash);
     }
