@@ -151,6 +151,25 @@ pub enum CastSubcommand {
         bytes: Option<String>,
     },
 
+    /// Pads hex data to a specified length.
+    #[command(visible_aliases = &["pd"])]
+    Pad {
+        /// The hex data to pad.
+        data: Option<String>,
+
+        /// Right-pad the data (instead of left-pad).
+        #[arg(long)]
+        right: bool,
+
+        /// Left-pad the data (default).
+        #[arg(long, conflicts_with = "right")]
+        left: bool,
+
+        /// Target length in bytes (default: 32).
+        #[arg(long, default_value = "32")]
+        len: usize,
+    },
+
     /// Convert an integer into a fixed point number.
     #[command(visible_aliases = &["--to-fix", "tf", "2f"])]
     ToFixedPoint {
