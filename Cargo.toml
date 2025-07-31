@@ -205,7 +205,7 @@ foundry-linking = { path = "crates/linking" }
 
 # fluentbase
 
-fluentbase-build = { path = "../fluentbase-v2/crates/build", features = ["json"] }
+fluentbase-build = { git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.3.7-dev", features = ["json"] }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.19.1", default-features = false }
