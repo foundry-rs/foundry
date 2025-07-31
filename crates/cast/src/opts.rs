@@ -157,13 +157,13 @@ pub enum CastSubcommand {
         /// The hex data to pad.
         data: Option<String>,
 
-        /// Left-pad the data (instead of right-pad).
+        /// Right-pad the data (instead of left-pad).
         #[arg(long)]
-        left: bool,
-
-        /// Right-pad the data (default).
-        #[arg(long, conflicts_with = "left")]
         right: bool,
+
+        /// Left-pad the data (default).
+        #[arg(long, conflicts_with = "right")]
+        left: bool,
 
         /// Target length in bytes (default: 32).
         #[arg(long, default_value = "32")]

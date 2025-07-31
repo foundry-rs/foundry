@@ -165,9 +165,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let value = stdin::unwrap_line(bytes)?;
             sh_println!("{}", SimpleCast::to_bytes32(&value)?)?
         }
-        CastSubcommand::Pad { data, left, right: _, len } => {
+        CastSubcommand::Pad { data, right, left: _, len } => {
             let value = stdin::unwrap_line(data)?;
-            sh_println!("{}", SimpleCast::pad(&value, left, len)?)?
+            sh_println!("{}", SimpleCast::pad(&value, right, len)?)?
         }
         CastSubcommand::FormatBytes32String { string } => {
             let value = stdin::unwrap_line(string)?;
