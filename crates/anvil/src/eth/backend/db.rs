@@ -329,7 +329,7 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeForkedDatabase for CacheDB<T> {
 pub struct StateDb(pub(crate) Box<dyn MaybeFullDatabase + Send + Sync>);
 
 impl StateDb {
-    pub fn new(db: impl MaybeFullDatabase + Send + Sync + 'static) -> Self {
+    pub fn new(db: impl MaybeFullDatabase + Send + 'static) -> Self {
         Self(Box::new(db))
     }
 

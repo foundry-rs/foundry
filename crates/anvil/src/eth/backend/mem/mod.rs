@@ -2659,9 +2659,6 @@ impl Backend {
             .position(|tx| tx.hash() == hash)
             .expect("transaction not found in block");
 
-        let parent = self.get_block_by_hash(block.header.parent_hash).unwrap();
-        let parent_number = parent.header.number();
-
         let prior_txs = &block.transactions[..index];
         let pool_txs: Vec<Arc<PoolTransaction>> = prior_txs
             .iter()
@@ -2677,82 +2674,78 @@ impl Backend {
             })
             .collect();
 
-        let result = {
-            self.with_database_at(
-                Some(BlockRequest::Number(parent_number)),
-                |state_db, block_env| {
-                    let mut cache_db = CacheDB::new(Box::new(&state_db));
+        let mut states = self.states.write();
+        let parent_state = states.get(&block.header.parent_hash).unwrap();
+        let mut cache_db = CacheDB::new(Box::new(parent_state));
+        let block_env = BlockEnv {
+            number: U256::from(block.header.number),
+            beneficiary: block.header.beneficiary,
+            timestamp: U256::from(block.header.timestamp),
+            difficulty: block.header.difficulty,
+            prevrandao: Some(block.header.mix_hash),
+            basefee: block.header.base_fee_per_gas.unwrap_or_default(),
+            gas_limit: block.header.gas_limit,
+            ..Default::default()
+        };
 
-                    let executor = TransactionExecutor {
-                        db: &mut cache_db,
-                        validator: self,
-                        pending: pool_txs.into_iter(),
-                        block_env: block_env.clone(),
-                        cfg_env: self.next_env().evm_env.cfg_env,
-                        parent_hash: block.header.parent_hash,
-                        gas_used: 0,
-                        blob_gas_used: 0,
-                        enable_steps_tracing: self.enable_steps_tracing,
-                        print_logs: self.print_logs,
-                        print_traces: self.print_traces,
-                        call_trace_decoder: self.call_trace_decoder.clone(),
-                        precompile_factory: self.precompile_factory.clone(),
-                        odyssey: self.odyssey,
-                        optimism: self.is_optimism(),
-                        blob_params: self.blob_params(),
-                    };
+        let executor = TransactionExecutor {
+            db: &mut cache_db,
+            validator: self,
+            pending: pool_txs.into_iter(),
+            block_env: block_env.clone(),
+            cfg_env: self.next_env().evm_env.cfg_env,
+            parent_hash: block.header.parent_hash,
+            gas_used: 0,
+            blob_gas_used: 0,
+            enable_steps_tracing: self.enable_steps_tracing,
+            print_logs: self.print_logs,
+            print_traces: self.print_traces,
+            call_trace_decoder: self.call_trace_decoder.clone(),
+            precompile_factory: self.precompile_factory.clone(),
+            odyssey: self.odyssey,
+            optimism: self.is_optimism(),
+            blob_params: self.blob_params(),
+        };
 
-                    let _ = executor.execute();
+        let _ = executor.execute();
 
-                    let built_tx = transaction_build(
-                        Some(info.transaction_hash),
-                        block.transactions[index].clone(),
-                        Some(&block),
-                        Some(info),
-                        block.header.base_fee_per_gas,
-                    );
-                    let pending_tx = PendingTransaction::new(
-                        TypedTransaction::try_from(built_tx.clone()).unwrap(),
-                    )?;
-                    let tx_env = pending_tx.to_revm_tx_env();
+        let built_tx = transaction_build(
+            Some(info.transaction_hash),
+            block.transactions[index].clone(),
+            Some(&block),
+            Some(info),
+            block.header.base_fee_per_gas,
+        );
 
-                    let request = TransactionRequest::from_transaction(built_tx);
-                    let call_env = self.build_call_env(
-                        WithOtherFields::new(request.clone()),
-                        FeeDetails::new(
-                            request.gas_price,
-                            request.max_fee_per_gas,
-                            request.max_priority_fee_per_gas,
-                            request.max_fee_per_blob_gas,
-                        )
-                        .unwrap(),
-                        block_env.clone(),
-                    );
+        let pending_tx =
+            PendingTransaction::new(TypedTransaction::try_from(built_tx.clone()).unwrap())?;
+        let tx_env = pending_tx.to_revm_tx_env();
 
-                    let config = tracer_config.clone().into_json();
-                    let mut inspector =
-                        revm_inspectors::tracing::js::JsInspector::new(code.clone(), config)
-                            .unwrap();
-                    let mut evm =
-                        self.new_evm_with_inspector_ref(&cache_db, &call_env, &mut inspector);
-
-                    let result = evm
-                        .transact(tx_env.clone())
-                        .map_err(|err| BlockchainError::Message(err.to_string()))?;
-
-                    inspector
-                        .json_result(
-                            result,
-                            &alloy_evm::IntoTxEnv::into_tx_env(tx_env),
-                            &block_env,
-                            &cache_db,
-                        )
-                        .map_err(|e| BlockchainError::Message(e.to_string()))
-                },
+        let request = TransactionRequest::from_transaction(built_tx);
+        let call_env = self.build_call_env(
+            WithOtherFields::new(request.clone()),
+            FeeDetails::new(
+                request.gas_price,
+                request.max_fee_per_gas,
+                request.max_priority_fee_per_gas,
+                request.max_fee_per_blob_gas,
             )
-            .await?
-        }?;
-        Ok(GethTrace::JS(result))
+            .unwrap(),
+            block_env.clone(),
+        );
+
+        let config = tracer_config.clone().into_json();
+        let mut inspector = revm_inspectors::tracing::js::JsInspector::new(code, config).unwrap();
+        let mut evm = self.new_evm_with_inspector_ref(&cache_db, &call_env, &mut inspector);
+
+        let result = evm
+            .transact(tx_env.clone())
+            .map_err(|err| BlockchainError::Message(err.to_string()))?;
+
+        let trace = inspector
+            .json_result(result, &alloy_evm::IntoTxEnv::into_tx_env(tx_env), &block_env, &cache_db)
+            .map_err(|e| BlockchainError::Message(e.to_string()))?;
+        Ok(GethTrace::JS(trace))
     }
 
     /// Returns code by its hash
