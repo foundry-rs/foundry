@@ -60,14 +60,14 @@ fn is_unsafe_typecast_hir(
 /// For cast chains, returns the ultimate source type, not intermediate cast results.
 fn infer_source_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<ElementaryType> {
     match &expr.kind {
-        // Recursive cast: Type(val)
-        ExprKind::Call(call_expr, args, _) => {
-            if let ExprKind::Type(_ty) = &call_expr.kind
-                && args.len() == 1
-                && let Some(first_arg) = args.exprs().next()
+        // A type cast call: Type(val)
+        ExprKind::Call(call_expr, _, _) => {
+            if let ExprKind::Type(hir::Type { kind: TypeKind::Elementary(elem_type), .. }) =
+                &call_expr.kind
             {
-                return infer_source_type(hir, first_arg);
+                return Some(*elem_type);
             }
+            // Do not attempt to guess the type of regular calls
             None
         }
 
@@ -104,6 +104,12 @@ fn infer_source_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<Element
             _ => infer_source_type(hir, inner_expr),
         },
 
+        ExprKind::Binary(lhs, _, rhs) => {
+            if let Some(ty) = infer_source_type(hir, lhs) {
+                return Some(ty);
+            }
+            infer_source_type(hir, rhs)
+        }
         _ => None,
     }
 }

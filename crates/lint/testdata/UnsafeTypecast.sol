@@ -288,9 +288,18 @@ contract UnsafeTypecast {
         uint16 s = uint16(base);   //~WARN: typecasts that can truncate values should be checked
         uint8 t = uint8(base);     //~WARN: typecasts that can truncate values should be checked
     }
+}
 
-    function repro() public pure {
+contract Repros {
+    function longDynamicBytesDoNotPanic() public pure {
         bytes memory stringToBytes = bytes("Initializable: contract is already initialized");
+    }
+
+    function nestedCastsAreEvaluatedAtAllDepths(uint64 a, int128 b) internal pure returns (uint64) {
+        return uint64(uint128(int128(uint128(a)) + b));
+        //~^WARN: typecasts that can truncate values should be checked
+        //~^^WARN: typecasts that can truncate values should be checked
+        //~^^^WARN: typecasts that can truncate values should be checked
     }
 }
 /// forge-lint: disable-end(mixed-case-variable)
