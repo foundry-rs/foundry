@@ -45,20 +45,32 @@ build-%:
 	cross build --target $* --features "$(FEATURES)" --profile "$(PROFILE)"
 
 
-.PHONY: build-gblend
-build-gblend: clean-gblend build ## Build gblend executables with symlinks.
-	mkdir -p $(BIN_DIR)
-	for bin in anvil cast chisel forge; do \
-		ln -sf $(CURDIR)/target/debug/$$bin $(BIN_DIR)/gblend-$$bin; \
-	done
+.PHONY: build-gblend-package
+build-gblend-package: ## Build only gblend package
+	cd gblend && cargo build --release
 
-.PHONY: build-gblend-forge
-build-gblend-forge: ## Build only forge executable.
-	cargo build --bin forge
+.PHONY: test-gblend
+test-gblend: ## Test gblend package
+	cd gblend && cargo test
 
-.PHONY: clean-gblend
-clean-gblend: ## Remove gblend executables.
-	rm -f $(BIN_DIR)/gblend-{anvil,cast,chisel,forge}
+.PHONY: publish-gblend-dry-run
+publish-gblend-dry-run: ## Test publishing gblend without actually publishing
+	cd gblend && cargo publish --dry-run
+#
+#.PHONY: build-gblend
+#build-gblend: clean-gblend build ## Build gblend executables with symlinks.
+#	mkdir -p $(BIN_DIR)
+#	for bin in anvil cast chisel forge; do \
+#		ln -sf $(CURDIR)/target/debug/$$bin $(BIN_DIR)/gblend-$$bin; \
+#	done
+#
+#.PHONY: build-gblend-forge
+#build-gblend-forge: ## Build only forge executable.
+#	cargo build --bin forge
+#
+#.PHONY: clean-gblend
+#clean-gblend: ## Remove gblend executables.
+#	rm -f $(BIN_DIR)/gblend-{anvil,cast,chisel,forge}
 
 .PHONY: docker-build-push
 docker-build-push: docker-build-prepare ## Build and push a cross-arch Docker image tagged with DOCKER_IMAGE_NAME.

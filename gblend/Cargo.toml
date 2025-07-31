@@ -1,0 +1,33 @@
+[package]
+name = "gblend"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+authors = ["d1r1 <danil@fluentlabs.xyz>"]
+license = "MIT OR Apache-2.0"
+description = "Foundry forge with gblend modifications for WASM blockchain development"
+homepage = "https://github.com/fluentlabs-xyz/gblend"
+repository = "https://github.com/fluentlabs-xyz/gblend"
+keywords = ["fluent", "wasm", "blockchain", "solidity", "testing"]
+categories = ["command-line-utilities", "development-tools"]
+readme = "README.md"
+
+[[bin]]
+name = "gblend"
+path = "src/main.rs"
+
+[dependencies]
+# Core forge dependency from workspace
+forge = { path = "../crates/forge" }
+
+# Foundry utilities needed for proper integration
+foundry-cli = { path = "../crates/cli" }
+foundry-common = { path = "../crates/common" }
+
+[features]
+default = ["jemalloc"]
+asm-keccak = ["forge/asm-keccak"]
+jemalloc = ["forge/jemalloc"]
+mimalloc = ["forge/mimalloc"]
+aws-kms = ["forge/aws-kms"]
+gcp-kms = ["forge/gcp-kms"]

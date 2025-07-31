@@ -134,8 +134,8 @@ impl FluentVerificationClient {
         );
 
         // Add delay to allow contract indexing
-        println!("Waiting 5 seconds for contract to be indexed...");
-        std::thread::sleep(Duration::from_secs(5));
+        println!("Waiting 15 seconds for contract to be indexed...");
+        std::thread::sleep(Duration::from_secs(15));
 
         println!("Sending verification request to: {}", url);
         println!("Contract: {} at address: {}", request.contract_name, request.address_hash);
