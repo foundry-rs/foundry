@@ -11,7 +11,7 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{Address, Bytes, TxKind, U256, map::HashMap, utils::format_units};
+use alloy_primitives::{Address, TxKind, U256, map::HashMap, utils::format_units};
 use dialoguer::Confirm;
 use eyre::{Context, Result};
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
@@ -127,7 +127,7 @@ impl PreSimulationState {
                         tx.from()
                             .expect("transaction doesn't have a `from` address at execution time"),
                         to,
-                        tx.input().map(Bytes::copy_from_slice),
+                        tx.input().cloned(),
                         tx.value(),
                         tx.authorization_list(),
                     )
