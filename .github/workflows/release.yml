@@ -1,14 +1,14 @@
 name: release
 
 on:
-  push:
-    tags:
-      - "stable"
-      - "rc"
-      - "rc-*"
-      - "v*.*.*"
-  schedule:
-    - cron: "0 6 * * *"
+  # push:
+  #   tags:
+  #     - "stable"
+  #     - "rc"
+  #     - "rc-*"
+  #     - "v*.*.*"
+  # schedule:
+  #   - cron: "0 6 * * *"
   workflow_dispatch:
 
 env:
