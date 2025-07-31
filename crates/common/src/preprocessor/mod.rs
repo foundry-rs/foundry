@@ -25,10 +25,17 @@ fn span_to_range(source_map: &SourceMap, span: Span) -> Range<usize> {
     source_map.span_to_source(span).unwrap().1
 }
 
+/// Preprocessor that replaces static bytecode linking in tests and scripts (`new Contract`) with
+/// dynamic linkage through (`Vm.create*`).
+///
+/// This allows for more efficient caching when iterating on tests.
+///
+/// See <https://github.com/foundry-rs/foundry/pull/10010>.
 #[derive(Debug)]
-pub struct TestOptimizerPreprocessor;
+pub struct DynamicTestLinkingPreprocessor;
 
-impl Preprocessor<SolcCompiler> for TestOptimizerPreprocessor {
+impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
+    #[instrument(name = "DynamicTestLinkingPreprocessor::preprocess", skip_all)]
     fn preprocess(
         &self,
         _solc: &SolcCompiler,
@@ -97,7 +104,7 @@ impl Preprocessor<SolcCompiler> for TestOptimizerPreprocessor {
     }
 }
 
-impl Preprocessor<MultiCompiler> for TestOptimizerPreprocessor {
+impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
     fn preprocess(
         &self,
         compiler: &MultiCompiler,

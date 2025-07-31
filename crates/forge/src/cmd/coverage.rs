@@ -185,7 +185,7 @@ impl CoverageArgs {
     }
 
     /// Builds the coverage report.
-    #[instrument(name = "prepare", skip_all)]
+    #[instrument(name = "Coverage::prepare", skip_all)]
     fn prepare(
         &self,
         project_paths: &ProjectPathsConfig,
@@ -258,6 +258,7 @@ impl CoverageArgs {
     }
 
     /// Runs tests, collects coverage data and generates the final report.
+    #[instrument(name = "Coverage::collect", skip_all)]
     async fn collect(
         mut self,
         root: &Path,
@@ -329,10 +330,17 @@ impl CoverageArgs {
         }
 
         // Output final reports.
-        for reporter in &mut self.reporters {
-            reporter.report(&report)?;
-        }
+        self.report(&report)?;
 
+        Ok(())
+    }
+
+    #[instrument(name = "Coverage::report", skip_all)]
+    fn report(&mut self, report: &CoverageReport) -> Result<()> {
+        for reporter in &mut self.reporters {
+            let _guard = debug_span!("reporter.report", kind=%reporter.name()).entered();
+            reporter.report(report)?;
+        }
         Ok(())
     }
 
