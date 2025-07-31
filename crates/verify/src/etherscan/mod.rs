@@ -92,7 +92,6 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     .wrap_err_with(|| {
                         // valid json
                         let args = serde_json::to_string(&verify_args).unwrap();
-                        error!(?args, "Failed to submit verification");
                         format!("Failed to submit contract verification, payload:\n{args}")
                     })?;
 
@@ -110,16 +109,15 @@ impl VerificationProvider for EtherscanVerificationProvider {
                         || resp.result.starts_with("The address is not a smart contract")
                     {
                         warn!("{}", resp.result);
-                        return Err(eyre!("Could not detect the deployment."));
+                        return Err(eyre!("Could not detect deployment: {}", resp.result));
                     }
 
-                    warn!("Failed verify submission: {:?}", resp);
                     sh_err!(
-                        "Encountered an error verifying this contract:\nResponse: `{}`\nDetails:
-                        `{}`",
+                        "Failed to verify contract - Response: `{}`, Details: `{}`",
                         resp.message,
                         resp.result
                     )?;
+                    warn!("Failed verify submission: {:?}", resp);
                     std::process::exit(1);
                 }
 
@@ -186,7 +184,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 }
 
                 if resp.status == "0" {
-                    return Err(RetryError::Break(eyre!("Contract failed to verify.")));
+                    return Err(RetryError::Break(eyre!("Contract verification failed - status: {}, result: {}", resp.status, resp.result)));
                 }
 
                 if resp.result == "Pass - Verified" {
