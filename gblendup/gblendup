@@ -1,0 +1,682 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+# NOTE: if you make modifications to this script, please increment the version number.
+# WARNING: the SemVer pattern: major.minor.patch must be followed as we use it to determine if the script is up to date.
+GBLENDUP_INSTALLER_VERSION="1.3.0"
+
+BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
+GBLEND_DIR=${GBLEND_DIR:-"$BASE_DIR/.foundry"}
+GBLEND_VERSIONS_DIR="$GBLEND_DIR/versions"
+GBLEND_BIN_DIR="$GBLEND_DIR/bin"
+GBLEND_MAN_DIR="$GBLEND_DIR/share/man/man1"
+GBLEND_BIN_URL="https://raw.githubusercontent.com/fluentlabs-xyz/gblend/gblend/gblendup/gblendup"
+GBLEND_BIN_PATH="$GBLEND_BIN_DIR/gblendup"
+GBLENDUP_JOBS=""
+GBLENDUP_IGNORE_VERIFICATION=false
+
+BINS=(gblend)
+HASH_NAMES=()
+HASH_VALUES=()
+
+export RUSTFLAGS="${RUSTFLAGS:--C target-cpu=native}"
+
+main() {
+  need_cmd git
+  need_cmd curl
+
+  while [[ -n $1 ]]; do
+    case $1 in
+      --)               shift; break;;
+
+      -v|--version)     shift; version;;
+      -U|--update)      shift; update;;
+      -r|--repo)        shift; GBLENDUP_REPO=$1;;
+      -b|--branch)      shift; GBLENDUP_BRANCH=$1;;
+      -i|--install)     shift; GBLENDUP_VERSION=$1;;
+      -l|--list)        shift; list;;
+      -u|--use)         shift; GBLENDUP_VERSION=$1; use;;
+      -p|--path)        shift; GBLENDUP_LOCAL_REPO=$1;;
+      -P|--pr)          shift; GBLENDUP_PR=$1;;
+      -C|--commit)      shift; GBLENDUP_COMMIT=$1;;
+      -j|--jobs)        shift; GBLENDUP_JOBS=$1;;
+      -f|--force)       GBLENDUP_IGNORE_VERIFICATION=true;;
+      --arch)           shift; GBLENDUP_ARCH=$1;;
+      --platform)       shift; GBLENDUP_PLATFORM=$1;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        warn "unknown option: $1"
+        usage
+        exit 1
+    esac; shift
+  done
+
+  CARGO_BUILD_ARGS=(--release)
+
+  if [ -n "$GBLENDUP_JOBS" ]; then
+    CARGO_BUILD_ARGS+=(--jobs "$GBLENDUP_JOBS")
+  fi
+
+  # Print the banner after successfully parsing args
+  banner
+
+  # Check if the gblendup installer is up to date, warn the user if not
+  check_installer_up_to_date
+
+  if [ -n "$GBLENDUP_PR" ]; then
+    if [ -z "$GBLENDUP_BRANCH" ]; then
+      GBLENDUP_BRANCH="refs/pull/$GBLENDUP_PR/head"
+    else
+      err "can't use --pr and --branch at the same time"
+    fi
+  fi
+
+  check_bins_in_use
+
+  # Installs foundry from a local repository if --path parameter is provided
+  if [[ -n "$GBLENDUP_LOCAL_REPO" ]]; then
+    need_cmd cargo
+
+    # Ignore branches/versions as we do not want to modify local git state
+    if [ -n "$GBLENDUP_REPO" ] || [ -n "$GBLENDUP_BRANCH" ] || [ -n "$GBLENDUP_VERSION" ]; then
+      warn "--branch, --install, --use, and --repo arguments are ignored during local install"
+    fi
+
+    # Enter local repo and build
+    say "installing from $GBLENDUP_LOCAL_REPO"
+    cd "$GBLENDUP_LOCAL_REPO"
+    ensure cargo build --bins "${CARGO_BUILD_ARGS[@]}"
+
+    for bin in "${BINS[@]}"; do
+      # Remove prior installations if they exist
+      rm -f "$GBLEND_BIN_DIR/$bin"
+      # Symlink from local repo binaries to bin dir
+      ensure ln -s "$PWD/target/release/$bin" "$GBLEND_BIN_DIR/$bin"
+    done
+
+    say "done"
+    exit 0
+  fi
+
+  GBLENDUP_REPO=${GBLENDUP_REPO:-foundry-rs/foundry}
+
+  # Install by downloading binaries
+  if [[ "$GBLENDUP_REPO" == "foundry-rs/foundry" && -z "$GBLENDUP_BRANCH" && -z "$GBLENDUP_COMMIT" ]]; then
+    GBLENDUP_VERSION=${GBLENDUP_VERSION:-stable}
+    GBLENDUP_TAG=$GBLENDUP_VERSION
+
+    # Normalize versions (handle channels, versions without v prefix)
+    if [[ "$GBLENDUP_VERSION" =~ ^nightly ]]; then
+      GBLENDUP_VERSION="nightly"
+    elif [[ "$GBLENDUP_VERSION" == [[:digit:]]* ]]; then
+      # Add v prefix
+      GBLENDUP_VERSION="v${GBLENDUP_VERSION}"
+      GBLENDUP_TAG="${GBLENDUP_VERSION}"
+    fi
+
+    say "installing foundry (version ${GBLENDUP_VERSION}, tag ${GBLENDUP_TAG})"
+
+    uname_s=$(uname -s)
+    PLATFORM=$(tolower "${GBLENDUP_PLATFORM:-$uname_s}")
+    EXT="tar.gz"
+    case $PLATFORM in
+      linux|alpine) ;;
+      darwin|mac*)
+        PLATFORM="darwin"
+        ;;
+      mingw*|win*)
+        EXT="zip"
+        PLATFORM="win32"
+        ;;
+      *)
+        err "unsupported platform: $PLATFORM"
+        ;;
+    esac
+
+    uname_m=$(uname -m)
+    ARCHITECTURE=$(tolower "${GBLENDUP_ARCH:-$uname_m}")
+    if [ "${ARCHITECTURE}" = "x86_64" ]; then
+      # Redirect stderr to /dev/null to avoid printing errors if non Rosetta.
+      if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ]; then
+        ARCHITECTURE="arm64" # Rosetta.
+      else
+        ARCHITECTURE="amd64" # Intel.
+      fi
+    elif [ "${ARCHITECTURE}" = "arm64" ] ||[ "${ARCHITECTURE}" = "aarch64" ] ; then
+      ARCHITECTURE="arm64" # Arm.
+    else
+      ARCHITECTURE="amd64" # Amd.
+    fi
+
+    # Compute the URL of the release tarball in the Foundry repository.
+    RELEASE_URL="https://github.com/${GBLENDUP_REPO}/releases/download/${GBLENDUP_TAG}/"
+    ATTESTATION_URL="${RELEASE_URL}foundry_${GBLENDUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.attestation.txt"
+    BIN_ARCHIVE_URL="${RELEASE_URL}foundry_${GBLENDUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.$EXT"
+    MAN_TARBALL_URL="${RELEASE_URL}foundry_man_${GBLENDUP_VERSION}.tar.gz"
+
+    ensure mkdir -p "$GBLEND_VERSIONS_DIR"
+
+    # If `--force` is set, skip the SHA verification.
+    if [ "$GBLENDUP_IGNORE_VERIFICATION" = false ]; then
+      # Check if the version is already installed by downloading the attestation file.
+      say "checking if gblend for $GBLENDUP_TAG version are already installed"
+
+      # Create a temporary directory to store the attestation link and artifact.
+      tmp_dir="$(mktemp -d 2>/dev/null || echo ".")"
+      tmp="$tmp_dir/attestation.txt"
+      ensure download "$ATTESTATION_URL" "$tmp"
+
+      # Read the first line of the attestation file to get the artifact link.
+      # The first line should contain the link to the attestation artifact.
+      attestation_artifact_link="$(head -n1 "$tmp" | tr -d '\r')"
+      attestation_missing=false
+
+      # If the attestation artifact link is empty or the file contains 'Not Found',
+      # we consider the attestation missing and skip the SHA verification.
+      if [ -z "$attestation_artifact_link" ] || grep -q 'Not Found' "$tmp"; then
+        attestation_missing=true
+      fi
+
+      # Clean up the temporary attestation file.
+      rm -f "$tmp"
+
+      if $attestation_missing; then
+        say "no attestation found for this release, skipping SHA verification"
+      else
+        say "found attestation for $GBLENDUP_TAG version, downloading attestation artifact, checking..."
+
+        # Download the attestation artifact JSON file.
+        tmp="$tmp_dir/foundry-attestation.sigstore.json"
+        ensure download "${attestation_artifact_link}/download" "$tmp"
+
+        # Extract the payload from the JSON file.
+        payload_b64=$(awk '/"payload":/ {gsub(/[",]/, "", $2); print $2; exit}' "$tmp")
+        payload_json=$(printf '%s' "$payload_b64" | base64 -d 2>/dev/null || printf '%s' "$payload_b64" | base64 -D)
+
+
+        # Extract the names and hashes from the payload JSON.
+        # The payload is expected to be a JSON array of objects with "name" and "sha256" fields.
+        while read -r name_line && read -r sha_line; do
+          name=$(echo "$name_line" | sed -nE 's/.*"name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')
+          sha=$(echo "$sha_line"  | sed -nE 's/.*"sha256"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')
+          if [ -n "$name" ] && [ -n "$sha" ]; then
+            HASH_NAMES+=("$name")
+            HASH_VALUES+=("$sha")
+          fi
+        done < <(echo "$payload_json" | tr '{}' '\n' | grep -E '"name"|sha256')
+
+        # Clean up the temporary attestation artifact.
+        # The hashes are now stored in the HASHES associative array.
+        rm -f "$tmp"
+
+        # Check if the binaries are already installed and match the expected hashes.
+        # If they do, skip the download.
+        version_dir="$GBLEND_VERSIONS_DIR/$GBLENDUP_TAG"
+        all_match=true
+        for bin in "${BINS[@]}"; do
+          expected=""
+          for i in "${!HASH_NAMES[@]}"; do
+            if [ "${HASH_NAMES[$i]}" = "$bin" ] || [ "${HASH_NAMES[$i]}" = "$bin.exe" ]; then
+              expected="${HASH_VALUES[$i]}"
+              break
+            fi
+          done
+
+          path="$version_dir/$bin"
+
+          if [ -z "$expected" ] || [ ! -x "$path" ]; then
+            all_match=false
+            break
+          fi
+
+          actual=$(compute_sha256 "$path")
+          if [ "$actual" != "$expected" ]; then
+            all_match=false
+            break
+          fi
+        done
+
+        if $all_match; then
+          say "version $GBLENDUP_TAG already installed and verified, activating..."
+          GBLENDUP_VERSION=$GBLENDUP_TAG
+          use
+          say "done!"
+          exit 0
+        fi
+      fi
+
+      # If we reach here, we need to download the binaries.
+      say "binaries not found or do not match expected hashes, downloading new binaries"
+    fi
+
+    # Download and extract the binaries archive
+    say "downloading gblend for $GBLENDUP_TAG version"
+    if [ "$PLATFORM" = "win32" ]; then
+      tmp="$(mktemp -d 2>/dev/null || echo ".")/foundry.zip"
+      ensure download "$BIN_ARCHIVE_URL" "$tmp"
+      ensure unzip "$tmp" -d "$GBLEND_VERSIONS_DIR/$GBLENDUP_TAG"
+      rm -f "$tmp"
+    else
+      tmp="$(mktemp -d 2>/dev/null || echo ".")/foundry.tar.gz"
+      ensure download "$BIN_ARCHIVE_URL" "$tmp"
+      # Make sure it's a valid tar archive.
+      ensure tar tf $tmp 1> /dev/null
+      ensure mkdir -p "$GBLEND_VERSIONS_DIR/$GBLENDUP_TAG"
+      ensure tar -C "$GBLEND_VERSIONS_DIR/$GBLENDUP_TAG" -xvf $tmp
+      rm -f "$tmp"
+    fi
+
+    # Optionally download the manuals
+    if check_cmd tar; then
+      say "downloading manpages"
+      mkdir -p "$GBLEND_MAN_DIR"
+      download "$MAN_TARBALL_URL" | tar -xzC "$GBLEND_MAN_DIR"
+    else
+      say 'skipping manpage download: missing "tar"'
+    fi
+
+    if [ "$GBLENDUP_IGNORE_VERIFICATION" = true ]; then
+      say "skipped SHA verification for downloaded binaries due to --force flag"
+    else
+      # Verify the downloaded binaries against the attestation file.
+      # If the attestation file was not found or is empty, we skip the verification.
+      if $attestation_missing; then
+        say "no attestation found for these binaries, skipping SHA verification for downloaded binaries"
+      else
+        say "verifying downloaded binaries against the attestation file"
+
+        failed=false
+        for bin in "${BINS[@]}"; do
+          expected=""
+          for i in "${!HASH_NAMES[@]}"; do
+            if [ "${HASH_NAMES[$i]}" = "$bin" ] || [ "${HASH_NAMES[$i]}" = "$bin.exe" ]; then
+              expected="${HASH_VALUES[$i]}"
+              break
+            fi
+          done
+
+          path="$GBLEND_VERSIONS_DIR/$GBLENDUP_TAG/$bin"
+
+          if [ -z "$expected" ]; then
+            say "no expected hash for $bin"
+            failed=true
+            continue
+          fi
+
+          if [ ! -x "$path" ]; then
+            say "binary $bin not found at $path"
+            failed=true
+            continue
+          fi
+
+          actual=$(compute_sha256 "$path")
+          if [ "$actual" != "$expected" ]; then
+            say "$bin hash verification failed:"
+            say "  expected: $expected"
+            say "  actual:   $actual"
+            failed=true
+          else
+            say "$bin verified ✓"
+          fi
+        done
+
+        if $failed; then
+          err "one or more binaries failed post-installation verification"
+        fi
+      fi
+    fi
+
+    # Use newly installed version.
+    GBLENDUP_VERSION=$GBLENDUP_TAG
+    use
+
+    say "done!"
+
+  # Install by cloning the repo with the provided branch/tag
+  else
+    need_cmd cargo
+    GBLENDUP_BRANCH=${GBLENDUP_BRANCH:-master}
+    REPO_PATH="$GBLEND_DIR/$GBLENDUP_REPO"
+    AUTHOR="$(echo "$GBLENDUP_REPO" | cut -d'/' -f1 -)"
+
+    # If repo path does not exist, grab the author from the repo, make a directory in .foundry, cd to it and clone.
+    if [ ! -d "$REPO_PATH" ]; then
+      ensure mkdir -p "$GBLEND_DIR/$AUTHOR"
+      cd "$GBLEND_DIR/$AUTHOR"
+      ensure git clone "https://github.com/$GBLENDUP_REPO"
+    fi
+
+    # Force checkout, discarding any local changes
+    cd "$REPO_PATH"
+    ensure git fetch origin "${GBLENDUP_BRANCH}:remotes/origin/${GBLENDUP_BRANCH}"
+    ensure git checkout "origin/${GBLENDUP_BRANCH}"
+
+    # Create custom version based on the install method, e.g.:
+    # - foundry-rs-commit-c22c4cc96b0535cd989ee94b79da1b19d236b8db
+    # - foundry-rs-pr-1
+    # - foundry-rs-branch-chore-bump-forge-std
+    if [ -n "$GBLENDUP_COMMIT" ]; then
+      # If set, checkout specific commit from branch
+      ensure git checkout "$GBLENDUP_COMMIT"
+      GBLENDUP_VERSION=$AUTHOR-commit-$GBLENDUP_COMMIT
+    elif [ -n "$GBLENDUP_PR" ]; then
+     GBLENDUP_VERSION=$AUTHOR-pr-$GBLENDUP_PR
+    else
+      if [ -n "$GBLENDUP_BRANCH" ]; then
+        NORMALIZED_BRANCH="$(echo "$GBLENDUP_BRANCH" | tr / -)"
+        GBLENDUP_VERSION=$AUTHOR-branch-$NORMALIZED_BRANCH
+      fi
+    fi
+    say "installing version $GBLENDUP_VERSION"
+
+    # Build the repo.
+    ensure cargo build --bins "${CARGO_BUILD_ARGS[@]}"
+    # Create foundry custom version directory.
+    ensure mkdir -p "$GBLEND_VERSIONS_DIR/$GBLENDUP_VERSION"
+    for bin in "${BINS[@]}"; do
+      for try_path in target/release/$bin target/release/$bin.exe; do
+        if [ -f "$try_path" ]; then
+          mv -f "$try_path" "$GBLEND_VERSIONS_DIR/$GBLENDUP_VERSION"
+        fi
+      done
+    done
+
+    # Use newly built version.
+    use
+
+    # If help2man is installed, use it to add Foundry man pages.
+    if check_cmd help2man; then
+      for bin in "${BINS[@]}"; do
+        help2man -N "$GBLEND_BIN_DIR/$bin" > "$GBLEND_MAN_DIR/$bin.1"
+      done
+    fi
+
+    say "done"
+  fi
+}
+
+usage() {
+  cat 1>&2 <<EOF
+The installer for Foundry.
+
+Update or revert to a specific Foundry version with ease.
+
+By default, the latest stable version is installed from built binaries.
+
+USAGE:
+    gblendup <OPTIONS>
+
+OPTIONS:
+    -h, --help      Print help information
+    -v, --version   Print the version of gblendup
+    -U, --update    Update gblendup to the latest version
+    -i, --install   Install a specific version from built binaries
+    -l, --list      List versions installed from built binaries
+    -u, --use       Use a specific installed version from built binaries
+    -b, --branch    Build and install a specific branch
+    -P, --pr        Build and install a specific Pull Request
+    -C, --commit    Build and install a specific commit
+    -r, --repo      Build and install from a remote GitHub repo (uses default branch if no other options are set)
+    -p, --path      Build and install a local repository
+    -j, --jobs      Number of CPUs to use for building Foundry (default: all CPUs)
+    -f, --force     Skip SHA verification for downloaded binaries (INSECURE - use with caution)
+    --arch          Install a specific architecture (supports amd64 and arm64)
+    --platform      Install a specific platform (supports win32, linux, darwin and alpine)
+EOF
+}
+
+version() {
+  say "$GBLENDUP_INSTALLER_VERSION"
+  exit 0
+}
+
+update() {
+  say "updating gblendup..."
+
+  current_version="$GBLENDUP_INSTALLER_VERSION"
+
+  # Download the new version.
+  tmp_file="$(mktemp)"
+  ensure download "$GBLEND_BIN_URL" "$tmp_file"
+
+  # Extract new version from downloaded file.
+  new_version=$(grep -Eo 'GBLENDUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' "$tmp_file" | cut -d'"' -f2)
+
+  # If the new version could not be determined, exit gracefully.
+  # This prevents from upgrading to an empty or invalid version.
+  if [ -z "$new_version" ]; then
+    warn "could not determine new gblendup version. Exiting."
+    rm -f "$tmp_file"
+    exit 0
+  fi
+
+  # If the new version is not greater than the current version, skip the update.
+  # This is to prevent downgrades or unnecessary updates.
+  if ! version_gt "$new_version" "$current_version"; then
+    say "gblendup is already up to date (installed: $current_version, remote: $new_version)."
+    rm -f "$tmp_file"
+    exit 0
+  fi
+
+  # Overwrite existing gblendup
+  ensure mv "$tmp_file" "$GBLEND_BIN_PATH"
+  ensure chmod +x "$GBLEND_BIN_PATH"
+
+  say "successfully updated gblendup: $current_version → $new_version"
+  exit 0
+}
+
+list() {
+  if [ -d "$GBLEND_VERSIONS_DIR" ]; then
+    for VERSION in $GBLEND_VERSIONS_DIR/*; do
+      say "${VERSION##*/}"
+      for bin in "${BINS[@]}"; do
+        bin_path="$VERSION/$bin"
+        say "- $(ensure "$bin_path" -V)"
+      done
+      printf "\n"
+    done
+  else
+    for bin in "${BINS[@]}"; do
+      bin_path="$GBLEND_BIN_DIR/$bin"
+      say "- $(ensure "$bin_path" -V)"
+    done
+  fi
+  exit 0
+}
+
+use() {
+  [ -z "$GBLENDUP_VERSION" ] && err "no version provided"
+  GBLEND_VERSION_DIR="$GBLEND_VERSIONS_DIR/$GBLENDUP_VERSION"
+  if [ -d "$GBLEND_VERSION_DIR" ]; then
+
+    check_bins_in_use
+
+    for bin in "${BINS[@]}"; do
+      bin_path="$GBLEND_BIN_DIR/$bin"
+      cp "$GBLEND_VERSION_DIR/$bin" "$bin_path"
+      # Print usage msg
+      say "use - $(ensure "$bin_path" -V)"
+
+      # Check if the default path of the binary is not in GBLEND_BIN_DIR
+      which_path="$(command -v "$bin" || true)"
+      if [ -n "$which_path" ] && [ "$which_path" != "$bin_path" ]; then
+        warn ""
+        cat 1>&2 <<EOF
+There are multiple binaries with the name '$bin' present in your 'PATH'.
+This may be the result of installing '$bin' using another method,
+like Cargo or other package managers.
+You may need to run 'rm $which_path' or move '$GBLEND_BIN_DIR'
+in your 'PATH' to allow the newly installed version to take precedence!
+
+EOF
+      fi
+    done
+    exit 0
+  else
+    err "version $GBLENDUP_VERSION not installed"
+  fi
+}
+
+say() {
+  printf "gblendup: %s\n" "$1"
+}
+
+warn() {
+  say "warning: ${1}" >&2
+}
+
+err() {
+  say "$1" >&2
+  exit 1
+}
+
+tolower() {
+  echo "$1" | awk '{print tolower($0)}'
+}
+
+compute_sha256() {
+  if check_cmd sha256sum; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+need_cmd() {
+  if ! check_cmd "$1"; then
+    err "need '$1' (command not found)"
+  fi
+}
+
+check_cmd() {
+  command -v "$1" &>/dev/null
+}
+
+check_installer_up_to_date() {
+  say "checking if gblendup is up to date..."
+
+  if check_cmd curl; then
+    remote_version=$(curl -fsSL "$GBLEND_BIN_URL" | grep -Eo 'GBLENDUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' | cut -d'"' -f2)
+  else
+    remote_version=$(wget -qO- "$GBLEND_BIN_URL" | grep -Eo 'GBLENDUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' | cut -d'"' -f2)
+  fi
+
+  if [ -z "$remote_version" ]; then
+    warn "Could not determine remote gblendup version. Skipping version check."
+    return 0
+  fi
+
+  if version_gt "$remote_version" "$GBLENDUP_INSTALLER_VERSION"; then
+    printf '
+Your installation of gblendup is out of date.
+
+Installed: %s → Latest: %s
+
+To update, run:
+
+  gblendup --update
+
+Updating is highly recommended as it gives you access to the latest features and bug fixes.
+
+' "$GBLENDUP_INSTALLER_VERSION" "$remote_version" >&2
+  else
+    say "gblendup is up to date."
+  fi
+}
+
+# Compares two version strings in the format "major.minor.patch".
+# Returns 0 if $1 is greater than $2, 1 if $1 is less than $2, and 1 if they are equal.
+#
+# Assumes that the version strings are well-formed and contain three numeric components separated by dots.
+#
+# Example: version_gt "1.2.3" "1.2.4"
+#          returns 1 (1.2.3 < 1.2.4)
+#          version_gt "1.2.3" "1.2.3"
+#          returns 1 (1.2.3 == 1.2.3)
+#          version_gt "1.2.4" "1.2.3"
+#          returns 0 (1.2.4 > 1.2.3)
+version_gt() {
+  [ "$1" = "$2" ] && return 1
+
+  IFS=. read -r major1 minor1 patch1 <<EOF
+$1
+EOF
+  IFS=. read -r major2 minor2 patch2 <<EOF
+$2
+EOF
+
+  [ "$major1" -gt "$major2" ] && return 0
+  [ "$major1" -lt "$major2" ] && return 1
+  [ "$minor1" -gt "$minor2" ] && return 0
+  [ "$minor1" -lt "$minor2" ] && return 1
+  [ "$patch1" -gt "$patch2" ] && return 0
+  [ "$patch1" -lt "$patch2" ] && return 1
+
+  return 1
+}
+
+check_bins_in_use() {
+  if check_cmd pgrep; then
+    for bin in "${BINS[@]}"; do
+      if pgrep -x "$bin" >/dev/null; then
+        err "Error: '$bin' is currently running. Please stop the process and try again."
+      fi
+    done
+  else
+    warn "Make sure no foundry process is running during the install process!"
+  fi
+}
+
+# Run a command that should never fail. If the command fails execution
+# will immediately terminate with an error showing the failing command.
+ensure() {
+  if ! "$@"; then err "command failed: $*"; fi
+}
+
+# Downloads $1 into $2 or stdout
+download() {
+  if [ -n "$2" ]; then
+    # output into $2
+    if check_cmd curl; then
+      curl -#o "$2" -L "$1"
+    else
+      wget --show-progress -qO "$2" "$1"
+    fi
+  else
+    # output to stdout
+    if check_cmd curl; then
+      curl -#L "$1"
+    else
+      wget --show-progress -qO- "$1"
+    fi
+  fi
+}
+
+# Banner prompt for Foundry
+banner() {
+  printf '
+
+.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx
+
+  ██████╗ ██████╗ ██╗     ███████╗███╗   ██╗██████╗
+  ██╔════╝ ██╔══██╗██║     ██╔════╝████╗  ██║██╔══██╗
+  ██║  ███╗██████╔╝██║     █████╗  ██╔██╗ ██║██║  ██║
+  ██║   ██║██╔══██╗██║     ██╔══╝  ██║╚██╗██║██║  ██║
+  ╚██████╔╝██████╔╝███████╗███████╗██║ ╚████║██████╔╝
+   ╚═════╝ ╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═══╝╚═════╝
+
+.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx
+
+Repo       : https://github.com/fluentlabs-xyz/gblend
+
+.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx.xOx
+
+'
+}
+
+
+main "$@"
