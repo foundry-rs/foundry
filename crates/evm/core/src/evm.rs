@@ -323,8 +323,9 @@ impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
                     return Ok(Some(FrameResult::Call(CallOutcome {
                         result: InterpreterResult {
                             result: InstructionResult::Revert,
-                            output: Bytes::copy_from_slice(
-                                format!("missing CREATE2 deployer: {create2_deployer}").as_bytes(),
+                            output: Bytes::from(
+                                format!("missing CREATE2 deployer: {create2_deployer}")
+                                    .into_bytes(),
                             ),
                             gas: Gas::new(gas_limit),
                         },

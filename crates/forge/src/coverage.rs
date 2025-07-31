@@ -15,6 +15,9 @@ pub use foundry_evm::coverage::*;
 
 /// A coverage reporter.
 pub trait CoverageReporter {
+    /// Returns a debug string for the reporter.
+    fn name(&self) -> &'static str;
+
     /// Returns `true` if the reporter needs source maps for the final report.
     fn needs_source_maps(&self) -> bool {
         false
@@ -62,6 +65,10 @@ impl CoverageSummaryReporter {
 }
 
 impl CoverageReporter for CoverageSummaryReporter {
+    fn name(&self) -> &'static str {
+        "summary"
+    }
+
     fn report(&mut self, report: &CoverageReport) -> eyre::Result<()> {
         for (path, summary) in report.summary_by_file() {
             self.total.merge(&summary);
@@ -108,6 +115,10 @@ impl LcovReporter {
 }
 
 impl CoverageReporter for LcovReporter {
+    fn name(&self) -> &'static str {
+        "lcov"
+    }
+
     fn report(&mut self, report: &CoverageReport) -> eyre::Result<()> {
         let mut out = std::io::BufWriter::new(fs::create_file(&self.path)?);
 
@@ -184,6 +195,10 @@ impl CoverageReporter for LcovReporter {
 pub struct DebugReporter;
 
 impl CoverageReporter for DebugReporter {
+    fn name(&self) -> &'static str {
+        "debug"
+    }
+
     fn report(&mut self, report: &CoverageReport) -> eyre::Result<()> {
         for (path, items) in report.items_by_file() {
             sh_println!("Uncovered for {}:", path.display())?;
@@ -237,6 +252,10 @@ impl BytecodeReporter {
 }
 
 impl CoverageReporter for BytecodeReporter {
+    fn name(&self) -> &'static str {
+        "bytecode"
+    }
+
     fn needs_source_maps(&self) -> bool {
         true
     }

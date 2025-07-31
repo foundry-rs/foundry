@@ -329,3 +329,46 @@ contract ValidContract {}
 
     cmd.args(["build"]).assert_success();
 });
+
+// <https://github.com/foundry-rs/foundry/issues/11149>
+forgetest_init!(test_consistent_build_output, |prj, cmd| {
+    prj.add_source(
+        "AContract.sol",
+        r#"
+import {B} from "/badpath/B.sol";
+
+contract A is B {}
+   "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "CContract.sol",
+        r#"
+import {B} from "badpath/B.sol";
+
+contract C is B {}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["build", "src/AContract.sol"]).assert_failure().stdout_eq(str![[r#"
+...
+Unable to resolve imports:
+      "/badpath/B.sol" in "[..]"
+with remappings:
+      forge-std/=[..]
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+
+"#]]);
+    cmd.forge_fuse().args(["build", "src/CContract.sol"]).assert_failure().stdout_eq(str![[r#"
+Unable to resolve imports:
+      "badpath/B.sol" in "[..]"
+with remappings:
+      forge-std/=[..]
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+
+"#]]);
+});
