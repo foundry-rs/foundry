@@ -25,12 +25,11 @@ members = [
     "crates/macros/",
     "crates/test-utils/",
     "crates/lint/",
-    "gblend/",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "1.2.3"
+version = "0.1.0"
 edition = "2024"
 # Remember to update clippy.toml as well
 rust-version = "1.88"
