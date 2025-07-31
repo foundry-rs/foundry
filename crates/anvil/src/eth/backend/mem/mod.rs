@@ -2734,7 +2734,7 @@ impl Backend {
             block_env.clone(),
         );
 
-        let config = tracer_config.clone().into_json();
+        let config = tracer_config.into_json();
         let mut inspector = revm_inspectors::tracing::js::JsInspector::new(code, config).unwrap();
         let mut evm = self.new_evm_with_inspector_ref(&cache_db, &call_env, &mut inspector);
 
