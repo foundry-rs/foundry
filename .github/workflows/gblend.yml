@@ -69,22 +69,22 @@ jobs:
           # `target`: Rust build target triple
           # `platform` and `arch`: Used in tarball names
           # `svm`: target platform to use for the Solc binary: https://github.com/roynalnaruto/svm-rs/blob/84cbe0ac705becabdc13168bae28a45ad2299749/svm-builds/build.rs#L4-L24
-          - runner: Linux-22.04
+          - runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             svm_target_platform: linux-amd64
             platform: linux
             arch: amd64
-          - runner: Linux-22.04
+          - runner: ubuntu-22.04
             target: x86_64-unknown-linux-musl
             svm_target_platform: linux-amd64
             platform: alpine
             arch: amd64
-          - runner: Linux-22.04
+          - runner: ubuntu-22.04
             target: aarch64-unknown-linux-gnu
             svm_target_platform: linux-aarch64
             platform: linux
             arch: arm64
-          - runner: Linux-22.04
+          - runner: ubuntu-22.04
             target: aarch64-unknown-linux-musl
             svm_target_platform: linux-aarch64
             platform: alpine
@@ -96,12 +96,12 @@ jobs:
             svm_target_platform: macosx-amd64
             platform: darwin
             arch: amd64
-          - runner: macos-latest-large
+          - runner: macos-latest
             target: aarch64-apple-darwin
             svm_target_platform: macosx-aarch64
             platform: darwin
             arch: arm64
-          - runner: Windows
+          - runner: windows-latest
             target: x86_64-pc-windows-msvc
             svm_target_platform: windows-amd64
             platform: win32
@@ -174,20 +174,20 @@ jobs:
         shell: bash
         run: |
           if [[ "$PLATFORM_NAME" == "linux" || "$PLATFORM_NAME" == "alpine" ]]; then
-            tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C $OUT_DIR gblend
-            echo "file_name=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> $GITHUB_OUTPUT
+            tar -czvf "gblend_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C $OUT_DIR gblend
+            echo "file_name=gblend_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> $GITHUB_OUTPUT
           elif [ "$PLATFORM_NAME" == "darwin" ]; then
             # We need to use gtar here otherwise the archive is corrupt.
             # See: https://github.com/actions/virtual-environments/issues/2619
-            gtar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C $OUT_DIR gblend
-            echo "file_name=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> $GITHUB_OUTPUT
+            gtar -czvf "gblend_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C $OUT_DIR gblend
+            echo "file_name=gblend_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> $GITHUB_OUTPUT
           else
             cd $OUT_DIR
-            7z a -tzip "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" forge.exe cast.exe anvil.exe chisel.exe
-            mv "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" ../../../
-            echo "file_name=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" >> $GITHUB_OUTPUT
+            7z a -tzip "gblend_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" forge.exe cast.exe anvil.exe chisel.exe
+            mv "gblend_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" ../../../
+            echo "file_name=gblend_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" >> $GITHUB_OUTPUT
           fi
-          echo "foundry_attestation=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.attestation.txt" >> $GITHUB_OUTPUT
+          echo "gblend_attestation=gblend_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.attestation.txt" >> $GITHUB_OUTPUT
 
       - name: Build man page
         id: man
@@ -212,7 +212,7 @@ jobs:
 
       # - name: Record attestation URL
       #   run: |
-      #     echo "${{ steps.attestation.outputs.attestation-url }}" > ${{ steps.artifacts.outputs.foundry_attestation }}
+      #     echo "${{ steps.attestation.outputs.attestation-url }}" > ${{ steps.artifacts.outputs.gblend_attestation }}
 
       # Creates the release for this specific version
       - name: Create release
@@ -224,11 +224,11 @@ jobs:
           body: ${{ needs.prepare.outputs.changelog }}
           files: |
             ${{ steps.artifacts.outputs.file_name }}
-            ${{ steps.artifacts.outputs.foundry_attestation }}
+            ${{ steps.artifacts.outputs.gblend_attestation }}
             ${{ steps.man.outputs.gblend_man }}
 
       # # If this is a nightly release, it also updates the release
-      # # tagged `nightly` for compatibility with `foundryup`
+      # # tagged `nightly` for compatibility with `gblendup`
       # - name: Update nightly release
       #   if: ${{ env.IS_NIGHTLY == 'true' }}
       #   uses: softprops/action-gh-release@v2.2.2
@@ -239,7 +239,7 @@ jobs:
       #     body: ${{ needs.prepare.outputs.changelog }}
       #     files: |
       #       ${{ steps.artifacts.outputs.file_name }}
-      #       ${{ steps.artifacts.outputs.foundry_attestation }}
+      #       ${{ steps.artifacts.outputs.gblend_attestation }}
       #       ${{ steps.man.outputs.gblend_man }}
 
   cleanup:
