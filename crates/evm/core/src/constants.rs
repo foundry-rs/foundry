@@ -37,9 +37,6 @@ pub const MAGIC_ASSUME: &[u8] = b"FOUNDRY::ASSUME";
 /// Magic return value returned by the `skip` cheatcode. Optionally appended with a reason.
 pub const MAGIC_SKIP: &[u8] = b"FOUNDRY::SKIP";
 
-/// Test timeout return value.
-pub const TEST_TIMEOUT: &str = "FOUNDRY::TEST_TIMEOUT";
-
 /// The address that deploys the default CREATE2 deployer contract.
 pub const DEFAULT_CREATE2_DEPLOYER_DEPLOYER: Address =
     address!("0x3fAB184622Dc19b6109349B94811493BF2a45362");

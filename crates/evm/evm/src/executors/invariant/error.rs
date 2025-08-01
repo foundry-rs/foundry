@@ -1,9 +1,9 @@
-use super::{BasicTxDetails, InvariantContract};
+use super::InvariantContract;
 use crate::executors::RawCallResult;
 use alloy_primitives::{Address, Bytes};
 use foundry_config::InvariantConfig;
 use foundry_evm_core::decode::RevertDecoder;
-use foundry_evm_fuzz::{Reason, invariant::FuzzRunIdentifiedContracts};
+use foundry_evm_fuzz::{BasicTxDetails, Reason, invariant::FuzzRunIdentifiedContracts};
 use proptest::test_runner::TestError;
 
 /// Stores information about failures and reverts of the invariant tests.

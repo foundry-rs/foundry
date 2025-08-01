@@ -1,4 +1,4 @@
-use crate::invariant::{BasicTxDetails, FuzzRunIdentifiedContracts};
+use crate::{BasicTxDetails, invariant::FuzzRunIdentifiedContracts};
 use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt, FunctionExt};
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{
