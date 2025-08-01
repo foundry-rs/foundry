@@ -38,10 +38,14 @@ impl<'ast> EarlyLintPass<'ast> for Imports {
     }
 
     fn check_full_source_unit(&mut self, ctx: &LintContext<'ast>, ast: &'ast SourceUnit<'ast>) {
-        let mut checker = UnusedChecker::new(ctx.session().source_map());
-        let _ = checker.visit_source_unit(ast);
-        checker.check_unused_imports(ast, ctx);
-        checker.clear();
+        // Despite disabled lints are filtered inside `ctx.emit()`, we explicitly check
+        // upfront to avoid the expensive full source unit traversal when unnecessary.
+        if ctx.is_lint_enabled(UNUSED_IMPORT.id) {
+            let mut checker = UnusedChecker::new(ctx.session().source_map());
+            let _ = checker.visit_source_unit(ast);
+            checker.check_unused_imports(ast, ctx);
+            checker.clear();
+        }
     }
 }
 
