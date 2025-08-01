@@ -2,7 +2,7 @@
 
 use crate::abi::Greeter;
 use alloy_network::{ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{Bytes, U256, Uint, address, utils::Unit};
+use alloy_primitives::{Bytes, U256, Uint, address, b256, utils::Unit};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
@@ -395,11 +395,22 @@ async fn test_backward_compatibility_mixed_formats_deserialization_v1_2() {
 
     let state: SerializableState = serde_json::from_str(&mixed_format.to_string()).unwrap();
     let block_env = state.block.unwrap();
+
     assert_eq!(block_env.number, U256::from(3));
     assert_eq!(block_env.beneficiary, address!("0x1111111111111111111111111111111111111111"));
     assert_eq!(block_env.timestamp, U256::from(1751619509));
-    assert_eq!(block_env.gas_limit, 30000000);
-    assert_eq!(block_env.basefee, 1000000000);
+    assert_eq!(block_env.gas_limit, 0x1c9c380);
+    assert_eq!(block_env.basefee, 1_000_000_000);
+    assert_eq!(block_env.difficulty, U256::ZERO);
+    assert_eq!(
+        block_env.prevrandao.unwrap(),
+        b256!("ecc5f0af8ff6b65c14bfdac55ba9db870d89482eb2b87200c6d7e7cd3a3a5ad5")
+    );
+
+    let blob = block_env.blob_excess_gas_and_price.unwrap();
+    assert_eq!(blob.excess_blob_gas, 0);
+    assert_eq!(blob.blob_gasprice, 1);
+
     assert_eq!(state.best_block_number, Some(3));
 }
 
@@ -423,10 +434,21 @@ async fn test_backward_compatibility_optional_fields_deserialization_v1_2() {
     });
 
     let state: SerializableState = serde_json::from_str(&partial_old_format.to_string()).unwrap();
-    assert!(state.block.is_some());
+
     let block_env = state.block.unwrap();
     assert_eq!(block_env.number, U256::from(1));
+    assert_eq!(block_env.beneficiary, address!("0x0000000000000000000000000000000000000000"));
+    assert_eq!(block_env.timestamp, U256::from(0x688c83b5));
+    assert_eq!(block_env.gas_limit, 0x1c9c380);
+    assert_eq!(block_env.basefee, 0x3b9aca00);
+    assert_eq!(block_env.difficulty, U256::ZERO);
+    assert_eq!(
+        block_env.prevrandao.unwrap(),
+        b256!("ecc5f0af8ff6b65c14bfdac55ba9db870d89482eb2b87200c6d7e7cd3a3a5ad5")
+    );
     assert!(block_env.blob_excess_gas_and_price.is_none());
+
+    assert_eq!(state.best_block_number, Some(1));
     assert!(state.blocks.is_empty());
     assert!(state.transactions.is_empty());
 }

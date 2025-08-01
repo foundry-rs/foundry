@@ -23,7 +23,7 @@ use revm::{
     context::BlockEnv,
     context_interface::block::BlobExcessGasAndPrice,
     database::{CacheDB, DatabaseRef, DbAccount},
-    primitives::KECCAK_EMPTY,
+    primitives::{KECCAK_EMPTY, eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
     state::AccountInfo,
 };
 use serde::{
@@ -389,6 +389,75 @@ impl MaybeFullDatabase for StateDb {
     }
 }
 
+/// Legacy block environment from before v1.3.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct LegacyBlockEnv {
+    pub number: Option<StringOrU64>,
+    #[serde(alias = "coinbase")]
+    pub beneficiary: Option<Address>,
+    pub timestamp: Option<StringOrU64>,
+    pub gas_limit: Option<StringOrU64>,
+    pub basefee: Option<StringOrU64>,
+    pub difficulty: Option<StringOrU64>,
+    pub prevrandao: Option<B256>,
+    pub blob_excess_gas_and_price: Option<LegacyBlobExcessGasAndPrice>,
+}
+
+/// Legacy blob excess gas and price structure from before v1.3.
+#[derive(Debug, Deserialize)]
+pub struct LegacyBlobExcessGasAndPrice {
+    pub excess_blob_gas: u64,
+    pub blob_gasprice: u64,
+}
+
+/// Legacy string or u64 type from before v1.3.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum StringOrU64 {
+    Hex(String),
+    Dec(u64),
+}
+
+impl StringOrU64 {
+    pub fn to_u64(&self) -> Option<u64> {
+        match self {
+            Self::Dec(n) => Some(*n),
+            Self::Hex(s) => s.strip_prefix("0x").and_then(|s| u64::from_str_radix(s, 16).ok()),
+        }
+    }
+
+    pub fn to_u256(&self) -> Option<U256> {
+        match self {
+            Self::Dec(n) => Some(U256::from(*n)),
+            Self::Hex(s) => s.strip_prefix("0x").and_then(|s| U256::from_str_radix(s, 16).ok()),
+        }
+    }
+}
+
+/// Converts a `LegacyBlockEnv` to a `BlockEnv`, handling the conversion of legacy fields.
+impl TryFrom<LegacyBlockEnv> for BlockEnv {
+    type Error = &'static str;
+
+    fn try_from(legacy: LegacyBlockEnv) -> Result<Self, Self::Error> {
+        Ok(Self {
+            number: legacy.number.and_then(|v| v.to_u256()).unwrap_or(U256::ZERO),
+            beneficiary: legacy.beneficiary.unwrap_or(Address::ZERO),
+            timestamp: legacy.timestamp.and_then(|v| v.to_u256()).unwrap_or(U256::ONE),
+            gas_limit: legacy.gas_limit.and_then(|v| v.to_u64()).unwrap_or(u64::MAX),
+            basefee: legacy.basefee.and_then(|v| v.to_u64()).unwrap_or(0),
+            difficulty: legacy.difficulty.and_then(|v| v.to_u256()).unwrap_or(U256::ZERO),
+            prevrandao: legacy.prevrandao.or(Some(B256::ZERO)),
+            blob_excess_gas_and_price: legacy
+                .blob_excess_gas_and_price
+                .map(|v| BlobExcessGasAndPrice::new(v.excess_blob_gas, v.blob_gasprice))
+                .or_else(|| {
+                    Some(BlobExcessGasAndPrice::new(0, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE))
+                }),
+        })
+    }
+}
+
 /// Custom deserializer for `BlockEnv` that handles both v1.2 and v1.3+ formats.
 fn deserialize_block_env_compat<'de, D>(deserializer: D) -> Result<Option<BlockEnv>, D::Error>
 where
@@ -399,35 +468,15 @@ where
         return Ok(None);
     };
 
-    // If we successfully deserialize the block_env, we can return it directly.
-    if let Ok(block_env) = BlockEnv::deserialize(value.clone()) {
-        return Ok(Some(block_env));
+    if let Ok(env) = BlockEnv::deserialize(&value) {
+        return Ok(Some(env));
     }
 
-    // Otherwise, we try to parse the block environment from the old format.
-    let obj = value.as_object().ok_or_else(|| DeError::custom("expected block to be an object"))?;
+    let legacy: LegacyBlockEnv = serde_json::from_value(value).map_err(|e| {
+        D::Error::custom(format!("Legacy deserialization of `BlockEnv` failed: {e}"))
+    })?;
 
-    Ok(Some(BlockEnv {
-        number: parse_u256_value(obj.get("number")).unwrap_or_default(),
-        timestamp: parse_u256_value(obj.get("timestamp")).unwrap_or_default(),
-        difficulty: parse_u256_value(obj.get("difficulty")).unwrap_or_default(),
-        gas_limit: parse_u64_value(obj.get("gas_limit")).unwrap_or_default(),
-        basefee: parse_u64_value(obj.get("basefee")).unwrap_or_default(),
-        beneficiary: obj
-            .get("coinbase")
-            .or_else(|| obj.get("beneficiary"))
-            .and_then(Value::as_str)
-            .and_then(|s| s.parse().ok())
-            .unwrap_or_default(),
-        prevrandao: obj.get("prevrandao").and_then(Value::as_str).and_then(|s| s.parse().ok()),
-        blob_excess_gas_and_price: obj.get("blob_excess_gas_and_price").and_then(|v| {
-            let obj = v.as_object()?;
-            Some(BlobExcessGasAndPrice::new(
-                obj.get("excess_blob_gas")?.as_u64()?,
-                obj.get("blob_gasprice")?.as_u64()?,
-            ))
-        }),
-    }))
+    Ok(Some(BlockEnv::try_from(legacy).map_err(D::Error::custom)?))
 }
 
 /// Custom deserializer for `best_block_number` that handles both v1.2 and v1.3+ formats.
@@ -440,32 +489,19 @@ where
         return Ok(None);
     };
 
-    Ok(parse_u64_value(Some(&value)))
-}
+    let number = match value {
+        Value::Number(n) => n.as_u64(),
+        Value::String(s) => {
+            if let Some(s) = s.strip_prefix("0x") {
+                u64::from_str_radix(s, 16).ok()
+            } else {
+                s.parse().ok()
+            }
+        }
+        _ => None,
+    };
 
-/// Attempts to parse a `U256` from a value (hex string or u64).
-pub fn parse_u256_value(value: Option<&Value>) -> Option<U256> {
-    parse_from_value(value, |s| U256::from_str_radix(s, 16).ok(), U256::from)
-}
-
-/// Attempts to parse a `u64` from a value (hex string or number).
-pub fn parse_u64_value(value: Option<&Value>) -> Option<u64> {
-    parse_from_value(value, |s| u64::from_str_radix(s, 16).ok(), |n| n)
-}
-
-/// Generic parser for hex strings or numbers.
-fn parse_from_value<T, FHex, FNum>(
-    value: Option<&Value>,
-    parse_hex: FHex,
-    from_u64: FNum,
-) -> Option<T>
-where
-    FHex: Fn(&str) -> Option<T>,
-    FNum: Fn(u64) -> T,
-{
-    value
-        .and_then(|v| v.as_str().and_then(|s| s.strip_prefix("0x")).and_then(&parse_hex))
-        .or_else(|| value.and_then(Value::as_u64).map(&from_u64))
+    Ok(number)
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
