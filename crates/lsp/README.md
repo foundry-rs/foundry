@@ -14,7 +14,8 @@ forge lsp
 
 ### Planned
 
-- [x] Diagnostics (compilation errors and warnings)
+- [x] forge lint errors
+- [ ] Diagnostics (compilation errors and warnings)
 - [ ] Go-to-definition
 - [ ] Symbol search and references
 - [ ] Code completion
@@ -22,10 +23,6 @@ forge lsp
 - [ ] Code formatting
 - [ ] Refactoring support
 - [ ] Code Actions
-
-## Configuration
-
-The LSP server automatically detects Foundry projects by looking for `foundry.toml` files. It uses the same configuration as other Foundry tools.
 
 ## Development
 
@@ -41,17 +38,11 @@ cargo build --bin forge
 cargo test -p forge-lsp
 ```
 
-### Debugging
-
-Use the `--debug` flag to enable debug logging:
-
-```bash
-forge lsp
-```
-
 ### Neovim
 
 With `nvim-lspconfig`:
+
+> Install forge nightly with `foundryup -i nightly` to access forge lint feature
 
 ```lua
 {
@@ -60,6 +51,28 @@ With `nvim-lspconfig`:
   root_markers = { "foundry.toml", ".git" },
   root_dir = vim.fs.root(0, { "foundry.toml", ".git" }),
 }
+```
+
+### Debugging in neovim
+
+Lsp logs are stored in `~/.local/state/nvim/lsp.log`
+
+To clear lsp logs run:
+
+```bash
+> -f ~/.local/state/nvim/lsp.log
+```
+
+To monitor logs in real time run:
+
+```bash
+tail -f ~/.local/state/nvim/lsp.log
+```
+
+Enable traces in neovim to view full traces in logs:
+
+```sh
+:lua vim.lsp.set_log_level("trace")
 ```
 
 ## Contributing
