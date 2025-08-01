@@ -408,11 +408,11 @@ where
     let obj = value.as_object().ok_or_else(|| DeError::custom("expected block to be an object"))?;
 
     Ok(Some(BlockEnv {
-        number: parse_u256_field(obj.get("number")).unwrap_or_default(),
-        timestamp: parse_u256_field(obj.get("timestamp")).unwrap_or_default(),
-        difficulty: parse_u256_field(obj.get("difficulty")).unwrap_or_default(),
-        gas_limit: parse_u64_field(obj.get("gas_limit")).unwrap_or_default(),
-        basefee: parse_u64_field(obj.get("basefee")).unwrap_or_default(),
+        number: parse_u256_value(obj.get("number")).unwrap_or_default(),
+        timestamp: parse_u256_value(obj.get("timestamp")).unwrap_or_default(),
+        difficulty: parse_u256_value(obj.get("difficulty")).unwrap_or_default(),
+        gas_limit: parse_u64_value(obj.get("gas_limit")).unwrap_or_default(),
+        basefee: parse_u64_value(obj.get("basefee")).unwrap_or_default(),
         beneficiary: obj
             .get("coinbase")
             .or_else(|| obj.get("beneficiary"))
@@ -440,29 +440,32 @@ where
         return Ok(None);
     };
 
-    Ok(parse_u64_field(Some(&value)))
+    Ok(parse_u64_value(Some(&value)))
 }
 
 /// Attempts to parse a `U256` from a value (hex string or u64).
-pub fn parse_u256_field(value: Option<&Value>) -> Option<U256> {
-    value
-        .and_then(|v| {
-            v.as_str()
-                .and_then(|s| s.strip_prefix("0x"))
-                .and_then(|s| U256::from_str_radix(s, 16).ok())
-        })
-        .or_else(|| value.and_then(Value::as_u64).map(U256::from))
+pub fn parse_u256_value(value: Option<&Value>) -> Option<U256> {
+    parse_from_value(value, |s| U256::from_str_radix(s, 16).ok(), U256::from)
 }
 
 /// Attempts to parse a `u64` from a value (hex string or number).
-pub fn parse_u64_field(value: Option<&Value>) -> Option<u64> {
+pub fn parse_u64_value(value: Option<&Value>) -> Option<u64> {
+    parse_from_value(value, |s| u64::from_str_radix(s, 16).ok(), |n| n)
+}
+
+/// Generic parser for hex strings or numbers.
+fn parse_from_value<T, FHex, FNum>(
+    value: Option<&Value>,
+    parse_hex: FHex,
+    from_u64: FNum,
+) -> Option<T>
+where
+    FHex: Fn(&str) -> Option<T>,
+    FNum: Fn(u64) -> T,
+{
     value
-        .and_then(|v| {
-            v.as_str()
-                .and_then(|s| s.strip_prefix("0x"))
-                .and_then(|s| u64::from_str_radix(s, 16).ok())
-        })
-        .or_else(|| value.and_then(Value::as_u64))
+        .and_then(|v| v.as_str().and_then(|s| s.strip_prefix("0x")).and_then(&parse_hex))
+        .or_else(|| value.and_then(Value::as_u64).map(&from_u64))
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

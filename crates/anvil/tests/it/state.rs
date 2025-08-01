@@ -315,7 +315,7 @@ async fn computes_next_base_fee_after_loading_state() {
 // <https://github.com/foundry-rs/foundry/issues/11176>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_backward_compatibility_deserialization_v1_2() {
-    let old_format_json = r#"{
+    let old_format = r#"{
         "block": {
             "number": "0x5",
             "coinbase": "0x1234567890123456789012345678901234567890",
@@ -335,7 +335,7 @@ async fn test_backward_compatibility_deserialization_v1_2() {
         "transactions": []
     }"#;
 
-    let state: SerializableState = serde_json::from_str(old_format_json).unwrap();
+    let state: SerializableState = serde_json::from_str(old_format).unwrap();
     assert!(state.block.is_some());
     let block_env = state.block.unwrap();
     assert_eq!(block_env.number, U256::from(5));
@@ -343,7 +343,7 @@ async fn test_backward_compatibility_deserialization_v1_2() {
     assert_eq!(block_env.beneficiary, address!("0x1234567890123456789012345678901234567890"));
 
     // New format with beneficiary and numeric values
-    let new_format_json = r#"{
+    let new_format = r#"{
         "block": {
             "number": 6,
             "beneficiary": "0x1234567890123456789012345678901234567891",
@@ -363,7 +363,7 @@ async fn test_backward_compatibility_deserialization_v1_2() {
         "transactions": []
     }"#;
 
-    let state: SerializableState = serde_json::from_str(new_format_json).unwrap();
+    let state: SerializableState = serde_json::from_str(new_format).unwrap();
     assert!(state.block.is_some());
     let block_env = state.block.unwrap();
     assert_eq!(block_env.number, U256::from(6));
@@ -388,7 +388,7 @@ async fn test_backward_compatibility_mixed_formats_deserialization_v1_2() {
             }
         },
         "accounts": {},
-        "best_block_number": 3, // numeric instead of hex
+        "best_block_number": 3,
         "blocks": [],
         "transactions": []
     });
@@ -406,8 +406,7 @@ async fn test_backward_compatibility_mixed_formats_deserialization_v1_2() {
 // <https://github.com/foundry-rs/foundry/issues/11176>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_backward_compatibility_optional_fields_deserialization_v1_2() {
-    // Test with missing optional fields from old format
-    let minimal_old_format = json!({
+    let partial_old_format = json!({
         "block": {
             "number": "0x1",
             "coinbase": "0x0000000000000000000000000000000000000000",
@@ -423,7 +422,7 @@ async fn test_backward_compatibility_optional_fields_deserialization_v1_2() {
         // Missing blocks and transactions arrays - should default to empty
     });
 
-    let state: SerializableState = serde_json::from_str(&minimal_old_format.to_string()).unwrap();
+    let state: SerializableState = serde_json::from_str(&partial_old_format.to_string()).unwrap();
     assert!(state.block.is_some());
     let block_env = state.block.unwrap();
     assert_eq!(block_env.number, U256::from(1));
@@ -432,11 +431,14 @@ async fn test_backward_compatibility_optional_fields_deserialization_v1_2() {
     assert!(state.transactions.is_empty());
 }
 
+// <https://github.com/foundry-rs/foundry/issues/11176>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_backward_compatibility_state_dump_deserialization_v1_2() {
     let tmp = tempfile::tempdir().unwrap();
     let old_state_file = tmp.path().join("old_state.json");
 
+    // A simple state dump with a single block containing one transaction of a Counter contract
+    // deployment.
     let old_state_json = json!({
       "block": {
         "number": "0x1",
@@ -697,16 +699,16 @@ async fn test_backward_compatibility_state_dump_deserialization_v1_2() {
     let contract_account = deserialized_state.accounts.get(&contract_addr).unwrap();
     assert_eq!(contract_account.nonce, 1);
     assert_eq!(contract_account.balance, U256::ZERO);
-    assert!(!contract_account.code.is_empty()); // Has contract code
+    assert!(!contract_account.code.is_empty());
 
     // Verify blocks and transactions are preserved.
     assert_eq!(deserialized_state.blocks.len(), 2);
     assert_eq!(deserialized_state.transactions.len(), 1);
 
-    // Test that Anvil can actually load this old state dump.
+    // Test that Anvil can load this old state dump.
     let (api, _handle) = spawn(NodeConfig::test().with_init_state_path(&old_state_file)).await;
 
-    // Verify the state was loaded correctly by Anvil.
+    // Verify the state was loaded correctly.
     let block_number = api.block_number().unwrap();
     assert_eq!(block_number, U256::from(1));
 
@@ -714,7 +716,6 @@ async fn test_backward_compatibility_state_dump_deserialization_v1_2() {
     let provider = _handle.http_provider();
     let deployer_balance = provider.get_balance(deployer_addr).await.unwrap();
     assert_eq!(deployer_balance, U256::from_str("0x21e19e03b1e9e55d17f").unwrap());
-
     let contract_balance = provider.get_balance(contract_addr).await.unwrap();
     assert_eq!(contract_balance, U256::ZERO);
 
