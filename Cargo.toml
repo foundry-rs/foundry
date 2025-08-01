@@ -25,6 +25,7 @@ members = [
     "crates/macros/",
     "crates/test-utils/",
     "crates/lint/",
+    "crates/lsp/",
 ]
 resolver = "2"
 
@@ -180,6 +181,7 @@ forge = { path = "crates/forge" }
 forge-doc = { path = "crates/doc" }
 forge-fmt = { path = "crates/fmt" }
 forge-lint = { path = "crates/lint" }
+forge-lsp = { path = "crates/lsp" }
 forge-verify = { path = "crates/verify" }
 forge-script = { path = "crates/script" }
 forge-sol-macro-gen = { path = "crates/sol-macro-gen" }
