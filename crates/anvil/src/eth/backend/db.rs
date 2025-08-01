@@ -22,7 +22,7 @@ use revm::{
 };
 use serde::{
     Deserialize, Deserializer, Serialize,
-    de::{MapAccess, Visitor},
+    de::{Error as DeError, MapAccess, Visitor},
 };
 use std::{
     collections::BTreeMap,
@@ -385,14 +385,139 @@ impl MaybeFullDatabase for StateDb {
     }
 }
 
+/// Custom deserializer for BlockEnv that handles both old and new formats
+fn deserialize_block_env_compat<'de, D>(deserializer: D) -> Result<Option<BlockEnv>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use revm::context_interface::block::BlobExcessGasAndPrice;
+    use serde_json::Value;
+
+    let value: Option<Value> = Option::deserialize(deserializer)?;
+    let Some(value) = value else {
+        return Ok(None);
+    };
+
+    // Try to deserialize as the new format first
+    match BlockEnv::deserialize(value.clone()) {
+        Ok(block_env) => Ok(Some(block_env)),
+        Err(_) => {
+            // Failed with new format, try old format
+            let obj = value
+                .as_object()
+                .ok_or_else(|| DeError::custom("expected block to be an object"))?;
+
+            // Extract fields from old format and convert to new format
+            let number = obj
+                .get("number")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.strip_prefix("0x"))
+                .and_then(|s| U256::from_str_radix(s, 16).ok())
+                .or_else(|| obj.get("number").and_then(|v| v.as_u64()).map(U256::from))
+                .unwrap_or_default();
+
+            let beneficiary = obj
+                .get("coinbase")
+                .or_else(|| obj.get("beneficiary"))
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_default();
+
+            let timestamp = obj
+                .get("timestamp")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.strip_prefix("0x"))
+                .and_then(|s| U256::from_str_radix(s, 16).ok())
+                .or_else(|| obj.get("timestamp").and_then(|v| v.as_u64()).map(U256::from))
+                .unwrap_or_default();
+
+            let gas_limit = obj
+                .get("gas_limit")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.strip_prefix("0x"))
+                .and_then(|s| u64::from_str_radix(s, 16).ok())
+                .or_else(|| obj.get("gas_limit").and_then(|v| v.as_u64()))
+                .unwrap_or_default();
+
+            let basefee = obj
+                .get("basefee")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.strip_prefix("0x"))
+                .and_then(|s| u64::from_str_radix(s, 16).ok())
+                .or_else(|| obj.get("basefee").and_then(|v| v.as_u64()))
+                .unwrap_or_default();
+
+            let difficulty = obj
+                .get("difficulty")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.strip_prefix("0x"))
+                .and_then(|s| U256::from_str_radix(s, 16).ok())
+                .unwrap_or_default();
+
+            let prevrandao = obj
+                .get("prevrandao")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_default();
+
+            let blob_excess_gas_and_price = obj.get("blob_excess_gas_and_price").and_then(|v| {
+                let obj = v.as_object()?;
+                let excess_blob_gas = obj.get("excess_blob_gas")?.as_u64()?;
+                let blob_gasprice = obj.get("blob_gasprice")?.as_u64()?;
+                Some(BlobExcessGasAndPrice::new(excess_blob_gas, blob_gasprice))
+            });
+
+            Ok(Some(BlockEnv {
+                number,
+                beneficiary,
+                timestamp,
+                gas_limit,
+                basefee,
+                difficulty,
+                prevrandao: Some(prevrandao),
+                blob_excess_gas_and_price,
+            }))
+        }
+    }
+}
+
+/// Custom deserializer for best_block_number that handles both hex string and number formats
+fn deserialize_best_block_number<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde_json::Value;
+
+    let value: Option<Value> = Option::deserialize(deserializer)?;
+    let Some(value) = value else {
+        return Ok(None);
+    };
+
+    let number = match value {
+        Value::Number(n) => n.as_u64(),
+        Value::String(s) => {
+            if let Some(s) = s.strip_prefix("0x") {
+                u64::from_str_radix(s, 16).ok()
+            } else {
+                s.parse().ok()
+            }
+        }
+        _ => None,
+    };
+
+    Ok(number)
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SerializableState {
     /// The block number of the state
     ///
     /// Note: This is an Option for backwards compatibility: <https://github.com/foundry-rs/foundry/issues/5460>
+    #[serde(deserialize_with = "deserialize_block_env_compat")]
     pub block: Option<BlockEnv>,
     pub accounts: BTreeMap<Address, SerializableAccountRecord>,
     /// The best block number of the state, can be different from block number (Arbitrum chain).
+    #[serde(deserialize_with = "deserialize_best_block_number")]
     pub best_block_number: Option<u64>,
     #[serde(default)]
     pub blocks: Vec<SerializableBlock>,
