@@ -434,12 +434,10 @@ async fn test_backward_compatibility_optional_fields_deserialization_v1_2() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_backward_compatibility_state_dump_deserialization_v1_2() {
-    // Test with the actual old state dump provided by the user
     let tmp = tempfile::tempdir().unwrap();
-    let old_state_file = tmp.path().join("real_old_state.json");
+    let old_state_file = tmp.path().join("old_state.json");
 
-    // This is the exact old format state dump that was provided
-    let real_old_state_json = json!({
+    let old_state_json = json!({
       "block": {
         "number": "0x1",
         "coinbase": "0x0000000000000000000000000000000000000001",
@@ -670,11 +668,10 @@ async fn test_backward_compatibility_state_dump_deserialization_v1_2() {
     });
 
     // Write the old state to file.
-    foundry_common::fs::write_json_file(&old_state_file, &real_old_state_json).unwrap();
+    foundry_common::fs::write_json_file(&old_state_file, &old_state_json).unwrap();
 
     // Test deserializing the old state dump directly.
-    let deserialized_state: SerializableState =
-        serde_json::from_value(real_old_state_json).unwrap();
+    let deserialized_state: SerializableState = serde_json::from_value(old_state_json).unwrap();
 
     // Verify the old state was loaded correctly with `coinbase` to `beneficiary` conversion.
     let block_env = deserialized_state.block.unwrap();
