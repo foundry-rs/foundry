@@ -509,6 +509,11 @@ impl Backend {
         self.cheats.set_auto_impersonate_account(enabled);
     }
 
+    /// Sets whether to bypass authorization list signature checks
+    pub fn set_bypass_authorization_checks(&self, enabled: bool) {
+        self.cheats.set_bypass_authorization_checks(enabled);
+    }
+
     /// Returns the configured fork, if any
     pub fn get_fork(&self) -> Option<ClientFork> {
         self.fork.read().clone()
@@ -1584,7 +1589,16 @@ impl Backend {
             blob_hashes,
             ..Default::default()
         };
-        base.set_signed_authorization(authorization_list.unwrap_or_default());
+
+        // If bypass is enabled, skip setting authorization list to bypass signature validation
+        match self.cheats.bypass_authorization_checks() {
+            true => {
+                base.set_signed_authorization(Vec::new());
+            }
+            false => {
+                base.set_signed_authorization(authorization_list.unwrap_or_default());
+            }
+        }
         env.tx = OpTransaction { base, ..Default::default() };
 
         if let Some(nonce) = nonce {
