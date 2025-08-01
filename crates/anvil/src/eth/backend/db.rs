@@ -1,6 +1,11 @@
 //! Helper types for working with [revm](foundry_evm::revm)
 
-use crate::mem::storage::MinedTransaction;
+use std::{
+    collections::BTreeMap,
+    fmt::{self, Debug},
+    path::Path,
+};
+
 use alloy_consensus::Header;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256, map::HashMap};
 use alloy_rpc_types::BlockId;
@@ -16,6 +21,7 @@ use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
     context::BlockEnv,
+    context_interface::block::BlobExcessGasAndPrice,
     database::{CacheDB, DatabaseRef, DbAccount},
     primitives::KECCAK_EMPTY,
     state::AccountInfo,
@@ -24,11 +30,8 @@ use serde::{
     Deserialize, Deserializer, Serialize,
     de::{Error as DeError, MapAccess, Visitor},
 };
-use std::{
-    collections::BTreeMap,
-    fmt::{self, Debug},
-    path::Path,
-};
+
+use crate::mem::storage::MinedTransaction;
 
 /// Helper trait get access to the full state data of the database
 pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> + Debug {
@@ -390,10 +393,7 @@ fn deserialize_block_env_compat<'de, D>(deserializer: D) -> Result<Option<BlockE
 where
     D: Deserializer<'de>,
 {
-    use revm::context_interface::block::BlobExcessGasAndPrice;
-    use serde_json::Value;
-
-    let value: Option<Value> = Option::deserialize(deserializer)?;
+    let value: Option<serde_json::Value> = Option::deserialize(deserializer)?;
     let Some(value) = value else {
         return Ok(None);
     };
@@ -486,16 +486,14 @@ fn deserialize_best_block_number_compat<'de, D>(deserializer: D) -> Result<Optio
 where
     D: Deserializer<'de>,
 {
-    use serde_json::Value;
-
-    let value: Option<Value> = Option::deserialize(deserializer)?;
+    let value: Option<serde_json::Value> = Option::deserialize(deserializer)?;
     let Some(value) = value else {
         return Ok(None);
     };
 
     let number = match value {
-        Value::Number(n) => n.as_u64(),
-        Value::String(s) => {
+        serde_json::Value::Number(n) => n.as_u64(),
+        serde_json::Value::String(s) => {
             if let Some(s) = s.strip_prefix("0x") {
                 u64::from_str_radix(s, 16).ok()
             } else {
