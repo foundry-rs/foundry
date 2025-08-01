@@ -122,22 +122,27 @@ jobs:
           echo "SDKROOT=$(xcrun -sdk macosx --show-sdk-path)" >> $GITHUB_ENV
           echo "MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version)" >> $GITHUB_ENV
       - name: Install OpenSSL for cross-compilation targets
-        if: matrix.target == 'x86_64-unknown-linux-musl'
+        if: matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-gnu' || matrix.target == 'aarch64-unknown-linux-musl'
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config musl-tools musl-dev
+          sudo apt-get install -y pkg-config
 
-          # Compile OpenSSL for musl (simple approach)
-          wget -O - https://www.openssl.org/source/openssl-1.1.1w.tar.gz | tar xzf -
-          cd openssl-1.1.1w
-          CC=musl-gcc ./Configure no-shared no-async --prefix=/usr/local/musl --openssldir=/usr/local/musl linux-x86_64
-          make -j$(nproc)
-          sudo make install_sw
-          cd ..
-
-          # Set correct environment variables
-          echo "OPENSSL_DIR=/usr/local/musl" >> $GITHUB_ENV
-          echo "OPENSSL_STATIC=1" >> $GITHUB_ENV
+          if [[ "${{ matrix.target }}" == "x86_64-unknown-linux-musl" ]]; then
+            # Install musl toolchain and development packages
+            sudo apt-get install -y musl-tools musl-dev linux-libc-dev
+            
+            # For musl, we need to compile OpenSSL from source with musl
+            wget -O - https://www.openssl.org/source/openssl-1.1.1w.tar.gz | tar xzf -
+            cd openssl-1.1.1w
+            CC=musl-gcc ./Configure no-shared no-async no-secure-memory \
+              --prefix=/usr/local/musl --openssldir=/usr/local/musl linux-x86_64
+            make -j$(nproc)
+            sudo make install_sw
+            cd ..
+            
+            # Set environment variables for musl OpenSSL
+            echo "OPENSSL_STATIC=1" >> $GITHUB_ENV
+            echo "OPENSSL_DIR=/usr/local/musl" >> $GITHUB_ENV
             
           elif [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
             # Add ARM64 architecture support to package manager
@@ -160,13 +165,12 @@ jobs:
             wget -O - https://musl.cc/aarch64-linux-musl-cross.tgz | tar xzf -
             export PATH="$PWD/aarch64-linux-musl-cross/bin:$PATH"
             
-            # For ARM64 musl, we still need to compile OpenSSL from source
-            # but use older stable version (1.1.1w) for better musl compatibility
+            # For ARM64 musl, compile OpenSSL from source with musl
             wget -O - https://www.openssl.org/source/openssl-1.1.1w.tar.gz | tar xzf -
             cd openssl-1.1.1w
             
             # Configure OpenSSL for static linking with musl
-            CC=aarch64-linux-musl-gcc ./Configure no-shared no-async \
+            CC=aarch64-linux-musl-gcc ./Configure no-shared no-async no-secure-memory \
               --prefix=/usr/local/aarch64-musl \
               --openssldir=/usr/local/aarch64-musl \
               linux-aarch64
