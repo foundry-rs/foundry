@@ -12,7 +12,7 @@
 ## Foundry Versions
 
 - **v1.2.3**: forge Version: 1.2.3-v1.2.3 (a813a2c 2025-06-08)
-- **v1.3.0**: forge 1.3.0-v1.3.0 (b918f9b4ab 2025-07-31)
+- **v1.3.0**: forge 1.3.0-v1.3.0 (b918f9b 2025-07-31)
 
 ## Forge Test
 
