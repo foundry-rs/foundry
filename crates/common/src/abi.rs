@@ -15,6 +15,16 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
+    let args: Vec<S> = args.into_iter().collect();
+
+    if inputs.len() != args.len() {
+        eyre::bail!(
+            "encode length mismatch: expected {} types, got {}",
+            inputs.len(),
+            args.len()
+        )
+    }
+
     std::iter::zip(inputs, args)
         .map(|(input, arg)| coerce_value(&input.selector_type(), arg.as_ref()))
         .collect()
