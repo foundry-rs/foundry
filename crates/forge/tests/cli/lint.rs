@@ -37,6 +37,17 @@ const OTHER_CONTRACT: &str = r#"
     }
         "#;
 
+const ONLY_IMPORTS: &str = r#"
+    // SPDX-License-Identifier: MIT
+    pragma solidity ^0.8.0;
+
+    // forge-lint: disable-next-line
+    import { ContractWithLints } from "./ContractWithLints.sol";
+
+    import { _PascalCaseInfo } from "./ContractWithLints.sol";
+    import "./ContractWithLints.sol";
+        "#;
+
 forgetest!(can_use_config, |prj, cmd| {
     prj.wipe_contracts();
     prj.add_source("ContractWithLints", CONTRACT).unwrap();
@@ -358,6 +369,26 @@ forgetest!(can_process_inline_config_regardless_of_input_order, |prj, cmd| {
     prj.add_source("ContractWithLints", CONTRACT).unwrap();
     cmd.arg("lint").assert_success();
 });
+
+// <https://github.com/foundry-rs/foundry/issues/11080>
+forgetest!(can_use_only_lint_with_multilint_passes, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_source("ContractWithLints", CONTRACT).unwrap();
+    prj.add_source("OnlyImports", ONLY_IMPORTS).unwrap();
+    cmd.arg("lint").args(["--only-lint", "unused-import"]).assert_success().stderr_eq(str![[r#"
+note[unused-import]: unused imports should be removed
+ [FILE]:8:14
+  |
+8 |     import { _PascalCaseInfo } from "./ContractWithLints.sol";
+  |              ---------------
+  |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
+
+
+"#]]);
+});
+
+// ------------------------------------------------------------------------------------------------
 
 #[tokio::test]
 async fn ensure_lint_rule_docs() {
