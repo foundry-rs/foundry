@@ -1,4 +1,4 @@
-use crate::utils::{get_compile_diagnostics, get_lint_diagnostics};
+use crate::utils::get_lint_diagnostics;
 use tower_lsp::{Client, LanguageServer, jsonrpc::Result, lsp_types::*};
 
 #[derive(Debug)]
@@ -15,48 +15,13 @@ struct TextDocumentItem<'a> {
 
 impl ForgeLsp {
     async fn on_change<'a>(&self, params: TextDocumentItem<'a>) {
-        // Only process Solidity files
-        if !params.uri.path().ends_with(".sol") {
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    format!("Skipping non-Solidity file: {}", params.uri.path()),
-                )
-                .await;
-            return;
-        }
-
         self.client
             .log_message(MessageType::INFO, format!("Running diagnostics for: {})", params.uri))
             .await;
 
         let mut all_diagnostics = Vec::new();
 
-        // Collect compilation diagnostics
-        self.client.log_message(MessageType::INFO, "Running forge compile...").await;
-        match get_compile_diagnostics(&params.uri).await {
-            Ok(mut compile_diagnostics) => {
-                let compile_count = compile_diagnostics.len();
-                all_diagnostics.append(&mut compile_diagnostics);
-                self.client
-                    .log_message(
-                        MessageType::INFO,
-                        format!("Found {compile_count} compilation diagnostics"),
-                    )
-                    .await;
-            }
-            Err(e) => {
-                self.client
-                    .log_message(
-                        MessageType::ERROR,
-                        format!("Foundry compilation diagnostics failed: {e}"),
-                    )
-                    .await;
-            }
-        }
-
         // Collect linting diagnostics
-        self.client.log_message(MessageType::INFO, "Running forge lint...").await;
         match get_lint_diagnostics(&params.uri).await {
             Ok(mut lint_diagnostics) => {
                 let lint_count = lint_diagnostics.len();
@@ -78,35 +43,7 @@ impl ForgeLsp {
             }
         }
 
-        // Always publish diagnostics (even if empty) to clear previous ones
-        let diagnostics_count = all_diagnostics.len();
-
-        // Log detailed diagnostic information for debugging
-        for (i, diag) in all_diagnostics.iter().enumerate() {
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    format!(
-                        "Foundry Diagnostic {}: [{}] {} (severity: {:?}, line: {}, col: {})",
-                        i + 1,
-                        diag.source.as_ref().unwrap_or(&"unknown".to_string()),
-                        diag.message,
-                        diag.severity,
-                        diag.range.start.line,
-                        diag.range.start.character
-                    ),
-                )
-                .await;
-        }
-
         self.client.publish_diagnostics(params.uri.clone(), all_diagnostics, params.version).await;
-
-        self.client
-            .log_message(
-                MessageType::INFO,
-                format!("Published {} total diagnostics for {}", diagnostics_count, params.uri),
-            )
-            .await;
     }
 }
 

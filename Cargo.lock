@@ -4146,8 +4146,10 @@ version = "1.3.0"
 dependencies = [
  "eyre",
  "foundry-test-utils",
+ "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.12",
  "tokio",
  "tower-lsp",
  "tracing",
