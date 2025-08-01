@@ -1,5 +1,5 @@
 use forge_fmt_2::FormatterConfig;
-use snapbox::{assert_data_eq, Data};
+use snapbox::{Data, assert_data_eq};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -127,7 +127,9 @@ fn test_all_dirs_are_declared(dirs: &[&str]) {
         }
     }
     if !undeclared.is_empty() {
-        panic!("the following test directories are not declared in the test suite macro call: {undeclared:#?}");
+        panic!(
+            "the following test directories are not declared in the test suite macro call: {undeclared:#?}"
+        );
     }
 }
 
@@ -149,6 +151,9 @@ macro_rules! fmt_tests {
     };
 }
 
+// TODO (config):
+//  * style = tab
+
 fmt_tests! {
     #[ignore = "annotations are not valid Solidity"]
     Annotation,
@@ -156,7 +161,7 @@ fmt_tests! {
     BlockComments, // OK
     BlockCommentsFunction, // OK
     ConditionalOperatorExpression, //OK
-    ConstructorDefinition, // OK? is it acceptable to force no line before pragma?
+    ConstructorDefinition, // OK
     ConstructorModifierStyle, // OK
     ContractDefinition, // OK? Is it acceptable?
     DocComments, // OK? is it acceptable?
@@ -171,14 +176,14 @@ fmt_tests! {
     FunctionCallArgsStatement, // OK? Is it acceptable?
     FunctionDefinition, // OK? Is it acceptable? TODO: support all configs
     FunctionDefinitionWithFunctionReturns, // OK
-    FunctionType, // OK? is it acceptable?
+    FunctionType, // OK
     HexUnderscore, // OK
     IfStatement, // Ok
     IfStatement2, // OK
     ImportDirective, // OK
     InlineDisable, // FIX: invalid output
     IntTypes, // OK
-    LiteralExpression, // OK? is it acceptable?
+    LiteralExpression, // OK
     MappingType, // OK? is it acceptable?
     ModifierDefinition, // OK
     NamedFunctionCallExpression, // Okish. Is it acceptable?

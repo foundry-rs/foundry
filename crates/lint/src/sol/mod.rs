@@ -124,7 +124,7 @@ impl SolidityLinter {
             .collect();
 
         // Process the inline-config
-        let comments = Comments::new(file);
+        let comments = Comments::new(file, sess.source_map(), false, false);
         let inline_config = parse_inline_config(sess, &comments, InlineConfigSource::Ast(ast));
 
         // Initialize and run the early lint visitor
@@ -164,7 +164,7 @@ impl SolidityLinter {
             .collect();
 
         // Process the inline-config
-        let comments = Comments::new(file);
+        let comments = Comments::new(file, sess.source_map(), false, false);
         let inline_config =
             parse_inline_config(sess, &comments, InlineConfigSource::Hir((&gcx.hir, source_id)));
 

@@ -1,4 +1,4 @@
-use super::{BeginToken, BreakToken, Breaks, IndentStyle, Printer, Token, SIZE_INFINITY};
+use super::{BeginToken, BreakToken, Breaks, IndentStyle, Printer, SIZE_INFINITY, Token};
 use std::borrow::Cow;
 
 impl Printer {
@@ -36,6 +36,10 @@ impl Printer {
 
     pub fn word(&mut self, w: impl Into<Cow<'static, str>>) {
         self.scan_string(w.into());
+    }
+
+    pub fn word_without_indent(&mut self, w: impl Into<Cow<'static, str>>) {
+        self.scan_string_no_indent(w.into())
     }
 
     fn spaces(&mut self, n: usize) {

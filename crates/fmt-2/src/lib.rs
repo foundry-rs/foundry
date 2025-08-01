@@ -6,27 +6,25 @@
 const DEBUG: bool = false || option_env!("FMT_DEBUG").is_some();
 const DEBUG_INDENT: bool = false;
 
+use foundry_common::comments::{
+    Comment, Comments,
+    inline_config::{InlineConfig, InlineConfigItem},
+};
+
 // TODO(dani)
 // #[macro_use]
 // extern crate tracing;
 use tracing as _;
 use tracing_subscriber as _;
 
-pub mod inline_config;
-pub use inline_config::InlineConfig;
-
-mod comment;
-
-mod comments;
-pub use comments::Comments;
-
 mod state;
-
-pub(crate) mod iter;
 
 mod pp;
 
-use solar_parse::interface::{diagnostics::EmittedDiagnostics, source_map::SourceFile, Session};
+use solar_parse::{
+    ast::{SourceUnit, Span},
+    interface::{Session, diagnostics::EmittedDiagnostics, source_map::SourceFile},
+};
 use std::{path::Path, sync::Arc};
 
 pub use foundry_config::fmt::*;
@@ -123,9 +121,9 @@ fn format_inner(
     let first_result = format_once(config.clone(), mk_file);
 
     // If first pass was not successful, return the result
-    if first_result.is_err() {
-        return first_result;
-    }
+    // if first_result.is_err() {
+    return first_result;
+    // }
     let Some(first_formatted) = first_result.ok_ref() else { return first_result };
 
     // Second pass formatting
@@ -147,7 +145,9 @@ fn format_inner(
     }
 
     if first_result.is_ok() && second_result.is_err() && !DEBUG {
-        panic!("failed to format a second time:\nfirst_result={first_result:#?}\nsecond_result={second_result:#?}");
+        panic!(
+            "failed to format a second time:\nfirst_result={first_result:#?}\nsecond_result={second_result:#?}"
+        );
         // second_result
     } else {
         first_result
@@ -177,12 +177,11 @@ fn format_once(
         solar_parse::interface::Session::builder().with_buffer_emitter(Default::default()).build();
     let res = sess.enter(|| -> solar_parse::interface::Result<_> {
         let file = mk_file(&sess)?;
-        let source = file.src.as_str();
         let arena = solar_parse::ast::Arena::new();
         let mut parser = solar_parse::Parser::from_source_file(&sess, &arena, &file);
-        let comments = Comments::new(&file, sess.source_map());
+        let comments = Comments::new(&file, sess.source_map(), true, config.wrap_comments);
         let ast = parser.parse_file().map_err(|e| e.emit())?;
-        let inline_config = parse_inline_config(&sess, &comments, source);
+        let inline_config = parse_inline_config(&sess, &comments, &ast);
 
         let mut state = state::State::new(sess.source_map(), config, inline_config, comments);
         state.print_source_unit(&ast);
@@ -198,24 +197,46 @@ fn format_once(
     }
 }
 
-fn parse_inline_config(sess: &Session, comments: &Comments, src: &str) -> InlineConfig {
-    let items = comments.iter().filter_map(|comment| {
-        let mut item = comment.lines.first()?.as_str();
-        if let Some(prefix) = comment.prefix() {
+fn parse_inline_config<'ast>(
+    sess: &Session,
+    comments: &Comments,
+    ast: &'ast SourceUnit<'ast>,
+) -> InlineConfig<()> {
+    let parse_item = |mut item: &str, cmnt: &Comment| -> Option<(Span, InlineConfigItem<()>)> {
+        if let Some(prefix) = cmnt.prefix() {
             item = item.strip_prefix(prefix).unwrap_or(item);
         }
-        if let Some(suffix) = comment.suffix() {
+        if let Some(suffix) = cmnt.suffix() {
             item = item.strip_suffix(suffix).unwrap_or(item);
         }
         let item = item.trim_start().strip_prefix("forgefmt:")?.trim();
-        let span = comment.span;
-        match item.parse::<inline_config::InlineConfigItem>() {
-            Ok(item) => Some((span, item)),
+        match item.parse::<InlineConfigItem<()>>() {
+            Ok(item) => Some((cmnt.span, item)),
             Err(e) => {
-                sess.dcx.warn(e.to_string()).span(span).emit();
+                sess.dcx.warn(e.to_string()).span(cmnt.span).emit();
                 None
             }
         }
+    };
+
+    let items = comments.iter().flat_map(|cmnt| {
+        let mut found_items = Vec::with_capacity(2);
+        // Always process the first line.
+        if let Some(line) = cmnt.lines.first() {
+            if let Some(item) = parse_item(line, cmnt) {
+                found_items.push(item);
+            }
+        }
+        // If the comment has more than one line, process the last line.
+        if cmnt.lines.len() > 1 {
+            if let Some(line) = cmnt.lines.last() {
+                if let Some(item) = parse_item(line, cmnt) {
+                    found_items.push(item);
+                }
+            }
+        }
+        found_items
     });
-    InlineConfig::new(items, src)
+
+    InlineConfig::from_ast(items, ast, sess.source_map())
 }

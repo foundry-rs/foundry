@@ -401,8 +401,8 @@ impl Printer {
     }
 
     fn print_break(&mut self, token: BreakToken, size: isize) {
-        let fits = token.never_break ||
-            match self.get_top() {
+        let fits = token.never_break
+            || match self.get_top() {
                 PrintFrame::Fits(..) => true,
                 PrintFrame::Broken(.., Breaks::Consistent) => false,
                 PrintFrame::Broken(.., Breaks::Inconsistent) => size <= self.space,
@@ -443,5 +443,21 @@ impl Printer {
         self.out.reserve(self.pending_indentation);
         self.out.extend(iter::repeat_n(' ', self.pending_indentation));
         self.pending_indentation = 0;
+    }
+
+    fn print_string_no_indent(&mut self, string: &str) {
+        self.pending_indentation = 0;
+        self.out.push_str(string);
+        self.space -= string.len() as isize;
+    }
+
+    // TODO: do properly, check with dani
+    fn scan_string_no_indent(&mut self, string: Cow<'static, str>) {
+        if self.scan_stack.is_empty() {
+            self.print_string_no_indent(&string);
+        } else {
+            self.check_stream();
+            self.print_string_no_indent(&string);
+        }
     }
 }

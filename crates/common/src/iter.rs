@@ -1,11 +1,11 @@
 use std::iter::Peekable;
 
-pub(crate) struct Delimited<I: Iterator> {
+pub struct Delimited<I: Iterator> {
     is_first: bool,
     iter: Peekable<I>,
 }
 
-pub(crate) trait IterDelimited: Iterator + Sized {
+pub trait IterDelimited: Iterator + Sized {
     fn delimited(self) -> Delimited<Self> {
         Delimited { is_first: true, iter: self.peekable() }
     }
@@ -13,9 +13,9 @@ pub(crate) trait IterDelimited: Iterator + Sized {
 
 impl<I: Iterator> IterDelimited for I {}
 
-pub(crate) struct IteratorPosition {
-    pub(crate) is_first: bool,
-    pub(crate) is_last: bool,
+pub struct IteratorPosition {
+    pub is_first: bool,
+    pub is_last: bool,
 }
 
 impl<I: Iterator> Iterator for Delimited<I> {
