@@ -385,7 +385,7 @@ impl MaybeFullDatabase for StateDb {
     }
 }
 
-/// Custom deserializer for BlockEnv that handles both old and new formats
+/// Custom deserializer for `BlockEnv` that handles both v1.2 and v1.3+ formats.
 fn deserialize_block_env_compat<'de, D>(deserializer: D) -> Result<Option<BlockEnv>, D::Error>
 where
     D: Deserializer<'de>,
@@ -481,8 +481,8 @@ where
     }
 }
 
-/// Custom deserializer for best_block_number that handles both hex string and number formats
-fn deserialize_best_block_number<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+/// Custom deserializer for `best_block_number` that handles both v1.2 and v1.3+ formats.
+fn deserialize_best_block_number_compat<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -517,7 +517,7 @@ pub struct SerializableState {
     pub block: Option<BlockEnv>,
     pub accounts: BTreeMap<Address, SerializableAccountRecord>,
     /// The best block number of the state, can be different from block number (Arbitrum chain).
-    #[serde(deserialize_with = "deserialize_best_block_number")]
+    #[serde(deserialize_with = "deserialize_best_block_number_compat")]
     pub best_block_number: Option<u64>,
     #[serde(default)]
     pub blocks: Vec<SerializableBlock>,
