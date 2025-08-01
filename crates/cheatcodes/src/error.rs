@@ -1,5 +1,5 @@
 use crate::Vm;
-use alloy_primitives::{Address, Bytes, hex};
+use alloy_primitives::{Bytes, hex};
 use alloy_signer::Error as SignerError;
 use alloy_signer_local::LocalSignerError;
 use alloy_sol_types::SolError;
@@ -63,19 +63,6 @@ macro_rules! ensure {
             return ::std::result::Result::Err(fmt_err!($fmt, $($arg)*));
         }
     };
-}
-
-macro_rules! ensure_not_precompile {
-    ($address:expr, $ctxt:expr) => {
-        if $ctxt.is_precompile($address) {
-            return Err($crate::error::precompile_error($address));
-        }
-    };
-}
-
-#[cold]
-pub(crate) fn precompile_error(address: &Address) -> Error {
-    fmt_err!("cannot use precompile {address} as an argument")
 }
 
 /// Error thrown by cheatcodes.
