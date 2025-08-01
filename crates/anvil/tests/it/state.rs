@@ -8,6 +8,10 @@ use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, eth::backend::db::SerializableState, spawn};
 use foundry_test_utils::rpc::next_http_archive_rpc_url;
+use revm::{
+    context_interface::block::BlobExcessGasAndPrice,
+    primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+};
 use serde_json::json;
 use std::str::FromStr;
 
@@ -446,7 +450,10 @@ async fn test_backward_compatibility_optional_fields_deserialization_v1_2() {
         block_env.prevrandao.unwrap(),
         b256!("ecc5f0af8ff6b65c14bfdac55ba9db870d89482eb2b87200c6d7e7cd3a3a5ad5")
     );
-    assert!(block_env.blob_excess_gas_and_price.is_none());
+    assert_eq!(
+        block_env.blob_excess_gas_and_price,
+        Some(BlobExcessGasAndPrice::new(0, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE))
+    );
 
     assert_eq!(state.best_block_number, Some(1));
     assert!(state.blocks.is_empty());
