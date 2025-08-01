@@ -128,35 +128,55 @@ jobs:
           sudo apt-get install -y pkg-config
 
           if [[ "${{ matrix.target }}" == "x86_64-unknown-linux-musl" ]]; then
-            # For x86_64 musl target
+            # Install musl toolchain and development packages
             sudo apt-get install -y musl-tools musl-dev
-            wget -O - https://www.openssl.org/source/openssl-3.5.1.tar.gz | tar xzf -
-            cd openssl-3.5.1
-            CC=musl-gcc ./Configure no-shared no-async --prefix=/usr/local/musl --openssldir=/usr/local/musl linux-x86_64
-            make -j$(nproc)
-            sudo make install_sw
-            cd ..
-            echo "OPENSSL_DIR=/usr/local/musl" >> $GITHUB_ENV
+            
+            # Install system OpenSSL development packages
+            sudo apt-get install -y libssl-dev
+            
+            # Use static linking with system OpenSSL for musl target
+            # This avoids compiling OpenSSL from source
             echo "OPENSSL_STATIC=1" >> $GITHUB_ENV
+            echo "OPENSSL_DIR=/usr" >> $GITHUB_ENV
             
           elif [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
+            # Add ARM64 architecture support to package manager
             sudo dpkg --add-architecture arm64
             sudo apt-get update
+            
+            # Install cross-compiler and ARM64 OpenSSL development packages
             sudo apt-get install -y gcc-aarch64-linux-gnu
             sudo apt-get install -y libssl-dev:arm64
+            
+            # Set environment variables for cross-compilation
             echo "OPENSSL_DIR=/usr" >> $GITHUB_ENV
             echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
             
           elif [[ "${{ matrix.target }}" == "aarch64-unknown-linux-musl" ]]; then
-            # For aarch64 musl target
+            # Install musl cross-compiler for ARM64
+            sudo apt-get install -y gcc-aarch64-linux-gnu
+            
+            # Download and extract musl cross-compilation toolchain
             wget -O - https://musl.cc/aarch64-linux-musl-cross.tgz | tar xzf -
             export PATH="$PWD/aarch64-linux-musl-cross/bin:$PATH"
-            wget -O - https://www.openssl.org/source/openssl-3.5.1.tar.gz | tar xzf -
-            cd openssl-3.5.1
-            CC=aarch64-linux-musl-gcc ./Configure no-shared no-async --prefix=/usr/local/aarch64-musl --openssldir=/usr/local/aarch64-musl linux-aarch64
+            
+            # For ARM64 musl, we still need to compile OpenSSL from source
+            # but use older stable version (1.1.1w) for better musl compatibility
+            wget -O - https://www.openssl.org/source/openssl-1.1.1w.tar.gz | tar xzf -
+            cd openssl-1.1.1w
+            
+            # Configure OpenSSL for static linking with musl
+            CC=aarch64-linux-musl-gcc ./Configure no-shared no-async \
+              --prefix=/usr/local/aarch64-musl \
+              --openssldir=/usr/local/aarch64-musl \
+              linux-aarch64
+            
+            # Compile and install OpenSSL
             make -j$(nproc)
             sudo make install_sw
             cd ..
+            
+            # Set environment variables for Rust build
             echo "OPENSSL_DIR=/usr/local/aarch64-musl" >> $GITHUB_ENV
             echo "OPENSSL_STATIC=1" >> $GITHUB_ENV
           fi
