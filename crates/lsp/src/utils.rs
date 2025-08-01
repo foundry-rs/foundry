@@ -191,3 +191,69 @@ impl Compiler for ForgeCompiler {
         Ok(serde_json::Value::Array(diagnostics))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_lint_valid_file() {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let file_path = format!("{manifest_dir}/testdata/A.sol");
+        let path = std::path::Path::new(&file_path);
+        assert!(path.exists(), "Test file {path:?} does not exist");
+
+        let compiler = ForgeCompiler;
+        let result = compiler.lint(&file_path).await;
+
+        assert!(result.is_ok(), "Expected lint to succeed");
+        let json_value = result.unwrap();
+
+        assert!(json_value.is_array(), "Expected lint output to be an array");
+    }
+
+
+    #[tokio::test]
+    async fn test_debug_lint_conversion() {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let file_path = format!("{manifest_dir}/testdata/A.sol");
+
+        let compiler = ForgeCompiler;
+        let result = compiler.lint(&file_path).await;
+        assert!(result.is_ok());
+
+        let json_value = result.unwrap();
+        let diagnostics = lint_output_to_diagnostics(&json_value, &file_path);
+
+        assert!(!diagnostics.is_empty(), "Expected diagnostics");
+    }
+
+    #[tokio::test]
+    async fn test_forge_lint_to_lsp_diagnostics() {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let file_path = format!("{manifest_dir}/testdata/A.sol");
+        let path = std::path::Path::new(&file_path);
+        assert!(path.exists(), "Test file {path:?} does not exist");
+
+        let compiler = ForgeCompiler;
+        let result = compiler.lint(&file_path).await;
+
+        assert!(result.is_ok(), "Expected lint to succeed");
+        let json_value = result.unwrap();
+
+        let diagnostics = lint_output_to_diagnostics(&json_value, &file_path);
+
+
+        assert!(!diagnostics.is_empty(), "Expected at least one diagnostic");
+
+        let first_diag = &diagnostics[0];
+        assert_eq!(first_diag.source, Some("forge-lint".to_string()));
+        assert_eq!(first_diag.message, "[forge lint] function names should use mixedCase");
+        assert_eq!(
+            first_diag.severity,
+            Some(tower_lsp::lsp_types::DiagnosticSeverity::INFORMATION)
+        );
+        assert_eq!(first_diag.range.start.line, 8);
+        assert_eq!(first_diag.range.start.character, 13);
+    }
+}
