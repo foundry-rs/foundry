@@ -1,7 +1,5 @@
 use crate::utils::{get_compile_diagnostics, get_lint_diagnostics};
-use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::*;
-use tower_lsp::{Client, LanguageServer};
+use tower_lsp::{Client, LanguageServer, jsonrpc::Result, lsp_types::*};
 
 #[derive(Debug)]
 pub struct ForgeLsp {
