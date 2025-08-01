@@ -96,7 +96,7 @@ jobs:
             svm_target_platform: macosx-amd64
             platform: darwin
             arch: amd64
-          - runner: macos-latest
+          - runner: macos-14
             target: aarch64-apple-darwin
             svm_target_platform: macosx-aarch64
             platform: darwin
@@ -121,6 +121,45 @@ jobs:
         run: |
           echo "SDKROOT=$(xcrun -sdk macosx --show-sdk-path)" >> $GITHUB_ENV
           echo "MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version)" >> $GITHUB_ENV
+      - name: Install OpenSSL for cross-compilation targets
+        if: matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-gnu' || matrix.target == 'aarch64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config
+
+          if [[ "${{ matrix.target }}" == "x86_64-unknown-linux-musl" ]]; then
+            # For x86_64 musl target
+            sudo apt-get install -y musl-tools musl-dev
+            wget -O - https://www.openssl.org/source/openssl-3.5.1.tar.gz | tar xzf -
+            cd openssl-3.5.1
+            CC=musl-gcc ./Configure no-shared no-async --prefix=/usr/local/musl --openssldir=/usr/local/musl linux-x86_64
+            make -j$(nproc)
+            sudo make install_sw
+            cd ..
+            echo "OPENSSL_DIR=/usr/local/musl" >> $GITHUB_ENV
+            echo "OPENSSL_STATIC=1" >> $GITHUB_ENV
+            
+          elif [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
+            sudo dpkg --add-architecture arm64
+            sudo apt-get update
+            sudo apt-get install -y gcc-aarch64-linux-gnu
+            sudo apt-get install -y libssl-dev:arm64
+            echo "OPENSSL_DIR=/usr" >> $GITHUB_ENV
+            echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
+            
+          elif [[ "${{ matrix.target }}" == "aarch64-unknown-linux-musl" ]]; then
+            # For aarch64 musl target
+            wget -O - https://musl.cc/aarch64-linux-musl-cross.tgz | tar xzf -
+            export PATH="$PWD/aarch64-linux-musl-cross/bin:$PATH"
+            wget -O - https://www.openssl.org/source/openssl-3.5.1.tar.gz | tar xzf -
+            cd openssl-3.5.1
+            CC=aarch64-linux-musl-gcc ./Configure no-shared no-async --prefix=/usr/local/aarch64-musl --openssldir=/usr/local/aarch64-musl linux-aarch64
+            make -j$(nproc)
+            sudo make install_sw
+            cd ..
+            echo "OPENSSL_DIR=/usr/local/aarch64-musl" >> $GITHUB_ENV
+            echo "OPENSSL_STATIC=1" >> $GITHUB_ENV
+          fi
 
       - name: cross setup
         if: matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-gnu'
@@ -137,8 +176,7 @@ jobs:
         shell: bash
         run: |
           set -eo pipefail
-          flags=(--target $TARGET --profile $PROFILE --bins
-            --no-default-features --features aws-kms,gcp-kms,cli,asm-keccak)
+          flags=(--target $TARGET --profile $PROFILE --bin gblend --no-default-features --features aws-kms,gcp-kms,cli,asm-keccak)
 
           # `jemalloc` is not fully supported on MSVC or aarch64 Linux.
           if [[ "$TARGET" != *msvc* && "$TARGET" != "aarch64-unknown-linux-gnu" ]]; then
@@ -153,16 +191,13 @@ jobs:
             cargo build "${flags[@]}"
           fi
 
-          bins=(gblend)
-          for name in "${bins[@]}"; do
-            bin=$OUT_DIR/$name$ext
-            echo ""
-            file "$bin" || true
-            du -h "$bin" || true
-            ldd "$bin" || true
-            $bin --version || true
-            echo "${name}_bin_path=${bin}" >> $GITHUB_ENV
-          done
+          bin=$OUT_DIR/gblend$ext
+          echo "Built binary: $bin"
+          file "$bin" || true
+          du -h "$bin" || true
+          ldd "$bin" || true
+          $bin --version || true
+          echo "gblend_bin_path=${bin}" >> $GITHUB_ENV
 
       - name: Archive binaries
         id: artifacts
@@ -183,7 +218,7 @@ jobs:
             echo "file_name=gblend_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" >> $GITHUB_OUTPUT
           else
             cd $OUT_DIR
-            7z a -tzip "gblend_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" forge.exe cast.exe anvil.exe chisel.exe
+            7z a -tzip "gblend_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" gblend.exe
             mv "gblend_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" ../../../
             echo "file_name=gblend_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" >> $GITHUB_OUTPUT
           fi
