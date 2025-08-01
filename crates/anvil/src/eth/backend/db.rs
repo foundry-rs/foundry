@@ -30,6 +30,7 @@ use serde::{
     Deserialize, Deserializer, Serialize,
     de::{Error as DeError, MapAccess, Visitor},
 };
+use serde_json::Value;
 
 use crate::mem::storage::MinedTransaction;
 
@@ -393,92 +394,40 @@ fn deserialize_block_env_compat<'de, D>(deserializer: D) -> Result<Option<BlockE
 where
     D: Deserializer<'de>,
 {
-    let value: Option<serde_json::Value> = Option::deserialize(deserializer)?;
+    let value: Option<Value> = Option::deserialize(deserializer)?;
     let Some(value) = value else {
         return Ok(None);
     };
 
-    // Try to deserialize as the new format first
-    match BlockEnv::deserialize(value.clone()) {
-        Ok(block_env) => Ok(Some(block_env)),
-        Err(_) => {
-            // Failed with new format, try old format
-            let obj = value
-                .as_object()
-                .ok_or_else(|| DeError::custom("expected block to be an object"))?;
-
-            // Extract fields from old format and convert to new format
-            let number = obj
-                .get("number")
-                .and_then(|v| v.as_str())
-                .and_then(|s| s.strip_prefix("0x"))
-                .and_then(|s| U256::from_str_radix(s, 16).ok())
-                .or_else(|| obj.get("number").and_then(|v| v.as_u64()).map(U256::from))
-                .unwrap_or_default();
-
-            let beneficiary = obj
-                .get("coinbase")
-                .or_else(|| obj.get("beneficiary"))
-                .and_then(|v| v.as_str())
-                .and_then(|s| s.parse().ok())
-                .unwrap_or_default();
-
-            let timestamp = obj
-                .get("timestamp")
-                .and_then(|v| v.as_str())
-                .and_then(|s| s.strip_prefix("0x"))
-                .and_then(|s| U256::from_str_radix(s, 16).ok())
-                .or_else(|| obj.get("timestamp").and_then(|v| v.as_u64()).map(U256::from))
-                .unwrap_or_default();
-
-            let gas_limit = obj
-                .get("gas_limit")
-                .and_then(|v| v.as_str())
-                .and_then(|s| s.strip_prefix("0x"))
-                .and_then(|s| u64::from_str_radix(s, 16).ok())
-                .or_else(|| obj.get("gas_limit").and_then(|v| v.as_u64()))
-                .unwrap_or_default();
-
-            let basefee = obj
-                .get("basefee")
-                .and_then(|v| v.as_str())
-                .and_then(|s| s.strip_prefix("0x"))
-                .and_then(|s| u64::from_str_radix(s, 16).ok())
-                .or_else(|| obj.get("basefee").and_then(|v| v.as_u64()))
-                .unwrap_or_default();
-
-            let difficulty = obj
-                .get("difficulty")
-                .and_then(|v| v.as_str())
-                .and_then(|s| s.strip_prefix("0x"))
-                .and_then(|s| U256::from_str_radix(s, 16).ok())
-                .unwrap_or_default();
-
-            let prevrandao = obj
-                .get("prevrandao")
-                .and_then(|v| v.as_str())
-                .and_then(|s| s.parse().ok())
-                .unwrap_or_default();
-
-            let blob_excess_gas_and_price = obj.get("blob_excess_gas_and_price").and_then(|v| {
-                let obj = v.as_object()?;
-                let excess_blob_gas = obj.get("excess_blob_gas")?.as_u64()?;
-                let blob_gasprice = obj.get("blob_gasprice")?.as_u64()?;
-                Some(BlobExcessGasAndPrice::new(excess_blob_gas, blob_gasprice))
-            });
-
-            Ok(Some(BlockEnv {
-                number,
-                beneficiary,
-                timestamp,
-                gas_limit,
-                basefee,
-                difficulty,
-                prevrandao: Some(prevrandao),
-                blob_excess_gas_and_price,
-            }))
-        }
+    // If we successfully deserialize the block_env, we can return it directly.
+    if let Ok(block_env) = BlockEnv::deserialize(value.clone()) {
+        return Ok(Some(block_env));
     }
+
+    // Otherwise, we try to parse the block environment from the old format.
+    let obj = value.as_object().ok_or_else(|| DeError::custom("expected block to be an object"))?;
+
+    Ok(Some(BlockEnv {
+        number: parse_u256_field(obj.get("number")).unwrap_or_default(),
+        timestamp: parse_u256_field(obj.get("timestamp")).unwrap_or_default(),
+        difficulty: parse_u256_field(obj.get("difficulty")).unwrap_or_default(),
+        gas_limit: parse_u64_field(obj.get("gas_limit")).unwrap_or_default(),
+        basefee: parse_u64_field(obj.get("basefee")).unwrap_or_default(),
+        beneficiary: obj
+            .get("coinbase")
+            .or_else(|| obj.get("beneficiary"))
+            .and_then(Value::as_str)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_default(),
+        prevrandao: obj.get("prevrandao").and_then(Value::as_str).and_then(|s| s.parse().ok()),
+        blob_excess_gas_and_price: obj.get("blob_excess_gas_and_price").and_then(|v| {
+            let obj = v.as_object()?;
+            Some(BlobExcessGasAndPrice::new(
+                obj.get("excess_blob_gas")?.as_u64()?,
+                obj.get("blob_gasprice")?.as_u64()?,
+            ))
+        }),
+    }))
 }
 
 /// Custom deserializer for `best_block_number` that handles both v1.2 and v1.3+ formats.
@@ -486,24 +435,34 @@ fn deserialize_best_block_number_compat<'de, D>(deserializer: D) -> Result<Optio
 where
     D: Deserializer<'de>,
 {
-    let value: Option<serde_json::Value> = Option::deserialize(deserializer)?;
+    let value: Option<Value> = Option::deserialize(deserializer)?;
     let Some(value) = value else {
         return Ok(None);
     };
 
-    let number = match value {
-        serde_json::Value::Number(n) => n.as_u64(),
-        serde_json::Value::String(s) => {
-            if let Some(s) = s.strip_prefix("0x") {
-                u64::from_str_radix(s, 16).ok()
-            } else {
-                s.parse().ok()
-            }
-        }
-        _ => None,
-    };
+    Ok(parse_u64_field(Some(&value)))
+}
 
-    Ok(number)
+/// Attempts to parse a `U256` from a value (hex string or u64).
+pub fn parse_u256_field(value: Option<&Value>) -> Option<U256> {
+    value
+        .and_then(|v| {
+            v.as_str()
+                .and_then(|s| s.strip_prefix("0x"))
+                .and_then(|s| U256::from_str_radix(s, 16).ok())
+        })
+        .or_else(|| value.and_then(Value::as_u64).map(U256::from))
+}
+
+/// Attempts to parse a `u64` from a value (hex string or number).
+pub fn parse_u64_field(value: Option<&Value>) -> Option<u64> {
+    value
+        .and_then(|v| {
+            v.as_str()
+                .and_then(|s| s.strip_prefix("0x"))
+                .and_then(|s| u64::from_str_radix(s, 16).ok())
+        })
+        .or_else(|| value.and_then(Value::as_u64))
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
