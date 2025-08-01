@@ -53,20 +53,34 @@ pub struct LintContext<'s> {
     sess: &'s Session,
     with_description: bool,
     pub inline_config: InlineConfig,
+    active_lints: Vec<&'static str>,
 }
 
 impl<'s> LintContext<'s> {
-    pub fn new(sess: &'s Session, with_description: bool, config: InlineConfig) -> Self {
-        Self { sess, with_description, inline_config: config }
+    pub fn new(
+        sess: &'s Session,
+        with_description: bool,
+        config: InlineConfig,
+        active_lints: Vec<&'static str>,
+    ) -> Self {
+        Self { sess, with_description, inline_config: config, active_lints }
     }
 
     pub fn session(&self) -> &'s Session {
         self.sess
     }
 
+    // Helper method to check if a lint id is enabled.
+    //
+    // For performance reasons, some passes check several lints at once. Thus, this method is
+    // required to avoid unintended warnings.
+    pub fn is_lint_enabled(&self, id: &'static str) -> bool {
+        self.active_lints.contains(&id)
+    }
+
     /// Helper method to emit diagnostics easily from passes
     pub fn emit<L: Lint>(&self, lint: &'static L, span: Span) {
-        if self.inline_config.is_disabled(span, lint.id()) {
+        if self.inline_config.is_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
             return;
         }
 
@@ -87,7 +101,7 @@ impl<'s> LintContext<'s> {
     /// For Diff snippets, if no span is provided, it will use the lint's span.
     /// If unable to get code from the span, it will fall back to a Block snippet.
     pub fn emit_with_fix<L: Lint>(&self, lint: &'static L, span: Span, snippet: Snippet) {
-        if self.inline_config.is_disabled(span, lint.id()) {
+        if self.inline_config.is_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
             return;
         }
 
