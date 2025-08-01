@@ -1,0 +1,28 @@
+[package]
+name = "forge-lsp"
+description = "Language Server Protocol implementation for Solidity"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+tower-lsp = "0.20"
+tokio = { workspace = true, features = ["full"] }
+serde_json.workspace = true
+eyre.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+foundry-test-utils.workspace = true
+tempfile.workspace = true
+
+[features]
+default = []
