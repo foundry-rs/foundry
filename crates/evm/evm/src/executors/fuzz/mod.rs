@@ -119,6 +119,7 @@ impl FuzzedExecutor {
             &func.name,
             strategy.boxed(),
             &self.executor,
+            Some(func),
             None,
         )?;
 

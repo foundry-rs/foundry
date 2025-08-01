@@ -155,6 +155,7 @@ impl CorpusManager {
         func_name: &String,
         tx_generator: BoxedStrategy<BasicTxDetails>,
         executor: &Executor,
+        fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
     ) -> eyre::Result<Self> {
         let mut config = config.clone();
@@ -193,67 +194,72 @@ impl CorpusManager {
             foundry_common::fs::create_dir_all(corpus_dir)?;
         }
 
-        if let Some(contracts) = fuzzed_contracts {
-            let fuzzed_contracts = contracts.targets.lock();
-            for entry in std::fs::read_dir(corpus_dir)? {
-                let path = entry?.path();
-                if path.is_file()
-                    && let Some(name) = path.file_name().and_then(|s| s.to_str())
-                    && name.contains(METADATA_SUFFIX)
-                {
-                    // Ignore metadata files
-                    continue;
-                }
+        let can_reply_tx = |tx: &BasicTxDetails| -> bool {
+            fuzzed_contracts.is_some_and(|contracts| contracts.targets.lock().can_replay(tx))
+                || fuzzed_function
+                    .is_some_and(|function| function.selector() == tx.call_details.calldata[..4])
+        };
 
-                let read_corpus_result = match path.extension().and_then(|ext| ext.to_str()) {
-                    Some("gz") => {
-                        foundry_common::fs::read_json_gzip_file::<Vec<BasicTxDetails>>(&path)
-                    }
-                    _ => foundry_common::fs::read_json_file::<Vec<BasicTxDetails>>(&path),
-                };
+        for entry in std::fs::read_dir(corpus_dir)? {
+            let path = entry?.path();
+            if path.is_file()
+                && let Some(name) = path.file_name().and_then(|s| s.to_str())
+                && name.contains(METADATA_SUFFIX)
+            {
+                // Ignore metadata files
+                continue;
+            }
 
-                let Ok(tx_seq) = read_corpus_result else {
-                    trace!(target: "corpus", "failed to load corpus from {}", path.display());
-                    continue;
-                };
+            let read_corpus_result = match path.extension().and_then(|ext| ext.to_str()) {
+                Some("gz") => foundry_common::fs::read_json_gzip_file::<Vec<BasicTxDetails>>(&path),
+                _ => foundry_common::fs::read_json_file::<Vec<BasicTxDetails>>(&path),
+            };
 
-                if !tx_seq.is_empty() {
-                    // Warm up history map from loaded sequences.
-                    let mut executor = executor.clone();
-                    for tx in &tx_seq {
-                        if fuzzed_contracts.can_replay(tx) {
-                            let mut call_result = executor
-                                .call_raw(
-                                    tx.sender,
-                                    tx.call_details.target,
-                                    tx.call_details.calldata.clone(),
-                                    U256::ZERO,
-                                )
-                                .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))?;
+            let Ok(tx_seq) = read_corpus_result else {
+                trace!(target: "corpus", "failed to load corpus from {}", path.display());
+                continue;
+            };
 
-                            let (new_coverage, is_edge) =
-                                call_result.merge_edge_coverage(&mut history_map);
-                            if new_coverage {
-                                metrics.update_seen(is_edge);
-                            }
-                            executor.commit(&mut call_result);
-                        } else {
-                            failed_replays += 1;
+            if !tx_seq.is_empty() {
+                // Warm up history map from loaded sequences.
+                let mut executor = executor.clone();
+                for tx in &tx_seq {
+                    if can_reply_tx(tx) {
+                        let mut call_result = executor
+                            .call_raw(
+                                tx.sender,
+                                tx.call_details.target,
+                                tx.call_details.calldata.clone(),
+                                U256::ZERO,
+                            )
+                            .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))?;
+
+                        let (new_coverage, is_edge) =
+                            call_result.merge_edge_coverage(&mut history_map);
+                        if new_coverage {
+                            metrics.update_seen(is_edge);
                         }
+
+                        // Commit only when running invariant / stateful tests.
+                        if fuzzed_contracts.is_some() {
+                            executor.commit(&mut call_result);
+                        }
+                    } else {
+                        failed_replays += 1;
                     }
-
-                    metrics.corpus_count += 1;
-
-                    trace!(
-                        target: "corpus",
-                        "load sequence with len {} from corpus file {}",
-                        tx_seq.len(),
-                        path.display()
-                    );
-
-                    // Populate in memory corpus with the sequence from corpus file.
-                    in_memory_corpus.push(CorpusEntry::new(tx_seq, path)?);
                 }
+
+                metrics.corpus_count += 1;
+
+                trace!(
+                    target: "corpus",
+                    "load sequence with len {} from corpus file {}",
+                    tx_seq.len(),
+                    path.display()
+                );
+
+                // Populate in memory corpus with the sequence from corpus file.
+                in_memory_corpus.push(CorpusEntry::new(tx_seq, path)?);
             }
         }
 

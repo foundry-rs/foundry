@@ -622,6 +622,7 @@ impl<'a> InvariantExecutor<'a> {
             strategy.boxed(),
             &self.executor,
             None,
+            Some(&targeted_contracts),
         )?;
         let invariant_test = InvariantTest::new(
             fuzz_state,
