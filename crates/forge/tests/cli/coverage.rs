@@ -5,6 +5,11 @@ use foundry_test_utils::{
 };
 use std::path::Path;
 
+#[track_caller]
+fn assert_lcov(cmd: &mut TestCommand, data: impl IntoData) {
+    cmd.args(["--report=lcov", "--report-file"]).assert_file(data.into_data());
+}
+
 fn basic_base(prj: TestProject, mut cmd: TestCommand) {
     cmd.args(["coverage", "--report=lcov", "--report=summary"]).assert_success().stdout_eq(str![[
         r#"
@@ -1911,7 +1916,68 @@ end_of_record
     );
 });
 
-#[track_caller]
-fn assert_lcov(cmd: &mut TestCommand, data: impl IntoData) {
-    cmd.args(["--report=lcov", "--report-file"]).assert_file(data.into_data());
+// <https://github.com/foundry-rs/foundry/issues/11183>
+// Test that overridden functions are disambiguated in the LCOV report.
+forgetest!(disambiguate_functions, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number++;
+    }
+    function increment(uint256 amount) public {
+        number += amount;
+    }
 }
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "Counter.t.sol",
+        r#"
+import "./test.sol";
+import "./Counter.sol";
+
+contract CounterTest is DSTest {
+    function test_overridden() public {
+        Counter counter = new Counter();
+        counter.increment();
+        counter.increment(1);
+        counter.increment(2);
+        counter.increment(3);
+        assertEq(counter.number(), 7);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/Counter.sol
+DA:7,1
+FN:7,Counter.increment.0
+FNDA:1,Counter.increment.0
+DA:8,1
+DA:10,3
+FN:10,Counter.increment.1
+FNDA:3,Counter.increment.1
+DA:11,3
+FNF:2
+FNH:2
+LF:4
+LH:4
+BRF:0
+BRH:0
+end_of_record
+
+"#]],
+    );
+});
