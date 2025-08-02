@@ -992,12 +992,106 @@ fault: function(log) {}
         "    Result: 1",
         "772: SLOAD 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:1",
         "    Result: 1",
-        "835: SSTORE 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:4.4498830125527143e+76 <- 1",
-        "919: SSTORE 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:0 <- 8.008442285988055e+76",
+        "835: SSTORE 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:44498830125527143464827115118378702402016761369235290884359940707316142178310 <- 1",
+        "919: SSTORE 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:0 <- 80084422859880547211683076133703299733277748156566366325829078699459944778998",
         "712: SLOAD 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:0",
         "    Result: 0",
-        "765: SSTORE 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:5.465844868464591e+47 <- 0",
+        "765: SSTORE 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:546584486846459126461364135121053344201067465379 <- 0",
     ];
+
+    let actual: Vec<String> = result
+        .try_into_json_value()
+        .ok()
+        .and_then(|val| val.as_array().cloned())
+        .map(|arr| arr.into_iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+
+    assert_eq!(actual, expected);
+}
+
+#[cfg(feature = "js-tracer")]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_transaction_js_tracer() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(node_config).await;
+    let provider = crate::utils::http_provider(&handle.http_endpoint());
+
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let from = wallets[0].address();
+    api.anvil_add_balance(from, U256::MAX).await.unwrap();
+    api.anvil_add_balance(wallets[1].address(), U256::MAX).await.unwrap();
+
+    let multicall_contract = Multicall::deploy(&provider).await.unwrap();
+    let simple_storage_contract =
+        SimpleStorage::deploy(&provider, "init value".to_string()).await.unwrap();
+
+    let set_value = simple_storage_contract.setValue("bar".to_string());
+    let set_value_calldata = set_value.calldata();
+
+    let internal_call_tx_builder = multicall_contract.aggregate(vec![Multicall::Call {
+        target: *simple_storage_contract.address(),
+        callData: set_value_calldata.to_owned(),
+    }]);
+
+    let internal_call_tx_calldata = internal_call_tx_builder.calldata().to_owned();
+
+    let internal_call_tx = TransactionRequest::default()
+        .from(wallets[1].address())
+        .to(*multicall_contract.address())
+        .with_input(internal_call_tx_calldata)
+        .with_gas_limit(1_000_000)
+        .with_max_fee_per_gas(100_000_000_000)
+        .with_max_priority_fee_per_gas(100_000_000_000);
+
+    let receipt = provider
+        .send_transaction(internal_call_tx.into())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let js_tracer_code = r#"
+{
+data: [],
+step: function(log) {
+    var op = log.op.toString();
+    var pc = log.getPC();
+    var addr = log.contract.getAddress();
+
+    if (op === "SLOAD") {
+        this.data.push(pc + ": SLOAD " + addr + ":" + log.stack.peek(0));
+        this.data.push("    Result: " + log.stack.peek(0));
+    } else if (op === "SSTORE") {
+        this.data.push(pc + ": SSTORE " + addr + ":" + log.stack.peek(1) + " <- " + log.stack.peek(0));
+    } 
+},
+result: function() {
+    return this.data;
+},
+fault: function(log) {}
+}
+"#;
+
+    let expected = vec![
+        "547: SLOAD 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:0",
+        "    Result: 0",
+        "1907: SLOAD 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:1",
+        "    Result: 1",
+        "772: SLOAD 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:1",
+        "    Result: 1",
+        "835: SSTORE 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:44498830125527143464827115118378702402016761369235290884359940707316142178310 <- 1",
+        "919: SSTORE 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:0 <- 80084422859880547211683076133703299733277748156566366325829078699459944778998",
+        "712: SLOAD 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:0",
+        "    Result: 0",
+        "765: SSTORE 231,241,114,94,119,52,206,40,143,131,103,225,187,20,62,144,187,63,5,18:546584486846459126461364135121053344201067465379 <- 0",
+    ];
+    let result = api
+        .debug_trace_transaction(
+            receipt.transaction_hash,
+            GethDebugTracingOptions::js_tracer(js_tracer_code),
+        )
+        .await
+        .unwrap();
 
     let actual: Vec<String> = result
         .try_into_json_value()
