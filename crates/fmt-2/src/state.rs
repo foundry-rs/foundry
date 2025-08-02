@@ -237,8 +237,6 @@ impl<'sess> State<'sess, '_> {
                 }
             }
             CommentStyle::Isolated => {
-                println!(" > CURSOR: {:?}", self.cursor);
-                println!(" > PRINTING CMNT: {cmnt:?}");
                 let Some(mut prefix) = cmnt.prefix() else { return };
                 config.hardbreak_if_not_bol(self.is_bol_or_only_ind(), &mut self.s);
                 for (pos, line) in cmnt.lines.into_iter().delimited() {
@@ -660,13 +658,8 @@ impl State<'_, '_> {
     /// Returns `None` if the span is disabled and has been printed as-is.
     #[must_use]
     fn handle_comment(&mut self, cmnt: Comment) -> Option<Comment> {
-        println!(" > CURSOR: {:?}", self.cursor);
-        println!(" > SPAN (lo: {:?}, hi: {:?})", cmnt.span.lo(), cmnt.span.hi());
-        println!(" > IS DISABLED? {}", self.inline_config.is_disabled(cmnt.span));
         if self.print_span_if_disabled(cmnt.span) {
-            println!("\n{cmnt:?}");
             if !cmnt.style.is_mixed() {
-                println!("> BREAKS");
                 self.print_sep(Separator::Hardbreak);
             }
             return None;
@@ -821,7 +814,6 @@ impl<'ast> State<'_, 'ast> {
         .is_some_and(|cmnt| cmnt.is_mixed());
 
         if add_zero_break {
-            self.word("/*here*/");
             self.zerobreak();
         }
 
@@ -1013,7 +1005,6 @@ impl<'ast> State<'_, 'ast> {
                 self.print_comments(body_lo, CommentConfig::skip_leading_ws());
             }
 
-            self.cursor = body_lo;
             let mut is_first = true;
             let mut items = body.iter().peekable();
             while let Some(item) = items.next() {
@@ -1143,86 +1134,91 @@ impl<'ast> State<'_, 'ast> {
         let (mut map, attributes, first_attrib_pos, use_nbsp) =
             AttributeCommentMapper::new(returns.as_ref(), body_span.lo()).build(self, header);
 
-        println!("{map:?}");
-        // let mut handle_pre_cmnts = |this: &mut Self, span: Span| -> bool {
-        //     if this.inline_config.is_disabled(span)
-        //         // Note: `map` is still captured from the outer scope, which is fine.
-        //         && let Some((pre_cmnts, _)) = map.remove(&span.lo())
-        //     {
-        //         for (pos, cmnt) in pre_cmnts.into_iter().delimited() {
-        //             if let Some(cmnt) = this.handle_comment(cmnt) {
-        //                 this.print_comment(cmnt, CommentConfig::skip_ws().mixed_post_nbsp());
-        //             }
-        //             if pos.is_last {
-        //                 return true;
-        //             }
-        //         }
-        //     }
-        //     false
-        // };
+        let mut handle_pre_cmnts = |this: &mut Self, span: Span| -> bool {
+            if this.inline_config.is_disabled(span)
+                // Note: `map` is still captured from the outer scope, which is fine.
+                && let Some((pre_cmnts, _)) = map.remove(&span.lo())
+            {
+                for (pos, cmnt) in pre_cmnts.into_iter().delimited() {
+                    if let Some(cmnt) = this.handle_comment(cmnt) {
+                        this.print_comment(cmnt, CommentConfig::skip_ws().mixed_post_nbsp());
+                    }
+                    if pos.is_last {
+                        return true;
+                    }
+                }
+            }
+            false
+        };
 
-        // let skip_attribs = returns.as_ref().is_some_and(|ret| {
-        //     let attrib_span = Span::new(first_attrib_pos, ret.span.lo());
-        //     if handle_pre_cmnts(self, attrib_span) {
-        //         self.cursor = first_attrib_pos;
-        //     }
-        //     self.handle_span(attrib_span, false)
-        // });
-        // let skip_returns = {
-        //     let pos = if skip_attribs { self.cursor } else { first_attrib_pos };
-        //     let ret_span = Span::new(pos, body_span.lo());
-        //     if handle_pre_cmnts(self, ret_span) {
-        //         self.cursor = pos;
-        //     }
-        //     self.handle_span(ret_span, false)
-        // };
+        let skip_attribs = returns.as_ref().is_some_and(|ret| {
+            let attrib_span = Span::new(first_attrib_pos, ret.span.lo());
+            if handle_pre_cmnts(self, attrib_span) {
+                self.cursor = first_attrib_pos;
+            }
+            self.handle_span(attrib_span, false)
+        });
+        let skip_returns = {
+            let pos = if skip_attribs { self.cursor } else { first_attrib_pos };
+            let ret_span = Span::new(pos, body_span.lo());
+            if handle_pre_cmnts(self, ret_span) {
+                self.cursor = pos;
+            }
+            self.handle_span(ret_span, false)
+        };
 
         self.s.cbox(0);
-        // if !(skip_attribs || skip_returns) {
-        // Print fn attributes in correct order
-        if let Some(v) = visibility {
-            self.print_fn_attribute(v.span, &mut map, &mut |s| s.word(v.to_str()), use_nbsp);
-        }
-        if let Some(sm) = sm {
-            if !matches!(*sm, ast::StateMutability::NonPayable) {
-                self.print_fn_attribute(sm.span, &mut map, &mut |s| s.word(sm.to_str()), use_nbsp);
+        if !(skip_attribs || skip_returns) {
+            // Print fn attributes in correct order
+            if let Some(v) = visibility {
+                self.print_fn_attribute(v.span, &mut map, &mut |s| s.word(v.to_str()), use_nbsp);
             }
-        }
-        if let Some(v) = virtual_ {
-            self.print_fn_attribute(v, &mut map, &mut |s| s.word("virtual"), use_nbsp);
-        }
-        if let Some(o) = override_ {
-            self.print_fn_attribute(o.span, &mut map, &mut |s| s.print_override(o), use_nbsp);
-        }
-        for m in attributes.iter().filter(|a| matches!(a.kind, AttributeKind::Modifier(_))) {
-            if let AttributeKind::Modifier(modifier) = m.kind {
-                let is_base = self.is_modifier_a_base_contract(kind, modifier);
-                self.print_fn_attribute(
-                    m.span,
-                    &mut map,
-                    &mut |s| s.print_modifier_call(modifier, is_base),
-                    false,
-                );
-            }
-        }
-        // }
-        // if !skip_returns && let Some(ret) = returns {
-        // if !ret.is_empty() {
-        if let Some(ret) = returns {
-            if !self.handle_span(Span::new(self.cursor, ret.span.lo()), false) {
-                if !self.is_bol_or_only_ind() && !self.last_token_is_space() {
-                    self.print_sep(Separator::Space);
+            if let Some(sm) = sm {
+                if !matches!(*sm, ast::StateMutability::NonPayable) {
+                    self.print_fn_attribute(
+                        sm.span,
+                        &mut map,
+                        &mut |s| s.word(sm.to_str()),
+                        use_nbsp,
+                    );
                 }
-                self.cursor = ret.span.lo();
-                self.print_word("returns ");
             }
-            self.print_parameter_list(
-                ret,
-                ret.span,
-                ListFormat::Consistent { cmnts_break: false, with_space: false },
-            );
+            if let Some(v) = virtual_ {
+                self.print_fn_attribute(v, &mut map, &mut |s| s.word("virtual"), use_nbsp);
+            }
+            if let Some(o) = override_ {
+                self.print_fn_attribute(o.span, &mut map, &mut |s| s.print_override(o), use_nbsp);
+            }
+            for m in attributes.iter().filter(|a| matches!(a.kind, AttributeKind::Modifier(_))) {
+                if let AttributeKind::Modifier(modifier) = m.kind {
+                    let is_base = self.is_modifier_a_base_contract(kind, modifier);
+                    self.print_fn_attribute(
+                        m.span,
+                        &mut map,
+                        &mut |s| s.print_modifier_call(modifier, is_base),
+                        false,
+                    );
+                }
+            }
         }
-        // }
+        if !skip_returns && let Some(ret) = returns {
+            if !ret.is_empty() {
+                if let Some(ret) = returns {
+                    if !self.handle_span(Span::new(self.cursor, ret.span.lo()), false) {
+                        if !self.is_bol_or_only_ind() && !self.last_token_is_space() {
+                            self.print_sep(Separator::Space);
+                        }
+                        self.cursor = ret.span.lo();
+                        self.print_word("returns ");
+                    }
+                    self.print_parameter_list(
+                        ret,
+                        ret.span,
+                        ListFormat::Consistent { cmnts_break: false, with_space: false },
+                    );
+                }
+            }
+        }
 
         // Print fn body
         if let Some(body) = body {
@@ -2591,7 +2587,7 @@ impl<'ast> State<'_, 'ast> {
         // NOTE(rusowsky): unless we add bracket spans to solar,
         // using `then.span.lo()` consumes "cmnt12" of the IfStatement test inside the preceeding
         // clause: `self.print_if_cond("if", cond, cond.span.hi());`
-        if !self.handle_span(Span::new(cond.span.lo(), then.span.lo()), false) {
+        if !self.handle_span(Span::new(cond.span.lo(), then.span.lo()), true) {
             self.print_if_cond("if", cond, then.span.lo());
             self.print_sep(Separator::Space);
         }
@@ -3439,7 +3435,6 @@ impl<'ast> AttributeCommentMapper<'ast> {
         let mut empty_override = true;
         let mut first_pos = BytePos(u32::MAX);
         if let Some(v) = header.visibility {
-            println!("VISIBILITY: {:?}", v.span.lo());
             if v.span.lo() < first_pos {
                 first_pos = v.span.lo()
             }
@@ -3447,7 +3442,6 @@ impl<'ast> AttributeCommentMapper<'ast> {
                 .push(AttributeInfo { kind: AttributeKind::Visibility(*v), span: v.span });
         }
         if let Some(sm) = header.state_mutability {
-            println!("STATE MUT: {:?}", sm.span.lo());
             if sm.span.lo() < first_pos {
                 first_pos = sm.span.lo()
             }
@@ -3455,14 +3449,12 @@ impl<'ast> AttributeCommentMapper<'ast> {
                 .push(AttributeInfo { kind: AttributeKind::StateMutability(*sm), span: sm.span });
         }
         if let Some(span) = header.virtual_ {
-            println!("VIRTUAL: {:?}", span.lo());
             if span.lo() < first_pos {
                 first_pos = span.lo()
             }
             self.attributes.push(AttributeInfo { kind: AttributeKind::Virtual, span });
         }
         if let Some(ref o) = header.override_ {
-            println!("OVERRIDE: {:?}", o.span.lo());
             if o.span.lo() < first_pos {
                 first_pos = o.span.lo()
             }
@@ -3472,7 +3464,6 @@ impl<'ast> AttributeCommentMapper<'ast> {
             self.attributes.push(AttributeInfo { kind: AttributeKind::Override(o), span: o.span });
         }
         for m in header.modifiers.iter() {
-            println!("MODIFIER: {:?}", m.span().lo());
             if m.span().lo() < first_pos {
                 first_pos = m.span().lo()
             }
@@ -3541,9 +3532,10 @@ fn item_needs_iso(item: &ast::ItemKind<'_>) -> bool {
         | ast::ItemKind::Udvt(..)
         | ast::ItemKind::Enum(..)
         | ast::ItemKind::Error(..)
-        | ast::ItemKind::Event(..) => false,
-        ast::ItemKind::Contract(..) | ast::ItemKind::Struct(..) => true,
-        ast::ItemKind::Function(func) => func.body.as_ref().is_none_or(|b| b.stmts.is_empty()),
+        | ast::ItemKind::Event(..)
+        | ast::ItemKind::Struct(..) => false,
+        ast::ItemKind::Contract(..) => true,
+        ast::ItemKind::Function(func) => func.body.as_ref().is_some_and(|b| !b.stmts.is_empty()),
     }
 }
 

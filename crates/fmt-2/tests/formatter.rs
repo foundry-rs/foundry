@@ -152,7 +152,8 @@ macro_rules! fmt_tests {
 }
 
 // TODO (config):
-//  * style = tab
+// * style = tab
+// * all fn styles
 
 fmt_tests! {
     #[ignore = "annotations are not valid Solidity"]
@@ -176,12 +177,12 @@ fmt_tests! {
     FunctionCallArgsStatement, // OK? Is it acceptable?
     FunctionDefinition, // OK? Is it acceptable? TODO: support all configs
     FunctionDefinitionWithFunctionReturns, // OK
-    FunctionType, // OK
+    FunctionType, // OK? Is it acceptable? TODO: support all configs
     HexUnderscore, // OK
     IfStatement, // Ok
     IfStatement2, // OK
     ImportDirective, // OK
-    InlineDisable, // FIX: invalid output
+    InlineDisable, // OK
     IntTypes, // OK
     LiteralExpression, // OK
     MappingType, // OK? is it acceptable?
@@ -198,7 +199,7 @@ fmt_tests! {
     SortedImports, // OK
     StatementBlock, // OK
     StructDefinition, // OK
-    ThisExpression, // OK
+    ThisExpression, // OK? is it acceptable?
     TrailingComma, // OK (solar error)
     TryStatement, // OK? is it acceptable?
     TypeDefinition, // OK
