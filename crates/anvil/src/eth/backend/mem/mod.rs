@@ -2664,8 +2664,8 @@ impl Backend {
         let pool_txs: Vec<Arc<PoolTransaction>> = block.transactions[..index]
             .iter()
             .map(|tx| {
-                let typed_tx: TypedTransaction = tx.clone().into();
-                let pending_tx = PendingTransaction::new(typed_tx).unwrap();
+                let pending_tx =
+                    PendingTransaction::from_maybe_impersonated(tx.clone()).expect("is valid");
                 Arc::new(PoolTransaction {
                     pending_transaction: pending_tx,
                     requires: vec![],
