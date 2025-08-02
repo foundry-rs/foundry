@@ -70,6 +70,9 @@ pub enum BlockchainError {
     BlockOutOfRange(u64, u64),
     #[error("Resource not found")]
     BlockNotFound,
+    /// Thrown when a requested transaction is not found
+    #[error("transaction not found")]
+    TransactionNotFound,
     #[error("Required data unavailable")]
     DataUnavailable,
     #[error("Trie error: {0}")]
@@ -523,6 +526,11 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 }
                 err @ BlockchainError::BlockNotFound => RpcError {
                     // <https://eips.ethereum.org/EIPS/eip-1898>
+                    code: ErrorCode::ServerError(-32001),
+                    message: err.to_string().into(),
+                    data: None,
+                },
+                err @ BlockchainError::TransactionNotFound => RpcError {
                     code: ErrorCode::ServerError(-32001),
                     message: err.to_string().into(),
                     data: None,
