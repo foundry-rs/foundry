@@ -28,7 +28,9 @@ impl ForgeLsp {
                         format!("Found {lint_count} linting diagnostics"),
                     )
                     .await;
-                self.client.publish_diagnostics(params.uri.clone(), lint_diagnostics, params.version).await;
+                self.client
+                    .publish_diagnostics(params.uri.clone(), lint_diagnostics, params.version)
+                    .await;
             }
             Err(e) => {
                 self.client
