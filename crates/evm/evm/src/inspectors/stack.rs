@@ -643,7 +643,7 @@ impl InspectorStackRefMut<'_> {
         self.inner_context_data = Some(InnerContextData { original_origin: cached_env.tx.caller });
         self.in_inner_context = true;
 
-        let res = self.with_stack(|inspector| {
+        let res = self.with_inspector(|inspector| {
             let (db, journal, env) = ecx.as_db_env_and_journal();
             let mut evm = new_evm_with_inspector(db, env.to_owned(), inspector);
 
@@ -740,23 +740,22 @@ impl InspectorStackRefMut<'_> {
         (InterpreterResult { result, output, gas }, address)
     }
 
-    /// Moves out of references, constructs an [`InspectorStack`] and runs the given closure with
-    /// it.
-    fn with_stack<O>(&mut self, f: impl FnOnce(&mut InspectorStack) -> O) -> O {
-        let mut stack = InspectorStack {
-            cheatcodes: self.cheatcodes.as_deref_mut().map(|cheats| {
-                core::mem::replace(cheats, Cheatcodes::new(cheats.config.clone())).into()
-            }),
-            inner: std::mem::take(self.inner),
-        };
+    /// Moves out of references, constructs a new [`InspectorStackRefMut`] and runs the given
+    /// closure with it.
+    fn with_inspector<O>(&mut self, f: impl FnOnce(InspectorStackRefMut<'_>) -> O) -> O {
+        let mut cheatcodes = self
+            .cheatcodes
+            .as_deref_mut()
+            .map(|cheats| core::mem::replace(cheats, Cheatcodes::new(cheats.config.clone())));
+        let mut inner = std::mem::take(self.inner);
 
-        let out = f(&mut stack);
+        let out = f(InspectorStackRefMut { cheatcodes: cheatcodes.as_mut(), inner: &mut inner });
 
         if let Some(cheats) = self.cheatcodes.as_deref_mut() {
-            *cheats = *stack.cheatcodes.take().unwrap();
+            *cheats = cheatcodes.unwrap();
         }
 
-        *self.inner = stack.inner;
+        *self.inner = inner;
 
         out
     }
