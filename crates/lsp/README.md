@@ -7,7 +7,7 @@ A native Language Server Protocol (LSP) implementation for Solidity development 
 Start the LSP server using:
 
 ```bash
-forge lsp
+forge lsp --stdio
 ```
 
 ## Supported LSP Features
@@ -46,7 +46,7 @@ With `nvim-lspconfig`:
 
 ```lua
 {
-  cmd = { "forge", "lsp" },
+  cmd = { "forge", "lsp", "--stdio" },
   filetypes = { "solidity" },
   root_markers = { "foundry.toml", ".git" },
   root_dir = vim.fs.root(0, { "foundry.toml", ".git" }),

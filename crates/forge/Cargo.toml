@@ -90,6 +90,7 @@ watchexec-signals = "5.0"
 clearscreen = "4.0"
 evm-disassembler.workspace = true
 path-slash.workspace = true
+tower-lsp = "0.20"
 
 # doc server
 axum = { workspace = true, features = ["ws"] }

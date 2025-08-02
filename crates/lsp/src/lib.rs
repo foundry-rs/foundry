@@ -7,8 +7,6 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 pub mod lsp;
-pub mod server;
 pub mod utils;
 
 pub use lsp::ForgeLsp;
-pub use server::ForgeLspServer;

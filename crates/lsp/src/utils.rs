@@ -212,7 +212,6 @@ mod tests {
         assert!(json_value.is_array(), "Expected lint output to be an array");
     }
 
-
     #[tokio::test]
     async fn test_debug_lint_conversion() {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -242,7 +241,6 @@ mod tests {
         let json_value = result.unwrap();
 
         let diagnostics = lint_output_to_diagnostics(&json_value, &file_path);
-
 
         assert!(!diagnostics.is_empty(), "Expected at least one diagnostic");
 

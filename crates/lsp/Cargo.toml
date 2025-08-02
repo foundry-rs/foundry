@@ -19,8 +19,6 @@ tokio = { workspace = true, features = ["full"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-eyre.workspace = true
-tracing.workspace = true
 
 [dev-dependencies]
 foundry-test-utils.workspace = true

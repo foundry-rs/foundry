@@ -3,7 +3,7 @@ use tower_lsp::{Client, LanguageServer, jsonrpc::Result, lsp_types::*};
 
 #[derive(Debug)]
 pub struct ForgeLsp {
-    pub(crate) client: Client,
+    pub client: Client,
 }
 
 #[allow(dead_code)]
@@ -14,15 +14,18 @@ struct TextDocumentItem<'a> {
 }
 
 impl ForgeLsp {
-    async fn on_change<'a>(&self, params: TextDocumentItem<'a>) {
-        self.client
-            .log_message(MessageType::INFO, format!("Running diagnostics for: {})", params.uri))
-            .await;
+    pub fn new(client: Client) -> Self {
+        Self { client }
+    }
 
+    async fn lint_file(&self, uri: &Url) -> Vec<Diagnostic> {
+        self.client
+            .log_message(MessageType::INFO, format!("Running diagnostics for: {uri})"))
+            .await;
         let mut all_diagnostics = Vec::new();
 
         // Collect linting diagnostics
-        match get_lint_diagnostics(&params.uri).await {
+        match get_lint_diagnostics(uri).await {
             Ok(mut lint_diagnostics) => {
                 let lint_count = lint_diagnostics.len();
                 all_diagnostics.append(&mut lint_diagnostics);
@@ -42,8 +45,12 @@ impl ForgeLsp {
                     .await;
             }
         }
+        all_diagnostics
+    }
 
-        self.client.publish_diagnostics(params.uri.clone(), all_diagnostics, params.version).await;
+    async fn on_change<'a>(&self, params: TextDocumentItem<'a>) {
+        let diagnostics = self.lint_file(&params.uri).await;
+        self.client.publish_diagnostics(params.uri.clone(), diagnostics, params.version).await;
     }
 }
 
@@ -55,7 +62,6 @@ impl LanguageServer for ForgeLsp {
                 name: "forge lsp".to_string(),
                 version: Some(env!("CARGO_PKG_VERSION").to_string()),
             }),
-
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
@@ -66,7 +72,7 @@ impl LanguageServer for ForgeLsp {
     }
 
     async fn initialized(&self, _: InitializedParams) {
-        self.client.log_message(MessageType::INFO, "lsp server intialized!").await;
+        self.client.log_message(MessageType::INFO, "lsp server initialized!").await;
     }
 
     async fn shutdown(&self) -> Result<()> {
