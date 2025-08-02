@@ -81,7 +81,7 @@ pub fn transaction_request_to_typed(
             to: to?.into_to()?,
             chain_id: 0,
             access_list: access_list.unwrap_or_default(),
-            authorization_list: authorization_list.unwrap(),
+            authorization_list: authorization_list.unwrap_or_default(),
         }));
     }
 
