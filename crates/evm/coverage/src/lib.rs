@@ -44,6 +44,8 @@ pub struct CoverageReport {
     /// All coverage items for the codebase, keyed by the compiler version.
     pub analyses: HashMap<Version, SourceAnalysis>,
     /// All item anchors for the codebase, keyed by their contract ID.
+    ///
+    /// `(id, (creation, runtime))`
     pub anchors: HashMap<ContractId, (Vec<ItemAnchor>, Vec<ItemAnchor>)>,
     /// All the bytecode hits for the codebase.
     pub bytecode_hits: HashMap<ContractId, HitMap>,
@@ -77,6 +79,8 @@ impl CoverageReport {
     }
 
     /// Add anchors to this report.
+    ///
+    /// `(id, (creation, runtime))`
     pub fn add_anchors(
         &mut self,
         anchors: impl IntoIterator<Item = (ContractId, (Vec<ItemAnchor>, Vec<ItemAnchor>))>,
@@ -356,7 +360,7 @@ impl Display for CoverageItem {
                 write!(f, r#"Function "{name}""#)?;
             }
         }
-        write!(f, " (location: {}, hits: {})", self.loc, self.hits)
+        write!(f, " (location: ({}), hits: {})", self.loc, self.hits)
     }
 }
 
@@ -375,7 +379,7 @@ pub struct SourceLocation {
 
 impl Display for SourceLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "source ID {}, lines {:?}, bytes {:?}", self.source_id, self.lines, self.bytes)
+        write!(f, "source ID: {}, lines: {:?}, bytes: {:?}", self.source_id, self.lines, self.bytes)
     }
 }
 
