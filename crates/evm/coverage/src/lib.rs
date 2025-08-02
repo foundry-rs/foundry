@@ -326,7 +326,7 @@ pub enum CoverageItemKind {
     /// A function in the code.
     Function {
         /// The name of the function.
-        name: String,
+        name: Box<str>,
     },
 }
 
