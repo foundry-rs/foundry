@@ -10,3 +10,6 @@
 
 # fmt: all (#3398)
 860d083183b51a6f8d865408ef1a44aa694d6862
+
+# chore: bump to rust edition 2024 (#10802)
+710a1584aae8e0f8ca8d5ba552632dc72381091e

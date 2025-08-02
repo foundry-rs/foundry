@@ -1,24 +1,25 @@
-use crate::eth::{
-    backend::{info::StorageInfo, notifications::NewBlockNotifications},
-    error::BlockchainError,
+use std::{
+    collections::BTreeMap,
+    fmt,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
 };
+
 use alloy_consensus::Header;
 use alloy_eips::{
-    calc_next_block_base_fee, eip1559::BaseFeeParams, eip4844::MAX_DATA_GAS_PER_BLOCK,
+    calc_next_block_base_fee, eip1559::BaseFeeParams, eip7691::MAX_BLOBS_PER_BLOCK_ELECTRA,
     eip7840::BlobParams,
 };
 use alloy_primitives::B256;
 use anvil_core::eth::transaction::TypedTransaction;
-use foundry_evm::revm::primitives::{BlobExcessGasAndPrice, SpecId};
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
-use std::{
-    collections::BTreeMap,
-    fmt,
-    future::Future,
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
+use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork::SpecId};
+
+use crate::eth::{
+    backend::{info::StorageInfo, notifications::NewBlockNotifications},
+    error::BlockchainError,
 };
 
 /// Maximum number of entries in the fee history cache
@@ -54,7 +55,7 @@ pub struct FeeManager {
     /// Tracks the excess blob gas, and the base fee, for the next block post Cancun
     ///
     /// This value will be updated after a new block was mined
-    blob_excess_gas_and_price: Arc<RwLock<foundry_evm::revm::primitives::BlobExcessGasAndPrice>>,
+    blob_excess_gas_and_price: Arc<RwLock<BlobExcessGasAndPrice>>,
     /// The base price to use Pre London
     ///
     /// This will be constant value unless changed manually
@@ -95,19 +96,11 @@ impl FeeManager {
 
     /// Calculates the current blob gas price
     pub fn blob_gas_price(&self) -> u128 {
-        if self.is_eip4844() {
-            self.base_fee_per_blob_gas()
-        } else {
-            0
-        }
+        if self.is_eip4844() { self.base_fee_per_blob_gas() } else { 0 }
     }
 
     pub fn base_fee(&self) -> u64 {
-        if self.is_eip1559() {
-            *self.base_fee.read()
-        } else {
-            0
-        }
+        if self.is_eip1559() { *self.base_fee.read() } else { 0 }
     }
 
     pub fn is_min_priority_fee_enforced(&self) -> bool {
@@ -120,19 +113,11 @@ impl FeeManager {
     }
 
     pub fn excess_blob_gas_and_price(&self) -> Option<BlobExcessGasAndPrice> {
-        if self.is_eip4844() {
-            Some(self.blob_excess_gas_and_price.read().clone())
-        } else {
-            None
-        }
+        if self.is_eip4844() { Some(*self.blob_excess_gas_and_price.read()) } else { None }
     }
 
     pub fn base_fee_per_blob_gas(&self) -> u128 {
-        if self.is_eip4844() {
-            self.blob_excess_gas_and_price.read().blob_gasprice
-        } else {
-            0
-        }
+        if self.is_eip4844() { self.blob_excess_gas_and_price.read().blob_gasprice } else { 0 }
     }
 
     /// Returns the current gas price
@@ -158,15 +143,15 @@ impl FeeManager {
     /// Calculates the base fee for the next block
     pub fn get_next_block_base_fee_per_gas(
         &self,
-        gas_used: u128,
-        gas_limit: u128,
+        gas_used: u64,
+        gas_limit: u64,
         last_fee_per_gas: u64,
     ) -> u64 {
         // It's naturally impossible for base fee to be 0;
         // It means it was set by the user deliberately and therefore we treat it as a constant.
         // Therefore, we skip the base fee calculation altogether and we return 0.
         if self.base_fee() == 0 {
-            return 0
+            return 0;
         }
         calculate_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas)
     }
@@ -178,22 +163,20 @@ impl FeeManager {
 
     /// Calculates the next block blob excess gas, using the provided parent blob gas used and
     /// parent blob excess gas
-    pub fn get_next_block_blob_excess_gas(
-        &self,
-        blob_gas_used: u128,
-        blob_excess_gas: u128,
-    ) -> u64 {
-        alloy_eips::eip4844::calc_excess_blob_gas(blob_gas_used as u64, blob_excess_gas as u64)
+    pub fn get_next_block_blob_excess_gas(&self, blob_gas_used: u64, blob_excess_gas: u64) -> u64 {
+        alloy_eips::eip4844::calc_excess_blob_gas(blob_gas_used, blob_excess_gas)
     }
 }
 
 /// Calculate base fee for next block. [EIP-1559](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1559.md) spec
-pub fn calculate_next_block_base_fee(gas_used: u128, gas_limit: u128, base_fee: u64) -> u64 {
-    calc_next_block_base_fee(gas_used as u64, gas_limit as u64, base_fee, BaseFeeParams::ethereum())
+pub fn calculate_next_block_base_fee(gas_used: u64, gas_limit: u64, base_fee: u64) -> u64 {
+    calc_next_block_base_fee(gas_used, gas_limit, base_fee, BaseFeeParams::ethereum())
 }
 
 /// An async service that takes care of the `FeeHistory` cache
 pub struct FeeHistoryService {
+    /// blob parameters for the current spec
+    blob_params: BlobParams,
     /// incoming notifications about new blocks
     new_blocks: NewBlockNotifications,
     /// contains all fee history related entries
@@ -206,11 +189,18 @@ pub struct FeeHistoryService {
 
 impl FeeHistoryService {
     pub fn new(
+        blob_params: BlobParams,
         new_blocks: NewBlockNotifications,
         cache: FeeHistoryCache,
         storage_info: StorageInfo,
     ) -> Self {
-        Self { new_blocks, cache, fee_history_limit: MAX_FEE_HISTORY_CACHE_SIZE, storage_info }
+        Self {
+            blob_params,
+            new_blocks,
+            cache,
+            fee_history_limit: MAX_FEE_HISTORY_CACHE_SIZE,
+            storage_info,
+        }
     }
 
     /// Returns the configured history limit
@@ -247,7 +237,8 @@ impl FeeHistoryService {
         let base_fee = header.base_fee_per_gas.map(|g| g as u128).unwrap_or_default();
         let excess_blob_gas = header.excess_blob_gas.map(|g| g as u128);
         let blob_gas_used = header.blob_gas_used.map(|g| g as u128);
-        let base_fee_per_blob_gas = header.blob_fee(BlobParams::cancun());
+        let base_fee_per_blob_gas = header.blob_fee(self.blob_params);
+
         let mut item = FeeHistoryCacheItem {
             base_fee,
             gas_used_ratio: 0f64,
@@ -268,7 +259,7 @@ impl FeeHistoryService {
             let blob_gas_used = block.header.blob_gas_used.map(|g| g as f64);
             item.gas_used_ratio = gas_used / block.header.gas_limit as f64;
             item.blob_gas_used_ratio =
-                blob_gas_used.map(|g| g / MAX_DATA_GAS_PER_BLOCK as f64).unwrap_or(0 as f64);
+                blob_gas_used.map(|g| g / MAX_BLOBS_PER_BLOCK_ELECTRA as f64).unwrap_or(0 as f64);
 
             // extract useful tx info (gas_used, effective_reward)
             let mut transactions: Vec<(_, _)> = receipts
@@ -315,10 +306,10 @@ impl FeeHistoryService {
                 .filter_map(|p| {
                     let target_gas = (p * gas_used / 100f64) as u64;
                     let mut sum_gas = 0;
-                    for (gas_used, effective_reward) in transactions.iter().cloned() {
+                    for (gas_used, effective_reward) in transactions.iter().copied() {
                         sum_gas += gas_used;
                         if target_gas <= sum_gas {
-                            return Some(effective_reward)
+                            return Some(effective_reward);
                         }
                     }
                     None
@@ -440,7 +431,7 @@ impl FeeDetails {
                 if let Some(max_priority) = max_priority {
                     let max_fee = max_fee.unwrap_or_default();
                     if max_priority > max_fee {
-                        return Err(BlockchainError::InvalidFeeInput)
+                        return Err(BlockchainError::InvalidFeeInput);
                     }
                 }
                 Ok(Self {
@@ -456,7 +447,7 @@ impl FeeDetails {
                 if let Some(max_priority) = max_priority {
                     let max_fee = max_fee.unwrap_or_default();
                     if max_priority > max_fee {
-                        return Err(BlockchainError::InvalidFeeInput)
+                        return Err(BlockchainError::InvalidFeeInput);
                     }
                 }
                 Ok(Self {

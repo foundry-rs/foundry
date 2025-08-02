@@ -1,10 +1,10 @@
 use cache::Cache;
 use clap::{
-    builder::{PossibleValuesParser, TypedValueParser},
     Arg, Command, Parser, Subcommand,
+    builder::{PossibleValuesParser, TypedValueParser},
 };
 use eyre::Result;
-use foundry_config::{cache, Chain, Config, NamedChain};
+use foundry_config::{Chain, Config, NamedChain, cache};
 use std::{ffi::OsStr, str::FromStr};
 use strum::VariantNames;
 
@@ -131,7 +131,7 @@ fn clean_chain_cache(chain: impl Into<Chain>, blocks: Vec<u64>, etherscan: bool)
     if blocks.is_empty() {
         Config::clean_foundry_etherscan_chain_cache(chain)?;
         if etherscan {
-            return Ok(())
+            return Ok(());
         }
         Config::clean_foundry_chain_cache(chain)?;
     } else {

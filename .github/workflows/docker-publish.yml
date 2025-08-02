@@ -40,9 +40,9 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v2
         with:
-            registry: ${{ env.REGISTRY }}
-            username: ${{ github.actor }}
-            password: ${{ secrets.GITHUB_TOKEN }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       # Extract metadata (tags, labels) for Docker
       # https://github.com/docker/metadata-action
@@ -50,7 +50,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v4
         with:
-            images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
       # Creates an additional 'latest' or 'nightly' tag
       # If the job is triggered via cron schedule, tag nightly and nightly-{SHA}
@@ -59,22 +59,22 @@ jobs:
       - name: Finalize Docker Metadata
         id: docker_tagging
         run: |
-            if [[ "${{ github.event_name }}" == 'schedule' ]]; then
-              echo "cron trigger, assigning nightly tag"
-              echo "docker_tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly-${GITHUB_SHA}" >> $GITHUB_OUTPUT
-            elif [[ "${GITHUB_REF##*/}" == "main" ]] || [[ ${GITHUB_REF##*/} == "master" ]]; then
-              echo "manual trigger from master/main branch, assigning latest tag"
-              echo "docker_tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${GITHUB_REF##*/},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_OUTPUT
-            else
-              echo "Neither scheduled nor manual release from main branch. Just tagging as branch name"
-              echo "docker_tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${GITHUB_REF##*/}" >> $GITHUB_OUTPUT
-            fi
+          if [[ "${{ github.event_name }}" == 'schedule' ]]; then
+            echo "cron trigger, assigning nightly tag"
+            echo "docker_tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly-${GITHUB_SHA}" >> $GITHUB_OUTPUT
+          elif [[ "${GITHUB_REF##*/}" == "main" ]] || [[ ${GITHUB_REF##*/} == "master" ]]; then
+            echo "manual trigger from master/main branch, assigning latest tag"
+            echo "docker_tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${GITHUB_REF##*/},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_OUTPUT
+          else
+            echo "Neither scheduled nor manual release from main branch. Just tagging as branch name"
+            echo "docker_tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${GITHUB_REF##*/}" >> $GITHUB_OUTPUT
+          fi
 
       # Log docker metadata to explicitly know what is being pushed
       - name: Inspect Docker Metadata
         run: |
-            echo "TAGS -> ${{ steps.docker_tagging.outputs.docker_tags }}"
-            echo "LABELS -> ${{ steps.meta.outputs.labels }}"
+          echo "TAGS -> ${{ steps.docker_tagging.outputs.docker_tags }}"
+          echo "LABELS -> ${{ steps.meta.outputs.labels }}"
 
       - name: Build and push foundry image
         run: make DOCKER_IMAGE_NAME=${{ steps.docker_tagging.outputs.docker_tags }} CARGO_TAG_NAME=${{ inputs.tag_name }} PROFILE=maxperf docker-build-push

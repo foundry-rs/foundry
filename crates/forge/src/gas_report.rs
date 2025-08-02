@@ -5,11 +5,10 @@ use crate::{
     traces::{CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedCallData},
 };
 use alloy_primitives::map::HashSet;
-use comfy_table::{modifiers::UTF8_ROUND_CORNERS, Cell, Color, Table};
+use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS};
 use foundry_common::{
-    calc,
-    reports::{report_kind, ReportKind},
-    TestFunctionExt,
+    TestFunctionExt, calc,
+    reports::{ReportKind, report_kind},
 };
 use foundry_evm::traces::CallKind;
 

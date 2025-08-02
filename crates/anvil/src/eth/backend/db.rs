@@ -1,33 +1,37 @@
 //! Helper types for working with [revm](foundry_evm::revm)
 
-use crate::{mem::storage::MinedTransaction, revm::primitives::AccountInfo};
+use crate::mem::storage::MinedTransaction;
 use alloy_consensus::Header;
-use alloy_primitives::{keccak256, Address, Bytes, B256, U256, U64};
+use alloy_primitives::{Address, B256, Bytes, U256, keccak256, map::HashMap};
 use alloy_rpc_types::BlockId;
 use anvil_core::eth::{
     block::Block,
     transaction::{MaybeImpersonatedTransaction, TransactionInfo, TypedReceipt, TypedTransaction},
 };
 use foundry_common::errors::FsPathError;
-use foundry_evm::{
-    backend::{
-        BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertStateSnapshotAction,
-        StateSnapshot,
-    },
-    revm::{
-        db::{CacheDB, DatabaseRef, DbAccount},
-        primitives::{BlockEnv, Bytecode, HashMap, KECCAK_EMPTY},
-        Database, DatabaseCommit,
-    },
+use foundry_evm::backend::{
+    BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertStateSnapshotAction, StateSnapshot,
+};
+use revm::{
+    Database, DatabaseCommit,
+    bytecode::Bytecode,
+    context::BlockEnv,
+    database::{CacheDB, DatabaseRef, DbAccount},
+    primitives::KECCAK_EMPTY,
+    state::AccountInfo,
 };
 use serde::{
-    de::{MapAccess, Visitor},
     Deserialize, Deserializer, Serialize,
+    de::{MapAccess, Visitor},
 };
-use std::{collections::BTreeMap, fmt, path::Path};
+use std::{
+    collections::BTreeMap,
+    fmt::{self, Debug},
+    path::Path,
+};
 
 /// Helper trait get access to the full state data of the database
-pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> {
+pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> + Debug {
     /// Returns a reference to the database as a `dyn DatabaseRef`.
     // TODO: Required until trait upcasting is stabilized: <https://github.com/rust-lang/rust/issues/65991>
     fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError>;
@@ -115,7 +119,7 @@ pub trait Db:
         Ok(())
     }
 
-    /// Sets the balance of the given address
+    /// Sets the code of the given address
     fn set_code(&mut self, address: Address, code: Bytes) -> DatabaseResult<()> {
         let mut info = self.basic(address)?.unwrap_or_default();
         let code_hash = if code.as_ref().is_empty() {
@@ -129,7 +133,7 @@ pub trait Db:
         Ok(())
     }
 
-    /// Sets the balance of the given address
+    /// Sets the storage value at the given slot for the address
     fn set_storage_at(&mut self, address: Address, slot: B256, val: B256) -> DatabaseResult<()>;
 
     /// inserts a blockhash for the given number
@@ -139,7 +143,7 @@ pub trait Db:
     fn dump_state(
         &self,
         at: BlockEnv,
-        best_number: U64,
+        best_number: u64,
         blocks: Vec<SerializableBlock>,
         transactions: Vec<SerializableTransaction>,
         historical_states: Option<SerializableHistoricalStates>,
@@ -215,13 +219,13 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: B256) {
-        self.block_hashes.insert(number, hash);
+        self.cache.block_hashes.insert(number, hash);
     }
 
     fn dump_state(
         &self,
         _at: BlockEnv,
-        _best_number: U64,
+        _best_number: u64,
         _blocks: Vec<SerializableBlock>,
         _transaction: Vec<SerializableTransaction>,
         _historical_states: Option<SerializableHistoricalStates>,
@@ -242,43 +246,43 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
     }
 }
 
-impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
+impl<T: DatabaseRef<Error = DatabaseError> + Debug> MaybeFullDatabase for CacheDB<T> {
     fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
         self
     }
 
     fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
-        Some(&self.accounts)
+        Some(&self.cache.accounts)
     }
 
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
-        let db_accounts = std::mem::take(&mut self.accounts);
+        let db_accounts = std::mem::take(&mut self.cache.accounts);
         let mut accounts = HashMap::default();
         let mut account_storage = HashMap::default();
 
         for (addr, mut acc) in db_accounts {
             account_storage.insert(addr, std::mem::take(&mut acc.storage));
             let mut info = acc.info;
-            info.code = self.contracts.remove(&info.code_hash);
+            info.code = self.cache.contracts.remove(&info.code_hash);
             accounts.insert(addr, info);
         }
-        let block_hashes = std::mem::take(&mut self.block_hashes);
+        let block_hashes = std::mem::take(&mut self.cache.block_hashes);
         StateSnapshot { accounts, storage: account_storage, block_hashes }
     }
 
     fn read_as_state_snapshot(&self) -> StateSnapshot {
-        let db_accounts = self.accounts.clone();
+        let db_accounts = self.cache.accounts.clone();
         let mut accounts = HashMap::default();
         let mut account_storage = HashMap::default();
 
         for (addr, acc) in db_accounts {
             account_storage.insert(addr, acc.storage.clone());
             let mut info = acc.info;
-            info.code = self.contracts.get(&info.code_hash).cloned();
+            info.code = self.cache.contracts.get(&info.code_hash).cloned();
             accounts.insert(addr, info);
         }
 
-        let block_hashes = self.block_hashes.clone();
+        let block_hashes = self.cache.block_hashes.clone();
         StateSnapshot { accounts, storage: account_storage, block_hashes }
     }
 
@@ -291,9 +295,9 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
 
         for (addr, mut acc) in accounts {
             if let Some(code) = acc.code.take() {
-                self.contracts.insert(acc.code_hash, code);
+                self.cache.contracts.insert(acc.code_hash, code);
             }
-            self.accounts.insert(
+            self.cache.accounts.insert(
                 addr,
                 DbAccount {
                     info: acc,
@@ -302,7 +306,7 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
                 },
             );
         }
-        self.block_hashes = block_hashes;
+        self.cache.block_hashes = block_hashes;
     }
 }
 
@@ -321,6 +325,7 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeForkedDatabase for CacheDB<T> {
 }
 
 /// Represents a state at certain point
+#[derive(Debug)]
 pub struct StateDb(pub(crate) Box<dyn MaybeFullDatabase + Send + Sync>);
 
 impl StateDb {
@@ -388,7 +393,7 @@ pub struct SerializableState {
     pub block: Option<BlockEnv>,
     pub accounts: BTreeMap<Address, SerializableAccountRecord>,
     /// The best block number of the state, can be different from block number (Arbitrum chain).
-    pub best_block_number: Option<U64>,
+    pub best_block_number: Option<u64>,
     #[serde(default)]
     pub blocks: Vec<SerializableBlock>,
     #[serde(default)]

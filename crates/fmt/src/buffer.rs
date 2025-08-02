@@ -4,6 +4,7 @@ use crate::{
     comments::{CommentState, CommentStringExt},
     string::{QuoteState, QuotedStringExt},
 };
+use foundry_config::fmt::IndentStyle;
 use std::fmt::Write;
 
 /// An indent group. The group may optionally skip the first line
@@ -44,6 +45,7 @@ pub struct FormatBuffer<W> {
     indents: Vec<IndentGroup>,
     base_indent_len: usize,
     tab_width: usize,
+    style: IndentStyle,
     last_char: Option<char>,
     current_line_len: usize,
     restrict_to_single_line: bool,
@@ -51,10 +53,11 @@ pub struct FormatBuffer<W> {
 }
 
 impl<W> FormatBuffer<W> {
-    pub fn new(w: W, tab_width: usize) -> Self {
+    pub fn new(w: W, tab_width: usize, style: IndentStyle) -> Self {
         Self {
             w,
             tab_width,
+            style,
             base_indent_len: 0,
             indents: vec![],
             current_line_len: 0,
@@ -67,7 +70,7 @@ impl<W> FormatBuffer<W> {
     /// Create a new temporary buffer based on an existing buffer which retains information about
     /// the buffer state, but has a blank String as its underlying `Write` interface
     pub fn create_temp_buf(&self) -> FormatBuffer<String> {
-        let mut new = FormatBuffer::new(String::new(), self.tab_width);
+        let mut new = FormatBuffer::new(String::new(), self.tab_width, self.style);
         new.base_indent_len = self.total_indent_len();
         new.current_line_len = self.current_line_len();
         new.last_char = self.last_char;
@@ -114,9 +117,28 @@ impl<W> FormatBuffer<W> {
         }
     }
 
-    /// Get the current indent size (level * tab_width)
+    /// Get the current indent size. level * tab_width for spaces and level for tabs
     pub fn current_indent_len(&self) -> usize {
-        self.level() * self.tab_width
+        match self.style {
+            IndentStyle::Space => self.level() * self.tab_width,
+            IndentStyle::Tab => self.level(),
+        }
+    }
+
+    /// Get the char used for indent
+    pub fn indent_char(&self) -> char {
+        match self.style {
+            IndentStyle::Space => ' ',
+            IndentStyle::Tab => '\t',
+        }
+    }
+
+    /// Get the indent len for the given level
+    pub fn get_indent_len(&self, level: usize) -> usize {
+        match self.style {
+            IndentStyle::Space => level * self.tab_width,
+            IndentStyle::Tab => level,
+        }
     }
 
     /// Get the total indent size
@@ -181,7 +203,7 @@ impl<W: Write> FormatBuffer<W> {
                 .take(self.base_indent_len)
                 .take_while(|(_, _, ch)| ch.is_whitespace())
                 .last()
-                .map(|(state, idx, _)| (state, idx + 1))
+                .map(|(state, idx, ch)| (state, idx + ch.len_utf8()))
                 .unwrap_or((comment_state, 0));
             comment_state = new_comment_state;
             let trimmed_line = &line[line_start..];
@@ -193,7 +215,7 @@ impl<W: Write> FormatBuffer<W> {
             }
             if lines.peek().is_some() || s.ends_with('\n') {
                 if self.restrict_to_single_line {
-                    return Err(std::fmt::Error)
+                    return Err(std::fmt::Error);
                 }
                 self.w.write_char('\n')?;
                 self.handle_newline(comment_state);
@@ -206,10 +228,10 @@ impl<W: Write> FormatBuffer<W> {
 impl<W: Write> Write for FormatBuffer<W> {
     fn write_str(&mut self, mut s: &str) -> std::fmt::Result {
         if s.is_empty() {
-            return Ok(())
+            return Ok(());
         }
 
-        let mut indent = " ".repeat(self.current_indent_len());
+        let mut indent = self.indent_char().to_string().repeat(self.current_indent_len());
 
         loop {
             match self.state {
@@ -221,7 +243,7 @@ impl<W: Write> Write for FormatBuffer<W> {
                                 self.w.write_str(s)?;
                                 self.handle_newline(comment_state);
                             }
-                            break
+                            break;
                         }
 
                         // We can see the next non-empty line. Write up to the
@@ -232,11 +254,14 @@ impl<W: Write> Write for FormatBuffer<W> {
                             self.w.write_str(head)?;
                             self.w.write_str(&indent)?;
                             self.current_line_len = 0;
-                            self.last_char = Some(' ');
+                            self.last_char = Some(self.indent_char());
                             // a newline has been inserted
                             if len > 0 {
                                 if self.last_indent_group_skipped() {
-                                    indent = " ".repeat(self.current_indent_len() + self.tab_width);
+                                    indent = self
+                                        .indent_char()
+                                        .to_string()
+                                        .repeat(self.get_indent_len(self.level() + 1));
                                     self.set_last_indent_group_skipped(false);
                                 }
                                 if comment_state == CommentState::Line {
@@ -250,7 +275,7 @@ impl<W: Write> Write for FormatBuffer<W> {
                 }
                 WriteState::WriteTokens(comment_state) => {
                     if s.is_empty() {
-                        break
+                        break;
                     }
 
                     // find the next newline or non-comment string separator (e.g. ' or ")
@@ -261,13 +286,13 @@ impl<W: Write> Write for FormatBuffer<W> {
                         len = idx;
                         if ch == '\n' {
                             if self.restrict_to_single_line {
-                                return Err(std::fmt::Error)
+                                return Err(std::fmt::Error);
                             }
                             new_state = WriteState::LineStart(state);
-                            break
+                            break;
                         } else if state == CommentState::None && (ch == '\'' || ch == '"') {
                             new_state = WriteState::WriteString(ch);
-                            break
+                            break;
                         } else {
                             new_state = WriteState::WriteTokens(state);
                         }
@@ -279,7 +304,7 @@ impl<W: Write> Write for FormatBuffer<W> {
                         self.current_line_len += s.len();
                         self.last_char = s.chars().next_back();
                         self.state = new_state;
-                        break
+                        break;
                     } else {
                         // A newline or string has been found. Write up to that character and
                         // continue on the tail
@@ -305,7 +330,7 @@ impl<W: Write> Write for FormatBuffer<W> {
                             self.w.write_str(s)?;
                             self.current_line_len += s.len();
                             self.last_char = s.chars().next_back();
-                            break
+                            break;
                         }
                         // String end found, write the string and continue to add tokens after
                         Some((_, _, len)) => {
@@ -340,10 +365,11 @@ mod tests {
     fn test_buffer_indents() -> std::fmt::Result {
         let delta = 1;
 
-        let mut buf = FormatBuffer::new(String::new(), TAB_WIDTH);
+        let mut buf = FormatBuffer::new(String::new(), TAB_WIDTH, IndentStyle::Space);
         assert_eq!(buf.indents.len(), 0);
         assert_eq!(buf.level(), 0);
         assert_eq!(buf.current_indent_len(), 0);
+        assert_eq!(buf.style, IndentStyle::Space);
 
         buf.indent(delta);
         assert_eq!(buf.indents.len(), delta);
@@ -374,7 +400,7 @@ mod tests {
     fn test_identical_temp_buf() -> std::fmt::Result {
         let content = "test string";
         let multiline_content = "test\nmultiline\nmultiple";
-        let mut buf = FormatBuffer::new(String::new(), TAB_WIDTH);
+        let mut buf = FormatBuffer::new(String::new(), TAB_WIDTH, IndentStyle::Space);
 
         // create identical temp buf
         let mut temp = buf.create_temp_buf();
@@ -432,11 +458,40 @@ mod tests {
         ];
 
         for content in &contents {
-            let mut buf = FormatBuffer::new(String::new(), TAB_WIDTH);
+            let mut buf = FormatBuffer::new(String::new(), TAB_WIDTH, IndentStyle::Space);
             write!(buf, "{content}")?;
             assert_eq!(&buf.w, content);
         }
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_indent_char() -> std::fmt::Result {
+        assert_eq!(
+            FormatBuffer::new(String::new(), TAB_WIDTH, IndentStyle::Space).indent_char(),
+            ' '
+        );
+        assert_eq!(
+            FormatBuffer::new(String::new(), TAB_WIDTH, IndentStyle::Tab).indent_char(),
+            '\t'
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_indent_len() -> std::fmt::Result {
+        // Space should use level * TAB_WIDTH
+        let mut buf = FormatBuffer::new(String::new(), TAB_WIDTH, IndentStyle::Space);
+        assert_eq!(buf.current_indent_len(), 0);
+        buf.indent(2);
+        assert_eq!(buf.current_indent_len(), 2 * TAB_WIDTH);
+
+        // Tab should use level
+        buf = FormatBuffer::new(String::new(), TAB_WIDTH, IndentStyle::Tab);
+        assert_eq!(buf.current_indent_len(), 0);
+        buf.indent(2);
+        assert_eq!(buf.current_indent_len(), 2);
         Ok(())
     }
 }

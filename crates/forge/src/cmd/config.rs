@@ -32,7 +32,7 @@ impl ConfigArgs {
             for warning in fix_tomls() {
                 sh_warn!("{warning}")?;
             }
-            return Ok(())
+            return Ok(());
         }
 
         let config = self

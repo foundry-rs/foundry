@@ -1,10 +1,10 @@
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::U256;
 use proptest::{
+    prelude::Rng,
     strategy::{NewTree, Strategy, ValueTree},
     test_runner::TestRunner,
 };
-use rand::Rng;
 
 /// Value tree for unsigned ints (up to uint256).
 pub struct UintValueTree {
@@ -49,7 +49,7 @@ impl ValueTree for UintValueTree {
 
     fn simplify(&mut self) -> bool {
         if self.fixed || (self.hi <= self.lo) {
-            return false
+            return false;
         }
         self.hi = self.curr;
         self.reposition()
@@ -57,7 +57,7 @@ impl ValueTree for UintValueTree {
 
     fn complicate(&mut self) -> bool {
         if self.fixed || (self.hi <= self.lo) {
-            return false
+            return false;
         }
 
         self.lo = self.curr + U256::from(1);
@@ -111,8 +111,8 @@ impl UintStrategy {
     fn generate_edge_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
         let rng = runner.rng();
         // Choose if we want values around 0 or max
-        let is_min = rng.gen_bool(0.5);
-        let offset = U256::from(rng.gen_range(0..4));
+        let is_min = rng.random::<bool>();
+        let offset = U256::from(rng.random_range(0..4));
         let start = if is_min { offset } else { self.type_max().saturating_sub(offset) };
         Ok(UintValueTree::new(start, false))
     }
@@ -120,15 +120,15 @@ impl UintStrategy {
     fn generate_fixtures_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
         // generate random cases if there's no fixtures
         if self.fixtures.is_empty() {
-            return self.generate_random_tree(runner)
+            return self.generate_random_tree(runner);
         }
 
         // Generate value tree from fixture.
-        let fixture = &self.fixtures[runner.rng().gen_range(0..self.fixtures.len())];
-        if let Some(uint_fixture) = fixture.as_uint() {
-            if uint_fixture.1 == self.bits {
-                return Ok(UintValueTree::new(uint_fixture.0, false));
-            }
+        let fixture = &self.fixtures[runner.rng().random_range(0..self.fixtures.len())];
+        if let Some(uint_fixture) = fixture.as_uint()
+            && uint_fixture.1 == self.bits
+        {
+            return Ok(UintValueTree::new(uint_fixture.0, false));
         }
 
         // If fixture is not a valid type, raise error and generate random value.
@@ -140,11 +140,11 @@ impl UintStrategy {
         let rng = runner.rng();
 
         // generate random number of bits uniformly
-        let bits = rng.gen_range(0..=self.bits);
+        let bits = rng.random_range(0..=self.bits);
 
         // init 2 128-bit randoms
-        let mut higher: u128 = rng.gen_range(0..=u128::MAX);
-        let mut lower: u128 = rng.gen_range(0..=u128::MAX);
+        let mut higher: u128 = rng.random_range(0..=u128::MAX);
+        let mut lower: u128 = rng.random_range(0..=u128::MAX);
 
         // cut 2 randoms according to bits size
         match bits {
@@ -169,11 +169,7 @@ impl UintStrategy {
     }
 
     fn type_max(&self) -> U256 {
-        if self.bits < 256 {
-            (U256::from(1) << self.bits) - U256::from(1)
-        } else {
-            U256::MAX
-        }
+        if self.bits < 256 { (U256::from(1) << self.bits) - U256::from(1) } else { U256::MAX }
     }
 }
 
@@ -182,7 +178,7 @@ impl Strategy for UintStrategy {
     type Value = U256;
     fn new_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
         let total_weight = self.random_weight + self.fixtures_weight + self.edge_weight;
-        let bias = runner.rng().gen_range(0..total_weight);
+        let bias = runner.rng().random_range(0..total_weight);
         // randomly select one of 3 strategies
         match bias {
             x if x < self.edge_weight => self.generate_edge_tree(runner),

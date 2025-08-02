@@ -1,6 +1,6 @@
 //! Subscription types
 use alloy_primitives::hex;
-use rand::{distributions::Alphanumeric, thread_rng, Rng};
+use rand::{Rng, distr::Alphanumeric, rng};
 use std::fmt;
 
 /// Unique subscription id
@@ -46,9 +46,9 @@ pub struct HexIdProvider {
 
 impl HexIdProvider {
     /// Generates a random hex encoded Id
-    pub fn gen(&self) -> String {
+    pub fn generate(&self) -> String {
         let id: String =
-            (&mut thread_rng()).sample_iter(Alphanumeric).map(char::from).take(self.len).collect();
+            (&mut rng()).sample_iter(Alphanumeric).map(char::from).take(self.len).collect();
         let out = hex::encode(id);
         format!("0x{out}")
     }
@@ -62,5 +62,5 @@ impl Default for HexIdProvider {
 
 /// Returns a new random hex identifier
 pub fn hex_id() -> String {
-    HexIdProvider::default().gen()
+    HexIdProvider::default().generate()
 }

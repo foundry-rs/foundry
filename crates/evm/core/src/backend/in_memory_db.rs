@@ -4,9 +4,11 @@ use crate::state_snapshot::StateSnapshots;
 use alloy_primitives::{Address, B256, U256};
 use foundry_fork_db::DatabaseError;
 use revm::{
-    db::{CacheDB, DatabaseRef, EmptyDB},
-    primitives::{Account, AccountInfo, Bytecode, HashMap as Map},
     Database, DatabaseCommit,
+    bytecode::Bytecode,
+    database::{CacheDB, DatabaseRef, EmptyDB},
+    primitives::HashMap as Map,
+    state::{Account, AccountInfo},
 };
 
 /// Type alias for an in-memory database.
@@ -131,16 +133,16 @@ mod tests {
         // call `basic` on a non-existing account
         let info = Database::basic(&mut db, address).unwrap();
         assert!(info.is_none());
+
         let mut info = info.unwrap_or_default();
         info.balance = U256::from(500u64);
 
         // insert the modified account info
         db.insert_account_info(address, info);
 
-        // when fetching again, the `AccountInfo` is still `None` because the state of the account
-        // is `AccountState::NotExisting`, see <https://github.com/bluealloy/revm/blob/8f4348dc93022cffb3730d9db5d3ab1aad77676a/crates/revm/src/db/in_memory_db.rs#L217-L226>
+        // now we can call `basic` again and it should return the inserted account info
         let info = Database::basic(&mut db, address).unwrap();
-        assert!(info.is_none());
+        assert!(info.is_some());
     }
 
     /// Demonstrates how to insert a new account but not mark it as non-existing

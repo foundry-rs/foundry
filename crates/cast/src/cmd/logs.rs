@@ -1,13 +1,13 @@
 use crate::Cast;
 use alloy_dyn_abi::{DynSolType, DynSolValue, Specifier};
+use alloy_ens::NameOrAddress;
 use alloy_json_abi::Event;
 use alloy_network::AnyNetwork;
-use alloy_primitives::{hex::FromHex, Address, B256};
+use alloy_primitives::{Address, B256, hex::FromHex};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, FilterBlockOption, FilterSet, Topic};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{opts::EthereumOpts, utils, utils::LoadConfig};
-use foundry_common::ens::NameOrAddress;
 use itertools::Itertools;
 use std::{io, str::FromStr};
 
@@ -77,7 +77,7 @@ impl LogsArgs {
         if !subscribe {
             let logs = cast.filter_logs(filter).await?;
             sh_println!("{logs}")?;
-            return Ok(())
+            return Ok(());
         }
 
         // FIXME: this is a hotfix for <https://github.com/foundry-rs/foundry/issues/7682>
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn test_build_filter_sig_with_arguments() {
         let addr = Address::from_str(ADDRESS).unwrap();
-        let addr = U256::from(U160::from_be_bytes(addr.0 .0));
+        let addr = U256::from(U160::from_be_bytes(addr.0.0));
         let expected = Filter {
             block_option: FilterBlockOption::Range { from_block: None, to_block: None },
             address: vec![].into(),
@@ -295,7 +295,7 @@ mod tests {
     #[test]
     fn test_build_filter_sig_with_skipped_arguments() {
         let addr = Address::from_str(ADDRESS).unwrap();
-        let addr = U256::from(U160::from_be_bytes(addr.0 .0));
+        let addr = U256::from(U160::from_be_bytes(addr.0.0));
         let expected = Filter {
             block_option: FilterBlockOption::Range { from_block: None, to_block: None },
             address: vec![].into(),

@@ -1,5 +1,5 @@
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, Bytes, map::HashMap};
 use foundry_common::ContractsByArtifact;
 use foundry_compilers::ArtifactId;
 use foundry_config::{Chain, Config};
@@ -76,6 +76,17 @@ impl<'a> TraceIdentifiers<'a> {
     /// Sets the local identifier.
     pub fn with_local(mut self, known_contracts: &'a ContractsByArtifact) -> Self {
         self.local = Some(LocalTraceIdentifier::new(known_contracts));
+        self
+    }
+
+    /// Sets the local identifier.
+    pub fn with_local_and_bytecodes(
+        mut self,
+        known_contracts: &'a ContractsByArtifact,
+        contracts_bytecode: &'a HashMap<Address, Bytes>,
+    ) -> Self {
+        self.local =
+            Some(LocalTraceIdentifier::new(known_contracts).with_bytecodes(contracts_bytecode));
         self
     }
 

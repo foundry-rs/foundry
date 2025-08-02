@@ -7,7 +7,7 @@ on:
     # Run weekly
     - cron: "0 0 * * SUN"
   workflow_dispatch:
-    # Needed so we can run it manually
+# Needed so we can run it manually
 
 permissions:
   contents: write

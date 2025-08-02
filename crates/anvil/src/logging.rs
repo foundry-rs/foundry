@@ -2,8 +2,8 @@
 
 use parking_lot::RwLock;
 use std::sync::Arc;
-use tracing::{subscriber::Interest, Metadata};
-use tracing_subscriber::{layer::Context, Layer};
+use tracing::{Metadata, subscriber::Interest};
+use tracing_subscriber::{Layer, layer::Context};
 
 /// The target that identifies the events intended to be logged to stdout
 pub(crate) const NODE_USER_LOG_TARGET: &str = "node::user";
@@ -42,9 +42,9 @@ where
     }
 
     fn enabled(&self, metadata: &Metadata<'_>, _ctx: Context<'_, S>) -> bool {
-        self.state.is_enabled() &&
-            (metadata.target() == NODE_USER_LOG_TARGET ||
-                metadata.target() == EVM_CONSOLE_LOG_TARGET)
+        self.state.is_enabled()
+            && (metadata.target() == NODE_USER_LOG_TARGET
+                || metadata.target() == EVM_CONSOLE_LOG_TARGET)
     }
 }
 

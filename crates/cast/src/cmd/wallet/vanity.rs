@@ -1,4 +1,4 @@
-use alloy_primitives::{hex, Address};
+use alloy_primitives::{Address, hex};
 use alloy_signer::{k256::ecdsa::SigningKey, utils::secret_key_to_address};
 use alloy_signer_local::PrivateKeySigner;
 use clap::Parser;
@@ -91,7 +91,7 @@ impl VanityArgs {
         }
 
         macro_rules! find_vanity {
-            ($m:ident, $nonce: ident) => {
+            ($m:ident, $nonce:ident) => {
                 if let Some(nonce) = $nonce {
                     find_vanity_address_with_nonce($m, nonce)
                 } else {
@@ -221,7 +221,7 @@ pub fn wallet_generator() -> iter::Map<iter::Repeat<()>, impl Fn(()) -> Generate
 
 /// Generates a random K-256 signing key and derives its Ethereum address.
 pub fn generate_wallet() -> GeneratedWallet {
-    let key = SigningKey::random(&mut rand::thread_rng());
+    let key = SigningKey::random(&mut rand_08::thread_rng());
     let address = secret_key_to_address(&key);
     (key, address)
 }

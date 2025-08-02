@@ -33,10 +33,10 @@ contract Issue7238Test is DSTest {
     /// forge-config: default.allow_internal_expect_revert = true
     function testShouldFailEarlyRevert() public {
         vm.expectRevert();
-        rever();
+        revert_();
     }
 
-    function rever() internal {
+    function revert_() internal {
         revert();
     }
 }

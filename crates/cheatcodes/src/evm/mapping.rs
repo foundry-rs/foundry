@@ -1,11 +1,13 @@
 use crate::{Cheatcode, Cheatcodes, Result, Vm::*};
 use alloy_primitives::{
-    keccak256,
+    Address, B256, U256, keccak256,
     map::{AddressHashMap, B256HashMap},
-    Address, B256, U256,
 };
 use alloy_sol_types::SolValue;
-use revm::interpreter::{opcode, Interpreter};
+use revm::{
+    bytecode::opcode,
+    interpreter::{Interpreter, interpreter_types::Jumps},
+};
 
 /// Recorded mapping slots.
 #[derive(Clone, Debug, Default)]
@@ -32,7 +34,7 @@ impl MappingSlots {
         match self.seen_sha3.get(&slot).copied() {
             Some((key, parent)) => {
                 if self.keys.contains_key(&slot) {
-                    return false
+                    return false;
                 }
                 self.keys.insert(slot, key);
                 self.parent_slots.insert(slot, parent);
@@ -117,25 +119,24 @@ fn slot_child<'a>(
 
 #[cold]
 pub(crate) fn step(mapping_slots: &mut AddressHashMap<MappingSlots>, interpreter: &Interpreter) {
-    match interpreter.current_opcode() {
+    match interpreter.bytecode.opcode() {
         opcode::KECCAK256 => {
             if interpreter.stack.peek(1) == Ok(U256::from(0x40)) {
-                let address = interpreter.contract.target_address;
+                let address = interpreter.input.target_address;
                 let offset = interpreter.stack.peek(0).expect("stack size > 1").saturating_to();
-                let data = interpreter.shared_memory.slice(offset, 0x40);
+                let data = interpreter.memory.slice_len(offset, 0x40);
                 let low = B256::from_slice(&data[..0x20]);
                 let high = B256::from_slice(&data[0x20..]);
-                let result = keccak256(data);
+                let result = keccak256(&*data);
 
                 mapping_slots.entry(address).or_default().seen_sha3.insert(result, (low, high));
             }
         }
         opcode::SSTORE => {
-            if let Some(mapping_slots) = mapping_slots.get_mut(&interpreter.contract.target_address)
+            if let Some(mapping_slots) = mapping_slots.get_mut(&interpreter.input.target_address)
+                && let Ok(slot) = interpreter.stack.peek(0)
             {
-                if let Ok(slot) = interpreter.stack.peek(0) {
-                    mapping_slots.insert(slot.into());
-                }
+                mapping_slots.insert(slot.into());
             }
         }
         _ => {}

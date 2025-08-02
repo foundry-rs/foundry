@@ -1,12 +1,11 @@
 //! Helper for shutdown signals
 
 use futures::{
+    FutureExt,
     channel::oneshot,
     future::{FusedFuture, Shared},
-    FutureExt,
 };
 use std::{
-    future::Future,
     pin::Pin,
     task::{Context, Poll},
 };

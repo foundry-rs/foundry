@@ -1,15 +1,16 @@
 //! Anvil is a fast local Ethereum development node.
 
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 use crate::{
     eth::{
+        EthApi,
         backend::{info::StorageInfo, mem},
         fees::{FeeHistoryService, FeeManager},
         miner::{Miner, MiningMode},
         pool::Pool,
         sign::{DevSigner, Signer as EthSigner},
-        EthApi,
     },
     filter::Filters,
     logging::{LoggingManager, NodeLogLayer},
@@ -18,17 +19,17 @@ use crate::{
     shutdown::Signal,
     tasks::TaskManager,
 };
+use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
 use eth::backend::fork::ClientFork;
 use eyre::Result;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
-use foundry_evm::revm;
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
+use revm::primitives::hardfork::SpecId;
 use server::try_spawn_ipc;
 use std::{
-    future::Future,
     net::SocketAddr,
     pin::Pin,
     sync::Arc,
@@ -44,17 +45,17 @@ mod service;
 
 mod config;
 pub use config::{
-    AccountGenerator, ForkChoice, NodeConfig, CHAIN_ID, DEFAULT_GAS_LIMIT, VERSION_MESSAGE,
+    AccountGenerator, CHAIN_ID, DEFAULT_GAS_LIMIT, ForkChoice, NodeConfig, VERSION_MESSAGE,
 };
 
 mod hardfork;
-pub use hardfork::EthereumHardfork;
-
+pub use alloy_hardforks::EthereumHardfork;
 /// ethereum related implementations
 pub mod eth;
 /// Evm related abstractions
 mod evm;
-pub use evm::{inject_precompiles, PrecompileFactory};
+pub use evm::{PrecompileFactory, inject_precompiles};
+
 /// support for polling filters
 pub mod filter;
 /// commandline output
@@ -198,6 +199,11 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi, NodeHandle)> {
 
     let fee_history_cache = Arc::new(Mutex::new(Default::default()));
     let fee_history_service = FeeHistoryService::new(
+        match backend.spec_id() {
+            SpecId::OSAKA => BlobParams::osaka(),
+            SpecId::PRAGUE => BlobParams::prague(),
+            _ => BlobParams::cancun(),
+        },
         backend.new_block_notifications(),
         Arc::clone(&fee_history_cache),
         StorageInfo::new(Arc::clone(&backend)),

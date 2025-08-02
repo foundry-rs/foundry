@@ -1,5 +1,5 @@
 use crate::executors::RawCallResult;
-use alloy_primitives::{map::HashMap, Bytes, Log};
+use alloy_primitives::{Bytes, Log, map::HashMap};
 use foundry_common::evm::Breakpoints;
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::FuzzCase;
@@ -29,7 +29,7 @@ pub struct CounterExampleOutcome {
     /// Minimal reproduction test case for failing test.
     pub counterexample: (Bytes, RawCallResult),
     /// The status of the call.
-    pub exit_reason: InstructionResult,
+    pub exit_reason: Option<InstructionResult>,
     /// Breakpoints char pc map.
     pub breakpoints: Breakpoints,
 }

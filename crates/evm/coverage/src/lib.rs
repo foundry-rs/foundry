@@ -9,8 +9,8 @@
 extern crate tracing;
 
 use alloy_primitives::{
-    map::{B256HashMap, HashMap},
     Bytes,
+    map::{B256HashMap, HashMap},
 };
 use analysis::SourceAnalysis;
 use eyre::Result;
@@ -29,7 +29,7 @@ pub mod analysis;
 pub mod anchors;
 
 mod inspector;
-pub use inspector::CoverageCollector;
+pub use inspector::LineCoverageCollector;
 
 /// A coverage report.
 ///

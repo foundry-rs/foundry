@@ -10,8 +10,8 @@ extern crate tracing;
 
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_primitives::{
-    map::{AddressHashMap, HashMap},
     Address, Bytes, Log,
+    map::{AddressHashMap, HashMap},
 };
 use foundry_common::{calc, contracts::ContractsByAddress, evm::Breakpoints};
 use foundry_evm_coverage::HitMaps;
@@ -76,27 +76,25 @@ impl BaseCounterExample {
         traces: Option<SparsedTraceArena>,
         show_solidity: bool,
     ) -> Self {
-        if let Some((name, abi)) = &contracts.get(&addr) {
-            if let Some(func) = abi.functions().find(|f| f.selector() == bytes[..4]) {
-                // skip the function selector when decoding
-                if let Ok(args) = func.abi_decode_input(&bytes[4..], false) {
-                    return Self {
-                        sender: Some(sender),
-                        addr: Some(addr),
-                        calldata: bytes.clone(),
-                        contract_name: Some(name.clone()),
-                        func_name: Some(func.name.clone()),
-                        signature: Some(func.signature()),
-                        args: Some(
-                            foundry_common::fmt::format_tokens(&args).format(", ").to_string(),
-                        ),
-                        raw_args: Some(
-                            foundry_common::fmt::format_tokens_raw(&args).format(", ").to_string(),
-                        ),
-                        traces,
-                        show_solidity,
-                    };
-                }
+        if let Some((name, abi)) = &contracts.get(&addr)
+            && let Some(func) = abi.functions().find(|f| f.selector() == bytes[..4])
+        {
+            // skip the function selector when decoding
+            if let Ok(args) = func.abi_decode_input(&bytes[4..]) {
+                return Self {
+                    sender: Some(sender),
+                    addr: Some(addr),
+                    calldata: bytes.clone(),
+                    contract_name: Some(name.clone()),
+                    func_name: Some(func.name.clone()),
+                    signature: Some(func.signature()),
+                    args: Some(foundry_common::fmt::format_tokens(&args).format(", ").to_string()),
+                    raw_args: Some(
+                        foundry_common::fmt::format_tokens_raw(&args).format(", ").to_string(),
+                    ),
+                    traces,
+                    show_solidity,
+                };
             }
         }
 
@@ -138,22 +136,21 @@ impl BaseCounterExample {
 impl fmt::Display for BaseCounterExample {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Display counterexample as solidity.
-        if self.show_solidity {
-            if let (Some(sender), Some(contract), Some(address), Some(func_name), Some(args)) =
+        if self.show_solidity
+            && let (Some(sender), Some(contract), Some(address), Some(func_name), Some(args)) =
                 (&self.sender, &self.contract_name, &self.addr, &self.func_name, &self.raw_args)
-            {
-                writeln!(f, "\t\tvm.prank({sender});")?;
-                write!(
-                    f,
-                    "\t\t{}({}).{}({});",
-                    contract.split_once(':').map_or(contract.as_str(), |(_, contract)| contract),
-                    address,
-                    func_name,
-                    args
-                )?;
+        {
+            writeln!(f, "\t\tvm.prank({sender});")?;
+            write!(
+                f,
+                "\t\t{}({}).{}({});",
+                contract.split_once(':').map_or(contract.as_str(), |(_, contract)| contract),
+                address,
+                func_name,
+                args
+            )?;
 
-                return Ok(())
-            }
+            return Ok(());
         }
 
         // Regular counterexample display.
@@ -221,8 +218,8 @@ pub struct FuzzTestResult {
     /// Those traces should not be displayed.
     pub gas_report_traces: Vec<CallTraceArena>,
 
-    /// Raw coverage info
-    pub coverage: Option<HitMaps>,
+    /// Raw line coverage info
+    pub line_coverage: Option<HitMaps>,
 
     /// Breakpoints for debugger. Correspond to the same fuzz case as `traces`.
     pub breakpoints: Option<Breakpoints>,

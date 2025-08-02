@@ -14,13 +14,11 @@ In this phase, builder invokes 2 parsers: [solang parser](https://github.com/hyp
 
 Then, builder takes the output of the internal `Parser` and creates documents with additional information: the path of the original item, display identity, the target path where this document will be written.
 
-
 2. Preprocess
 
 The builder accepts an array of preprocessors which can be applied to documents produced in the `Parse` phase. The preprocessors can rearrange and/or change the array as well as modify the separate documents.
 
 At the end of this phase, the builder maintains a possibly modified collection of documents.
-
 
 3. Write
 

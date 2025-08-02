@@ -1,4 +1,4 @@
-use clap::{builder::RangedU64ValueParser, Parser};
+use clap::{Parser, builder::RangedU64ValueParser};
 use foundry_common::retry::Retry;
 use std::time::Duration;
 

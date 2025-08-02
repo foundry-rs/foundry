@@ -1,9 +1,9 @@
 use alloy_primitives::{Bytes, U256};
 
 use foundry_evm_traces::CallTraceArena;
-use revm::interpreter::{InstructionResult, OpCode};
+use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
 
-use foundry_evm_core::buffer::{get_buffer_accesses, BufferKind};
+use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
 use revm_inspectors::tracing::types::{CallTraceStep, RecordedMemory, TraceMemberOrder};
 use spec::Vm::DebugStep;
 
@@ -71,11 +71,11 @@ pub(crate) fn convert_call_trace_to_debug_step(step: &CallTraceStep) -> DebugSte
 
     let memory = get_memory_input_for_opcode(opcode, step.stack.as_ref(), step.memory.as_ref());
 
-    let is_out_of_gas = step.status == InstructionResult::OutOfGas ||
-        step.status == InstructionResult::MemoryOOG ||
-        step.status == InstructionResult::MemoryLimitOOG ||
-        step.status == InstructionResult::PrecompileOOG ||
-        step.status == InstructionResult::InvalidOperandOOG;
+    let is_out_of_gas = step.status == Some(InstructionResult::OutOfGas)
+        || step.status == Some(InstructionResult::MemoryOOG)
+        || step.status == Some(InstructionResult::MemoryLimitOOG)
+        || step.status == Some(InstructionResult::PrecompileOOG)
+        || step.status == Some(InstructionResult::InvalidOperandOOG);
 
     DebugStep {
         stack,
@@ -98,10 +98,10 @@ fn get_memory_input_for_opcode(
     let Some(stack_data) = stack else { return memory_input };
     let Some(memory_data) = memory else { return memory_input };
 
-    if let Some(accesses) = get_buffer_accesses(opcode, stack_data) {
-        if let Some((BufferKind::Memory, access)) = accesses.read {
-            memory_input = get_slice_from_memory(memory_data.as_bytes(), access.offset, access.len);
-        }
+    if let Some(accesses) = get_buffer_accesses(opcode, stack_data)
+        && let Some((BufferKind::Memory, access)) = accesses.read
+    {
+        memory_input = get_slice_from_memory(memory_data.as_bytes(), access.offset, access.len);
     };
 
     memory_input

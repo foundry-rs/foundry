@@ -1,8 +1,10 @@
-use alloy_primitives::{map::AddressHashMap, B256, U256};
-use revm::{
-    primitives::{AccountInfo, Env, HashMap},
-    JournaledState,
+use super::JournaledState;
+use crate::Env;
+use alloy_primitives::{
+    B256, U256,
+    map::{AddressHashMap, HashMap},
 };
+use revm::state::AccountInfo;
 use serde::{Deserialize, Serialize};
 
 /// A minimal abstraction of a state at a certain point in time

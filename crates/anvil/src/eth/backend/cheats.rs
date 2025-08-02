@@ -1,6 +1,6 @@
 //! Support for "cheat codes" / bypass functions
 
-use alloy_primitives::{map::AddressHashSet, Address};
+use alloy_primitives::{Address, map::AddressHashSet};
 use parking_lot::RwLock;
 use std::sync::Arc;
 
@@ -16,8 +16,6 @@ pub struct CheatsManager {
 impl CheatsManager {
     /// Sets the account to impersonate
     ///
-    /// This also accepts the actual code hash if the address is a contract to bypass EIP-3607
-    ///
     /// Returns `true` if the account is already impersonated
     pub fn impersonate(&self, addr: Address) -> bool {
         trace!(target: "cheats", "Start impersonating {:?}", addr);
@@ -27,7 +25,7 @@ impl CheatsManager {
         // which does not check that list when auto impersonation is enabled.
         if state.impersonated_accounts.contains(&addr) {
             // need to check if already impersonated, so we don't overwrite the code
-            return true
+            return true;
         }
         state.impersonated_accounts.insert(addr)
     }

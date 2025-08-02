@@ -32,7 +32,7 @@ aws-sdk-kms = { workspace = true, default-features = false, optional = true }
 
 # gcp-kms
 alloy-signer-gcp = { workspace = true, features = ["eip712"], optional = true }
-gcloud-sdk = { version = "0.26.4", features = [
+gcloud-sdk = { version = "0.27.3", features = [
   "google-cloud-kms-v1",
   "google-longrunning",
 ], optional = true }

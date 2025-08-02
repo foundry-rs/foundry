@@ -1,11 +1,12 @@
 use crate::{CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::{hex, I256, U256};
+use alloy_primitives::{I256, U256, U512, hex};
 use foundry_evm_core::{
     abi::console::{format_units_int, format_units_uint},
     backend::GLOBAL_FAIL_SLOT,
     constants::CHEATCODE_ADDRESS,
 };
 use itertools::Itertools;
+use revm::context::JournalTr;
 use std::fmt::{Debug, Display};
 
 const EQ_REL_DELTA_RESOLUTION: U256 = U256::from_limbs([18, 0, 0, 0]);
@@ -190,7 +191,11 @@ fn handle_assertion_result<ERR>(
                 Err(msg.into())
             } else {
                 executor.console_log(ccx, &msg);
-                ccx.ecx.sstore(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, U256::from(1))?;
+                ccx.ecx.journaled_state.sstore(
+                    CHEATCODE_ADDRESS,
+                    GLOBAL_FAIL_SLOT,
+                    U256::from(1),
+                )?;
                 Ok(Default::default())
             }
         }
@@ -448,19 +453,11 @@ impl_assertions! {
 }
 
 fn assert_true(condition: bool) -> Result<Vec<u8>, SimpleAssertionError> {
-    if condition {
-        Ok(Default::default())
-    } else {
-        Err(SimpleAssertionError)
-    }
+    if condition { Ok(Default::default()) } else { Err(SimpleAssertionError) }
 }
 
 fn assert_false(condition: bool) -> Result<Vec<u8>, SimpleAssertionError> {
-    if !condition {
-        Ok(Default::default())
-    } else {
-        Err(SimpleAssertionError)
-    }
+    if !condition { Ok(Default::default()) } else { Err(SimpleAssertionError) }
 }
 
 fn assert_eq<'a, T: PartialEq>(left: &'a T, right: &'a T) -> ComparisonResult<'a, T> {
@@ -479,27 +476,24 @@ fn assert_not_eq<'a, T: PartialEq>(left: &'a T, right: &'a T) -> ComparisonResul
     }
 }
 
-fn get_delta_uint(left: U256, right: U256) -> U256 {
-    if left > right {
-        left - right
-    } else {
-        right - left
-    }
-}
-
 fn get_delta_int(left: I256, right: I256) -> U256 {
     let (left_sign, left_abs) = left.into_sign_and_abs();
     let (right_sign, right_abs) = right.into_sign_and_abs();
 
     if left_sign == right_sign {
-        if left_abs > right_abs {
-            left_abs - right_abs
-        } else {
-            right_abs - left_abs
-        }
+        if left_abs > right_abs { left_abs - right_abs } else { right_abs - left_abs }
     } else {
         left_abs + right_abs
     }
+}
+
+/// Calculates the relative delta for an absolute difference.
+///
+/// Avoids overflow in the multiplication by using [`U512`] to hold the intermediary result.
+fn calc_delta_full<T>(abs_diff: U256, right: U256) -> Result<U256, EqRelAssertionError<T>> {
+    let delta = U512::from(abs_diff) * U512::from(10).pow(U512::from(EQ_REL_DELTA_RESOLUTION))
+        / U512::from(right);
+    U256::checked_from_limbs_slice(delta.as_limbs()).ok_or(EqRelAssertionError::Overflow)
 }
 
 fn uint_assert_approx_eq_abs(
@@ -507,7 +501,7 @@ fn uint_assert_approx_eq_abs(
     right: U256,
     max_delta: U256,
 ) -> Result<Vec<u8>, Box<EqAbsAssertionError<U256, U256>>> {
-    let delta = get_delta_uint(left, right);
+    let delta = left.abs_diff(right);
 
     if delta <= max_delta {
         Ok(Default::default())
@@ -537,21 +531,18 @@ fn uint_assert_approx_eq_rel(
 ) -> Result<Vec<u8>, EqRelAssertionError<U256>> {
     if right.is_zero() {
         if left.is_zero() {
-            return Ok(Default::default())
+            return Ok(Default::default());
         } else {
             return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
                 left,
                 right,
                 max_delta,
                 real_delta: EqRelDelta::Undefined,
-            })))
+            })));
         };
     }
 
-    let delta = get_delta_uint(left, right)
-        .checked_mul(U256::pow(U256::from(10), EQ_REL_DELTA_RESOLUTION))
-        .ok_or(EqRelAssertionError::Overflow)? /
-        right;
+    let delta = calc_delta_full::<U256>(left.abs_diff(right), right)?;
 
     if delta <= max_delta {
         Ok(Default::default())
@@ -572,22 +563,18 @@ fn int_assert_approx_eq_rel(
 ) -> Result<Vec<u8>, EqRelAssertionError<I256>> {
     if right.is_zero() {
         if left.is_zero() {
-            return Ok(Default::default())
+            return Ok(Default::default());
         } else {
             return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
                 left,
                 right,
                 max_delta,
                 real_delta: EqRelDelta::Undefined,
-            })))
+            })));
         }
     }
 
-    let (_, abs_right) = right.into_sign_and_abs();
-    let delta = get_delta_int(left, right)
-        .checked_mul(U256::pow(U256::from(10), EQ_REL_DELTA_RESOLUTION))
-        .ok_or(EqRelAssertionError::Overflow)? /
-        abs_right;
+    let delta = calc_delta_full::<I256>(get_delta_int(left, right), right.unsigned_abs())?;
 
     if delta <= max_delta {
         Ok(Default::default())

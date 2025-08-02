@@ -1,5 +1,5 @@
 use alloy_primitives::map::HashMap;
-use derive_more::{derive::Display, Deref, DerefMut};
+use derive_more::{Deref, DerefMut, derive::Display};
 use solang_parser::doccomment::DocCommentTag;
 
 /// The natspec comment tag explaining the purpose of the comment.
@@ -46,7 +46,7 @@ impl CommentTag {
             }
             _ => {
                 warn!(target: "forge::doc", tag=trimmed, "unknown comment tag. custom tags must be preceded by `custom:`");
-                return None
+                return None;
             }
         };
         Some(tag)
@@ -88,11 +88,7 @@ impl Comment {
     pub fn match_first_word(&self, expected: &str) -> Option<&str> {
         self.split_first_word().and_then(
             |(word, rest)| {
-                if word == expected {
-                    Some(rest)
-                } else {
-                    None
-                }
+                if word == expected { Some(rest) } else { None }
             },
         )
     }
@@ -170,13 +166,13 @@ impl<'a> CommentsRef<'a> {
     /// Filter a collection of comments and return only those that match provided tags.
     pub fn include_tags(&self, tags: &[CommentTag]) -> Self {
         // Cloning only references here
-        CommentsRef(self.iter().cloned().filter(|c| tags.contains(&c.tag)).collect())
+        CommentsRef(self.iter().copied().filter(|c| tags.contains(&c.tag)).collect())
     }
 
     /// Filter a collection of comments and return only those that do not match provided tags.
     pub fn exclude_tags(&self, tags: &[CommentTag]) -> Self {
         // Cloning only references here
-        CommentsRef(self.iter().cloned().filter(|c| !tags.contains(&c.tag)).collect())
+        CommentsRef(self.iter().copied().filter(|c| !tags.contains(&c.tag)).collect())
     }
 
     /// Check if the collection contains a target comment.
@@ -184,8 +180,8 @@ impl<'a> CommentsRef<'a> {
         self.iter().any(|c| match (&c.tag, &target.tag) {
             (CommentTag::Inheritdoc, CommentTag::Inheritdoc) => c.value == target.value,
             (CommentTag::Param, CommentTag::Param) | (CommentTag::Return, CommentTag::Return) => {
-                c.split_first_word().map(|(name, _)| name) ==
-                    target.split_first_word().map(|(name, _)| name)
+                c.split_first_word().map(|(name, _)| name)
+                    == target.split_first_word().map(|(name, _)| name)
             }
             (tag1, tag2) => tag1 == tag2,
         })
@@ -200,7 +196,7 @@ impl<'a> CommentsRef<'a> {
 
     /// Filter a collection of comments and only return the custom tags.
     pub fn get_custom_tags(&self) -> Self {
-        CommentsRef(self.iter().cloned().filter(|c| c.is_custom()).collect())
+        CommentsRef(self.iter().copied().filter(|c| c.is_custom()).collect())
     }
 }
 

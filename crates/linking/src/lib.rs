@@ -5,11 +5,11 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{Address, B256, Bytes};
 use foundry_compilers::{
+    Artifact, ArtifactId,
     artifacts::{CompactContractBytecodeCow, Libraries},
     contracts::ArtifactContracts,
-    Artifact, ArtifactId,
 };
 use semver::Version;
 use std::{
@@ -79,10 +79,10 @@ impl<'a> Linker<'a> {
         version: Option<&Version>,
     ) -> Option<&'a ArtifactId> {
         for id in self.contracts.keys() {
-            if let Some(version) = version {
-                if id.version != *version {
-                    continue;
-                }
+            if let Some(version) = version
+                && id.version != *version
+            {
+                continue;
             }
             let (artifact_path, artifact_name) = self.convert_artifact_id_to_lib_path(id);
 
@@ -106,10 +106,10 @@ impl<'a> Linker<'a> {
         if let Some(bytecode) = &contract.bytecode {
             references.extend(bytecode.link_references.clone());
         }
-        if let Some(deployed_bytecode) = &contract.deployed_bytecode {
-            if let Some(bytecode) = &deployed_bytecode.bytecode {
-                references.extend(bytecode.link_references.clone());
-            }
+        if let Some(deployed_bytecode) = &contract.deployed_bytecode
+            && let Some(bytecode) = &deployed_bytecode.bytecode
+        {
+            references.extend(bytecode.link_references.clone());
         }
 
         for (file, libs) in &references {
@@ -285,9 +285,9 @@ mod tests {
     use super::*;
     use alloy_primitives::{address, fixed_bytes, map::HashMap};
     use foundry_compilers::{
+        Project, ProjectCompileOutput, ProjectPathsConfig,
         multi::MultiCompiler,
         solc::{Solc, SolcCompiler},
-        Project, ProjectCompileOutput, ProjectPathsConfig,
     };
 
     struct LinkerTest {

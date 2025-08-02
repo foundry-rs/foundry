@@ -1,5 +1,5 @@
 use forge_fmt_2::FormatterConfig;
-use snapbox::{assert_data_eq, Data};
+use snapbox::{Data, assert_data_eq};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -127,7 +127,9 @@ fn test_all_dirs_are_declared(dirs: &[&str]) {
         }
     }
     if !undeclared.is_empty() {
-        panic!("the following test directories are not declared in the test suite macro call: {undeclared:#?}");
+        panic!(
+            "the following test directories are not declared in the test suite macro call: {undeclared:#?}"
+        );
     }
 }
 
@@ -149,59 +151,63 @@ macro_rules! fmt_tests {
     };
 }
 
+// TODO (config):
+// * style = tab
+// * all fn styles
+
 fmt_tests! {
     #[ignore = "annotations are not valid Solidity"]
     Annotation,
-    ArrayExpressions,
-    BlockComments,
-    BlockCommentsFunction,
-    ConditionalOperatorExpression,
-    ConstructorDefinition,
-    ConstructorModifierStyle,
-    ContractDefinition,
-    DocComments,
-    DoWhileStatement,
-    EmitStatement,
-    EnumDefinition,
-    EnumVariants,
-    ErrorDefinition,
-    EventDefinition,
-    ForStatement,
-    FunctionCall,
-    FunctionCallArgsStatement,
-    FunctionDefinition,
-    FunctionDefinitionWithFunctionReturns,
-    FunctionType,
-    HexUnderscore,
-    IfStatement,
-    IfStatement2,
-    ImportDirective,
-    InlineDisable,
-    IntTypes,
-    LiteralExpression,
-    MappingType,
-    ModifierDefinition,
-    NamedFunctionCallExpression,
-    NumberLiteralUnderscore,
-    OperatorExpressions,
-    PragmaDirective,
-    Repros,
-    ReturnStatement,
-    RevertNamedArgsStatement,
-    RevertStatement,
-    SimpleComments,
-    SortedImports,
-    StatementBlock,
-    StructDefinition,
-    ThisExpression,
-    TrailingComma,
-    TryStatement,
-    TypeDefinition,
-    UnitExpression,
-    UsingDirective,
-    VariableAssignment,
-    VariableDefinition,
-    WhileStatement,
-    Yul,
-    YulStrings,
+    ArrayExpressions, // OK? Is it acceptable? (data loc keyword won't have a span in solar)
+    BlockComments, // OK
+    BlockCommentsFunction, // OK
+    ConditionalOperatorExpression, //OK
+    ConstructorDefinition, // OK
+    ConstructorModifierStyle, // OK
+    ContractDefinition, // OK? Is it acceptable?
+    DocComments, // OK? is it acceptable?
+    DoWhileStatement, // OK
+    EmitStatement, // OK? is it acceptable? (matches perfectly with `ListFormat::Compact`, but test `EventDefinition` doesn't match)
+    EnumDefinition, // OK
+    EnumVariants, // OK
+    ErrorDefinition, // OK
+    EventDefinition, // OK
+    ForStatement, // OK (works if we use one less digit + breaks as it should)
+    FunctionCall, // OK
+    FunctionCallArgsStatement, // OK? Is it acceptable?
+    FunctionDefinition, // OK? Is it acceptable? TODO: support all configs
+    FunctionDefinitionWithFunctionReturns, // OK
+    FunctionType, // OK? Is it acceptable? TODO: support all configs
+    HexUnderscore, // OK
+    IfStatement, // Ok
+    IfStatement2, // OK
+    ImportDirective, // OK
+    InlineDisable, // OK
+    IntTypes, // OK
+    LiteralExpression, // OK
+    MappingType, // OK? is it acceptable?
+    ModifierDefinition, // OK
+    NamedFunctionCallExpression, // Okish. Is it acceptable?
+    NumberLiteralUnderscore, // OK
+    OperatorExpressions, // OK
+    PragmaDirective, // OK
+    Repros, // TODO: check boxes, panics
+    ReturnStatement, // OK? is it acceptable? (inline block logic is inconsistent with 'if stmt' unit test)
+    RevertNamedArgsStatement, // OK? is it acceptable? (properly break long calls?)
+    RevertStatement, // OK
+    SimpleComments, // OK
+    SortedImports, // OK
+    StatementBlock, // OK
+    StructDefinition, // OK
+    ThisExpression, // OK? is it acceptable?
+    TrailingComma, // OK (solar error)
+    TryStatement, // OK? is it acceptable?
+    TypeDefinition, // OK
+    UnitExpression, // OK (subdenom word won't have a span in solar)
+    UsingDirective, // OK
+    VariableAssignment, // OK? is it acceptable?
+    VariableDefinition, // OK? is it acceptable? (solar forces constants to be initialized)
+    WhileStatement,  // OK
+    Yul, // FIX: spacing
+    YulStrings, // OK
 }

@@ -1,11 +1,11 @@
 //! Contains the code to launch an Ethereum RPC server.
 
 use crate::{EthApi, IpcTask};
-use anvil_server::{ipc::IpcEndpoint, ServerConfig};
+use anvil_server::{ServerConfig, ipc::IpcEndpoint};
 use axum::Router;
 use futures::StreamExt;
 use handler::{HttpEthRpcHandler, PubSubEthRpcHandler};
-use std::{future::Future, io, net::SocketAddr, pin::pin};
+use std::{io, net::SocketAddr, pin::pin};
 use tokio::net::TcpListener;
 
 pub mod error;

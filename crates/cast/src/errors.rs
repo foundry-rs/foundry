@@ -20,7 +20,10 @@ impl fmt::Display for FunctionSignatureError {
             }
             Self::MissingEtherscan { sig } => {
                 writeln!(f, "Failed to determine function signature for `{sig}`")?;
-                writeln!(f, "To lookup a function signature of a deployed contract by name, a valid ETHERSCAN_API_KEY must be set.")?;
+                writeln!(
+                    f,
+                    "To lookup a function signature of a deployed contract by name, a valid ETHERSCAN_API_KEY must be set."
+                )?;
                 write!(f, "\tOr did you mean:\t {sig}()")
             }
             Self::UnknownChain(chain) => {

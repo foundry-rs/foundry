@@ -1,8 +1,8 @@
-use alloy_chains::Chain;
+use alloy_chains::{Chain, NamedChain};
 use alloy_network::AnyTransactionReceipt;
-use alloy_primitives::{utils::format_units, TxHash, U256};
+use alloy_primitives::{TxHash, U256, utils::format_units};
 use alloy_provider::{PendingTransactionBuilder, PendingTransactionError, Provider, WatchTxError};
-use eyre::{eyre, Result};
+use eyre::{Result, eyre};
 use foundry_common::{provider::RetryProvider, retry, retry::RetryError, shell};
 use std::time::Duration;
 
@@ -99,9 +99,14 @@ pub fn format_receipt(chain: Chain, receipt: &AnyTransactionReceipt) -> String {
                     .unwrap_or_else(|_| "N/A".into());
                 let gas_price =
                     format_units(U256::from(gas_price), 9).unwrap_or_else(|_| "N/A".into());
+                let token_symbol = NamedChain::try_from(chain)
+                    .unwrap_or_default()
+                    .native_currency_symbol()
+                    .unwrap_or("ETH");
                 format!(
-                    "Paid: {} ETH ({gas_used} gas * {} gwei)",
+                    "Paid: {} {} ({gas_used} gas * {} gwei)",
                     paid.trim_end_matches('0'),
+                    token_symbol,
                     gas_price.trim_end_matches('0').trim_end_matches('.')
                 )
             },

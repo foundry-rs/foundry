@@ -7,12 +7,12 @@ use alloy_network::{
     AnyHeader, AnyReceiptEnvelope, AnyRpcBlock, AnyRpcTransaction, AnyTransactionReceipt,
     AnyTxEnvelope, ReceiptResponse,
 };
-use alloy_primitives::{hex, Address, Bloom, Bytes, FixedBytes, Uint, I256, U256, U64, U8};
+use alloy_primitives::{Address, Bloom, Bytes, FixedBytes, I256, U8, U64, U256, Uint, hex};
 use alloy_rpc_types::{
     AccessListItem, Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
-use revm_primitives::SignedAuthorization;
+use revm::context_interface::transaction::SignedAuthorization;
 use serde::Deserialize;
 
 /// length of the name column for pretty formatting `{:>20}{value}`
@@ -41,11 +41,7 @@ impl<T: UIfmt> UIfmt for &T {
 
 impl<T: UIfmt> UIfmt for Option<T> {
     fn pretty(&self) -> String {
-        if let Some(ref inner) = self {
-            inner.pretty()
-        } else {
-            String::new()
-        }
+        if let Some(inner) = self { inner.pretty() } else { String::new() }
     }
 }
 

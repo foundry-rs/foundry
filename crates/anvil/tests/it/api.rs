@@ -2,20 +2,22 @@
 
 use crate::{
     abi::{Multicall, SimpleStorage},
-    utils::{connect_pubsub_with_wallet, http_provider_with_signer},
+    utils::{connect_pubsub_with_wallet, http_provider, http_provider_with_signer},
 };
-use alloy_network::{EthereumWallet, TransactionBuilder};
+use alloy_consensus::{SignableTransaction, Transaction, TxEip1559};
+use alloy_network::{EthereumWallet, TransactionBuilder, TxSignerSync};
 use alloy_primitives::{
+    Address, B256, ChainId, U256, b256, bytes,
     map::{AddressHashMap, B256HashMap, HashMap},
-    Address, ChainId, B256, U256,
 };
 use alloy_provider::Provider;
 use alloy_rpc_types::{
-    request::TransactionRequest, state::AccountOverride, BlockId, BlockNumberOrTag,
-    BlockTransactions,
+    BlockId, BlockNumberOrTag, BlockTransactions, request::TransactionRequest,
+    state::AccountOverride,
 };
 use alloy_serde::WithOtherFields;
-use anvil::{eth::api::CLIENT_VERSION, spawn, NodeConfig, CHAIN_ID};
+use anvil::{CHAIN_ID, EthereumHardfork, NodeConfig, eth::api::CLIENT_VERSION, spawn};
+use foundry_test_utils::rpc;
 use futures::join;
 use std::time::Duration;
 
@@ -243,7 +245,7 @@ async fn can_call_on_pending_block() {
         let block_number = BlockNumberOrTag::Number(anvil_block_number as u64);
         let block = api.block_by_number(block_number).await.unwrap().unwrap();
 
-        let Multicall::getCurrentBlockTimestampReturn { timestamp: ret_timestamp, .. } = contract
+        let ret_timestamp = contract
             .getCurrentBlockTimestamp()
             .block(BlockId::number(anvil_block_number as u64))
             .call()
@@ -251,7 +253,7 @@ async fn can_call_on_pending_block() {
             .unwrap();
         assert_eq!(block.header.timestamp, ret_timestamp.to::<u64>());
 
-        let Multicall::getCurrentBlockGasLimitReturn { gaslimit: ret_gas_limit, .. } = contract
+        let ret_gas_limit = contract
             .getCurrentBlockGasLimit()
             .block(BlockId::number(anvil_block_number as u64))
             .call()
@@ -259,7 +261,7 @@ async fn can_call_on_pending_block() {
             .unwrap();
         assert_eq!(block.header.gas_limit, ret_gas_limit.to::<u64>());
 
-        let Multicall::getCurrentBlockCoinbaseReturn { coinbase: ret_coinbase, .. } = contract
+        let ret_coinbase = contract
             .getCurrentBlockCoinbase()
             .block(BlockId::number(anvil_block_number as u64))
             .call()
@@ -296,8 +298,7 @@ async fn can_call_with_undersized_max_fee_per_gas() {
         .from(wallet.address())
         .call()
         .await
-        .unwrap()
-        ._0;
+        .unwrap();
     assert_eq!(last_sender, Address::ZERO);
 }
 
@@ -323,8 +324,7 @@ async fn can_call_with_state_override() {
     let balance = U256::from(42u64);
     let mut overrides = AddressHashMap::default();
     overrides.insert(account, AccountOverride { balance: Some(balance), ..Default::default() });
-    let result =
-        multicall_contract.getEthBalance(account).state(overrides).call().await.unwrap().balance;
+    let result = multicall_contract.getEthBalance(account).state(overrides).call().await.unwrap();
     assert_eq!(result, balance);
 
     // Test the `state_diff` account override
@@ -341,16 +341,16 @@ async fn can_call_with_state_override() {
     );
 
     let last_sender =
-        simple_storage_contract.lastSender().state(HashMap::default()).call().await.unwrap()._0;
+        simple_storage_contract.lastSender().state(HashMap::default()).call().await.unwrap();
     // No `sender` set without override
     assert_eq!(last_sender, Address::ZERO);
 
     let last_sender =
-        simple_storage_contract.lastSender().state(overrides.clone()).call().await.unwrap()._0;
+        simple_storage_contract.lastSender().state(overrides.clone()).call().await.unwrap();
     // `sender` *is* set with override
     assert_eq!(last_sender, account);
 
-    let value = simple_storage_contract.getValue().state(overrides).call().await.unwrap()._0;
+    let value = simple_storage_contract.getValue().state(overrides).call().await.unwrap();
     // `value` *is not* changed with state-diff
     assert_eq!(value, init_value);
 
@@ -368,11 +368,11 @@ async fn can_call_with_state_override() {
     );
 
     let last_sender =
-        simple_storage_contract.lastSender().state(overrides.clone()).call().await.unwrap()._0;
+        simple_storage_contract.lastSender().state(overrides.clone()).call().await.unwrap();
     // `sender` *is* set with override
     assert_eq!(last_sender, account);
 
-    let value = simple_storage_contract.getValue().state(overrides).call().await.unwrap()._0;
+    let value = simple_storage_contract.getValue().state(overrides).call().await.unwrap();
     // `value` *is* changed with state
     assert_eq!(value, "");
 }
@@ -404,4 +404,65 @@ async fn can_mine_while_mining() {
 
     let block = api.block_by_number(BlockNumberOrTag::Number(block_number)).await.unwrap().unwrap();
     assert_eq!(block.header.number, total_blocks);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_send_raw_tx_sync() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(node_config).await;
+    let provider = http_provider(&handle.http_endpoint());
+
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
+
+    let from = wallets[0].address();
+    let mut tx = TxEip1559 {
+        max_fee_per_gas: eip1559_est.max_fee_per_gas,
+        max_priority_fee_per_gas: eip1559_est.max_priority_fee_per_gas,
+        gas_limit: 100000,
+        chain_id: 31337,
+        to: alloy_primitives::TxKind::Call(from),
+        input: bytes!("11112222"),
+        ..Default::default()
+    };
+    let signature = wallets[1].sign_transaction_sync(&mut tx).unwrap();
+
+    let tx = tx.into_signed(signature);
+    let mut encoded = Vec::new();
+    tx.eip2718_encode(&mut encoded);
+
+    let receipt = api.send_raw_transaction_sync(encoded.into()).await.unwrap();
+    assert_eq!(receipt.from, wallets[1].address());
+    assert_eq!(receipt.to, tx.to());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_send_tx_sync() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(node_config).await;
+
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+    let logger_bytecode = bytes!("66365f5f37365fa05f5260076019f3");
+
+    let from = wallets[0].address();
+    let tx = TransactionRequest::default()
+        .with_from(from)
+        .into_create()
+        .with_nonce(0)
+        .with_input(logger_bytecode);
+
+    let receipt = api.send_transaction_sync(WithOtherFields::new(tx)).await.unwrap();
+    assert_eq!(receipt.from, wallets[0].address());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_code_by_hash() {
+    let (api, _) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))).await;
+
+    // The code hash for DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE
+    let code_hash = b256!("2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989");
+
+    let code = api.debug_code_by_hash(code_hash, None).await.unwrap();
+    assert_eq!(&code.unwrap(), foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE);
 }

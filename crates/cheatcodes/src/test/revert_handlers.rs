@@ -1,9 +1,9 @@
 use crate::{Error, Result};
-use alloy_primitives::{address, hex, Address, Bytes};
+use alloy_primitives::{Address, Bytes, address, hex};
 use alloy_sol_types::{SolError, SolValue};
 use foundry_common::ContractsByArtifact;
 use foundry_evm_core::decode::RevertDecoder;
-use revm::interpreter::{return_ok, InstructionResult};
+use revm::interpreter::{InstructionResult, return_ok};
 use spec::Vm;
 
 use super::{
@@ -23,7 +23,7 @@ static DUMMY_CALL_OUTPUT: Bytes = Bytes::from_static(&[0u8; 8192]);
 const DUMMY_CREATE_ADDRESS: Address = address!("0x0000000000000000000000000000000000000001");
 
 fn stringify(data: &[u8]) -> String {
-    if let Ok(s) = String::abi_decode(data, true) {
+    if let Ok(s) = String::abi_decode(data) {
         return s;
     }
     if data.is_ascii() {
@@ -64,14 +64,13 @@ fn handle_revert(
 ) -> Result<(), Error> {
     // If expected reverter address is set then check it matches the actual reverter.
     if let (Some(expected_reverter), Some(&actual_reverter)) = (revert_params.reverter(), reverter)
+        && expected_reverter != actual_reverter
     {
-        if expected_reverter != actual_reverter {
-            return Err(fmt_err!(
-                "Reverter != expected reverter: {} != {}",
-                actual_reverter,
-                expected_reverter
-            ));
-        }
+        return Err(fmt_err!(
+            "Reverter != expected reverter: {} != {}",
+            actual_reverter,
+            expected_reverter
+        ));
     }
 
     let expected_reason = revert_params.reason();
@@ -94,8 +93,8 @@ fn handle_revert(
     // Try decoding as known errors.
     actual_revert = decode_revert(actual_revert);
 
-    if actual_revert == expected_reason ||
-        (is_cheatcode && memchr::memmem::find(&actual_revert, expected_reason).is_some())
+    if actual_revert == expected_reason
+        || (is_cheatcode && memchr::memmem::find(&actual_revert, expected_reason).is_some())
     {
         Ok(())
     } else {
@@ -172,6 +171,7 @@ pub(crate) fn handle_expect_revert(
     }
 
     if expected_revert.count == 0 {
+        // If no specific reason or reverter is expected, we just check if it reverted
         if expected_revert.reverter.is_none() && expected_revert.reason.is_none() {
             ensure!(
                 matches!(status, return_ok!()),
@@ -184,41 +184,77 @@ pub(crate) fn handle_expect_revert(
         let mut reason_match = expected_revert.reason.as_ref().map(|_| false);
         let mut reverter_match = expected_revert.reverter.as_ref().map(|_| false);
 
-        // Reverter check
-        if let (Some(expected_reverter), Some(actual_reverter)) =
-            (expected_revert.reverter, expected_revert.reverted_by)
-        {
-            if expected_reverter == actual_reverter {
+        // If we expect no reverts with a specific reason/reverter, but got a revert,
+        // we need to check if it matches our criteria
+        if !matches!(status, return_ok!()) {
+            // We got a revert, but we expected 0 reverts
+            // We need to check if this revert matches our expected criteria
+
+            // Reverter check
+            if let (Some(expected_reverter), Some(actual_reverter)) =
+                (expected_revert.reverter, expected_revert.reverted_by)
+                && expected_reverter == actual_reverter
+            {
                 reverter_match = Some(true);
             }
-        }
 
-        // Reason check
-        let expected_reason = expected_revert.reason.as_deref();
-        if let Some(expected_reason) = expected_reason {
-            let mut actual_revert: Vec<u8> = retdata.into();
-            actual_revert = decode_revert(actual_revert);
+            // Reason check
+            let expected_reason = expected_revert.reason.as_deref();
+            if let Some(expected_reason) = expected_reason {
+                let mut actual_revert: Vec<u8> = retdata.to_vec();
+                actual_revert = decode_revert(actual_revert);
 
-            if actual_revert == expected_reason {
-                reason_match = Some(true);
+                if actual_revert == expected_reason {
+                    reason_match = Some(true);
+                }
             }
-        };
 
-        match (reason_match, reverter_match) {
-            (Some(true), Some(true)) => Err(fmt_err!(
-                "expected 0 reverts with reason: {}, from address: {}, but got one",
-                &stringify(expected_reason.unwrap_or_default()),
-                expected_revert.reverter.unwrap()
-            )),
-            (Some(true), None) => Err(fmt_err!(
-                "expected 0 reverts with reason: {}, but got one",
-                &stringify(expected_reason.unwrap_or_default())
-            )),
-            (None, Some(true)) => Err(fmt_err!(
-                "expected 0 reverts from address: {}, but got one",
-                expected_revert.reverter.unwrap()
-            )),
-            _ => Ok(success_return()),
+            match (reason_match, reverter_match) {
+                (Some(true), Some(true)) => Err(fmt_err!(
+                    "expected 0 reverts with reason: {}, from address: {}, but got one",
+                    &stringify(expected_reason.unwrap_or_default()),
+                    expected_revert.reverter.unwrap()
+                )),
+                (Some(true), None) => Err(fmt_err!(
+                    "expected 0 reverts with reason: {}, but got one",
+                    &stringify(expected_reason.unwrap_or_default())
+                )),
+                (None, Some(true)) => Err(fmt_err!(
+                    "expected 0 reverts from address: {}, but got one",
+                    expected_revert.reverter.unwrap()
+                )),
+                _ => {
+                    // The revert doesn't match our criteria, which means it's a different revert
+                    // For expectRevert with count=0, any revert should fail the test
+                    let decoded_revert = decode_revert(retdata.to_vec());
+
+                    // Provide more specific error messages based on what was expected
+                    if expected_revert.reverter.is_some() && expected_revert.reason.is_some() {
+                        Err(fmt_err!(
+                            "call reverted with '{}' from {}, but expected 0 reverts with reason '{}' from {}",
+                            &stringify(&decoded_revert),
+                            expected_revert.reverted_by.unwrap_or_default(),
+                            &stringify(expected_reason.unwrap_or_default()),
+                            expected_revert.reverter.unwrap()
+                        ))
+                    } else if expected_revert.reverter.is_some() {
+                        Err(fmt_err!(
+                            "call reverted with '{}' from {}, but expected 0 reverts from {}",
+                            &stringify(&decoded_revert),
+                            expected_revert.reverted_by.unwrap_or_default(),
+                            expected_revert.reverter.unwrap()
+                        ))
+                    } else {
+                        Err(fmt_err!(
+                            "call reverted with '{}' when it was expected not to revert",
+                            &stringify(&decoded_revert)
+                        ))
+                    }
+                }
+            }
+        } else {
+            // No revert occurred, which is what we expected
+            Ok(success_return())
         }
     } else {
         ensure!(!matches!(status, return_ok!()), "next call did not revert as expected");
@@ -239,10 +275,9 @@ fn decode_revert(revert: Vec<u8>) -> Vec<u8> {
     if matches!(
         revert.get(..4).map(|s| s.try_into().unwrap()),
         Some(Vm::CheatcodeError::SELECTOR | alloy_sol_types::Revert::SELECTOR)
-    ) {
-        if let Ok(decoded) = Vec::<u8>::abi_decode(&revert[4..], false) {
-            return decoded;
-        }
+    ) && let Ok(decoded) = Vec::<u8>::abi_decode(&revert[4..])
+    {
+        return decoded;
     }
     revert
 }

@@ -1,15 +1,12 @@
-use crate::revm::primitives::Authorization;
 use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
-use alloy_primitives::{hex, Address, PrimitiveSignature as Signature, B256, U256};
+use alloy_primitives::{Address, B256, Signature, U256, hex};
 use alloy_provider::Provider;
-use alloy_signer::{
-    k256::{elliptic_curve::sec1::ToEncodedPoint, SecretKey},
-    Signer,
-};
+use alloy_rpc_types::Authorization;
+use alloy_signer::Signer;
 use alloy_signer_local::{
-    coins_bip39::{English, Entropy, Mnemonic},
     MnemonicBuilder, PrivateKeySigner,
+    coins_bip39::{English, Entropy, Mnemonic},
 };
 use clap::Parser;
 use eyre::{Context, Result};
@@ -17,7 +14,7 @@ use foundry_cli::{opts::RpcOpts, utils, utils::LoadConfig};
 use foundry_common::{fs, sh_println, shell};
 use foundry_config::Config;
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
-use rand::thread_rng;
+use rand_08::thread_rng;
 use serde_json::json;
 use std::path::Path;
 use yansi::Paint;
@@ -147,6 +144,9 @@ pub enum WalletSubcommands {
     #[command(visible_alias = "v")]
     Verify {
         /// The original message.
+        ///
+        /// Treats 0x-prefixed strings as hex encoded bytes.
+        /// Non 0x-prefixed strings are treated as raw input message.
         message: String,
 
         /// The signature to verify.
@@ -273,7 +273,10 @@ impl WalletSubcommands {
                         // If the path doesn't exist, it will fail to be canonicalized,
                         // so we attach more context to the error message.
                         Err(e) => {
-                            eyre::bail!("If you specified a directory, please make sure it exists, or create it before running `cast wallet new <DIR>`.\n{path} is not a directory.\nError: {}", e);
+                            eyre::bail!(
+                                "If you specified a directory, please make sure it exists, or create it before running `cast wallet new <DIR>`.\n{path} is not a directory.\nError: {}",
+                                e
+                            );
                         }
                     };
                     if !path.is_dir() {
@@ -303,44 +306,61 @@ impl WalletSubcommands {
                         let identifier = account_name_ref.as_deref().unwrap_or(&uuid);
 
                         if let Some(json) = json_values.as_mut() {
-                            json.push(json!({
-                                "address": wallet.address().to_checksum(None),
-                                "path": format!("{}", path.join(identifier).display()),
-                            }));
+                            json.push(if shell::verbosity() > 0 {
+                                json!({
+                                    "address": wallet.address().to_checksum(None),
+                                    "public_key": format!("0x{}", hex::encode(wallet.public_key())),
+                                    "path": format!("{}", path.join(identifier).display()),
+                                })
+                            } else {
+                                json!({
+                                    "address": wallet.address().to_checksum(None),
+                                    "path": format!("{}", path.join(identifier).display()),
+                                })
+                            });
                         } else {
                             sh_println!(
                                 "Created new encrypted keystore file: {}",
                                 path.join(identifier).display()
                             )?;
-                            sh_println!("Address: {}", wallet.address().to_checksum(None))?;
+                            sh_println!("Address:    {}", wallet.address().to_checksum(None))?;
+                            if shell::verbosity() > 0 {
+                                sh_println!("Public key: 0x{}", hex::encode(wallet.public_key()))?;
+                            }
                         }
-                    }
-
-                    if let Some(json) = json_values.as_ref() {
-                        sh_println!("{}", serde_json::to_string_pretty(json)?)?;
                     }
                 } else {
                     for _ in 0..number {
                         let wallet = PrivateKeySigner::random_with(&mut rng);
 
                         if let Some(json) = json_values.as_mut() {
-                            json.push(json!({
-                                "address": wallet.address().to_checksum(None),
-                                "private_key": format!("0x{}", hex::encode(wallet.credential().to_bytes())),
-                            }))
+                            json.push(if shell::verbosity() > 0 {
+                                json!({
+                                    "address": wallet.address().to_checksum(None),
+                                    "public_key": format!("0x{}", hex::encode(wallet.public_key())),
+                                    "private_key": format!("0x{}", hex::encode(wallet.credential().to_bytes())),
+                                })
+                            } else {
+                                json!({
+                                    "address": wallet.address().to_checksum(None),
+                                    "private_key": format!("0x{}", hex::encode(wallet.credential().to_bytes())),
+                                })
+                            });
                         } else {
                             sh_println!("Successfully created new keypair.")?;
                             sh_println!("Address:     {}", wallet.address().to_checksum(None))?;
+                            if shell::verbosity() > 0 {
+                                sh_println!("Public key:  0x{}", hex::encode(wallet.public_key()))?;
+                            }
                             sh_println!(
                                 "Private key: 0x{}",
                                 hex::encode(wallet.credential().to_bytes())
                             )?;
                         }
                     }
-
-                    if let Some(json) = json_values.as_ref() {
-                        sh_println!("{}", serde_json::to_string_pretty(json)?)?;
-                    }
+                }
+                if let Some(json) = json_values.as_ref() {
+                    sh_println!("{}", serde_json::to_string_pretty(json)?)?;
                 }
             }
             Self::NewMnemonic { words, accounts, entropy } => {
@@ -374,16 +394,28 @@ impl WalletSubcommands {
 
                 let mut accounts = json!([]);
                 for (i, wallet) in wallets.iter().enumerate() {
+                    let public_key = hex::encode(wallet.public_key());
                     let private_key = hex::encode(wallet.credential().to_bytes());
                     if format_json {
-                        accounts.as_array_mut().unwrap().push(json!({
-                            "address": format!("{}", wallet.address()),
-                            "private_key": format!("0x{}", private_key),
-                        }));
+                        accounts.as_array_mut().unwrap().push(if shell::verbosity() > 0 {
+                            json!({
+                                "address": format!("{}", wallet.address()),
+                                "public_key": format!("0x{}", public_key),
+                                "private_key": format!("0x{}", private_key),
+                            })
+                        } else {
+                            json!({
+                                "address": format!("{}", wallet.address()),
+                                "private_key": format!("0x{}", private_key),
+                            })
+                        });
                     } else {
                         sh_println!("- Account {i}:")?;
                         sh_println!("Address:     {}", wallet.address())?;
-                        sh_println!("Private key: 0x{private_key}\n")?;
+                        if shell::verbosity() > 0 {
+                            sh_println!("Public key:  0x{}", public_key)?;
+                        }
+                        sh_println!("Private key: 0x{}\n", private_key)?;
                     }
                 }
 
@@ -420,23 +452,12 @@ impl WalletSubcommands {
                     .signer()
                     .await?;
 
-                let private_key_bytes = match wallet {
-                    WalletSigner::Local(wallet) => wallet.credential().to_bytes(),
+                let public_key = match wallet {
+                    WalletSigner::Local(wallet) => wallet.public_key(),
                     _ => eyre::bail!("Only local wallets are supported by this command"),
                 };
 
-                let secret_key = SecretKey::from_slice(&private_key_bytes)
-                    .map_err(|e| eyre::eyre!("Invalid private key: {}", e))?;
-
-                // Get the public key from the private key
-                let public_key = secret_key.public_key();
-
-                // Serialize it as uncompressed (65 bytes: 0x04 || X (32 bytes) || Y (32 bytes))
-                let pubkey_bytes = public_key.to_encoded_point(false);
-                // Strip the 1-byte prefix (0x04) to get 64 bytes for Ethereum use
-                let ethereum_pubkey = &pubkey_bytes.as_bytes()[1..];
-
-                sh_println!("0x{}", hex::encode(ethereum_pubkey))?;
+                sh_println!("0x{}", hex::encode(public_key))?;
             }
             Self::Sign { message, data, from_file, no_hash, wallet } => {
                 let wallet = wallet.signer().await?;
@@ -454,7 +475,29 @@ impl WalletSubcommands {
                 } else {
                     wallet.sign_message(&Self::hex_str_to_bytes(&message)?).await?
                 };
-                sh_println!("0x{}", hex::encode(sig.as_bytes()))?;
+
+                if shell::verbosity() > 0 {
+                    if shell::is_json() {
+                        sh_println!(
+                            "{}",
+                            serde_json::to_string_pretty(&json!({
+                                "message": message,
+                                "address": wallet.address(),
+                                "signature": hex::encode(sig.as_bytes()),
+                            }))?
+                        )?;
+                    } else {
+                        sh_println!(
+                            "Successfully signed!\n   Message: {}\n   Address: {}\n   Signature: 0x{}",
+                            message,
+                            wallet.address(),
+                            hex::encode(sig.as_bytes()),
+                        )?;
+                    }
+                } else {
+                    // Pipe friendly output
+                    sh_println!("0x{}", hex::encode(sig.as_bytes()))?;
+                }
             }
             Self::SignAuth { rpc, nonce, chain, wallet, address } => {
                 let wallet = wallet.signer().await?;
@@ -472,7 +515,31 @@ impl WalletSubcommands {
                 let auth = Authorization { chain_id: U256::from(chain_id), address, nonce };
                 let signature = wallet.sign_hash(&auth.signature_hash()).await?;
                 let auth = auth.into_signed(signature);
-                sh_println!("{}", hex::encode_prefixed(alloy_rlp::encode(&auth)))?;
+
+                if shell::verbosity() > 0 {
+                    if shell::is_json() {
+                        sh_println!(
+                            "{}",
+                            serde_json::to_string_pretty(&json!({
+                                "nonce": nonce,
+                                "chain_id": chain_id,
+                                "address": wallet.address(),
+                                "signature": hex::encode_prefixed(alloy_rlp::encode(&auth)),
+                            }))?
+                        )?;
+                    } else {
+                        sh_println!(
+                            "Successfully signed!\n   Nonce: {}\n   Chain ID: {}\n   Address: {}\n   Signature: 0x{}",
+                            nonce,
+                            chain_id,
+                            wallet.address(),
+                            hex::encode_prefixed(alloy_rlp::encode(&auth)),
+                        )?;
+                    }
+                } else {
+                    // Pipe friendly output
+                    sh_println!("{}", hex::encode_prefixed(alloy_rlp::encode(&auth)))?;
+                }
             }
             Self::Verify { message, signature, address } => {
                 let recovered_address = Self::recover_address_from_message(&message, &signature)?;
@@ -713,11 +780,17 @@ flag to set your key via:
         Ok(())
     }
 
-    /// Recovers an address from the specified message and signature
+    /// Recovers an address from the specified message and signature.
+    ///
+    /// Note: This attempts to decode the message as hex if it starts with 0x.
     fn recover_address_from_message(message: &str, signature: &Signature) -> Result<Address> {
+        let message = Self::hex_str_to_bytes(message)?;
         Ok(signature.recover_address_from_msg(message)?)
     }
 
+    /// Strips the 0x prefix from a hex string and decodes it to bytes.
+    ///
+    /// Treats the string as raw bytes if it doesn't start with 0x.
     fn hex_str_to_bytes(s: &str) -> Result<Vec<u8>> {
         Ok(match s.strip_prefix("0x") {
             Some(data) => hex::decode(data).wrap_err("Could not decode 0x-prefixed string.")?,

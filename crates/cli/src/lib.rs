@@ -14,3 +14,6 @@ extern crate tracing;
 pub mod handler;
 pub mod opts;
 pub mod utils;
+
+#[cfg(feature = "tracy")]
+tracing_tracy::client::register_demangler!();

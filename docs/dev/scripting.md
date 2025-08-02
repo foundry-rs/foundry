@@ -44,7 +44,6 @@ graph TD;
     MultiChainSequence::new-->ScriptArgs::multi_chain_deployment
     ScriptSequence::new-->ScriptArgs::single_deployment
     ScriptArgs::single_deployment-->ScriptArgs::send_transactions
-
 ```
 
 ### Notes
@@ -83,7 +82,6 @@ ScriptRunner::script--"run()"-->Executor::call;
 end
 end
 Executor::call-. BroadcastableTransactions .->ScriptArgs::handle_broadcastable_transactions;
-
 ```
 
 ## Nonce Management
