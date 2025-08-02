@@ -18,39 +18,31 @@ impl ForgeLsp {
         Self { client }
     }
 
-    async fn lint_file(&self, uri: &Url) -> Vec<Diagnostic> {
-        self.client
-            .log_message(MessageType::INFO, format!("Running diagnostics for: {uri})"))
-            .await;
-        let mut all_diagnostics = Vec::new();
-
-        // Collect linting diagnostics
-        match get_lint_diagnostics(uri).await {
-            Ok(mut lint_diagnostics) => {
+    async fn lint_file<'a>(&self, params: TextDocumentItem<'a>) {
+        match get_lint_diagnostics(&params.uri).await {
+            Ok(lint_diagnostics) => {
                 let lint_count = lint_diagnostics.len();
-                all_diagnostics.append(&mut lint_diagnostics);
                 self.client
                     .log_message(
                         MessageType::INFO,
                         format!("Found {lint_count} linting diagnostics"),
                     )
                     .await;
+                self.client.publish_diagnostics(params.uri.clone(), lint_diagnostics, params.version).await;
             }
             Err(e) => {
                 self.client
                     .log_message(
                         MessageType::WARNING,
-                        format!("Foundry linting diagnostics failed: {e}"),
+                        format!("Forge linting diagnostics failed: {e}"),
                     )
                     .await;
             }
         }
-        all_diagnostics
     }
 
     async fn on_change<'a>(&self, params: TextDocumentItem<'a>) {
-        let diagnostics = self.lint_file(&params.uri).await;
-        self.client.publish_diagnostics(params.uri.clone(), diagnostics, params.version).await;
+        self.lint_file(params).await;
     }
 }
 
