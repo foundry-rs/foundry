@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy_consensus::TxEnvelope;
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{Address, B256, Bytes, U256, map::HashMap};
+use alloy_primitives::{Address, B256, U256, map::HashMap};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use foundry_common::fs::{read_json_file, write_json_file};
@@ -184,7 +184,7 @@ impl Cheatcode for getNonce_1Call {
 impl Cheatcode for loadCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { target, slot } = *self;
-        ensure_not_precompile!(&target, ccx);
+        ccx.ensure_not_precompile(&target)?;
         ccx.ecx.journaled_state.load_account(target)?;
         let mut val = ccx.ecx.journaled_state.sload(target, slot.into())?;
 
@@ -530,9 +530,9 @@ impl Cheatcode for dealCall {
 impl Cheatcode for etchCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { target, newRuntimeBytecode } = self;
-        ensure_not_precompile!(target, ccx);
+        ccx.ensure_not_precompile(target)?;
         ccx.ecx.journaled_state.load_account(*target)?;
-        let bytecode = Bytecode::new_raw_checked(Bytes::copy_from_slice(newRuntimeBytecode))
+        let bytecode = Bytecode::new_raw_checked(newRuntimeBytecode.clone())
             .map_err(|e| fmt_err!("failed to create bytecode: {e}"))?;
         ccx.ecx.journaled_state.set_code(*target, bytecode);
         Ok(Default::default())
@@ -582,9 +582,8 @@ impl Cheatcode for setNonceUnsafeCall {
 impl Cheatcode for storeCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { target, slot, value } = *self;
-        ensure_not_precompile!(&target, ccx);
-        // ensure the account is touched
-        let _ = journaled_account(ccx.ecx, target)?;
+        ccx.ensure_not_precompile(&target)?;
+        ensure_loaded_account(ccx.ecx, target)?;
         ccx.ecx.journaled_state.sstore(target, slot.into(), value.into())?;
         Ok(Default::default())
     }
@@ -1155,9 +1154,14 @@ pub(super) fn journaled_account<'a>(
     ecx: Ecx<'a, '_, '_>,
     addr: Address,
 ) -> Result<&'a mut Account> {
+    ensure_loaded_account(ecx, addr)?;
+    Ok(ecx.journaled_state.state.get_mut(&addr).expect("account is loaded"))
+}
+
+pub(super) fn ensure_loaded_account(ecx: Ecx, addr: Address) -> Result<()> {
     ecx.journaled_state.load_account(addr)?;
     ecx.journaled_state.touch(addr);
-    Ok(ecx.journaled_state.state.get_mut(&addr).expect("account is loaded"))
+    Ok(())
 }
 
 /// Consumes recorded account accesses and returns them as an abi encoded

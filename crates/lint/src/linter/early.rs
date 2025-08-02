@@ -44,6 +44,23 @@ pub trait EarlyLintPass<'ast>: Send + Sync {
 
     /// Should be called after the source unit has been visited. Enables lints that require
     /// knowledge of the entire AST to perform their analysis.
+    ///
+    /// # Performance
+    ///
+    /// Since a full-AST analysis can be computationally expensive, implementations
+    /// should guard their logic by first checking if the relevant lint is enabled
+    /// using [`LintContext::is_lint_enabled`]. This avoids performing costly work
+    /// if the user has disabled the lint.
+    ///
+    /// ### Example
+    /// ```rust,ignore
+    /// fn check_full_source_unit(&mut self, ctx: &LintContext<'ast>, ast: &'ast ast::SourceUnit<'ast>) {
+    ///     // Check if the lint is enabled before performing expensive work.
+    ///     if ctx.is_lint_enabled(MY_EXPENSIVE_LINT.id) {
+    ///         // ... perform computation and emit diagnostics ...
+    ///     }
+    /// }
+    /// ```
     fn check_full_source_unit(
         &mut self,
         _ctx: &LintContext<'ast>,
