@@ -154,6 +154,10 @@ macro_rules! fmt_tests {
 // TODO (config):
 // * style = tab
 // * all fn styles
+//
+// TODO (isolation):
+// * when are functions isolated?
+// * when are structs isolated?
 
 fmt_tests! {
     #[ignore = "annotations are not valid Solidity"]

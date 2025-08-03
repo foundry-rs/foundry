@@ -3,7 +3,7 @@ use crate::{
     pp::{self, BreakToken, SIZE_INFINITY, Token},
 };
 use foundry_common::{
-    comments::{Comment, CommentStyle, Comments, DISABLE_END, DISABLE_START},
+    comments::{Comment, CommentStyle, Comments, DISABLE_START},
     iter::IterDelimited,
 };
 use foundry_config::fmt as config;
@@ -476,8 +476,14 @@ impl<'sess> State<'sess, '_> {
         if values.is_empty() {
             self.print_word("(");
             self.s.cbox(self.ind);
-            if self.print_comments(pos_hi, CommentConfig::skip_ws().mixed_prev_space()).is_some() {
-                self.break_offset_if_not_bol(0, -self.ind, false);
+            if let Some(cmnt) =
+                self.print_comments(pos_hi, CommentConfig::skip_ws().mixed_prev_space())
+            {
+                if cmnt.is_mixed() {
+                    self.s.offset(-self.ind);
+                } else {
+                    self.break_offset_if_not_bol(0, -self.ind, false);
+                }
             }
             self.end();
             self.print_word(")");
@@ -636,6 +642,7 @@ impl<'sess> State<'sess, '_> {
             self.nbsp();
         }
         self.end();
+        self.cursor = pos_hi;
     }
 }
 
@@ -807,7 +814,7 @@ impl<'ast> State<'_, 'ast> {
         }
 
         let add_zero_break = if skip_ws {
-            self.print_comments(span.lo(), CommentConfig::skip_ws())
+            self.print_comments(span.lo(), CommentConfig::skip_leading_ws())
         } else {
             self.print_comments(span.lo(), CommentConfig::default())
         }
@@ -964,12 +971,11 @@ impl<'ast> State<'_, 'ast> {
         self.nbsp();
 
         // TODO(rusowsky): move into helper fn to deal with disabled lists of items
-        if let Some(first_span) = bases.first().map(|base| base.span())
-            && let Some(last_span) = bases.last().map(|base| base.span())
-            && self.inline_config.is_disabled(first_span)
-            && self.inline_config.is_disabled(last_span)
+        if let Some(first) = bases.first().map(|base| base.span())
+            && let Some(last) = bases.last().map(|base| base.span())
+            && self.inline_config.is_disabled(Span::new(first.lo(), last.hi()))
         {
-            _ = self.handle_span(Span::new(first_span.lo(), last_span.hi()), false);
+            _ = self.handle_span(Span::new(first.lo(), last.hi()), false);
         } else if !bases.is_empty() {
             self.word("is");
             self.space();
@@ -1115,7 +1121,7 @@ impl<'ast> State<'_, 'ast> {
         self.s.cbox(self.ind);
 
         // Print fn name and params
-        self.cursor = header.span.lo();
+        _ = self.handle_span(Span::new(self.cursor, header.span.lo()), false);
         self.print_word(kind.to_str());
         if let Some(name) = name {
             self.print_sep(Separator::Nbsp);
@@ -1140,6 +1146,9 @@ impl<'ast> State<'_, 'ast> {
                 && let Some((pre_cmnts, _)) = map.remove(&span.lo())
             {
                 for (pos, cmnt) in pre_cmnts.into_iter().delimited() {
+                    if pos.is_first && cmnt.style.is_isolated() && !this.is_bol_or_only_ind() {
+                        this.print_sep(Separator::Hardbreak);
+                    }
                     if let Some(cmnt) = this.handle_comment(cmnt) {
                         this.print_comment(cmnt, CommentConfig::skip_ws().mixed_post_nbsp());
                     }
@@ -1153,17 +1162,13 @@ impl<'ast> State<'_, 'ast> {
 
         let skip_attribs = returns.as_ref().is_some_and(|ret| {
             let attrib_span = Span::new(first_attrib_pos, ret.span.lo());
-            if handle_pre_cmnts(self, attrib_span) {
-                self.cursor = first_attrib_pos;
-            }
+            handle_pre_cmnts(self, attrib_span);
             self.handle_span(attrib_span, false)
         });
         let skip_returns = {
             let pos = if skip_attribs { self.cursor } else { first_attrib_pos };
             let ret_span = Span::new(pos, body_span.lo());
-            if handle_pre_cmnts(self, ret_span) {
-                self.cursor = pos;
-            }
+            handle_pre_cmnts(self, ret_span);
             self.handle_span(ret_span, false)
         };
 
@@ -1251,17 +1256,16 @@ impl<'ast> State<'_, 'ast> {
             self.end();
             self.end();
 
-            if let Some(first_span) = body.first().map(|stmt| stmt.span)
-                && let Some(last_span) = body.last().map(|stmt| stmt.span)
-                && self.inline_config.is_disabled(first_span)
-                && self.inline_config.is_disabled(last_span)
+            if let Some(first) = body.first().map(|stmt| stmt.span)
+                && let Some(last) = body.last().map(|stmt| stmt.span)
+                && self.inline_config.is_disabled(Span::new(first.lo(), last.hi()))
             {
-                if !self.inline_config.is_disabled(Span::new(self.cursor, first_span.lo())) {
+                if !self.inline_config.is_disabled(Span::new(self.cursor, first.lo())) {
                     // We don't use `print_sep()` because we want to introduce the breakpoint
                     Separator::Space.print(&mut self.s, &mut self.cursor);
                 }
-                _ = self.handle_span(Span::new(first_span.lo(), last_span.hi()), false);
-                if !self.handle_span(Span::new(last_span.hi(), body_span.hi()), false) {
+                _ = self.handle_span(Span::new(first.lo(), last.hi()), false);
+                if !self.handle_span(Span::new(last.hi(), body_span.hi()), false) {
                     if self
                         .print_comments(body_span.hi(), CommentConfig::default())
                         .map_or(true, |cmnt| cmnt.is_mixed())
@@ -1362,7 +1366,6 @@ impl<'ast> State<'_, 'ast> {
         if self.handle_span(*span, false) {
             return;
         }
-        self.cursor = span.lo();
         let init_space_left = self.space_left();
         let mut pre_init_size = self.estimate_size(ty.span);
 
@@ -2274,7 +2277,6 @@ impl<'ast> State<'_, 'ast> {
             ListFormat::Consistent { cmnts_break: true, with_space: self.config.bracket_spacing },
             true,
         );
-
         self.word("}");
     }
 
@@ -2385,7 +2387,6 @@ impl<'ast> State<'_, 'ast> {
                     self.single_line_stmt = Some(inline.outcome);
                 }
 
-                self.cursor = span.lo();
                 self.cbox(0);
                 self.ibox(0);
                 // Print if stmt
@@ -2660,7 +2661,6 @@ impl<'ast> State<'_, 'ast> {
             return;
         }
 
-        self.cursor = stmt.span.lo();
         let stmts = if let ast::StmtKind::Block(stmts) = &stmt.kind {
             stmts
         } else {
@@ -3532,10 +3532,16 @@ fn item_needs_iso(item: &ast::ItemKind<'_>) -> bool {
         | ast::ItemKind::Udvt(..)
         | ast::ItemKind::Enum(..)
         | ast::ItemKind::Error(..)
-        | ast::ItemKind::Event(..)
-        | ast::ItemKind::Struct(..) => false,
+        | ast::ItemKind::Event(..) => false,
         ast::ItemKind::Contract(..) => true,
-        ast::ItemKind::Function(func) => func.body.as_ref().is_some_and(|b| !b.stmts.is_empty()),
+        // is this logic correct? that's what i figured out based on unit tests
+        ast::ItemKind::Struct(strukt) => !strukt.fields.is_empty(),
+        // is this logic correct? that's what i figured out based on unit tests
+        ast::ItemKind::Function(func) => {
+            func.body.is_some()
+                && !(matches!(func.kind, ast::FunctionKind::Modifier)
+                    && func.body.as_ref().is_none_or(|b| b.is_empty()))
+        }
     }
 }
 

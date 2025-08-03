@@ -209,12 +209,13 @@ impl<I: ItemIdIterator> InlineConfig<I> {
                 }
                 InlineConfigItem::DisableNextLine(ids) => {
                     if let Some(offset) = src[comment_range.end..].find('\n') {
-                        let start = comment_range.end + offset + 1;
-                        if start < src.len() {
-                            let end = src[start..].find('\n').map_or(src.len(), |i| start + i);
+                        let next_line = comment_range.end + offset + 1;
+                        if next_line < src.len() {
+                            let end =
+                                src[next_line..].find('\n').map_or(src.len(), |i| next_line + i);
                             for id in ids.into_iter() {
                                 disabled_ranges.entry(id).or_default().push(DisabledRange {
-                                    start: start + file.start_pos.to_usize(),
+                                    start: comment_range.start + file.start_pos.to_usize(),
                                     end: end + file.start_pos.to_usize(),
                                     loose: false,
                                 })
