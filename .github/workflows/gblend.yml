@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - "v*.*.*" # Version releases (v1.0.0, v2.1.3, etc.)
-      - "latest" # Latest release
   workflow_dispatch: # Manual trigger
 
 env:
@@ -248,6 +247,30 @@ jobs:
           fi
           echo "gblend_attestation=gblend_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.attestation.txt" >> $GITHUB_OUTPUT
 
+      # Create additional artifacts with latest in the name for stable releases
+      - name: Create latest artifacts
+        if: ${{ env.IS_NIGHTLY != 'true' && startsWith(github.ref, 'refs/tags/v') }}
+        id: latest_artifacts
+        env:
+          PLATFORM_NAME: ${{ matrix.platform }}
+          OUT_DIR: target/${{ matrix.target }}/${{ env.PROFILE }}
+          ARCH: ${{ matrix.arch }}
+        shell: bash
+        run: |
+          if [[ "$PLATFORM_NAME" == "linux" ]]; then
+            tar -czvf "gblend_latest_${PLATFORM_NAME}_${ARCH}.tar.gz" -C $OUT_DIR gblend
+            echo "latest_file_name=gblend_latest_${PLATFORM_NAME}_${ARCH}.tar.gz" >> $GITHUB_OUTPUT
+          elif [ "$PLATFORM_NAME" == "darwin" ]; then
+            gtar -czvf "gblend_latest_${PLATFORM_NAME}_${ARCH}.tar.gz" -C $OUT_DIR gblend
+            echo "latest_file_name=gblend_latest_${PLATFORM_NAME}_${ARCH}.tar.gz" >> $GITHUB_OUTPUT
+          else
+            cd $OUT_DIR
+            7z a -tzip "gblend_latest_${PLATFORM_NAME}_${ARCH}.zip" gblend.exe
+            mv "gblend_latest_${PLATFORM_NAME}_${ARCH}.zip" ../../../
+            echo "latest_file_name=gblend_latest_${PLATFORM_NAME}_${ARCH}.zip" >> $GITHUB_OUTPUT
+          fi
+          echo "Created latest artifact: gblend_latest_${PLATFORM_NAME}_${ARCH}"
+
       - name: Build man page
         id: man
         if: matrix.target == 'x86_64-unknown-linux-gnu'
@@ -261,6 +284,19 @@ jobs:
           gzip gblend.1
           tar -czvf "gblend_man_${VERSION_NAME}.tar.gz" gblend.1.gz
           echo "gblend_man=gblend_man_${VERSION_NAME}.tar.gz" >> $GITHUB_OUTPUT
+
+      # Create latest man page for stable releases
+      - name: Build latest man page
+        id: latest_man
+        if: ${{ matrix.target == 'x86_64-unknown-linux-gnu' && env.IS_NIGHTLY != 'true' && startsWith(github.ref, 'refs/tags/v') }}
+        env:
+          OUT_DIR: target/${{ matrix.target }}/${{ env.PROFILE }}
+        shell: bash
+        run: |
+          help2man -N $OUT_DIR/gblend > gblend_latest.1
+          gzip gblend_latest.1
+          tar -czvf "gblend_man_latest.tar.gz" gblend_latest.1.gz
+          echo "latest_man=gblend_man_latest.tar.gz" >> $GITHUB_OUTPUT
 
       # - name: Binaries attestation
       #   id: attestation
@@ -285,6 +321,25 @@ jobs:
             ${{ steps.artifacts.outputs.file_name }}
             ${{ steps.artifacts.outputs.gblend_attestation }}
             ${{ steps.man.outputs.gblend_man }}
+
+      # Update the latest release with latest artifacts for stable releases
+      - name: Update latest release
+        if: ${{ env.IS_NIGHTLY != 'true' && startsWith(github.ref, 'refs/tags/v') }}
+        uses: softprops/action-gh-release@v2.2.2
+        with:
+          name: "Latest Release"
+          tag_name: "latest"
+          prerelease: false
+          body: |
+            This release always points to the latest stable version: ${{ needs.prepare.outputs.tag_name }}
+
+            **Current stable version:** ${{ needs.prepare.outputs.tag_name }}
+            **Release date:** ${{ github.event.head_commit.timestamp }}
+
+            For version-specific releases, please check the [releases page](https://github.com/${{ github.repository }}/releases).
+          files: |
+            ${{ steps.latest_artifacts.outputs.latest_file_name }}
+            ${{ steps.latest_man.outputs.latest_man }}
 
       # # If this is a nightly release, it also updates the release
       # # tagged `nightly` for compatibility with `gblendup`
@@ -325,6 +380,8 @@ jobs:
           script: |
             const prunePrereleases = require('./.github/scripts/prune-prereleases.js')
             await prunePrereleases({github, context})
+
+      # Update latest tag for stable releases
       - name: Update latest tag for stable releases
         if: ${{ env.IS_NIGHTLY != 'true' && startsWith(github.ref, 'refs/tags/v') }}
         uses: actions/github-script@v7
