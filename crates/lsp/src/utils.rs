@@ -146,12 +146,10 @@ pub fn build_output_to_diagnostics(
                 .and_then(|full_path| Path::new(full_path).file_name())
                 .and_then(|os_str| os_str.to_str());
 
-            // Compare just the file names, not full paths
             if source_file != Some(filename) {
                 continue;
             }
 
-            // Rest of your code remains the same...
             let start_offset = err
                 .get("sourceLocation")
                 .and_then(|loc| loc.get("start"))
