@@ -792,9 +792,9 @@ impl<'a> InvariantExecutor<'a> {
             .map(|(addr, (identifier, abi))| {
                 let mut contract = TargetedContract::new(identifier.clone(), abi.clone());
                 // Try to find storage layout from project contracts
-                if let Some((_, contract_data)) = self.project_contracts.iter().find(|(artifact, _)| {
-                    &artifact.name == identifier
-                }) {
+                if let Some((_, contract_data)) =
+                    self.project_contracts.iter().find(|(artifact, _)| &artifact.name == identifier)
+                {
                     contract.storage_layout = contract_data.storage_layout.as_ref().map(Arc::clone);
                 }
                 (*addr, contract)
@@ -840,9 +840,11 @@ impl<'a> InvariantExecutor<'a> {
             // Identifiers are specified as an array, so we loop through them.
             for identifier in artifacts {
                 // Try to find the contract by name or identifier in the project's contracts.
-                if let Some((_, contract_data)) = self.project_contracts.iter().find(|(artifact, _)| {
-                    &artifact.name == identifier || &artifact.identifier() == identifier
-                }) {
+                if let Some((_, contract_data)) =
+                    self.project_contracts.iter().find(|(artifact, _)| {
+                        &artifact.name == identifier || &artifact.identifier() == identifier
+                    })
+                {
                     let abi = &contract_data.abi;
                     combined
                         // Check if there's an entry for the given key in the 'combined' map.
@@ -854,8 +856,10 @@ impl<'a> InvariantExecutor<'a> {
                         })
                         // Otherwise insert it into the map.
                         .or_insert_with(|| {
-                            let mut contract = TargetedContract::new(identifier.to_string(), abi.clone());
-                            contract.storage_layout = contract_data.storage_layout.as_ref().map(Arc::clone);
+                            let mut contract =
+                                TargetedContract::new(identifier.to_string(), abi.clone());
+                            contract.storage_layout =
+                                contract_data.storage_layout.as_ref().map(Arc::clone);
                             contract
                         });
                 }
@@ -959,9 +963,9 @@ impl<'a> InvariantExecutor<'a> {
                 })?;
                 let mut contract = TargetedContract::new(identifier.clone(), abi.clone());
                 // Try to find storage layout from project contracts
-                if let Some((_, contract_data)) = self.project_contracts.iter().find(|(artifact, _)| {
-                    &artifact.name == identifier
-                }) {
+                if let Some((_, contract_data)) =
+                    self.project_contracts.iter().find(|(artifact, _)| &artifact.name == identifier)
+                {
                     contract.storage_layout = contract_data.storage_layout.as_ref().map(Arc::clone);
                 }
                 entry.insert(contract)

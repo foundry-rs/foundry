@@ -310,7 +310,7 @@ impl FuzzDictionary {
         // Try to determine the type of this storage slot
         let storage_type = storage_layout.and_then(|layout| {
             // Convert slot to string for comparison
-            let slot_str = format!("{:#x}", storage_slot);
+            let slot_str = format!("{storage_slot:#x}");
 
             // Find the storage entry for this slot
             layout
@@ -322,8 +322,7 @@ impl FuzzDictionary {
                     layout
                         .types
                         .get(&storage.storage_type)
-                        .map(|t| DynSolType::parse(&t.label).ok())
-                        .flatten()
+                        .and_then(|t| DynSolType::parse(&t.label).ok())
                 })
         });
 

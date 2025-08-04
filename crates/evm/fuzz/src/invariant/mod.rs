@@ -153,7 +153,9 @@ impl TargetedContracts {
     pub fn get_storage_layouts(&self) -> HashMap<Address, Arc<StorageLayout>> {
         self.inner
             .iter()
-            .filter_map(|(addr, c)| c.storage_layout.as_ref().map(|layout| (*addr, Arc::clone(layout))))
+            .filter_map(|(addr, c)| {
+                c.storage_layout.as_ref().map(|layout| (*addr, Arc::clone(layout)))
+            })
             .collect()
     }
 }
