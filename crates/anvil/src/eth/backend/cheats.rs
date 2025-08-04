@@ -1,6 +1,10 @@
 //! Support for "cheat codes" / bypass functions
 
-use alloy_primitives::{Address, map::AddressHashSet};
+use alloy_primitives::{
+    Address,
+    map::{AddressHashSet, foldhash::HashMap},
+};
+use alloy_signer::Signature;
 use parking_lot::RwLock;
 use std::sync::Arc;
 
@@ -61,6 +65,21 @@ impl CheatsManager {
     pub fn impersonated_accounts(&self) -> AddressHashSet {
         self.state.read().impersonated_accounts.clone()
     }
+
+    /// Registers an override so that `ecrecover(signature)` returns `addr`.
+    pub fn add_recover_override(&self, sig: Signature, addr: Address) {
+        self.state.write().signature_overrides.insert(sig, addr);
+    }
+
+    /// If an override exists for `sig`, returns the address; otherwise `None`.
+    pub fn get_recover_override(&self, sig: &Signature) -> Option<Address> {
+        self.state.read().signature_overrides.get(sig).cloned()
+    }
+
+    /// Returns true if any ecrecover overrides have been registered.
+    pub fn has_recover_overrides(&self) -> bool {
+        !self.state.read().signature_overrides.is_empty()
+    }
 }
 
 /// Container type for all the state variables
@@ -70,4 +89,6 @@ pub struct CheatsState {
     pub impersonated_accounts: AddressHashSet,
     /// If set to true will make the `is_impersonated` function always return true
     pub auto_impersonate_accounts: bool,
+    /// Overrides for ecrecover: Signature => Address
+    pub signature_overrides: HashMap<Signature, Address>,
 }

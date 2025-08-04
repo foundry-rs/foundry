@@ -85,6 +85,7 @@ use foundry_evm::decode::RevertDecoder;
 use futures::{
     StreamExt,
     channel::{mpsc::Receiver, oneshot},
+    future::ok,
 };
 use parking_lot::RwLock;
 use revm::{
@@ -348,6 +349,9 @@ impl EthApi {
             }
             EthRequest::AutoImpersonateAccount(enable) => {
                 self.anvil_auto_impersonate_account(enable).await.to_rpc_result()
+            }
+            EthRequest::RecoverSignature(signature, address) => {
+                self.anvil_recover_signature(signature, address).await.to_rpc_result()
             }
             EthRequest::GetAutoMine(()) => self.anvil_get_auto_mine().to_rpc_result(),
             EthRequest::Mine(blocks, interval) => {
@@ -1818,6 +1822,15 @@ impl EthApi {
     pub async fn anvil_auto_impersonate_account(&self, enabled: bool) -> Result<()> {
         node_info!("anvil_autoImpersonateAccount");
         self.backend.auto_impersonate_account(enabled);
+        Ok(())
+    }
+
+    ///
+    pub async fn anvil_recover_signature(
+        &self,
+        signature: Signature,
+        address: Address,
+    ) -> Result<()> {
         Ok(())
     }
 

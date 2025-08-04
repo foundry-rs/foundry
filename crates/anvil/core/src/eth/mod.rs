@@ -1,5 +1,5 @@
 use crate::{eth::subscription::SubscriptionId, types::ReorgOptions};
-use alloy_primitives::{Address, B64, B256, Bytes, TxHash, U256};
+use alloy_primitives::{Address, B64, B256, Bytes, Signature, TxHash, U256};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag as BlockNumber, BlockOverrides, Filter, Index,
     anvil::{Forking, MineOptions},
@@ -321,6 +321,11 @@ pub enum EthRequest {
         with = "sequence"
     )]
     AutoImpersonateAccount(bool),
+
+    /// Registers a signature/address pair for faking `ecrecover` results
+    #[serde(rename = "anvil_recoverSignature", with = "sequence")]
+    RecoverSignature(Signature, Address),
+
     /// Returns true if automatic mining is enabled, and false.
     #[serde(rename = "anvil_getAutomine", alias = "hardhat_getAutomine", with = "empty_params")]
     GetAutoMine(()),

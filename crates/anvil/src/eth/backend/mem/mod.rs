@@ -3015,6 +3015,14 @@ impl Backend {
         Ok(None)
     }
 
+    pub async fn recover_signature(
+        &self,
+        signature: Signature,
+        address: Address,
+    ) -> Result<bool, BlockchainError> {
+        if self.cheats().
+    }
+
     /// Prove an account's existence or nonexistence in the state trie.
     ///
     /// Returns a merkle proof of the account's trie node, `account_key` == keccak(address)
