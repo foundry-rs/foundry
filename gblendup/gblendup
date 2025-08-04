@@ -396,6 +396,7 @@ use() {
   if [ -d "$GBLEND_VERSION_DIR" ]; then
 
     check_bins_in_use
+    ensure mkdir -p "$GBLEND_BIN_DIR"
 
     for bin in "${BINS[@]}"; do
       bin_path="$GBLEND_BIN_DIR/$bin"
