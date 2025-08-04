@@ -309,21 +309,14 @@ impl FuzzDictionary {
 
         // Try to determine the type of this storage slot
         let storage_type = storage_layout.and_then(|layout| {
-            // Convert slot to string for comparison
-            let slot_str = format!("{storage_slot:#x}");
-
             // Find the storage entry for this slot
-            layout
-                .storage
-                .iter()
-                .find(|s| s.slot == slot_str || s.slot == storage_slot.to_string())
-                .and_then(|storage| {
-                    // Look up the type information
-                    layout
-                        .types
-                        .get(&storage.storage_type)
-                        .and_then(|t| DynSolType::parse(&t.label).ok())
-                })
+            layout.storage.iter().find(|s| s.slot == storage_slot.to_string()).and_then(|storage| {
+                // Look up the type information
+                layout
+                    .types
+                    .get(&storage.storage_type)
+                    .and_then(|t| DynSolType::parse(&t.label).ok())
+            })
         });
 
         // If we have type information, only insert as a sample value with the correct type
