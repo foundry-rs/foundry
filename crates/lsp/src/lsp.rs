@@ -1,4 +1,4 @@
-use crate::utils::get_lint_diagnostics;
+use crate::utils::{get_build_diagnostics, get_lint_diagnostics};
 use tower_lsp::{Client, LanguageServer, jsonrpc::Result, lsp_types::*};
 
 #[derive(Debug)]
@@ -7,6 +7,7 @@ pub struct ForgeLsp {
 }
 
 #[allow(dead_code)]
+#[derive(Debug, Clone)]
 struct TextDocumentItem<'a> {
     uri: Url,
     text: &'a str,
@@ -43,8 +44,31 @@ impl ForgeLsp {
         }
     }
 
+    async fn build_file<'a>(&self, params: TextDocumentItem<'a>) {
+        match get_build_diagnostics(&params.uri).await {
+            Ok(lint_diagnostics) => {
+                let lint_count = lint_diagnostics.len();
+                self.client
+                    .log_message(MessageType::INFO, format!("Found {lint_count} build diagnostics"))
+                    .await;
+                self.client
+                    .publish_diagnostics(params.uri.clone(), lint_diagnostics, params.version)
+                    .await;
+            }
+            Err(e) => {
+                self.client
+                    .log_message(
+                        MessageType::WARNING,
+                        format!("Forge build diagnostics failed: {e}"),
+                    )
+                    .await;
+            }
+        }
+    }
+
     async fn on_change<'a>(&self, params: TextDocumentItem<'a>) {
-        self.lint_file(params).await;
+        self.lint_file(params.clone()).await;
+        self.build_file(params).await;
     }
 }
 
