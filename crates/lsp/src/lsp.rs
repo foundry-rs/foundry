@@ -1,5 +1,6 @@
-use crate::utils::{get_build_diagnostics, get_lint_diagnostics};
-use tower_lsp::{Client, LanguageServer, jsonrpc::Result, lsp_types::*};
+use crate::{build::get_build_diagnostics, lint::get_lint_diagnostics};
+
+use tower_lsp::{Client, LanguageServer, lsp_types::*};
 
 #[derive(Debug)]
 pub struct ForgeLsp {
@@ -74,7 +75,10 @@ impl ForgeLsp {
 
 #[tower_lsp::async_trait]
 impl LanguageServer for ForgeLsp {
-    async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(
+        &self,
+        _: InitializeParams,
+    ) -> tower_lsp::jsonrpc::Result<InitializeResult> {
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
                 name: "forge lsp".to_string(),
@@ -93,7 +97,7 @@ impl LanguageServer for ForgeLsp {
         self.client.log_message(MessageType::INFO, "lsp server initialized!").await;
     }
 
-    async fn shutdown(&self) -> Result<()> {
+    async fn shutdown(&self) -> tower_lsp::jsonrpc::Result<()> {
         self.client.log_message(MessageType::INFO, "lsp server shutting down").await;
         Ok(())
     }
@@ -164,7 +168,10 @@ impl LanguageServer for ForgeLsp {
         self.client.log_message(MessageType::INFO, "watched files have changed!").await;
     }
 
-    async fn execute_command(&self, _: ExecuteCommandParams) -> Result<Option<serde_json::Value>> {
+    async fn execute_command(
+        &self,
+        _: ExecuteCommandParams,
+    ) -> tower_lsp::jsonrpc::Result<Option<serde_json::Value>> {
         self.client.log_message(MessageType::INFO, "command executed!").await;
 
         match self.client.apply_edit(WorkspaceEdit::default()).await {

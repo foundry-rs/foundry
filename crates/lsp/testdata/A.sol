@@ -6,7 +6,7 @@ contract A {
 
     function() internal c;
 
-    function add_num(uint256 a) public returns (uint256) {
+    function add_num(uint256 a) public pure returns (uint256) {
         bool fad;
         return a + 4;
     }
