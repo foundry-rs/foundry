@@ -1437,7 +1437,7 @@ impl Config {
                 Some(config) => return Ok(Some(config)),
                 None => {
                     return Err(EtherscanConfigError::UnknownChain(
-                        "".to_string(),
+                        String::new(),
                         chain.unwrap_or_default(),
                     ));
                 }
