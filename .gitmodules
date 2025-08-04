@@ -1,9 +1,0 @@
-[submodule "lib/forge-std"]
-	path = lib/forge-std
-	url = https://github.com/foundry-rs/forge-std
-[submodule "examples/wasm/lib/forge-std"]
-	path = examples/wasm/lib/forge-std
-	url = https://github.com/foundry-rs/forge-std
-[submodule "examples/ttt/lib/forge-std"]
-	path = examples/ttt/lib/forge-std
-	url = https://github.com/foundry-rs/forge-std
