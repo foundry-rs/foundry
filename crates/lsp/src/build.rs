@@ -1,21 +1,6 @@
-use crate::{
-    compiler::{Compiler, CompilerError, ForgeCompiler},
-    utils::byte_offset_to_position,
-};
+use crate::utils::byte_offset_to_position;
 use std::path::Path;
-use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range, Url};
-
-pub async fn get_build_diagnostics(file: &Url) -> Result<Vec<Diagnostic>, CompilerError> {
-    let path = file.to_file_path().map_err(|_| CompilerError::InvalidUrl)?;
-    let path_str = path.to_str().ok_or(CompilerError::InvalidUrl)?;
-    let filename =
-        path.file_name().and_then(|os_str| os_str.to_str()).ok_or(CompilerError::InvalidUrl)?;
-    let content = tokio::fs::read_to_string(&path).await.map_err(|_| CompilerError::ReadError)?;
-    let compiler = ForgeCompiler;
-    let build_output = compiler.build(path_str).await?;
-    let diagnostics = build_output_to_diagnostics(&build_output, filename, &content);
-    Ok(diagnostics)
-}
+use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range};
 
 fn ignored_code_for_tests(value: &serde_json::Value) -> bool {
     let error_code = value.get("errorCode").and_then(|v| v.as_str()).unwrap_or_default();
@@ -121,6 +106,7 @@ pub fn build_output_to_diagnostics(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compiler::{Compiler, ForgeCompiler};
 
     fn setup(testdata: &str) -> (std::string::String, ForgeCompiler) {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");

@@ -26,6 +26,32 @@ pub fn byte_offset_to_position(source: &str, byte_offset: usize) -> (u32, u32) {
     (line, col)
 }
 
+pub fn position_to_byte_offset(source: &str, line: u32, character: u32) -> usize {
+    let mut current_line = 0;
+    let mut current_col = 0;
+
+    for (i, ch) in source.char_indices() {
+        if current_line == line && current_col == character {
+            return i;
+        }
+
+        match ch {
+            '\n' => {
+                if current_line == line && current_col < character {
+                    return i; // clamp to end of line
+                }
+                current_line += 1;
+                current_col = 0;
+            }
+            _ => {
+                current_col += 1;
+            }
+        }
+    }
+
+    source.len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,5 +96,27 @@ mod tests {
         let source = "";
         assert_eq!(byte_offset_to_position(source, 0), (0, 0));
         assert_eq!(byte_offset_to_position(source, 10), (0, 0));
+    }
+
+    #[test]
+    fn test_position_to_byte_offset_basic() {
+        let source = "line1\nline2\nline3\n";
+        assert_eq!(position_to_byte_offset(source, 0, 0), 0); // 'l'
+        assert_eq!(position_to_byte_offset(source, 0, 5), 5); // '\n'
+        assert_eq!(position_to_byte_offset(source, 1, 0), 6); // 'l' in line2
+        assert_eq!(position_to_byte_offset(source, 1, 3), 9); // 'e' in line2
+        assert_eq!(position_to_byte_offset(source, 2, 0), 12); // 'l' in line3
+    }
+
+    #[test]
+    fn test_position_to_byte_offset_out_of_bounds() {
+        let source = "line1\nline2\n";
+        assert_eq!(position_to_byte_offset(source, 10, 10), source.len());
+    }
+
+    #[test]
+    fn test_position_to_byte_offset_empty() {
+        let source = "";
+        assert_eq!(position_to_byte_offset(source, 0, 0), 0);
     }
 }

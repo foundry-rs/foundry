@@ -1,10 +1,10 @@
-use crate::{build::get_build_diagnostics, lint::get_lint_diagnostics};
-
+use crate::compiler::{Compiler, ForgeCompiler};
+use std::sync::Arc;
 use tower_lsp::{Client, LanguageServer, lsp_types::*};
 
-#[derive(Debug)]
 pub struct ForgeLsp {
-    pub client: Client,
+    client: Client,
+    compiler: Arc<dyn Compiler>,
 }
 
 #[allow(dead_code)]
@@ -17,15 +17,18 @@ struct TextDocumentItem<'a> {
 
 impl ForgeLsp {
     pub fn new(client: Client) -> Self {
-        Self { client }
+        let compiler = Arc::new(ForgeCompiler) as Arc<dyn Compiler>;
+        Self { client, compiler }
     }
 
     async fn on_change<'a>(&self, params: TextDocumentItem<'a>) {
         let uri = params.uri.clone();
         let version = params.version;
 
-        let (lint_result, build_result) =
-            tokio::join!(get_lint_diagnostics(&uri), get_build_diagnostics(&uri));
+        let (lint_result, build_result) = tokio::join!(
+            self.compiler.get_lint_diagnostics(&uri),
+            self.compiler.get_build_diagnostics(&uri)
+        );
 
         let mut all_diagnostics = vec![];
 
@@ -115,10 +118,6 @@ impl LanguageServer for ForgeLsp {
 
     async fn did_change(&self, _params: DidChangeTextDocumentParams) {
         self.client.log_message(MessageType::INFO, "file changed").await;
-
-        // Don't run diagnostics on change - only on save
-        // This prevents interrupting the user while typing
-        // TODO: Implement code completion
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {

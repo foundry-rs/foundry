@@ -1,16 +1,5 @@
-use crate::compiler::{Compiler, CompilerError, ForgeCompiler};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range, Url};
-
-pub async fn get_lint_diagnostics(file: &Url) -> Result<Vec<Diagnostic>, CompilerError> {
-    let path: PathBuf = file.to_file_path().map_err(|_| CompilerError::InvalidUrl)?;
-    let path_str = path.to_str().ok_or(CompilerError::InvalidUrl)?;
-    let compiler = ForgeCompiler;
-    let lint_output = compiler.lint(path_str).await?;
-    let diagnostics = lint_output_to_diagnostics(&lint_output, path_str);
-    Ok(diagnostics)
-}
+use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 
 pub fn lint_output_to_diagnostics(
     forge_output: &serde_json::Value,
@@ -115,6 +104,7 @@ pub struct ForgeLintChild {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compiler::{Compiler, ForgeCompiler};
 
     fn setup(testdata: &str) -> (std::string::String, ForgeCompiler) {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");

@@ -1,14 +1,21 @@
+use crate::{build::build_output_to_diagnostics, lint::lint_output_to_diagnostics};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use thiserror::Error;
 use tokio::process::Command;
-use tower_lsp::async_trait;
+use tower_lsp::{
+    async_trait,
+    lsp_types::{Diagnostic, Url},
+};
 
 pub struct ForgeCompiler;
 
 #[async_trait]
 pub trait Compiler: Send + Sync {
-    async fn lint(&self, file: &str) -> Result<serde_json::Value, CompilerError>;
     async fn build(&self, file: &str) -> Result<serde_json::Value, CompilerError>;
+    async fn get_build_diagnostics(&self, file: &Url) -> Result<Vec<Diagnostic>, CompilerError>;
+    async fn get_lint_diagnostics(&self, file: &Url) -> Result<Vec<Diagnostic>, CompilerError>;
+    async fn lint(&self, file: &str) -> Result<serde_json::Value, CompilerError>;
 }
 
 #[async_trait]
@@ -51,6 +58,26 @@ impl Compiler for ForgeCompiler {
         let parsed: serde_json::Value = serde_json::from_str(&stdout_str)?;
 
         Ok(parsed)
+    }
+
+    async fn get_lint_diagnostics(&self, file: &Url) -> Result<Vec<Diagnostic>, CompilerError> {
+        let path: PathBuf = file.to_file_path().map_err(|_| CompilerError::InvalidUrl)?;
+        let path_str = path.to_str().ok_or(CompilerError::InvalidUrl)?;
+        let lint_output = self.lint(path_str).await?;
+        let diagnostics = lint_output_to_diagnostics(&lint_output, path_str);
+        Ok(diagnostics)
+    }
+
+    async fn get_build_diagnostics(&self, file: &Url) -> Result<Vec<Diagnostic>, CompilerError> {
+        let path = file.to_file_path().map_err(|_| CompilerError::InvalidUrl)?;
+        let path_str = path.to_str().ok_or(CompilerError::InvalidUrl)?;
+        let filename =
+            path.file_name().and_then(|os_str| os_str.to_str()).ok_or(CompilerError::InvalidUrl)?;
+        let content =
+            tokio::fs::read_to_string(&path).await.map_err(|_| CompilerError::ReadError)?;
+        let build_output = self.build(path_str).await?;
+        let diagnostics = build_output_to_diagnostics(&build_output, filename, &content);
+        Ok(diagnostics)
     }
 }
 
