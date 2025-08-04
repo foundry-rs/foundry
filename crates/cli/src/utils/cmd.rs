@@ -2,7 +2,7 @@ use crate::opts::GenesisOpts;
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{map::HashMap, Address, Bytes};
 use eyre::{Result, WrapErr};
-use fluentbase_genesis::Genesis;
+use alloy_genesis::Genesis;
 use foundry_common::{
     compile::ProjectCompiler, fs, selectors::SelectorKind, shell, ContractsByArtifact,
     TestFunctionExt,

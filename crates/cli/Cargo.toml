@@ -55,9 +55,9 @@ tracy-client = { workspace = true, optional = true, features = ["demangle"] }
 yansi.workspace = true
 rustls = { workspace = true, features = ["ring"] }
 dunce.workspace = true
-
+alloy-genesis.workspace = true
 # fluentbase
-fluentbase-genesis = { workspace = true, default-features = false }
+#fluentbase-genesis = { workspace = true, default-features = false }
 
 tracing-tracy = { version = "0.11", optional = true }
 
