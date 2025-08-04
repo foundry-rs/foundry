@@ -106,15 +106,15 @@ pub fn build_output_to_diagnostics(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::{Compiler, ForgeCompiler};
+    use crate::runner::{ForgeRunner, Runner};
 
-    fn setup(testdata: &str) -> (std::string::String, ForgeCompiler) {
+    fn setup(testdata: &str) -> (std::string::String, ForgeRunner) {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
         let file_path = format!("{manifest_dir}/{testdata}");
         let path = std::path::Path::new(&file_path);
         assert!(path.exists(), "Test file {path:?} does not exist");
 
-        let compiler = ForgeCompiler;
+        let compiler = ForgeRunner;
         (file_path, compiler)
     }
 

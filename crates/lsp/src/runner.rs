@@ -8,19 +8,19 @@ use tower_lsp::{
     lsp_types::{Diagnostic, Url},
 };
 
-pub struct ForgeCompiler;
+pub struct ForgeRunner;
 
 #[async_trait]
-pub trait Compiler: Send + Sync {
-    async fn build(&self, file: &str) -> Result<serde_json::Value, CompilerError>;
-    async fn get_build_diagnostics(&self, file: &Url) -> Result<Vec<Diagnostic>, CompilerError>;
-    async fn get_lint_diagnostics(&self, file: &Url) -> Result<Vec<Diagnostic>, CompilerError>;
-    async fn lint(&self, file: &str) -> Result<serde_json::Value, CompilerError>;
+pub trait Runner: Send + Sync {
+    async fn build(&self, file: &str) -> Result<serde_json::Value, RunnerError>;
+    async fn get_build_diagnostics(&self, file: &Url) -> Result<Vec<Diagnostic>, RunnerError>;
+    async fn get_lint_diagnostics(&self, file: &Url) -> Result<Vec<Diagnostic>, RunnerError>;
+    async fn lint(&self, file: &str) -> Result<serde_json::Value, RunnerError>;
 }
 
 #[async_trait]
-impl Compiler for ForgeCompiler {
-    async fn lint(&self, file_path: &str) -> Result<serde_json::Value, CompilerError> {
+impl Runner for ForgeRunner {
+    async fn lint(&self, file_path: &str) -> Result<serde_json::Value, RunnerError> {
         let output =
             Command::new("forge").arg("lint").arg(file_path).arg("--json").output().await?;
 
@@ -44,7 +44,7 @@ impl Compiler for ForgeCompiler {
         Ok(serde_json::Value::Array(diagnostics))
     }
 
-    async fn build(&self, file_path: &str) -> Result<serde_json::Value, CompilerError> {
+    async fn build(&self, file_path: &str) -> Result<serde_json::Value, RunnerError> {
         let output = Command::new("forge")
             .arg("build")
             .arg(file_path)
@@ -60,21 +60,20 @@ impl Compiler for ForgeCompiler {
         Ok(parsed)
     }
 
-    async fn get_lint_diagnostics(&self, file: &Url) -> Result<Vec<Diagnostic>, CompilerError> {
-        let path: PathBuf = file.to_file_path().map_err(|_| CompilerError::InvalidUrl)?;
-        let path_str = path.to_str().ok_or(CompilerError::InvalidUrl)?;
+    async fn get_lint_diagnostics(&self, file: &Url) -> Result<Vec<Diagnostic>, RunnerError> {
+        let path: PathBuf = file.to_file_path().map_err(|_| RunnerError::InvalidUrl)?;
+        let path_str = path.to_str().ok_or(RunnerError::InvalidUrl)?;
         let lint_output = self.lint(path_str).await?;
         let diagnostics = lint_output_to_diagnostics(&lint_output, path_str);
         Ok(diagnostics)
     }
 
-    async fn get_build_diagnostics(&self, file: &Url) -> Result<Vec<Diagnostic>, CompilerError> {
-        let path = file.to_file_path().map_err(|_| CompilerError::InvalidUrl)?;
-        let path_str = path.to_str().ok_or(CompilerError::InvalidUrl)?;
+    async fn get_build_diagnostics(&self, file: &Url) -> Result<Vec<Diagnostic>, RunnerError> {
+        let path = file.to_file_path().map_err(|_| RunnerError::InvalidUrl)?;
+        let path_str = path.to_str().ok_or(RunnerError::InvalidUrl)?;
         let filename =
-            path.file_name().and_then(|os_str| os_str.to_str()).ok_or(CompilerError::InvalidUrl)?;
-        let content =
-            tokio::fs::read_to_string(&path).await.map_err(|_| CompilerError::ReadError)?;
+            path.file_name().and_then(|os_str| os_str.to_str()).ok_or(RunnerError::InvalidUrl)?;
+        let content = tokio::fs::read_to_string(&path).await.map_err(|_| RunnerError::ReadError)?;
         let build_output = self.build(path_str).await?;
         let diagnostics = build_output_to_diagnostics(&build_output, filename, &content);
         Ok(diagnostics)
@@ -82,7 +81,7 @@ impl Compiler for ForgeCompiler {
 }
 
 #[derive(Error, Debug)]
-pub enum CompilerError {
+pub enum RunnerError {
     #[error("Invalid file URL")]
     InvalidUrl,
     #[error("Failed to run command: {0}")]
@@ -96,16 +95,16 @@ pub enum CompilerError {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct ForgeSourceLocation {
+pub struct SourceLocation {
     file: String,
     start: i32, // Changed to i32 to handle -1 values
     end: i32,   // Changed to i32 to handle -1 values
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct ForgeCompileError {
+pub struct ForgeDiagnosticMessage {
     #[serde(rename = "sourceLocation")]
-    source_location: ForgeSourceLocation,
+    source_location: SourceLocation,
     #[serde(rename = "type")]
     error_type: String,
     component: String,
@@ -118,8 +117,8 @@ pub struct ForgeCompileError {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct ForgeCompileOutput {
-    errors: Option<Vec<ForgeCompileError>>,
+pub struct CompileOutput {
+    errors: Option<Vec<ForgeDiagnosticMessage>>,
     sources: serde_json::Value,
     contracts: serde_json::Value,
     build_infos: Vec<serde_json::Value>,

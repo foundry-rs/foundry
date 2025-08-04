@@ -7,9 +7,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 pub mod build;
-pub mod compiler;
 pub mod lint;
 pub mod lsp;
+pub mod runner;
 pub mod utils;
 
 pub use lsp::ForgeLsp;

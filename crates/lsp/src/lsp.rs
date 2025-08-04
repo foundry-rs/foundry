@@ -1,10 +1,10 @@
-use crate::compiler::{Compiler, ForgeCompiler};
+use crate::runner::{ForgeRunner, Runner};
 use std::sync::Arc;
 use tower_lsp::{Client, LanguageServer, lsp_types::*};
 
 pub struct ForgeLsp {
     client: Client,
-    compiler: Arc<dyn Compiler>,
+    compiler: Arc<dyn Runner>,
 }
 
 #[allow(dead_code)]
@@ -17,7 +17,7 @@ struct TextDocumentItem<'a> {
 
 impl ForgeLsp {
     pub fn new(client: Client) -> Self {
-        let compiler = Arc::new(ForgeCompiler) as Arc<dyn Compiler>;
+        let compiler = Arc::new(ForgeRunner) as Arc<dyn Runner>;
         Self { client, compiler }
     }
 
