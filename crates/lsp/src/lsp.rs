@@ -19,19 +19,24 @@ impl ForgeLsp {
         Self { client }
     }
 
-    async fn lint_file<'a>(&self, params: TextDocumentItem<'a>) {
-        match get_lint_diagnostics(&params.uri).await {
-            Ok(lint_diagnostics) => {
-                let lint_count = lint_diagnostics.len();
+    async fn on_change<'a>(&self, params: TextDocumentItem<'a>) {
+        let uri = params.uri.clone();
+        let version = params.version;
+
+        let (lint_result, build_result) =
+            tokio::join!(get_lint_diagnostics(&uri), get_build_diagnostics(&uri));
+
+        let mut all_diagnostics = vec![];
+
+        match lint_result {
+            Ok(mut lints) => {
                 self.client
                     .log_message(
                         MessageType::INFO,
-                        format!("Found {lint_count} linting diagnostics"),
+                        format!("Found {} linting diagnostics", lints.len()),
                     )
                     .await;
-                self.client
-                    .publish_diagnostics(params.uri.clone(), lint_diagnostics, params.version)
-                    .await;
+                all_diagnostics.append(&mut lints);
             }
             Err(e) => {
                 self.client
@@ -42,18 +47,16 @@ impl ForgeLsp {
                     .await;
             }
         }
-    }
 
-    async fn build_file<'a>(&self, params: TextDocumentItem<'a>) {
-        match get_build_diagnostics(&params.uri).await {
-            Ok(lint_diagnostics) => {
-                let lint_count = lint_diagnostics.len();
+        match build_result {
+            Ok(mut builds) => {
                 self.client
-                    .log_message(MessageType::INFO, format!("Found {lint_count} build diagnostics"))
+                    .log_message(
+                        MessageType::INFO,
+                        format!("Found {} build diagnostics", builds.len()),
+                    )
                     .await;
-                self.client
-                    .publish_diagnostics(params.uri.clone(), lint_diagnostics, params.version)
-                    .await;
+                all_diagnostics.append(&mut builds);
             }
             Err(e) => {
                 self.client
@@ -64,11 +67,8 @@ impl ForgeLsp {
                     .await;
             }
         }
-    }
 
-    async fn on_change<'a>(&self, params: TextDocumentItem<'a>) {
-        self.lint_file(params.clone()).await;
-        self.build_file(params).await;
+        self.client.publish_diagnostics(uri, all_diagnostics, version).await;
     }
 }
 
