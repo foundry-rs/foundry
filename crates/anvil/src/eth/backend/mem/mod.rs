@@ -1178,6 +1178,23 @@ impl Backend {
         if let Some(factory) = &self.precompile_factory {
             inject_precompiles(&mut evm, factory.precompiles());
         }
+        let cheats_arc = Arc::new(self.cheats.clone());
+
+        evm.precompiles_mut().apply_precompile(
+            &address!("0x0000000000000000000000000000000000000001"),
+            move |_| {
+                let cheats_clone = Arc::clone(&cheats_arc);
+                Some(alloy_evm::precompiles::DynPrecompile::from(
+                    move |input: alloy_evm::precompiles::PrecompileInput<'_>| {
+                        crate::evm::custom_ecrecover(
+                            input.data,
+                            input.gas,
+                            Arc::clone(&cheats_clone),
+                        )
+                    },
+                ))
+            },
+        );
 
         evm
     }
@@ -3020,7 +3037,12 @@ impl Backend {
         signature: Signature,
         address: Address,
     ) -> Result<bool, BlockchainError> {
-        if self.cheats().
+        // Check if this signature has an override
+        if let Some(actual_address) = self.cheats.get_recover_override(&signature) {
+            Ok(actual_address == address)
+        } else {
+            Ok(false)
+        }
     }
 
     /// Prove an account's existence or nonexistence in the state trie.

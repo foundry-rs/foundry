@@ -85,7 +85,6 @@ use foundry_evm::decode::RevertDecoder;
 use futures::{
     StreamExt,
     channel::{mpsc::Receiver, oneshot},
-    future::ok,
 };
 use parking_lot::RwLock;
 use revm::{
@@ -1830,8 +1829,8 @@ impl EthApi {
         &self,
         signature: Signature,
         address: Address,
-    ) -> Result<()> {
-        Ok(())
+    ) -> Result<bool> {
+        self.backend.recover_signature(signature, address).await
     }
 
     /// Returns true if auto mining is enabled, and false.
