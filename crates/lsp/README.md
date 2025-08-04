@@ -69,7 +69,7 @@ If you have neovim 0.11+ installed add these to your config
 
 ```lua
 -- lsp/forge_lsp.lua
-{
+return {
   cmd = { "forge", "lsp", "--stdio" },
   filetypes = { "solidity" },
   root_markers = { "foundry.toml", ".git" },
