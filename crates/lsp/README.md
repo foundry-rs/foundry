@@ -61,7 +61,7 @@ You can add the following to VSCode (or cursor) using a lsp-proxy extension see 
 
 ### Neovim
 
-With `nvim-lspconfig`:
+If using neovim 0.11+:
 
 > Install forge nightly with `foundryup -i nightly` to access forge lint feature
 
