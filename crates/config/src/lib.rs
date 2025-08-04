@@ -1429,13 +1429,20 @@ impl Config {
 
         // etherscan fallback via API key
         if let Some(key) = self.etherscan_api_key.as_ref() {
-            return Ok(ResolvedEtherscanConfig::create(
+            match ResolvedEtherscanConfig::create(
                 key,
                 chain.or(self.chain).unwrap_or_default(),
                 default_api_version,
-            ));
+            ) {
+                Some(config) => return Ok(Some(config)),
+                None => {
+                    return Err(EtherscanConfigError::UnknownChain(
+                        "".to_string(),
+                        chain.unwrap_or_default(),
+                    ));
+                }
+            }
         }
-
         Ok(None)
     }
 
