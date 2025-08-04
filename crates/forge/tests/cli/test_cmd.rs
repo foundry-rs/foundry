@@ -3944,3 +3944,88 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 });
+
+// tests proper reverts in fork mode for contracts with non-existent linked libraries.
+// <https://github.com/foundry-rs/foundry/issues/11185>
+forgetest_init!(can_fork_test_with_non_existent_linked_library, |prj, cmd| {
+    prj.update_config(|config| {
+        config.libraries =
+            vec!["src/Counter.sol:LibCounter:0x530008d2b058137d9c475b1b7d83984f1fcf1dd0".into()];
+    });
+    prj.add_source(
+        "Counter.sol",
+        r"
+library LibCounter {
+    function dummy() external pure returns (uint) {
+        return 1;
+    }
+}
+
+contract Counter {
+    uint256 public number;
+
+    constructor() {
+        LibCounter.dummy();
+    }
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() public {
+        number++;
+    }
+
+    function dummy() external pure returns (uint) {
+        return LibCounter.dummy();
+    }
+}
+   ",
+    )
+    .unwrap();
+
+    let endpoint = rpc::next_http_archive_rpc_url();
+
+    prj.add_test(
+        "Counter.t.sol",
+        &r#"
+import "forge-std/Test.sol";
+import "src/Counter.sol";
+
+contract CounterTest is Test {
+    function test_select_fork() public {
+        vm.createSelectFork("<url>");
+        new Counter();
+    }
+
+    function test_roll_fork() public {
+        vm.rollFork(block.number - 100);
+        new Counter();
+    }
+}
+   "#
+        .replace("<url>", &endpoint),
+    )
+    .unwrap();
+
+    cmd.args(["test", "--fork-url", &endpoint]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 2 tests for test/Counter.t.sol:CounterTest
+[FAIL: EvmError: Revert] test_roll_fork() ([GAS])
+[FAIL: Contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f does not exist and is not marked as persistent, see `vm.makePersistent()`] test_select_fork() ([GAS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
+
+Failing tests:
+Encountered 2 failing tests in test/Counter.t.sol:CounterTest
+[FAIL: EvmError: Revert] test_roll_fork() ([GAS])
+[FAIL: Contract 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f does not exist and is not marked as persistent, see `vm.makePersistent()`] test_select_fork() ([GAS])
+
+Encountered a total of 2 failing tests, 0 tests succeeded
+
+"#]]);
+});
