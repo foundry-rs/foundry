@@ -129,6 +129,18 @@ pub async fn get_build_diagnostics(file: &Url) -> Result<Vec<Diagnostic>, Compil
     Ok(diagnostics)
 }
 
+fn ignored_code_for_tests(value: &serde_json::Value) -> bool {
+    let error_code = value.get("errorCode").and_then(|v| v.as_str()).unwrap_or_default();
+    let file_path = value
+        .get("sourceLocation")
+        .and_then(|loc| loc.get("file"))
+        .and_then(|f| f.as_str())
+        .unwrap_or_default();
+
+    // Ignore error code 5574 for test files (code size limit)
+    error_code == "5574" && file_path.contains(".t.sol")
+}
+
 pub fn build_output_to_diagnostics(
     forge_output: &serde_json::Value,
     filename: &str,
@@ -138,7 +150,10 @@ pub fn build_output_to_diagnostics(
 
     if let Some(errors) = forge_output.get("errors").and_then(|e| e.as_array()) {
         for err in errors {
-            // Extract file name from error's sourceLocation.file path
+            if ignored_code_for_tests(err) {
+                continue;
+            }
+
             let source_file = err
                 .get("sourceLocation")
                 .and_then(|loc| loc.get("file"))
@@ -481,5 +496,32 @@ mod tests {
         assert_eq!(diag.code, Some(NumberOrString::String("9589".to_string())));
         assert!(diag.range.start.line > 0);
         assert!(diag.range.start.character > 0);
+    }
+
+    #[tokio::test]
+    async fn test_ignored_code_for_tests() {
+        let error_json = serde_json::json!({
+            "errorCode": "5574",
+            "sourceLocation": {
+                "file": "test/ERC6909Claims.t.sol"
+            }
+        });
+        assert!(ignored_code_for_tests(&error_json));
+
+        let error_json_non_test = serde_json::json!({
+            "errorCode": "5574",
+            "sourceLocation": {
+                "file": "contracts/ERC6909Claims.sol"
+            }
+        });
+        assert!(!ignored_code_for_tests(&error_json_non_test));
+
+        let error_json_other_code = serde_json::json!({
+            "errorCode": "1234",
+            "sourceLocation": {
+                "file": "test/ERC6909Claims.t.sol"
+            }
+        });
+        assert!(!ignored_code_for_tests(&error_json_other_code));
     }
 }
