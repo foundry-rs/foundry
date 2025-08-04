@@ -171,7 +171,7 @@ impl MultiContractRunner {
     ) -> Result<()> {
         let tokio_handle = tokio::runtime::Handle::current();
         trace!("running all tests");
-
+        //     ,  self.tcfg.evm_opts.genesis.clone()
         // The DB backend that serves all the data.
         let db = Backend::spawn(self.fork.take())?;
 

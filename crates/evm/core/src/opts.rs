@@ -12,6 +12,8 @@ use foundry_config::{Chain, Config, GasLimit};
 use revm::context::{BlockEnv, TxEnv};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
+use std::sync::Arc;
+use alloy_genesis::Genesis;
 use url::Url;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -77,6 +79,10 @@ pub struct EvmOpts {
 
     /// The CREATE2 deployer's address.
     pub create2_deployer: Address,
+
+    /// Set genesis
+    #[serde(skip)]
+    pub genesis: Option<Arc<Genesis>>,
 }
 
 impl Default for EvmOpts {
@@ -101,6 +107,7 @@ impl Default for EvmOpts {
             disable_block_gas_limit: false,
             odyssey: false,
             create2_deployer: DEFAULT_CREATE2_DEPLOYER,
+            genesis: None,
         }
     }
 }
@@ -250,6 +257,11 @@ impl EvmOpts {
         }
 
         None
+    }
+    /// Add custom genesis
+    pub fn with_genesis(mut self, genesis: Genesis) -> Self {
+        self.genesis = Some(Arc::new(genesis));
+        self
     }
 }
 

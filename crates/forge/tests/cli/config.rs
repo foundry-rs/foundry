@@ -173,7 +173,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         compilation_restrictions: Default::default(),
         script_execution_protection: true,
         _non_exhaustive: (),
-    };
+    wasm: false,};
     prj.write_config(input.clone());
     let config = cmd.config();
     similar_asserts::assert_eq!(input, config);

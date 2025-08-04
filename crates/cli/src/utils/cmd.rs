@@ -1,6 +1,8 @@
+use crate::opts::GenesisOpts;
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{map::HashMap, Address, Bytes};
 use eyre::{Result, WrapErr};
+use fluentbase_genesis::Genesis;
 use foundry_common::{
     compile::ProjectCompiler, fs, selectors::SelectorKind, shell, ContractsByArtifact,
     TestFunctionExt,
@@ -24,6 +26,7 @@ use foundry_evm::{
         Traces,
     },
 };
+use std::sync::Arc;
 use std::{
     fmt::Write,
     path::{Path, PathBuf},
@@ -244,6 +247,8 @@ pub trait LoadConfig {
         let figment = self.figment();
 
         let mut evm_opts = figment.extract::<EvmOpts>().map_err(ExtractConfigError::new)?;
+        let genesis_opts =
+            figment.extract::<GenesisOpts>().map_err(ExtractConfigError::new)?;
         let config = Config::from_provider(figment)?.sanitized();
 
         // update the fork url if it was an alias
@@ -252,7 +257,28 @@ pub trait LoadConfig {
             evm_opts.fork_url = Some(fork_url?.into_owned());
         }
 
+        // If no fork is used, we should use genesis configuration
+        if evm_opts.fork_url.is_none() {
+            let genesis = if let Some(genesis_path) = &genesis_opts.genesis {
+                // Load genesis from the specified file path
+                Self::load_genesis_from_file(genesis_path)?
+            } else {
+                // Use default devnet genesis
+                fluentbase_genesis::devnet_genesis_from_file()
+            };
+
+            evm_opts.genesis = Some(Arc::new(genesis));
+            trace!(target: "forge::config", "Genesis configuration applied to EvmOpts");
+        }
+
         Ok((config, evm_opts))
+    }
+
+    fn load_genesis_from_file(path: &Path) -> Result<Genesis> {
+        let genesis_content = std::fs::read_to_string(path)
+            .wrap_err_with(|| format!("Failed to read genesis file at {}", path.display()))?;
+
+        serde_json::from_str(&genesis_content).wrap_err("Failed to parse genesis JSON from file")
     }
 }
 

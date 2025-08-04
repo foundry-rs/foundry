@@ -1,33 +1,35 @@
 //! Foundry's main executor backend abstraction and implementation.
 
 use crate::{
-    AsEnvMut, Env, EnvMut, InspectorExt,
-    constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
-    evm::new_evm_with_inspector,
-    fork::{CreateFork, ForkId, MultiFork},
-    state_snapshot::StateSnapshots,
+    constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS}, evm::new_evm_with_inspector, fork::{CreateFork, ForkId, MultiFork}, state_snapshot::StateSnapshots,
     utils::{configure_tx_env, configure_tx_req_env},
+    AsEnvMut,
+    Env,
+    EnvMut,
+    InspectorExt,
 };
 use alloy_consensus::Typed2718;
 use alloy_evm::Evm;
+use alloy_genesis::Genesis;
 use alloy_genesis::GenesisAccount;
 use alloy_network::{AnyRpcBlock, AnyTxEnvelope, TransactionResponse};
-use alloy_primitives::{Address, B256, TxKind, U256, keccak256, uint};
+use alloy_primitives::{keccak256, uint, Address, TxKind, B256, U256};
 use alloy_rpc_types::{BlockNumberOrTag, Transaction, TransactionRequest};
 use eyre::Context;
-use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
-pub use foundry_fork_db::{BlockchainDb, SharedBackend, cache::BlockchainDbMeta};
+use foundry_common::{is_known_system_sender, SYSTEM_TRANSACTION_TYPE};
+pub use foundry_fork_db::{cache::BlockchainDbMeta, BlockchainDb, SharedBackend};
 use revm::{
-    Database, DatabaseCommit, JournalEntry,
-    bytecode::Bytecode,
-    context::JournalInner,
-    context_interface::{block::BlobExcessGasAndPrice, result::ResultAndState},
+    bytecode::Bytecode, context::JournalInner, context_interface::{block::BlobExcessGasAndPrice, result::ResultAndState},
     database::{CacheDB, DatabaseRef},
     inspector::NoOpInspector,
     precompile::{PrecompileSpecId, Precompiles},
-    primitives::{HashMap as Map, KECCAK_EMPTY, Log, hardfork::SpecId},
+    primitives::{hardfork::SpecId, HashMap as Map, Log, KECCAK_EMPTY},
     state::{Account, AccountInfo, EvmState, EvmStorageSlot},
+    Database,
+    DatabaseCommit,
+    JournalEntry,
 };
+use std::sync::Arc;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     time::Instant,
@@ -479,11 +481,14 @@ impl Backend {
     /// Prefer using [`spawn`](Self::spawn) instead.
     pub fn new(forks: MultiFork, fork: Option<CreateFork>) -> eyre::Result<Self> {
         trace!(target: "backend", forking_mode=?fork.is_some(), "creating executor backend");
+
         // Note: this will take of registering the `fork`
         let inner = BackendInner {
             persistent_accounts: HashSet::from(DEFAULT_PERSISTENT_ACCOUNTS),
             ..Default::default()
         };
+
+        let initial_journaled_state = inner.new_journaled_state();
 
         let mut backend = Self {
             forks,
@@ -492,6 +497,7 @@ impl Backend {
             active_fork_ids: None,
             inner,
         };
+        backend.commit(initial_journaled_state.state);
 
         if let Some(fork) = fork {
             let (fork_id, fork, _) = backend.forks.create_fork(fork)?;
@@ -770,7 +776,7 @@ impl Backend {
         &mut self,
         env: &mut Env,
         inspector: &mut I,
-    ) -> eyre::Result<ResultAndState> {        
+    ) -> eyre::Result<ResultAndState> {
         self.initialize(env);
         let mut evm = crate::evm::new_evm_with_inspector(self, env.to_owned(), inspector);
 
@@ -1658,9 +1664,17 @@ pub struct BackendInner {
     pub spec_id: SpecId,
     /// All accounts that are allowed to execute cheatcodes
     pub cheatcode_access_accounts: HashSet<Address>,
+
+    /// Genesis
+    pub genesis: Genesis,
 }
 
 impl BackendInner {
+    // pub fn with_genesis(&mut self, genesis: Genesis) -> Self {
+    //     self.genesis = genesis;
+    //     self
+    // }
+
     pub fn ensure_fork_id(&self, id: LocalForkId) -> eyre::Result<&ForkId> {
         self.issued_local_fork_ids
             .get(&id)
@@ -1826,13 +1840,44 @@ impl BackendInner {
             journal_inner.set_spec_id(self.spec_id);
             journal_inner
         };
+
         journal.precompiles.extend(self.precompiles().addresses().copied());
+
+        for (address, account) in self.genesis.alloc.clone() {
+            let mut state_acc = journal.state.entry(address).or_default();
+            state_acc.info.balance = account.balance;
+            state_acc.info.nonce = account.nonce.unwrap_or_default();
+
+            if let Some(code) = &account.code {
+                let bytecode = Bytecode::new_raw(code.0.clone().into());
+                state_acc.info.code_hash = bytecode.hash_slow();
+                state_acc.info.code = Some(bytecode);
+            } else {
+                state_acc.info.code_hash = KECCAK_EMPTY;
+                state_acc.info.code = None;
+            }
+
+            if let Some(storage) = &account.storage {
+                state_acc.storage = storage
+                    .iter()
+                    .map(|(key, value)| {
+                        let slot = U256::from_be_bytes(key.0);
+                        let value = U256::from_be_bytes(value.0);
+
+                        (slot, EvmStorageSlot::new_changed(U256::ZERO, value))
+                    })
+                    .collect();
+            }
+            journal.touch(address);
+        }
+
         journal
     }
 }
 
 impl Default for BackendInner {
     fn default() -> Self {
+        let genesis = fluentbase_genesis::devnet_genesis_from_file();
         Self {
             launched_with_fork: None,
             issued_local_fork_ids: Default::default(),
@@ -1851,6 +1896,7 @@ impl Default for BackendInner {
                 TEST_CONTRACT_ADDRESS,
                 CALLER,
             ]),
+            genesis,
         }
     }
 }

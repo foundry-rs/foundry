@@ -1,6 +1,7 @@
+use std::path::PathBuf;
 use clap::Parser;
 use foundry_compilers::artifacts::{EvmVersion, output_selection::ContractOutputSelection};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 mod core;
 pub use self::core::BuildOpts;
@@ -57,6 +58,15 @@ pub struct CompilerOpts {
     #[arg(long, num_args(1..), value_name = "SELECTOR")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub extra_output_files: Vec<ContractOutputSelection>,
+}
+
+#[derive(Debug, Clone, Parser, Serialize, Deserialize)]
+#[command(next_help_heading = "Genesis Options")]
+pub struct GenesisOpts {
+    /// Path to a genesis JSON file.
+    /// If not provided, and not forking, a default devnet genesis will be used.
+    #[arg(long, value_name = "PATH")]
+    pub genesis: Option<PathBuf>,
 }
 
 #[cfg(test)]
