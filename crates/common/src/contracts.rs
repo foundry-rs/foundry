@@ -76,7 +76,7 @@ pub struct ContractData {
     /// Contract runtime code.
     pub deployed_bytecode: Option<BytecodeData>,
     /// Contract storage layout, if available.
-    pub storage_layout: Option<StorageLayout>,
+    pub storage_layout: Option<Arc<StorageLayout>>,
 }
 
 impl ContractData {
@@ -144,7 +144,7 @@ impl ContractsByArtifact {
                         abi,
                         bytecode: artifact.bytecode.map(Into::into),
                         deployed_bytecode: artifact.deployed_bytecode.map(Into::into),
-                        storage_layout: artifact.storage_layout,
+                        storage_layout: artifact.storage_layout.map(Arc::new),
                     },
                 ))
             })

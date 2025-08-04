@@ -795,7 +795,7 @@ impl<'a> InvariantExecutor<'a> {
                 if let Some((_, contract_data)) = self.project_contracts.iter().find(|(artifact, _)| {
                     &artifact.name == identifier
                 }) {
-                    contract.storage_layout = contract_data.storage_layout.clone();
+                    contract.storage_layout = contract_data.storage_layout.as_ref().map(Arc::clone);
                 }
                 (*addr, contract)
             })
@@ -855,7 +855,7 @@ impl<'a> InvariantExecutor<'a> {
                         // Otherwise insert it into the map.
                         .or_insert_with(|| {
                             let mut contract = TargetedContract::new(identifier.to_string(), abi.clone());
-                            contract.storage_layout = contract_data.storage_layout.clone();
+                            contract.storage_layout = contract_data.storage_layout.as_ref().map(Arc::clone);
                             contract
                         });
                 }
@@ -962,7 +962,7 @@ impl<'a> InvariantExecutor<'a> {
                 if let Some((_, contract_data)) = self.project_contracts.iter().find(|(artifact, _)| {
                     &artifact.name == identifier
                 }) {
-                    contract.storage_layout = contract_data.storage_layout.clone();
+                    contract.storage_layout = contract_data.storage_layout.as_ref().map(Arc::clone);
                 }
                 entry.insert(contract)
             }

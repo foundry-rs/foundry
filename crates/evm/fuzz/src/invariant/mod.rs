@@ -76,7 +76,7 @@ impl FuzzRunIdentifiedContracts {
                 abi: contract.abi.clone(),
                 targeted_functions: functions,
                 excluded_functions: Vec::new(),
-                storage_layout: contract.storage_layout.clone(),
+                storage_layout: contract.storage_layout.as_ref().map(Arc::clone),
             };
             targets.insert(*address, contract);
         }
@@ -150,10 +150,10 @@ impl TargetedContracts {
     }
 
     /// Returns a map of contract addresses to their storage layouts.
-    pub fn get_storage_layouts(&self) -> HashMap<Address, StorageLayout> {
+    pub fn get_storage_layouts(&self) -> HashMap<Address, Arc<StorageLayout>> {
         self.inner
             .iter()
-            .filter_map(|(addr, c)| c.storage_layout.as_ref().map(|layout| (*addr, layout.clone())))
+            .filter_map(|(addr, c)| c.storage_layout.as_ref().map(|layout| (*addr, Arc::clone(layout))))
             .collect()
     }
 }
@@ -184,7 +184,7 @@ pub struct TargetedContract {
     /// The excluded functions of the contract.
     pub excluded_functions: Vec<Function>,
     /// The contract's storage layout, if available.
-    pub storage_layout: Option<StorageLayout>,
+    pub storage_layout: Option<Arc<StorageLayout>>,
 }
 
 impl TargetedContract {

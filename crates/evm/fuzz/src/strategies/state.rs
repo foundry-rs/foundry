@@ -232,7 +232,7 @@ impl FuzzDictionary {
     fn insert_new_state_values(
         &mut self,
         state_changeset: &StateChangeset,
-        storage_layouts: &HashMap<Address, StorageLayout>,
+        storage_layouts: &HashMap<Address, Arc<StorageLayout>>,
     ) {
         for (address, account) in state_changeset {
             // Insert basic account information.
@@ -241,7 +241,7 @@ impl FuzzDictionary {
             self.insert_push_bytes_values(address, &account.info);
             // Insert storage values.
             if self.config.include_storage {
-                let storage_layout = storage_layouts.get(address);
+                let storage_layout = storage_layouts.get(address).map(|arc| arc.as_ref());
                 for (slot, value) in &account.storage {
                     self.insert_storage_value(slot, &value.present_value, storage_layout);
                 }
