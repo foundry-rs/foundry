@@ -118,21 +118,51 @@ impl InitArgs {
             let script = root.join("script");
             fs::create_dir_all(&script)?;
 
-            // write the contract file
-            let contract_path = src.join("Counter.sol");
-            fs::write(contract_path, include_str!("../../assets/CounterTemplate.sol"))?;
-            // write the tests
-            let contract_path = test.join("Counter.t.sol");
-            fs::write(contract_path, include_str!("../../assets/CounterTemplate.t.sol"))?;
-            // write the script
-            let contract_path = script.join("Counter.s.sol");
-            fs::write(contract_path, include_str!("../../assets/CounterTemplate.s.sol"))?;
-            // Write the default README file
+            // Create the power-calculator subdirectory structure
+            let power_calc_dir = src.join("power-calculator");
+            fs::create_dir_all(&power_calc_dir)?;
+            let power_calc_src = power_calc_dir.join("src");
+            fs::create_dir_all(&power_calc_src)?;
+
+            // Write the BlendedCounter.sol contract file
+            let contract_path = src.join("BlendedCounter.sol");
+            fs::write(
+                contract_path,
+                include_str!("../../examples/blended/src/BlendedCounter.sol"),
+            )?;
+
+            // Write the test file
+            let test_path = test.join("BlendedCounter.t.sol");
+            fs::write(test_path, include_str!("../../examples/blended/test/BlendedCounter.t.sol"))?;
+
+            // Write the deployment script
+            let script_path = script.join("BlendedCounter.s.sol");
+            fs::write(
+                script_path,
+                include_str!("../../examples/blended/script/BlendedCounter.s.sol"),
+            )?;
+
+            // Write the Rust WASM module files
+            let cargo_toml_path = power_calc_dir.join("Cargo.toml");
+            fs::write(
+                cargo_toml_path,
+                include_str!("../../examples/blended/src/power-calculator/Cargo.toml"),
+            )?;
+
+            let lib_rs_path = power_calc_src.join("lib.rs");
+            fs::write(
+                lib_rs_path,
+                include_str!("../../examples/blended/src/power-calculator/src/lib.rs"),
+            )?;
+
+            // Write the README
             let readme_path = root.join("README.md");
-            fs::write(readme_path, include_str!("../../assets/README.md"))?;
+            fs::write(readme_path, include_str!("../../examples/blended/README.md"))?;
 
             // write foundry.toml, if it doesn't exist already
             let dest = root.join(Config::FILE_NAME);
+
+            // Load config after writing custom foundry.toml
             let mut config = Config::load_with_root(&root)?;
             if !dest.exists() {
                 fs::write(dest, config.clone().into_basic().to_string_pretty()?)?;
@@ -180,14 +210,7 @@ fn init_git_repo(git: Git<'_>, commit: bool) -> Result<()> {
     // .gitignore
     let gitignore = git.root.join(".gitignore");
     if !gitignore.exists() {
-        fs::write(gitignore, include_str!("../../assets/.gitignoreTemplate"))?;
-    }
-
-    // github workflow
-    let workflow = git.root.join(".github/workflows/test.yml");
-    if !workflow.exists() {
-        fs::create_dir_all(workflow.parent().unwrap())?;
-        fs::write(workflow, include_str!("../../assets/workflowTemplate.yml"))?;
+        fs::write(gitignore, include_str!("../../examples/blended/.gitignoreTemplate"))?;
     }
 
     // commit everything
