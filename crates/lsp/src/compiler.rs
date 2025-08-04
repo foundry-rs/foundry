@@ -11,7 +11,6 @@ pub trait Compiler: Send + Sync {
     async fn build(&self, file: &str) -> Result<serde_json::Value, CompilerError>;
 }
 
-
 #[async_trait]
 impl Compiler for ForgeCompiler {
     async fn lint(&self, file_path: &str) -> Result<serde_json::Value, CompilerError> {
