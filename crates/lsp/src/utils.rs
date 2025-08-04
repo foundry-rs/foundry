@@ -330,10 +330,10 @@ mod tests {
         let (file_path, compiler) = setup("testdata/A.sol");
 
         let json = compiler.build(&file_path).await.unwrap();
-        if let Some(errors) = json.get("errors") {
-            if let Some(first) = errors.get(0) {
-                assert!(first.get("message").is_some(), "Expected error object to have a message");
-            }
+        if let Some(errors) = json.get("errors")
+            && let Some(first) = errors.get(0)
+        {
+            assert!(first.get("message").is_some(), "Expected error object to have a message");
         }
     }
 
