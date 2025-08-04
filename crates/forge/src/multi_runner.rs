@@ -521,7 +521,7 @@ impl MultiContractRunnerBuilder {
 
         // Create known contracts with storage layout information
         let known_contracts = ContractsByArtifact::with_storage_layout(
-            output.clone().with_stripped_file_prefixes(root)
+            output.clone().with_stripped_file_prefixes(root),
         );
 
         Ok(MultiContractRunner {
