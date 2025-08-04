@@ -244,6 +244,9 @@ pub struct FuzzTestResult {
 
     // Deprecated cheatcodes mapped to their replacements.
     pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
+
+    /// NUmber of failed replays from persisted corpus.
+    pub failed_corpus_replays: usize,
 }
 
 impl FuzzTestResult {

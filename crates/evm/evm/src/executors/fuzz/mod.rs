@@ -248,6 +248,7 @@ impl FuzzedExecutor {
             gas_report_traces: traces.into_iter().map(|a| a.arena).collect(),
             line_coverage: test_data.coverage,
             deprecated_cheatcodes: test_data.deprecated_cheatcodes,
+            failed_corpus_replays: corpus_manager.failed_replays(),
         };
 
         match test_data.failure {
