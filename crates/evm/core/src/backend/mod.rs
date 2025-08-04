@@ -1877,7 +1877,16 @@ impl BackendInner {
 
 impl Default for BackendInner {
     fn default() -> Self {
-        let genesis = fluentbase_genesis::devnet_genesis_from_file();
+        let json_file_compressed = include_bytes!("../../../genesis/genesis-fluent-v0.3.7.json.gz");
+
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+        let mut decoder = GzDecoder::new(&json_file_compressed[..]);
+        let mut json_string = String::new();
+        decoder.read_to_string(&mut json_string).expect("failed to decompress a genesis gz file");
+        let genesis = serde_json::from_str::<Genesis>(&json_string)
+            .expect("failed to parse a genesis JSON file");
+
         Self {
             launched_with_fork: None,
             issued_local_fork_ids: Default::default(),

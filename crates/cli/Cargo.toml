@@ -57,7 +57,7 @@ rustls = { workspace = true, features = ["ring"] }
 dunce.workspace = true
 
 # fluentbase
-fluentbase-genesis.workspace = true
+fluentbase-genesis = { workspace = true, default-features = false }
 
 tracing-tracy = { version = "0.11", optional = true }
 

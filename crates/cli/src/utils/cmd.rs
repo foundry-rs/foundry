@@ -247,8 +247,7 @@ pub trait LoadConfig {
         let figment = self.figment();
 
         let mut evm_opts = figment.extract::<EvmOpts>().map_err(ExtractConfigError::new)?;
-        let genesis_opts =
-            figment.extract::<GenesisOpts>().map_err(ExtractConfigError::new)?;
+        let genesis_opts = figment.extract::<GenesisOpts>().map_err(ExtractConfigError::new)?;
         let config = Config::from_provider(figment)?.sanitized();
 
         // update the fork url if it was an alias
@@ -259,15 +258,15 @@ pub trait LoadConfig {
 
         // If no fork is used, we should use genesis configuration
         if evm_opts.fork_url.is_none() {
-            let genesis = if let Some(genesis_path) = &genesis_opts.genesis {
+            // TODO(d1r1): add custom genesis processing (not working for now)
+            // maybe it would be better to setup fork?
+            evm_opts.genesis = if let Some(genesis_path) = &genesis_opts.genesis {
                 // Load genesis from the specified file path
-                Self::load_genesis_from_file(genesis_path)?
+                Some(Arc::new(Self::load_genesis_from_file(genesis_path)?))
             } else {
-                // Use default devnet genesis
-                fluentbase_genesis::devnet_genesis_from_file()
+                None
             };
 
-            evm_opts.genesis = Some(Arc::new(genesis));
             trace!(target: "forge::config", "Genesis configuration applied to EvmOpts");
         }
 
