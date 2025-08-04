@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
 use tokio::process::Command;
 use tower_lsp::{
@@ -17,6 +17,8 @@ pub enum CompilerError {
     JsonError(#[from] serde_json::Error),
     #[error("Empty output from compiler")]
     EmptyOutput,
+    #[error("ReadError")]
+    ReadError,
 }
 
 #[async_trait]
@@ -116,19 +118,72 @@ pub async fn get_lint_diagnostics(file: &Url) -> Result<Vec<Diagnostic>, Compile
 }
 
 pub async fn get_build_diagnostics(file: &Url) -> Result<Vec<Diagnostic>, CompilerError> {
-    let path: PathBuf = file.to_file_path().map_err(|_| CompilerError::InvalidUrl)?;
+    let path = file.to_file_path().map_err(|_| CompilerError::InvalidUrl)?;
     let path_str = path.to_str().ok_or(CompilerError::InvalidUrl)?;
+    let filename =
+        path.file_name().and_then(|os_str| os_str.to_str()).ok_or(CompilerError::InvalidUrl)?;
+    let content = tokio::fs::read_to_string(&path).await.map_err(|_| CompilerError::ReadError)?;
     let compiler = ForgeCompiler;
     let build_output = compiler.build(path_str).await?;
-    let diagnostics = build_output_to_diagnostics(&build_output);
+    let diagnostics = build_output_to_diagnostics(&build_output, filename, &content);
     Ok(diagnostics)
 }
 
-pub fn build_output_to_diagnostics(forge_output: &serde_json::Value) -> Vec<Diagnostic> {
+pub fn build_output_to_diagnostics(
+    forge_output: &serde_json::Value,
+    filename: &str,
+    content: &str,
+) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     if let Some(errors) = forge_output.get("errors").and_then(|e| e.as_array()) {
         for err in errors {
+            // Extract file name from error's sourceLocation.file path
+            let source_file = err
+                .get("sourceLocation")
+                .and_then(|loc| loc.get("file"))
+                .and_then(|f| f.as_str())
+                .and_then(|full_path| Path::new(full_path).file_name())
+                .and_then(|os_str| os_str.to_str());
+
+            // Compare just the file names, not full paths
+            if source_file != Some(filename) {
+                continue;
+            }
+
+            // Rest of your code remains the same...
+            let start_offset = err
+                .get("sourceLocation")
+                .and_then(|loc| loc.get("start"))
+                .and_then(|s| s.as_u64())
+                .unwrap_or(0) as usize;
+
+            let end_offset = err
+                .get("sourceLocation")
+                .and_then(|loc| loc.get("end"))
+                .and_then(|s| s.as_u64())
+                .map(|v| v as usize)
+                .unwrap_or(start_offset);
+
+            let (start_line, start_col) = byte_offset_to_position(content, start_offset);
+            let (mut end_line, mut end_col) = byte_offset_to_position(content, end_offset);
+
+            if end_col > 0 {
+                end_col -= 1;
+            } else if end_line > 0 {
+                end_line -= 1;
+                end_col = content
+                    .lines()
+                    .nth(end_line.try_into().unwrap())
+                    .map(|l| l.len() as u32)
+                    .unwrap_or(0);
+            }
+
+            let range = Range {
+                start: Position { line: start_line, character: start_col },
+                end: Position { line: end_line, character: end_col + 1 },
+            };
+
             let message =
                 err.get("message").and_then(|m| m.as_str()).unwrap_or("Unknown error").to_string();
 
@@ -145,25 +200,7 @@ pub fn build_output_to_diagnostics(forge_output: &serde_json::Value) -> Vec<Diag
                 .and_then(|c| c.as_str())
                 .map(|s| NumberOrString::String(s.to_string()));
 
-            // Attempt to extract line:column from formattedMessage
-            let (line, column) = err
-                .get("formattedMessage")
-                .and_then(|fm| fm.as_str())
-                .and_then(parse_line_col_from_formatted_message)
-                .unwrap_or((0, 0)); // fallback to start of file
-
-            let range = Range {
-                start: Position {
-                    line: line.saturating_sub(1),        // LSP is 0-based
-                    character: column.saturating_sub(1), // LSP is 0-based
-                },
-                end: Position {
-                    line: line.saturating_sub(1),
-                    character: column.saturating_sub(1) + 1, // Just one char span
-                },
-            };
-
-            let diagnostic = Diagnostic {
+            diagnostics.push(Diagnostic {
                 range,
                 severity,
                 code,
@@ -173,29 +210,44 @@ pub fn build_output_to_diagnostics(forge_output: &serde_json::Value) -> Vec<Diag
                 related_information: None,
                 tags: None,
                 data: None,
-            };
-
-            diagnostics.push(diagnostic);
+            });
         }
     }
 
     diagnostics
 }
 
-/// Parses `--> file.sol:17:5:` from formattedMessage and returns (line, column)
-fn parse_line_col_from_formatted_message(msg: &str) -> Option<(u32, u32)> {
-    // Find the line starting with `--> `
-    for line in msg.lines() {
-        if let Some(rest) = line.strip_prefix("  --> ") {
-            let parts: Vec<&str> = rest.split(':').collect();
-            if parts.len() >= 3 {
-                let line = parts[1].parse::<u32>().ok()?;
-                let column = parts[2].parse::<u32>().ok()?;
-                return Some((line, column));
-            }
+fn byte_offset_to_position(source: &str, byte_offset: usize) -> (u32, u32) {
+    let mut line = 0;
+    let mut bytes_counted = 0;
+
+    for line_str in source.lines() {
+        // Detect newline length after this line
+        // Find the position after this line in source to check newline length
+        let line_start = bytes_counted;
+        let line_end = line_start + line_str.len();
+
+        // Peek next char(s) to count newline length
+        let newline_len = if source.get(line_end..line_end + 2) == Some("\r\n") {
+            2
+        } else if source.get(line_end..line_end + 1) == Some("\n") {
+            1
+        } else {
+            0
+        };
+
+        let line_len = line_str.len() + newline_len;
+
+        if bytes_counted + line_len > byte_offset {
+            let col = (byte_offset - bytes_counted) as u32;
+            return (line, col);
         }
+
+        bytes_counted += line_len;
+        line += 1;
     }
-    None
+
+    (line, 0)
 }
 
 pub fn lint_output_to_diagnostics(
@@ -388,62 +440,48 @@ mod tests {
         assert_eq!(first_diag.range.start.character, 13);
     }
 
-    #[test]
-    fn test_parse_line_col_from_valid_formatted_message() {
-        let msg = r#"
-Warning: Unused local variable.
-  --> C.sol:19:5:
-   |
-19 |     bool fad;
-   |     ^^^^^^^^
-"#;
-        let (line, col) = parse_line_col_from_formatted_message(msg).unwrap();
-        assert_eq!(line, 19);
-        assert_eq!(col, 5);
-    }
-
-    #[test]
-    fn test_parse_line_col_from_invalid_message() {
-        let msg = "Something that doesn't match";
-        assert!(parse_line_col_from_formatted_message(msg).is_none());
-    }
-
-    #[test]
-    fn test_build_output_to_diagnostics_extracts_range() {
-        let mock = serde_json::json!({
-            "errors": [
-                {
-                    "sourceLocation": {
-                        "file": "Test.sol",
-                        "start": 123,
-                        "end": 130
-                    },
-                    "severity": "warning",
-                    "errorCode": "2072",
-                    "message": "Unused local variable.",
-                    "formattedMessage": "Warning: Unused local variable.\n  --> Test.sol:10:3:\n   |\n10 |     bool x;\n   |     ^^^^^^^\n"
-                }
-            ]
-        });
-
-        let diagnostics = build_output_to_diagnostics(&mock);
-        assert_eq!(diagnostics.len(), 1);
+    #[tokio::test]
+    async fn test_diagnostic_offsets_match_source() {
+        let (file_path, compiler) = setup("testdata/A.sol");
+        let source_code = tokio::fs::read_to_string(&file_path).await.expect("read source");
+        let build_output = compiler.build(&file_path).await.expect("build failed");
+        let expected_start_byte = 81;
+        let expected_end_byte = 82;
+        let expected_start_pos = byte_offset_to_position(&source_code, expected_start_byte);
+        let expected_end_pos = byte_offset_to_position(&source_code, expected_end_byte);
+        let filename = std::path::Path::new(&file_path)
+            .file_name()
+            .and_then(|f| f.to_str())
+            .expect("filename");
+        let diagnostics = build_output_to_diagnostics(&build_output, filename, &source_code);
+        assert!(!diagnostics.is_empty(), "no diagnostics found");
 
         let diag = &diagnostics[0];
-        assert!(diag.message.contains("Unused"));
-
-        // Should be 0-based in the Diagnostic object
-        let expected_range = Range {
-            start: Position { line: 9, character: 2 },
-            end: Position { line: 9, character: 3 },
-        };
-        assert_eq!(diag.range, expected_range);
+        assert_eq!(diag.range.start.line, expected_start_pos.0);
+        assert_eq!(diag.range.start.character, expected_start_pos.1);
+        assert_eq!(diag.range.end.line, expected_end_pos.0);
+        assert_eq!(diag.range.end.character, expected_end_pos.1);
     }
 
-    #[test]
-    fn test_build_output_to_diagnostics_empty() {
-        let mock = serde_json::json!({ "errors": [] });
-        let diagnostics = build_output_to_diagnostics(&mock);
-        assert!(diagnostics.is_empty());
+    #[tokio::test]
+    async fn test_build_output_to_diagnostics_from_file() {
+        let (file_path, compiler) = setup("testdata/A.sol");
+        let source_code =
+            tokio::fs::read_to_string(&file_path).await.expect("Failed to read source file");
+        let build_output = compiler.build(&file_path).await.expect("Compiler build failed");
+        let filename = std::path::Path::new(&file_path)
+            .file_name()
+            .and_then(|f| f.to_str())
+            .expect("Failed to get filename");
+
+        let diagnostics = build_output_to_diagnostics(&build_output, filename, &source_code);
+        assert!(!diagnostics.is_empty(), "Expected at least one diagnostic");
+
+        let diag = &diagnostics[0];
+        assert_eq!(diag.severity, Some(DiagnosticSeverity::ERROR));
+        assert!(diag.message.contains("Identifier is not a library name"));
+        assert_eq!(diag.code, Some(NumberOrString::String("9589".to_string())));
+        assert!(diag.range.start.line > 0);
+        assert!(diag.range.start.character > 0);
     }
 }
