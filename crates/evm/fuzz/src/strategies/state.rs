@@ -6,6 +6,7 @@ use alloy_primitives::{
     map::{AddressIndexSet, B256IndexSet, HashMap},
 };
 use foundry_common::ignore_metadata_hash;
+use foundry_compilers::artifacts::StorageLayout;
 use foundry_config::FuzzDictionaryConfig;
 use foundry_evm_core::utils::StateChangeset;
 use parking_lot::{RawRwLock, RwLock, lock_api::RwLockReadGuard};
@@ -72,8 +73,10 @@ impl EvmFuzzState {
             let (target_abi, target_function) = targets.fuzzed_artifacts(tx);
             dict.insert_logs_values(target_abi, logs, run_depth);
             dict.insert_result_values(target_function, result, run_depth);
+            // Get storage layouts for contracts in the state changeset
+            let storage_layouts = targets.get_storage_layouts();
+            dict.insert_new_state_values(state_changeset, &storage_layouts);
         }
-        dict.insert_new_state_values(state_changeset);
     }
 
     /// Removes all newly added entries from the dictionary.
@@ -151,7 +154,7 @@ impl FuzzDictionary {
                 // Sort storage values before inserting to ensure deterministic dictionary.
                 let values = account.storage.iter().collect::<BTreeMap<_, _>>();
                 for (slot, value) in values {
-                    self.insert_storage_value(slot, value);
+                    self.insert_storage_value(slot, value, None);
                 }
             }
         }
@@ -226,7 +229,11 @@ impl FuzzDictionary {
 
     /// Insert values from call state changeset into fuzz dictionary.
     /// These values are removed at the end of current run.
-    fn insert_new_state_values(&mut self, state_changeset: &StateChangeset) {
+    fn insert_new_state_values(
+        &mut self,
+        state_changeset: &StateChangeset,
+        storage_layouts: &HashMap<Address, StorageLayout>,
+    ) {
         for (address, account) in state_changeset {
             // Insert basic account information.
             self.insert_value(address.into_word());
@@ -234,8 +241,9 @@ impl FuzzDictionary {
             self.insert_push_bytes_values(address, &account.info);
             // Insert storage values.
             if self.config.include_storage {
+                let storage_layout = storage_layouts.get(address);
                 for (slot, value) in &account.storage {
-                    self.insert_storage_value(slot, &value.present_value);
+                    self.insert_storage_value(slot, &value.present_value, storage_layout);
                 }
             }
         }
@@ -290,17 +298,86 @@ impl FuzzDictionary {
 
     /// Insert values from single storage slot and storage value into fuzz dictionary.
     /// If storage values are newly collected then they are removed at the end of current run.
-    fn insert_storage_value(&mut self, storage_slot: &U256, storage_value: &U256) {
+    fn insert_storage_value(
+        &mut self,
+        storage_slot: &U256,
+        storage_value: &U256,
+        storage_layout: Option<&StorageLayout>,
+    ) {
+        // Always insert the slot itself
         self.insert_value(B256::from(*storage_slot));
-        self.insert_value(B256::from(*storage_value));
-        // also add the value below and above the storage value to the dictionary.
-        if *storage_value != U256::ZERO {
-            let below_value = storage_value - U256::from(1);
-            self.insert_value(B256::from(below_value));
-        }
-        if *storage_value != U256::MAX {
-            let above_value = storage_value + U256::from(1);
-            self.insert_value(B256::from(above_value));
+
+        // Try to determine the type of this storage slot
+        let storage_type = storage_layout.and_then(|layout| {
+            // Convert slot to string for comparison
+            let slot_str = format!("{:#x}", storage_slot);
+
+            // Find the storage entry for this slot
+            layout
+                .storage
+                .iter()
+                .find(|s| s.slot == slot_str || s.slot == storage_slot.to_string())
+                .and_then(|storage| {
+                    // Look up the type information
+                    layout
+                        .types
+                        .get(&storage.storage_type)
+                        .map(|t| DynSolType::parse(&t.label).ok())
+                        .flatten()
+                })
+        });
+
+        // If we have type information, only insert as a sample value with the correct type
+        if let Some(sol_type) = storage_type {
+            // Only insert values for types that can be represented as a single word
+            match &sol_type {
+                DynSolType::Address
+                | DynSolType::Uint(_)
+                | DynSolType::Int(_)
+                | DynSolType::Bool
+                | DynSolType::FixedBytes(_)
+                | DynSolType::Bytes => {
+                    // Insert as a typed sample value
+                    self.sample_values
+                        .entry(sol_type.clone())
+                        .or_default()
+                        .insert(B256::from(*storage_value));
+
+                    // For numeric types, also add adjacent values as samples
+                    if matches!(sol_type, DynSolType::Uint(_) | DynSolType::Int(_)) {
+                        if *storage_value != U256::ZERO {
+                            let below_value = storage_value - U256::from(1);
+                            self.sample_values
+                                .entry(sol_type.clone())
+                                .or_default()
+                                .insert(B256::from(below_value));
+                        }
+                        if *storage_value != U256::MAX {
+                            let above_value = storage_value + U256::from(1);
+                            self.sample_values
+                                .entry(sol_type.clone())
+                                .or_default()
+                                .insert(B256::from(above_value));
+                        }
+                    }
+                }
+                _ => {
+                    // For complex types (arrays, mappings, structs), insert as raw value
+                    self.insert_value(B256::from(*storage_value));
+                }
+            }
+        } else {
+            // No type information available, insert as raw values (old behavior)
+            self.insert_value(B256::from(*storage_value));
+            // also add the value below and above the storage value to the dictionary.
+            if *storage_value != U256::ZERO {
+                let below_value = storage_value - U256::from(1);
+                self.insert_value(B256::from(below_value));
+            }
+            if *storage_value != U256::MAX {
+                let above_value = storage_value + U256::from(1);
+                self.insert_value(B256::from(above_value));
+            }
         }
     }
 
@@ -383,5 +460,113 @@ impl FuzzDictionary {
             state.hits = self.hits,
             "FuzzDictionary stats",
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_compilers::artifacts::{Storage, StorageType};
+
+    #[test]
+    fn test_type_aware_storage_insertion() {
+        // Create a simple storage layout for testing
+        let mut storage_layout = StorageLayout {
+            storage: vec![
+                Storage {
+                    ast_id: 1,
+                    contract: "TestContract".to_string(),
+                    label: "myUint".to_string(),
+                    offset: 0,
+                    slot: "0x0".to_string(),
+                    storage_type: "t_uint256".to_string(),
+                },
+                Storage {
+                    ast_id: 2,
+                    contract: "TestContract".to_string(),
+                    label: "myAddress".to_string(),
+                    offset: 0,
+                    slot: "0x1".to_string(),
+                    storage_type: "t_address".to_string(),
+                },
+            ],
+            types: BTreeMap::new(),
+        };
+
+        // Add type information
+        storage_layout.types.insert(
+            "t_uint256".to_string(),
+            StorageType {
+                encoding: "inplace".to_string(),
+                key: None,
+                label: "uint256".to_string(),
+                number_of_bytes: "32".to_string(),
+                value: None,
+                other: BTreeMap::new(),
+            },
+        );
+        storage_layout.types.insert(
+            "t_address".to_string(),
+            StorageType {
+                encoding: "inplace".to_string(),
+                key: None,
+                label: "address".to_string(),
+                number_of_bytes: "20".to_string(),
+                value: None,
+                other: BTreeMap::new(),
+            },
+        );
+
+        // Create a fuzz dictionary
+        let config = FuzzDictionaryConfig::default();
+        let mut dict = FuzzDictionary::new(config);
+
+        // Test inserting a uint256 value
+        let uint_slot = U256::from(0);
+        let uint_value = U256::from(42);
+        dict.insert_storage_value(&uint_slot, &uint_value, Some(&storage_layout));
+
+        // Test inserting an address value
+        let addr_slot = U256::from(1);
+        let addr_value = U256::from_be_bytes([
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 12 zeros
+            0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x34, 0x56, 0x78,
+            0x90, 0x12, 0x34, 0x56, 0x78, 0x90,
+        ]);
+        dict.insert_storage_value(&addr_slot, &addr_value, Some(&storage_layout));
+
+        // Check that values were inserted as typed samples
+        let uint_type = DynSolType::Uint(256);
+        let addr_type = DynSolType::Address;
+
+        assert!(dict.samples(&uint_type).is_some());
+        assert!(dict.samples(&addr_type).is_some());
+
+        // Check that the uint value was inserted with adjacent values
+        let uint_samples = dict.samples(&uint_type).unwrap();
+        assert!(uint_samples.contains(&B256::from(uint_value)));
+        assert!(uint_samples.contains(&B256::from(uint_value - U256::from(1))));
+        assert!(uint_samples.contains(&B256::from(uint_value + U256::from(1))));
+
+        // Check that the address value was inserted
+        let addr_samples = dict.samples(&addr_type).unwrap();
+        assert!(addr_samples.contains(&B256::from(addr_value)));
+    }
+
+    #[test]
+    fn test_storage_insertion_without_layout() {
+        let config = FuzzDictionaryConfig::default();
+        let mut dict = FuzzDictionary::new(config);
+
+        // Test inserting without storage layout (fallback behavior)
+        let slot = U256::from(5);
+        let value = U256::from(100);
+        dict.insert_storage_value(&slot, &value, None);
+
+        // Without storage layout, values should be inserted as raw values
+        assert!(dict.values().contains(&B256::from(slot)));
+        assert!(dict.values().contains(&B256::from(value)));
+        assert!(dict.values().contains(&B256::from(value - U256::from(1))));
+        assert!(dict.values().contains(&B256::from(value + U256::from(1))));
     }
 }
