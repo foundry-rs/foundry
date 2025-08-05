@@ -6,46 +6,21 @@ A Foundry forge wrapper optimized for Fluent Network and WASM smart contract dev
 
 ### Quick Install (Recommended)
 
-The fastest way to install gblend is using the gblendup installer:
+1. Install `gblendup`:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/fluentlabs-xyz/gblend/gblend/gblendup | bash
+curl -sSL https://raw.githubusercontent.com/fluentlabs-xyz/gblend/refs/tags/latest/gblendup/install | bash
+```
+
+2. Start a new terminal session or update source file
+
+3. Install `gblend` using `gblendup`
+
+```
+gblendup
 ```
 
 This will automatically download precompiled binaries for your platform or build from source if needed.
-
-### Manual Installation Options
-
-#### Install specific version
-
-```bash
-# Install a specific version
-curl -sSL https://raw.githubusercontent.com/fluentlabs-xyz/gblend/gblend/gblendup | bash -s -- --version v1.0.0
-
-# Force build from source (latest gblend branch)
-curl -sSL https://raw.githubusercontent.com/fluentlabs-xyz/gblend/gblend/gblendup | bash -s -- --build-from-source
-```
-
-#### Download precompiled binaries directly
-
-Visit the [releases page](https://github.com/fluentlabs-xyz/gblend/releases) and download the appropriate binary for your platform:
-
-- `gblend-linux-amd64.tar.gz` - Linux x86_64
-- `gblend-linux-arm64.tar.gz` - Linux ARM64
-- `gblend-darwin-amd64.tar.gz` - macOS Intel
-- `gblend-darwin-arm64.tar.gz` - macOS Apple Silicon
-- `gblend-win32-amd64.zip` - Windows x64
-
-Extract and add to your PATH.
-
-#### Build from source
-
-```bash
-git clone https://github.com/fluentlabs-xyz/gblend.git
-cd gblend
-git checkout gblend
-cargo install --path . --bin gblend
-```
 
 ### Verify Installation
 
@@ -60,7 +35,7 @@ gblend --version
 To update gblend to the latest version, simply run the installer again:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/fluentlabs-xyz/gblend/gblend/gblendup | bash
+curl -sSL https://raw.githubusercontent.com/fluentlabs-xyz/gblend/refs/tags/latest/gblendup/install | bash
 ```
 
 ## Motivation
@@ -88,6 +63,8 @@ gblend init my-project
 gblend init my-project --template <template-name>
 
 # Build your contracts
+# For reproducibility, builds are run inside a Docker container.  
+# The first build may take longer as the container image needs to be downloaded.
 gblend build
 
 # Clean build artifacts
@@ -111,27 +88,47 @@ gblend test --gas-report
 
 ```bash
 # Deploy a contract
-# Deploy a Solidity contract
-gblend create src/Counter.sol:Counter --rpc-url <rpc-url> --private-key <key> --broadcast --constructor-args <args>
 
 # Deploy a WASM contract with verification
-gblend create PowerCalculator.wasm --rpc-url <rpc-url> --private-key <key> --broadcast --verify --verifier blockscout --verifier-url <verifier-url> --wasm
+# contract name - rust package name in pascal case with .wasm suffix
+gblend create PowerCalculator.wasm \        
+    --rpc-url <rpc-url> \       
+    --private-key <key> \        
+    --broadcast \        
+    --verify \       
+    --wasm \
+    --verifier blockscout \      
+    --verifier-url <verifier-url>
+
+# Deploy a Solidity contract
+# NOTE: constructor args should be the last argument if used
+gblend create src/BlendedCounter.sol:BlendedCounter \
+    --rpc-url <rpc-url> \
+    --private-key <key> \
+    --broadcast \
+    --constructor-args <args>
 
 # Deploy using a script
-gblend script script/Counter.s.sol:Deploy --rpc-url <rpc-url> --private-key <key> --broadcast
+gblend script script/BlendedCounter.s.sol:Deploy \
+    --rpc-url <rpc-url> \
+    --private-key <key> \
+    --broadcast
 ```
 
 ### Verification
 
 ```bash
 # Verify a regular Solidity contract
-gblend verify-contract <address> <ContractName> --verifier blockscout --verifier-url <verifier-url>
+gblend verify-contract <address> BlendedCounter \
+    --verifier blockscout \
+    --verifier-url <verifier-url>
 
-# Verify a WASM contract (included in deployment command above)
-gblend create MyContract.wasm --verify --verifier blockscout --verifier-url <verifier-url> --wasm
+gblend verify-contract <address> PowerCalculator.wasm \
+    --wasm \
+    --verifier blockscout \
+    --verifier-url <verifier-url> \
+    --constructor-args <args>
 
-# Verify with constructor arguments
-gblend verify-contract <address> <ContractName> --constructor-args <args> --verifier blockscout --verifier-url <verifier-url>
 ```
 
 ## Configuration
@@ -146,57 +143,20 @@ libs = ["lib"]
 optimizer = true
 optimizer_runs = 200
 
-# Fluent Network configuration
 [rpc_endpoints]
 fluent = <rpc-url>
 
 ```
 
-## Examples
-
-### Creating a Rust Contract Project
-
-```bash
-# Initialize with Fluent Rust contract template
-gblend init counter --template counter
-
-cd counter
-
-# Build the Rust contract
-gblend build
-
-# Test the contract
-gblend test
-
-# Deploy to Fluent testnet
-gblend script script/Counter.s.sol:Deploy --rpc-url <rpc-url> --private-key <private-key> --broadcast
-```
-
-### Working with WASM Contracts
-
-```bash
-# Deploy a pre-compiled WASM contract
-gblend create PowerCalculator.wasm --rpc-url <rpc-url> --private-key <private-key> --broadcast
-
-# Verify WASM contract
-gblend verify-contract \
-    --rpc-url <rpc-url> \
-    --verifier blockscout \
-    --verifier-url <verifier-url> \
-    --wasm \
-    0x123... PowerCalculator.wasm
-```
-
 ## Differences from Standard Forge
 
 - **WASM Support**: Native support for WASM contract compilation and deployment
-- **Fluent Templates**: Access to Fluent-specific project templates
 - **Enhanced Verification**: `--wasm` flag for verifying WASM contracts
 - **Custom REVM**: Support for the fluentbase REVM implementation.
 
 ## Documentation
 
-For complete documentation on forge commands, see the [Foundry Book](https://book.getfoundry.sh/).
+For complete documentation on forge commands, see the [Foundry Book](https://getfoundry.sh/forge/overview).
 
 For Fluent-specific development guides, visit [Fluent Documentation](https://docs.fluent.xyz).
 
