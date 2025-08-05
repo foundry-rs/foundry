@@ -157,7 +157,7 @@ impl Cheatcode for pauseTracingCall {
         ccx: &mut crate::CheatsCtxt,
         executor: &mut dyn CheatcodesExecutor,
     ) -> Result {
-        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
+        let Some(tracer) = executor.tracing_inspector() else {
             // No tracer -> nothing to pause
             return Ok(Default::default());
         };
@@ -180,7 +180,7 @@ impl Cheatcode for resumeTracingCall {
         ccx: &mut crate::CheatsCtxt,
         executor: &mut dyn CheatcodesExecutor,
     ) -> Result {
-        let Some(tracer) = executor.tracing_inspector().and_then(|t| t.as_ref()) else {
+        let Some(tracer) = executor.tracing_inspector() else {
             // No tracer -> nothing to unpause
             return Ok(Default::default());
         };
