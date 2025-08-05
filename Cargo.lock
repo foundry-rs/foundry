@@ -4145,6 +4145,7 @@ dependencies = [
 name = "forge-lsp"
 version = "1.3.0"
 dependencies = [
+ "foundry-common",
  "foundry-test-utils",
  "serde",
  "serde_json",

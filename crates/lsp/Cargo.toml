@@ -14,6 +14,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+foundry-common.workspace = true
 tower-lsp = "0.20"
 tokio = { workspace = true, features = ["full"] }
 serde.workspace = true

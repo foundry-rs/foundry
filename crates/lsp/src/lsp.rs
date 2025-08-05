@@ -1,4 +1,5 @@
 use crate::runner::{ForgeRunner, Runner};
+use foundry_common::version::SHORT_VERSION;
 use std::sync::Arc;
 use tower_lsp::{Client, LanguageServer, lsp_types::*};
 
@@ -85,7 +86,7 @@ impl LanguageServer for ForgeLsp {
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
                 name: "forge lsp".to_string(),
-                version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                version: Some(SHORT_VERSION.to_string()),
             }),
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
