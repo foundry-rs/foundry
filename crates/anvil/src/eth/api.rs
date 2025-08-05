@@ -1824,12 +1824,13 @@ impl EthApi {
         Ok(())
     }
 
-    ///
+    /// Checks whether the given signature is overridden to resolve to the specified address.
     pub async fn anvil_recover_signature(
         &self,
         signature: Bytes,
         address: Address,
     ) -> Result<bool> {
+        node_info!("anvil_recoverSignature");
         self.backend.recover_signature(signature, address).await
     }
 

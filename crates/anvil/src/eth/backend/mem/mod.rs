@@ -3023,6 +3023,7 @@ impl Backend {
         Ok(None)
     }
 
+    /// Checks whether the given signature is overridden to resolve to the specified address.
     pub async fn recover_signature(
         &self,
         signature: Bytes,
