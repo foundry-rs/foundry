@@ -1,6 +1,7 @@
 use super::{format_int_exp, format_uint_exp};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::hex;
+use serde_json::{Value, json};
 use std::fmt;
 
 /// [`DynSolValue`] formatter.
@@ -181,5 +182,38 @@ mod tests {
             ))),
             "0xFb6916095cA1Df60bb79ce92cE3EA74c37c5d359"
         );
+    }
+}
+
+/// Recursively converts a `DynSolValue` into a serde_json::Value.
+pub fn token_to_json(value: &DynSolValue) -> Value {
+    use DynSolValue::*;
+
+    match value {
+        Address(addr) => json!(addr.to_string()),
+        Function(func) => json!(format!("0x{}", hex::encode(func))),
+        Bytes(bytes) => json!(format!("0x{}", hex::encode(bytes))),
+        FixedBytes(word, size) => json!(format!("0x{}", hex::encode(&word[..*size]))),
+        Uint(inner, _) => json!(inner.to_string()),
+        Int(inner, _) => json!(inner.to_string()),
+        Bool(b) => json!(*b),
+        String(s) => json!(s),
+        Array(values) | FixedArray(values) | Tuple(values) => {
+            let elements: Vec<Value> = values.iter().map(token_to_json).collect();
+            Value::Array(elements)
+        }
+        CustomStruct { name, prop_names, tuple } => {
+            if prop_names.len() == tuple.len() {
+                let obj = prop_names
+                    .iter()
+                    .zip(tuple)
+                    .map(|(k, v)| (k.clone(), token_to_json(v)))
+                    .collect();
+                Value::Object(obj)
+            } else {
+                let elements: Vec<Value> = tuple.iter().map(token_to_json).collect();
+                json!({ name: elements })
+            }
+        }
     }
 }
