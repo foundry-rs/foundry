@@ -3941,6 +3941,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 // tests proper reverts in fork mode for contracts with non-existent linked libraries.
 // <https://github.com/foundry-rs/foundry/issues/11185>
+#[cfg(not(feature = "isolate-by-default"))]
 forgetest_init!(can_fork_test_with_non_existent_linked_library, |prj, cmd| {
     prj.update_config(|config| {
         config.libraries =
