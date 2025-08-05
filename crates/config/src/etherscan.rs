@@ -54,8 +54,8 @@ pub enum EtherscanConfigError {
     Unresolved(#[from] UnresolvedEnvVarError),
 
     #[error(
-        "No known Etherscan API URL for chain `{1}`. To fix this, please:\n
-        1. Specify a `url` {0}\n
+        "No known Etherscan API URL for chain `{1}`. To fix this, please:\n\
+        1. Specify a `url` {0}\n\
         2. Verify the chain `{1}` is correct"
     )]
     UnknownChain(String, Chain),
