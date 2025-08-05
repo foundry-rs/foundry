@@ -169,7 +169,7 @@ pub fn token_to_json(value: &DynSolValue) -> Value {
                 json!({ name: tokens })
             }
         }
-        _ => json!(DynValueDisplay::new(value, true).to_string()),
+        _ => json!(format_token_raw(value)),
     }
 }
 
