@@ -195,7 +195,7 @@ fmt_tests! {
     NumberLiteralUnderscore, // OK
     OperatorExpressions, // OK
     PragmaDirective, // OK
-    Repros, // TODO: check boxes, panics
+    Repros, // OK? is it acceptable?
     ReturnStatement, // OK? is it acceptable? (inline block logic is inconsistent with 'if stmt' unit test)
     RevertNamedArgsStatement, // OK? is it acceptable? (properly break long calls?)
     RevertStatement, // OK

@@ -48,15 +48,15 @@ contract TestContract {
     }
 
     function test1() public {
-        assembly { sstore(   1,    1) /* inline comment*/ // forgefmt: disable-line
+        assembly{ sstore(   1,    1) /* inline comment*/ // forgefmt: disable-line
             sstore(2,    2)
         }
     }
 
     function test2() public {
-        assembly { sstore(   1,    1) // forgefmt: disable-line
+        assembly{ sstore(   1,    1) // forgefmt: disable-line
             sstore(2,    2)
-            sstore(3,    3) // forgefmt: disable-line
+            sstore(3,    3)// forgefmt: disable-line
             sstore(4,    4)
         }
     }
@@ -65,17 +65,17 @@ contract TestContract {
         // forgefmt: disable-next-line
         assembly{ sstore(   1,    1)
             sstore(2,    2)
-            sstore(3,    3) // forgefmt: disable-line
+            sstore(3,    3)// forgefmt: disable-line
             sstore(4,    4)
         }// forgefmt: disable-line
     }
 
     function test4() public {
         // forgefmt: disable-next-line
-                  assembly {
+                  assembly{
             sstore(   1,    1)
             sstore(2,    2)
-            sstore(3,    3) // forgefmt: disable-line
+            sstore(3,    3)// forgefmt: disable-line
             sstore(4,    4)
         }// forgefmt: disable-line
         if (condition) execute(); // comment7

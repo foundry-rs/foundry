@@ -587,25 +587,33 @@ impl<'sess> State<'sess, '_> {
 
         self.s.cbox(self.ind);
         let mut skip_first_break = is_single_without_cmnts;
-        if let Some(first_pos) = get_span(&values[0]).map(Span::lo)
-            && let Some((span, style)) = self
+        if let Some(first_pos) = get_span(&values[0]).map(Span::lo) {
+            if let Some((span, style)) = self
                 .peek_comment_before(first_pos)
                 .map_or(None, |cmnt| Some((cmnt.span, cmnt.style)))
-        {
-            if self.cursor.enabled && self.inline_config.is_disabled(span) && style.is_isolated() {
-                self.hardbreak();
+            {
+                if self.cursor.enabled
+                    && self.inline_config.is_disabled(span)
+                    && style.is_isolated()
+                {
+                    self.hardbreak();
+                }
+                self.print_comments(
+                    first_pos,
+                    CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
+                );
+                // If mixed comment before the 1st item, manually handle breaks.
+                match (style.is_mixed(), format.breaks_comments()) {
+                    (true, true) => self.hardbreak(),
+                    (true, false) => self.space(),
+                    _ => {}
+                };
+                skip_first_break = true;
             }
-            self.print_comments(
-                first_pos,
-                CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
-            );
-            // If mixed comment before the 1st item, manually handle breaks.
-            match (style.is_mixed(), format.breaks_comments()) {
-                (true, true) => self.hardbreak(),
-                (true, false) => self.space(),
-                _ => {}
-            };
-            skip_first_break = true;
+            // Update cursor if previously enabled
+            if self.cursor.enabled {
+                self.cursor.advance_to(first_pos, true);
+            }
         }
         if !skip_first_break {
             format.soft_break(&mut self.s);
@@ -748,17 +756,7 @@ impl State<'_, '_> {
 
     fn print_span(&mut self, span: Span, skip_ind: bool) {
         match self.sm.span_to_snippet(span) {
-            Ok(s) => {
-                // // if trailing `disable-start` cmnt, add a preceeding nbsp
-                // if span.lo() != self.cursor
-                //     && s.contains(DISABLE_START)
-                //     && let Ok(b) = self.sm.span_to_snippet(Span::new(self.cursor, span.lo()))
-                //     && b.chars().all(|c| c == ' ')
-                // {
-                //     self.word(b);
-                // }
-                self.word(s);
-            }
+            Ok(s) => self.word(s),
             Err(e) => panic!("failed to print {span:?}: {e:#?}"),
         }
         // Drop comments that are included in the span.
@@ -790,7 +788,7 @@ impl<'ast> State<'_, 'ast> {
                 self.print_item(item, is_first);
                 is_first = false;
                 if let Some(next_item) = items.peek() {
-                    self.separate_items(next_item);
+                    self.separate_items(next_item, false);
                 }
                 continue;
             }
@@ -824,23 +822,43 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
             if let Some(next_item) = items.peek() {
-                self.separate_items(next_item);
+                self.separate_items(next_item, false);
             }
         }
 
         self.print_remaining_comments();
     }
 
-    fn separate_items(&mut self, next_item: &'ast ast::Item<'ast>) {
-        if !self.cursor.enabled && self.inline_config.is_disabled(next_item.span) {
-            return;
-        }
+    fn separate_items(&mut self, next_item: &'ast ast::Item<'ast>, advance: bool) {
+        // Since this function forces the hardbreaks, we don't update the cursor
+        if item_needs_iso(&next_item.kind) {
+            let cmnts = self
+                .comments
+                .iter()
+                .filter_map(|c| if c.pos() < next_item.span.lo() { Some(c.style) } else { None })
+                .collect::<Vec<_>>();
 
-        if item_needs_iso(&next_item.kind)
-            && !self.comments.iter().any(|c| c.pos() < next_item.span.lo() && c.style.is_blank())
-        {
-            // Since we are forcing the hardbreaks, we don't update the cursor
-            self.hardbreak();
+            if let Some(first) = cmnts.first()
+                && let Some(last) = cmnts.last()
+            {
+                if !(first.is_blank() || last.is_blank()) {
+                    self.hardbreak();
+                    return;
+                }
+                if advance {
+                    if self.peek_comment_before(next_item.span.lo()).is_some() {
+                        self.print_comments(next_item.span.lo(), CommentConfig::default());
+                    } else if self.inline_config.is_disabled(Span::new(
+                        next_item.span.lo(),
+                        next_item.span.lo() + BytePos(1),
+                    )) {
+                        self.hardbreak();
+                        self.cursor.advance_to(next_item.span.lo(), true);
+                    }
+                }
+            } else {
+                self.hardbreak();
+            }
         }
     }
 
@@ -1061,7 +1079,11 @@ impl<'ast> State<'_, 'ast> {
                 self.print_item(item, is_first);
                 is_first = false;
                 if let Some(next_item) = items.peek() {
-                    self.separate_items(next_item);
+                    if self.inline_config.is_disabled(next_item.span) {
+                        _ = self.handle_span(next_item.span, false);
+                    } else {
+                        self.separate_items(next_item, true);
+                    }
                 }
             }
 
