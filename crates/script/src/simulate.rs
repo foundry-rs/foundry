@@ -149,7 +149,11 @@ impl PreSimulationState {
                 };
 
                 let transaction = ScriptTransactionBuilder::from(transaction)
-                    .with_execution_result(&result, self.args.gas_estimate_multiplier)
+                    .with_execution_result(
+                        &result,
+                        self.args.gas_estimate_multiplier,
+                        &self.build_data,
+                    )
                     .build();
 
                 eyre::Ok((Some(transaction), is_noop_tx, result.traces))
