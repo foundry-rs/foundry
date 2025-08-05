@@ -393,7 +393,6 @@ fn transact(
 // https://github.com/foundry-rs/foundry/issues/8004
 fn persist_caller(ccx: &mut CheatsCtxt) {
     ccx.ecx.journaled_state.database.add_persistent_account(ccx.caller);
-    ccx.ecx.journaled_state.database.add_persistent_account(CALLER);
 }
 
 /// Performs an Ethereum JSON-RPC request to the given endpoint.
