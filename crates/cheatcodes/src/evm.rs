@@ -159,11 +159,7 @@ impl Display for AccountStateDiffs {
         if let Some(nonce_diff) = &self.nonce_diff
             && nonce_diff.previous_value != nonce_diff.new_value
         {
-            writeln!(
-                f,
-                "- nonce diff: {} → {}",
-                nonce_diff.previous_value, nonce_diff.new_value
-            )?;
+            writeln!(f, "- nonce diff: {} → {}", nonce_diff.previous_value, nonce_diff.new_value)?;
         }
         // Print state diff if any.
         if !&self.state_diff.is_empty() {

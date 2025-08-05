@@ -1648,8 +1648,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                 initialized: true,
                 oldBalance: U256::ZERO, // updated on create_end
                 newBalance: U256::ZERO, // updated on create_end
-                oldNonce: 0, // new contract starts with nonce 0
-                newNonce: 1, // updated on create_end (contracts start with nonce 1)
+                oldNonce: 0,            // new contract starts with nonce 0
+                newNonce: 1,            // updated on create_end (contracts start with nonce 1)
                 value: input.value(),
                 data: input.init_code(),
                 reverted: false,
@@ -1960,7 +1960,9 @@ impl Cheatcodes {
                 let (initialized, old_balance, old_nonce) = ecx
                     .journaled_state
                     .load_account(target)
-                    .map(|account| (account.info.exists(), account.info.balance, account.info.nonce))
+                    .map(|account| {
+                        (account.info.exists(), account.info.balance, account.info.nonce)
+                    })
                     .unwrap_or_default();
 
                 // load balance of this account
