@@ -8,7 +8,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
 use foundry_common::provider::ProviderBuilder;
-use foundry_evm_core::{AsEnvMut, ContextExt, fork::CreateFork};
+use foundry_evm_core::{AsEnvMut, ContextExt, constants::CALLER, fork::CreateFork};
 
 impl Cheatcode for activeForkCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
@@ -393,6 +393,7 @@ fn transact(
 // https://github.com/foundry-rs/foundry/issues/8004
 fn persist_caller(ccx: &mut CheatsCtxt) {
     ccx.ecx.journaled_state.database.add_persistent_account(ccx.caller);
+    ccx.ecx.journaled_state.database.add_persistent_account(CALLER);
 }
 
 /// Performs an Ethereum JSON-RPC request to the given endpoint.
