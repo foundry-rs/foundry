@@ -152,14 +152,6 @@ pub fn token_to_json(value: &DynSolValue) -> Value {
     use DynSolValue::*;
 
     match value {
-        Address(addr) => json!(addr.to_string()),
-        Function(func) => json!(format!("0x{}", hex::encode(func))),
-        Bytes(bytes) => json!(format!("0x{}", hex::encode(bytes))),
-        FixedBytes(word, size) => json!(format!("0x{}", hex::encode(&word[..*size]))),
-        Uint(inner, _) => json!(inner.to_string()),
-        Int(inner, _) => json!(inner.to_string()),
-        Bool(b) => json!(*b),
-        String(s) => json!(s),
         Array(values) | FixedArray(values) | Tuple(values) => {
             let tokens: Vec<Value> = values.iter().map(token_to_json).collect();
             Value::Array(tokens)
@@ -177,6 +169,7 @@ pub fn token_to_json(value: &DynSolValue) -> Value {
                 json!({ name: tokens })
             }
         }
+        _ => json!(DynValueDisplay::new(value, true).to_string()),
     }
 }
 
