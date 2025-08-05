@@ -115,17 +115,28 @@ impl SolidityLinter {
         }
 
         // Filter passes based on linter config
-        let mut passes: Vec<Box<dyn EarlyLintPass<'_>>> = passes_and_lints
+        let (mut passes, lints): (Vec<Box<dyn EarlyLintPass<'_>>>, Vec<_>) = passes_and_lints
             .into_iter()
-            .filter_map(|(pass, lint)| if self.include_lint(lint) { Some(pass) } else { None })
-            .collect();
+            .fold((Vec::new(), Vec::new()), |(mut passes, mut ids), (pass, lints)| {
+                let included_ids: Vec<_> = lints
+                    .iter()
+                    .filter_map(|lint| if self.include_lint(*lint) { Some(lint.id) } else { None })
+                    .collect();
+
+                if !included_ids.is_empty() {
+                    passes.push(pass);
+                    ids.extend(included_ids);
+                }
+
+                (passes, ids)
+            });
 
         // Process the inline-config
         let comments = Comments::new(file);
         let inline_config = parse_inline_config(sess, &comments, InlineConfigSource::Ast(ast));
 
         // Initialize and run the early lint visitor
-        let ctx = LintContext::new(sess, self.with_description, inline_config);
+        let ctx = LintContext::new(sess, self.with_description, inline_config, lints);
         let mut early_visitor = EarlyLintVisitor::new(&ctx, &mut passes);
         _ = early_visitor.visit_source_unit(ast);
         early_visitor.post_source_unit(ast);
@@ -154,10 +165,21 @@ impl SolidityLinter {
         }
 
         // Filter passes based on config
-        let mut passes: Vec<Box<dyn LateLintPass<'_>>> = passes_and_lints
+        let (mut passes, lints): (Vec<Box<dyn LateLintPass<'_>>>, Vec<_>) = passes_and_lints
             .into_iter()
-            .filter_map(|(pass, lint)| if self.include_lint(lint) { Some(pass) } else { None })
-            .collect();
+            .fold((Vec::new(), Vec::new()), |(mut passes, mut ids), (pass, lints)| {
+                let included_ids: Vec<_> = lints
+                    .iter()
+                    .filter_map(|lint| if self.include_lint(*lint) { Some(lint.id) } else { None })
+                    .collect();
+
+                if !included_ids.is_empty() {
+                    passes.push(pass);
+                    ids.extend(included_ids);
+                }
+
+                (passes, ids)
+            });
 
         // Process the inline-config
         let comments = Comments::new(file);
@@ -165,7 +187,7 @@ impl SolidityLinter {
             parse_inline_config(sess, &comments, InlineConfigSource::Hir((&gcx.hir, source_id)));
 
         // Run late lint visitor
-        let ctx = LintContext::new(sess, self.with_description, inline_config);
+        let ctx = LintContext::new(sess, self.with_description, inline_config, lints);
         let mut late_visitor = LateLintVisitor::new(&ctx, &mut passes, &gcx.hir);
 
         // Visit this specific source

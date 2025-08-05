@@ -52,20 +52,23 @@ macro_rules! declare_forge_lint {
 /// - `const REGISTERED_LINTS` containing all registered lint objects
 #[macro_export]
 macro_rules! register_lints {
-    // 1. Internal rule for declaring structs.
-    ( @declare_structs $( ($pass_id:ident, $pass_type:ident, $lints:tt) ),* $(,)? ) => {
+    // 1. Internal rule for declaring structs and their associated lints.
+    ( @declare_structs $( ($pass_id:ident, $pass_type:ident, ($($lint:expr),* $(,)?)) ),* $(,)? ) => {
         $(
             #[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
             pub struct $pass_id;
 
             impl $pass_id {
+                /// Static slice of lints associated with this pass.
+                const LINTS: &'static [SolLint] = &[$($lint),*];
+
                 register_lints!(@early_impl $pass_id, $pass_type);
                 register_lints!(@late_impl $pass_id, $pass_type);
             }
         )*
     };
 
-    // 2. Internal rule for declaring the const array.
+    // 2. Internal rule for declaring the const array of ALL lints.
     ( @declare_consts $( ($pass_id:ident, $pass_type:ident, ($($lint:expr),* $(,)?)) ),* $(,)? ) => {
         pub const REGISTERED_LINTS: &[SolLint] = &[
             $(
@@ -76,10 +79,10 @@ macro_rules! register_lints {
 
     // 3. Internal rule for declaring the helper functions.
     ( @declare_funcs $( ($pass_id:ident, $pass_type:ident, $lints:tt) ),* $(,)? ) => {
-        pub fn create_early_lint_passes<'a>() -> Vec<(Box<dyn EarlyLintPass<'a>>, SolLint)> {
-            vec![
+        pub fn create_early_lint_passes<'ast>() -> Vec<(Box<dyn EarlyLintPass<'ast>>, &'static [SolLint])> {
+            [
                 $(
-                    register_lints!(@early_create $pass_id, $pass_type, $lints),
+                    register_lints!(@early_create $pass_id, $pass_type),
                 )*
             ]
             .into_iter()
@@ -87,10 +90,10 @@ macro_rules! register_lints {
             .collect()
         }
 
-        pub fn create_late_lint_passes<'hir>() -> Vec<(Box<dyn LateLintPass<'hir>>, SolLint)> {
-            vec![
+        pub fn create_late_lint_passes<'hir>() -> Vec<(Box<dyn LateLintPass<'hir>>, &'static [SolLint])> {
+            [
                 $(
-                    register_lints!(@late_create $pass_id, $pass_type, $lints),
+                    register_lints!(@late_create $pass_id, $pass_type),
                 )*
             ]
             .into_iter()
@@ -114,14 +117,14 @@ macro_rules! register_lints {
         }
     };
 
-    (@early_create $_pass_id:ident, late, $_lints:tt) => { vec![] };
-    (@early_create $pass_id:ident, $other:ident, ($($lint:expr),*)) => {
-        vec![ $(($pass_id::as_early_lint_pass(), $lint)),* ]
+    (@early_create $_pass_id:ident, late) => { None };
+    (@early_create $pass_id:ident, $_other:ident) => {
+        Some(($pass_id::as_early_lint_pass(), $pass_id::LINTS))
     };
 
-    (@late_create $_pass_id:ident, early, $_lints:tt) => { vec![] };
-    (@late_create $pass_id:ident, $other:ident, ($($lint:expr),*)) => {
-        vec![ $(($pass_id::as_late_lint_pass(), $lint)),* ]
+    (@late_create $_pass_id:ident, early) => { None };
+    (@late_create $pass_id:ident, $_other:ident) => {
+        Some(($pass_id::as_late_lint_pass(), $pass_id::LINTS))
     };
 
     // --- ENTRY POINT ---------------------------------------------------------
