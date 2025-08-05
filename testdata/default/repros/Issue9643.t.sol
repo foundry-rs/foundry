@@ -42,7 +42,7 @@ contract Issue9643Test is DSTest {
         proxied.setCounter(42);
         string memory rawDiff = vm.getStateDiffJson();
         assertEq(
-            "{\"0x2e234dae75c793f67a35089c9d99245e1c58470b\":{\"label\":null,\"balanceDiff\":null,\"stateDiff\":{\"0x0000000000000000000000000000000000000000000000000000000000000000\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x000000000000000000000000000000000000000000000000000000000000002a\"}}}}",
+            "{\"0x185a4dc360ce69bdccee33b3784b0282f7961aea\":{\"label\":null,\"balanceDiff\":null,\"nonceDiff\":{\"previousValue\":0,\"newValue\":1},\"stateDiff\":{\"0x0000000000000000000000000000000000000000000000000000000000000000\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x000000000000000000000000000000000000000000000000000000000000002a\"}}},\"0xce71065d4017f316ec606fe4422e11eb2c47c246\":{\"label\":null,\"balanceDiff\":null,\"nonceDiff\":{\"previousValue\":0,\"newValue\":1},\"stateDiff\":{}}}",
             rawDiff
         );
     }
