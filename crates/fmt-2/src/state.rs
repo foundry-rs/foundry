@@ -3,7 +3,7 @@ use crate::{
     pp::{self, BreakToken, SIZE_INFINITY, Token},
 };
 use foundry_common::{
-    comments::{Comment, CommentStyle, Comments, DISABLE_START},
+    comments::{Comment, CommentStyle, Comments},
     iter::IterDelimited,
 };
 use foundry_config::fmt as config;
@@ -148,6 +148,11 @@ impl<'sess> State<'sess, '_> {
                     config.mixed_no_break = true;
                     config.mixed_prev_space = false;
                 }
+            } else if config.offset != 0
+                && cmnt.style.is_isolated()
+                && last_style.is_some_and(|s| s.is_isolated())
+            {
+                self.offset(config.offset);
             }
 
             last_style = Some(cmnt.style);
@@ -221,11 +226,6 @@ impl<'sess> State<'sess, '_> {
 
     fn print_comment(&mut self, mut cmnt: Comment, mut config: CommentConfig) {
         self.cursor.advance_to(cmnt.span.hi(), true);
-        // // DEBUG
-        // if !cmnt.style.is_blank() {
-        //     println!("{cmnt:?}");
-        //     println!(" > BOL? {}\n", self.is_bol_or_only_ind());
-        // }
         match cmnt.style {
             CommentStyle::Mixed => {
                 let Some(prefix) = cmnt.prefix() else { return };
@@ -1440,6 +1440,11 @@ impl<'ast> State<'_, 'ast> {
         if self.handle_span(*span, false) {
             return;
         }
+
+        // NOTE(rusowsky): this is hacky but necessary to properly estimate if we figure out if we
+        // have double breaks (which should have double indentation) or not.
+        // Alternatively, we could achieve the same behavior with a new box group that supports
+        // "continuation" which would only increase indentation if its parent box broke.
         let init_space_left = self.space_left();
         let mut pre_init_size = self.estimate_size(ty.span);
 
@@ -1637,8 +1642,6 @@ impl<'ast> State<'_, 'ast> {
         if self.handle_span(span, false) {
             return;
         }
-        // self.print_comments(span.lo(),
-        // CommentConfig::skip_ws().mixed_no_break().mixed_post_nbsp());
 
         match *kind {
             ast::LitKind::Str(kind, ..) => {
@@ -2392,7 +2395,7 @@ impl<'ast> State<'_, 'ast> {
                         self.print_sep(Separator::Nbsp);
                     }
                 }
-                self.print_yul_block(block, block.span, false);
+                self.print_yul_block(block, block.span);
             }
             ast::StmtKind::DeclSingle(var) => self.print_var(var, true),
             ast::StmtKind::DeclMulti(vars, expr) => {
@@ -2755,22 +2758,20 @@ impl<'ast> State<'_, 'ast> {
         }
     }
 
-    fn print_yul_block(
-        &mut self,
-        block: &'ast [yul::Stmt<'ast>],
-        span: Span,
-        attempt_single_line: bool,
-    ) {
+    fn print_yul_block(&mut self, block: &'ast [yul::Stmt<'ast>], span: Span) {
         if self.handle_span(span, false) {
             return;
         }
+
+        self.word("{");
         self.print_block_inner(
             block,
-            if attempt_single_line { BlockFormat::Compact(false) } else { BlockFormat::Regular },
+            BlockFormat::NoBraces(Some(self.ind)),
             Self::print_yul_stmt,
             |b| b.span,
             span.hi(),
         );
+        self.word("}");
     }
 
     fn print_block_inner<T: Debug>(
@@ -2821,7 +2822,6 @@ impl<'ast> State<'_, 'ast> {
                 self.print_comments(pos_hi, CommentConfig::skip_ws());
             }
             // Other comments are printed inside the block
-            // else if cmnt.unwrap().style.is_isolated() {
             else {
                 if block_format.with_braces() {
                     self.word("{");
@@ -3138,7 +3138,7 @@ impl<'ast> State<'_, 'ast> {
         }
 
         match kind {
-            yul::StmtKind::Block(stmts) => self.print_yul_block(stmts, span, false),
+            yul::StmtKind::Block(stmts) => self.print_yul_block(stmts, span),
             yul::StmtKind::AssignSingle(path, expr) => {
                 self.print_path(path, false);
                 self.word(" := ");
@@ -3164,23 +3164,23 @@ impl<'ast> State<'_, 'ast> {
                 self.word("if ");
                 self.print_yul_expr(expr);
                 self.nbsp();
-                self.print_yul_block(stmts, span, true);
+                self.print_yul_block(stmts, span);
             }
             yul::StmtKind::For { init, cond, step, body } => {
                 // TODO(dani): boxes
                 self.ibox(0);
 
                 self.word("for ");
-                self.print_yul_block(init, span, true);
+                self.print_yul_block(init, span);
 
                 self.space();
                 self.print_yul_expr(cond);
 
                 self.space();
-                self.print_yul_block(step, span, true);
+                self.print_yul_block(step, span);
 
                 self.space();
-                self.print_yul_block(body, span, true);
+                self.print_yul_block(body, span);
 
                 self.end();
             }
@@ -3195,7 +3195,7 @@ impl<'ast> State<'_, 'ast> {
                     self.word("case ");
                     self.print_lit(constant);
                     self.nbsp();
-                    self.print_yul_block(body, span, true);
+                    self.print_yul_block(body, span);
 
                     self.print_trailing_comment(selector.span.hi(), None);
                 }
@@ -3203,7 +3203,7 @@ impl<'ast> State<'_, 'ast> {
                 if let Some(default_case) = default_case {
                     self.hardbreak_if_not_bol();
                     self.word("default ");
-                    self.print_yul_block(default_case, span, true);
+                    self.print_yul_block(default_case, span);
                 }
             }
             yul::StmtKind::Leave => self.word("leave"),
@@ -3211,7 +3211,7 @@ impl<'ast> State<'_, 'ast> {
             yul::StmtKind::Continue => self.word("continue"),
             yul::StmtKind::FunctionDef(yul::Function { name, parameters, returns, body }) => {
                 self.cbox(0);
-                self.ibox(0);
+                self.s.ibox(0);
                 self.word("function ");
                 self.print_ident(name);
                 self.print_tuple(
@@ -3235,14 +3235,14 @@ impl<'ast> State<'_, 'ast> {
                         ListFormat::Consistent { cmnts_break: false, with_space: false },
                         false,
                     );
-                    self.nbsp();
+                    self.space_if_not_bol();
                 }
                 self.end();
-                self.print_yul_block(body, span, false);
+                self.print_yul_block(body, span);
                 self.end();
             }
             yul::StmtKind::VarDecl(idents, expr) => {
-                self.ibox(0);
+                self.s.ibox(self.ind);
                 self.word("let ");
                 self.commasep(
                     idents,
@@ -3254,10 +3254,10 @@ impl<'ast> State<'_, 'ast> {
                     false,
                 );
                 if let Some(expr) = expr {
-                    self.word(" := ");
-                    self.neverbreak();
-                    self.end();
+                    self.word(" :=");
+                    self.space();
                     self.print_yul_expr(expr);
+                    self.end();
                 } else {
                     self.end();
                 }
