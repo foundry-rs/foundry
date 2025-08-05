@@ -574,7 +574,12 @@ pub enum CastSubcommand {
         sig: String,
 
         /// The ABI-encoded calldata.
-        calldata: String,
+        #[arg(required_unless_present = "file", index = 2)]
+        calldata: Option<String>,
+
+        /// Load ABI-encoded calldata from a file instead.
+        #[arg(long = "file", short = 'f', conflicts_with = "calldata")]
+        file: Option<PathBuf>,
     },
 
     /// Decode ABI-encoded string.

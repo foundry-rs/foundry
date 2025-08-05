@@ -83,11 +83,26 @@ impl<T: AsRef<Path>> FoundryPathExt for T {
 
 /// Initializes a tracing Subscriber for logging
 pub fn subscriber() {
-    let registry = tracing_subscriber::Registry::default()
-        .with(tracing_subscriber::EnvFilter::from_default_env());
+    let registry = tracing_subscriber::Registry::default().with(env_filter());
     #[cfg(feature = "tracy")]
     let registry = registry.with(tracing_tracy::TracyLayer::default());
     registry.with(tracing_subscriber::fmt::layer()).init()
+}
+
+fn env_filter() -> tracing_subscriber::EnvFilter {
+    const DEFAULT_DIRECTIVES: &[&str] = &[
+        // Hyper
+        "hyper=off",
+        "hyper_util=off",
+        "h2=off",
+        // Tokio
+        "mio=off",
+    ];
+    let mut filter = tracing_subscriber::EnvFilter::from_default_env();
+    for &directive in DEFAULT_DIRECTIVES {
+        filter = filter.add_directive(directive.parse().unwrap());
+    }
+    filter
 }
 
 pub fn abi_to_solidity(abi: &JsonAbi, name: &str) -> Result<String> {
