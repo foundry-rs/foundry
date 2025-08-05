@@ -70,6 +70,9 @@ pub enum BlockchainError {
     BlockOutOfRange(u64, u64),
     #[error("Resource not found")]
     BlockNotFound,
+    /// Thrown when a requested transaction is not found
+    #[error("transaction not found")]
+    TransactionNotFound,
     #[error("Required data unavailable")]
     DataUnavailable,
     #[error("Trie error: {0}")]
@@ -115,6 +118,8 @@ pub enum BlockchainError {
         /// Duration that was waited before timing out
         duration: Duration,
     },
+    #[error("Failed to parse transaction request: missing required fields")]
+    MissingRequiredFields,
 }
 
 impl From<eyre::Report> for BlockchainError {
@@ -525,6 +530,11 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     message: err.to_string().into(),
                     data: None,
                 },
+                err @ BlockchainError::TransactionNotFound => RpcError {
+                    code: ErrorCode::ServerError(-32001),
+                    message: err.to_string().into(),
+                    data: None,
+                },
                 err @ BlockchainError::DataUnavailable => {
                     RpcError::internal_error_with(err.to_string())
                 }
@@ -561,6 +571,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 }
                 err @ BlockchainError::Message(_) => RpcError::internal_error_with(err.to_string()),
                 err @ BlockchainError::UnknownTransactionType => {
+                    RpcError::invalid_params(err.to_string())
+                }
+                err @ BlockchainError::MissingRequiredFields => {
                     RpcError::invalid_params(err.to_string())
                 }
             }

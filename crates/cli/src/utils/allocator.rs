@@ -20,8 +20,7 @@ cfg_if::cfg_if! {
 // Wrap the allocator if the `tracy-allocator` feature is enabled.
 cfg_if::cfg_if! {
     if #[cfg(feature = "tracy-allocator")] {
-        type AllocatorWrapper = tracy_client::ProfiledAllocator<AllocatorInner>;
-        tracy_client::register_demangler!();
+        type AllocatorWrapper = tracing_tracy::client::ProfiledAllocator<AllocatorInner>;
         const fn new_allocator_wrapper() -> AllocatorWrapper {
             AllocatorWrapper::new(AllocatorInner {}, 100)
         }

@@ -1722,11 +1722,10 @@ impl Backend {
                     cache_db.commit(state);
                     gas_used += result.gas_used();
 
-                    // TODO: this is likely incomplete
                     // create the transaction from a request
                     let from = request.from.unwrap_or_default();
-                    let request =
-                        transaction_request_to_typed(WithOtherFields::new(request)).unwrap();
+                    let request = transaction_request_to_typed(WithOtherFields::new(request))
+                        .ok_or(BlockchainError::MissingRequiredFields)?;
                     let tx = build_typed_transaction(
                         request,
                         Signature::new(Default::default(), Default::default(), false),
@@ -2615,6 +2614,15 @@ impl Backend {
         hash: B256,
         opts: GethDebugTracingOptions,
     ) -> Result<GethTrace, BlockchainError> {
+        #[cfg(feature = "js-tracer")]
+        if let Some(tracer_type) = opts.tracer.as_ref()
+            && tracer_type.is_js()
+        {
+            return self
+                .trace_tx_with_js_tracer(hash, tracer_type.as_str().to_string(), opts.clone())
+                .await;
+        }
+
         if let Some(trace) = self.mined_geth_trace_transaction(hash, opts.clone()) {
             return trace;
         }
@@ -2624,6 +2632,111 @@ impl Backend {
         }
 
         Ok(GethTrace::Default(Default::default()))
+    }
+
+    /// Traces the transaction with the js tracer
+    #[cfg(feature = "js-tracer")]
+    pub async fn trace_tx_with_js_tracer(
+        &self,
+        hash: B256,
+        code: String,
+        opts: GethDebugTracingOptions,
+    ) -> Result<GethTrace, BlockchainError> {
+        let GethDebugTracingOptions { tracer_config, .. } = opts;
+
+        let block = {
+            let storage = self.blockchain.storage.read();
+            let MinedTransaction { block_hash, .. } = storage
+                .transactions
+                .get(&hash)
+                .cloned()
+                .ok_or(BlockchainError::TransactionNotFound)?;
+
+            storage.blocks.get(&block_hash).cloned().ok_or(BlockchainError::BlockNotFound)?
+        };
+
+        let index = block
+            .transactions
+            .iter()
+            .position(|tx| tx.hash() == hash)
+            .expect("transaction not found in block");
+
+        let pool_txs: Vec<Arc<PoolTransaction>> = block.transactions[..index]
+            .iter()
+            .map(|tx| {
+                let pending_tx =
+                    PendingTransaction::from_maybe_impersonated(tx.clone()).expect("is valid");
+                Arc::new(PoolTransaction {
+                    pending_transaction: pending_tx,
+                    requires: vec![],
+                    provides: vec![],
+                    priority: crate::eth::pool::transactions::TransactionPriority(0),
+                })
+            })
+            .collect();
+
+        let mut states = self.states.write();
+        let parent_state =
+            states.get(&block.header.parent_hash).ok_or(BlockchainError::BlockNotFound)?;
+        let mut cache_db = CacheDB::new(Box::new(parent_state));
+
+        // configure the blockenv for the block of the transaction
+        let mut env = self.env.read().clone();
+
+        env.evm_env.block_env = BlockEnv {
+            number: U256::from(block.header.number),
+            beneficiary: block.header.beneficiary,
+            timestamp: U256::from(block.header.timestamp),
+            difficulty: block.header.difficulty,
+            prevrandao: Some(block.header.mix_hash),
+            basefee: block.header.base_fee_per_gas.unwrap_or_default(),
+            gas_limit: block.header.gas_limit,
+            ..Default::default()
+        };
+
+        let executor = TransactionExecutor {
+            db: &mut cache_db,
+            validator: self,
+            pending: pool_txs.into_iter(),
+            block_env: env.evm_env.block_env.clone(),
+            cfg_env: env.evm_env.cfg_env.clone(),
+            parent_hash: block.header.parent_hash,
+            gas_used: 0,
+            blob_gas_used: 0,
+            enable_steps_tracing: self.enable_steps_tracing,
+            print_logs: self.print_logs,
+            print_traces: self.print_traces,
+            call_trace_decoder: self.call_trace_decoder.clone(),
+            precompile_factory: self.precompile_factory.clone(),
+            odyssey: self.odyssey,
+            optimism: self.is_optimism(),
+            blob_params: self.blob_params(),
+        };
+
+        let _ = executor.execute();
+
+        let target_tx = block.transactions[index].clone();
+        let target_tx = PendingTransaction::from_maybe_impersonated(target_tx)?;
+        let tx_env = target_tx.to_revm_tx_env();
+
+        let config = tracer_config.into_json();
+        let mut inspector = revm_inspectors::tracing::js::JsInspector::new(code, config)
+            .map_err(|err| BlockchainError::Message(err.to_string()))?;
+        let mut evm = self.new_evm_with_inspector_ref(&cache_db, &env, &mut inspector);
+
+        let result = evm
+            .transact(tx_env.clone())
+            .map_err(|err| BlockchainError::Message(err.to_string()))?;
+
+        let trace = inspector
+            .json_result(
+                result,
+                &alloy_evm::IntoTxEnv::into_tx_env(tx_env),
+                &env.evm_env.block_env,
+                &cache_db,
+            )
+            .map_err(|e| BlockchainError::Message(e.to_string()))?;
+        Ok(GethTrace::JS(trace))
     }
 
     /// Returns code by its hash

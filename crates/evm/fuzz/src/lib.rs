@@ -206,7 +206,7 @@ pub struct FuzzTestResult {
     pub logs: Vec<Log>,
 
     /// Labeled addresses
-    pub labeled_addresses: AddressHashMap<String>,
+    pub labels: AddressHashMap<String>,
 
     /// Exemplary traces for a fuzz run of the test function
     ///

@@ -1,8 +1,7 @@
-<svg width="852px" height="506px" xmlns="http://www.w3.org/2000/svg">
+<svg width="844px" height="470px" xmlns="http://www.w3.org/2000/svg">
   <style>
     .fg { fill: #AAAAAA }
     .bg { background: #000000 }
-    .fg-blue { fill: #0000AA }
     .fg-green { fill: #00AA00 }
     .fg-yellow { fill: #AA5500 }
     .container {
@@ -43,7 +42,7 @@
 </tspan>
     <tspan x="10px" y="226px">
 </tspan>
-    <tspan x="10px" y="244px"><tspan>  [31851] </tspan><tspan class="fg-green">CounterTest</tspan><tspan>::</tspan><tspan class="fg-green">test_Increment</tspan><tspan>()</tspan>
+    <tspan x="10px" y="244px"><tspan>  [28783] </tspan><tspan class="fg-green">CounterTest</tspan><tspan>::</tspan><tspan class="fg-green">test_Increment</tspan><tspan>()</tspan>
 </tspan>
     <tspan x="10px" y="262px"><tspan>    ├─ [22418] </tspan><tspan class="fg-green">Counter</tspan><tspan>::</tspan><tspan class="fg-green">increment</tspan><tspan>()</tspan>
 </tspan>
@@ -57,21 +56,17 @@
 </tspan>
     <tspan x="10px" y="352px"><tspan>    │   └─ </tspan><tspan class="fg-green">← [Return]</tspan><tspan> 1</tspan>
 </tspan>
-    <tspan x="10px" y="370px"><tspan>    ├─ [0] </tspan><tspan class="fg-blue">VM</tspan><tspan>::</tspan><tspan class="fg-blue">assertEq</tspan><tspan>(1, 1)</tspan><tspan class="fg-yellow"> [staticcall]</tspan>
+    <tspan x="10px" y="370px"><tspan>    └─ </tspan><tspan class="fg-green">← [Stop]</tspan>
 </tspan>
-    <tspan x="10px" y="388px"><tspan>    │   └─ </tspan><tspan class="fg-blue">← [Return]</tspan>
+    <tspan x="10px" y="388px">
 </tspan>
-    <tspan x="10px" y="406px"><tspan>    └─ </tspan><tspan class="fg-green">← [Stop]</tspan>
+    <tspan x="10px" y="406px"><tspan>Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]</tspan>
 </tspan>
     <tspan x="10px" y="424px">
 </tspan>
-    <tspan x="10px" y="442px"><tspan>Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]</tspan>
+    <tspan x="10px" y="442px"><tspan>Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)</tspan>
 </tspan>
     <tspan x="10px" y="460px">
-</tspan>
-    <tspan x="10px" y="478px"><tspan>Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)</tspan>
-</tspan>
-    <tspan x="10px" y="496px">
 </tspan>
   </text>
 
