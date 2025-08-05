@@ -113,7 +113,8 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     }
 
                     sh_err!(
-                        "Failed to verify contract - Response: `{}`, Details: `{}`",
+                        "Encountered an error verifying this contract:\nResponse: `{}`\nDetails:
+                        `{}`",
                         resp.message,
                         resp.result
                     )?;
