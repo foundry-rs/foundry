@@ -7,7 +7,7 @@ use crate::{
     config::PruneStateHistoryConfig,
     eth::{
         backend::{
-            cheats::CheatsManager,
+            cheats::{CheatEcrecover, CheatsManager},
             db::{Db, MaybeFullDatabase, SerializableState},
             env::Env,
             executor::{ExecutedTransactions, TransactionExecutor},
@@ -45,7 +45,7 @@ use alloy_evm::{
     Database, Evm,
     eth::EthEvmContext,
     overrides::{OverrideBlockHashes, apply_state_overrides},
-    precompiles::PrecompilesMap,
+    precompiles::{DynPrecompile, Precompile, PrecompilesMap},
 };
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
@@ -1180,21 +1180,12 @@ impl Backend {
         }
         let cheats_arc = Arc::new(self.cheats.clone());
 
-        evm.precompiles_mut().apply_precompile(
-            &address!("0x0000000000000000000000000000000000000001"),
-            move |_| {
-                let cheats_clone = Arc::clone(&cheats_arc);
-                Some(alloy_evm::precompiles::DynPrecompile::from(
-                    move |input: alloy_evm::precompiles::PrecompileInput<'_>| {
-                        crate::evm::custom_ecrecover(
-                            input.data,
-                            input.gas,
-                            Arc::clone(&cheats_clone),
-                        )
-                    },
-                ))
-            },
-        );
+        let cheat_ecrecover = CheatEcrecover::new(Arc::clone(&cheats_arc));
+
+        evm.precompiles_mut()
+            .apply_precompile(&address!("0x0000000000000000000000000000000000000001"), move |_| {
+                Some(DynPrecompile::new_stateful(move |input| cheat_ecrecover.call(input)))
+            });
 
         evm
     }
@@ -3034,7 +3025,7 @@ impl Backend {
 
     pub async fn recover_signature(
         &self,
-        signature: Signature,
+        signature: Bytes,
         address: Address,
     ) -> Result<bool, BlockchainError> {
         // Check if this signature has an override

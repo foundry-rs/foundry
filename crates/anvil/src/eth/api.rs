@@ -1827,7 +1827,7 @@ impl EthApi {
     ///
     pub async fn anvil_recover_signature(
         &self,
-        signature: Signature,
+        signature: Bytes,
         address: Address,
     ) -> Result<bool> {
         self.backend.recover_signature(signature, address).await

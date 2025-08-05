@@ -1,21 +1,13 @@
-use crate::eth::backend::cheats::CheatsManager;
 use alloy_evm::{
     Database, Evm,
     eth::EthEvmContext,
     precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap},
 };
-use alloy_primitives::Bytes;
-use alloy_signer::Signature;
+
 use foundry_evm_core::either_evm::EitherEvm;
 use op_revm::OpContext;
-use revm::{
-    Inspector,
-    precompile::{
-        PrecompileError, PrecompileOutput, PrecompileResult, PrecompileWithAddress,
-        secp256k1::ec_recover_run, utilities::right_pad,
-    },
-};
-use std::{fmt::Debug, sync::Arc};
+use revm::{Inspector, precompile::PrecompileWithAddress};
+use std::fmt::Debug;
 
 /// Object-safe trait that enables injecting extra precompiles when using
 /// `anvil` as a library.
@@ -37,47 +29,6 @@ pub fn inject_precompiles<DB, I>(
             Some(DynPrecompile::from(move |input: PrecompileInput<'_>| func(input.data, gas)))
         });
     }
-}
-
-/// A wrapper around the default ecrecover precompile that supports override via CheatsManager.
-pub fn custom_ecrecover(
-    input: &[u8],
-    gas_limit: u64,
-    cheats: Arc<CheatsManager>,
-) -> PrecompileResult {
-    const ECRECOVER_BASE: u64 = 3_000;
-    if gas_limit < ECRECOVER_BASE {
-        return Err(PrecompileError::OutOfGas);
-    }
-
-    let padded_input = right_pad::<128>(input);
-
-    // Only v = 27 or 28 is allowed
-    if !(padded_input[32..63].iter().all(|&b| b == 0) && matches!(padded_input[63], 27 | 28)) {
-        return Ok(PrecompileOutput::new(ECRECOVER_BASE, Bytes::new()));
-    }
-
-    let sig_bytes: [u8; 65] = {
-        let mut buf = [0u8; 65];
-        buf[..64].copy_from_slice(&padded_input[64..128]);
-        buf[64] = padded_input[63]; // recovery ID
-        buf
-    };
-
-    // Convert raw 65-byte sig into Signature
-    let sig = match Signature::try_from(&sig_bytes[..]) {
-        Ok(sig) => sig,
-        Err(_) => return Ok(PrecompileOutput::new(ECRECOVER_BASE, Bytes::new())),
-    };
-
-    if let Some(addr) = cheats.get_recover_override(&sig) {
-        let mut out = [0u8; 32];
-        out[12..].copy_from_slice(addr.as_slice()); // right-aligned
-        return Ok(PrecompileOutput::new(ECRECOVER_BASE, Bytes::copy_from_slice(&out)));
-    }
-
-    // fallback to real ec_recover
-    ec_recover_run(input, gas_limit)
 }
 
 #[cfg(test)]
