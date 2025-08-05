@@ -8,7 +8,7 @@ use tracing::info;
 /// Start the Foundry Language Server Protocol (LSP) server
 #[derive(Clone, Debug, Parser)]
 pub struct LspArgs {
-    /// See: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#implementationConsiderations
+    /// See: <https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#implementationConsiderations>
     #[arg(long)]
     pub stdio: bool,
 }
