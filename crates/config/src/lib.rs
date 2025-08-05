@@ -1429,13 +1429,20 @@ impl Config {
 
         // etherscan fallback via API key
         if let Some(key) = self.etherscan_api_key.as_ref() {
-            return Ok(ResolvedEtherscanConfig::create(
+            match ResolvedEtherscanConfig::create(
                 key,
                 chain.or(self.chain).unwrap_or_default(),
                 default_api_version,
-            ));
+            ) {
+                Some(config) => return Ok(Some(config)),
+                None => {
+                    return Err(EtherscanConfigError::UnknownChain(
+                        String::new(),
+                        chain.unwrap_or_default(),
+                    ));
+                }
+            }
         }
-
         Ok(None)
     }
 
@@ -5080,5 +5087,46 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(endpoint.url, "https://rpc.sophon.xyz");
+    }
+
+    #[test]
+    fn test_get_etherscan_config_with_unknown_chain() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [etherscan]
+                mainnet = { chain = 3658348, key = "api-key"}
+            "#,
+            )?;
+            let config = Config::load().unwrap();
+            let unknown_chain = Chain::from_id(3658348);
+            let result = config.get_etherscan_config_with_chain(Some(unknown_chain));
+            assert!(result.is_err());
+            let error_msg = result.unwrap_err().to_string();
+            assert!(error_msg.contains("No known Etherscan API URL for chain `3658348`"));
+            assert!(error_msg.contains("Specify a `url`"));
+            assert!(error_msg.contains("Verify the chain `3658348` is correct"));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_get_etherscan_config_with_existing_chain_and_url() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [etherscan]
+                mainnet = { chain = 1, key = "api-key" }
+            "#,
+            )?;
+            let config = Config::load().unwrap();
+            let unknown_chain = Chain::from_id(1);
+            let result = config.get_etherscan_config_with_chain(Some(unknown_chain));
+            assert!(result.is_ok());
+            Ok(())
+        });
     }
 }
