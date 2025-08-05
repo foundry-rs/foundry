@@ -135,7 +135,7 @@ pub struct ScriptArgs {
     /// Send via `eth_sendTransaction` using the `--sender` argument as sender.
     #[arg(
         long,
-        conflicts_with_all = &["private_key", "private_keys", "froms", "ledger", "trezor", "aws"],
+        conflicts_with_all = &["private_key", "private_keys", "ledger", "trezor", "aws"],
     )]
     pub unlocked: bool,
 
@@ -538,16 +538,24 @@ pub struct ScriptResult {
 }
 
 impl ScriptResult {
-    pub fn get_created_contracts(&self) -> Vec<AdditionalContract> {
+    pub fn get_created_contracts(
+        &self,
+        known_contracts: &ContractsByArtifact,
+    ) -> Vec<AdditionalContract> {
         self.traces
             .iter()
             .flat_map(|(_, traces)| {
                 traces.nodes().iter().filter_map(|node| {
                     if node.trace.kind.is_any_create() {
+                        let init_code = node.trace.data.clone();
+                        let contract_name = known_contracts
+                            .find_by_creation_code(init_code.as_ref())
+                            .map(|artifact| artifact.0.name.clone());
                         return Some(AdditionalContract {
                             opcode: node.trace.kind,
                             address: node.trace.address,
-                            init_code: node.trace.data.clone(),
+                            contract_name,
+                            init_code,
                         });
                     }
                     None

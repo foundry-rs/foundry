@@ -1603,6 +1603,73 @@ casttest!(mktx_raw_unsigned, |_prj, cmd| {
     ]]);
 });
 
+casttest!(mktx_raw_unsigned_no_from_missing_chain, async |_prj, cmd| {
+    // As chain is not provided, a query is made to the provider to get the chain id, before the tx
+    // is built. Anvil is configured to use chain id 1 so that the produced tx will be the same
+    // as in the `mktx_raw_unsigned` test.
+    let (_, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
+    cmd.args([
+        "mktx",
+        "--nonce",
+        "0",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "0x0000000000000000000000000000000000000001",
+        "--raw-unsigned",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[
+        r#"0x02e80180843b9aca008502540be4008252089400000000000000000000000000000000000000018080c0
+
+"#
+    ]]);
+});
+
+casttest!(mktx_raw_unsigned_no_from_missing_gas_pricing, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    cmd.args([
+        "mktx",
+        "--nonce",
+        "0",
+        "0x0000000000000000000000000000000000000001",
+        "--raw-unsigned",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[
+        r#"0x02e5827a69800184773594018252089400000000000000000000000000000000000000018080c0
+
+"#
+    ]]);
+});
+
+casttest!(mktx_raw_unsigned_no_from_missing_nonce, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "--chain",
+        "1",
+        "--gas-limit",
+        "21000", 
+        "--gas-price",
+        "20000000000",
+        "0x742d35Cc6634C0532925a3b8D6Ac6F67C9c2b7FD",
+        "--raw-unsigned",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[
+        r#"Error: Missing required parameters for raw unsigned transaction. When --from is not provided, you must specify: --nonce
+
+"#
+    ]]);
+});
+
 casttest!(mktx_ethsign, async |_prj, cmd| {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
@@ -1659,6 +1726,34 @@ casttest!(tx_raw, |_prj, cmd| {
         rpc.as_str(),
     ]).assert_success().stdout_eq(str![[r#"
 0xf86d824c548502743b65088275309491da5bf3f8eb72724e6f50ec6c3d199c6355c59c87a0a73f33e9e4cc8025a0428518b1748a08bbeb2392ea055b418538944d30adfc2accbbfa8362a401d3a4a07d6093ab2580efd17c11b277de7664fce56e6953cae8e925bec3313399860470
+
+"#]]);
+});
+
+casttest!(tx_to_request_json, |_prj, cmd| {
+    let rpc = next_http_rpc_endpoint();
+
+    // <https://etherscan.io/getRawTx?tx=0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e>
+    cmd.args([
+        "tx",
+        "0x44f2aaa351460c074f2cb1e5a9e28cbc7d83f33e425101d2de14331c7b7ec31e",
+        "--to-request",
+        "--rpc-url",
+        rpc.as_str(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+{
+  "from": "0x199d5ed7f45f4ee35960cf22eade2076e95b253f",
+  "to": "0x91da5bf3f8eb72724e6f50ec6c3d199c6355c59c",
+  "gasPrice": "0x2743b6508",
+  "gas": "0x7530",
+  "value": "0xa0a73f33e9e4cc",
+  "input": "0x",
+  "nonce": "0x4c54",
+  "chainId": "0x1",
+  "type": "0x0"
+}
 
 "#]]);
 });

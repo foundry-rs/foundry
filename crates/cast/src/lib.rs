@@ -763,7 +763,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let tx = cast.transaction(Some(tx_hash.to_string()), None, None, None, false).await?;
+    /// let tx = cast.transaction(Some(tx_hash.to_string()), None, None, None, false, false).await?;
     /// println!("{}", tx);
     /// # Ok(())
     /// # }
@@ -775,6 +775,7 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         nonce: Option<u64>,
         field: Option<String>,
         raw: bool,
+        to_request: bool,
     ) -> Result<String> {
         let tx = if let Some(tx_hash) = tx_hash {
             let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
@@ -811,6 +812,10 @@ impl<P: Provider<AnyNetwork>> Cast<P> {
         } else if shell::is_json() {
             // to_value first to sort json object keys
             serde_json::to_value(&tx)?.to_string()
+        } else if to_request {
+            serde_json::to_string_pretty(&TransactionRequest::from_recovered_transaction(
+                tx.into(),
+            ))?
         } else {
             tx.pretty()
         })
@@ -1627,6 +1632,48 @@ impl SimpleCast {
         let mut bytes32: [u8; 32] = [0u8; 32];
         bytes32[..str_bytes.len()].copy_from_slice(str_bytes);
         Ok(hex::encode_prefixed(bytes32))
+    }
+
+    /// Pads hex data to a specified length
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// let padded = Cast::pad("abcd", true, 20)?;
+    /// assert_eq!(padded, "0xabcd000000000000000000000000000000000000");
+    ///
+    /// let padded = Cast::pad("abcd", false, 20)?;
+    /// assert_eq!(padded, "0x000000000000000000000000000000000000abcd");
+    ///
+    /// let padded = Cast::pad("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", true, 32)?;
+    /// assert_eq!(padded, "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2000000000000000000000000");
+    ///
+    /// let padded = Cast::pad("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", false, 32)?;
+    /// assert_eq!(padded, "0x000000000000000000000000C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    ///
+    /// let err = Cast::pad("1234", false, 1).unwrap_err();
+    /// assert_eq!(err.to_string(), "input length exceeds target length");
+    ///
+    /// let err = Cast::pad("foobar", false, 32).unwrap_err();
+    /// assert_eq!(err.to_string(), "input is not a valid hex");
+    ///
+    /// # Ok::<_, eyre::Report>(())
+    /// ```
+    pub fn pad(s: &str, right: bool, len: usize) -> Result<String> {
+        let s = strip_0x(s);
+        let hex_len = len * 2;
+
+        // Validate input
+        if s.len() > hex_len {
+            eyre::bail!("input length exceeds target length");
+        }
+        if !s.chars().all(|c| c.is_ascii_hexdigit()) {
+            eyre::bail!("input is not a valid hex");
+        }
+
+        Ok(if right { format!("0x{s:0<hex_len$}") } else { format!("0x{s:0>hex_len$}") })
     }
 
     /// Decodes string from bytes32 value

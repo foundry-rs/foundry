@@ -177,7 +177,7 @@ impl FuzzedExecutor {
             reason: None,
             counterexample: None,
             logs: fuzz_result.logs,
-            labeled_addresses: call.labels,
+            labels: call.labels,
             traces: last_run_traces,
             breakpoints: last_run_breakpoints,
             gas_report_traces: traces.into_iter().map(|a| a.arena).collect(),

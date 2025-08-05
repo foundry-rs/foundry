@@ -407,7 +407,8 @@ pub struct TestResult {
     pub line_coverage: Option<HitMaps>,
 
     /// Labeled addresses
-    pub labeled_addresses: AddressHashMap<String>,
+    #[serde(rename = "labeled_addresses")] // Backwards compatibility.
+    pub labels: AddressHashMap<String>,
 
     #[serde(with = "foundry_common::serde_helpers::duration")]
     pub duration: Duration,
@@ -472,11 +473,20 @@ impl fmt::Display for TestResult {
     }
 }
 
+macro_rules! extend {
+    ($a:expr, $b:expr, $trace_kind:expr) => {
+        $a.logs.extend($b.logs);
+        $a.labels.extend($b.labels);
+        $a.traces.extend($b.traces.map(|traces| ($trace_kind, traces)));
+        $a.merge_coverages($b.line_coverage);
+    };
+}
+
 impl TestResult {
     /// Creates a new test result starting from test setup results.
     pub fn new(setup: &TestSetup) -> Self {
         Self {
-            labeled_addresses: setup.labels.clone(),
+            labels: setup.labels.clone(),
             logs: setup.logs.clone(),
             traces: setup.traces.clone(),
             line_coverage: setup.coverage.clone(),
@@ -491,13 +501,25 @@ impl TestResult {
 
     /// Creates a test setup result.
     pub fn setup_result(setup: TestSetup) -> Self {
+        let TestSetup {
+            address: _,
+            fuzz_fixtures: _,
+            logs,
+            labels,
+            traces,
+            coverage,
+            deployed_libs: _,
+            reason,
+            skipped,
+            deployment_failure: _,
+        } = setup;
         Self {
-            status: if setup.skipped { TestStatus::Skipped } else { TestStatus::Failure },
-            reason: setup.reason,
-            logs: setup.logs,
-            traces: setup.traces,
-            line_coverage: setup.coverage,
-            labeled_addresses: setup.labels,
+            status: if skipped { TestStatus::Skipped } else { TestStatus::Failure },
+            reason,
+            logs,
+            traces,
+            line_coverage: coverage,
+            labels,
             ..Default::default()
         }
     }
@@ -525,11 +547,7 @@ impl TestResult {
         self.kind =
             TestKind::Unit { gas: raw_call_result.gas_used.wrapping_sub(raw_call_result.stipend) };
 
-        // Record logs, labels, traces and merge coverages.
-        self.logs.extend(raw_call_result.logs);
-        self.labeled_addresses.extend(raw_call_result.labels);
-        self.traces.extend(raw_call_result.traces.map(|traces| (TraceKind::Execution, traces)));
-        self.merge_coverages(raw_call_result.line_coverage);
+        extend!(self, raw_call_result, TraceKind::Execution);
 
         self.status = match success {
             true => TestStatus::Success,
@@ -557,10 +575,7 @@ impl TestResult {
         };
 
         // Record logs, labels, traces and merge coverages.
-        self.logs.extend(result.logs);
-        self.labeled_addresses.extend(result.labeled_addresses);
-        self.traces.extend(result.traces.map(|traces| (TraceKind::Execution, traces)));
-        self.merge_coverages(result.line_coverage);
+        extend!(self, result, TraceKind::Execution);
 
         self.status = if result.skipped {
             TestStatus::Skipped
@@ -667,10 +682,7 @@ impl TestResult {
 
     /// Merges the given raw call result into `self`.
     pub fn extend(&mut self, call_result: RawCallResult) {
-        self.logs.extend(call_result.logs);
-        self.labeled_addresses.extend(call_result.labels);
-        self.traces.extend(call_result.traces.map(|traces| (TraceKind::Execution, traces)));
-        self.merge_coverages(call_result.line_coverage);
+        extend!(self, call_result, TraceKind::Execution);
     }
 
     /// Merges the given coverage result into `self`.
@@ -825,9 +837,10 @@ impl TestSetup {
     }
 
     pub fn extend(&mut self, raw: RawCallResult, trace_kind: TraceKind) {
-        self.logs.extend(raw.logs);
-        self.labels.extend(raw.labels);
-        self.traces.extend(raw.traces.map(|traces| (trace_kind, traces)));
-        HitMaps::merge_opt(&mut self.coverage, raw.line_coverage);
+        extend!(self, raw, trace_kind);
+    }
+
+    pub fn merge_coverages(&mut self, other_coverage: Option<HitMaps>) {
+        HitMaps::merge_opt(&mut self.coverage, other_coverage);
     }
 }

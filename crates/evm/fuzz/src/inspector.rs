@@ -9,10 +9,10 @@ use revm::{
 /// An inspector that can fuzz and collect data for that effect.
 #[derive(Clone, Debug)]
 pub struct Fuzzer {
-    /// Given a strategy, it generates a random call.
-    pub call_generator: Option<RandomCallGenerator>,
     /// If set, it collects `stack` and `memory` values for fuzzing purposes.
     pub collect: bool,
+    /// Given a strategy, it generates a random call.
+    pub call_generator: Option<RandomCallGenerator>,
     /// If `collect` is set, we store the collected values in this fuzz dictionary.
     pub fuzz_state: EvmFuzzState,
 }
@@ -21,6 +21,7 @@ impl<CTX> Inspector<CTX> for Fuzzer
 where
     CTX: ContextTr<Journal: JournalExt>,
 {
+    #[inline]
     fn step(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
         // We only collect `stack` and `memory` data before and after calls.
         if self.collect {
