@@ -196,11 +196,15 @@ impl CorpusManager {
 
         let can_reply_tx = |tx: &BasicTxDetails| -> bool {
             fuzzed_contracts.is_some_and(|contracts| contracts.targets.lock().can_replay(tx))
-                || fuzzed_function
-                    .is_some_and(|function| function.selector() == tx.call_details.calldata[..4])
+                || fuzzed_function.is_some_and(|function| {
+                    tx.call_details
+                        .calldata
+                        .get(..4)
+                        .is_some_and(|selector| function.selector() == selector)
+                })
         };
 
-        for entry in std::fs::read_dir(corpus_dir)? {
+        'corpus_replay: for entry in std::fs::read_dir(corpus_dir)? {
             let path = entry?.path();
             if path.is_file()
                 && let Some(name) = path.file_name().and_then(|s| s.to_str())
@@ -246,6 +250,12 @@ impl CorpusManager {
                         }
                     } else {
                         failed_replays += 1;
+
+                        // If the only input for fuzzed function cannot be replied, then move to
+                        // next one without adding it in memory.
+                        if fuzzed_function.is_some() {
+                            continue 'corpus_replay;
+                        }
                     }
                 }
 
@@ -368,7 +378,7 @@ impl CorpusManager {
             let mutation_type = self
                 .mutation_generator
                 .new_tree(test_runner)
-                .expect("Could not generate mutation type")
+                .map_err(|err| eyre!("Could not generate mutation type {err}"))?
                 .current();
             let rng = test_runner.rng();
             let corpus_len = self.in_memory_corpus.len();
@@ -491,7 +501,6 @@ impl CorpusManager {
             let corpus = &self.in_memory_corpus
                 [test_runner.rng().random_range(0..self.in_memory_corpus.len())];
             self.current_mutated = Some(corpus.uuid);
-
             let new_seq = corpus.tx_seq.clone();
             let mut tx = new_seq.first().unwrap().clone();
             self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
@@ -573,10 +582,7 @@ impl CorpusManager {
             debug!(target: "corpus", "evict corpus {uuid}");
 
             // Flush to disk the seed metadata at the time of eviction.
-            let eviction_time = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("Time went backwards")
-                .as_secs();
+            let eviction_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
             foundry_common::fs::write_json_file(
                 self.config
                     .corpus_dir
@@ -611,7 +617,7 @@ impl CorpusManager {
         };
         let mut prev_inputs = function
             .abi_decode_input(&tx.call_details.calldata[4..])
-            .expect("function cannot abi decode input");
+            .map_err(|err| eyre!("failed to load previous inputs: {err}"))?;
 
         // For now, only new inputs are generated, no existing inputs are
         // mutated.

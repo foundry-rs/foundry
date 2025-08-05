@@ -160,13 +160,15 @@ impl FuzzedExecutor {
 
                 test_data.runs += 1;
 
-                let Ok(input) = corpus_manager.new_input(&mut self.runner, &state, func) else {
-                    test_data.failure =
-                        Some(TestCaseError::fail("no input generated to call fuzzed target"));
-                    break 'stop;
-                };
-
-                input
+                match corpus_manager.new_input(&mut self.runner, &state, func) {
+                    Ok(input) => input,
+                    Err(err) => {
+                        test_data.failure = Some(TestCaseError::fail(format!(
+                            "failed to generate fuzzed input: {err}"
+                        )));
+                        break 'stop;
+                    }
+                }
             };
 
             match self.single_fuzz(address, input, &mut corpus_manager) {
