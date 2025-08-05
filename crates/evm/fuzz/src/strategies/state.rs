@@ -334,24 +334,6 @@ impl FuzzDictionary {
                         .entry(sol_type.clone())
                         .or_default()
                         .insert(B256::from(*storage_value));
-
-                    // For numeric types, also add adjacent values as samples
-                    if matches!(sol_type, DynSolType::Uint(_) | DynSolType::Int(_)) {
-                        if *storage_value != U256::ZERO {
-                            let below_value = storage_value - U256::from(1);
-                            self.sample_values
-                                .entry(sol_type.clone())
-                                .or_default()
-                                .insert(B256::from(below_value));
-                        }
-                        if *storage_value != U256::MAX {
-                            let above_value = storage_value + U256::from(1);
-                            self.sample_values
-                                .entry(sol_type.clone())
-                                .or_default()
-                                .insert(B256::from(above_value));
-                        }
-                    }
                 }
                 _ => {
                     // For complex types (arrays, mappings, structs), insert as raw value
