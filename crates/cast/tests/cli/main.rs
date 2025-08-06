@@ -3808,20 +3808,24 @@ error: unexpected argument '--invalid-flag' found
 Usage: cast call [OPTIONS] [TO] [SIG] [ARGS]... [COMMAND]
 
 For more information, try '--help'.
+
 "#]]);
 });
 
-// Test cast send with negative numbers
+// Test cast send with negative numbers.
+// this test is a bit awkward, but the fact that it fails at sending the request
+// proves that the calldata encoding itself didnt fail
 casttest!(cast_send_negative_numbers, |_prj, cmd| {
-    cmd.args([
-        "send",
-        "0xCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCc",
-        "withdraw(int128)",
-        "-2500"
-    ])
-    .assert_failure() // Will fail due to wallet/RPC, but parsing should work
-    .stderr_eq(str![[r#"
-Error: Could not find or load private key. Make sure you set your private key via the --private-key flag or the ETH_PRIVATE_KEY env var.
+    cmd.args(["send", "0xCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCc", "withdraw(int128)", "-2500"])
+        .assert_failure() // Will fail due to wallet/RPC, but parsing should work
+        .stderr_eq(str![[r#"
+Error: error sending request for url (http://localhost:8545/)
+
+Context:
+- Error #0: client error (Connect)
+- Error #1: tcp connect error
+- Error #2: Connection refused (os error 111)
+
 "#]]);
 });
 
