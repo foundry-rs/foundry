@@ -4617,6 +4617,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "foundry-config-spec"
+version = "1.3.1"
+dependencies = [
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "foundry-debugger"
 version = "1.3.1"
 dependencies = [

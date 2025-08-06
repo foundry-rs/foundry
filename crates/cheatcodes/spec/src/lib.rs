@@ -19,7 +19,7 @@ mod vm;
 pub use vm::Vm;
 
 // The `cheatcodes.json` schema.
-/// Foundry cheatcodes. Learn more: <https://book.getfoundry.sh/cheatcodes/>
+/// Foundry cheatcodes. Learn more: <https://getfoundry.sh/forge/tests/cheatcodes#cheatcodes>
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]

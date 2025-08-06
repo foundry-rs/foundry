@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Cheatcodes",
-  "description": "Foundry cheatcodes. Learn more: <https://book.getfoundry.sh/cheatcodes/>",
+  "description": "Foundry cheatcodes. Learn more: <https://getfoundry.sh/forge/tests/cheatcodes#cheatcodes>",
   "type": "object",
   "properties": {
     "cheatcodes": {

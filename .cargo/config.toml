@@ -1,6 +1,10 @@
 [alias]
-cheats = "test -p foundry-cheatcodes-spec --features schema tests::"
+spec-cheats = "test -p foundry-cheatcodes-spec --features schema tests::"
+spec-config = "test -p foundry-config-spec --features schema tests::"
 test-debugger = "test -p forge --test cli manual_debug_setup -- --include-ignored --nocapture"
+
+# Backwards compatibility alias for `spec-cheats`
+cheats = "spec-cheats"
 
 # Increase the stack size to 10MB for Windows targets, which is in line with Linux
 # (whereas default for Windows is 1MB).
