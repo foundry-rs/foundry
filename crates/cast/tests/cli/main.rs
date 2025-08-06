@@ -3812,7 +3812,6 @@ For more information, try '--help'.
 "#]]);
 });
 
-
 // Test cast estimate with negative numbers
 casttest!(cast_estimate_negative_numbers, |_prj, cmd| {
     let rpc = next_rpc_endpoint(NamedChain::Sepolia);
