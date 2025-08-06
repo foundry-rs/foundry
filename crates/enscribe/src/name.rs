@@ -4,7 +4,6 @@ use crate::abi::{
 };
 use alloy_chains::NamedChain;
 use alloy_ens::{ProviderEnsExt, namehash};
-use alloy_primitives::address;
 use alloy_provider::{
     Provider, ProviderBuilder, WalletProvider,
     network::{AnyNetwork, EthereumWallet},

@@ -1,6 +1,7 @@
 //! Aggregated error type for this module
 
 use crate::eth::pool::transactions::PoolTransaction;
+use alloy_evm::overrides::StateOverrideError;
 use alloy_primitives::{B256, Bytes, SignatureError};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Error as SignerError;
@@ -114,6 +115,8 @@ pub enum BlockchainError {
         /// Duration that was waited before timing out
         duration: Duration,
     },
+    #[error("Failed to parse transaction request: missing required fields")]
+    MissingRequiredFields,
 }
 
 impl From<eyre::Report> for BlockchainError {
@@ -186,6 +189,21 @@ impl From<WalletError> for BlockchainError {
             WalletError::InvalidTransactionRequest => {
                 Self::Message("invalid tx request".to_string())
             }
+        }
+    }
+}
+
+impl<E> From<StateOverrideError<E>> for BlockchainError
+where
+    E: Into<Self>,
+{
+    fn from(value: StateOverrideError<E>) -> Self {
+        match value {
+            StateOverrideError::InvalidBytecode(err) => Self::StateOverrideError(err.to_string()),
+            StateOverrideError::BothStateAndStateDiff(addr) => Self::StateOverrideError(format!(
+                "state and state_diff can't be used together for account {addr}",
+            )),
+            StateOverrideError::Database(err) => err.into(),
         }
     }
 }
@@ -305,6 +323,8 @@ pub enum InvalidTransactionError {
     /// Thrown when an access list is used before the berlin hard fork.
     #[error("EIP-7702 authorization lists are not supported before the Prague hardfork")]
     AuthorizationListNotSupported,
+    #[error("Transaction gas limit is greater than the block gas limit, gas_limit: {0}, cap: {1}")]
+    TxGasLimitGreaterThanCap(u64, u64),
     /// Forwards error from the revm
     #[error(transparent)]
     Revm(revm::context_interface::result::InvalidTransaction),
@@ -348,15 +368,19 @@ impl From<InvalidTransaction> for InvalidTransactionError {
             InvalidTransaction::AuthorizationListNotSupported => {
                 Self::AuthorizationListNotSupported
             }
+            InvalidTransaction::TxGasLimitGreaterThanCap { gas_limit, cap } => {
+                Self::TxGasLimitGreaterThanCap(gas_limit, cap)
+            }
+
             InvalidTransaction::AuthorizationListInvalidFields
             | InvalidTransaction::Eip1559NotSupported
             | InvalidTransaction::Eip2930NotSupported
             | InvalidTransaction::Eip4844NotSupported
             | InvalidTransaction::Eip7702NotSupported
-            | InvalidTransaction::EofCreateShouldHaveToAddress
             | InvalidTransaction::EmptyAuthorizationList
             | InvalidTransaction::Eip7873NotSupported
-            | InvalidTransaction::Eip7873MissingTarget => Self::Revm(err),
+            | InvalidTransaction::Eip7873MissingTarget
+            | InvalidTransaction::MissingChainId => Self::Revm(err),
         }
     }
 }
@@ -539,6 +563,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 }
                 err @ BlockchainError::Message(_) => RpcError::internal_error_with(err.to_string()),
                 err @ BlockchainError::UnknownTransactionType => {
+                    RpcError::invalid_params(err.to_string())
+                }
+                err @ BlockchainError::MissingRequiredFields => {
                     RpcError::invalid_params(err.to_string())
                 }
             }

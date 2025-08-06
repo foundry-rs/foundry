@@ -1,12 +1,25 @@
 use crate::EnvMut;
+use alloy_chains::Chain;
 use alloy_consensus::BlockHeader;
+use alloy_hardforks::EthereumHardfork;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_network::{AnyTxEnvelope, TransactionResponse};
-use alloy_primitives::{Address, B256, Selector, TxKind, U256};
+use alloy_primitives::{Address, B256, ChainId, Selector, TxKind, U256};
 use alloy_provider::{Network, network::BlockResponse};
 use alloy_rpc_types::{Transaction, TransactionRequest};
 use foundry_config::NamedChain;
+use revm::primitives::{
+    eip4844::{BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
+    hardfork::SpecId,
+};
 pub use revm::state::EvmState as StateChangeset;
+
+/// Hints to the compiler that this is a cold path, i.e. unlikely to be taken.
+#[cold]
+#[inline(always)]
+pub fn cold_path() {
+    // TODO: remove `#[cold]` and call `std::hint::cold_path` once stable.
+}
 
 /// Depending on the configured chain id and block number this should apply any specific changes
 ///
@@ -68,6 +81,28 @@ pub fn apply_chain_and_block_specific_env_changes<N: Network>(
     // if difficulty is `0` we assume it's past merge
     if block.header().difficulty().is_zero() {
         env.block.difficulty = env.block.prevrandao.unwrap_or_default().into();
+    }
+}
+
+/// Derive the blob base fee update fraction based on the chain and timestamp by checking the
+/// hardfork.
+pub fn get_blob_base_fee_update_fraction(chain_id: ChainId, timestamp: u64) -> u64 {
+    let hardfork = EthereumHardfork::from_chain_and_timestamp(Chain::from_id(chain_id), timestamp)
+        .unwrap_or_default();
+
+    if hardfork >= EthereumHardfork::Prague {
+        BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
+    } else {
+        BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN
+    }
+}
+
+/// Returns the blob base fee update fraction based on the spec id.
+pub fn get_blob_base_fee_update_fraction_by_spec_id(spec: SpecId) -> u64 {
+    if spec >= SpecId::PRAGUE {
+        BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
+    } else {
+        BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN
     }
 }
 

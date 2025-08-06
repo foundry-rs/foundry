@@ -396,7 +396,7 @@ impl CallTraceDecoder {
                 && (!cdata.is_empty() || !self.receive_contracts.contains(&trace.address))
             {
                 let return_data = if !trace.success {
-                    let revert_msg = self.revert_decoder.decode(&trace.output, Some(trace.status));
+                    let revert_msg = self.revert_decoder.decode(&trace.output, trace.status);
 
                     if trace.output.is_empty() || revert_msg.contains("EvmError: Revert") {
                         Some(format!(
@@ -410,18 +410,18 @@ impl CallTraceDecoder {
                     None
                 };
 
-                if let Some(func) = functions.first() {
-                    return DecodedCallTrace {
+                return if let Some(func) = functions.first() {
+                    DecodedCallTrace {
                         label,
                         call_data: Some(self.decode_function_input(trace, func)),
                         return_data,
-                    };
+                    }
                 } else {
-                    return DecodedCallTrace {
+                    DecodedCallTrace {
                         label,
                         call_data: self.fallback_call_data(trace),
                         return_data,
-                    };
+                    }
                 };
             }
 
@@ -667,7 +667,14 @@ impl CallTraceDecoder {
 
     /// The default decoded return data for a trace.
     fn default_return_data(&self, trace: &CallTrace) -> Option<String> {
-        (!trace.success).then(|| self.revert_decoder.decode(&trace.output, Some(trace.status)))
+        // For calls with status None or successful status, don't decode revert data
+        // This is due to trace.status is derived from the revm_interpreter::InstructionResult in
+        // revm-inspectors status will `None` post revm 27, as `InstructionResult::Continue` does
+        // not exists anymore.
+        if trace.status.is_none() || trace.status.is_some_and(|s| s.is_ok()) {
+            return None;
+        }
+        (!trace.success).then(|| self.revert_decoder.decode(&trace.output, trace.status))
     }
 
     /// Decodes an event.

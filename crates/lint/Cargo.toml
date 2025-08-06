@@ -23,6 +23,7 @@ solar-parse.workspace = true
 solar-ast.workspace = true
 solar-interface = { workspace = true, features = ["json"] }
 solar-data-structures.workspace = true
+solar-sema.workspace = true
 
 heck.workspace = true
 rayon.workspace = true

@@ -178,6 +178,14 @@ pub enum EthRequest {
     #[serde(rename = "eth_getTransactionByHash", with = "sequence")]
     EthGetTransactionByHash(TxHash),
 
+    /// Returns the blob for a given blob versioned hash.
+    #[serde(rename = "anvil_getBlobByHash", with = "sequence")]
+    GetBlobByHash(B256),
+
+    /// Returns the blobs for a given transaction hash.
+    #[serde(rename = "anvil_getBlobsByTransactionHash", with = "sequence")]
+    GetBlobByTransactionHash(TxHash),
+
     #[serde(rename = "eth_getTransactionByBlockHashAndIndex")]
     EthGetTransactionByBlockHashAndIndex(TxHash, Index),
 
@@ -271,6 +279,10 @@ pub enum EthRequest {
         #[serde(default)] Option<BlockId>,
         #[serde(default)] GethDebugTracingCallOptions,
     ),
+
+    /// reth's `debug_codeByHash` endpoint
+    #[serde(rename = "debug_codeByHash")]
+    DebugCodeByHash(B256, #[serde(default)] Option<BlockId>),
 
     /// Trace transaction endpoint for parity's `trace_transaction`
     #[serde(rename = "trace_transaction", with = "sequence")]

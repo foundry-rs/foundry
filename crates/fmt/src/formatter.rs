@@ -112,7 +112,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         config: FormatterConfig,
     ) -> Self {
         Self {
-            buf: FormatBuffer::new(w, config.tab_width),
+            buf: FormatBuffer::new(w, config.tab_width, config.style),
             source,
             config,
             temp_bufs: Vec::new(),
@@ -158,6 +158,7 @@ impl<'a, W: Write> Formatter<'a, W> {
     buf_fn! { fn last_indent_group_skipped(&self) -> bool }
     buf_fn! { fn set_last_indent_group_skipped(&mut self, skip: bool) }
     buf_fn! { fn write_raw(&mut self, s: impl AsRef<str>) -> std::fmt::Result }
+    buf_fn! { fn indent_char(&self) -> char }
 
     /// Do the callback within the context of a temp buffer
     fn with_temp_buf(
@@ -570,7 +571,12 @@ impl<'a, W: Write> Formatter<'a, W> {
             .char_indices()
             .take_while(|(idx, ch)| ch.is_whitespace() && *idx <= self.buf.current_indent_len())
             .count();
-        let to_skip = indent_whitespace_count - indent_whitespace_count % self.config.tab_width;
+        let to_skip = if indent_whitespace_count < self.buf.current_indent_len() {
+            0
+        } else {
+            self.buf.current_indent_len()
+        };
+
         write!(self.buf(), " *")?;
         let content = &line[to_skip..];
         if !content.trim().is_empty() {
@@ -599,7 +605,8 @@ impl<'a, W: Write> Formatter<'a, W> {
                 .char_indices()
                 .skip_while(|(idx, ch)| ch.is_whitespace() && *idx < indent)
                 .map(|(_, ch)| ch);
-            let padded = format!("{}{}", " ".repeat(indent), chars.join(""));
+            let padded =
+                format!("{}{}", self.indent_char().to_string().repeat(indent), chars.join(""));
             self.write_raw(padded)?;
             return Ok(false);
         }
@@ -722,7 +729,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             let mut chunk = chunk.content.trim_start().to_string();
             chunk.insert(0, '\n');
             chunk
-        } else if chunk.content.starts_with(' ') {
+        } else if chunk.content.starts_with(self.indent_char()) {
             let mut chunk = chunk.content.trim_start().to_string();
             chunk.insert(0, ' ');
             chunk
@@ -3607,7 +3614,6 @@ impl<W: Write> Visitor for Formatter<'_, W> {
             let chunk = list_chunks.pop().unwrap();
             if self.will_chunk_fit(&format!("{{}} {simulated_for_def};"), &chunk)? {
                 self.write_chunk(&chunk)?;
-                write_for_def(self)?;
             } else {
                 self.write_whitespace_separator(true)?;
                 self.grouped(|fmt| {
@@ -3615,7 +3621,6 @@ impl<W: Write> Visitor for Formatter<'_, W> {
                     Ok(())
                 })?;
                 self.write_whitespace_separator(true)?;
-                write_for_def(self)?;
             }
         } else {
             self.surrounded(
@@ -3635,8 +3640,8 @@ impl<W: Write> Visitor for Formatter<'_, W> {
                     Ok(())
                 },
             )?;
-            write_for_def(self)?;
         }
+        write_for_def(self)?;
 
         self.write_semicolon()?;
 

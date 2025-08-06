@@ -33,8 +33,7 @@ pub fn run() -> Result<()> {
 
     let args = CastArgs::parse();
     args.global.init()?;
-
-    run_command(args)
+    args.global.tokio_runtime().block_on(run_command(args))
 }
 
 /// Setup the global logger and other utilities.
@@ -49,7 +48,6 @@ pub fn setup() -> Result<()> {
 }
 
 /// Run the subcommand.
-#[tokio::main]
 pub async fn run_command(args: CastArgs) -> Result<()> {
     match args.cmd {
         // Constants
@@ -111,9 +109,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             };
             sh_println!("0x{output}")?
         }
-        CastSubcommand::ToCheckSumAddress { address } => {
+        CastSubcommand::ToCheckSumAddress { address, chain_id } => {
             let value = stdin::unwrap_line(address)?;
-            sh_println!("{}", value.to_checksum(None))?
+            sh_println!("{}", value.to_checksum(chain_id))?
         }
         CastSubcommand::ToUint256 { value } => {
             let value = stdin::unwrap_line(value)?;
@@ -316,13 +314,17 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 Cast::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?
             )?
         }
-        CastSubcommand::Block { block, full, field, rpc } => {
+        CastSubcommand::Block { block, full, field, raw, rpc } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
+
+            // Can use either --raw or specify raw as a field
+            let raw = raw || field.as_ref().is_some_and(|f| f == "raw");
+
             sh_println!(
                 "{}",
                 Cast::new(provider)
-                    .block(block.unwrap_or(BlockId::Number(Latest)), full, field)
+                    .block(block.unwrap_or(BlockId::Number(Latest)), full, field, raw)
                     .await?
             )?
         }
@@ -505,7 +507,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Run(cmd) => cmd.run().await?,
         CastSubcommand::SendTx(cmd) => cmd.run().await?,
-        CastSubcommand::Tx { tx_hash, from, nonce, field, raw, rpc } => {
+        CastSubcommand::Tx { tx_hash, from, nonce, field, raw, rpc, to_request } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
 
@@ -514,7 +516,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
 
             sh_println!(
                 "{}",
-                Cast::new(&provider).transaction(tx_hash, from, nonce, field, raw).await?
+                Cast::new(&provider)
+                    .transaction(tx_hash, from, nonce, field, raw, to_request)
+                    .await?
             )?
         }
 

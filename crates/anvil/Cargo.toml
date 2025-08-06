@@ -30,7 +30,7 @@ foundry-evm.workspace = true
 foundry-evm-core.workspace = true
 
 # alloy
-alloy-evm.workspace = true
+alloy-evm = { workspace = true, features = ["call-util"] }
 alloy-op-evm.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
@@ -130,3 +130,4 @@ cmd = [
     "anvil-server/clap",
     "tokio/signal",
 ]
+js-tracer = ["revm-inspectors/js-tracer"]

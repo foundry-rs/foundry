@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use alloy_evm::{
     Database, Evm,
     eth::EthEvmContext,
-    precompiles::{DynPrecompile, PrecompilesMap},
+    precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap},
 };
 use foundry_evm_core::either_evm::EitherEvm;
 use op_revm::OpContext;
@@ -13,20 +13,21 @@ use revm::{Inspector, precompile::PrecompileWithAddress};
 /// `anvil` as a library.
 pub trait PrecompileFactory: Send + Sync + Unpin + Debug {
     /// Returns a set of precompiles to extend the EVM with.
-    fn precompiles(&self) -> Vec<PrecompileWithAddress>;
+    fn precompiles(&self) -> Vec<(PrecompileWithAddress, u64)>;
 }
 
 /// Inject precompiles into the EVM dynamically.
 pub fn inject_precompiles<DB, I>(
     evm: &mut EitherEvm<DB, I, PrecompilesMap>,
-    precompiles: Vec<PrecompileWithAddress>,
+    precompiles: Vec<(PrecompileWithAddress, u64)>,
 ) where
     DB: Database,
     I: Inspector<EthEvmContext<DB>> + Inspector<OpContext<DB>>,
 {
-    for p in precompiles {
-        evm.precompiles_mut()
-            .apply_precompile(p.address(), |_| Some(DynPrecompile::from(*p.precompile())));
+    for (PrecompileWithAddress(addr, func), gas) in precompiles {
+        evm.precompiles_mut().apply_precompile(&addr, move |_| {
+            Some(DynPrecompile::from(move |input: PrecompileInput<'_>| func(input.data, gas)))
+        });
     }
 }
 
@@ -70,18 +71,21 @@ mod tests {
     struct CustomPrecompileFactory;
 
     impl PrecompileFactory for CustomPrecompileFactory {
-        fn precompiles(&self) -> Vec<PrecompileWithAddress> {
-            vec![PrecompileWithAddress::from((
-                PRECOMPILE_ADDR,
-                custom_echo_precompile as fn(&[u8], u64) -> PrecompileResult,
-            ))]
+        fn precompiles(&self) -> Vec<(PrecompileWithAddress, u64)> {
+            vec![(
+                PrecompileWithAddress::from((
+                    PRECOMPILE_ADDR,
+                    custom_echo_precompile as fn(&[u8], u64) -> PrecompileResult,
+                )),
+                1000,
+            )]
         }
     }
 
     /// Custom precompile that echoes the input data.
     /// In this example it uses `0xdeadbeef` as the input data, returning it as output.
     fn custom_echo_precompile(input: &[u8], _gas_limit: u64) -> PrecompileResult {
-        Ok(PrecompileOutput { bytes: Bytes::copy_from_slice(input), gas_used: 0 })
+        Ok(PrecompileOutput { bytes: Bytes::copy_from_slice(input), gas_used: 0, reverted: false })
     }
 
     /// Creates a new EVM instance with the custom precompile factory.

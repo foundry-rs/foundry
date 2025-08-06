@@ -184,12 +184,6 @@ pub fn now() -> Duration {
     SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards")
 }
 
-/// Runs the `future` in a new [`tokio::runtime::Runtime`]
-pub fn block_on<F: Future>(future: F) -> F::Output {
-    let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
-    rt.block_on(future)
-}
-
 /// Loads a dotenv file, from the cwd and the project root, ignoring potential failure.
 ///
 /// We could use `warn!` here, but that would imply that the dotenv file can't configure
@@ -677,7 +671,7 @@ ignore them in the `.gitignore` file."
     /// If the status is prefix with `-`, the submodule is not initialized.
     ///
     /// Ref: <https://git-scm.com/docs/git-submodule#Documentation/git-submodule.txt-status--cached--recursive--ltpathgt82308203>
-    pub fn submodules_unintialized(self) -> Result<bool> {
+    pub fn submodules_uninitialized(self) -> Result<bool> {
         self.cmd()
             .args(["submodule", "status"])
             .get_stdout_lossy()

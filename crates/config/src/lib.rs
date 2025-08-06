@@ -346,7 +346,11 @@ pub struct Config {
     /// the initial balance of each deployed test contract
     pub initial_balance: U256,
     /// the block.number value during EVM execution
-    pub block_number: u64,
+    #[serde(
+        deserialize_with = "crate::deserialize_u64_to_u256",
+        serialize_with = "crate::serialize_u64_or_u256"
+    )]
+    pub block_number: U256,
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
     /// The chain name or EIP-155 chain ID.
@@ -366,7 +370,11 @@ pub struct Config {
     /// The `block.coinbase` value during EVM execution.
     pub block_coinbase: Address,
     /// The `block.timestamp` value during EVM execution.
-    pub block_timestamp: u64,
+    #[serde(
+        deserialize_with = "crate::deserialize_u64_to_u256",
+        serialize_with = "crate::serialize_u64_or_u256"
+    )]
+    pub block_timestamp: U256,
     /// The `block.difficulty` value during EVM execution.
     pub block_difficulty: u64,
     /// Before merge the `block.max_hash`, after merge it is `block.prevrandao`.
@@ -1679,8 +1687,8 @@ impl Config {
     pub fn dapptools() -> Self {
         Self {
             chain: Some(Chain::from_id(99)),
-            block_timestamp: 0,
-            block_number: 0,
+            block_timestamp: U256::ZERO,
+            block_number: U256::ZERO,
             ..Self::default()
         }
     }
@@ -2370,7 +2378,7 @@ impl Default for Config {
             sender: Self::DEFAULT_SENDER,
             tx_origin: Self::DEFAULT_SENDER,
             initial_balance: U256::from((1u128 << 96) - 1),
-            block_number: 1,
+            block_number: U256::from(1),
             fork_block_number: None,
             chain: None,
             gas_limit: (1u64 << 30).into(), // ~1B
@@ -2378,7 +2386,7 @@ impl Default for Config {
             gas_price: None,
             block_base_fee_per_gas: 0,
             block_coinbase: Address::ZERO,
-            block_timestamp: 1,
+            block_timestamp: U256::from(1),
             block_difficulty: 0,
             block_prevrandao: Default::default(),
             block_gas_limit: None,
@@ -2589,6 +2597,7 @@ mod tests {
         cache::{CachedChains, CachedEndpoints},
         endpoints::RpcEndpointType,
         etherscan::ResolvedEtherscanConfigs,
+        fmt::IndentStyle,
     };
     use NamedChain::Moonbeam;
     use endpoints::{RpcAuth, RpcEndpointConfig};
@@ -4174,7 +4183,7 @@ mod tests {
 
             let config = Config::load().unwrap();
 
-            assert_eq!(config.block_number, 1337);
+            assert_eq!(config.block_number, U256::from(1337));
             assert_eq!(config.sender, addr);
             assert_eq!(config.fuzz.runs, 420);
             assert_eq!(config.invariant.depth, 20);
@@ -4502,12 +4511,13 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
-                r"
+                r#"
                 [fmt]
                 line_length = 100
                 tab_width = 2
                 bracket_spacing = true
-            ",
+                style = "space"
+            "#,
             )?;
             let loaded = Config::load().unwrap().sanitized();
             assert_eq!(
@@ -4516,6 +4526,7 @@ mod tests {
                     line_length: 100,
                     tab_width: 2,
                     bracket_spacing: true,
+                    style: IndentStyle::Space,
                     ..Default::default()
                 }
             );
