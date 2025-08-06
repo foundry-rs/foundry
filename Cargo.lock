@@ -224,7 +224,7 @@ dependencies = [
 [[package]]
 name = "alloy-evm"
 version = "0.10.0"
-source = "git+https://github.com/fluentlabs-xyz/alloy-rwasm?branch=devel#b02fc8216747ed265291b0aff1e103e1e15d417a"
+source = "git+https://github.com/fluentlabs-xyz/alloy-rwasm?branch=devel#44ed0540640da5ca71aeb79ffa41ec09fdfb6d70"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2867,7 +2867,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
  "lazy_static",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3977,7 +3977,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "778e2ac28f6c47af28e4907f13ffd1e1ddbd400980a9abd7c8df189bf578a5ad"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4092,7 +4092,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
 dependencies = [
  "cfg-if",
  "rustix 1.0.7",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4173,8 +4173,8 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-build"
-version = "0.3.7-dev"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.3.7-dev#259638ffa6a4a7336078f7ceb586ad8e2a9970ca"
+version = "0.4.0-dev"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.4.0-dev#ee0d1f6e1ce1f61b6633bf7f1a24f08f9aeb1998"
 dependencies = [
  "anyhow",
  "cargo_metadata 0.19.2",
@@ -4196,8 +4196,8 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec"
-version = "0.3.7-dev"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.3.7-dev#259638ffa6a4a7336078f7ceb586ad8e2a9970ca"
+version = "0.4.0-dev"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.4.0-dev#ee0d1f6e1ce1f61b6633bf7f1a24f08f9aeb1998"
 dependencies = [
  "alloy-primitives",
  "byteorder",
@@ -4209,8 +4209,8 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec-derive"
-version = "0.3.7-dev"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.3.7-dev#259638ffa6a4a7336078f7ceb586ad8e2a9970ca"
+version = "0.4.0-dev"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.4.0-dev#ee0d1f6e1ce1f61b6633bf7f1a24f08f9aeb1998"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
@@ -4222,8 +4222,8 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-runtime"
-version = "0.3.7-dev"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.3.7-dev#259638ffa6a4a7336078f7ceb586ad8e2a9970ca"
+version = "0.4.0-dev"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.4.0-dev#ee0d1f6e1ce1f61b6633bf7f1a24f08f9aeb1998"
 dependencies = [
  "fluentbase-codec",
  "fluentbase-types",
@@ -4240,8 +4240,8 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk"
-version = "0.3.7-dev"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.3.7-dev#259638ffa6a4a7336078f7ceb586ad8e2a9970ca"
+version = "0.4.0-dev"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.4.0-dev#ee0d1f6e1ce1f61b6633bf7f1a24f08f9aeb1998"
 dependencies = [
  "fluentbase-codec",
  "fluentbase-sdk-derive",
@@ -4251,8 +4251,8 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive"
-version = "0.3.7-dev"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.3.7-dev#259638ffa6a4a7336078f7ceb586ad8e2a9970ca"
+version = "0.4.0-dev"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.4.0-dev#ee0d1f6e1ce1f61b6633bf7f1a24f08f9aeb1998"
 dependencies = [
  "alloy-sol-macro-input",
  "crypto-hashes",
@@ -4265,8 +4265,8 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive-core"
-version = "0.0.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.3.7-dev#259638ffa6a4a7336078f7ceb586ad8e2a9970ca"
+version = "0.4.0-dev"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.4.0-dev#ee0d1f6e1ce1f61b6633bf7f1a24f08f9aeb1998"
 dependencies = [
  "alloy-sol-macro-input",
  "anyhow",
@@ -4288,8 +4288,8 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-types"
-version = "0.3.7-dev"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.3.7-dev#259638ffa6a4a7336078f7ceb586ad8e2a9970ca"
+version = "0.4.0-dev"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.4.0-dev#ee0d1f6e1ce1f61b6633bf7f1a24f08f9aeb1998"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -6162,7 +6162,7 @@ checksum = "e04d7f318608d35d4b61ddd75cbdaee86b023ebe2bd5a66ee0915f0bf93095a9"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6245,7 +6245,7 @@ dependencies = [
  "portable-atomic",
  "portable-atomic-util",
  "serde",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7346,7 +7346,7 @@ dependencies = [
 [[package]]
 name = "op-revm"
 version = "5.0.1"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.3.7-dev#259638ffa6a4a7336078f7ceb586ad8e2a9970ca"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.4.0-dev#ee0d1f6e1ce1f61b6633bf7f1a24f08f9aeb1998"
 dependencies = [
  "auto_impl",
  "once_cell",
@@ -8418,7 +8418,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8745,7 +8745,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "24.0.1"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.3.7-dev#259638ffa6a4a7336078f7ceb586ad8e2a9970ca"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.4.0-dev#ee0d1f6e1ce1f61b6633bf7f1a24f08f9aeb1998"
 dependencies = [
  "revm-bytecode",
  "revm-context",
@@ -8763,7 +8763,7 @@ dependencies = [
 [[package]]
 name = "revm-bytecode"
 version = "4.0.1"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.3.7-dev#259638ffa6a4a7336078f7ceb586ad8e2a9970ca"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.4.0-dev#ee0d1f6e1ce1f61b6633bf7f1a24f08f9aeb1998"
 dependencies = [
  "bitvec",
  "once_cell",
@@ -8775,7 +8775,7 @@ dependencies = [
 [[package]]
 name = "revm-context"
 version = "5.0.1"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.3.7-dev#259638ffa6a4a7336078f7ceb586ad8e2a9970ca"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.4.0-dev#ee0d1f6e1ce1f61b6633bf7f1a24f08f9aeb1998"
 dependencies = [
  "cfg-if",
  "derive-where",
@@ -8791,7 +8791,7 @@ dependencies = [
 [[package]]
 name = "revm-context-interface"
 version = "5.0.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.3.7-dev#259638ffa6a4a7336078f7ceb586ad8e2a9970ca"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.4.0-dev#ee0d1f6e1ce1f61b6633bf7f1a24f08f9aeb1998"
 dependencies = [
  "alloy-eip2930",
  "alloy-eip7702",
@@ -8806,7 +8806,7 @@ dependencies = [
 [[package]]
 name = "revm-database"
 version = "4.0.1"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.3.7-dev#259638ffa6a4a7336078f7ceb586ad8e2a9970ca"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.4.0-dev#ee0d1f6e1ce1f61b6633bf7f1a24f08f9aeb1998"
 dependencies = [
  "alloy-eips",
  "revm-bytecode",
@@ -8819,7 +8819,7 @@ dependencies = [
 [[package]]
 name = "revm-database-interface"
 version = "4.0.1"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.3.7-dev#259638ffa6a4a7336078f7ceb586ad8e2a9970ca"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.4.0-dev#ee0d1f6e1ce1f61b6633bf7f1a24f08f9aeb1998"
 dependencies = [
  "auto_impl",
  "revm-primitives",
@@ -8830,7 +8830,7 @@ dependencies = [
 [[package]]
 name = "revm-handler"
 version = "5.0.1"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.3.7-dev#259638ffa6a4a7336078f7ceb586ad8e2a9970ca"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.4.0-dev#ee0d1f6e1ce1f61b6633bf7f1a24f08f9aeb1998"
 dependencies = [
  "auto_impl",
  "fluentbase-sdk",
@@ -8848,7 +8848,7 @@ dependencies = [
 [[package]]
 name = "revm-inspector"
 version = "5.0.1"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.3.7-dev#259638ffa6a4a7336078f7ceb586ad8e2a9970ca"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.4.0-dev#ee0d1f6e1ce1f61b6633bf7f1a24f08f9aeb1998"
 dependencies = [
  "auto_impl",
  "revm-context",
@@ -8882,7 +8882,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "20.0.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.3.7-dev#259638ffa6a4a7336078f7ceb586ad8e2a9970ca"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.4.0-dev#ee0d1f6e1ce1f61b6633bf7f1a24f08f9aeb1998"
 dependencies = [
  "fluentbase-sdk",
  "revm-bytecode",
@@ -8894,7 +8894,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "21.0.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.3.7-dev#259638ffa6a4a7336078f7ceb586ad8e2a9970ca"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.4.0-dev#ee0d1f6e1ce1f61b6633bf7f1a24f08f9aeb1998"
 dependencies = [
  "ark-bls12-381",
  "ark-bn254",
@@ -8918,7 +8918,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "19.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.3.7-dev#259638ffa6a4a7336078f7ceb586ad8e2a9970ca"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.4.0-dev#ee0d1f6e1ce1f61b6633bf7f1a24f08f9aeb1998"
 dependencies = [
  "alloy-primitives",
  "num_enum",
@@ -8928,7 +8928,7 @@ dependencies = [
 [[package]]
 name = "revm-state"
 version = "4.0.1"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.3.7-dev#259638ffa6a4a7336078f7ceb586ad8e2a9970ca"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.4.0-dev#ee0d1f6e1ce1f61b6633bf7f1a24f08f9aeb1998"
 dependencies = [
  "bitflags 2.9.1",
  "revm-bytecode",
@@ -9126,7 +9126,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -9139,7 +9139,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.9.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -9235,7 +9235,7 @@ dependencies = [
 [[package]]
 name = "rwasm"
 version = "0.0.0"
-source = "git+https://github.com/fluentlabs-xyz/rwasm?rev=853d86b9#853d86b9faa87685c13d65eb7aef5d43387b81e6"
+source = "git+https://github.com/fluentlabs-xyz/rwasm?rev=9923a95b#9923a95bc04c4053725b7b7bc5ac5f98dd9f151f"
 dependencies = [
  "anyhow",
  "bincode 2.0.1",
@@ -9258,8 +9258,8 @@ dependencies = [
 
 [[package]]
 name = "rwasm-revm"
-version = "0.3.7-dev"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.3.7-dev#259638ffa6a4a7336078f7ceb586ad8e2a9970ca"
+version = "0.4.0-dev"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?tag=v0.4.0-dev#ee0d1f6e1ce1f61b6633bf7f1a24f08f9aeb1998"
 dependencies = [
  "fluentbase-runtime",
  "fluentbase-sdk",
@@ -10520,7 +10520,7 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix 1.0.7",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -12125,7 +12125,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

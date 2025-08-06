@@ -205,8 +205,8 @@ foundry-linking = { path = "crates/linking" }
 
 # fluentbase
 
-fluentbase-build = { git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.3.7-dev", features = ["json"] }
-#fluentbase-genesis = { git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.3.7-dev", default-features = false }
+fluentbase-build = { git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.4.0-dev", features = ["json"] }
+#fluentbase-genesis = { git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.4.0-dev", default-features = false }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.19.1", default-features = false }
@@ -369,17 +369,17 @@ idna_adapter = "=1.1.0"
 zip-extract = "=0.2.1"
 
 [patch.crates-io]
-revm = { package = "revm", git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.3.7-dev" }
-revm-bytecode = { package = "revm-bytecode", git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.3.7-dev" }
-revm-database = { package = "revm-database", git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.3.7-dev" }
-revm-state = { package = "revm-state", git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.3.7-dev" }
-revm-primitives = { package = "revm-primitives", git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.3.7-dev" }
-revm-interpreter = { package = "revm-interpreter", git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.3.7-dev" }
-revm-inspector = { package = "revm-inspector", git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.3.7-dev" }
-revm-context = { package = "revm-context", git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.3.7-dev" }
-revm-context-interface = { package = "revm-context-interface", git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.3.7-dev" }
-revm-database-interface = { package = "revm-database-interface", git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.3.7-dev" }
-op-revm = { package = "op-revm", git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.3.7-dev" }
+revm = { package = "revm", git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.4.0-dev" }
+revm-bytecode = { package = "revm-bytecode", git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.4.0-dev" }
+revm-database = { package = "revm-database", git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.4.0-dev" }
+revm-state = { package = "revm-state", git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.4.0-dev" }
+revm-primitives = { package = "revm-primitives", git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.4.0-dev" }
+revm-interpreter = { package = "revm-interpreter", git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.4.0-dev" }
+revm-inspector = { package = "revm-inspector", git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.4.0-dev" }
+revm-context = { package = "revm-context", git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.4.0-dev" }
+revm-context-interface = { package = "revm-context-interface", git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.4.0-dev" }
+revm-database-interface = { package = "revm-database-interface", git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.4.0-dev" }
+op-revm = { package = "op-revm", git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.4.0-dev" }
 alloy-evm = { git = "https://github.com/fluentlabs-xyz/alloy-rwasm", branch = "devel" }
 
 ## fluentbase
