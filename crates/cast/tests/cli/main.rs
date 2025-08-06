@@ -3805,7 +3805,7 @@ error: unexpected argument '--invalid-flag' found
 
   tip: to pass '--invalid-flag' as a value, use '-- --invalid-flag'
 
-Usage: cast call [OPTIONS] [TO] [SIG] [ARGS]... [COMMAND]
+Usage: cast[..] call [OPTIONS] [TO] [SIG] [ARGS]... [COMMAND]
 
 For more information, try '--help'.
 
