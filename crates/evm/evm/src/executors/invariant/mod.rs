@@ -794,7 +794,7 @@ impl<'a> InvariantExecutor<'a> {
                 if let Some((src, name)) = identifier.split_once(':')
                     && let Some((_, contract_data)) =
                         self.project_contracts.iter().find(|(artifact, _)| {
-                            &artifact.name == name && artifact.source.as_path().ends_with(src)
+                            artifact.name == name && artifact.source.as_path().ends_with(src)
                         })
                 {
                     contract.storage_layout = contract_data.storage_layout.as_ref().map(Arc::clone);
@@ -967,7 +967,7 @@ impl<'a> InvariantExecutor<'a> {
                 if let Some((src, name)) = identifier.split_once(':')
                     && let Some((_, contract_data)) =
                         self.project_contracts.iter().find(|(artifact, _)| {
-                            &artifact.name == name && artifact.source.as_path().ends_with(src)
+                            artifact.name == name && artifact.source.as_path().ends_with(src)
                         })
                 {
                     contract.storage_layout = contract_data.storage_layout.as_ref().map(Arc::clone);
