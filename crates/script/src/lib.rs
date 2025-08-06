@@ -287,6 +287,15 @@ impl ScriptArgs {
                 .as_ref()
                 .is_none_or(|txs| txs.is_empty())
             {
+                // If the script execution failed, we should still show traces to report the error
+                if !pre_simulation.execution_result.success {
+                    if shell::is_json() {
+                        pre_simulation.show_json().await?;
+                    } else {
+                        pre_simulation.show_traces().await?;
+                    }
+                }
+                
                 if pre_simulation.args.broadcast {
                     sh_warn!("No transactions to broadcast.")?;
                 }
