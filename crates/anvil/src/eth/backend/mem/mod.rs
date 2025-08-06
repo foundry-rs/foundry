@@ -98,7 +98,7 @@ use foundry_evm::{
     traces::{CallTraceDecoder, TracingInspectorConfig},
     utils::{get_blob_base_fee_update_fraction, get_blob_base_fee_update_fraction_by_spec_id},
 };
-use foundry_evm_core::either_evm::EitherEvm;
+use foundry_evm_core::{either_evm::EitherEvm, precompiles::EC_RECOVER};
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use op_alloy_consensus::DEPOSIT_TX_TYPE_ID;
 use op_revm::{
@@ -1182,11 +1182,9 @@ impl Backend {
 
         let cheat_ecrecover = CheatEcrecover::new(Arc::clone(&cheats_arc));
 
-        evm.precompiles_mut()
-            .apply_precompile(&address!("0x0000000000000000000000000000000000000001"), move |_| {
-                Some(DynPrecompile::new_stateful(move |input| cheat_ecrecover.call(input)))
-            });
-
+        evm.precompiles_mut().apply_precompile(&EC_RECOVER, move |_| {
+            Some(DynPrecompile::new_stateful(move |input| cheat_ecrecover.call(input)))
+        });
         evm
     }
 
@@ -3028,13 +3026,9 @@ impl Backend {
         &self,
         signature: Bytes,
         address: Address,
-    ) -> Result<bool, BlockchainError> {
-        // Check if this signature has an override
-        if let Some(actual_address) = self.cheats.get_recover_override(&signature) {
-            Ok(actual_address == address)
-        } else {
-            Ok(false)
-        }
+    ) -> Result<(), BlockchainError> {
+        self.cheats.add_recover_override(signature, address);
+        Ok(())
     }
 
     /// Prove an account's existence or nonexistence in the state trie.
