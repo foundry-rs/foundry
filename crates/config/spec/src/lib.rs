@@ -3,14 +3,18 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
+use foundry_config::Config;
 use serde::{Deserialize, Serialize};
 
 // The `config.json` schema.
 /// Foundry configuration. Learn more: <https://getfoundry.sh/config/overview>
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
-pub struct Config {}
+pub struct ConfigSchema {
+    #[serde(flatten)]
+    pub config: Config,
+}
 
 #[cfg(test)]
 #[expect(clippy::disallowed_macros)]
@@ -24,7 +28,7 @@ mod tests {
     /// Generates the configuration JSON schema.
     #[cfg(feature = "schema")]
     fn json_schema() -> String {
-        serde_json::to_string_pretty(&schemars::schema_for!(Config)).unwrap()
+        serde_json::to_string_pretty(&schemars::schema_for!(ConfigSchema)).unwrap()
     }
 
     #[test]
@@ -45,7 +49,7 @@ mod tests {
 
         eprintln!("\n\x1b[31;1merror\x1b[0m: {} was not up-to-date, updating\n", file.display());
         if std::env::var("CI").is_ok() {
-            eprintln!("    NOTE: run `cargo cheats` locally and commit the updated files\n");
+            eprintln!("    NOTE: run `cargo spec-config` locally and commit the updated files\n");
         }
         if let Some(parent) = file.parent() {
             let _ = fs::create_dir_all(parent);

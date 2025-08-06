@@ -10,6 +10,10 @@ foundry_config::impl_figment_convert!(ConfigArgs, build, evm);
 /// CLI arguments for `forge config`.
 #[derive(Clone, Debug, Parser)]
 pub struct ConfigArgs {
+    /// Print only a basic set of the currently set config values.
+    #[arg(long)]
+    basic: bool,
+
     /// Attempt to fix any configuration warnings.
     #[arg(long)]
     fix: bool,
@@ -37,7 +41,14 @@ impl ConfigArgs {
             // we explicitly normalize the version, so mimic the behavior when invoking solc
             .normalized_evm_version();
 
-        let s = if shell::is_json() {
+        let s = if self.basic {
+            let config = config.into_basic();
+            if shell::is_json() {
+                serde_json::to_string_pretty(&config)?
+            } else {
+                config.to_string_pretty()?
+            }
+        } else if shell::is_json() {
             serde_json::to_string_pretty(&config)?
         } else {
             config.to_string_pretty()?

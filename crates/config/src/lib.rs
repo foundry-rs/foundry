@@ -159,6 +159,7 @@ pub use compilation::{CompilationRestrictions, SettingsOverrides};
 ///
 /// Note that these behaviors differ from those of [`Config::figment()`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Config {
     /// The selected profile. **(default: _default_ `default`)**
     ///
@@ -1700,6 +1701,24 @@ impl Config {
         }
     }
 
+    /// Extracts a basic subset of the config, used for initialisations.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use foundry_config::Config;
+    /// let my_config = Config::with_root(".").into_basic();
+    /// ```
+    pub fn into_basic(self) -> BasicConfig {
+        BasicConfig {
+            profile: self.profile,
+            src: self.src,
+            out: self.out,
+            libs: self.libs,
+            remappings: self.remappings,
+        }
+    }
+
     /// Updates the `foundry.toml` file for the given `root` based on the provided closure.
     ///
     /// **Note:** the closure will only be invoked if the `foundry.toml` file exists, See
@@ -2502,6 +2521,49 @@ impl<T: AsRef<str>> From<T> for SolcReq {
     fn from(s: T) -> Self {
         let s = s.as_ref();
         if let Ok(v) = Version::from_str(s) { Self::Version(v) } else { Self::Local(s.into()) }
+    }
+}
+
+/// A subset of the foundry `Config`
+/// used to initialize a `foundry.toml` file
+///
+/// # Example
+///
+/// ```rust
+/// use foundry_config::{BasicConfig, Config};
+/// use serde::Deserialize;
+///
+/// let my_config = Config::figment().extract::<BasicConfig>();
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BasicConfig {
+    /// the profile tag: `[profile.default]`
+    #[serde(skip)]
+    pub profile: Profile,
+    /// path of the source contracts dir, like `src` or `contracts`
+    pub src: PathBuf,
+    /// path to where artifacts shut be written to
+    pub out: PathBuf,
+    /// all library folders to include, `lib`, `node_modules`
+    pub libs: Vec<PathBuf>,
+    /// `Remappings` to use for this repo
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remappings: Vec<RelativeRemapping>,
+}
+
+impl BasicConfig {
+    /// Serialize the config as a String of TOML.
+    ///
+    /// This serializes to a table with the name of the profile
+    pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
+        let s = toml::to_string_pretty(self)?;
+        Ok(format!(
+            "\
+[profile.{}]
+{s}
+# See more config options: https://getfoundry.sh/config/reference/default-config\n",
+            self.profile
+        ))
     }
 }
 
@@ -3961,6 +4023,51 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_basic() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "mysrc"
+                out = "myout"
+                verbosity = 3
+                evm_version = 'berlin'
+                [profile.other]
+                src = "other-src"
+            "#,
+            )?;
+            let loaded = Config::load().unwrap();
+            assert_eq!(loaded.evm_version, EvmVersion::Berlin);
+            let base = loaded.into_basic();
+            let default = Config::default();
+            assert_eq!(
+                base,
+                BasicConfig {
+                    profile: Config::DEFAULT_PROFILE,
+                    src: "mysrc".into(),
+                    out: "myout".into(),
+                    libs: default.libs.clone(),
+                    remappings: default.remappings.clone(),
+                }
+            );
+            jail.set_env("FOUNDRY_PROFILE", r"other");
+            let base = Config::figment().extract::<BasicConfig>().unwrap();
+            assert_eq!(
+                base,
+                BasicConfig {
+                    profile: Config::DEFAULT_PROFILE,
+                    src: "other-src".into(),
+                    out: "myout".into(),
+                    libs: default.libs.clone(),
+                    remappings: default.remappings,
+                }
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
     #[should_panic]
     fn test_parse_invalid_fuzz_weight() {
         figment::Jail::expect_with(|jail| {
@@ -4511,6 +4618,51 @@ mod tests {
             assert_eq!(config.fuzz.dictionary.dictionary_weight, 99);
             assert_eq!(config.invariant.depth, 5);
 
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_extract_basic() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "mysrc"
+                out = "myout"
+                verbosity = 3
+                evm_version = 'berlin'
+                [profile.other]
+                src = "other-src"
+            "#,
+            )?;
+            let loaded = Config::load().unwrap();
+            assert_eq!(loaded.evm_version, EvmVersion::Berlin);
+            let base = loaded.into_basic();
+            let default = Config::default();
+            assert_eq!(
+                base,
+                BasicConfig {
+                    profile: Config::DEFAULT_PROFILE,
+                    src: "mysrc".into(),
+                    out: "myout".into(),
+                    libs: default.libs.clone(),
+                    remappings: default.remappings.clone(),
+                }
+            );
+            jail.set_env("FOUNDRY_PROFILE", r"other");
+            let base = Config::figment().extract::<BasicConfig>().unwrap();
+            assert_eq!(
+                base,
+                BasicConfig {
+                    profile: Config::DEFAULT_PROFILE,
+                    src: "other-src".into(),
+                    out: "myout".into(),
+                    libs: default.libs.clone(),
+                    remappings: default.remappings,
+                }
+            );
             Ok(())
         });
     }

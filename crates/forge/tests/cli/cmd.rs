@@ -3,7 +3,7 @@
 use crate::constants::*;
 use foundry_compilers::artifacts::{ConfigurableContractArtifact, Metadata, remappings::Remapping};
 use foundry_config::{
-    Chain, Config, FuzzConfig, InvariantConfig, SolidityErrorCode, parse_with_profile,
+    BasicConfig, Chain, Config, FuzzConfig, InvariantConfig, SolidityErrorCode, parse_with_profile,
 };
 use foundry_test_utils::{
     foundry_compilers::PathStyle,
@@ -278,7 +278,7 @@ Warning: Target directory is not empty, but `--force` was specified
 "#]]);
 
     let s = read_string(&foundry_toml);
-    let _config: Config = parse_with_profile(&s).unwrap().unwrap().1;
+    let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
 });
 
 // Checks that a forge project fails to initialise if dir is already git repo and dirty
@@ -638,7 +638,7 @@ Compiler run successful!
 "#]]);
 
     let s = read_string(&foundry_toml);
-    let _config: Config = parse_with_profile(&s).unwrap().unwrap().1;
+    let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
 });
 
 // Checks that quiet mode does not print anything for clone
@@ -686,7 +686,7 @@ Compiler run successful!
 "#]]);
 
     let s = read_string(&foundry_toml);
-    let _config: Config = parse_with_profile(&s).unwrap().unwrap().1;
+    let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
 });
 
 // checks that clone works with --keep-directory-structure
@@ -725,7 +725,7 @@ forgetest!(can_clone_keep_directory_structure, |prj, cmd| {
     }
 
     let s = read_string(&foundry_toml);
-    let _config: Config = parse_with_profile(&s).unwrap().unwrap().1;
+    let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
 });
 
 // checks that clone works with raw src containing `node_modules`
