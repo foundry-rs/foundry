@@ -3009,3 +3009,95 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
     assert_eq!(receiver2.nonce, 0);
     assert_eq!(receiver2.balance.to_string(), "101000000000000000000");
 });
+
+// <https://github.com/foundry-rs/foundry/issues/11159>
+forgetest_async!(check_broadcast_log_with_additional_contracts, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() public {
+        number++;
+    }
+}
+   "#,
+    )
+    .unwrap();
+    prj.add_source(
+        "Factory.sol",
+        r#"
+import {Counter} from "./Counter.sol";
+
+contract Factory {
+    function deployCounter() public returns (Counter) {
+        return new Counter();
+    }
+}
+   "#,
+    )
+    .unwrap();
+    let deploy_script = prj
+        .add_script(
+            "Factory.s.sol",
+            r#"
+import "forge-std/Script.sol";
+import {Factory} from "../src/Factory.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract FactoryScript is Script {
+    Factory public factory;
+    Counter public counter;
+
+    function setUp() public {}
+
+    function run() public {
+        vm.startBroadcast();
+
+        factory = new Factory();
+        counter = factory.deployCounter();
+
+        vm.stopBroadcast();
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    let deploy_contract = deploy_script.display().to_string() + ":FactoryScript";
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.args([
+        "script",
+        &deploy_contract,
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--slow",
+        "--broadcast",
+        "--private-key",
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_success();
+
+    let broadcast_log = prj.root().join("broadcast/Factory.s.sol/31337/run-latest.json");
+    let script_sequence: ScriptSequence = serde_json::from_reader(
+        fs::File::open(prj.artifacts().join(broadcast_log)).expect("no broadcast log"),
+    )
+    .expect("no script sequence");
+
+    let counter_contract = script_sequence
+        .transactions
+        .get(1)
+        .expect("no tx")
+        .additional_contracts
+        .first()
+        .expect("no Counter contract");
+    assert_eq!(counter_contract.contract_name, Some("Counter".to_string()));
+});

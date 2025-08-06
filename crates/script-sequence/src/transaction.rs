@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 pub struct AdditionalContract {
     #[serde(rename = "transactionType")]
     pub opcode: CallKind,
+    pub contract_name: Option<String>,
     pub address: Address,
     pub init_code: Bytes,
 }
