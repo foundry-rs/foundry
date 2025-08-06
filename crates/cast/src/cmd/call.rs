@@ -72,6 +72,7 @@ pub struct CallArgs {
     sig: Option<String>,
 
     /// The arguments of the function to call.
+    #[arg(allow_negative_numbers = true)]
     args: Vec<String>,
 
     /// Raw hex-encoded data for the transaction. Used instead of \[SIG\] and \[ARGS\].
@@ -177,6 +178,7 @@ pub enum CallSubcommands {
         sig: Option<String>,
 
         /// The arguments of the constructor.
+        #[arg(allow_negative_numbers = true)]
         args: Vec<String>,
 
         /// Ether to send in the transaction.
@@ -642,5 +644,22 @@ mod tests {
             args.state_overrides,
             Some(vec!["0x123:0x1:0x1234".to_string(), "0x456:0x2:0x5678".to_string()])
         );
+    }
+
+    #[test]
+    fn test_negative_args_with_flags() {
+        // Test that negative args work with flags
+        let args = CallArgs::parse_from([
+            "foundry-cli",
+            "--trace",
+            "0xDeaDBeeFcAfEbAbEfAcEfEeDcBaDbEeFcAfEbAbE",
+            "process(int256)",
+            "-999999",
+            "--debug",
+        ]);
+
+        assert!(args.trace);
+        assert!(args.debug);
+        assert_eq!(args.args, vec!["-999999"]);
     }
 }
