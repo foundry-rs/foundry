@@ -4781,6 +4781,7 @@ dependencies = [
  "terminal_size",
  "thiserror 2.0.12",
  "tokio",
+ "toml 0.8.23",
  "tower",
  "tracing",
  "url",

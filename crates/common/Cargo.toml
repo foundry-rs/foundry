@@ -80,6 +80,7 @@ ciborium.workspace = true
 flate2.workspace = true
 cargo_metadata = "0.19.2"
 convert_case = "0.7.1"
+toml = "0.8.23"
 
 [build-dependencies]
 chrono.workspace = true

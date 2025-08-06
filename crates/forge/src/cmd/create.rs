@@ -126,12 +126,12 @@ impl CreateArgs {
         // Check if the contract is rust
         // TODO(d1r1): after move compilation logic into Founry compiler - we can simplify this flow
         // completely
-        let rust_contracts = find_rust_contracts(&project.paths.sources)?;
+        let rust_contracts = find_rust_contracts(&project.paths.sources, Some(project.root()))?;
 
         let target_path = if let Some(ref mut path) = self.contract.path {
             canonicalize(project.root().join(path))?
-        } else if let Some((rust_path, _)) = rust_contracts.get(&self.contract.name) {
-            rust_path.clone()
+        } else if let Some(project_info) = rust_contracts.get(&self.contract.name) {
+            project_info.path.clone()
         } else {
             project.find_contract_path(&self.contract.name)?
         };
@@ -298,7 +298,7 @@ impl CreateArgs {
             config.get_etherscan_config_with_chain(Some(chain.into()))?.map(|c| c.key);
         if self.verifier.wasm {
             // TODO(d1r1): add actual checks - for now just return Ok(())
-            return Ok(())
+            return Ok(());
         } else {
             let context = verify.resolve_context().await?;
             verify.verification_provider()?.preflight_verify_check(verify, context).await?;

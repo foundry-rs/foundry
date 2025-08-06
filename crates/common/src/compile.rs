@@ -1,6 +1,6 @@
 //! Support for compiling [foundry_compilers::Project]
 use crate::{
-    preprocessor::TestOptimizerPreprocessor,
+    find_rust_contracts, preprocessor::TestOptimizerPreprocessor,
     reports::{report_kind, ReportKind},
     shell,
     term::SpinnerReporter,
@@ -253,7 +253,7 @@ impl ProjectCompiler {
         project: &Project<C>,
     ) -> Result<()> {
         // Find all Rust projects (crates) in source directories
-        let rust_projects = find_rust_projects(&project.paths.sources)?;
+        let rust_projects = find_rust_contracts(&project.paths.sources, Some(project.root()))?;
 
         if rust_projects.is_empty() {
             sh_println!("No Rust contracts found")?;
@@ -264,16 +264,15 @@ impl ProjectCompiler {
         let timer = Instant::now();
 
         // Iterate through each found Rust project and compile it
-        for rust_project_path in rust_projects {
-            let contract_dir = rust_project_path
+        for (pkg_name, pkg_info) in rust_projects {
+            let contract_dir = pkg_info
+                .path
                 .file_name()
-                .ok_or_else(|| {
-                    eyre!("Rust project path has no name: {}", rust_project_path.display())
-                })?
+                .ok_or_else(|| eyre!("Rust project path has no name: {}", pkg_info.path.display()))?
                 .to_str()
                 .ok_or_else(|| eyre!("Rust project path is not valid UTF-8"))?;
 
-            let contract_name_clean = Self::normalize_contract_name(contract_dir);
+            let contract_name_clean = Self::normalize_contract_name(&pkg_name);
             let contract_name = format!("{contract_name_clean}.wasm");
 
             sh_println!("  - Compiling contract {contract_dir}:{contract_name}...");
@@ -298,13 +297,13 @@ impl ProjectCompiler {
             sh_println!("  - Build args: {build_args:?}");
 
             // Execute Rust contract build
-            execute_build(&build_args, Some(rust_project_path.clone()))
+            execute_build(&build_args, Some(pkg_info.path.clone()))
                 .map_err(|e| eyre::eyre!("Build failed: {}", e))
                 .wrap_err_with(|| {
-                    format!("Failed to build Rust contract at {}", rust_project_path.display())
+                    format!("Failed to build Rust contract at {}", pkg_info.path.display())
                 })?;
             // remove directory after proccessing
-            self.files.retain(|file| !file.starts_with(&rust_project_path));
+            self.files.retain(|file| !file.starts_with(&pkg_info.path));
         }
         sh_println!("Finished compiling Rust contracts in {:.2?}", timer.elapsed())?;
 
@@ -327,48 +326,6 @@ impl ProjectCompiler {
             })
             .collect()
     }
-
-    // /// Integrates Rust contract artifacts into ProjectCompileOutput
-    // fn integrate_rust_contracts_into_output<C: Compiler<CompilerContract = Contract>>(
-    //     &self,
-    //     output: &mut ProjectCompileOutput<C>,
-    //     rust_contracts: Vec<(String, PathBuf, Contract)>,
-    //     project: &Project<C>,
-    // ) -> Result<()> {
-    //     for (contract_name, _rust_project_path, contract) in rust_contracts {
-    //         let interface_path = project
-    //             .artifacts_path()
-    //             .join(format!("{}.wasm", contract_name))
-    //             .join("interface.sol");
-
-    //         let versioned_contract = foundry_compilers::contracts::VersionedContract {
-    //             contract,
-    //             version: semver::Version::new(1, 0, 0),
-    //             build_id: format!("rust-{}", contract_name),
-    //             profile: "rust".to_string(),
-    //         };
-
-    //         // output
-    //         //     .output_mut()
-    //         //     .contracts
-    //         //     .0
-    //         //     .entry(interface_path.clone())
-    //         //     .or_default()
-    //         //     .entry(contract_name.clone())
-    //         //     .or_default()
-    //         //     .push(versioned_contract);
-
-    //         output.output_mut().extend(semver::Version::new(1, 0, 0), build_info, profile,
-    // output);
-
-    //         sh_println!(
-    //             "  - Added Rust contract {} to compilation output (source: interface.sol)",
-    //             contract_name
-    //         )?;
-    //     }
-
-    //     Ok(())
-    // }
 
     /// If configured, this will print sizes or names
     fn handle_output<C: Compiler<CompilerContract = Contract>>(
@@ -721,24 +678,6 @@ pub fn with_compilation_reporter<O>(quiet: bool, f: impl FnOnce() -> O) -> O {
     };
 
     foundry_compilers::report::with_scoped(&reporter, f)
-}
-
-fn find_rust_projects(src_root: &Path) -> Result<Vec<PathBuf>> {
-    sh_println!("find_rust_projects at: src_root={}", src_root.display());
-    let mut projects = Vec::new();
-    if !src_root.is_dir() {
-        return Ok(projects);
-    }
-
-    for entry in std::fs::read_dir(src_root)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() && path.join("Cargo.toml").exists() {
-            projects.push(path);
-        }
-    }
-
-    Ok(projects)
 }
 
 /// Container type for parsing contract identifiers from CLI.

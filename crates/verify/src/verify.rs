@@ -276,12 +276,12 @@ impl VerifyArgs {
         }
         self.verifier.verifier.client(self.etherscan.key().as_deref())?.verify(self, context).await.map_err(|err| {
             if let Some(verifier_url) = verifier_url {
-                 match Url::parse(&verifier_url) {
+                match Url::parse(&verifier_url) {
                     Ok(url) => {
                         if is_host_only(&url) {
                             return err.wrap_err(format!(
                                 "Provided URL `{verifier_url}` is host only.\n Did you mean to use the API endpoint`{verifier_url}/api` ?"
-                            ))
+                            ));
                         }
                     }
                     Err(url_err) => {
@@ -324,16 +324,15 @@ impl VerifyArgs {
 
         // Find Project & Compile
         let project = config.project()?;
-        let rust_contracts = find_rust_contracts(&project.paths.sources)?;
+        let rust_contracts = find_rust_contracts(&project.paths.sources, Some(project.root()))?;
 
         let contract_info = self
             .contract
             .as_ref()
             .ok_or_else(|| eyre::eyre!("Contract name is required for WASM verification"))?;
 
-        let (sources_path, pkg_name) = rust_contracts
+        let pkg_info = rust_contracts
             .get(&contract_info.name)
-            .map(|(p, n)| (p.clone(), n.clone()))
             .ok_or_else(|| {
                 eyre::eyre!("Rust contract '{}' not found in project", contract_info.name)
             })?;
@@ -360,9 +359,9 @@ impl VerifyArgs {
 
         // Create verification request using new API
         let request = crate::fluent::VerificationRequest::new_archive(
-            pkg_name,
+            pkg_info.package_name.clone(),
             self.address.to_string(),
-            &sources_path,
+            &pkg_info.path,
             compile_settings,
             abi,
         ).await.map_err(|err| {
