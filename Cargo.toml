@@ -287,7 +287,6 @@ thiserror = "2"
 # allocators
 mimalloc = "0.1"
 tikv-jemallocator = "0.6"
-tracy-client = "0.18"
 
 # misc
 auto_impl = "1"
@@ -297,10 +296,7 @@ bytes = "1.10"
 walkdir = "2"
 prettyplease = "0.2"
 base64 = "0.22"
-chrono = { version = "0.4", default-features = false, features = [
-    "clock",
-    "std",
-] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 axum = "0.8"
 ciborium = "0.2"
 color-eyre = "0.6"
@@ -363,17 +359,8 @@ snapbox = { version = "0.6", features = ["json", "regex", "term-svg"] }
 # by the `url` crate.
 # See the `idna_adapter` README.md for more details: https://docs.rs/crate/idna_adapter/latest
 idna_adapter = "=1.1.0"
-# Avoid duplicating `zip 2` and `zip 3`. Remove once all `zip` dependencies are updated to `zip 3`.
-zip-extract = "=0.2.1"
 
 [patch.crates-io]
-# solar-parse = { git = "https://github.com/paradigmxyz/solar", branch = "main" }
-# solar-sema = { git = "https://github.com/paradigmxyz/solar", branch = "main" }
-# solar-ast = { git = "https://github.com/paradigmxyz/solar", branch = "main" }
-# solar-interface = { git = "https://github.com/paradigmxyz/solar", branch = "main" }
-
-figment = { git = "https://github.com/DaniPopes/Figment", branch = "less-mono" }
-
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
 # alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }
