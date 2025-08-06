@@ -3102,6 +3102,7 @@ contract FactoryScript is Script {
     assert_eq!(counter_contract.contract_name, Some("Counter".to_string()));
 });
 
+// <https://github.com/foundry-rs/foundry/issues/11213>
 forgetest_async!(call_to_non_contract_address_does_not_panic, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
 
