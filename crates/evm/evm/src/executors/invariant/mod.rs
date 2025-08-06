@@ -791,11 +791,15 @@ impl<'a> InvariantExecutor<'a> {
             })
             .map(|(addr, (identifier, abi))| {
                 let mut contract = TargetedContract::new(identifier.clone(), abi.clone());
-                // Try to find storage layout from project contracts
-                if let Some((_, contract_data)) =
-                    self.project_contracts.iter().find(|(artifact, _)| &artifact.name == identifier)
-                {
-                    contract.storage_layout = contract_data.storage_layout.as_ref().map(Arc::clone);
+                if let Some((src, name)) = identifier.split_once(':') {
+                    if let Some((_, contract_data)) =
+                        self.project_contracts.iter().find(|(artifact, _)| {
+                            &artifact.name == name && artifact.source.as_path().ends_with(src)
+                        })
+                    {
+                        contract.storage_layout =
+                            contract_data.storage_layout.as_ref().map(Arc::clone);
+                    }
                 }
                 (*addr, contract)
             })
@@ -962,11 +966,15 @@ impl<'a> InvariantExecutor<'a> {
                     )
                 })?;
                 let mut contract = TargetedContract::new(identifier.clone(), abi.clone());
-                // Try to find storage layout from project contracts
-                if let Some((_, contract_data)) =
-                    self.project_contracts.iter().find(|(artifact, _)| &artifact.name == identifier)
-                {
-                    contract.storage_layout = contract_data.storage_layout.as_ref().map(Arc::clone);
+                if let Some((src, name)) = identifier.split_once(':') {
+                    if let Some((_, contract_data)) =
+                        self.project_contracts.iter().find(|(artifact, _)| {
+                            &artifact.name == name && artifact.source.as_path().ends_with(src)
+                        })
+                    {
+                        contract.storage_layout =
+                            contract_data.storage_layout.as_ref().map(Arc::clone);
+                    }
                 }
                 entry.insert(contract)
             }
