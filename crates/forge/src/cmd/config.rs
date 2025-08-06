@@ -37,13 +37,13 @@ impl ConfigArgs {
             // we explicitly normalize the version, so mimic the behavior when invoking solc
             .normalized_evm_version();
 
-        if shell::is_json() {
+        let s = if shell::is_json() {
             serde_json::to_string_pretty(&config)?
         } else {
             config.to_string_pretty()?
         };
-
         sh_println!("{s}")?;
+
         Ok(())
     }
 }
