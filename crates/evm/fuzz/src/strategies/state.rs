@@ -309,7 +309,6 @@ impl FuzzDictionary {
 
         // Try to determine the type of this storage slot
         let storage_type = storage_layout.and_then(|layout| {
-            // Find the storage entry for this slot
             layout.storage.iter().find(|s| s.slot == storage_slot.to_string()).and_then(|storage| {
                 // Look up the type information
                 layout
@@ -317,6 +316,28 @@ impl FuzzDictionary {
                     .get(&storage.storage_type)
                     .and_then(|t| DynSolType::parse(&t.label).ok())
             })
+        });
+
+        // Handle "mappings" separately
+        let mapping_storage_types = storage_layout.and_then(|layout| {
+            let types = layout
+                .types
+                .values()
+                .filter_map(|type_info| {
+                    if type_info.encoding == "mapping"
+                        && let Some(t_value) = type_info.value.as_ref()
+                        && let Some(mapping_value) = t_value.strip_prefix("t_")
+                    {
+                        // Get the value type for this mapping
+                        if let Ok(sol_type) = DynSolType::parse(mapping_value) {
+                            return Some(sol_type);
+                        }
+                    }
+                    None
+                })
+                .collect::<Vec<_>>();
+
+            if types.is_empty() { None } else { Some(types) }
         });
 
         // If we have type information, only insert as a sample value with the correct type
@@ -338,6 +359,34 @@ impl FuzzDictionary {
                 _ => {
                     // For complex types (arrays, mappings, structs), insert as raw value
                     self.insert_value(B256::from(*storage_value));
+                }
+            }
+        } else if let Some(mapping_sol_types) = mapping_storage_types
+            && !mapping_sol_types.is_empty()
+        {
+            for t in mapping_sol_types {
+                match &t {
+                    DynSolType::Address
+                    | DynSolType::Uint(_)
+                    | DynSolType::Int(_)
+                    | DynSolType::Bool
+                    | DynSolType::FixedBytes(_)
+                    | DynSolType::Bytes => {
+                        match t.abi_decode(storage_value.as_le_slice()) {
+                            Ok(_) => {
+                                // Insert as a typed sample value
+                                self.sample_values
+                                    .entry(t.clone())
+                                    .or_default()
+                                    .insert(B256::from(*storage_value));
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {
+                        // For complex types (arrays, mappings, structs), insert as raw value
+                        self.insert_value(B256::from(*storage_value));
+                    }
                 }
             }
         } else {
