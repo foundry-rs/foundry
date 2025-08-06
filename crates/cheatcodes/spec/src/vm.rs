@@ -2177,6 +2177,38 @@ interface Vm {
 
     // ======== Scripts ========
 
+    // -------- Loading Config Vars (from foundry.toml) --------
+
+    #[cheatcode(group = Scripting)]
+    function getScriptChains() external view returns (string[] memory);
+
+    #[cheatcode(group = Scripting)]
+    function getScriptChainId(string memory chain) external view returns (uint256);
+
+    #[cheatcode(group = Scripting)]
+    function getScriptChainRpcUrl(string memory chain) external view returns (string memory);
+
+    #[cheatcode(group = Scripting)]
+    function getScriptChainBool(string memory chain, string memory key) external view returns (bool);
+
+    #[cheatcode(group = Scripting)]
+    function getScriptChainInt(string memory chain, string memory key) external view returns (int256);
+
+    #[cheatcode(group = Scripting)]
+    function getScriptChainUint(string memory chain, string memory key) external view returns (uint256);
+
+    #[cheatcode(group = Scripting)]
+    function getScriptChainAddress(string memory chain, string memory key) external view returns (address);
+
+    #[cheatcode(group = Scripting)]
+    function getScriptChainBytes32(string memory chain, string memory key) external view returns (bytes32);
+
+    #[cheatcode(group = Scripting)]
+    function getScriptChainString(string memory chain, string memory key) external view returns (string memory);
+
+    #[cheatcode(group = Scripting)]
+    function getScriptChainBytes(string memory chain, string memory key) external view returns (bytes memory);
+
     // -------- Broadcasting Transactions --------
 
     /// Has the next call (at this call depth only) create transactions that can later be signed and sent onchain.

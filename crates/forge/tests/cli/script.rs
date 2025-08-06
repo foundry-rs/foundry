@@ -5,6 +5,7 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, Bytes, address, hex};
 use anvil::{NodeConfig, spawn};
 use forge_script_sequence::ScriptSequence;
+use foundry_config::ChainConfig;
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
     rpc::{self, next_http_archive_rpc_url},
@@ -13,7 +14,7 @@ use foundry_test_utils::{
 };
 use regex::Regex;
 use serde_json::Value;
-use std::{env, fs, path::PathBuf};
+use std::{collections::HashMap, env, fs, path::PathBuf};
 
 // Tests that fork cheat codes can be used in script
 forgetest_init!(
@@ -2578,13 +2579,13 @@ Chain 31337
 accessList           []
 chainId              31337
 gasLimit             [..]
-gasPrice             
+gasPrice
 input                [..]
-maxFeePerBlobGas     
-maxFeePerGas         
-maxPriorityFeePerGas 
+maxFeePerBlobGas
+maxFeePerGas
+maxPriorityFeePerGas
 nonce                0
-to                   
+to
 type                 0
 value                0
 
@@ -2593,11 +2594,11 @@ value                0
 accessList           []
 chainId              31337
 gasLimit             93856
-gasPrice             
+gasPrice
 input                0x7357f5d2000000000000000000000000000000000000000000000000000000000000007b00000000000000000000000000000000000000000000000000000000000001c8
-maxFeePerBlobGas     
-maxFeePerGas         
-maxPriorityFeePerGas 
+maxFeePerBlobGas
+maxFeePerGas
+maxPriorityFeePerGas
 nonce                1
 to                   0x5FbDB2315678afecb367f032d93F642f64180aa3
 type                 0
@@ -3100,4 +3101,74 @@ contract FactoryScript is Script {
         .first()
         .expect("no Counter contract");
     assert_eq!(counter_contract.contract_name, Some("Counter".to_string()));
+});
+
+// Tests that script can get chain ids from `foundry.toml`
+forgetest_init!(can_access_chain_ids, |prj, cmd| {
+    prj.update_config(|config| {
+        config.script_config.chains = vec![
+            (
+                "mainnet".into(),
+                ChainConfig { id: 1, rpc_url: "mainnet-rpc".to_string(), vars: HashMap::new() },
+            ),
+            (
+                "optimism".into(),
+                ChainConfig { id: 10, rpc_url: "optimism-rpc".to_string(), vars: HashMap::new() },
+            ),
+        ]
+        .into_iter()
+        .collect();
+    });
+
+    prj.add_script(
+        "ScriptWithConfig.s.sol",
+        r#"
+        import {console} from "forge-std/Script.sol";
+
+    interface Vm {
+        function getScriptChains() external view returns (string[] memory);
+        function getScriptChainId(string memory chain) external view returns (uint256);
+        function getScriptChainRpcUrl(string memory chain) external view returns (string memory);
+    }
+
+    contract ScriptWithConfig {
+        address internal constant HEVM_ADDRESS = address(uint160(uint256(keccak256("hevm cheat code"))));
+        Vm constant vm = Vm(HEVM_ADDRESS);
+
+        function run() public view {
+            string[2] memory chains = ["mainnet", "optimism"];
+            string[] memory cheatChains = vm.getScriptChains();
+            for (uint256 i = 0; i < chains.length; i++) {
+                assert(eqString(chains[i], cheatChains[0]) || eqString(chains[i], cheatChains[1]));
+                console.log("chain:", chains[i]);
+                console.log(" >  id:", vm.getScriptChainId(chains[i]));
+                console.log(" > rpc:", vm.getScriptChainRpcUrl(chains[i]));
+            }
+        }
+
+        function eqString(string memory s1, string memory s2) public pure returns(bool) {
+            return keccak256(bytes(s1)) == keccak256(bytes(s2));
+        }
+    }
+    "#,
+    )
+    .unwrap();
+
+    cmd.arg("script").arg("ScriptWithConfig").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+== Logs ==
+  chain: mainnet
+   >  id: 1
+   > rpc: mainnet-rpc
+  chain: optimism
+   >  id: 10
+   > rpc: optimism-rpc
+  chain: base
+
+"#]]);
 });

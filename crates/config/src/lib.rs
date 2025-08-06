@@ -45,7 +45,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize, Serializer};
 use std::{
     borrow::Cow,
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     fs,
     path::{Path, PathBuf},
     str::FromStr,
@@ -538,6 +538,9 @@ pub struct Config {
     /// Whether to enable script execution protection.
     pub script_execution_protection: bool,
 
+    /// Script (variables) configuration
+    pub script_config: ScriptConfig,
+
     /// PRIVATE: This structure may grow, As such, constructing this structure should
     /// _always_ be done using a public constructor or update syntax:
     ///
@@ -549,6 +552,20 @@ pub struct Config {
     #[doc(hidden)]
     #[serde(skip)]
     pub _non_exhaustive: (),
+}
+
+/// Foundry Script Config: Chains
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+pub struct ScriptConfig {
+    pub chains: HashMap<String, ChainConfig>,
+}
+
+/// Foundry Script - Chain Config: Variables
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ChainConfig {
+    pub id: u64,
+    pub rpc_url: String,
+    pub vars: HashMap<String, toml::Value>,
 }
 
 /// Mapping of fallback standalone sections. See [`FallbackProfileProvider`].
@@ -2453,6 +2470,7 @@ impl Default for Config {
             compilation_restrictions: Default::default(),
             script_execution_protection: true,
             _non_exhaustive: (),
+            script_config: Default::default(),
         }
     }
 }

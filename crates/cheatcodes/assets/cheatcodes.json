@@ -6416,6 +6416,206 @@
     },
     {
       "func": {
+        "id": "getScriptChainAddress",
+        "description": "",
+        "declaration": "function getScriptChainAddress(string memory chain, string memory key) external view returns (address);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getScriptChainAddress(string,string)",
+        "selector": "0x0397a972",
+        "selectorBytes": [
+          3,
+          151,
+          169,
+          114
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getScriptChainBool",
+        "description": "",
+        "declaration": "function getScriptChainBool(string memory chain, string memory key) external view returns (bool);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getScriptChainBool(string,string)",
+        "selector": "0x5a9036e7",
+        "selectorBytes": [
+          90,
+          144,
+          54,
+          231
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getScriptChainBytes",
+        "description": "",
+        "declaration": "function getScriptChainBytes(string memory chain, string memory key) external view returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getScriptChainBytes(string,string)",
+        "selector": "0xb22b866c",
+        "selectorBytes": [
+          178,
+          43,
+          134,
+          108
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getScriptChainBytes32",
+        "description": "",
+        "declaration": "function getScriptChainBytes32(string memory chain, string memory key) external view returns (bytes32);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getScriptChainBytes32(string,string)",
+        "selector": "0x06e5e401",
+        "selectorBytes": [
+          6,
+          229,
+          228,
+          1
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getScriptChainId",
+        "description": "",
+        "declaration": "function getScriptChainId(string memory chain) external view returns (uint256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getScriptChainId(string)",
+        "selector": "0x1ebbc380",
+        "selectorBytes": [
+          30,
+          187,
+          195,
+          128
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getScriptChainInt",
+        "description": "",
+        "declaration": "function getScriptChainInt(string memory chain, string memory key) external view returns (int256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getScriptChainInt(string,string)",
+        "selector": "0x6d8f7a80",
+        "selectorBytes": [
+          109,
+          143,
+          122,
+          128
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getScriptChainRpcUrl",
+        "description": "",
+        "declaration": "function getScriptChainRpcUrl(string memory chain) external view returns (string memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getScriptChainRpcUrl(string)",
+        "selector": "0x8a767a2d",
+        "selectorBytes": [
+          138,
+          118,
+          122,
+          45
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getScriptChainString",
+        "description": "",
+        "declaration": "function getScriptChainString(string memory chain, string memory key) external view returns (string memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getScriptChainString(string,string)",
+        "selector": "0xd88b9d50",
+        "selectorBytes": [
+          216,
+          139,
+          157,
+          80
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getScriptChainUint",
+        "description": "",
+        "declaration": "function getScriptChainUint(string memory chain, string memory key) external view returns (uint256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getScriptChainUint(string,string)",
+        "selector": "0x9285c4a6",
+        "selectorBytes": [
+          146,
+          133,
+          196,
+          166
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getScriptChains",
+        "description": "",
+        "declaration": "function getScriptChains() external view returns (string[] memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getScriptChains()",
+        "selector": "0x1f280520",
+        "selectorBytes": [
+          31,
+          40,
+          5,
+          32
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getStateDiff",
         "description": "Returns state diffs from current `vm.startStateDiffRecording` session.",
         "declaration": "function getStateDiff() external view returns (string memory diff);",

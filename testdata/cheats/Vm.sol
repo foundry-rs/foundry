@@ -314,6 +314,16 @@ interface Vm {
     function getNonce(Wallet calldata wallet) external returns (uint64 nonce);
     function getRawBlockHeader(uint256 blockNumber) external view returns (bytes memory rlpHeader);
     function getRecordedLogs() external returns (Log[] memory logs);
+    function getScriptChainAddress(string memory chain, string memory key) external view returns (address);
+    function getScriptChainBool(string memory chain, string memory key) external view returns (bool);
+    function getScriptChainBytes(string memory chain, string memory key) external view returns (bytes memory);
+    function getScriptChainBytes32(string memory chain, string memory key) external view returns (bytes32);
+    function getScriptChainId(string memory chain) external view returns (uint256);
+    function getScriptChainInt(string memory chain, string memory key) external view returns (int256);
+    function getScriptChainRpcUrl(string memory chain) external view returns (string memory);
+    function getScriptChainString(string memory chain, string memory key) external view returns (string memory);
+    function getScriptChainUint(string memory chain, string memory key) external view returns (uint256);
+    function getScriptChains() external view returns (string[] memory);
     function getStateDiff() external view returns (string memory diff);
     function getStateDiffJson() external view returns (string memory diff);
     function getWallets() external returns (address[] memory wallets);
