@@ -1,6 +1,6 @@
 use crate::{inspector::Ecx, Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_primitives::{Bytes, FixedBytes, TxKind};
-use alloy_sol_types::{Revert, SolError, SolValue};
+use alloy_sol_types::{Revert, SolError};
 use assertion_executor::{
     db::{fork_db::ForkDb, DatabaseCommit, DatabaseRef},
     primitives::{
@@ -108,8 +108,7 @@ pub fn execute_assertion(
     ecx: Ecx,
     executor: &mut dyn CheatcodesExecutor,
     cheats: &mut Cheatcodes,
-    is_create: bool,
-) -> Result<Option<Address>, crate::Error> {
+) -> Result<(), crate::Error> {
     let spec_id = ecx.cfg.spec;
     let block = ecx.block.clone();
     let state = ecx.journaled_state.state.clone();
@@ -173,12 +172,6 @@ pub fn execute_assertion(
         .validate_transaction_ext_db(block.clone(), tx_env.clone(), &mut fork_db, &mut ext_db)
         .map_err(|e| format!("Assertion Executor Error: {e:#?}"))?;
 
-    ecx.journaled_state.inner.checkpoint();
-
-    if let Some(expected) = &mut cheats.expected_revert {
-        expected.max_depth = max(ecx.journaled_state.depth(), expected.max_depth);
-    }
-
     let mut inspector = executor.get_inspector(cheats);
     // if transaction execution reverted, log the revert reason
     if !tx_validation.result_and_state.result.is_success() {
@@ -194,6 +187,15 @@ pub fn execute_assertion(
     let tx_gas_used = tx_validation.result_and_state.result.gas_used();
 
     if total_assertions_ran != 1 {
+        // If assertions were not executed, we need to update expect revert depth to
+        // allow for matching on this revert condition, as we will not execute against
+        // test evm in this case.
+        ecx.journaled_state.inner.checkpoint();
+
+        std::mem::drop(inspector);
+        if let Some(expected) = &mut cheats.expected_revert {
+            expected.max_depth = max(ecx.journaled_state.depth(), expected.max_depth);
+        }
         bail!("Expected 1 assertion to be executed, but {total_assertions_ran} were executed.");
     }
 
@@ -220,7 +222,19 @@ pub fn execute_assertion(
     );
     inspector.console_log(&assertion_gas_message);
 
+    // Drop the inspector to avoid borrow checker issues
+    std::mem::drop(inspector);
+
     if !tx_validation.is_valid() {
+        // If invalidated, we don't execute against test evm, so we must update expected depth
+        // for expect revert cheatcode.
+        ecx.journaled_state.inner.checkpoint();
+
+        if let Some(expected) = &mut cheats.expected_revert {
+            expected.max_depth = max(ecx.journaled_state.depth(), expected.max_depth);
+        }
+
+        let mut inspector = executor.get_inspector(cheats);
         match &assertion_fn_result.result {
             AssertionFunctionExecutionResult::AssertionContractDeployFailure(result) => {
                 inspector.console_log(&format!(
@@ -239,34 +253,8 @@ pub fn execute_assertion(
                 return Err(crate::Error::from(output.clone()));
             }
         }
-    } else {
-        let journaled_state = &mut ecx.journaled_state.state;
-        for (address, account) in tx_validation.result_and_state.state {
-            let journaled_acct = journaled_state.get_mut(&address);
-            match journaled_acct {
-                Some(journaled_acct) => {
-                    journaled_acct.info = account.info;
-                    journaled_acct.status = journaled_acct.status.union(account.status);
-                    for (index, value) in account.storage.iter() {
-                        journaled_acct.storage.insert(*index, value.clone());
-                    }
-                }
-                None => {
-                    journaled_state.insert(address, account);
-                }
-            }
-        }
     }
-
-    if is_create {
-        let address: Option<Address> =
-            tx_validation.result_and_state.result.output().map(|output| {
-                Address::abi_decode(output).expect("Could not decode address from create output")
-            });
-        Ok(address)
-    } else {
-        Ok(None)
-    }
+    Ok(())
 }
 
 fn decode_invalidated_assertion(execution_result: &ExecutionResult) -> Revert {
