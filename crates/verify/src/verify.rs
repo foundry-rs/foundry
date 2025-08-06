@@ -320,7 +320,11 @@ impl VerifyArgs {
                     .unwrap_or_default();
 
                 if unique_versions.is_empty() {
-                    eyre::bail!("No matching artifact found for {}", contract.name);
+                    eyre::bail!(
+                        "No matching artifact found for {}. This could be due to:\n\
+                        - Compiler version mismatch - the contract was compiled with a different Solidity version than what's being used for verification",
+                        contract.name
+                    );
                 } else if unique_versions.len() > 1 {
                     warn!(
                         "Ambiguous compiler versions found in cache: {}",
@@ -372,7 +376,12 @@ impl VerifyArgs {
                     .unwrap_or_default();
 
                 if profiles.is_empty() {
-                    eyre::bail!("No matching artifact found for {}", contract.name);
+                    eyre::bail!(
+                        "No matching artifact found for {} with compiler version {}. This could be due to:\n\
+                        - Compiler version mismatch - the contract was compiled with a different Solidity version",
+                        contract.name,
+                        version
+                    );
                 } else if profiles.len() > 1 {
                     eyre::bail!(
                         "Ambiguous compilation profiles found in cache: {}, please specify the profile through `--compilation-profile` flag",
