@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_chains::Chain;
 use forge::result::SuiteResult;
-use foundry_config::{fs_permissions::PathPermission, Config, FsPermissions};
+use foundry_config::{Config, FsPermissions, fs_permissions::PathPermission};
 use foundry_test_utils::Filter;
 use std::fs;
 

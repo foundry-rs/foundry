@@ -1,4 +1,5 @@
-contract Contract {
+contract Contract layout at 69 {
+    bytes32 transient a;
     bytes32 constant private BYTES = 0;
     bytes32 private constant override (Base1) BYTES = 0;
     bytes32 private constant override (Base1, Base2) BYTES = 0;

@@ -81,7 +81,7 @@ fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Resul
         let out = String::from_utf8_lossy(&output.stdout);
         println!("{out}");
         if out.contains("Contract successfully verified") {
-            return Ok(())
+            return Ok(());
         }
         eyre::bail!(
             "Failed to get verification, stdout: {}, stderr: {}",

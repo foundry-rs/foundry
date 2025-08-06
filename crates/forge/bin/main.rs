@@ -3,9 +3,8 @@
 
 use forge::args::run;
 
-#[cfg(all(feature = "jemalloc", unix))]
 #[global_allocator]
-static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+static ALLOC: foundry_cli::utils::Allocator = foundry_cli::utils::new_allocator();
 
 fn main() {
     if let Err(err) = run() {
