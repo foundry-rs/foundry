@@ -265,4 +265,13 @@ fn matches_simple_glob(text: &str, pattern: &str) -> bool {
     }
 }
 
-
+pub fn normalize_contract_name(name: &str) -> String {
+    // Check if the name has .wasm suffix
+    if let Some(base_name) = name.strip_suffix(".wasm") {
+        // Convert from PascalCase to kebab-case
+        base_name.to_case(Case::Kebab)
+    } else {
+        // Already in kebab-case format or other format
+        name.to_string()
+    }
+}

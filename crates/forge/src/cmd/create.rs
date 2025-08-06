@@ -16,12 +16,7 @@ use foundry_cli::{
     opts::{BuildOpts, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{self, read_constructor_args_file, remove_contract, LoadConfig},
 };
-use foundry_common::{
-    compile::{self},
-    find_rust_contracts,
-    fmt::parse_tokens,
-    shell,
-};
+use foundry_common::{compile::{self}, find_rust_contracts, fmt::parse_tokens, normalize_contract_name, shell};
 use foundry_compilers::{
     artifacts::{BytecodeObject, CompactBytecode}, info::ContractInfo,
     utils::canonicalize,
@@ -127,10 +122,11 @@ impl CreateArgs {
         // TODO(d1r1): after move compilation logic into Founry compiler - we can simplify this flow
         // completely
         let rust_contracts = find_rust_contracts(&project.paths.sources, Some(project.root()))?;
+        let contract_name = normalize_contract_name(&self.contract.name);
 
         let target_path = if let Some(ref mut path) = self.contract.path {
             canonicalize(project.root().join(path))?
-        } else if let Some(project_info) = rust_contracts.get(&self.contract.name) {
+        } else if let Some(project_info) = rust_contracts.get(&contract_name) {
             project_info.path.clone()
         } else {
             project.find_contract_path(&self.contract.name)?

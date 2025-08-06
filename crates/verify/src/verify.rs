@@ -15,7 +15,7 @@ use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::{self, LoadConfig},
 };
-use foundry_common::{compile::ProjectCompiler, find_rust_contracts, ContractsByArtifact};
+use foundry_common::{compile::ProjectCompiler, find_rust_contracts, normalize_contract_name, ContractsByArtifact};
 use foundry_compilers::{
     artifacts::EvmVersion, compilers::solc::Solc, info::ContractInfo, utils::canonicalize,
 };
@@ -332,7 +332,7 @@ impl VerifyArgs {
             .ok_or_else(|| eyre::eyre!("Contract name is required for WASM verification"))?;
 
         let pkg_info = rust_contracts
-            .get(&contract_info.name)
+            .get(&normalize_contract_name(&contract_info.name))
             .ok_or_else(|| {
                 eyre::eyre!("Rust contract '{}' not found in project", contract_info.name)
             })?;
