@@ -3816,9 +3816,16 @@ For more information, try '--help'.
 // this test is a bit awkward, but the fact that it fails at sending the request
 // proves that the calldata encoding itself didnt fail
 casttest!(cast_send_negative_numbers, |_prj, cmd| {
-    cmd.args(["send", "0xCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCc", "withdraw(int128)", "-2500"])
-        .assert_failure() // Will fail due to wallet/RPC, but parsing should work
-        .stderr_eq(str![[r#"
+    cmd.args([
+        "send",
+        "0xCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCc",
+        "withdraw(int128)",
+        "-2500",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_failure() // Will fail due to wallet/RPC, but parsing should work
+    .stderr_eq(str![[r#"
 Error: error sending request for url (http://localhost:8545/)
 
 Context:
