@@ -3823,6 +3823,8 @@ casttest!(cast_send_negative_numbers, |_prj, cmd| {
         "-2500",
         "--private-key",
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--gas-limit",
+        "1000000",
     ])
     .assert_failure() // Will fail due to wallet/RPC, but parsing should work
     .stderr_eq(str![[r#"
