@@ -2175,9 +2175,7 @@ interface Vm {
     #[cheatcode(group = Environment)]
     function isContext(ForgeContext context) external view returns (bool result);
 
-    // ======== Scripts ========
-
-    // -------- Loading Config Vars (from foundry.toml) --------
+    // ======== Forks ========
 
     /// Returns an array with the name of all the configured fork chains.
     ///
@@ -2283,6 +2281,7 @@ interface Vm {
     #[cheatcode(group = Forking)]
     function forkChainBytes(uint256 chain, string memory key) external view returns (bytes memory);
 
+    // ======== Scripts ========
     // -------- Broadcasting Transactions --------
 
     /// Has the next call (at this call depth only) create transactions that can later be signed and sent onchain.
