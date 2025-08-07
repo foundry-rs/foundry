@@ -41,7 +41,7 @@ contract Rlp is DSTest {
         bytes[] memory decoded = vm.fromRlp(rlp);
 
         assertEq(decoded.length, original.length);
-        for (uint i = 0; i < original.length; i++) {
+        for (uint256 i = 0; i < original.length; i++) {
             assertEq(decoded[i], original[i]);
         }
     }
