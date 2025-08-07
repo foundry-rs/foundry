@@ -90,7 +90,7 @@ fn map_env_err<'a>(key: &'a str, value: &'a str) -> impl FnOnce(Error) -> Error 
 fn get_chain_name(id: u64) -> Result<&'static str> {
     let chain = alloy_chains::Chain::from_id(id)
         .named()
-        .ok_or_eyre("unkown name for active forked chain")?;
+        .ok_or_eyre("unknown name for active forked chain")?;
 
     Ok(chain.as_str())
 }
