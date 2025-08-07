@@ -1,6 +1,6 @@
 use super::{install, watch::WatchArgs};
 use clap::Parser;
-use eyre::Result;
+use eyre::{Result, eyre};
 use forge_lint::{linter::Linter, sol::SolidityLinter};
 use foundry_cli::{
     opts::{BuildOpts, solar_pcx_from_build_opts},
@@ -112,9 +112,13 @@ impl BuildArgs {
             sh_println!("{}", serde_json::to_string_pretty(&output.output())?)?;
         }
 
+        if !config.lint.lint_on_build {
+            return Ok(output);
+        }
+
         // Only run the `SolidityLinter` if there are no compilation errors
-        if output.output().errors.iter().all(|e| !e.is_error()) {
-            self.lint(&project, &config)?;
+        if !output.output().errors.iter().any(|e| e.is_error()) {
+            self.lint(&project, &config).map_err(|err| eyre!("Lint failed: {err}"))?;
         }
 
         Ok(output)
@@ -122,7 +126,7 @@ impl BuildArgs {
 
     fn lint(&self, project: &Project, config: &Config) -> Result<()> {
         let format_json = shell::is_json();
-        if project.compiler.solc.is_some() && config.lint.lint_on_build && !shell::is_quiet() {
+        if project.compiler.solc.is_some() && !shell::is_quiet() {
             let linter = SolidityLinter::new(config.project_paths())
                 .with_json_emitter(format_json)
                 .with_description(!format_json)
