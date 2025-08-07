@@ -224,7 +224,7 @@ dependencies = [
 [[package]]
 name = "alloy-evm"
 version = "0.17.0"
-source = "git+https://github.com/alloy-rs/evm.git?rev=e01a56d#e01a56db146d032723f723aea32f63e6baf76f68"
+source = "git+https://github.com/alloy-rs/evm.git?rev=cbeeefb#cbeeefb43214d9473a353b27d771fd49df8ad0fb"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -335,7 +335,7 @@ dependencies = [
 [[package]]
 name = "alloy-op-evm"
 version = "0.17.0"
-source = "git+https://github.com/alloy-rs/evm.git?rev=e01a56d#e01a56db146d032723f723aea32f63e6baf76f68"
+source = "git+https://github.com/alloy-rs/evm.git?rev=cbeeefb#cbeeefb43214d9473a353b27d771fd49df8ad0fb"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -4784,7 +4784,7 @@ dependencies = [
 [[package]]
 name = "foundry-fork-db"
 version = "0.16.0"
-source = "git+https://github.com/foundry-rs/foundry-fork-db?rev=123ec01#123ec01430f57f9010891523fa9c98e626c74829"
+source = "git+https://github.com/foundry-rs/foundry-fork-db?rev=bae7340#bae73407a6a220c890b747e6def862863ecee642"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -8114,7 +8114,7 @@ dependencies = [
 [[package]]
 name = "revm-inspectors"
 version = "0.27.1"
-source = "git+https://github.com/zerosnacks/revm-inspectors.git?rev=404b90f#404b90f591709d1fd81b3908362ed0e0ecd11447"
+source = "git+https://github.com/zerosnacks/revm-inspectors.git?rev=aabe41d#aabe41d53c01f67064ad4b494fe280b861a22d46"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-eth",
