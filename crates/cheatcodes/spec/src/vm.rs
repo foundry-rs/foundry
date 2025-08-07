@@ -2187,7 +2187,7 @@ interface Vm {
     ///
     /// Note that the configured fork chains are subsections of the `[fork]` section of 'foundry.toml'.
     #[cheatcode(group = Forking)]
-    function forkChainIds() external view returns (uint256[]);
+    function forkChainIds() external view returns (uint256[] memory);
 
     /// Returns the chain name of the currently selected fork.
     #[cheatcode(group = Forking)]

@@ -1137,6 +1137,8 @@ out = "utils/JsonBindings.sol"
 include = []
 exclude = []
 
+[forks]
+
 
 "#]]);
 
@@ -1275,6 +1277,7 @@ exclude = []
   },
   "no_storage_caching": false,
   "no_rpc_rate_limit": false,
+  "forks": {},
   "use_literal_content": false,
   "bytecode_hash": "ipfs",
   "cbor_metadata": true,

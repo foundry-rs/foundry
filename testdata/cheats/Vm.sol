@@ -296,7 +296,7 @@ interface Vm {
     function forkChainBytes(uint256 chain, string memory key) external view returns (bytes memory);
     function forkChainBytes32(uint256 chain, string memory key) external view returns (bytes32);
     function forkChainId() external view returns (uint256);
-    function forkChainIds() external view returns (uint256[]);
+    function forkChainIds() external view returns (uint256[] memory);
     function forkChainInt(uint256 chain, string memory key) external view returns (int256);
     function forkChainRpcUrl(uint256 id) external view returns (string memory);
     function forkChainString(uint256 chain, string memory key) external view returns (string memory);

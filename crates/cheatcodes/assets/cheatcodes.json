@@ -6058,7 +6058,7 @@
       "func": {
         "id": "forkChainIds",
         "description": "Returns an array with the ids of all the configured fork chains.\nNote that the configured fork chains are subsections of the `[fork]` section of 'foundry.toml'.",
-        "declaration": "function forkChainIds() external view returns (uint256[]);",
+        "declaration": "function forkChainIds() external view returns (uint256[] memory);",
         "visibility": "external",
         "mutability": "view",
         "signature": "forkChainIds()",
