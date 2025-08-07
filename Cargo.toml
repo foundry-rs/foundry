@@ -262,9 +262,9 @@ op-alloy-rpc-types = "0.18.13"
 op-alloy-flz = "0.13.1"
 
 ## revm
-revm = { version = "27.1.0", default-features = false }
+revm = { version = "28.0.0", default-features = false }
 revm-inspectors = { version = "0.27.1", features = ["serde"] }
-op-revm = { version = "8.1.0", default-features = false }
+op-revm = { version = "9.0.0", default-features = false }
 
 ## alloy-evm
 alloy-evm = "0.16.0"
@@ -401,8 +401,8 @@ idna_adapter = "=1.1.0"
 # alloy-op-evm = { git = "https://github.com/alloy-rs/evm.git", rev = "7762adc" }
 
 ## revm
-revm = { git = "https://github.com/bluealloy/revm.git", rev = "9c849d1" }
-op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "9c849d1" }
+# revm = { git = "https://github.com/bluealloy/revm.git", rev = "9c849d1" }
+# op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "9c849d1" }
 # revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "956bc98" }
 
 ## foundry
