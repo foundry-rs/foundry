@@ -3,7 +3,6 @@ pragma solidity ^0.8.13;
 
 import {Test} from "forge-std/Test.sol";
 import {BlendedCounter} from "../src/BlendedCounter.sol";
-import {IPowerCalculator} from "../out/PowerCalculator.wasm/interface.sol";
 
 contract BlendedCounterTest is Test {
     BlendedCounter public counter;
