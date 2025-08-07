@@ -1,6 +1,7 @@
 use super::{format_int_exp, format_uint_exp};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::hex;
+use serde_json::{Value, json};
 use std::fmt;
 
 /// [`DynSolValue`] formatter.
@@ -144,6 +145,32 @@ pub fn format_token(value: &DynSolValue) -> String {
 /// - structs are formatted as tuples, losing the struct and property names
 pub fn format_token_raw(value: &DynSolValue) -> String {
     DynValueDisplay::new(value, true).to_string()
+}
+
+/// Recursively converts a `DynSolValue` into a serde_json::Value.
+pub fn token_to_json(value: &DynSolValue) -> Value {
+    use DynSolValue::*;
+
+    match value {
+        Array(values) | FixedArray(values) | Tuple(values) => {
+            let tokens: Vec<Value> = values.iter().map(token_to_json).collect();
+            Value::Array(tokens)
+        }
+        CustomStruct { name, prop_names, tuple } => {
+            if prop_names.len() == tuple.len() {
+                let obj = prop_names
+                    .iter()
+                    .zip(tuple)
+                    .map(|(k, v)| (k.clone(), token_to_json(v)))
+                    .collect();
+                Value::Object(obj)
+            } else {
+                let tokens: Vec<Value> = tuple.iter().map(token_to_json).collect();
+                json!({ name: tokens })
+            }
+        }
+        _ => json!(format_token_raw(value)),
+    }
 }
 
 #[cfg(test)]
