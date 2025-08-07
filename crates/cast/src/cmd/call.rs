@@ -30,6 +30,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
 };
+use itertools::Either;
 use regex::Regex;
 use revm::context::TransactionType;
 use std::{str::FromStr, sync::LazyLock};
@@ -309,6 +310,13 @@ impl CallArgs {
                 }
             }
 
+            if let Some(auth) = tx.inner.authorization_list {
+                env_tx.authorization_list =
+                    auth.into_iter().map(|auth| Either::Left(auth)).collect();
+
+                env_tx.tx_type = TransactionType::Eip7702 as u8;
+            }
+
             let trace = match tx_kind {
                 TxKind::Create => {
                     let deploy_result = executor.deploy(from, input, value, None);
@@ -362,6 +370,7 @@ impl CallArgs {
             self.nonce_overrides.as_ref(),
             self.code_overrides.as_ref(),
             self.state_overrides.as_ref(),
+            self.state_diff_overrides.as_ref(),
         ]
         .iter()
         .all(Option::is_none)
