@@ -5856,6 +5856,406 @@
     },
     {
       "func": {
+        "id": "forkAddress",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as `address`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkAddress(string memory key) external view returns (address);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkAddress(string)",
+        "selector": "0x27b1efc0",
+        "selectorBytes": [
+          39,
+          177,
+          239,
+          192
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkBool",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as `bool`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkBool(string memory key) external view returns (bool);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkBool(string)",
+        "selector": "0xc06e85dd",
+        "selectorBytes": [
+          192,
+          110,
+          133,
+          221
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkBytes",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as `bytes`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkBytes(string memory key) external view returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkBytes(string)",
+        "selector": "0x7c055631",
+        "selectorBytes": [
+          124,
+          5,
+          86,
+          49
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkBytes32",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as `bytes32`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkBytes32(string memory key) external view returns (bytes32);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkBytes32(string)",
+        "selector": "0xa912a3f4",
+        "selectorBytes": [
+          169,
+          18,
+          163,
+          244
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChain",
+        "description": "Returns the chain name of the currently selected fork.",
+        "declaration": "function forkChain() external view returns (string memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChain()",
+        "selector": "0xe6075d94",
+        "selectorBytes": [
+          230,
+          7,
+          93,
+          148
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChainAddress",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `address`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkChainAddress(uint256 chain, string memory key) external view returns (address);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChainAddress(uint256,string)",
+        "selector": "0x5dc00a35",
+        "selectorBytes": [
+          93,
+          192,
+          10,
+          53
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChainBool",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bool`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkChainBool(uint256 chain, string memory key) external view returns (bool);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChainBool(uint256,string)",
+        "selector": "0x8f947e16",
+        "selectorBytes": [
+          143,
+          148,
+          126,
+          22
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChainBytes",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bytes`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkChainBytes(uint256 chain, string memory key) external view returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChainBytes(uint256,string)",
+        "selector": "0x0e73256d",
+        "selectorBytes": [
+          14,
+          115,
+          37,
+          109
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChainBytes32",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bytes32`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkChainBytes32(uint256 chain, string memory key) external view returns (bytes32);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChainBytes32(uint256,string)",
+        "selector": "0x05dd6d07",
+        "selectorBytes": [
+          5,
+          221,
+          109,
+          7
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChainId",
+        "description": "Returns the chain id of the currently selected fork.",
+        "declaration": "function forkChainId() external view returns (uint256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChainId()",
+        "selector": "0xe6b661e2",
+        "selectorBytes": [
+          230,
+          182,
+          97,
+          226
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChainIds",
+        "description": "Returns an array with the ids of all the configured fork chains.\nNote that the configured fork chains are subsections of the `[fork]` section of 'foundry.toml'.",
+        "declaration": "function forkChainIds() external view returns (uint256[]);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChainIds()",
+        "selector": "0x04dc8feb",
+        "selectorBytes": [
+          4,
+          220,
+          143,
+          235
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChainInt",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `int256`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkChainInt(uint256 chain, string memory key) external view returns (int256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChainInt(uint256,string)",
+        "selector": "0xc1ff595f",
+        "selectorBytes": [
+          193,
+          255,
+          89,
+          95
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChainRpcUrl",
+        "description": "Returns the rpc url of the corresponding chain id.\nBy default, the rpc url of each fork is derived from the `[rpc_endpoints]`, unless\nthe rpc config is specifically informed in the fork config for that specific chain.",
+        "declaration": "function forkChainRpcUrl(uint256 id) external view returns (string memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChainRpcUrl(uint256)",
+        "selector": "0xa2c51cca",
+        "selectorBytes": [
+          162,
+          197,
+          28,
+          202
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChainString",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `string`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkChainString(uint256 chain, string memory key) external view returns (string memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChainString(uint256,string)",
+        "selector": "0x24062881",
+        "selectorBytes": [
+          36,
+          6,
+          40,
+          129
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChainUint",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `uint256`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkChainUint(uint256 chain, string memory key) external view returns (uint256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChainUint(uint256,string)",
+        "selector": "0x2bfffa5c",
+        "selectorBytes": [
+          43,
+          255,
+          250,
+          92
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChains",
+        "description": "Returns an array with the name of all the configured fork chains.\nNote that the configured fork chains are subsections of the `[fork]` section of 'foundry.toml'.",
+        "declaration": "function forkChains() external view returns (string[] memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChains()",
+        "selector": "0x081f64cd",
+        "selectorBytes": [
+          8,
+          31,
+          100,
+          205
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkInt",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as `int256`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkInt(string memory key) external view returns (int256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkInt(string)",
+        "selector": "0x4b326af0",
+        "selectorBytes": [
+          75,
+          50,
+          106,
+          240
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkRpcUrl",
+        "description": "Returns the rpc url of the currently selected fork.\nBy default, the rpc url of each fork is derived from the `[rpc_endpoints]`, unless\nthe rpc config is specifically informed in the fork config for that specific chain.",
+        "declaration": "function forkRpcUrl() external view returns (string memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkRpcUrl()",
+        "selector": "0x66d48d21",
+        "selectorBytes": [
+          102,
+          212,
+          141,
+          33
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkString",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as `string`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkString(string memory key) external view returns (string memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkString(string)",
+        "selector": "0xd8525752",
+        "selectorBytes": [
+          216,
+          82,
+          87,
+          82
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkUint",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as `uint256`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkUint(string memory key) external view returns (uint256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkUint(string)",
+        "selector": "0xbe0fe4a8",
+        "selectorBytes": [
+          190,
+          15,
+          228,
+          168
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "foundryVersionAtLeast",
         "description": "Returns true if the current Foundry version is greater than or equal to the given version.\nThe given version string must be in the format `major.minor.patch`.\nThis is equivalent to `foundryVersionCmp(version) >= 0`.",
         "declaration": "function foundryVersionAtLeast(string calldata version) external view returns (bool);",
@@ -6411,206 +6811,6 @@
         ]
       },
       "group": "evm",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "getScriptChainAddress",
-        "description": "",
-        "declaration": "function getScriptChainAddress(string memory chain, string memory key) external view returns (address);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "getScriptChainAddress(string,string)",
-        "selector": "0x0397a972",
-        "selectorBytes": [
-          3,
-          151,
-          169,
-          114
-        ]
-      },
-      "group": "scripting",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "getScriptChainBool",
-        "description": "",
-        "declaration": "function getScriptChainBool(string memory chain, string memory key) external view returns (bool);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "getScriptChainBool(string,string)",
-        "selector": "0x5a9036e7",
-        "selectorBytes": [
-          90,
-          144,
-          54,
-          231
-        ]
-      },
-      "group": "scripting",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "getScriptChainBytes",
-        "description": "",
-        "declaration": "function getScriptChainBytes(string memory chain, string memory key) external view returns (bytes memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "getScriptChainBytes(string,string)",
-        "selector": "0xb22b866c",
-        "selectorBytes": [
-          178,
-          43,
-          134,
-          108
-        ]
-      },
-      "group": "scripting",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "getScriptChainBytes32",
-        "description": "",
-        "declaration": "function getScriptChainBytes32(string memory chain, string memory key) external view returns (bytes32);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "getScriptChainBytes32(string,string)",
-        "selector": "0x06e5e401",
-        "selectorBytes": [
-          6,
-          229,
-          228,
-          1
-        ]
-      },
-      "group": "scripting",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "getScriptChainId",
-        "description": "",
-        "declaration": "function getScriptChainId(string memory chain) external view returns (uint256);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "getScriptChainId(string)",
-        "selector": "0x1ebbc380",
-        "selectorBytes": [
-          30,
-          187,
-          195,
-          128
-        ]
-      },
-      "group": "scripting",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "getScriptChainInt",
-        "description": "",
-        "declaration": "function getScriptChainInt(string memory chain, string memory key) external view returns (int256);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "getScriptChainInt(string,string)",
-        "selector": "0x6d8f7a80",
-        "selectorBytes": [
-          109,
-          143,
-          122,
-          128
-        ]
-      },
-      "group": "scripting",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "getScriptChainRpcUrl",
-        "description": "",
-        "declaration": "function getScriptChainRpcUrl(string memory chain) external view returns (string memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "getScriptChainRpcUrl(string)",
-        "selector": "0x8a767a2d",
-        "selectorBytes": [
-          138,
-          118,
-          122,
-          45
-        ]
-      },
-      "group": "scripting",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "getScriptChainString",
-        "description": "",
-        "declaration": "function getScriptChainString(string memory chain, string memory key) external view returns (string memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "getScriptChainString(string,string)",
-        "selector": "0xd88b9d50",
-        "selectorBytes": [
-          216,
-          139,
-          157,
-          80
-        ]
-      },
-      "group": "scripting",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "getScriptChainUint",
-        "description": "",
-        "declaration": "function getScriptChainUint(string memory chain, string memory key) external view returns (uint256);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "getScriptChainUint(string,string)",
-        "selector": "0x9285c4a6",
-        "selectorBytes": [
-          146,
-          133,
-          196,
-          166
-        ]
-      },
-      "group": "scripting",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "getScriptChains",
-        "description": "",
-        "declaration": "function getScriptChains() external view returns (string[] memory);",
-        "visibility": "external",
-        "mutability": "view",
-        "signature": "getScriptChains()",
-        "selector": "0x1f280520",
-        "selectorBytes": [
-          31,
-          40,
-          5,
-          32
-        ]
-      },
-      "group": "scripting",
       "status": "stable",
       "safety": "safe"
     },

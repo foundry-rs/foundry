@@ -436,6 +436,8 @@ pub struct Config {
     /// Multiple rpc endpoints and their aliases
     #[serde(default, skip_serializing_if = "RpcEndpoints::is_empty")]
     pub rpc_endpoints: RpcEndpoints,
+    /// Fork (variables) configuration
+    pub forks: HashMap<String, ForkConfig>,
     /// Whether to store the referenced sources in the metadata as literal data.
     pub use_literal_content: bool,
     /// Whether to include the metadata hash.
@@ -538,9 +540,6 @@ pub struct Config {
     /// Whether to enable script execution protection.
     pub script_execution_protection: bool,
 
-    /// Script (variables) configuration
-    pub script_config: ScriptConfig,
-
     /// PRIVATE: This structure may grow, As such, constructing this structure should
     /// _always_ be done using a public constructor or update syntax:
     ///
@@ -554,17 +553,15 @@ pub struct Config {
     pub _non_exhaustive: (),
 }
 
-/// Foundry Script Config: Chains
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
-pub struct ScriptConfig {
-    pub chains: HashMap<String, ChainConfig>,
-}
-
-/// Foundry Script - Chain Config: Variables
+/// Fork-scoped config for tests and scripts.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ChainConfig {
-    pub id: u64,
-    pub rpc_url: String,
+pub struct ForkConfig {
+    // Optional RPC endpoint for the fork.
+    //
+    // If uninformed, it will attempt to load one from `[rpc_endpoints]` with a matching alias
+    // for the name of the forked chain.
+    pub rpc_url: Option<RpcEndpoint>,
+    // Any arbitrary key-value pair of variables.
     pub vars: HashMap<String, toml::Value>,
 }
 
@@ -600,6 +597,7 @@ impl Config {
         "soldeer",
         "vyper",
         "bind_json",
+        "forks",
     ];
 
     /// File name of config toml file
@@ -2470,7 +2468,7 @@ impl Default for Config {
             compilation_restrictions: Default::default(),
             script_execution_protection: true,
             _non_exhaustive: (),
-            script_config: Default::default(),
+            forks: Default::default(),
         }
     }
 }
@@ -2630,6 +2628,7 @@ mod tests {
     use foundry_compilers::artifacts::{
         ModelCheckerEngine, YulDetails, vyper::VyperOptimizationMode,
     };
+    use itertools::Itertools;
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
     use std::{fs::File, io::Write};
@@ -5144,6 +5143,59 @@ mod tests {
             let unknown_chain = Chain::from_id(1);
             let result = config.get_etherscan_config_with_chain(Some(unknown_chain));
             assert!(result.is_ok());
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_get_script_config() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [forks]
+
+                    [forks.mainnet]
+                    rpc_url = "mainnet-rpc"
+
+                    [forks.mainnet.vars]
+                    weth = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+                    usdc = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+                    pool_name = "USDC-ETH"
+                    pool_fee = 3000
+                    max_slippage = 500
+                "#,
+            )?;
+            let config = Config::load().unwrap();
+
+            let expected: HashMap<String, ForkConfig> = vec![(
+                "mainnet".to_string(),
+                ForkConfig {
+                    rpc_url: Some(RpcEndpoint::new(RpcEndpointUrl::Url("mainnet-rpc".to_string()))),
+                    vars: vec![
+                        ("weth".into(), "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".into()),
+                        ("usdc".into(), "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".into()),
+                        ("pool_name".into(), "USDC-ETH".into()),
+                        ("pool_fee".into(), 3000.into()),
+                        ("max_slippage".into(), 500.into()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+            )]
+            .into_iter()
+            .collect();
+            assert_eq!(
+                expected.keys().sorted().collect::<Vec<_>>(),
+                config.forks.keys().sorted().collect::<Vec<_>>()
+            );
+
+            let expected_mainnet = expected.get("mainnet").unwrap();
+            let mainnet = config.forks.get("mainnet").unwrap();
+            assert_eq!(expected_mainnet.rpc_url, mainnet.rpc_url);
+            for (k, v) in expected_mainnet.vars.iter() {
+                assert_eq!(v, mainnet.vars.get(k).unwrap());
+            }
             Ok(())
         });
     }

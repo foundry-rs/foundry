@@ -172,7 +172,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         additional_compiler_profiles: Default::default(),
         compilation_restrictions: Default::default(),
         script_execution_protection: true,
-        script_config: Default::default(),
+        forks: Default::default(),
         _non_exhaustive: (),
     };
     prj.write_config(input.clone());

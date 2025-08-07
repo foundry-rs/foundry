@@ -17,39 +17,6 @@ use revm::{
 };
 use std::sync::Arc;
 
-impl Cheatcode for getScriptChainsCall {
-    fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
-        let Self {} = self;
-        Ok(state.config.script_config.chains.keys().collect::<Vec<_>>().abi_encode())
-    }
-}
-
-impl Cheatcode for getScriptChainIdCall {
-    fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
-        let Self { chain } = self;
-
-        // Get the chain ID from the chain_configs
-        if let Some(chain_config) = state.config.script_config.chains.get(chain) {
-            Ok(chain_config.id.abi_encode())
-        } else {
-            bail!("'{chain}' subsection not found in [script] section of 'foundry.toml'");
-        }
-    }
-}
-
-impl Cheatcode for getScriptChainRpcUrlCall {
-    fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
-        let Self { chain } = self;
-
-        // Get the chain ID from the chain_configs
-        if let Some(config) = state.config.script_config.chains.get(chain) {
-            Ok(config.rpc_url.abi_encode())
-        } else {
-            bail!("'{chain}' subsection not found in [script] section of 'foundry.toml'");
-        }
-    }
-}
-
 impl Cheatcode for broadcast_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self {} = self;
