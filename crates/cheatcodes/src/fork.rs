@@ -41,7 +41,7 @@ impl Cheatcode for forkChainIdCall {
 fn resolve_rpc_url(name: &'static str, state: &mut crate::Cheatcodes) -> Result {
     // Get the chain ID from the chain_configs
     if let Some(config) = state.config.forks.get(name) {
-        let rpc = match config.rpc_url {
+        let rpc = match config.rpc_endpoint {
             Some(ref url) => url.clone().resolve(),
             None => state.config.rpc_endpoint(name).map_err(|e| Error::from(e))?,
         };

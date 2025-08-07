@@ -63,7 +63,7 @@ pub struct CheatsConfig {
     pub chains: HashMap<String, ChainData>,
     /// Mapping of chain IDs to their aliases
     pub chain_id_to_alias: HashMap<u64, String>,
-    /// Script configuration
+    /// Fork configuration
     pub forks: HashMap<String, ForkConfig>,
 }
 

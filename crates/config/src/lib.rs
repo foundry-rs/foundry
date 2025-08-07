@@ -436,7 +436,7 @@ pub struct Config {
     /// Multiple rpc endpoints and their aliases
     #[serde(default, skip_serializing_if = "RpcEndpoints::is_empty")]
     pub rpc_endpoints: RpcEndpoints,
-    /// Fork (variables) configuration
+    /// Fork configuration
     pub forks: HashMap<String, ForkConfig>,
     /// Whether to store the referenced sources in the metadata as literal data.
     pub use_literal_content: bool,
@@ -560,7 +560,7 @@ pub struct ForkConfig {
     //
     // If uninformed, it will attempt to load one from `[rpc_endpoints]` with a matching alias
     // for the name of the forked chain.
-    pub rpc_url: Option<RpcEndpoint>,
+    pub rpc_endpoint: Option<RpcEndpoint>,
     // Any arbitrary key-value pair of variables.
     pub vars: HashMap<String, toml::Value>,
 }
@@ -5156,7 +5156,7 @@ mod tests {
                     [forks]
 
                     [forks.mainnet]
-                    rpc_url = "mainnet-rpc"
+                    rpc_endpoint = "mainnet-rpc"
 
                     [forks.mainnet.vars]
                     weth = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
@@ -5171,7 +5171,9 @@ mod tests {
             let expected: HashMap<String, ForkConfig> = vec![(
                 "mainnet".to_string(),
                 ForkConfig {
-                    rpc_url: Some(RpcEndpoint::new(RpcEndpointUrl::Url("mainnet-rpc".to_string()))),
+                    rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
+                        "mainnet-rpc".to_string(),
+                    ))),
                     vars: vec![
                         ("weth".into(), "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".into()),
                         ("usdc".into(), "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".into()),
@@ -5192,7 +5194,7 @@ mod tests {
 
             let expected_mainnet = expected.get("mainnet").unwrap();
             let mainnet = config.forks.get("mainnet").unwrap();
-            assert_eq!(expected_mainnet.rpc_url, mainnet.rpc_url);
+            assert_eq!(expected_mainnet.rpc_endpoint, mainnet.rpc_endpoint);
             for (k, v) in expected_mainnet.vars.iter() {
                 assert_eq!(v, mainnet.vars.get(k).unwrap());
             }

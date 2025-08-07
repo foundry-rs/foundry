@@ -3110,7 +3110,9 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
             (
                 "mainnet".to_string(),
                 ForkConfig {
-                    rpc_url: Some(RpcEndpoint::new(RpcEndpointUrl::Url("mainnet-rpc".to_string()))),
+                    rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
+                        "mainnet-rpc".to_string(),
+                    ))),
                     vars: vec![
                         ("i256".into(), "-1234".into()),
                         ("u256".into(), 1234.into()),
@@ -3131,7 +3133,7 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
             (
                 "optimism".to_string(),
                 ForkConfig {
-                    rpc_url: None,
+                    rpc_endpoint: None,
                     vars: vec![
                         ("i256".into(), "-4321".into()),
                         ("u256".into(), 4321.into()),
@@ -3258,7 +3260,9 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
             (
                 "mainnet".to_string(),
                 ForkConfig {
-                    rpc_url: Some(RpcEndpoint::new(RpcEndpointUrl::Url(mainnet_endpoint.clone()))),
+                    rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
+                        mainnet_endpoint.clone(),
+                    ))),
                     vars: vec![
                         ("i256".into(), "-1234".into()),
                         ("u256".into(), 1234.into()),
@@ -3279,7 +3283,7 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
             (
                 "optimism".to_string(),
                 ForkConfig {
-                    rpc_url: None,
+                    rpc_endpoint: None,
                     vars: vec![
                         ("i256".into(), "-4321".into()),
                         ("u256".into(), 4321.into()),
