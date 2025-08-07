@@ -134,7 +134,7 @@ impl CreateArgs {
 
         let output = compile::compile_target(&target_path, &project, shell::is_json())?;
 
-        let (abi, bin, id) = if rust_contracts.contains_key(&self.contract.name) {
+        let (abi, bin, id) = if rust_contracts.contains_key(&normalize_contract_name(&self.contract.name)) {
             let artifact_dir = project.artifacts_path().join(&self.contract.name);
             let artifact: serde_json::Value =
                 serde_json::from_str(&fs::read_to_string(&artifact_dir.join("foundry.json"))?)?;
