@@ -463,6 +463,16 @@
           "name": "depth",
           "ty": "uint64",
           "description": "Call depth traversed during the recording of state differences"
+        },
+        {
+          "name": "oldNonce",
+          "ty": "uint64",
+          "description": "The previous nonce of the accessed account."
+        },
+        {
+          "name": "newNonce",
+          "ty": "uint64",
+          "description": "The new nonce of the accessed account."
         }
       ]
     },

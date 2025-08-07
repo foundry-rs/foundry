@@ -278,6 +278,10 @@ interface Vm {
         StorageAccess[] storageAccesses;
         /// Call depth traversed during the recording of state differences
         uint64 depth;
+        /// The previous nonce of the accessed account.
+        uint64 oldNonce;
+        /// The new nonce of the accessed account.
+        uint64 newNonce;
     }
 
     /// The result of the `stopDebugTraceRecording` call
