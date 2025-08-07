@@ -107,17 +107,17 @@ async fn get_reverse_registrar<P: Provider<AnyNetwork> + ProviderEnsExt<AnyNetwo
     provider: &P,
 ) -> Result<Address> {
     let rev_registrar_addr = provider.get_reverse_registrar().await?;
-    Ok(rev_registrar_addr.address().clone())
+    Ok(*rev_registrar_addr.address())
 }
 
 async fn get_public_resolver<P: Provider<AnyNetwork> + ProviderEnsExt<AnyNetwork, P>>(
     provider: &P,
     name: &str,
 ) -> Result<Address> {
-    if let Some(domain) = name.splitn(2, '.').nth(1) {
+    if let Some(domain) = name.split_once('.').map(|x| x.1) {
         let domain_hash = namehash(domain);
         let resolver_addr = provider.get_resolver(domain_hash, domain).await?;
-        Ok(resolver_addr.address().clone())
+        Ok(*resolver_addr.address())
     } else {
         Err(eyre::eyre!("invalid name: {name}"))
     }
@@ -253,7 +253,6 @@ async fn set_resolutions<P: Provider<AnyNetwork>>(
             provider.send_transaction(tx.into_transaction_request()).await?.watch().await?;
         sh_println!("done (txn hash: {:?})", result)?;
     } else {
-        sh_println!("calling rev registrar::setNameForAddr({}, {}, {}, {})", contract_addr, sender_addr, public_resolver_addr, name)?;
         let reverse_registrar = ReverseRegistrar::new(reverse_registrar_addr, provider);
         let tx = reverse_registrar.setNameForAddr(
             contract_addr,

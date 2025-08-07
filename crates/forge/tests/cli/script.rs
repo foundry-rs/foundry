@@ -1,20 +1,10 @@
 //! Contains various tests related to `forge script`.
 
-use crate::{
-    abi::{
-        BaseRegistrarImplementation, DummyOracle, ENSRegistry, ETHRegistrarController,
-        NameWrapper, PublicResolver, ReverseRegistrar, price_oracle::StablePriceOracle,
-    },
-    constants::TEMPLATE_CONTRACT,
-};
-use alloy_ens::namehash;
+use crate::constants::TEMPLATE_CONTRACT;
 use alloy_hardforks::EthereumHardfork;
-use alloy_network::EthereumWallet;
-use alloy_primitives::{Address, B256, Bytes, I256, U256, address, hex, keccak256};
-use alloy_rpc_types::anvil::MineOptions;
+use alloy_primitives::{Address, Bytes, address, hex};
 use anvil::{NodeConfig, spawn};
 use forge_script_sequence::ScriptSequence;
-use foundry_common::provider::ProviderBuilder;
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
     rpc::{self, next_http_archive_rpc_url},
@@ -2587,7 +2577,7 @@ Chain 31337
 
 accessList           []
 chainId              31337
-gasLimit             228231
+gasLimit             [..]
 gasPrice             
 input                [..]
 maxFeePerBlobGas     
@@ -3020,476 +3010,94 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
     assert_eq!(receiver2.balance.to_string(), "101000000000000000000");
 });
 
-/*
-forgetest_async!(can_set_name, |prj, cmd| {
-    cmd.args(["init", "--force"])
-        .arg(prj.root())
-        .assert_success()
-        .stdout_eq(str![[r#"
-Initializing [..]...
-Installing forge-std in [..] (url: Some("https://github.com/foundry-rs/forge-std"), tag: None)
-    Installed forge-std[..]
-    Initialized forge project
-
-"#]])
-        .stderr_eq(str![[r#"
-Warning: Target directory is not empty, but `--force` was specified
-...
-
-"#]]);
-
-    let (api, handle) = spawn(NodeConfig::test()).await;
-    let wallet = handle.dev_wallets().next().unwrap();
-    let signer: EthereumWallet = wallet.clone().into();
-    let account = wallet.address();
-    let provider = ProviderBuilder::new(&handle.http_endpoint())
-        .build_with_wallet(signer)
-        .expect("failed to build Alloy HTTP provider with signer");
-
-
-    let _ = prj.add_source("HelloWorld.sol",
+// <https://github.com/foundry-rs/foundry/issues/11159>
+forgetest_async!(check_broadcast_log_with_additional_contracts, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "Counter.sol",
         r#"
-import "@openzeppelin/openzeppelin-contracts/contracts/access/Ownable.sol";
+contract Counter {
+    uint256 public number;
 
-contract HelloWorld is Ownable {
-    string greetings;
-    uint256 count;
-
-    constructor(string memory greet, uint256 initialCount) Ownable () {
-        greetings = greet;
-        count = initialCount;
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
     }
 
-    function set(string memory greet) public {
-        greetings = greet;
-    }
-
-    function retrieve() public view returns (string memory) {
-        return greetings;
-    }
-}"#
-        );
-
-    let _ = prj.add_source("DeployOracle.sol",
-    r#"
-import '@ensdomains/ens-contracts/contracts/ethregistrar/DummyOracle.sol';
-import '@ensdomains/ens-contracts/contracts/ethregistrar/StablePriceOracle.sol';
-
-contract DeployOracle {
-    function deploy() public returns (StablePriceOracle) {
-        DummyOracle dummyOracle = new DummyOracle(100000000);
-
-        uint256[] memory priceTiers = new uint256[](5);
-        priceTiers[0] = 0;
-        priceTiers[1] = 0;
-        priceTiers[2] = 4;
-        priceTiers[3] = 2;
-        priceTiers[4] = 1;
-
-        StablePriceOracle priceOracle = new StablePriceOracle(AggregatorInterface(address(dummyOracle)), priceTiers);
-
-        return priceOracle;
+    function increment() public {
+        number++;
     }
 }
-    "#);
+   "#,
+    )
+    .unwrap();
+    prj.add_source(
+        "Factory.sol",
+        r#"
+import {Counter} from "./Counter.sol";
 
-    let hello_world_script = prj.add_script(
-            "HelloWorldScript.s.sol",
-            r#"
-import "forge-std/Script.sol";
-import {HelloWorld} from '../src/HelloWorld.sol';
-
-contract HelloWorldScript is Script {
-    address public deployer = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
-
-    function run() public {
-        vm.startBroadcast(deployer);
-
-        new HelloWorld("hi forge!", 0);
-
-        vm.stopBroadcast();
+contract Factory {
+    function deployCounter() public returns (Counter) {
+        return new Counter();
     }
 }
-            "#).unwrap();
-
-    let script = prj
+   "#,
+    )
+    .unwrap();
+    let deploy_script = prj
         .add_script(
-            "ENSRegistryDeployment.s.sol",
+            "Factory.s.sol",
             r#"
 import "forge-std/Script.sol";
-import '@ensdomains/ens-contracts/contracts/registry/ENSRegistry.sol';
+import {Factory} from "../src/Factory.sol";
+import {Counter} from "../src/Counter.sol";
 
-contract ENSRegistryDeployScript is Script {
-    address public deployer = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
-    address constant ENS_REGISTRY = 0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e;
+contract FactoryScript is Script {
+    Factory public factory;
+    Counter public counter;
+
+    function setUp() public {}
 
     function run() public {
-        vm.startBroadcast(deployer);
+        vm.startBroadcast();
 
-        // Step 1: Deploy core ENS contracts
-        // (ENSRegistry ens, BaseRegistrarImplementation baseRegistrar, ReverseRegistrar reverseRegistrar) =
-        //     new DeployCore().deploy(deployer);
-
-        ENSRegistry temp = new ENSRegistry();
-        temp.setOwner(bytes32(0), deployer);
-        vm.etch(ENS_REGISTRY, address(temp).code);
-
-        // ENSRegistry ens = ENSRegistry(ENS_REGISTRY);
+        factory = new Factory();
+        counter = factory.deployCounter();
 
         vm.stopBroadcast();
     }
-}   "#,
+}
+   "#,
         )
         .unwrap();
 
-    prj.create_file(
-        "foundry.toml",
-        r#"
-        [profile.default]
-        via_ir = true
-        src = "src"
-        out = "out"
-        libs = ["lib"]
-        remappings = [
-            '@openzeppelin/openzeppelin-contracts/=lib/openzeppelin-contracts/',
-            '@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/',
-            '@ensdomains/ens-contracts/=lib/ens-contracts/',
-            '@ensdomains/buffer/=lib/buffer/'
-        ]
-        "#,
-    );
-
-    cmd.forge_fuse().args(["install", "openzeppelin/openzeppelin-contracts@v4.9.6"]).assert_success().stdout_eq(
-                str![[r#"
-Installing openzeppelin-contracts in [..] (url: Some("https://github.com/openzeppelin/openzeppelin-contracts"), tag: Some("v4.9.6"))
-    Installed openzeppelin-contracts [..]
-
-"#]],
-            );
-    cmd.forge_fuse().args(["install", "ensdomains/ens-contracts"]).assert_success().stdout_eq(
-                str![[r#"
-Installing ens-contracts in [..] (url: Some("https://github.com/ensdomains/ens-contracts"), tag: None)
-    Installed ens-contracts [..]
-
-"#]],
-        );
-    cmd.forge_fuse().args(["install", "ensdomains/buffer"]).assert_success().stdout_eq(
-                str![[r#"
-Installing buffer in [..] (url: Some("https://github.com/ensdomains/buffer"), tag: None)
-    Installed buffer
-
-"#]],
-            );
-
-    cmd.forge_fuse().args(["build", "--sizes"]).assert_success();
-
-    let cmd = cmd.forge_fuse().arg("script").arg(script).args([
-        "--tc",
-        "ENSRegistryDeployScript",
-        "--sender",
-        account.to_string().as_str(),
-        "--rpc-url",
-        handle.http_endpoint().as_str(),
+    let deploy_contract = deploy_script.display().to_string() + ":FactoryScript";
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.args([
+        "script",
+        &deploy_contract,
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--slow",
         "--broadcast",
         "--private-key",
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-    ]);
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_success();
 
-    cmd.assert_success().stdout_eq(str![[r#"
-No files changed, compilation skipped
-Script ran successfully.
-
-## Setting up 1 EVM.
-
-==========================
-
-Chain 31337
-
-[ESTIMATED_GAS_PRICE]
-
-[ESTIMATED_TOTAL_GAS_USED]
-
-[ESTIMATED_AMOUNT_REQUIRED]
-
-==========================
-
-
-==========================
-
-ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
-
-[SAVED_TRANSACTIONS]
-
-[SAVED_SENSITIVE_VALUES]
-
-
-"#]]);
-
-    // deploy ENSRegistry
-    let ens_registry = ENSRegistry::new(address!("0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e"), &provider);
-
-    let eth_namehash = namehash("eth");
-    // Deploy BaseRegistrarImplementation & set owner of eth tld to base-registrar via the ens
-    // registry
-    let base_registrar_impl = BaseRegistrarImplementation::deploy(
-        &provider,
-        ens_registry.address().to_owned(),
-        eth_namehash,
+    let broadcast_log = prj.root().join("broadcast/Factory.s.sol/31337/run-latest.json");
+    let script_sequence: ScriptSequence = serde_json::from_reader(
+        fs::File::open(prj.artifacts().join(broadcast_log)).expect("no broadcast log"),
     )
-    .await
-    .unwrap();
+    .expect("no script sequence");
 
-    println!("ens registry addr: {}", ens_registry.address().to_owned());
-
-    let _receipt = ens_registry
-        .setSubnodeOwner(B256::ZERO, keccak256("reverse"), account)
-        .send()
-        .await
-        .unwrap();
-
-    // Deploy ReverseRegistrar
-    let rev_registrar =
-        match ReverseRegistrar::deploy(&provider, ens_registry.address().to_owned()).await {
-            Ok(re) => re,
-            Err(e) => panic!("failed to deploy ReverseRegistrar: {e}"),
-        };
-
-    let _receipt = ens_registry
-        .setSubnodeOwner(namehash("reverse"), keccak256("addr"), rev_registrar.address().to_owned())
-        .send()
-        .await
-        .unwrap();
-
-    // Deploy NameWrapper
-    let name_wrapper = NameWrapper::deploy(
-        &provider,
-        ens_registry.address().to_owned(),
-        base_registrar_impl.address().to_owned(),
-        account,
-    )
-    .await
-    .unwrap();
-
-    let _ = ens_registry
-        .setSubnodeOwner(B256::ZERO, keccak256("eth"), base_registrar_impl.address().to_owned())
-        .send()
-        .await
-        .unwrap();
-
-    // Deploy DummyOracle
-    let dummy_oracle =
-        DummyOracle::deploy(&provider, I256::try_from(100000000).unwrap()).await.unwrap();
-
-    // Deploy StablePriceOracle
-    let price_oracle = StablePriceOracle::deploy(
-        &provider,
-        dummy_oracle.address().to_owned(),
-        vec![
-            U256::try_from(0).unwrap(),
-            U256::try_from(0).unwrap(),
-            U256::try_from(4).unwrap(),
-            U256::try_from(2).unwrap(),
-            U256::try_from(1).unwrap(),
-        ],
-    )
-    .await
-    .unwrap();
-
-    // Deploy ETHRegistrarController
-    let eth_registrar_controller = ETHRegistrarController::deploy(
-        &provider,
-        base_registrar_impl.address().to_owned(),
-        price_oracle.address().to_owned(),
-        U256::try_from(600).unwrap(),
-        U256::try_from(86400).unwrap(),
-        rev_registrar.address().to_owned(),
-        name_wrapper.address().to_owned(),
-        ens_registry.address().to_owned(),
-    )
-    .await
-    .unwrap();
-
-    let _ = name_wrapper
-        .setController(eth_registrar_controller.address().to_owned(), true)
-        .send()
-        .await
-        .unwrap();
-    let _ =
-        base_registrar_impl.addController(name_wrapper.address().to_owned()).send().await.unwrap();
-    let _ = rev_registrar
-        .setController(eth_registrar_controller.address().to_owned(), true)
-        .send()
-        .await
-        .unwrap();
-
-    // Deploy PublicResolver
-    let public_resolver = PublicResolver::deploy(
-        &provider,
-        ens_registry.address().to_owned(),
-        name_wrapper.address().to_owned(),
-        eth_registrar_controller.address().to_owned(),
-        rev_registrar.address().to_owned(),
-    )
-    .await
-    .unwrap();
-
-    let _receipt = base_registrar_impl
-        .addController(eth_registrar_controller.address().to_owned())
-        .send()
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
-    let _receipt = base_registrar_impl
-        .addController(account)
-        .send()
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
-
-    let commitment = eth_registrar_controller
-        .makeCommitment(
-            "forge".to_owned(),
-            account,
-            U256::try_from(365 * 24 * 60 * 60).unwrap(),
-            B256::ZERO,
-            public_resolver.address().to_owned(),
-            vec![],
-            false,
-            0,
-        )
-        .call()
-        .await
-        .unwrap();
-
-    let _ = eth_registrar_controller
-        .makeCommitment(
-            "forge".to_owned(),
-            account,
-            U256::try_from(365 * 24 * 60 * 60).unwrap(),
-            B256::ZERO,
-            public_resolver.address().to_owned(),
-            vec![],
-            false,
-            0,
-        )
-        .send()
-        .await
-        .unwrap();
-
-    let _ = eth_registrar_controller
-        .commit(commitment)
-        .send()
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
-
-    let min_age = eth_registrar_controller.minCommitmentAge().call().await.unwrap();
-    api.evm_increase_time(min_age).await.unwrap(); // add enough seconds
-    api.evm_mine(Some(MineOptions::Options { timestamp: None, blocks: Some(1) })).await.unwrap();
-
-    let price = eth_registrar_controller
-        .rentPrice("forge".to_owned(), U256::from(365 * 24 * 60 * 60))
-        .call()
-        .await
-        .unwrap();
-
-    let _ = eth_registrar_controller
-        .register(
-            "forge".to_owned(),
-            account,
-            U256::try_from(365 * 24 * 60 * 60).unwrap(),
-            B256::ZERO,
-            public_resolver.address().to_owned(),
-            vec![],
-            false,
-            0,
-        )
-        .value(price.base + price.premium)
-        .call()
-        .await
-        .unwrap();
-    let _ = eth_registrar_controller
-        .register(
-            "forge".to_owned(),
-            account,
-            U256::try_from(365 * 24 * 60 * 60).unwrap(),
-            B256::ZERO,
-            public_resolver.address().to_owned(),
-            vec![],
-            false,
-            0,
-        )
-        .value(price.base + price.premium)
-        .send()
-        .await
-        .unwrap();
-
-    let exists = ens_registry.recordExists(namehash("forge.eth")).call().await.unwrap();
-    assert!(exists);
-
-    let cmd = cmd.forge_fuse().arg("script").arg(hello_world_script).args([
-        "--ens-name",
-        "test.forge.eth",
-        "--tc",
-        "HelloWorldScript",
-        "--sender",
-        account.to_string().as_str(),
-        "--rpc-url",
-        handle.http_endpoint().as_str(),
-        "--broadcast",
-        "--private-key",
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-    ]);
-
-    cmd.assert_success().stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-...
-Script ran successfully.
-
-## Setting up 1 EVM.
-
-==========================
-
-Chain 31337
-
-[ESTIMATED_GAS_PRICE]
-
-[ESTIMATED_TOTAL_GAS_USED]
-
-[ESTIMATED_AMOUNT_REQUIRED]
-
-==========================
-
-
-==========================
-
-ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
-Contract is Ownable contract.
-creating subname ...
-done (txn hash: 0x8837e36c20a3d5834c108630769dd5960efdc86fb873ab9ad9abf37bfe1d13f3)
-checking if fwd resolution already set ...
-setting fwd resolution (test.forge.eth -> 0xc6e7DF5E7b4f2A278906862b61205850344D4e7d) ...
-done (txn hash: 0x88f5ed94b3547d3ad89c3e357e7185bf271f3339112bf19c90d733e2f5e1800f)
-setting rev resolution (0xc6e7DF5E7b4f2A278906862b61205850344D4e7d -> test.forge.eth) ...
-done (txn hash: 0xd69ce325e96e609f773d043377efda271d9d24fbf7b4e62f9af268fdb2afe217)
-
-✨ Contract named: https://app.enscribe.xyz/explore/31337/0xc6e7DF5E7b4f2A278906862b61205850344D4e7d
-
-[SAVED_TRANSACTIONS]
-
-[SAVED_SENSITIVE_VALUES]
-
-
-"#]]);
-    // let exists = ens_registry.recordExists(namehash("test.forge.eth")).call().await.unwrap();
-    // assert!(exists);
+    let counter_contract = script_sequence
+        .transactions
+        .get(1)
+        .expect("no tx")
+        .additional_contracts
+        .first()
+        .expect("no Counter contract");
+    assert_eq!(counter_contract.contract_name, Some("Counter".to_string()));
 });
-*/

@@ -49,11 +49,7 @@ impl BroadcastedState {
             .sequence
             .sequences()
             .iter()
-            .filter_map(|s| {
-                let contract_deployment_receipt =
-                    s.receipts.iter().find(|r| r.contract_address.is_some());
-                contract_deployment_receipt
-            })
+            .filter_map(|s| s.receipts.iter().find(|r| r.contract_address.is_some()))
             .next();
 
         if let Some(receipt) = contract_deployment_receipt {

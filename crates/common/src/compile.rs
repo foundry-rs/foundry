@@ -2,7 +2,7 @@
 
 use crate::{
     TestFunctionExt,
-    preprocessor::TestOptimizerPreprocessor,
+    preprocessor::DynamicTestLinkingPreprocessor,
     reports::{ReportKind, report_kind},
     shell,
     term::SpinnerReporter,
@@ -146,13 +146,15 @@ impl ProjectCompiler {
         self.dynamic_test_linking = preprocess;
         self
     }
+
     /// Compiles the project.
+    #[instrument(target = "forge::compile", skip_all)]
     pub fn compile<C: Compiler<CompilerContract = Contract>>(
         mut self,
         project: &Project<C>,
     ) -> Result<ProjectCompileOutput<C>>
     where
-        TestOptimizerPreprocessor: Preprocessor<C>,
+        DynamicTestLinkingPreprocessor: Preprocessor<C>,
     {
         self.project_root = project.root().to_path_buf();
 
@@ -180,7 +182,7 @@ impl ProjectCompiler {
             let mut compiler =
                 foundry_compilers::project::ProjectCompiler::with_sources(project, sources)?;
             if preprocess {
-                compiler = compiler.with_preprocessor(TestOptimizerPreprocessor);
+                compiler = compiler.with_preprocessor(DynamicTestLinkingPreprocessor);
             }
             compiler.compile().map_err(Into::into)
         })
@@ -196,7 +198,6 @@ impl ProjectCompiler {
     /// let prj = config.project().unwrap();
     /// ProjectCompiler::new().compile_with(|| Ok(prj.compile()?)).unwrap();
     /// ```
-    #[instrument(target = "forge::compile", skip_all)]
     fn compile_with<C: Compiler<CompilerContract = Contract>, F>(
         self,
         f: F,
@@ -519,7 +520,7 @@ pub fn compile_target<C: Compiler<CompilerContract = Contract>>(
     quiet: bool,
 ) -> Result<ProjectCompileOutput<C>>
 where
-    TestOptimizerPreprocessor: Preprocessor<C>,
+    DynamicTestLinkingPreprocessor: Preprocessor<C>,
 {
     ProjectCompiler::new().quiet(quiet).files([target_path.into()]).compile(project)
 }
