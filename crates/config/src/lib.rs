@@ -5195,7 +5195,7 @@ mod tests {
             let expected_mainnet = expected.get("mainnet").unwrap();
             let mainnet = config.forks.get("mainnet").unwrap();
             assert_eq!(expected_mainnet.rpc_endpoint, mainnet.rpc_endpoint);
-            for (k, v) in expected_mainnet.vars.iter() {
+            for (k, v) in &expected_mainnet.vars {
                 assert_eq!(v, mainnet.vars.get(k).unwrap());
             }
             Ok(())

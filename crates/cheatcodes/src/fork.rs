@@ -43,10 +43,10 @@ fn resolve_rpc_url(name: &'static str, state: &mut crate::Cheatcodes) -> Result 
     if let Some(config) = state.config.forks.get(name) {
         let rpc = match config.rpc_endpoint {
             Some(ref url) => url.clone().resolve(),
-            None => state.config.rpc_endpoint(name).map_err(|e| Error::from(e))?,
+            None => state.config.rpc_endpoint(name)?,
         };
 
-        return Ok(rpc.url().map_err(|e| Error::from(e))?.abi_encode());
+        return Ok(rpc.url()?.abi_encode());
     }
 
     bail!("[fork.{name}] subsection not found in [fork] of 'foundry.toml'")
@@ -68,7 +68,7 @@ impl Cheatcode for forkRpcUrlCall {
 }
 
 fn cast_string(key: &str, val: &str, ty: &DynSolType) -> Result {
-    string::parse(val, ty).map_err(map_env_err(key, &val))
+    string::parse(val, ty).map_err(map_env_err(key, val))
 }
 
 /// Converts the error message of a failed parsing attempt to a more user-friendly message that
@@ -96,7 +96,7 @@ fn get_chain_name(id: u64) -> Result<&'static str> {
 }
 
 /// Gets the chain id of the active fork. Panics if no fork is selected.
-fn get_active_fork_chain_id<'evm>(ccx: &mut CheatsCtxt) -> Result<u64> {
+fn get_active_fork_chain_id(ccx: &mut CheatsCtxt) -> Result<u64> {
     let (db, _, env) = ccx.as_db_env_and_journal();
     if !db.is_forked_mode() {
         bail!("a fork must be selected");
