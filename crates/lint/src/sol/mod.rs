@@ -370,6 +370,12 @@ impl<'a> TryFrom<&'a str> for SolLint {
             }
         }
 
+        for &lint in codesize::REGISTERED_LINTS {
+            if lint.id() == value {
+                return Ok(lint);
+            }
+        }
+
         Err(SolLintError::InvalidId(value.to_string()))
     }
 }
