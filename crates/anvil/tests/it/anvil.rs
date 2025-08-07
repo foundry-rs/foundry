@@ -167,7 +167,7 @@ async fn test_anvil_recover_signature() {
     let v = sig[64];
     let fake_hash = B256::random();
     let expected = alloy_primitives::address!("0x1234567890123456789012345678901234567890");
-    api.anvil_recover_signature(sig.clone().into(), expected).await.unwrap();
+    api.anvil_impersonate_signature(sig.clone().into(), expected).await.unwrap();
     let result = contract.testRecover(fake_hash, v, r, s, expected).call().await;
     assert!(result.is_ok(), "ecrecover failed: {:?}", result.err());
 }

@@ -111,6 +111,10 @@ impl CheatEcrecover {
 
 impl Precompile for CheatEcrecover {
     fn call(&self, input: PrecompileInput<'_>) -> PrecompileResult {
+        if !self.cheats.has_recover_overrides() {
+            return ec_recover_run(input.data, input.gas);
+        }
+
         const ECRECOVER_BASE: u64 = 3_000;
         if input.gas < ECRECOVER_BASE {
             return Err(PrecompileError::OutOfGas);

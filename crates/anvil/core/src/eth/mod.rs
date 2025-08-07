@@ -323,8 +323,8 @@ pub enum EthRequest {
     AutoImpersonateAccount(bool),
 
     /// Registers a signature/address pair for faking `ecrecover` results
-    #[serde(rename = "anvil_recoverSignature", with = "sequence")]
-    RecoverSignature(Bytes, Address),
+    #[serde(rename = "anvil_impersonateSignature", with = "sequence")]
+    ImpersonateSignature(Bytes, Address),
 
     /// Returns true if automatic mining is enabled, and false.
     #[serde(rename = "anvil_getAutomine", alias = "hardhat_getAutomine", with = "empty_params")]

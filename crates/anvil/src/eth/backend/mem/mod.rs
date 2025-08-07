@@ -3135,8 +3135,8 @@ impl Backend {
         Ok(None)
     }
 
-    /// Checks whether the given signature is overridden to resolve to the specified address.
-    pub async fn recover_signature(
+    /// Overrides the given signature to impersonate the specified address during ecrecover.
+    pub async fn impersonate_signature(
         &self,
         signature: Bytes,
         address: Address,
