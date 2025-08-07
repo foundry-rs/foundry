@@ -25,6 +25,7 @@ pub mod contracts;
 pub mod errors;
 pub mod evm;
 pub mod fs;
+pub mod iter;
 mod preprocessor;
 pub mod provider;
 pub mod reports;
