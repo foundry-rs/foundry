@@ -97,12 +97,6 @@ pub struct CheatsState {
     pub signature_overrides: HashMap<Bytes, Address>,
 }
 
-/// A custom ecrecover precompile that supports cheat-based signature overrides.
-#[derive(Clone, Debug)]
-pub struct CheatEcrecover {
-    cheats: Arc<CheatsManager>,
-}
-
 impl CheatEcrecover {
     pub fn new(cheats: Arc<CheatsManager>) -> Self {
         Self { cheats }
@@ -121,10 +115,6 @@ impl Precompile for CheatEcrecover {
         }
         let padded = right_pad::<128>(input.data);
         let v = padded[63];
-        if !(padded[32..63].iter().all(|&b| b == 0) && (v == 27 || v == 28)) {
-            return Ok(PrecompileOutput::new(ECRECOVER_BASE, Bytes::new()));
-        }
-
         let mut sig_bytes = [0u8; 65];
         sig_bytes[..64].copy_from_slice(&padded[64..128]);
         sig_bytes[64] = v;
@@ -140,4 +130,10 @@ impl Precompile for CheatEcrecover {
     fn is_pure(&self) -> bool {
         false
     }
+}
+
+/// A custom ecrecover precompile that supports cheat-based signature overrides.
+#[derive(Clone, Debug)]
+pub struct CheatEcrecover {
+    cheats: Arc<CheatsManager>,
 }

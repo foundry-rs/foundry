@@ -160,8 +160,7 @@ async fn test_anvil_recover_signature() {
     let contract_address = receipt.contract_address().unwrap();
     let contract = TestRecover::new(contract_address, &provider);
 
-    let mut sig = alloy_primitives::hex::decode("11".repeat(65)).unwrap();
-    sig[64] = 27;
+    let sig = alloy_primitives::hex::decode("11".repeat(65)).unwrap();
     let r = B256::from_slice(&sig[0..32]);
     let s = B256::from_slice(&sig[32..64]);
     let v = sig[64];
