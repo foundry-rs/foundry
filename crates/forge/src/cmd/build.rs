@@ -118,13 +118,13 @@ impl BuildArgs {
 
         // Only run the `SolidityLinter` if there are no compilation errors
         if !output.output().errors.iter().any(|e| e.is_error()) {
-            self.lint(&project, &config).map_err(|err| eyre!("Lint failed: {err}"))?;
+            self.lint(&project, &config, &self.paths).map_err(|err| eyre!("Lint failed: {err}"))?;
         }
 
         Ok(output)
     }
 
-    fn lint(&self, project: &Project, config: &Config) -> Result<()> {
+    fn lint(&self, project: &Project, config: &Config, files: &Option<Vec<PathBuf>>) -> Result<()> {
         let format_json = shell::is_json();
         if project.compiler.solc.is_some() && !shell::is_quiet() {
             let linter = SolidityLinter::new(config.project_paths())
@@ -160,8 +160,17 @@ impl BuildArgs {
                 .project_paths::<SolcLanguage>()
                 .input_files_iter()
                 .filter(|p| {
-                    skip.is_match(p)
-                        && !(ignored.contains(p) || ignored.contains(&curr_dir.join(p)))
+                    // Lint only specified build files, if any.
+                    if let Some(files) = files {
+                        return files.iter().any(|file| &curr_dir.join(file) == p);
+                    }
+                    let include = if ignored.is_empty() {
+                        // Default to source contracts only if lint ignore not configured.
+                        p.starts_with(&config.src)
+                    } else {
+                        !(ignored.contains(p) || ignored.contains(&curr_dir.join(p)))
+                    };
+                    skip.is_match(p) && include
                 })
                 .collect::<Vec<_>>();
 
