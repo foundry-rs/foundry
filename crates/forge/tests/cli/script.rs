@@ -3168,16 +3168,16 @@ contract CounterScript is Script {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Traces:
-  [462955] → new CounterScript@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
+  [..] → new CounterScript@[..]
     └─ ← [Return] 2200 bytes of code
-  [121] CounterScript::setUp()
+  [..] CounterScript::setUp()
     └─ ← [Stop]
-  [141727] CounterScript::run()
+  [..] CounterScript::run()
     ├─ [0] VM::createSelectFork("<rpc url>")
     │   └─ ← [Return] 1
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return]
-    ├─ [96345] → new Counter@0xB6888174e4BD6f052115c0428524da1DA8B6bE00
+    ├─ [..] → new Counter@[..]
     │   └─ ← [Return] 481 bytes of code
     ├─ [0] VM::stopBroadcast()
     │   └─ ← [Return]
@@ -3185,9 +3185,9 @@ Traces:
     │   └─ ← [Return] 2
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return]
-    └─ ← [Revert] call to non-contract address 0xB6888174e4BD6f052115c0428524da1DA8B6bE00
+    └─ ← [Revert] call to non-contract address [..]
 "#]])
     .stderr_eq(str![[r#"
-Error: script failed: call to non-contract address 0xB6888174e4BD6f052115c0428524da1DA8B6bE00
+Error: script failed: call to non-contract address [..]
 "#]]);
 });
