@@ -1,7 +1,7 @@
 use super::state::EvmFuzzState;
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{Address, B256, I256, U256};
-use proptest::prelude::*;
+use proptest::{prelude::*, test_runner::TestRunner};
 use rand::{SeedableRng, rngs::StdRng};
 
 /// The max length of arrays we fuzz for is 256.
@@ -101,6 +101,65 @@ fn fuzz_param_inner(
                 .boxed()
         }
         _ => panic!("unsupported fuzz param type: {param}"),
+    }
+}
+
+/// Mutates the current value of a given a parameter type and value.
+/// TODO: add more mutations, see https://github.com/fuzzland/ityfuzz/blob/master/src/mutation_utils.rs#L449-L452
+/// for static args,
+pub fn mutate_param_value(
+    param: &DynSolType,
+    value: DynSolValue,
+    test_runner: &mut TestRunner,
+    state: &EvmFuzzState,
+) -> DynSolValue {
+    let new_value = |param: &DynSolType, test_runner: &mut TestRunner| {
+        fuzz_param_from_state(param, state)
+            .new_tree(test_runner)
+            .expect("Could not generate case")
+            .current()
+    };
+
+    match value {
+        // flip boolean value
+        DynSolValue::Bool(val) => DynSolValue::Bool(!val),
+        // Uint: increment, decrement or generate new value from state.
+        DynSolValue::Uint(val, size) => match test_runner.rng().random_range(0..=2) {
+            0 => DynSolValue::Uint(val.saturating_add(U256::ONE), size),
+            1 => DynSolValue::Uint(val.saturating_sub(U256::ONE), size),
+            _ => new_value(param, test_runner),
+        },
+        // Int: increment, decrement or generate new value from state.
+        DynSolValue::Int(val, size) => match test_runner.rng().random_range(0..=2) {
+            0 => DynSolValue::Int(val.saturating_add(I256::ONE), size),
+            1 => DynSolValue::Int(val.saturating_sub(I256::ONE), size),
+            _ => new_value(param, test_runner),
+        },
+        DynSolValue::Array(mut values) => {
+            if values.is_empty() {
+                return new_value(param, test_runner);
+            }
+
+            let DynSolType::Array(param_type) = param else { return new_value(param, test_runner) };
+
+            match test_runner.rng().random_range(0..=2) {
+                // Decrease array size by removing a random element.
+                0 => {
+                    values.remove(test_runner.rng().random_range(0..values.len()));
+                }
+                // Increase array size.
+                1 => values.push(new_value(param_type, test_runner)),
+                // Mutate array element.
+                _ => {
+                    let id_to_mutate = test_runner.rng().random_range(0..values.len());
+                    let val = values.get(id_to_mutate).unwrap();
+                    let new_value = mutate_param_value(param_type, val.clone(), test_runner, state);
+                    values[id_to_mutate] = new_value;
+                }
+            };
+            DynSolValue::Array(values)
+        }
+        _ => new_value(param, test_runner),
     }
 }
 

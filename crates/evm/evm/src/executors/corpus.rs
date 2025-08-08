@@ -7,7 +7,7 @@ use foundry_config::FuzzCorpusConfig;
 use foundry_evm_fuzz::{
     BasicTxDetails,
     invariant::FuzzRunIdentifiedContracts,
-    strategies::{EvmFuzzState, fuzz_param_from_state},
+    strategies::{EvmFuzzState, mutate_param_value},
 };
 use proptest::{
     prelude::{Just, Rng, Strategy},
@@ -608,31 +608,33 @@ impl CorpusManager {
         test_runner: &mut TestRunner,
         fuzz_state: &EvmFuzzState,
     ) -> eyre::Result<()> {
-        let rng = test_runner.rng();
-        let mut arg_mutation_rounds = rng.random_range(0..=function.inputs.len()).max(1);
+        // let rng = test_runner.rng();
+        let mut arg_mutation_rounds =
+            test_runner.rng().random_range(0..=function.inputs.len()).max(1);
         let round_arg_idx: Vec<usize> = if function.inputs.len() <= 1 {
             vec![0]
         } else {
-            (0..arg_mutation_rounds).map(|_| rng.random_range(0..function.inputs.len())).collect()
+            (0..arg_mutation_rounds)
+                .map(|_| test_runner.rng().random_range(0..function.inputs.len()))
+                .collect()
         };
         let mut prev_inputs = function
             .abi_decode_input(&tx.call_details.calldata[4..])
             .map_err(|err| eyre!("failed to load previous inputs: {err}"))?;
 
-        // For now, only new inputs are generated, no existing inputs are
-        // mutated.
-        let mut gen_input = |input: &alloy_json_abi::Param| {
-            fuzz_param_from_state(&input.selector_type().parse().unwrap(), fuzz_state)
-                .new_tree(test_runner)
-                .expect("Could not generate case")
-                .current()
-        };
-
         while arg_mutation_rounds > 0 {
             let idx = round_arg_idx[arg_mutation_rounds - 1];
-            let input = &function.inputs.get(idx).expect("Could not get input to mutate");
-            let new_input = gen_input(input);
-            prev_inputs[idx] = new_input;
+            prev_inputs[idx] = mutate_param_value(
+                &function
+                    .inputs
+                    .get(idx)
+                    .expect("Could not get input to mutate")
+                    .selector_type()
+                    .parse()?,
+                prev_inputs[idx].clone(),
+                test_runner,
+                fuzz_state,
+            );
             arg_mutation_rounds -= 1;
         }
 
