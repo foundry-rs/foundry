@@ -3101,3 +3101,98 @@ contract FactoryScript is Script {
         .expect("no Counter contract");
     assert_eq!(counter_contract.contract_name, Some("Counter".to_string()));
 });
+
+// <https://github.com/foundry-rs/foundry/issues/11213>
+forgetest_async!(call_to_non_contract_address_does_not_panic, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+
+    let endpoint = rpc::next_http_archive_rpc_url();
+
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+    function increment() public {
+        number++;
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    let deploy_script = prj
+        .add_script(
+            "Counter.s.sol",
+            &r#"
+import "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+contract CounterScript is Script {
+    Counter public counter;
+    function setUp() public {}
+    function run() public {
+        vm.createSelectFork("<url>");
+        vm.startBroadcast();
+        counter = new Counter();
+        vm.stopBroadcast();
+        vm.createSelectFork("<url>");
+        vm.startBroadcast();
+        counter.increment();
+        vm.stopBroadcast();
+    }
+}
+   "#
+            .replace("<url>", &endpoint),
+        )
+        .unwrap();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.args([
+        "script",
+        &deploy_script.display().to_string(),
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--slow",
+        "--broadcast",
+        "--private-key",
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_failure()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Traces:
+  [..] → new CounterScript@[..]
+    └─ ← [Return] 2200 bytes of code
+
+  [..] CounterScript::setUp()
+    └─ ← [Stop]
+
+  [..] CounterScript::run()
+    ├─ [..] VM::createSelectFork("<rpc url>")
+    │   └─ ← [Return] 1
+    ├─ [..] VM::startBroadcast()
+    │   └─ ← [Return]
+    ├─ [..] → new Counter@[..]
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [..] VM::stopBroadcast()
+    │   └─ ← [Return]
+    ├─ [..] VM::createSelectFork("<rpc url>")
+    │   └─ ← [Return] 2
+    ├─ [..] VM::startBroadcast()
+    │   └─ ← [Return]
+    └─ ← [Revert] call to non-contract address [..]
+
+
+
+"#]])
+    .stderr_eq(str![[r#"
+Error: script failed: call to non-contract address [..]
+"#]]);
+});
