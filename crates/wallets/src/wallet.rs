@@ -97,20 +97,27 @@ impl WalletOpts {
             utils::create_trezor_signer(self.raw.hd_path.as_deref(), self.raw.mnemonic_index)
                 .await?
         } else if self.aws {
-            let key_id = std::env::var("AWS_KMS_KEY_ID")
-                .map_err(|_| eyre::eyre!("AWS_KMS_KEY_ID environment variable is required for AWS signer"))?;
+            let key_id = std::env::var("AWS_KMS_KEY_ID").map_err(|_| {
+                eyre::eyre!("AWS_KMS_KEY_ID environment variable is required for AWS signer")
+            })?;
             WalletSigner::from_aws(key_id).await?
         } else if self.gcp {
-            let project_id = std::env::var("GCP_PROJECT_ID")
-                .map_err(|_| eyre::eyre!("GCP_PROJECT_ID environment variable is required for GCP signer"))?;
-            let location = std::env::var("GCP_LOCATION")
-                .map_err(|_| eyre::eyre!("GCP_LOCATION environment variable is required for GCP signer"))?;
-            let keyring = std::env::var("GCP_KEYRING")
-                .map_err(|_| eyre::eyre!("GCP_KEYRING environment variable is required for GCP signer"))?;
-            let key_name = std::env::var("GCP_KEY_NAME")
-                .map_err(|_| eyre::eyre!("GCP_KEY_NAME environment variable is required for GCP signer"))?;
+            let project_id = std::env::var("GCP_PROJECT_ID").map_err(|_| {
+                eyre::eyre!("GCP_PROJECT_ID environment variable is required for GCP signer")
+            })?;
+            let location = std::env::var("GCP_LOCATION").map_err(|_| {
+                eyre::eyre!("GCP_LOCATION environment variable is required for GCP signer")
+            })?;
+            let keyring = std::env::var("GCP_KEYRING").map_err(|_| {
+                eyre::eyre!("GCP_KEYRING environment variable is required for GCP signer")
+            })?;
+            let key_name = std::env::var("GCP_KEY_NAME").map_err(|_| {
+                eyre::eyre!("GCP_KEY_NAME environment variable is required for GCP signer")
+            })?;
             let key_version = std::env::var("GCP_KEY_VERSION")
-                .map_err(|_| eyre::eyre!("GCP_KEY_VERSION environment variable is required for GCP signer"))?
+                .map_err(|_| {
+                    eyre::eyre!("GCP_KEY_VERSION environment variable is required for GCP signer")
+                })?
                 .parse()
                 .map_err(|_| eyre::eyre!("GCP_KEY_VERSION must be a valid number"))?;
             WalletSigner::from_gcp(project_id, location, keyring, key_name, key_version).await?
