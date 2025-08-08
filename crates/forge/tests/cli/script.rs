@@ -3170,22 +3170,27 @@ Compiler run successful!
 Traces:
   [..] → new CounterScript@[..]
     └─ ← [Return] 2200 bytes of code
+
   [..] CounterScript::setUp()
     └─ ← [Stop]
+
   [..] CounterScript::run()
-    ├─ [0] VM::createSelectFork("<rpc url>")
+    ├─ [..] VM::createSelectFork("<rpc url>")
     │   └─ ← [Return] 1
-    ├─ [0] VM::startBroadcast()
+    ├─ [..] VM::startBroadcast()
     │   └─ ← [Return]
     ├─ [..] → new Counter@[..]
     │   └─ ← [Return] 481 bytes of code
-    ├─ [0] VM::stopBroadcast()
+    ├─ [..] VM::stopBroadcast()
     │   └─ ← [Return]
-    ├─ [0] VM::createSelectFork("<rpc url>")
+    ├─ [..] VM::createSelectFork("<rpc url>")
     │   └─ ← [Return] 2
-    ├─ [0] VM::startBroadcast()
+    ├─ [..] VM::startBroadcast()
     │   └─ ← [Return]
     └─ ← [Revert] call to non-contract address [..]
+
+
+
 "#]])
     .stderr_eq(str![[r#"
 Error: script failed: call to non-contract address [..]
