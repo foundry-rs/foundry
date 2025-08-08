@@ -30,6 +30,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
 };
+use itertools::Either;
 use regex::Regex;
 use revm::context::TransactionType;
 use std::{str::FromStr, sync::LazyLock};
@@ -309,6 +310,12 @@ impl CallArgs {
                 if env_tx.tx_type == TransactionType::Legacy as u8 {
                     env_tx.tx_type = TransactionType::Eip2930 as u8;
                 }
+            }
+
+            if let Some(auth) = tx.inner.authorization_list {
+                env_tx.authorization_list = auth.into_iter().map(Either::Left).collect();
+
+                env_tx.tx_type = TransactionType::Eip7702 as u8;
             }
 
             let trace = match tx_kind {

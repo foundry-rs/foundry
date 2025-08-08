@@ -105,8 +105,8 @@ fn fuzz_param_inner(
 }
 
 /// Mutates the current value of a given a parameter type and value.
-/// TODO: add more mutations, see https://github.com/fuzzland/ityfuzz/blob/master/src/mutation_utils.rs#L449-L452
-/// for static args,
+/// TODO: add more mutations, see <https://github.com/fuzzland/ityfuzz/blob/master/src/mutation_utils.rs#L449-L452>
+/// for static args.
 pub fn mutate_param_value(
     param: &DynSolType,
     value: DynSolValue,
