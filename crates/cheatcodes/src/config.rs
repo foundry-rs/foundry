@@ -4,8 +4,8 @@ use alloy_primitives::{U256, map::AddressHashMap};
 use foundry_common::{ContractsByArtifact, fs::normalize_path};
 use foundry_compilers::{ArtifactId, ProjectPathsConfig, utils::canonicalize};
 use foundry_config::{
-    Config, FsPermissions, ResolvedRpcEndpoint, ResolvedRpcEndpoints, RpcEndpoint, RpcEndpointUrl,
-    cache::StorageCachingConfig, fs_permissions::FsAccessKind,
+    Config, ForkConfig, FsPermissions, ResolvedRpcEndpoint, ResolvedRpcEndpoints, RpcEndpoint,
+    RpcEndpointUrl, cache::StorageCachingConfig, fs_permissions::FsAccessKind,
 };
 use foundry_evm_core::opts::EvmOpts;
 use std::{
@@ -63,6 +63,8 @@ pub struct CheatsConfig {
     pub chains: HashMap<String, ChainData>,
     /// Mapping of chain IDs to their aliases
     pub chain_id_to_alias: HashMap<u64, String>,
+    /// Fork configuration
+    pub forks: HashMap<String, ForkConfig>,
 }
 
 /// Chain data for getChain cheatcodes
@@ -114,6 +116,7 @@ impl CheatsConfig {
             internal_expect_revert: config.allow_internal_expect_revert,
             chains: HashMap::new(),
             chain_id_to_alias: HashMap::new(),
+            forks: config.forks.clone(),
         }
     }
 
@@ -318,6 +321,7 @@ impl Default for CheatsConfig {
             internal_expect_revert: false,
             chains: HashMap::new(),
             chain_id_to_alias: HashMap::new(),
+            forks: Default::default(),
         }
     }
 }
