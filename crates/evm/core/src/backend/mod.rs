@@ -1833,7 +1833,9 @@ impl BackendInner {
             journal_inner.set_spec_id(self.spec_id);
             journal_inner
         };
-        journal.precompiles.extend(self.precompiles().addresses().copied());
+        journal
+            .warm_addresses
+            .set_precompile_addresses(self.precompiles().addresses().copied().collect());
         journal
     }
 }

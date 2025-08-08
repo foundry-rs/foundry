@@ -89,10 +89,9 @@ impl LineCoverageCollector {
 /// tx) then the hash is calculated from the bytecode.
 #[inline]
 fn get_or_insert_contract_hash(interpreter: &mut Interpreter) -> B256 {
-    // TODO: use just `get_or_calculate_hash`
     interpreter
         .bytecode
         .hash()
         .filter(|h| !h.is_zero())
-        .unwrap_or_else(|| interpreter.bytecode.regenerate_hash())
+        .unwrap_or_else(|| interpreter.bytecode.get_or_calculate_hash())
 }
