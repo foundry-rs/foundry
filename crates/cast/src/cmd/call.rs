@@ -311,8 +311,7 @@ impl CallArgs {
             }
 
             if let Some(auth) = tx.inner.authorization_list {
-                env_tx.authorization_list =
-                    auth.into_iter().map(|auth| Either::Left(auth)).collect();
+                env_tx.authorization_list = auth.into_iter().map(Either::Left).collect();
 
                 env_tx.tx_type = TransactionType::Eip7702 as u8;
             }
