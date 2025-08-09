@@ -184,7 +184,9 @@ impl ChiselRunner {
                 cheatcodes.fs_commit = !cheatcodes.fs_commit;
             }
 
-            res = self.executor.call_raw(from, to, calldata.clone(), value)?;
+            if !commit {
+                res = self.executor.call_raw(from, to, calldata.clone(), value)?;
+            }
         }
 
         if commit {
