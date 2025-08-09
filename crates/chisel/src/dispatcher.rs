@@ -352,7 +352,7 @@ impl ChiselDispatcher {
                 }
                 if args.len() != 1 {
                     return DispatchResult::CommandFailed(Self::make_error(
-                        "Must supply a session ID as the argument.",
+                        "Must supply a URL or RPC alias as the argument.",
                     ));
                 }
                 let arg = *args.first().unwrap();
