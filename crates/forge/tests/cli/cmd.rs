@@ -3589,6 +3589,66 @@ forgetest!(inspect_custom_counter_method_identifiers, |prj, cmd| {
 "#]]);
 });
 
+const CUSTOM_COUNTER_HUGE_METHOD_IDENTIFIERS: &str = r#"
+contract Counter {
+    struct BigStruct {
+        uint256 a;
+        uint256 b;
+        uint256 c;
+        uint256 d;
+        uint256 e;
+        uint256 f;
+    }
+
+    struct NestedBigStruct {
+        BigStruct a;
+        BigStruct b;
+        BigStruct c;
+    }
+
+    function hugeIdentifier(NestedBigStruct[] calldata _bigStructs, NestedBigStruct calldata _bigStruct) external {}
+}
+"#;
+
+forgetest!(inspect_custom_counter_very_huge_method_identifiers_unwrapped, |prj, cmd| {
+    prj.add_source("Counter.sol", CUSTOM_COUNTER_HUGE_METHOD_IDENTIFIERS).unwrap();
+
+    cmd.args(["inspect", "Counter", "method-identifiers"]).assert_success().stdout_eq(str![[r#"
+
+╭-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------╮
+| Method                                                                                                                                                                                                                                                                                                                            | Identifier |
++================================================================================================================================================================================================================================================================================================================================================+
+| hugeIdentifier(((uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint256,uint256))[],((uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256,uint256,uint256))) | f38dafbb   |
+╰-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------╯
+
+
+"#]]);
+});
+
+forgetest!(inspect_custom_counter_very_huge_method_identifiers_wrapped, |prj, cmd| {
+    prj.add_source("Counter.sol", CUSTOM_COUNTER_HUGE_METHOD_IDENTIFIERS).unwrap();
+
+    // Force a specific terminal width to test wrapping
+    cmd.args(["inspect", "--wrap", "Counter", "method-identifiers"])
+        .assert_with_terminal_width(80)
+        .success()
+        .stdout_eq(str![[r#"
+
+╭-----------------------------------------------------------------+------------╮
+| Method                                                          | Identifier |
++==============================================================================+
+| hugeIdentifier(((uint256,uint256,uint256,uint256,uint256,uint25 | f38dafbb   |
+| 6),(uint256,uint256,uint256,uint256,uint256,uint256),(uint256,u |            |
+| int256,uint256,uint256,uint256,uint256))[],((uint256,uint256,ui |            |
+| nt256,uint256,uint256,uint256),(uint256,uint256,uint256,uint256 |            |
+| ,uint256,uint256),(uint256,uint256,uint256,uint256,uint256,uint |            |
+| 256)))                                                          |            |
+╰-----------------------------------------------------------------+------------╯
+
+
+"#]]);
+});
+
 forgetest_init!(can_inspect_standard_json, |prj, cmd| {
     cmd.args(["inspect", "src/Counter.sol:Counter", "standard-json"]).assert_success().stdout_eq(str![[r#"
 {

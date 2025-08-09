@@ -948,6 +948,18 @@ impl TestCommand {
         assert
     }
 
+    /// Runs the command with specific terminal width, returning a [`snapbox`] object to assert the
+    /// command output.
+    #[track_caller]
+    pub fn assert_with_terminal_width(&mut self, width: u16) -> OutputAssert {
+        let assert =
+            OutputAssert::new(self.try_execute_via_tty_with_size(Some((width, 24))).unwrap());
+        if self.redact_output {
+            return assert.with_assert(test_assert());
+        }
+        assert
+    }
+
     /// Runs the command and asserts that it resulted in success.
     #[track_caller]
     pub fn assert_success(&mut self) -> OutputAssert {
@@ -1017,13 +1029,60 @@ impl TestCommand {
 
     #[track_caller]
     pub fn try_execute(&mut self) -> std::io::Result<Output> {
-        println!("executing {:?}", self.cmd);
         let mut child =
             self.cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::piped()).spawn()?;
         if let Some(fun) = self.stdin_fun.take() {
             fun(child.stdin.take().unwrap());
         }
         child.wait_with_output()
+    }
+
+    #[track_caller]
+    fn try_execute_via_tty_with_size(
+        &mut self,
+        size: Option<(u16, u16)>,
+    ) -> std::io::Result<Output> {
+        // Get the program and args from the current command
+        let program = self.cmd.get_program().to_string_lossy().to_string();
+        let args: Vec<String> =
+            self.cmd.get_args().map(|arg| arg.to_string_lossy().to_string()).collect();
+
+        // Build the command string
+        let mut cmd_str = program;
+        for arg in &args {
+            cmd_str.push(' ');
+            // Simple shell escaping - wrap in single quotes and escape any single quotes
+            if arg.contains(' ') || arg.contains('"') || arg.contains('\'') {
+                cmd_str.push('\'');
+                cmd_str.push_str(&arg.replace("'", "'\\'\''"));
+                cmd_str.push('\'');
+            } else {
+                cmd_str.push_str(arg);
+            }
+        }
+
+        // If size is specified, wrap the command with stty to set terminal size
+        if let Some((cols, rows)) = size {
+            cmd_str = format!("stty cols {cols} rows {rows}; {cmd_str}");
+        }
+
+        // Use script command to run in a pseudo-terminal
+        let mut script_cmd = Command::new("script");
+        script_cmd
+            .arg("-q") // quiet mode, no script started/done messages
+            .arg("-c") // command to run
+            .arg(&cmd_str)
+            .arg("/dev/null") // don't save typescript file
+            .current_dir(self.cmd.get_current_dir().unwrap_or(Path::new(".")));
+
+        // Copy environment variables
+        for (key, val) in self.cmd.get_envs() {
+            if let (Some(key), Some(val)) = (key.to_str(), val) {
+                script_cmd.env(key, val);
+            }
+        }
+
+        script_cmd.output()
     }
 }
 
