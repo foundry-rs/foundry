@@ -9,7 +9,7 @@ use foundry_compilers::{
     ArtifactId, Project, ProjectCompileOutput,
     artifacts::{
         BytecodeObject, CompactBytecode, CompactContractBytecode, CompactDeployedBytecode,
-        ConfigurableContractArtifact, ContractBytecodeSome, Offsets,
+        ConfigurableContractArtifact, ContractBytecodeSome, Offsets, StorageLayout,
     },
     utils::canonicalized,
 };
@@ -75,6 +75,8 @@ pub struct ContractData {
     pub bytecode: Option<BytecodeData>,
     /// Contract runtime code.
     pub deployed_bytecode: Option<BytecodeData>,
+    /// Contract storage layout, if available.
+    pub storage_layout: Option<Arc<StorageLayout>>,
 }
 
 impl ContractData {
@@ -120,6 +122,29 @@ impl ContractsByArtifact {
                         abi: abi?,
                         bytecode: bytecode.map(Into::into),
                         deployed_bytecode: deployed_bytecode.map(Into::into),
+                        storage_layout: None,
+                    },
+                ))
+            })
+            .collect();
+        Self(Arc::new(map))
+    }
+
+    /// Creates a new instance from project compile output, preserving storage layouts.
+    pub fn with_storage_layout(output: ProjectCompileOutput) -> Self {
+        let map = output
+            .into_artifacts()
+            .filter_map(|(id, artifact)| {
+                let name = id.name.clone();
+                let abi = artifact.abi?;
+                Some((
+                    id,
+                    ContractData {
+                        name,
+                        abi,
+                        bytecode: artifact.bytecode.map(Into::into),
+                        deployed_bytecode: artifact.deployed_bytecode.map(Into::into),
+                        storage_layout: artifact.storage_layout.map(Arc::new),
                     },
                 ))
             })
