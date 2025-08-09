@@ -280,6 +280,7 @@ impl NodeArgs {
             .with_optimism(self.evm.optimism)
             .with_odyssey(self.evm.odyssey)
             .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
+            .with_disable_pool_balance_checks(self.evm.disable_pool_balance_checks)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
             .with_memory_limit(self.evm.memory_limit)
             .with_cache_path(self.cache_path))
@@ -591,6 +592,10 @@ pub struct AnvilEvmArgs {
     /// Disable the default create2 deployer
     #[arg(long, visible_alias = "no-create2")]
     pub disable_default_create2_deployer: bool,
+
+    /// Disable pool balance checks
+    #[arg(long)]
+    pub disable_pool_balance_checks: bool,
 
     /// The memory limit per EVM execution in bytes.
     #[arg(long)]
