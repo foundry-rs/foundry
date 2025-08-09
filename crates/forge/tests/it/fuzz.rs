@@ -150,9 +150,9 @@ async fn test_persist_fuzz_failure() {
         assert_eq!(initial_calldata, new_calldata, "run {i}");
     }
 
-    // write new failure in different file
+    // write new failure in different dir.
     let new_calldata = match run_fail!(|config| {
-        config.fuzz.failure_persist_file = Some("failure1".to_string());
+        config.fuzz.failure_persist_dir = Some(tempfile::tempdir().unwrap().keep())
     }) {
         Some(CounterExample::Single(counterexample)) => counterexample.calldata,
         _ => Bytes::new(),

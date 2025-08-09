@@ -2,7 +2,7 @@
 
 use crate::{
     MultiContractRunner, TestFilter,
-    fuzz::{BaseCounterExample, invariant::BasicTxDetails},
+    fuzz::BaseCounterExample,
     multi_runner::{TestContract, TestRunnerConfig, is_matching_test},
     progress::{TestsProgress, start_fuzz_progress},
     result::{SuiteResult, TestResult, TestSetup},
@@ -13,7 +13,7 @@ use alloy_primitives::{Address, Bytes, U256, address, map::HashMap};
 use eyre::Result;
 use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
 use foundry_compilers::utils::canonicalized;
-use foundry_config::{Config, InvariantConfig};
+use foundry_config::Config;
 use foundry_evm::{
     constants::CALLER,
     decode::RevertDecoder,
@@ -25,15 +25,13 @@ use foundry_evm::{
         },
     },
     fuzz::{
-        CounterExample, FuzzFixtures, fixture_name,
-        invariant::{CallDetails, InvariantContract},
+        BasicTxDetails, CallDetails, CounterExample, FuzzFixtures, fixture_name,
+        invariant::InvariantContract,
     },
     traces::{TraceKind, TraceMode, load_contracts},
 };
 use itertools::Itertools;
-use proptest::test_runner::{
-    FailurePersistence, FileFailurePersistence, RngAlgorithm, TestError, TestRng, TestRunner,
-};
+use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -708,9 +706,9 @@ impl<'a> FunctionRunner<'a> {
         let mut executor = self.clone_executor();
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
         // metrics (useful for benchmarking the fuzzer).
-        executor.inspector_mut().collect_edge_coverage(
-            invariant_config.corpus_dir.is_some() || invariant_config.show_edge_coverage,
-        );
+        executor
+            .inspector_mut()
+            .collect_edge_coverage(invariant_config.corpus.collect_edge_coverage());
 
         let mut evm = InvariantExecutor::new(
             executor,
@@ -726,8 +724,8 @@ impl<'a> FunctionRunner<'a> {
             abi: &self.cr.contract.abi,
         };
 
-        let (failure_dir, failure_file) = invariant_failure_paths(
-            invariant_config,
+        let (failure_dir, failure_file) = test_failure_paths(
+            invariant_config.failure_persist_dir.clone().unwrap(),
             self.cr.name,
             &invariant_contract.invariant_function.name,
         );
@@ -929,17 +927,48 @@ impl<'a> FunctionRunner<'a> {
             fuzz_config.runs,
         );
 
+        let (failure_dir, failure_file) = test_failure_paths(
+            fuzz_config.failure_persist_dir.clone().unwrap(),
+            self.cr.name,
+            &func.name,
+        );
+
+        let mut executor = self.executor.into_owned();
+        // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
+        // metrics (useful for benchmarking the fuzzer).
+        executor.inspector_mut().collect_edge_coverage(fuzz_config.corpus.collect_edge_coverage());
+        // Load persisted counterexample, if any.
+        let persisted_failure =
+            foundry_common::fs::read_json_file::<BaseCounterExample>(failure_file.as_path()).ok();
         // Run fuzz test.
-        let fuzzed_executor =
-            FuzzedExecutor::new(self.executor.into_owned(), runner, self.tcfg.sender, fuzz_config);
-        let result = fuzzed_executor.fuzz(
+        let mut fuzzed_executor =
+            FuzzedExecutor::new(executor, runner, self.tcfg.sender, fuzz_config, persisted_failure);
+        let result = match fuzzed_executor.fuzz(
             func,
             &self.setup.fuzz_fixtures,
             &self.setup.deployed_libs,
             self.address,
             &self.cr.mcr.revert_decoder,
             progress.as_ref(),
-        );
+        ) {
+            Ok(x) => x,
+            Err(e) => {
+                self.result.fuzz_setup_fail(e);
+                return self.result;
+            }
+        };
+
+        // Record counterexample.
+        if let Some(CounterExample::Single(counterexample)) = &result.counterexample {
+            if let Err(err) = foundry_common::fs::create_dir_all(failure_dir) {
+                error!(%err, "Failed to create fuzz failure dir");
+            } else if let Err(err) =
+                foundry_common::fs::write_json_file(failure_file.as_path(), counterexample)
+            {
+                error!(%err, "Failed to record call sequence");
+            }
+        }
+
         self.result.fuzz_result(result);
         self.result
     }
@@ -995,25 +1024,12 @@ impl<'a> FunctionRunner<'a> {
 
     fn fuzz_runner(&self) -> TestRunner {
         let config = &self.config.fuzz;
-        let failure_persist_path = config
-            .failure_persist_dir
-            .as_ref()
-            .unwrap()
-            .join(config.failure_persist_file.as_ref().unwrap())
-            .into_os_string()
-            .into_string()
-            .unwrap();
-        fuzzer_with_cases(
-            config.seed,
-            config.runs,
-            config.max_test_rejects,
-            Some(Box::new(FileFailurePersistence::Direct(failure_persist_path.leak()))),
-        )
+        fuzzer_with_cases(config.seed, config.runs, config.max_test_rejects)
     }
 
     fn invariant_runner(&self) -> TestRunner {
         let config = &self.config.invariant;
-        fuzzer_with_cases(self.config.fuzz.seed, config.runs, config.max_assume_rejects, None)
+        fuzzer_with_cases(self.config.fuzz.seed, config.runs, config.max_assume_rejects)
     }
 
     fn clone_executor(&self) -> Executor {
@@ -1021,14 +1037,8 @@ impl<'a> FunctionRunner<'a> {
     }
 }
 
-fn fuzzer_with_cases(
-    seed: Option<U256>,
-    cases: u32,
-    max_global_rejects: u32,
-    file_failure_persistence: Option<Box<dyn FailurePersistence>>,
-) -> TestRunner {
+fn fuzzer_with_cases(seed: Option<U256>, cases: u32, max_global_rejects: u32) -> TestRunner {
     let config = proptest::test_runner::Config {
-        failure_persistence: file_failure_persistence,
         cases,
         max_global_rejects,
         // Disable proptest shrink: for fuzz tests we provide single counterexample,
@@ -1077,18 +1087,13 @@ fn persisted_call_sequence(path: &Path, bytecode: &Bytes) -> Option<Vec<BaseCoun
     )
 }
 
-/// Helper functions to return canonicalized invariant failure paths.
-fn invariant_failure_paths(
-    config: &InvariantConfig,
+/// Helper functions to return canonicalized test failure paths.
+fn test_failure_paths(
+    persist_dir: PathBuf,
     contract_name: &str,
     invariant_name: &str,
 ) -> (PathBuf, PathBuf) {
-    let dir = config
-        .failure_persist_dir
-        .clone()
-        .unwrap()
-        .join("failures")
-        .join(contract_name.split(':').next_back().unwrap());
+    let dir = persist_dir.join("failures").join(contract_name.split(':').next_back().unwrap());
     let dir = canonicalized(dir);
     let file = canonicalized(dir.join(invariant_name));
     (dir, file)

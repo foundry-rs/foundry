@@ -6,7 +6,7 @@ use crate::executors::{
 };
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_evm_core::constants::MAGIC_ASSUME;
-use foundry_evm_fuzz::invariant::BasicTxDetails;
+use foundry_evm_fuzz::BasicTxDetails;
 use indicatif::ProgressBar;
 use proptest::bits::{BitSetLike, VarBitSet};
 use std::cmp::min;
