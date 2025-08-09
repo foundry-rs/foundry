@@ -1038,51 +1038,66 @@ impl TestCommand {
     }
 
     #[track_caller]
-    fn try_execute_via_tty_with_size(
+    pub fn try_execute_via_tty_with_size(
         &mut self,
         size: Option<(u16, u16)>,
     ) -> std::io::Result<Output> {
-        // Get the program and args from the current command
-        let program = self.cmd.get_program().to_string_lossy().to_string();
-        let args: Vec<String> =
-            self.cmd.get_args().map(|arg| arg.to_string_lossy().to_string()).collect();
+        use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
-        // Build the command string
-        let mut cmd_str = program;
-        for arg in &args {
-            cmd_str.push(' ');
-            // Simple shell escaping - wrap in single quotes and escape any single quotes
-            if arg.contains(' ') || arg.contains('"') || arg.contains('\'') {
-                cmd_str.push('\'');
-                cmd_str.push_str(&arg.replace("'", "'\\'\''"));
-                cmd_str.push('\'');
-            } else {
-                cmd_str.push_str(arg);
-            }
+        // Set default size or use provided size
+        let (cols, rows) = size.unwrap_or((120, 24));
+
+        // Create a new pty with specified size
+        let pty_system = native_pty_system();
+        let pty_size = PtySize { rows, cols, pixel_width: 0, pixel_height: 0 };
+
+        let pair = pty_system.openpty(pty_size).map_err(std::io::Error::other)?;
+
+        // Build the command
+        let mut cmd = CommandBuilder::new(self.cmd.get_program());
+        for arg in self.cmd.get_args() {
+            cmd.arg(arg);
         }
 
-        // If size is specified, wrap the command with stty to set terminal size
-        if let Some((cols, rows)) = size {
-            cmd_str = format!("stty cols {cols} rows {rows}; {cmd_str}");
+        // Set current directory
+        if let Some(dir) = self.cmd.get_current_dir() {
+            cmd.cwd(dir);
         }
-
-        // Use script command to run in a pseudo-terminal
-        let mut script_cmd = Command::new("script");
-        script_cmd
-            .arg("-q") // quiet mode, no script started/done messages
-            .arg("-c") // command to run
-            .arg(&cmd_str)
-            .arg("/dev/null") // don't save typescript file
-            .current_dir(self.cmd.get_current_dir().unwrap_or(Path::new(".")));
 
         // Copy environment variables
         for (key, val) in self.cmd.get_envs() {
-            if let (Some(key), Some(val)) = (key.to_str(), val) {
-                script_cmd.env(key, val);
+            if let (Some(val), Some(key_str)) = (val, key.to_str()) {
+                cmd.env(key_str, val);
             }
         }
 
-        script_cmd.output()
+        // Spawn the command in the pty
+        let mut child = pair.slave.spawn_command(cmd).map_err(std::io::Error::other)?;
+
+        // Close the slave end
+        drop(pair.slave);
+
+        // Read output from the master end
+        let mut reader = pair.master.try_clone_reader().map_err(std::io::Error::other)?;
+
+        let mut output = Vec::new();
+        reader.read_to_end(&mut output)?;
+
+        // Wait for the child to finish
+        let exit_status = child.wait().map_err(std::io::Error::other)?;
+
+        // Construct the output
+        #[cfg(unix)]
+        let status =
+            std::os::unix::process::ExitStatusExt::from_raw(exit_status.exit_code() as i32);
+        #[cfg(windows)]
+        let status = std::process::ExitStatus::from_raw(exit_status.exit_code() as u32);
+
+        Ok(Output {
+            status,
+            stdout: output.clone(),
+            stderr: Vec::new(), // PTY combines stdout and stderr
+        })
     }
 }
 
