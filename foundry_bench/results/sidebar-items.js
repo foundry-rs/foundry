@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["format_benchmark_name","format_duration_seconds","generate_table_rows","get_benchmark_cell_content","get_rustc_version"],"struct":["BenchmarkResults","HyperfineOutput","HyperfineResult"]};

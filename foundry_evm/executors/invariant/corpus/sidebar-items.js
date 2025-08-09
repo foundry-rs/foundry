@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["FAVORABILITY_THRESHOLD","JSON_EXTENSION","METADATA_SUFFIX"],"enum":["MutationType"],"struct":["CorpusEntry","CorpusMetrics","TxCorpusManager"]};

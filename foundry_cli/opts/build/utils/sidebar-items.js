@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["solar_pcx_from_build_opts","solar_pcx_from_solc_project"]};

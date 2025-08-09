@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["is_screaming_snake_case"],"static":["SCREAMING_SNAKE_CASE_CONSTANT","SCREAMING_SNAKE_CASE_IMMUTABLE"]};
