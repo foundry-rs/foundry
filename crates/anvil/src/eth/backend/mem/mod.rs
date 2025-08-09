@@ -834,6 +834,11 @@ impl Backend {
         self.env.read().is_optimism
     }
 
+    /// Returns true if Celo features are active
+    pub fn is_celo(&self) -> bool {
+        self.env.read().is_celo
+    }
+
     /// Returns [`BlobParams`] corresponding to the current spec.
     pub fn blob_params(&self) -> BlobParams {
         let spec_id = self.env.read().evm_env.cfg_env.spec;
@@ -1265,6 +1270,7 @@ impl Backend {
             precompile_factory: self.precompile_factory.clone(),
             odyssey: self.odyssey,
             optimism: self.is_optimism(),
+            celo: self.is_celo(),
             blob_params: self.blob_params(),
         };
 
@@ -1352,6 +1358,7 @@ impl Backend {
                     odyssey: self.odyssey,
                     precompile_factory: self.precompile_factory.clone(),
                     optimism: self.is_optimism(),
+                    celo: self.is_celo(),
                     blob_params: self.blob_params(),
                 };
                 let executed_tx = executor.execute();
@@ -2715,6 +2722,7 @@ impl Backend {
             precompile_factory: self.precompile_factory.clone(),
             odyssey: self.odyssey,
             optimism: self.is_optimism(),
+            celo: self.is_celo(),
             blob_params: self.blob_params(),
         };
 

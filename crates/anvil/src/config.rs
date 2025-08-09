@@ -194,6 +194,8 @@ pub struct NodeConfig {
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
     /// Enable Odyssey features.
     pub odyssey: bool,
+    /// Enable Celo features.
+    pub celo: bool,
     /// Do not print log messages.
     pub silent: bool,
     /// The path where states are cached.
@@ -489,6 +491,7 @@ impl Default for NodeConfig {
             memory_limit: None,
             precompile_factory: None,
             odyssey: false,
+            celo: false,
             silent: false,
             cache_path: None,
         }
@@ -1007,6 +1010,17 @@ impl NodeConfig {
         self
     }
 
+    /// Sets whether to enable Celo support
+    #[must_use]
+    pub fn with_celo(mut self, celo: bool) -> Self {
+        self.celo = celo;
+        if celo {
+            // Celo requires Optimism support
+            self.enable_optimism = true;
+        }
+        self
+    }
+
     /// Makes the node silent to not emit anything on stdout
     #[must_use]
     pub fn silent(self) -> Self {
@@ -1061,6 +1075,7 @@ impl NodeConfig {
                 ..Default::default()
             },
             self.enable_optimism,
+            self.celo,
         );
 
         let fees = FeeManager::new(

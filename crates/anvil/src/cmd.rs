@@ -279,6 +279,7 @@ impl NodeArgs {
             .with_max_persisted_states(self.max_persisted_states)
             .with_optimism(self.evm.optimism)
             .with_odyssey(self.evm.odyssey)
+            .with_celo(self.evm.celo)
             .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
             .with_memory_limit(self.evm.memory_limit)
@@ -599,6 +600,10 @@ pub struct AnvilEvmArgs {
     /// Enable Odyssey features
     #[arg(long, alias = "alphanet")]
     pub odyssey: bool,
+
+    /// Run a Celo chain
+    #[arg(long)]
+    pub celo: bool,
 }
 
 /// Resolves an alias passed as fork-url to the matching url defined in the rpc_endpoints section
