@@ -42,10 +42,11 @@ pub fn create_mnemonic_signer(
     index: u32,
 ) -> Result<WalletSigner> {
     let mnemonic = if Path::new(mnemonic).is_file() {
-        fs::read_to_string(mnemonic)?.replace('\n', "")
+        fs::read_to_string(mnemonic)?
     } else {
         mnemonic.to_owned()
     };
+    let mnemonic = mnemonic.split_whitespace().collect::<Vec<_>>().join(" ");
 
     Ok(WalletSigner::from_mnemonic(&mnemonic, passphrase, hd_path, index)?)
 }
