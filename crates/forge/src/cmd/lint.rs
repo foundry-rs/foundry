@@ -59,7 +59,14 @@ impl LintArgs {
                 config
                     .project_paths::<SolcLanguage>()
                     .input_files_iter()
-                    .filter(|p| !(ignored.contains(p) || ignored.contains(&cwd.join(p))))
+                    .filter(|p| {
+                        if ignored.is_empty() {
+                            // Default to source contracts only if lint ignore not configured.
+                            p.starts_with(&config.src)
+                        } else {
+                            !(ignored.contains(p) || ignored.contains(&cwd.join(p)))
+                        }
+                    })
                     .collect()
             }
             paths => {
