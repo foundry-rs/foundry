@@ -689,6 +689,10 @@ pub enum EthRequest {
     /// Set the executor (sponsor) wallet
     #[serde(rename = "anvil_setExecutor", with = "sequence")]
     AnvilSetExecutor(String),
+
+    /// Enable or disable bypass for authorization list signature checks
+    #[serde(rename = "anvil_setBypassAuthorizationChecks", with = "sequence")]
+    AnvilSetBypassAuthorizationChecks(bool),
 }
 
 /// Represents ethereum JSON-RPC API

@@ -509,6 +509,9 @@ impl EthApi {
             EthRequest::AnvilSetExecutor(executor_pk) => {
                 self.anvil_set_executor(executor_pk).to_rpc_result()
             }
+            EthRequest::AnvilSetBypassAuthorizationChecks(enabled) => {
+                self.anvil_set_bypass_authorization_checks(enabled).await.to_rpc_result()
+            }
         };
 
         if let ResponseResult::Error(err) = &response {
@@ -1818,6 +1821,15 @@ impl EthApi {
     pub async fn anvil_auto_impersonate_account(&self, enabled: bool) -> Result<()> {
         node_info!("anvil_autoImpersonateAccount");
         self.backend.auto_impersonate_account(enabled);
+        Ok(())
+    }
+
+    /// Enables or disables bypass for authorization list signature checks
+    ///
+    /// Handler for ETH RPC call: `anvil_setBypassAuthorizationChecks`
+    pub async fn anvil_set_bypass_authorization_checks(&self, enabled: bool) -> Result<()> {
+        node_info!("anvil_setBypassAuthorizationChecks");
+        self.backend.set_bypass_authorization_checks(enabled);
         Ok(())
     }
 

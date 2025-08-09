@@ -61,6 +61,18 @@ impl CheatsManager {
     pub fn impersonated_accounts(&self) -> AddressHashSet {
         self.state.read().impersonated_accounts.clone()
     }
+
+
+    /// Enables or disables bypass for authorization list signature checks
+    pub fn set_bypass_authorization_checks(&self, enabled: bool) {
+        trace!(target: "cheats", "Bypass authorization checks set to {:?}", enabled);
+        self.state.write().bypass_authorization_checks = enabled;
+    }
+
+    /// Returns true if authorization list signature checks should be bypassed
+    pub fn bypass_authorization_checks(&self) -> bool {
+        self.state.read().bypass_authorization_checks
+    }
 }
 
 /// Container type for all the state variables
@@ -70,4 +82,6 @@ pub struct CheatsState {
     pub impersonated_accounts: AddressHashSet,
     /// If set to true will make the `is_impersonated` function always return true
     pub auto_impersonate_accounts: bool,
+    /// If set to true, bypass signature verification on authorization lists
+    pub bypass_authorization_checks: bool,
 }
