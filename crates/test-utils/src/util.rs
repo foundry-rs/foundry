@@ -1091,7 +1091,8 @@ impl TestCommand {
         let status =
             std::os::unix::process::ExitStatusExt::from_raw(exit_status.exit_code() as i32);
         #[cfg(windows)]
-        let status = std::process::ExitStatus::from_raw(exit_status.exit_code() as u32);
+        let status =
+            std::os::windows::process::ExitStatusExt::from_raw(exit_status.exit_code() as u32);
 
         Ok(Output {
             status,
