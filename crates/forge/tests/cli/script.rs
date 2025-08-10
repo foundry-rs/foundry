@@ -422,6 +422,41 @@ Script ran successfully.
 "#]]);
 });
 
+// Tests that the run command can run functions with arguments without specifying the signature
+// <https://github.com/foundry-rs/foundry/issues/11240>
+forgetest!(can_execute_script_command_with_args_no_sig, |prj, cmd| {
+    let script = prj
+        .add_source(
+            "Foo",
+            r#"
+contract Demo {
+    event log_string(string);
+    event log_uint(uint);
+    function run(uint256 a, uint256 b) external {
+        emit log_string("script ran");
+        emit log_uint(a);
+        emit log_uint(b);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("script").arg(script).arg("1").arg("2").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+== Logs ==
+  script ran
+  1
+  2
+
+"#]]);
+});
+
 // Tests that the run command can run functions with return values
 forgetest!(can_execute_script_command_with_returned, |prj, cmd| {
     let script = prj
@@ -3008,4 +3043,191 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
         .unwrap();
     assert_eq!(receiver2.nonce, 0);
     assert_eq!(receiver2.balance.to_string(), "101000000000000000000");
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11159>
+forgetest_async!(check_broadcast_log_with_additional_contracts, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() public {
+        number++;
+    }
+}
+   "#,
+    )
+    .unwrap();
+    prj.add_source(
+        "Factory.sol",
+        r#"
+import {Counter} from "./Counter.sol";
+
+contract Factory {
+    function deployCounter() public returns (Counter) {
+        return new Counter();
+    }
+}
+   "#,
+    )
+    .unwrap();
+    let deploy_script = prj
+        .add_script(
+            "Factory.s.sol",
+            r#"
+import "forge-std/Script.sol";
+import {Factory} from "../src/Factory.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract FactoryScript is Script {
+    Factory public factory;
+    Counter public counter;
+
+    function setUp() public {}
+
+    function run() public {
+        vm.startBroadcast();
+
+        factory = new Factory();
+        counter = factory.deployCounter();
+
+        vm.stopBroadcast();
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    let deploy_contract = deploy_script.display().to_string() + ":FactoryScript";
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.args([
+        "script",
+        &deploy_contract,
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--slow",
+        "--broadcast",
+        "--private-key",
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_success();
+
+    let broadcast_log = prj.root().join("broadcast/Factory.s.sol/31337/run-latest.json");
+    let script_sequence: ScriptSequence = serde_json::from_reader(
+        fs::File::open(prj.artifacts().join(broadcast_log)).expect("no broadcast log"),
+    )
+    .expect("no script sequence");
+
+    let counter_contract = script_sequence
+        .transactions
+        .get(1)
+        .expect("no tx")
+        .additional_contracts
+        .first()
+        .expect("no Counter contract");
+    assert_eq!(counter_contract.contract_name, Some("Counter".to_string()));
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11213>
+forgetest_async!(call_to_non_contract_address_does_not_panic, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+
+    let endpoint = rpc::next_http_archive_rpc_url();
+
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+    function increment() public {
+        number++;
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    let deploy_script = prj
+        .add_script(
+            "Counter.s.sol",
+            &r#"
+import "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+contract CounterScript is Script {
+    Counter public counter;
+    function setUp() public {}
+    function run() public {
+        vm.createSelectFork("<url>");
+        vm.startBroadcast();
+        counter = new Counter();
+        vm.stopBroadcast();
+        vm.createSelectFork("<url>");
+        vm.startBroadcast();
+        counter.increment();
+        vm.stopBroadcast();
+    }
+}
+   "#
+            .replace("<url>", &endpoint),
+        )
+        .unwrap();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.args([
+        "script",
+        &deploy_script.display().to_string(),
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--slow",
+        "--broadcast",
+        "--private-key",
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_failure()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Traces:
+  [..] → new CounterScript@[..]
+    └─ ← [Return] 2200 bytes of code
+
+  [..] CounterScript::setUp()
+    └─ ← [Stop]
+
+  [..] CounterScript::run()
+    ├─ [..] VM::createSelectFork("<rpc url>")
+    │   └─ ← [Return] 1
+    ├─ [..] VM::startBroadcast()
+    │   └─ ← [Return]
+    ├─ [..] → new Counter@[..]
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [..] VM::stopBroadcast()
+    │   └─ ← [Return]
+    ├─ [..] VM::createSelectFork("<rpc url>")
+    │   └─ ← [Return] 2
+    ├─ [..] VM::startBroadcast()
+    │   └─ ← [Return]
+    └─ ← [Revert] call to non-contract address [..]
+
+
+
+"#]])
+    .stderr_eq(str![[r#"
+Error: script failed: call to non-contract address [..]
+"#]]);
 });
