@@ -12,7 +12,9 @@ use alloy_signer_local::{
 };
 use alloy_sol_types::SolValue;
 use k256::{
-    ecdsa::{hazmat, SigningKey}, elliptic_curve::{bigint::ArrayEncoding, sec1::ToEncodedPoint}, FieldBytes, Scalar
+    FieldBytes, Scalar,
+    ecdsa::{SigningKey, hazmat},
+    elliptic_curve::{bigint::ArrayEncoding, sec1::ToEncodedPoint},
 };
 
 use p256::ecdsa::{
@@ -256,7 +258,8 @@ fn sign(private_key: &U256, digest: &B256) -> Result<alloy_primitives::Signature
 // - `digest` is a 32-byte prehash.
 // WARNING: Use sign_with_nonce with extreme caution!
 // Reusing the same nonce (k) with the same private key in ECDSA will leak the private key.
-// Always generate `nonce` with a cryptographically secure RNG, and never reuse it across signatures.
+// Always generate `nonce` with a cryptographically secure RNG, and never reuse it across
+// signatures.
 fn sign_with_nonce(
     private_key: &U256,
     digest: &B256,
@@ -285,16 +288,14 @@ fn sign_with_nonce(
     // Hazmat signing using the scalar `d` (SignPrimitive is implemented for `Scalar`)
     // Note: returns (Signature, Option<RecoveryId>)
     let (sig_raw, recid_opt) =
-        <Scalar as hazmat::SignPrimitive<k256::Secp256k1>>
-            ::try_sign_prehashed(&d_scalar, k_scalar, &z_fb)
-            .map_err(|e| fmt_err!("sign_prehashed failed: {e}"))?;
+        <Scalar as hazmat::SignPrimitive<k256::Secp256k1>>::try_sign_prehashed(
+            &d_scalar, k_scalar, &z_fb,
+        )
+        .map_err(|e| fmt_err!("sign_prehashed failed: {e}"))?;
 
     // Enforce low-s; if mirrored, parity flips (we’ll account for it below if we use recid)
-    let (sig_low, flipped) = if let Some(norm) = sig_raw.normalize_s() {
-        (norm, true)
-    } else {
-        (sig_raw, false)
-    };
+    let (sig_low, flipped) =
+        if let Some(norm) = sig_raw.normalize_s() { (norm, true) } else { (sig_raw, false) };
 
     let r_u256 = U256::from_be_bytes(sig_low.r().to_bytes().into());
     let s_u256 = U256::from_be_bytes(sig_low.s().to_bytes().into());
@@ -302,7 +303,9 @@ fn sign_with_nonce(
     // Determine v parity in {0,1}
     let v_parity = if let Some(id) = recid_opt {
         let mut v = id.to_byte() & 1;
-        if flipped { v ^= 1; }
+        if flipped {
+            v ^= 1;
+        }
         v
     } else {
         // Fallback: choose parity by recovery to expected address
@@ -326,7 +329,6 @@ fn sign_with_nonce(
     let y_parity = v_parity != 0;
     Ok(alloy_primitives::Signature::new(r_u256, s_u256, y_parity))
 }
-
 
 fn sign_with_wallet(
     state: &mut Cheatcodes,
@@ -532,8 +534,9 @@ mod tests {
         // Given a fixed private key and digest
         let pk_u256: U256 = U256::from(1u64);
         let digest = FixedBytes::from_hex(
-            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-        ).unwrap();
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .unwrap();
 
         // Two distinct nonces
         let n1: U256 = U256::from(123u64);
@@ -544,7 +547,10 @@ mod tests {
         let sig2 = sign_with_nonce(&pk_u256, &digest, &n2).expect("sig2");
 
         // (r,s) must differ when nonce differs
-        assert!(sig1.r() != sig2.r() || sig1.s() != sig2.s(), "signatures should differ with different nonces");
+        assert!(
+            sig1.r() != sig2.r() || sig1.s() != sig2.s(),
+            "signatures should differ with different nonces"
+        );
 
         // ecrecover must yield the address for both signatures
         let sk = parse_private_key(&pk_u256).unwrap();
@@ -559,14 +565,14 @@ mod tests {
         // nonce = 0 should be rejected
         let pk_u256: U256 = U256::from(1u64);
         let digest = FixedBytes::from_hex(
-            "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        ).unwrap();
+            "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
+        .unwrap();
         let n0: U256 = U256::ZERO;
 
         let err = sign_with_nonce(&pk_u256, &digest, &n0).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("nonce cannot be 0"),
-            "unexpected error: {msg}");
+        assert!(msg.contains("nonce cannot be 0"), "unexpected error: {msg}");
     }
 
     #[test]
@@ -578,8 +584,9 @@ mod tests {
 
         let pk_u256: U256 = U256::from(1u64);
         let digest = FixedBytes::from_hex(
-            "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-        ).unwrap();
+            "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        )
+        .unwrap();
 
         // Try exactly n (>= n invalid)
         let err = sign_with_nonce(&pk_u256, &digest, &n_u256).unwrap_err();
