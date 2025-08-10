@@ -325,6 +325,11 @@ If the answer is not there:
 
 If you want to contribute, or follow along with contributor discussion, you can use our [main telegram](https://t.me/foundry_rs) to chat with us about the development of Foundry!
 
+## Troubleshooting
+
+If your script fails to run, ensure your entry function is named `run()` and exported correctly.  
+Copy-pasting examples without the parentheses may cause unexpected failures.  
+
 ## License
 
 Licensed under either of [Apache License](./LICENSE-APACHE), Version
