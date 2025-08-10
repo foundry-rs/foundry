@@ -527,7 +527,7 @@ mod tests {
         assert_eq!(result.err().unwrap().to_string(), "private key cannot be 0");
     }
 
-        #[test]
+    #[test]
     fn test_sign_with_nonce_varies_and_recovers() {
         // Given a fixed private key and digest
         let pk_u256: U256 = U256::from(1u64);
@@ -565,8 +565,7 @@ mod tests {
 
         let err = sign_with_nonce(&pk_u256, &digest, &n0).unwrap_err();
         let msg = err.to_string();
-        // Accept either of the explicit messages (depending on which branch triggers first)
-        assert!(msg.contains("nonce cannot be 0") || msg.contains("invalid nonce scalar"),
+        assert!(msg.contains("nonce cannot be 0"),
             "unexpected error: {msg}");
     }
 

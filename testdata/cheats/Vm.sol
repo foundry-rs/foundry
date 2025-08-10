@@ -495,6 +495,7 @@ interface Vm {
     function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
     function sign(bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
     function sign(address signer, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
+    function signWithNonce(uint256 privateKey, bytes32 digest, uint256 nonce) external pure returns (uint8 v, bytes32 r, bytes32 s);
     function skip(bool skipTest) external;
     function skip(bool skipTest, string calldata reason) external;
     function sleep(uint256 duration) external;

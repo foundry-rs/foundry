@@ -44,4 +44,44 @@ contract SignTest is DSTest {
     function testSignCompactMessage(uint248 pk, bytes memory message) public {
         testSignCompactDigest(pk, keccak256(message));
     }
+
+    /// secp256k1 subgroup order n
+    function _secp256k1Order() internal pure returns (uint256) {
+        return 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141;
+    }
+
+    function testSignWithNonceDigestDifferentNonces(uint248 pk, bytes32 digest) public {
+        vm.assume(pk != 0);
+        uint256 n1 = 123;
+        uint256 n2 = 456;
+        vm.assume(n1 != 0 && n2 != 0 && n1 != n2);
+        (uint8 v1, bytes32 r1, bytes32 s1) = vm.signWithNonce(pk, digest, n1);
+        (uint8 v2, bytes32 r2, bytes32 s2) = vm.signWithNonce(pk, digest, n2);
+        assertTrue(r1 != r2 || s1 != s2, "signatures should differ for different nonces");
+        address expected = vm.addr(pk);
+        assertEq(ecrecover(digest, v1, r1, s1), expected, "recover for nonce n1 failed");
+        assertEq(ecrecover(digest, v2, r2, s2), expected, "recover for nonce n2 failed");
+    }
+
+    function testSignWithNonceDigestSameNonceDeterministic(uint248 pk, bytes32 digest) public {
+        vm.assume(pk != 0);
+        uint256 n = 777;
+        vm.assume(n != 0);
+        (uint8 v1, bytes32 r1, bytes32 s1) = vm.signWithNonce(pk, digest, n);
+        (uint8 v2, bytes32 r2, bytes32 s2) = vm.signWithNonce(pk, digest, n);
+        assertEq(v1, v2, "v should match");
+        assertEq(r1, r2, "r should match");
+        assertEq(s1, s2, "s should match");
+        address expected = vm.addr(pk);
+        assertEq(ecrecover(digest, v1, r1, s1), expected, "recover failed");
+    }
+
+    function testSignWithNonceInvalidNoncesRevert(uint248 pk, bytes32 digest) public {
+        vm.assume(pk != 0);
+        vm.expectRevert();
+        vm.signWithNonce(pk, digest, 0);
+        uint256 n = _secp256k1Order();
+        vm.expectRevert();
+        vm.signWithNonce(pk, digest, n);
+    }
 }
