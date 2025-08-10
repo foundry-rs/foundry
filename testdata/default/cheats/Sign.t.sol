@@ -79,11 +79,10 @@ contract SignTest is DSTest {
     function testSignWithNonceInvalidNoncesRevert() public {
         uint256 pk = 1;
         bytes32 digest = 0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;
-
-        (bool ok, bytes memory data) = HEVM_ADDRESS.call(abi.encodeWithSelector(Vm.signWithNonce.selector, pk, digest, 0));
+        (bool ok, bytes memory data) =
+            HEVM_ADDRESS.call(abi.encodeWithSelector(Vm.signWithNonce.selector, pk, digest, 0));
         assertTrue(!ok, "expected revert on nonce=0");
         assertEq(_revertString(data), "vm.signWithNonce: nonce cannot be 0");
-
         uint256 n = _secp256k1Order();
         (ok, data) = HEVM_ADDRESS.call(abi.encodeWithSelector(Vm.signWithNonce.selector, pk, digest, n));
         assertTrue(!ok, "expected revert on nonce >= n");
@@ -101,5 +100,4 @@ contract SignTest is DSTest {
         }
         return abi.decode(tail, (string));
     }
-
 }
