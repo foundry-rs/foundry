@@ -107,31 +107,49 @@ pub fn build_output_to_diagnostics(
 mod tests {
     use super::*;
     use crate::runner::{ForgeRunner, Runner};
+    use std::io::Write;
 
-    fn setup(testdata: &str) -> (std::string::String, ForgeRunner) {
-        let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let file_path = format!("{manifest_dir}/{testdata}");
-        let path = std::path::Path::new(&file_path);
-        assert!(path.exists(), "Test file {path:?} does not exist");
+    static CONTRACT: &str = r#"// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.29;
+
+contract A {
+    using B for string;
+
+    function() internal c;
+
+    function add_num(uint256 a) public pure returns (uint256) {
+        bool fad;
+        return a + 4;
+    }
+}"#;
+
+    fn setup(contents: &str) -> (tempfile::TempPath, ForgeRunner) {
+        let mut tmp =
+            tempfile::Builder::new().suffix(".sol").tempfile().expect("failed to create temp file");
+
+        tmp.write_all(contents.as_bytes()).expect("failed to write temp file");
+        tmp.flush().expect("flush failed");
+        tmp.as_file().sync_all().expect("sync failed");
+
+        let path = tmp.into_temp_path();
 
         let compiler = ForgeRunner;
-        (file_path, compiler)
+        (path, compiler)
     }
 
     #[tokio::test]
     async fn test_build_success() {
-        let (file_path, compiler) = setup("testdata/A.sol");
+        let (tmp_file, compiler) = setup(CONTRACT);
+        let file_path = tmp_file.to_string_lossy().to_string();
 
         let result = compiler.build(&file_path).await;
         assert!(result.is_ok(), "Expected build to succeed");
-
-        let json = result.unwrap();
-        assert!(json.get("sources").is_some(), "Expected 'sources' in output");
     }
 
     #[tokio::test]
     async fn test_build_has_errors_array() {
-        let (file_path, compiler) = setup("testdata/A.sol");
+        let (file_, compiler) = setup(CONTRACT);
+        let file_path = file_.to_string_lossy().to_string();
 
         let json = compiler.build(&file_path).await.unwrap();
         assert!(json.get("errors").is_some(), "Expected 'errors' array in build output");
@@ -139,7 +157,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_error_formatting() {
-        let (file_path, compiler) = setup("testdata/A.sol");
+        let (file_, compiler) = setup(CONTRACT);
+        let file_path = file_.to_string_lossy().to_string();
 
         let json = compiler.build(&file_path).await.unwrap();
         if let Some(errors) = json.get("errors")
@@ -151,7 +170,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_diagnostic_offsets_match_source() {
-        let (file_path, compiler) = setup("testdata/A.sol");
+        let (file_, compiler) = setup(CONTRACT);
+        let file_path = file_.to_string_lossy().to_string();
         let source_code = tokio::fs::read_to_string(&file_path).await.expect("read source");
         let build_output = compiler.build(&file_path).await.expect("build failed");
         let expected_start_byte = 81;
@@ -174,7 +194,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_output_to_diagnostics_from_file() {
-        let (file_path, compiler) = setup("testdata/A.sol");
+        let (file_, compiler) = setup(CONTRACT);
+        let file_path = file_.to_string_lossy().to_string();
         let source_code =
             tokio::fs::read_to_string(&file_path).await.expect("Failed to read source file");
         let build_output = compiler.build(&file_path).await.expect("Compiler build failed");

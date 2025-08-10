@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 
 pub fn lint_output_to_diagnostics(
@@ -12,7 +13,13 @@ pub fn lint_output_to_diagnostics(
             if let Ok(forge_diag) = serde_json::from_value::<ForgeDiagnostic>(item.clone()) {
                 // Only include diagnostics for the target file
                 for span in &forge_diag.spans {
-                    if span.file_name.ends_with(target_file) && span.is_primary {
+                    let target_path = Path::new(target_file)
+                        .canonicalize()
+                        .unwrap_or_else(|_| Path::new(target_file).to_path_buf());
+                    let span_path = Path::new(&span.file_name)
+                        .canonicalize()
+                        .unwrap_or_else(|_| Path::new(&span.file_name).to_path_buf());
+                    if target_path == span_path && span.is_primary {
                         let diagnostic = Diagnostic {
                             range: Range {
                                 start: Position {
@@ -105,22 +112,36 @@ pub struct ForgeLintChild {
 mod tests {
     use super::*;
     use crate::runner::{ForgeRunner, Runner};
+    use std::io::Write;
 
-    fn setup(testdata: &str) -> (std::string::String, ForgeRunner) {
-        let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let file_path = format!("{manifest_dir}/{testdata}");
-        let path = std::path::Path::new(&file_path);
-        assert!(path.exists(), "Test file {path:?} does not exist");
+    static CONTRACT: &str = r#"// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.29;
+
+contract A {
+    function add_num(uint256 a) public pure returns (uint256) {
+        return a + 4;
+    }
+}"#;
+
+    fn setup(contents: &str) -> (tempfile::NamedTempFile, ForgeRunner) {
+        let mut tmp = tempfile::Builder::new()
+            .prefix("A")
+            .suffix(".sol")
+            .tempfile_in(".")
+            .expect("failed to create temp file");
+
+        tmp.write_all(contents.as_bytes()).expect("failed to write temp file");
+        tmp.flush().expect("flush failed");
+        tmp.as_file().sync_all().expect("sync failed");
 
         let compiler = ForgeRunner;
-        (file_path, compiler)
+        (tmp, compiler)
     }
 
     #[tokio::test]
     async fn test_lint_valid_file() {
-        let compiler;
-        let file_path;
-        (file_path, compiler) = setup("testdata/A.sol");
+        let (file_, compiler) = setup(CONTRACT);
+        let file_path = file_.path().to_string_lossy().to_string();
 
         let result = compiler.lint(&file_path).await;
         assert!(result.is_ok(), "Expected lint to succeed");
@@ -131,9 +152,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_lint_diagnosis_output() {
-        let compiler;
-        let file_path;
-        (file_path, compiler) = setup("testdata/A.sol");
+        let (file_, compiler) = setup(CONTRACT);
+        let file_path = file_.path().to_string_lossy().to_string();
 
         let result = compiler.lint(&file_path).await;
         assert!(result.is_ok());
@@ -145,9 +165,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_lint_to_lsp_diagnostics() {
-        let compiler;
-        let file_path;
-        (file_path, compiler) = setup("testdata/A.sol");
+        let (file_, compiler) = setup(CONTRACT);
+        let file_path = file_.path().to_string_lossy().to_string();
 
         let result = compiler.lint(&file_path).await;
         assert!(result.is_ok(), "Expected lint to succeed");
@@ -163,7 +182,7 @@ mod tests {
             first_diag.severity,
             Some(tower_lsp::lsp_types::DiagnosticSeverity::INFORMATION)
         );
-        assert_eq!(first_diag.range.start.line, 8);
+        assert_eq!(first_diag.range.start.line, 4);
         assert_eq!(first_diag.range.start.character, 13);
     }
 }
