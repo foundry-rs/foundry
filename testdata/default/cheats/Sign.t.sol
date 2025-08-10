@@ -76,12 +76,30 @@ contract SignTest is DSTest {
         assertEq(ecrecover(digest, v1, r1, s1), expected, "recover failed");
     }
 
-    function testSignWithNonceInvalidNoncesRevert(uint248 pk, bytes32 digest) public {
-        vm.assume(pk != 0);
-        vm.expectRevert();
-        vm.signWithNonce(pk, digest, 0);
+    function testSignWithNonceInvalidNoncesRevert() public {
+        uint256 pk = 1;
+        bytes32 digest = 0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;
+
+        (bool ok, bytes memory data) = HEVM_ADDRESS.call(abi.encodeWithSelector(Vm.signWithNonce.selector, pk, digest, 0));
+        assertTrue(!ok, "expected revert on nonce=0");
+        assertEq(_revertString(data), "vm.signWithNonce: nonce cannot be 0");
+
         uint256 n = _secp256k1Order();
-        vm.expectRevert();
-        vm.signWithNonce(pk, digest, n);
+        (ok, data) = HEVM_ADDRESS.call(abi.encodeWithSelector(Vm.signWithNonce.selector, pk, digest, n));
+        assertTrue(!ok, "expected revert on nonce >= n");
+        assertEq(_revertString(data), "vm.signWithNonce: invalid nonce scalar");
     }
+
+    /// Decode revert payload
+    /// by stripping the 4-byte selector and ABI-decoding the tail as `string`.
+    function _revertString(bytes memory data) internal pure returns (string memory) {
+        if (data.length < 4) return "";
+        // copy data[4:] into a new bytes
+        bytes memory tail = new bytes(data.length - 4);
+        for (uint256 i = 0; i < tail.length; i++) {
+            tail[i] = data[i + 4];
+        }
+        return abi.decode(tail, (string));
+    }
+
 }
