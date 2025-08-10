@@ -67,15 +67,6 @@ impl Runner for ForgeRunner {
         Ok(parsed)
     }
 
-            .output()
-            .await?;
-
-        let stdout_str = String::from_utf8_lossy(&output.stdout);
-        let parsed: serde_json::Value = serde_json::from_str(&stdout_str)?;
-
-        Ok(parsed)
-    }
-
     async fn get_lint_diagnostics(&self, file: &Url) -> Result<Vec<Diagnostic>, RunnerError> {
         let path: PathBuf = file.to_file_path().map_err(|_| RunnerError::InvalidUrl)?;
         let path_str = path.to_str().ok_or(RunnerError::InvalidUrl)?;
