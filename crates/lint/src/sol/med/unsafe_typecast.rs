@@ -42,16 +42,32 @@ impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
     }
 }
 
-/// Checks if a typecast from the source expression to target type is unsafe.
 fn is_unsafe_typecast_hir(
     hir: &hir::Hir<'_>,
     source_expr: &hir::Expr<'_>,
     target_type: &hir::ElementaryType,
 ) -> bool {
-    // Determine source type from the expression
     let Some(source_elem_type) = infer_source_type(hir, source_expr) else {
         return false;
     };
+
+    if let ElementaryType::Int(tgt_size) = target_type {
+        if let ExprKind::Call(call_expr, args, _) = &source_expr.kind {
+            if let ExprKind::Type(hir::Type {
+                kind: TypeKind::Elementary(ElementaryType::UInt(src_bits)),
+                ..
+            }) = &call_expr.kind
+            {
+                if let Some(inner) = args.exprs().next() {
+                    if let Some(ElementaryType::UInt(orig_bits)) = infer_source_type(hir, inner) {
+                        if orig_bits.bits() < tgt_size.bits() {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     is_unsafe_elementary_typecast(&source_elem_type, target_type)
 }
@@ -61,13 +77,12 @@ fn is_unsafe_typecast_hir(
 fn infer_source_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<ElementaryType> {
     match &expr.kind {
         // A type cast call: Type(val)
-        ExprKind::Call(call_expr, _, _) => {
+        ExprKind::Call(call_expr, args, _) => {
             if let ExprKind::Type(hir::Type { kind: TypeKind::Elementary(elem_type), .. }) =
                 &call_expr.kind
             {
                 return Some(*elem_type);
             }
-            // Do not attempt to guess the type of regular calls
             None
         }
 
