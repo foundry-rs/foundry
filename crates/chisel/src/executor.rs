@@ -8,7 +8,6 @@ use crate::prelude::{
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_json_abi::EventParam;
 use alloy_primitives::{Address, B256, U256, hex};
-use core::fmt::Debug;
 use eyre::{Result, WrapErr};
 use foundry_compilers::Artifact;
 use foundry_evm::{
