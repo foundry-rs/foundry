@@ -15,6 +15,7 @@ mod proof;
 mod pubsub;
 mod revert;
 mod sign;
+mod signature_bypass;
 mod simulate;
 mod state;
 mod traces;
