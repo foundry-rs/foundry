@@ -21,8 +21,13 @@ pub trait Runner: Send + Sync {
 #[async_trait]
 impl Runner for ForgeRunner {
     async fn lint(&self, file_path: &str) -> Result<serde_json::Value, RunnerError> {
-        let output =
-            Command::new("forge").arg("lint").arg(file_path).arg("--json").output().await?;
+        let output = Command::new("forge")
+            .arg("lint")
+            .arg(file_path)
+            .arg("--json")
+            .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
+            .output()
+            .await?;
 
         let stderr_str = String::from_utf8_lossy(&output.stderr);
 
@@ -51,6 +56,17 @@ impl Runner for ForgeRunner {
             .arg("--json")
             .arg("--no-cache")
             .arg("--ast")
+            .env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1")
+            .env("FOUNDRY_LINT_LINT_ON_BUILD", "false")
+            .output()
+            .await?;
+
+        let stdout_str = String::from_utf8_lossy(&output.stdout);
+        let parsed: serde_json::Value = serde_json::from_str(&stdout_str)?;
+
+        Ok(parsed)
+    }
+
             .output()
             .await?;
 
