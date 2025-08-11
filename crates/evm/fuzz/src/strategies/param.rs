@@ -7,6 +7,14 @@ use rand::{SeedableRng, rngs::StdRng};
 /// The max length of arrays we fuzz for is 256.
 const MAX_ARRAY_LEN: usize = 256;
 
+// Interesting 8-bit values to inject.
+const INTERESTING_8: [i8; 9] = [-128, -1, 0, 1, 16, 32, 64, 100, 127];
+
+/// Interesting 16-bit values to inject.
+const INTERESTING_16: [i16; 19] = [
+    -128, -1, 0, 1, 16, 32, 64, 100, 127, -32768, -129, 128, 255, 256, 512, 1000, 1024, 4096, 32767,
+];
+
 /// Given a parameter type, returns a strategy for generating values for that type.
 ///
 /// See [`fuzz_param_with_fixtures`] for more information.
@@ -241,24 +249,36 @@ pub fn mutate_param_value(
     match value {
         // flip boolean value
         DynSolValue::Bool(val) => DynSolValue::Bool(!val),
-        // Uint: increment, decrement, flip random bit or generate new value from state.
-        DynSolValue::Uint(val, size) => match test_runner.rng().random_range(0..=3) {
+        // Uint: increment, decrement, flip random bit, mutate with interesting byte or generate
+        // new value from state.
+        DynSolValue::Uint(val, size) => match test_runner.rng().random_range(0..=5) {
             0 => DynSolValue::Uint(val.saturating_add(U256::ONE), size),
             1 => DynSolValue::Uint(val.saturating_sub(U256::ONE), size),
-            2 => DynSolValue::Uint(flip_random_uint_bit(val, size, test_runner), size),
+            2 => flip_random_uint_bit(val, size, test_runner)
+                .map(|mutated_val| DynSolValue::Uint(mutated_val, size))
+                .unwrap_or_else(|| new_value(param, test_runner)),
+            3 => mutate_interesting_uint_byte(val, size, test_runner)
+                .map(|mutated_val| DynSolValue::Uint(mutated_val, size))
+                .unwrap_or_else(|| new_value(param, test_runner)),
+            4 => mutate_interesting_uint_word(val, size, test_runner)
+                .map(|mutated_val| DynSolValue::Uint(mutated_val, size))
+                .unwrap_or_else(|| new_value(param, test_runner)),
             _ => new_value(param, test_runner),
         },
-        // Int: increment, decrement, flip random bit or generate new value from state.
-        DynSolValue::Int(val, size) => match test_runner.rng().random_range(0..=3) {
+        // Int: increment, decrement, flip random bit, mutate with interesting byte or generate
+        // new value from state.
+        DynSolValue::Int(val, size) => match test_runner.rng().random_range(0..=5) {
             0 => DynSolValue::Int(val.saturating_add(I256::ONE), size),
             1 => DynSolValue::Int(val.saturating_sub(I256::ONE), size),
-            2 => {
-                if let Some(mutated_val) = flip_random_int_bit(val, size, test_runner) {
-                    DynSolValue::Int(mutated_val, size)
-                } else {
-                    new_value(param, test_runner)
-                }
-            }
+            2 => flip_random_int_bit(val, size, test_runner)
+                .map(|mutated_val| DynSolValue::Int(mutated_val, size))
+                .unwrap_or_else(|| new_value(param, test_runner)),
+            3 => mutate_interesting_int_byte(val, size, test_runner)
+                .map(|mutated_val| DynSolValue::Int(mutated_val, size))
+                .unwrap_or_else(|| new_value(param, test_runner)),
+            4 => mutate_interesting_int_word(val, size, test_runner)
+                .map(|mutated_val| DynSolValue::Int(mutated_val, size))
+                .unwrap_or_else(|| new_value(param, test_runner)),
             _ => new_value(param, test_runner),
         },
         // Address: flip random bit or generate new value from state.
@@ -348,22 +368,97 @@ fn mutate_array(
 }
 
 /// Flips a single random bit in the given U256 value.
-pub fn flip_random_uint_bit(value: U256, size: usize, test_runner: &mut TestRunner) -> U256 {
+fn flip_random_uint_bit(value: U256, size: usize, test_runner: &mut TestRunner) -> Option<U256> {
     let bit_index = test_runner.rng().random_range(0..size);
     let mask = U256::from(1u8) << bit_index;
-    value ^ mask
+    validate_uint_val(value ^ mask, size)
+}
+
+/// Mutate using interesting bytes, None if it doesn't fit in current size.
+fn mutate_interesting_uint_byte(
+    value: U256,
+    size: usize,
+    test_runner: &mut TestRunner,
+) -> Option<U256> {
+    let mut bytes: [u8; 32] = value.to_be_bytes();
+    let byte_index = test_runner.rng().random_range(0..32);
+    let interesting = INTERESTING_8[test_runner.rng().random_range(0..INTERESTING_8.len())] as u8;
+    bytes[byte_index] = interesting;
+    validate_uint_val(U256::from_be_bytes(bytes), size)
+}
+
+// Function to mutate a U256 by replacing word with an interesting value.
+fn mutate_interesting_uint_word(
+    value: U256,
+    size: usize,
+    test_runner: &mut TestRunner,
+) -> Option<U256> {
+    let mut bytes: [u8; 32] = value.to_be_bytes();
+    let byte_index = test_runner.rng().random_range(0..16);
+    let interesting = INTERESTING_16[test_runner.rng().random_range(0..INTERESTING_16.len())] as u8;
+    bytes[byte_index] = interesting;
+    validate_uint_val(U256::from_be_bytes(bytes), size)
+}
+
+/// Returns mutated uint value if it fits in the given size, otherwise None.
+fn validate_uint_val(mutated_value: U256, size: usize) -> Option<U256> {
+    let max_value = if size < 256 { (U256::from(1) << size) - U256::from(1) } else { U256::MAX };
+    if mutated_value < max_value { Some(mutated_value) } else { None }
 }
 
 /// Flips a single random bit in the given I256 value.
-pub fn flip_random_int_bit(value: I256, size: usize, test_runner: &mut TestRunner) -> Option<I256> {
+fn flip_random_int_bit(value: I256, size: usize, test_runner: &mut TestRunner) -> Option<I256> {
     let bit_index = test_runner.rng().random_range(0..size);
     let (sign, mut abs): (Sign, U256) = value.into_sign_and_abs();
     abs ^= U256::from(1u8) << bit_index;
-    I256::checked_from_sign_and_abs(sign, abs)
+    validate_int_val(I256::checked_from_sign_and_abs(sign, abs)?, size)
+}
+
+/// Mutate using interesting bytes, None if it doesn't fit in current size.
+fn mutate_interesting_int_byte(
+    value: I256,
+    size: usize,
+    test_runner: &mut TestRunner,
+) -> Option<I256> {
+    let mut bytes: [u8; 32] = value.to_be_bytes();
+    let byte_index = test_runner.rng().random_range(0..16);
+    let interesting = INTERESTING_8[test_runner.rng().random_range(0..INTERESTING_8.len())] as u8;
+    bytes[byte_index] = interesting;
+    validate_int_val(I256::from_be_bytes(bytes), size)
+}
+
+// Function to mutate an I256 by replacing word with an interesting value.
+fn mutate_interesting_int_word(
+    value: I256,
+    size: usize,
+    test_runner: &mut TestRunner,
+) -> Option<I256> {
+    let mut bytes: [u8; 32] = value.to_be_bytes();
+    let byte_index = test_runner.rng().random_range(0..32);
+    let interesting = INTERESTING_16[test_runner.rng().random_range(0..INTERESTING_16.len())] as u8;
+    bytes[byte_index] = interesting;
+    validate_int_val(I256::from_be_bytes(bytes), size)
+}
+
+/// Returns mutated int value if it fits in the given size, otherwise None.
+fn validate_int_val(mutated_value: I256, size: usize) -> Option<I256> {
+    let umax: U256 = (U256::from(1) << (size - 1)) - U256::from(1);
+    if match mutated_value.sign() {
+        Sign::Positive => {
+            mutated_value < I256::overflowing_from_sign_and_abs(Sign::Positive, umax).0
+        }
+        Sign::Negative => {
+            mutated_value >= I256::overflowing_from_sign_and_abs(Sign::Negative, umax).0
+        }
+    } {
+        Some(mutated_value)
+    } else {
+        None
+    }
 }
 
 /// Flips a single random bit in the given Address.
-pub fn flip_random_bit_address(addr: Address, test_runner: &mut TestRunner) -> Address {
+fn flip_random_bit_address(addr: Address, test_runner: &mut TestRunner) -> Address {
     let bit_index = test_runner.rng().random_range(0..160);
     let mut bytes = addr.0;
     bytes[bit_index / 8] ^= 1 << (bit_index % 8);
