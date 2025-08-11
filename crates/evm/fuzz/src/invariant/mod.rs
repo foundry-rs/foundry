@@ -1,5 +1,6 @@
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, Bytes, Selector};
+use alloy_primitives::{Address, Bytes, Selector, map::HashMap};
+use foundry_compilers::artifacts::StorageLayout;
 use itertools::Either;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -75,6 +76,7 @@ impl FuzzRunIdentifiedContracts {
                 abi: contract.abi.clone(),
                 targeted_functions: functions,
                 excluded_functions: Vec::new(),
+                storage_layout: contract.storage_layout.as_ref().map(Arc::clone),
             };
             targets.insert(*address, contract);
         }
@@ -146,6 +148,16 @@ impl TargetedContracts {
                 .map(|function| format!("{}.{}", contract.identifier.clone(), function.name))
         })
     }
+
+    /// Returns a map of contract addresses to their storage layouts.
+    pub fn get_storage_layouts(&self) -> HashMap<Address, Arc<StorageLayout>> {
+        self.inner
+            .iter()
+            .filter_map(|(addr, c)| {
+                c.storage_layout.as_ref().map(|layout| (*addr, Arc::clone(layout)))
+            })
+            .collect()
+    }
 }
 
 impl std::ops::Deref for TargetedContracts {
@@ -173,12 +185,33 @@ pub struct TargetedContract {
     pub targeted_functions: Vec<Function>,
     /// The excluded functions of the contract.
     pub excluded_functions: Vec<Function>,
+    /// The contract's storage layout, if available.
+    pub storage_layout: Option<Arc<StorageLayout>>,
 }
 
 impl TargetedContract {
     /// Returns a new `TargetedContract` instance.
     pub fn new(identifier: String, abi: JsonAbi) -> Self {
-        Self { identifier, abi, targeted_functions: Vec::new(), excluded_functions: Vec::new() }
+        Self {
+            identifier,
+            abi,
+            targeted_functions: Vec::new(),
+            excluded_functions: Vec::new(),
+            storage_layout: None,
+        }
+    }
+
+    /// Determines contract storage layout from project contracts. Needs `storageLayout` to be
+    /// enabled as extra output in project configuration.
+    pub fn with_project_contracts(mut self, project_contracts: &ContractsByArtifact) -> Self {
+        if let Some((src, name)) = self.identifier.split_once(':')
+            && let Some((_, contract_data)) = project_contracts.iter().find(|(artifact, _)| {
+                artifact.name == name && artifact.source.as_path().ends_with(src)
+            })
+        {
+            self.storage_layout = contract_data.storage_layout.as_ref().map(Arc::clone);
+        }
+        self
     }
 
     /// Helper to retrieve functions to fuzz for specified abi.
