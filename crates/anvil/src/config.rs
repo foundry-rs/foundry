@@ -184,6 +184,8 @@ pub struct NodeConfig {
     pub transaction_block_keeper: Option<usize>,
     /// Disable the default CREATE2 deployer
     pub disable_default_create2_deployer: bool,
+    /// Disable pool balance checks
+    pub disable_pool_balance_checks: bool,
     /// Enable Optimism deposit transaction
     pub enable_optimism: bool,
     /// Slots in an epoch
@@ -484,6 +486,7 @@ impl Default for NodeConfig {
             init_state: None,
             transaction_block_keeper: None,
             disable_default_create2_deployer: false,
+            disable_pool_balance_checks: false,
             enable_optimism: false,
             slots_in_an_epoch: 32,
             memory_limit: None,
@@ -990,6 +993,13 @@ impl NodeConfig {
     #[must_use]
     pub fn with_disable_default_create2_deployer(mut self, yes: bool) -> Self {
         self.disable_default_create2_deployer = yes;
+        self
+    }
+
+    /// Sets whether to disable pool balance checks
+    #[must_use]
+    pub fn with_disable_pool_balance_checks(mut self, yes: bool) -> Self {
+        self.disable_pool_balance_checks = yes;
         self
     }
 
