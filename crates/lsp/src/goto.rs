@@ -163,6 +163,14 @@ pub fn cache_ids(
                                     stack.push(expression);
                                 }
 
+                                if let Some(left_expression) = tree.get("leftExpression") {
+                                    stack.push(left_expression);
+                                }
+
+                                if let Some(right_expression) = tree.get("rightExpression") {
+                                    stack.push(right_expression);
+                                }
+
                                 if let Some(condition) = tree.get("condition") {
                                     stack.push(condition);
                                 }
@@ -175,9 +183,27 @@ pub fn cache_ids(
                                     stack.push(sub_expression);
                                 }
 
+                                if let Some(modifier_name) = tree.get("modifierName") {
+                                    stack.push(modifier_name);
+                                }
+
+                                if let Some(modifiers) =
+                                    tree.get("modifiers").and_then(|v| v.as_array())
+                                {
+                                    for modifier in modifiers {
+                                        stack.push(modifier);
+                                    }
+                                }
+
                                 if let Some(value) = tree.get("value") {
                                     if value.is_object() {
                                         stack.push(value);
+                                    }
+                                }
+
+                                if let Some(initial_value) = tree.get("initialValue") {
+                                    if initial_value.is_object() {
+                                        stack.push(initial_value);
                                     }
                                 }
 
