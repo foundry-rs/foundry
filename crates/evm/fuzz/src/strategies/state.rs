@@ -401,6 +401,8 @@ impl FuzzDictionary {
     /// ```
     ///
     /// A storage value is inserted if and only if it can be decoded into one of the mapping
+    /// [`DynSolType`] value types found in the [`StorageLayout`].
+    ///
     /// If decoding fails, the value is inserted as a raw value.
     fn insert_mapping_storage_values(
         &mut self,
@@ -455,6 +457,7 @@ impl FuzzDictionary {
                     if values.len() < limit as usize {
                         values.insert(sample_value);
                     } else {
+                        // Insert as state value (will be removed at the end of the run).
                         self.insert_value(sample_value);
                     }
                 } else {
