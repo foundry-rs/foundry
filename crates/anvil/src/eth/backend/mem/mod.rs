@@ -3417,15 +3417,14 @@ impl TransactionValidator for Backend {
             }
 
             // EIP-4844 blob fee validation
-            if env.evm_env.cfg_env.spec >= SpecId::CANCUN && tx.transaction.is_eip4844() {
-                if let Some(max_fee_per_blob_gas) = tx.essentials().max_fee_per_blob_gas
-                    && let Some(blob_gas_and_price) =
-                        &env.evm_env.block_env.blob_excess_gas_and_price
-                    && max_fee_per_blob_gas < blob_gas_and_price.blob_gasprice
-                {
-                    warn!(target: "backend", "max fee per blob gas={}, too low, block blob gas price={}", max_fee_per_blob_gas, blob_gas_and_price.blob_gasprice);
-                    return Err(InvalidTransactionError::BlobFeeCapTooLow);
-                }
+            if env.evm_env.cfg_env.spec >= SpecId::CANCUN
+                && tx.transaction.is_eip4844()
+                && let Some(max_fee_per_blob_gas) = tx.essentials().max_fee_per_blob_gas
+                && let Some(blob_gas_and_price) = &env.evm_env.block_env.blob_excess_gas_and_price
+                && max_fee_per_blob_gas < blob_gas_and_price.blob_gasprice
+            {
+                warn!(target: "backend", "max fee per blob gas={}, too low, block blob gas price={}", max_fee_per_blob_gas, blob_gas_and_price.blob_gasprice);
+                return Err(InvalidTransactionError::BlobFeeCapTooLow);
             }
 
             let max_cost = tx.max_cost();
