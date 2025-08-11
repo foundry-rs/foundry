@@ -7,6 +7,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 pub mod build;
+pub mod goto;
 pub mod lint;
 pub mod lsp;
 pub mod runner;

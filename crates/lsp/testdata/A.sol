@@ -2,12 +2,17 @@
 pragma solidity ^0.8.29;
 
 contract A {
-    using B for string;
+    uint256 a;
+    bool hi;
+    uint256 cc;
 
-    function() internal c;
+    /// @dev returns a bool
+    function bar() external returns (bool) {
+        require(cc == 9);
+        return a++ == 0;
+    }
 
-    function add_num(uint256 a) public pure returns (uint256) {
-        bool fad;
-        return a + 4;
+    function name(string memory) public returns (bool) {
+        return this.bar();
     }
 }
