@@ -227,21 +227,27 @@ pub fn cache_ids(
                                     stack.push(path_node);
                                 }
 
-                                // Check for arguments - direct from tree, not from expression
-                                if let Some(arguments) =
-                                    tree.get("arguments").and_then(|v| v.as_array())
-                                {
-                                    for arg in arguments {
-                                        stack.push(arg);
-                                    }
-                                }
-
                                 if let Some(left_hand_side) = tree.get("leftHandSide") {
                                     stack.push(left_hand_side);
                                 }
 
                                 if let Some(right_hand_side) = tree.get("rightHandSide") {
                                     stack.push(right_hand_side);
+                                }
+
+                                // arguments
+                                if let Some(arguments) = tree.get("arguments") {
+                                    match arguments {
+                                        Value::Array(arr) => {
+                                            for node in arr {
+                                                stack.push(node);
+                                            }
+                                        }
+                                        Value::Object(_) => {
+                                            stack.push(arguments);
+                                        }
+                                        _ => {}
+                                    }
                                 }
 
                                 // statements
