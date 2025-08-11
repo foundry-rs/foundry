@@ -179,6 +179,10 @@ pub fn cache_ids(
                                     stack.push(condition);
                                 }
 
+                                if let Some(false_body) = tree.get("falseBody") {
+                                    stack.push(false_body);
+                                }
+
                                 if let Some(true_body) = tree.get("trueBody") {
                                     stack.push(true_body);
                                 }
