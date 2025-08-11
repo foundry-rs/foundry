@@ -163,6 +163,18 @@ pub fn cache_ids(
                                     stack.push(expression);
                                 }
 
+                                if let Some(condition) = tree.get("condition") {
+                                    stack.push(condition);
+                                }
+
+                                if let Some(true_body) = tree.get("trueBody") {
+                                    stack.push(true_body);
+                                }
+
+                                if let Some(sub_expression) = tree.get("subExpression") {
+                                    stack.push(sub_expression);
+                                }
+
                                 if let Some(value) = tree.get("value") {
                                     if value.is_object() {
                                         stack.push(value);
