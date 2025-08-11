@@ -262,7 +262,7 @@ pub fn mutate_param_value(
             _ => new_value(param, test_runner),
         },
         // Address: flip random bit or generate new value from state.
-        DynSolValue::Address(val) => match test_runner.rng().random_range(0..=3) {
+        DynSolValue::Address(val) => match test_runner.rng().random_range(0..=1) {
             0 => DynSolValue::Address(flip_random_bit_address(val, test_runner)),
             _ => new_value(param, test_runner),
         },
@@ -324,7 +324,7 @@ pub fn mutate_param_value(
 
 /// Mutates random value from given tuples.
 fn mutate_tuple(
-    tuples: &mut Vec<DynSolValue>,
+    tuples: &mut [DynSolValue],
     tuple_types: &[DynSolType],
     test_runner: &mut TestRunner,
     state: &EvmFuzzState,
@@ -337,7 +337,7 @@ fn mutate_tuple(
 
 /// Mutates random value from given array.
 fn mutate_array(
-    array_values: &mut Vec<DynSolValue>,
+    array_values: &mut [DynSolValue],
     array_type: &DynSolType,
     test_runner: &mut TestRunner,
     state: &EvmFuzzState,
@@ -366,7 +366,7 @@ pub fn flip_random_int_bit(value: I256, size: usize, test_runner: &mut TestRunne
 pub fn flip_random_bit_address(addr: Address, test_runner: &mut TestRunner) -> Address {
     let bit_index = test_runner.rng().random_range(0..160);
     let mut bytes = addr.0;
-    bytes[bit_index / 8] ^= 1 << bit_index % 8;
+    bytes[bit_index / 8] ^= 1 << (bit_index % 8);
     Address::from(bytes)
 }
 
