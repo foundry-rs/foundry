@@ -790,16 +790,11 @@ impl<'a> InvariantExecutor<'a> {
                     && self.artifact_filters.matches(identifier)
             })
             .map(|(addr, (identifier, abi))| {
-                let mut contract = TargetedContract::new(identifier.clone(), abi.clone());
-                if let Some((src, name)) = identifier.split_once(':')
-                    && let Some((_, contract_data)) =
-                        self.project_contracts.iter().find(|(artifact, _)| {
-                            artifact.name == name && artifact.source.as_path().ends_with(src)
-                        })
-                {
-                    contract.storage_layout = contract_data.storage_layout.as_ref().map(Arc::clone);
-                }
-                (*addr, contract)
+                (
+                    *addr,
+                    TargetedContract::new(identifier.clone(), abi.clone())
+                        .with_project_contracts(self.project_contracts),
+                )
             })
             .collect();
         let mut contracts = TargetedContracts { inner: contracts };
@@ -963,16 +958,10 @@ impl<'a> InvariantExecutor<'a> {
                         address
                     )
                 })?;
-                let mut contract = TargetedContract::new(identifier.clone(), abi.clone());
-                if let Some((src, name)) = identifier.split_once(':')
-                    && let Some((_, contract_data)) =
-                        self.project_contracts.iter().find(|(artifact, _)| {
-                            artifact.name == name && artifact.source.as_path().ends_with(src)
-                        })
-                {
-                    contract.storage_layout = contract_data.storage_layout.as_ref().map(Arc::clone);
-                }
-                entry.insert(contract)
+                entry.insert(
+                    TargetedContract::new(identifier.clone(), abi.clone())
+                        .with_project_contracts(self.project_contracts),
+                )
             }
         };
         contract.add_selectors(selectors.iter().copied(), should_exclude)?;
