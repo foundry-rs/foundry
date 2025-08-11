@@ -129,6 +129,16 @@ pub fn cache_ids(
                                     }
                                 }
 
+                                if let Some(base_contracts) =
+                                    tree.get("baseContracts").and_then(|v| v.as_array())
+                                {
+                                    for alias in base_contracts {
+                                        if let Some(base_name) = alias.get("baseName") {
+                                            stack.push(base_name);
+                                        }
+                                    }
+                                }
+
                                 if let Some(symbol_aliases) =
                                     tree.get("symbolAliases").and_then(|v| v.as_array())
                                 {
