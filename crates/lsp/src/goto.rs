@@ -171,6 +171,10 @@ pub fn cache_ids(
                                     stack.push(right_expression);
                                 }
 
+                                if let Some(event_call) = tree.get("eventCall") {
+                                    stack.push(event_call);
+                                }
+
                                 if let Some(condition) = tree.get("condition") {
                                     stack.push(condition);
                                 }
@@ -240,32 +244,48 @@ pub fn cache_ids(
                                     stack.push(right_hand_side);
                                 }
 
-                                if let Some(statements) =
-                                    tree.get("statements").and_then(|v| v.as_array())
-                                {
-                                    for statement in statements {
-                                        stack.push(statement);
+                                // statements
+                                if let Some(statements) = tree.get("statements") {
+                                    match statements {
+                                        Value::Array(arr) => {
+                                            for node in arr {
+                                                stack.push(node);
+                                            }
+                                        }
+                                        Value::Object(_) => {
+                                            stack.push(statements);
+                                        }
+                                        _ => {}
                                     }
                                 }
 
+                                // parameters
                                 if let Some(parameters) = tree.get("parameters") {
-                                    if let Some(params_array) =
-                                        parameters.get("parameters").and_then(|v| v.as_array())
-                                    {
-                                        for param in params_array {
-                                            stack.push(param);
+                                    match parameters {
+                                        Value::Array(arr) => {
+                                            for node in arr {
+                                                stack.push(node);
+                                            }
                                         }
+                                        Value::Object(_) => {
+                                            stack.push(parameters);
+                                        }
+                                        _ => {}
                                     }
                                 }
 
+                                // returnParameters
                                 if let Some(return_parameters) = tree.get("returnParameters") {
-                                    if let Some(return_params_array) = return_parameters
-                                        .get("returnParameters")
-                                        .and_then(|v| v.as_array())
-                                    {
-                                        for param in return_params_array {
-                                            stack.push(param);
+                                    match return_parameters {
+                                        Value::Array(arr) => {
+                                            for node in arr {
+                                                stack.push(node);
+                                            }
                                         }
+                                        Value::Object(_) => {
+                                            stack.push(return_parameters);
+                                        }
+                                        _ => {}
                                     }
                                 }
                             }
