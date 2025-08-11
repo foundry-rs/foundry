@@ -3344,23 +3344,7 @@ impl TransactionValidator for Backend {
             }
         }
 
-        if !self.disable_pool_balance_checks && tx.gas_limit() < MIN_TRANSACTION_GAS as u64 {
-            warn!(target: "backend", "[{:?}] gas too low", tx.hash());
-            return Err(InvalidTransactionError::GasTooLow);
-        }
-
-        // Check gas limit, iff block gas limit is set.
-        if !self.disable_pool_balance_checks
-            && !env.evm_env.cfg_env.disable_block_gas_limit
-            && tx.gas_limit() > env.evm_env.block_env.gas_limit
-        {
-            warn!(target: "backend", "[{:?}] gas too high", tx.hash());
-            return Err(InvalidTransactionError::GasTooHigh(ErrDetail {
-                detail: String::from("tx.gas_limit > env.block.gas_limit"),
-            }));
-        }
-
-        // check nonce
+        // Nonce validation
         let is_deposit_tx =
             matches!(&pending.transaction.transaction, TypedTransaction::Deposit(_));
         let nonce = tx.nonce();
@@ -3369,40 +3353,15 @@ impl TransactionValidator for Backend {
             return Err(InvalidTransactionError::NonceTooLow);
         }
 
-        if !self.disable_pool_balance_checks && env.evm_env.cfg_env.spec >= SpecId::LONDON {
-            if tx.gas_price() < env.evm_env.block_env.basefee.into() && !is_deposit_tx {
-                warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.evm_env.block_env.basefee);
-                return Err(InvalidTransactionError::FeeCapTooLow);
-            }
-
-            if let (Some(max_priority_fee_per_gas), Some(max_fee_per_gas)) =
-                (tx.essentials().max_priority_fee_per_gas, tx.essentials().max_fee_per_gas)
-                && max_priority_fee_per_gas > max_fee_per_gas
-            {
-                warn!(target: "backend", "max priority fee per gas={}, too high, max fee per gas={}", max_priority_fee_per_gas, max_fee_per_gas);
-                return Err(InvalidTransactionError::TipAboveFeeCap);
-            }
-        }
-
-        // EIP-4844 Cancun hard fork validation steps
+        // EIP-4844 structural validation
         if env.evm_env.cfg_env.spec >= SpecId::CANCUN && tx.transaction.is_eip4844() {
-            // Light checks first: see if the blob fee cap is too low.
-            if let Some(max_fee_per_blob_gas) = tx.essentials().max_fee_per_blob_gas
-                && let Some(blob_gas_and_price) = &env.evm_env.block_env.blob_excess_gas_and_price
-                && !self.disable_pool_balance_checks
-                && max_fee_per_blob_gas < blob_gas_and_price.blob_gasprice
-            {
-                warn!(target: "backend", "max fee per blob gas={}, too low, block blob gas price={}", max_fee_per_blob_gas, blob_gas_and_price.blob_gasprice);
-                return Err(InvalidTransactionError::BlobFeeCapTooLow);
-            }
-
             // Heavy (blob validation) checks
-            let tx = match &tx.transaction {
+            let blob_tx = match &tx.transaction {
                 TypedTransaction::EIP4844(tx) => tx.tx(),
                 _ => unreachable!(),
             };
 
-            let blob_count = tx.tx().blob_versioned_hashes.len();
+            let blob_count = blob_tx.tx().blob_versioned_hashes.len();
 
             // Ensure there are blob hashes.
             if blob_count == 0 {
@@ -3417,15 +3376,60 @@ impl TransactionValidator for Backend {
 
             // Check for any blob validation errors if not impersonating.
             if !self.skip_blob_validation(Some(*pending.sender()))
-                && let Err(err) = tx.validate(EnvKzgSettings::default().get())
+                && let Err(err) = blob_tx.validate(EnvKzgSettings::default().get())
             {
                 return Err(InvalidTransactionError::BlobTransactionValidationError(err));
             }
         }
 
-        let max_cost = tx.max_cost();
-        let value = tx.value();
+        // Balance and fee related checks
         if !self.disable_pool_balance_checks {
+            // Gas limit validation
+            if tx.gas_limit() < MIN_TRANSACTION_GAS as u64 {
+                warn!(target: "backend", "[{:?}] gas too low", tx.hash());
+                return Err(InvalidTransactionError::GasTooLow);
+            }
+
+            // Check gas limit against block gas limit, if block gas limit is set.
+            if !env.evm_env.cfg_env.disable_block_gas_limit
+                && tx.gas_limit() > env.evm_env.block_env.gas_limit
+            {
+                warn!(target: "backend", "[{:?}] gas too high", tx.hash());
+                return Err(InvalidTransactionError::GasTooHigh(ErrDetail {
+                    detail: String::from("tx.gas_limit > env.block.gas_limit"),
+                }));
+            }
+
+            // EIP-1559 fee validation (London hard fork and later)
+            if env.evm_env.cfg_env.spec >= SpecId::LONDON {
+                if tx.gas_price() < env.evm_env.block_env.basefee.into() && !is_deposit_tx {
+                    warn!(target: "backend", "max fee per gas={}, too low, block basefee={}",tx.gas_price(),  env.evm_env.block_env.basefee);
+                    return Err(InvalidTransactionError::FeeCapTooLow);
+                }
+
+                if let (Some(max_priority_fee_per_gas), Some(max_fee_per_gas)) =
+                    (tx.essentials().max_priority_fee_per_gas, tx.essentials().max_fee_per_gas)
+                    && max_priority_fee_per_gas > max_fee_per_gas
+                {
+                    warn!(target: "backend", "max priority fee per gas={}, too high, max fee per gas={}", max_priority_fee_per_gas, max_fee_per_gas);
+                    return Err(InvalidTransactionError::TipAboveFeeCap);
+                }
+            }
+
+            // EIP-4844 blob fee validation
+            if env.evm_env.cfg_env.spec >= SpecId::CANCUN && tx.transaction.is_eip4844() {
+                if let Some(max_fee_per_blob_gas) = tx.essentials().max_fee_per_blob_gas
+                    && let Some(blob_gas_and_price) =
+                        &env.evm_env.block_env.blob_excess_gas_and_price
+                    && max_fee_per_blob_gas < blob_gas_and_price.blob_gasprice
+                {
+                    warn!(target: "backend", "max fee per blob gas={}, too low, block blob gas price={}", max_fee_per_blob_gas, blob_gas_and_price.blob_gasprice);
+                    return Err(InvalidTransactionError::BlobFeeCapTooLow);
+                }
+            }
+
+            let max_cost = tx.max_cost();
+            let value = tx.value();
             match &tx.transaction {
                 TypedTransaction::Deposit(deposit_tx) => {
                     // Deposit transactions
