@@ -201,6 +201,19 @@ impl TargetedContract {
         }
     }
 
+    /// Determines contract storage layout from project contracts. Needs `storageLayout` to be
+    /// enabled as extra output in project configuration.
+    pub fn with_project_contracts(mut self, project_contracts: &ContractsByArtifact) -> Self {
+        if let Some((src, name)) = self.identifier.split_once(':')
+            && let Some((_, contract_data)) = project_contracts.iter().find(|(artifact, _)| {
+                artifact.name == name && artifact.source.as_path().ends_with(src)
+            })
+        {
+            self.storage_layout = contract_data.storage_layout.as_ref().map(Arc::clone);
+        }
+        self
+    }
+
     /// Helper to retrieve functions to fuzz for specified abi.
     /// Returns specified targeted functions if any, else mutable abi functions that are not
     /// marked as excluded.
