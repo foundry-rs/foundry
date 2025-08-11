@@ -292,6 +292,22 @@ pub fn cache_ids(
                             _ => {}
                         }
                     }
+                    
+                    // overrides
+                    if let Some(overrides) = tree.get("overrides") {
+                        match overrides {
+                            Value::Array(arr) => {
+                                for node in arr {
+                                    stack.push(node);
+                                }
+                            }
+                            Value::Object(_) => {
+                                stack.push(overrides);
+                            }
+                            _ => {}
+                        }
+                    }
+
                 }
             }
         }
