@@ -1,6 +1,6 @@
 use super::state::EvmFuzzState;
 use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{Address, B256, I256, U256};
+use alloy_primitives::{Address, B256, I256, Sign, U256};
 use proptest::{prelude::*, test_runner::TestRunner};
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -101,65 +101,6 @@ fn fuzz_param_inner(
                 .boxed()
         }
         _ => panic!("unsupported fuzz param type: {param}"),
-    }
-}
-
-/// Mutates the current value of a given a parameter type and value.
-/// TODO: add more mutations, see <https://github.com/fuzzland/ityfuzz/blob/master/src/mutation_utils.rs#L449-L452>
-/// for static args.
-pub fn mutate_param_value(
-    param: &DynSolType,
-    value: DynSolValue,
-    test_runner: &mut TestRunner,
-    state: &EvmFuzzState,
-) -> DynSolValue {
-    let new_value = |param: &DynSolType, test_runner: &mut TestRunner| {
-        fuzz_param_from_state(param, state)
-            .new_tree(test_runner)
-            .expect("Could not generate case")
-            .current()
-    };
-
-    match value {
-        // flip boolean value
-        DynSolValue::Bool(val) => DynSolValue::Bool(!val),
-        // Uint: increment, decrement or generate new value from state.
-        DynSolValue::Uint(val, size) => match test_runner.rng().random_range(0..=2) {
-            0 => DynSolValue::Uint(val.saturating_add(U256::ONE), size),
-            1 => DynSolValue::Uint(val.saturating_sub(U256::ONE), size),
-            _ => new_value(param, test_runner),
-        },
-        // Int: increment, decrement or generate new value from state.
-        DynSolValue::Int(val, size) => match test_runner.rng().random_range(0..=2) {
-            0 => DynSolValue::Int(val.saturating_add(I256::ONE), size),
-            1 => DynSolValue::Int(val.saturating_sub(I256::ONE), size),
-            _ => new_value(param, test_runner),
-        },
-        DynSolValue::Array(mut values) => {
-            if values.is_empty() {
-                return new_value(param, test_runner);
-            }
-
-            let DynSolType::Array(param_type) = param else { return new_value(param, test_runner) };
-
-            match test_runner.rng().random_range(0..=2) {
-                // Decrease array size by removing a random element.
-                0 => {
-                    values.remove(test_runner.rng().random_range(0..values.len()));
-                }
-                // Increase array size.
-                1 => values.push(new_value(param_type, test_runner)),
-                // Mutate array element.
-                _ => {
-                    let id_to_mutate = test_runner.rng().random_range(0..values.len());
-                    let val = values.get(id_to_mutate).unwrap();
-                    let new_value = mutate_param_value(param_type, val.clone(), test_runner, state);
-                    values[id_to_mutate] = new_value;
-                }
-            };
-            DynSolValue::Array(values)
-        }
-        _ => new_value(param, test_runner),
     }
 }
 
@@ -281,6 +222,152 @@ pub fn fuzz_param_from_state(
         }
         _ => panic!("unsupported fuzz param type: {param}"),
     }
+}
+
+/// Mutates the current value of a given a parameter type and value.
+pub fn mutate_param_value(
+    param: &DynSolType,
+    value: DynSolValue,
+    test_runner: &mut TestRunner,
+    state: &EvmFuzzState,
+) -> DynSolValue {
+    let new_value = |param: &DynSolType, test_runner: &mut TestRunner| {
+        fuzz_param_from_state(param, state)
+            .new_tree(test_runner)
+            .expect("Could not generate case")
+            .current()
+    };
+
+    match value {
+        // flip boolean value
+        DynSolValue::Bool(val) => DynSolValue::Bool(!val),
+        // Uint: increment, decrement, flip random bit or generate new value from state.
+        DynSolValue::Uint(val, size) => match test_runner.rng().random_range(0..=3) {
+            0 => DynSolValue::Uint(val.saturating_add(U256::ONE), size),
+            1 => DynSolValue::Uint(val.saturating_sub(U256::ONE), size),
+            2 => DynSolValue::Uint(flip_random_uint_bit(val, size, test_runner), size),
+            _ => new_value(param, test_runner),
+        },
+        // Int: increment, decrement, flip random bit or generate new value from state.
+        DynSolValue::Int(val, size) => match test_runner.rng().random_range(0..=3) {
+            0 => DynSolValue::Int(val.saturating_add(I256::ONE), size),
+            1 => DynSolValue::Int(val.saturating_sub(I256::ONE), size),
+            2 => {
+                if let Some(mutated_val) = flip_random_int_bit(val, size, test_runner) {
+                    DynSolValue::Int(mutated_val, size)
+                } else {
+                    new_value(param, test_runner)
+                }
+            }
+            _ => new_value(param, test_runner),
+        },
+        // Address: flip random bit or generate new value from state.
+        DynSolValue::Address(val) => match test_runner.rng().random_range(0..=3) {
+            0 => DynSolValue::Address(flip_random_bit_address(val, test_runner)),
+            _ => new_value(param, test_runner),
+        },
+        DynSolValue::Array(mut values) => {
+            if let DynSolType::Array(param_type) = param
+                && !values.is_empty()
+            {
+                match test_runner.rng().random_range(0..=2) {
+                    // Decrease array size by removing a random element.
+                    0 => {
+                        values.remove(test_runner.rng().random_range(0..values.len()));
+                    }
+                    // Increase array size.
+                    1 => values.push(new_value(param_type, test_runner)),
+                    // Mutate random array element.
+                    _ => mutate_array(&mut values, param_type, test_runner, state),
+                }
+                DynSolValue::Array(values)
+            } else {
+                new_value(param, test_runner)
+            }
+        }
+        DynSolValue::FixedArray(mut values) => {
+            if let DynSolType::FixedArray(param_type, _size) = param
+                && !values.is_empty()
+            {
+                mutate_array(&mut values, param_type, test_runner, state);
+                DynSolValue::FixedArray(values)
+            } else {
+                new_value(param, test_runner)
+            }
+        }
+        DynSolValue::CustomStruct { name, prop_names, tuple: mut values } => {
+            if let DynSolType::CustomStruct { name: _, prop_names: _, tuple: tuple_types }
+            | DynSolType::Tuple(tuple_types) = param
+                && !values.is_empty()
+            {
+                // Mutate random struct element.
+                mutate_tuple(&mut values, tuple_types, test_runner, state);
+                DynSolValue::CustomStruct { name, prop_names, tuple: values }
+            } else {
+                new_value(param, test_runner)
+            }
+        }
+        DynSolValue::Tuple(mut values) => {
+            if let DynSolType::Tuple(tuple_types) = param
+                && !values.is_empty()
+            {
+                // Mutate random tuple element.
+                mutate_tuple(&mut values, tuple_types, test_runner, state);
+                DynSolValue::Tuple(values)
+            } else {
+                new_value(param, test_runner)
+            }
+        }
+        _ => new_value(param, test_runner),
+    }
+}
+
+/// Mutates random value from given tuples.
+fn mutate_tuple(
+    tuples: &mut Vec<DynSolValue>,
+    tuple_types: &[DynSolType],
+    test_runner: &mut TestRunner,
+    state: &EvmFuzzState,
+) {
+    let id = test_runner.rng().random_range(0..tuples.len());
+    let param_type = &tuple_types[id];
+    let new_val = mutate_param_value(param_type, tuples[id].clone(), test_runner, state);
+    tuples[id] = new_val;
+}
+
+/// Mutates random value from given array.
+fn mutate_array(
+    array_values: &mut Vec<DynSolValue>,
+    array_type: &DynSolType,
+    test_runner: &mut TestRunner,
+    state: &EvmFuzzState,
+) {
+    let id = test_runner.rng().random_range(0..array_values.len());
+    let new_val = mutate_param_value(array_type, array_values[id].clone(), test_runner, state);
+    array_values[id] = new_val;
+}
+
+/// Flips a single random bit in the given U256 value.
+pub fn flip_random_uint_bit(value: U256, size: usize, test_runner: &mut TestRunner) -> U256 {
+    let bit_index = test_runner.rng().random_range(0..size);
+    let mask = U256::from(1u8) << bit_index;
+    value ^ mask
+}
+
+/// Flips a single random bit in the given I256 value.
+pub fn flip_random_int_bit(value: I256, size: usize, test_runner: &mut TestRunner) -> Option<I256> {
+    let bit_index = test_runner.rng().random_range(0..size);
+    let (sign, mut abs): (Sign, U256) = value.into_sign_and_abs();
+    abs ^= U256::from(1u8) << bit_index;
+    I256::checked_from_sign_and_abs(sign, abs)
+}
+
+/// Flips a single random bit in the given Address.
+pub fn flip_random_bit_address(addr: Address, test_runner: &mut TestRunner) -> Address {
+    let bit_index = test_runner.rng().random_range(0..160);
+    let mut bytes = addr.0;
+    bytes[bit_index / 8] ^= 1 << bit_index % 8;
+    Address::from(bytes)
 }
 
 #[cfg(test)]
