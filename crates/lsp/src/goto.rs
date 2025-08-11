@@ -115,6 +115,7 @@ pub fn cache_ids(
                     push_if_node_or_array(tree, "arguments", &mut stack);
                     push_if_node_or_array(tree, "statements", &mut stack);
                     push_if_node_or_array(tree, "parameters", &mut stack);
+                    push_if_node_or_array(tree, "name", &mut stack);
                     push_if_node_or_array(tree, "names", &mut stack);
                     push_if_node_or_array(tree, "options", &mut stack);
                     push_if_node_or_array(tree, "components", &mut stack);
@@ -161,12 +162,13 @@ pub fn cache_ids(
                     push_if_node_or_array(tree, "arguments", &mut stack);
                     push_if_node_or_array(tree, "statements", &mut stack);
                     push_if_node_or_array(tree, "parameters", &mut stack);
-                    push_if_node_or_array(tree, "names", &mut stack);
                     push_if_node_or_array(tree, "options", &mut stack);
                     push_if_node_or_array(tree, "components", &mut stack);
                     push_if_node_or_array(tree, "options", &mut stack);
                     push_if_node_or_array(tree, "returnParameters", &mut stack);
                     push_if_node_or_array(tree, "overrides", &mut stack);
+                    push_if_node_or_array(tree, "abstract", &mut stack);
+                    push_if_node_or_array(tree, "storageLayout", &mut stack);
                 }
             }
         }
