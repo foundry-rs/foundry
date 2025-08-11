@@ -169,6 +169,22 @@ pub fn cache_ids(
                                     }
                                 }
 
+                                if let Some(type_name) = tree.get("typeName") {
+                                    stack.push(type_name);
+                                }
+
+                                if let Some(key_type) = tree.get("keyType") {
+                                    stack.push(key_type);
+                                }
+
+                                if let Some(value_type) = tree.get("valueType") {
+                                    stack.push(value_type);
+                                }
+
+                                if let Some(path_node) = tree.get("pathNode") {
+                                    stack.push(path_node);
+                                }
+
                                 // Check for arguments - direct from tree, not from expression
                                 if let Some(arguments) =
                                     tree.get("arguments").and_then(|v| v.as_array())
