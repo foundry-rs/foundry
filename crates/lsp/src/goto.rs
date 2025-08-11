@@ -11,6 +11,20 @@ pub struct NodeInfo {
     pub member_location: Option<String>,
 }
 
+fn push_if_node_or_array<'a>(tree: &'a Value, key: &str, stack: &mut Vec<&'a Value>) {
+    if let Some(value) = tree.get(key) {
+        match value {
+            Value::Array(arr) => {
+                stack.extend(arr);
+            }
+            Value::Object(_) => {
+                stack.push(value);
+            }
+            _ => {}
+        }
+    }
+}
+
 pub fn cache_ids(
     sources: &Value,
 ) -> (HashMap<String, HashMap<u64, NodeInfo>>, HashMap<String, String>) {
@@ -69,12 +83,11 @@ pub fn cache_ids(
                         // available
                         if name_location.is_none()
                             && let Some(name_locations) = tree.get("nameLocations")
-                        
                             && let Some(locations_array) = name_locations.as_array()
-                                && !locations_array.is_empty() {
-                                    name_location =
-                                        locations_array[0].as_str().map(|s| s.to_string());
-                                }
+                            && !locations_array.is_empty()
+                        {
+                            name_location = locations_array[0].as_str().map(|s| s.to_string());
+                        }
 
                         let node_info = NodeInfo {
                             src: src.to_string(),
@@ -95,219 +108,65 @@ pub fn cache_ids(
                         nodes.get_mut(&abs_path).unwrap().insert(id, node_info);
                     }
 
-                    // Add child nodes to stack - following the Python implementation
-                    // exactly
-                    if let Some(nodes_array) = tree.get("nodes").and_then(|v| v.as_array()) {
-                        for node in nodes_array {
-                            stack.push(node);
-                        }
-                    }
-
-                    if let Some(members_array) = tree.get("members").and_then(|v| v.as_array()) {
-                        for member in members_array {
-                            stack.push(member);
-                        }
-                    }
-
-                    if let Some(declarations_array) =
-                        tree.get("declarations").and_then(|v| v.as_array())
-                    {
-                        for declaration in declarations_array {
-                            stack.push(declaration);
-                        }
-                    }
-
-                    if let Some(base_contracts) =
-                        tree.get("baseContracts").and_then(|v| v.as_array())
-                    {
-                        for alias in base_contracts {
-                            if let Some(base_name) = alias.get("baseName") {
-                                stack.push(base_name);
-                            }
-                        }
-                    }
-
-                    if let Some(symbol_aliases) =
-                        tree.get("symbolAliases").and_then(|v| v.as_array())
-                    {
-                        for alias in symbol_aliases {
-                            if let Some(foreign) = alias.get("foreign") {
-                                stack.push(foreign);
-                            }
-                        }
-                    }
-
-                    if let Some(library_name) = tree.get("libraryName") {
-                        stack.push(library_name);
-                    }
-
-                    // Check for body nodes - simplified to match Python
-                    if let Some(body) = tree.get("body") {
-                        stack.push(body);
-                    }
-
-                    // Check for expression nodes
-                    if let Some(expression) = tree.get("expression") {
-                        stack.push(expression);
-                    }
-
-                    if let Some(base_expression) = tree.get("baseExpression") {
-                        stack.push(base_expression);
-                    }
-
-                    if let Some(index_expression) = tree.get("indexExpression") {
-                        stack.push(index_expression);
-                    }
-
-                    if let Some(left_expression) = tree.get("leftExpression") {
-                        stack.push(left_expression);
-                    }
-
-                    if let Some(right_expression) = tree.get("rightExpression") {
-                        stack.push(right_expression);
-                    }
-
-                    if let Some(event_call) = tree.get("eventCall") {
-                        stack.push(event_call);
-                    }
-
-                    if let Some(condition) = tree.get("condition") {
-                        stack.push(condition);
-                    }
-
-                    if let Some(false_body) = tree.get("falseBody") {
-                        stack.push(false_body);
-                    }
-
-                    if let Some(true_body) = tree.get("trueBody") {
-                        stack.push(true_body);
-                    }
-
-                    if let Some(sub_expression) = tree.get("subExpression") {
-                        stack.push(sub_expression);
-                    }
-
-                    if let Some(modifier_name) = tree.get("modifierName") {
-                        stack.push(modifier_name);
-                    }
-
-                    if let Some(modifiers) = tree.get("modifiers").and_then(|v| v.as_array()) {
-                        for modifier in modifiers {
-                            stack.push(modifier);
-                        }
-                    }
-
-                    if let Some(value) = tree.get("value")
-                        && value.is_object()
-                    {
-                        stack.push(value);
-                    }
-
-                    if let Some(initial_value) = tree.get("initialValue")
-                        && initial_value.is_object()
-                    {
-                        stack.push(initial_value);
-                    }
-
-                    if let Some(type_name) = tree.get("typeName") {
-                        stack.push(type_name);
-                    }
-
-                    if let Some(key_type) = tree.get("keyType") {
-                        stack.push(key_type);
-                    }
-
-                    if let Some(value_type) = tree.get("valueType") {
-                        stack.push(value_type);
-                    }
-
-                    if let Some(path_node) = tree.get("pathNode") {
-                        stack.push(path_node);
-                    }
-
-                    if let Some(left_hand_side) = tree.get("leftHandSide") {
-                        stack.push(left_hand_side);
-                    }
-
-                    if let Some(right_hand_side) = tree.get("rightHandSide") {
-                        stack.push(right_hand_side);
-                    }
-
-                    // arguments
-                    if let Some(arguments) = tree.get("arguments") {
-                        match arguments {
-                            Value::Array(arr) => {
-                                for node in arr {
-                                    stack.push(node);
-                                }
-                            }
-                            Value::Object(_) => {
-                                stack.push(arguments);
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    // statements
-                    if let Some(statements) = tree.get("statements") {
-                        match statements {
-                            Value::Array(arr) => {
-                                for node in arr {
-                                    stack.push(node);
-                                }
-                            }
-                            Value::Object(_) => {
-                                stack.push(statements);
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    // parameters
-                    if let Some(parameters) = tree.get("parameters") {
-                        match parameters {
-                            Value::Array(arr) => {
-                                for node in arr {
-                                    stack.push(node);
-                                }
-                            }
-                            Value::Object(_) => {
-                                stack.push(parameters);
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    // returnParameters
-                    if let Some(return_parameters) = tree.get("returnParameters") {
-                        match return_parameters {
-                            Value::Array(arr) => {
-                                for node in arr {
-                                    stack.push(node);
-                                }
-                            }
-                            Value::Object(_) => {
-                                stack.push(return_parameters);
-                            }
-                            _ => {}
-                        }
-                    }
-                    
-                    // overrides
-                    if let Some(overrides) = tree.get("overrides") {
-                        match overrides {
-                            Value::Array(arr) => {
-                                for node in arr {
-                                    stack.push(node);
-                                }
-                            }
-                            Value::Object(_) => {
-                                stack.push(overrides);
-                            }
-                            _ => {}
-                        }
-                    }
-
+                    push_if_node_or_array(tree, "nodes", &mut stack);
+                    push_if_node_or_array(tree, "members", &mut stack);
+                    push_if_node_or_array(tree, "declarations", &mut stack);
+                    push_if_node_or_array(tree, "baseContracts", &mut stack);
+                    push_if_node_or_array(tree, "arguments", &mut stack);
+                    push_if_node_or_array(tree, "statements", &mut stack);
+                    push_if_node_or_array(tree, "parameters", &mut stack);
+                    push_if_node_or_array(tree, "names", &mut stack);
+                    push_if_node_or_array(tree, "options", &mut stack);
+                    push_if_node_or_array(tree, "components", &mut stack);
+                    push_if_node_or_array(tree, "returnParameters", &mut stack);
+                    push_if_node_or_array(tree, "overrides", &mut stack);
+                    push_if_node_or_array(tree, "symbolAliases", &mut stack);
+                    push_if_node_or_array(tree, "baseContracts", &mut stack);
+                    push_if_node_or_array(tree, "baseName", &mut stack);
+                    push_if_node_or_array(tree, "foreign", &mut stack);
+                    push_if_node_or_array(tree, "libraryName", &mut stack);
+                    push_if_node_or_array(tree, "body", &mut stack);
+                    push_if_node_or_array(tree, "expression", &mut stack);
+                    push_if_node_or_array(tree, "baseExpression", &mut stack);
+                    push_if_node_or_array(tree, "indexExpression", &mut stack);
+                    push_if_node_or_array(tree, "startExpression", &mut stack);
+                    push_if_node_or_array(tree, "endExpression", &mut stack);
+                    push_if_node_or_array(tree, "subdenomination", &mut stack);
+                    push_if_node_or_array(tree, "trueExpression", &mut stack);
+                    push_if_node_or_array(tree, "falseExpression", &mut stack);
+                    push_if_node_or_array(tree, "rightExpression", &mut stack);
+                    push_if_node_or_array(tree, "leftExpression", &mut stack);
+                    push_if_node_or_array(tree, "eventCall", &mut stack);
+                    push_if_node_or_array(tree, "condition", &mut stack);
+                    push_if_node_or_array(tree, "falseBody", &mut stack);
+                    push_if_node_or_array(tree, "trueBody", &mut stack);
+                    push_if_node_or_array(tree, "subExpression", &mut stack);
+                    push_if_node_or_array(tree, "modifierName", &mut stack);
+                    push_if_node_or_array(tree, "modifiers", &mut stack);
+                    push_if_node_or_array(tree, "value", &mut stack);
+                    push_if_node_or_array(tree, "initialValue", &mut stack);
+                    push_if_node_or_array(tree, "typeName", &mut stack);
+                    push_if_node_or_array(tree, "keyType", &mut stack);
+                    push_if_node_or_array(tree, "valueType", &mut stack);
+                    push_if_node_or_array(tree, "pathNode", &mut stack);
+                    push_if_node_or_array(tree, "leftHandSide", &mut stack);
+                    push_if_node_or_array(tree, "rightHandSide", &mut stack);
+                    push_if_node_or_array(tree, "initialValue", &mut stack);
+                    push_if_node_or_array(tree, "block", &mut stack);
+                    push_if_node_or_array(tree, "baseType", &mut stack);
+                    push_if_node_or_array(tree, "loopExpression", &mut stack);
+                    push_if_node_or_array(tree, "externalCall", &mut stack);
+                    push_if_node_or_array(tree, "errorCall", &mut stack);
+                    push_if_node_or_array(tree, "initializationExpression", &mut stack);
+                    push_if_node_or_array(tree, "arguments", &mut stack);
+                    push_if_node_or_array(tree, "statements", &mut stack);
+                    push_if_node_or_array(tree, "parameters", &mut stack);
+                    push_if_node_or_array(tree, "names", &mut stack);
+                    push_if_node_or_array(tree, "options", &mut stack);
+                    push_if_node_or_array(tree, "components", &mut stack);
+                    push_if_node_or_array(tree, "options", &mut stack);
+                    push_if_node_or_array(tree, "returnParameters", &mut stack);
+                    push_if_node_or_array(tree, "overrides", &mut stack);
                 }
             }
         }
@@ -698,8 +557,7 @@ mod tests {
             for node_info in file_nodes.values() {
                 assert!(!node_info.src.is_empty());
                 // Some nodes should have referenced declarations
-                if node_info.referenced_declaration.is_some() {
-                }
+                if node_info.referenced_declaration.is_some() {}
             }
         });
     }
@@ -736,7 +594,7 @@ mod tests {
         // Should find a declaration
         if let Some((file_path, _location_bytes)) = result {
             assert!(!file_path.is_empty());
-        } 
+        }
     }
     #[test]
     fn test_goto_declaration_and_definition_consistency() {
@@ -828,7 +686,6 @@ mod tests {
 
         // Should have at least some nodes with name locations
         assert!(nodes_with_name_location > 0, "Expected to find nodes with name locations");
-
     }
 
     #[test]
@@ -875,6 +732,5 @@ mod tests {
         assert!(test_file_nodes.contains_key(&3));
         let node3 = &test_file_nodes[&3];
         assert_eq!(node3.name_location, Some("35:5:0".to_string()));
-
     }
 }
