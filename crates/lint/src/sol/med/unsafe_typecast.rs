@@ -54,7 +54,7 @@ fn is_unsafe_typecast_hir(
     if let ElementaryType::Int(tgt_size) = target_type {
         if let ExprKind::Call(call_expr, args, _) = &source_expr.kind {
             if let ExprKind::Type(hir::Type {
-                kind: TypeKind::Elementary(ElementaryType::UInt(src_bits)),
+                kind: TypeKind::Elementary(ElementaryType::UInt(_src_bits)),
                 ..
             }) = &call_expr.kind
             {
@@ -77,7 +77,7 @@ fn is_unsafe_typecast_hir(
 fn infer_source_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<ElementaryType> {
     match &expr.kind {
         // A type cast call: Type(val)
-        ExprKind::Call(call_expr, args, _) => {
+        ExprKind::Call(call_expr, _args, _) => {
             if let ExprKind::Type(hir::Type { kind: TypeKind::Elementary(elem_type), .. }) =
                 &call_expr.kind
             {
