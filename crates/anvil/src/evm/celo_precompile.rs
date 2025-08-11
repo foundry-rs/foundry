@@ -4,7 +4,7 @@
 //! EVM contract. The precompile is part of Celo's token duality system, allowing transfer of
 //! native tokens via ERC20.
 //!
-//! For more details, see: https://specs.celo.org/token_duality.html#the-transfer-precompile
+//! For more details, see: <https://specs.celo.org/token_duality.html#the-transfer-precompile>
 //!
 //! The transfer precompile is deployed at address 0xfd and accepts 96 bytes of input:
 //! - from address (32 bytes, left-padded)
