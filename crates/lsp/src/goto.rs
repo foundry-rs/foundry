@@ -163,6 +163,12 @@ pub fn cache_ids(
                                     stack.push(expression);
                                 }
 
+                                if let Some(value) = tree.get("value") {
+                                    if value.is_object() {
+                                        stack.push(value);
+                                    }
+                                }
+
                                 // Check for arguments - direct from tree, not from expression
                                 if let Some(arguments) =
                                     tree.get("arguments").and_then(|v| v.as_array())
@@ -276,7 +282,7 @@ pub fn goto_bytes(
 
     // Search for the referenced declaration across all files
     let mut target_node: Option<&NodeInfo> = None;
-    for (_file_path, file_nodes) in nodes {
+    for file_nodes in nodes.values() {
         if let Some(node) = file_nodes.get(&ref_id) {
             target_node = Some(node);
             break;
@@ -360,7 +366,7 @@ pub fn goto_declaration(
     let byte_position = pos_to_bytes(source_bytes, position);
 
     if let Some((file_path, location_bytes)) =
-        goto_bytes(&nodes, &path_to_abs, &id_to_path_map, &file_uri.to_string(), byte_position)
+        goto_bytes(&nodes, &path_to_abs, &id_to_path_map, file_uri.as_ref(), byte_position)
     {
         // Read the target file to convert byte position to line/column
         let target_file_path = std::path::Path::new(&file_path);
@@ -495,7 +501,6 @@ mod tests {
         let ast_data = match get_ast_data() {
             Some(data) => data,
             None => {
-                println!("Skipping test - could not get AST data");
                 return;
             }
         };
@@ -520,7 +525,6 @@ mod tests {
         let ast_data = match get_ast_data() {
             Some(data) => data,
             None => {
-                println!("Skipping test - could not get AST data");
                 return;
             }
         };
