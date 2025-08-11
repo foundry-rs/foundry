@@ -163,6 +163,14 @@ pub fn cache_ids(
                                     stack.push(expression);
                                 }
 
+                                if let Some(base_expression) = tree.get("baseExpression") {
+                                    stack.push(base_expression);
+                                }
+
+                                if let Some(index_expression) = tree.get("indexExpression") {
+                                    stack.push(index_expression);
+                                }
+
                                 if let Some(left_expression) = tree.get("leftExpression") {
                                     stack.push(left_expression);
                                 }
