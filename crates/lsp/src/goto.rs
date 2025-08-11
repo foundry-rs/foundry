@@ -19,294 +19,277 @@ pub fn cache_ids(
 
     if let Some(sources_obj) = sources.as_object() {
         for (path, contents) in sources_obj {
-            if let Some(contents_array) = contents.as_array() {
-                if let Some(first_content) = contents_array.first() {
-                    if let Some(source_file) = first_content.get("source_file") {
-                        if let Some(ast) = source_file.get("ast") {
-                            // Get the absolute path for this file
-                            let abs_path = ast
-                                .get("absolutePath")
+            if let Some(contents_array) = contents.as_array()
+                && let Some(first_content) = contents_array.first()
+                && let Some(source_file) = first_content.get("source_file")
+                && let Some(ast) = source_file.get("ast")
+            {
+                // Get the absolute path for this file
+                let abs_path =
+                    ast.get("absolutePath").and_then(|v| v.as_str()).unwrap_or(path).to_string();
+
+                path_to_abs.insert(path.clone(), abs_path.clone());
+
+                // Initialize the nodes map for this file
+                if !nodes.contains_key(&abs_path) {
+                    nodes.insert(abs_path.clone(), HashMap::new());
+                }
+
+                if let Some(id) = ast.get("id").and_then(|v| v.as_u64())
+                    && let Some(src) = ast.get("src").and_then(|v| v.as_str())
+                {
+                    nodes.get_mut(&abs_path).unwrap().insert(
+                        id,
+                        NodeInfo {
+                            src: src.to_string(),
+                            name_location: None,
+                            referenced_declaration: None,
+                            node_type: ast
+                                .get("nodeType")
                                 .and_then(|v| v.as_str())
-                                .unwrap_or(path)
-                                .to_string();
+                                .map(|s| s.to_string()),
+                            member_location: None,
+                        },
+                    );
+                }
 
-                            path_to_abs.insert(path.clone(), abs_path.clone());
+                let mut stack = vec![ast];
 
-                            // Initialize the nodes map for this file
-                            if !nodes.contains_key(&abs_path) {
-                                nodes.insert(abs_path.clone(), HashMap::new());
+                while let Some(tree) = stack.pop() {
+                    if let Some(id) = tree.get("id").and_then(|v| v.as_u64())
+                        && let Some(src) = tree.get("src").and_then(|v| v.as_str())
+                    {
+                        // Check for nameLocation first
+                        let mut name_location = tree
+                            .get("nameLocation")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+
+                        // Check for nameLocations array and use first element if
+                        // available
+                        if name_location.is_none()
+                            && let Some(name_locations) = tree.get("nameLocations")
+                        
+                            && let Some(locations_array) = name_locations.as_array()
+                                && !locations_array.is_empty() {
+                                    name_location =
+                                        locations_array[0].as_str().map(|s| s.to_string());
+                                }
+
+                        let node_info = NodeInfo {
+                            src: src.to_string(),
+                            name_location,
+                            referenced_declaration: tree
+                                .get("referencedDeclaration")
+                                .and_then(|v| v.as_u64()),
+                            node_type: tree
+                                .get("nodeType")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string()),
+                            member_location: tree
+                                .get("memberLocation")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string()),
+                        };
+
+                        nodes.get_mut(&abs_path).unwrap().insert(id, node_info);
+                    }
+
+                    // Add child nodes to stack - following the Python implementation
+                    // exactly
+                    if let Some(nodes_array) = tree.get("nodes").and_then(|v| v.as_array()) {
+                        for node in nodes_array {
+                            stack.push(node);
+                        }
+                    }
+
+                    if let Some(members_array) = tree.get("members").and_then(|v| v.as_array()) {
+                        for member in members_array {
+                            stack.push(member);
+                        }
+                    }
+
+                    if let Some(declarations_array) =
+                        tree.get("declarations").and_then(|v| v.as_array())
+                    {
+                        for declaration in declarations_array {
+                            stack.push(declaration);
+                        }
+                    }
+
+                    if let Some(base_contracts) =
+                        tree.get("baseContracts").and_then(|v| v.as_array())
+                    {
+                        for alias in base_contracts {
+                            if let Some(base_name) = alias.get("baseName") {
+                                stack.push(base_name);
                             }
+                        }
+                    }
 
-                            if let Some(id) = ast.get("id").and_then(|v| v.as_u64()) {
-                                if let Some(src) = ast.get("src").and_then(|v| v.as_str()) {
-                                    nodes.get_mut(&abs_path).unwrap().insert(
-                                        id,
-                                        NodeInfo {
-                                            src: src.to_string(),
-                                            name_location: None,
-                                            referenced_declaration: None,
-                                            node_type: ast
-                                                .get("nodeType")
-                                                .and_then(|v| v.as_str())
-                                                .map(|s| s.to_string()),
-                                            member_location: None,
-                                        },
-                                    );
-                                }
+                    if let Some(symbol_aliases) =
+                        tree.get("symbolAliases").and_then(|v| v.as_array())
+                    {
+                        for alias in symbol_aliases {
+                            if let Some(foreign) = alias.get("foreign") {
+                                stack.push(foreign);
                             }
+                        }
+                    }
 
-                            let mut stack = vec![ast];
+                    if let Some(library_name) = tree.get("libraryName") {
+                        stack.push(library_name);
+                    }
 
-                            while let Some(tree) = stack.pop() {
-                                if let Some(id) = tree.get("id").and_then(|v| v.as_u64()) {
-                                    if let Some(src) = tree.get("src").and_then(|v| v.as_str()) {
-                                        // Check for nameLocation first
-                                        let mut name_location = tree
-                                            .get("nameLocation")
-                                            .and_then(|v| v.as_str())
-                                            .map(|s| s.to_string());
+                    // Check for body nodes - simplified to match Python
+                    if let Some(body) = tree.get("body") {
+                        stack.push(body);
+                    }
 
-                                        // Check for nameLocations array and use first element if
-                                        // available
-                                        if name_location.is_none() {
-                                            if let Some(name_locations) = tree.get("nameLocations")
-                                            {
-                                                if let Some(locations_array) =
-                                                    name_locations.as_array()
-                                                {
-                                                    if !locations_array.is_empty() {
-                                                        name_location = locations_array[0]
-                                                            .as_str()
-                                                            .map(|s| s.to_string());
-                                                    }
-                                                }
-                                            }
-                                        }
+                    // Check for expression nodes
+                    if let Some(expression) = tree.get("expression") {
+                        stack.push(expression);
+                    }
 
-                                        let node_info = NodeInfo {
-                                            src: src.to_string(),
-                                            name_location,
-                                            referenced_declaration: tree
-                                                .get("referencedDeclaration")
-                                                .and_then(|v| v.as_u64()),
-                                            node_type: tree
-                                                .get("nodeType")
-                                                .and_then(|v| v.as_str())
-                                                .map(|s| s.to_string()),
-                                            member_location: tree
-                                                .get("memberLocation")
-                                                .and_then(|v| v.as_str())
-                                                .map(|s| s.to_string()),
-                                        };
+                    if let Some(base_expression) = tree.get("baseExpression") {
+                        stack.push(base_expression);
+                    }
 
-                                        nodes.get_mut(&abs_path).unwrap().insert(id, node_info);
-                                    }
-                                }
+                    if let Some(index_expression) = tree.get("indexExpression") {
+                        stack.push(index_expression);
+                    }
 
-                                // Add child nodes to stack - following the Python implementation
-                                // exactly
-                                if let Some(nodes_array) =
-                                    tree.get("nodes").and_then(|v| v.as_array())
-                                {
-                                    for node in nodes_array {
-                                        stack.push(node);
-                                    }
-                                }
+                    if let Some(left_expression) = tree.get("leftExpression") {
+                        stack.push(left_expression);
+                    }
 
-                                if let Some(members_array) =
-                                    tree.get("members").and_then(|v| v.as_array())
-                                {
-                                    for member in members_array {
-                                        stack.push(member);
-                                    }
-                                }
+                    if let Some(right_expression) = tree.get("rightExpression") {
+                        stack.push(right_expression);
+                    }
 
-                                if let Some(declarations_array) =
-                                    tree.get("declarations").and_then(|v| v.as_array())
-                                {
-                                    for declaration in declarations_array {
-                                        stack.push(declaration);
-                                    }
-                                }
+                    if let Some(event_call) = tree.get("eventCall") {
+                        stack.push(event_call);
+                    }
 
-                                if let Some(base_contracts) =
-                                    tree.get("baseContracts").and_then(|v| v.as_array())
-                                {
-                                    for alias in base_contracts {
-                                        if let Some(base_name) = alias.get("baseName") {
-                                            stack.push(base_name);
-                                        }
-                                    }
-                                }
+                    if let Some(condition) = tree.get("condition") {
+                        stack.push(condition);
+                    }
 
-                                if let Some(symbol_aliases) =
-                                    tree.get("symbolAliases").and_then(|v| v.as_array())
-                                {
-                                    for alias in symbol_aliases {
-                                        if let Some(foreign) = alias.get("foreign") {
-                                            stack.push(foreign);
-                                        }
-                                    }
-                                }
+                    if let Some(false_body) = tree.get("falseBody") {
+                        stack.push(false_body);
+                    }
 
-                                if let Some(library_name) = tree.get("libraryName") {
-                                    stack.push(library_name);
-                                }
+                    if let Some(true_body) = tree.get("trueBody") {
+                        stack.push(true_body);
+                    }
 
-                                // Check for body nodes - simplified to match Python
-                                if let Some(body) = tree.get("body") {
-                                    stack.push(body);
-                                }
+                    if let Some(sub_expression) = tree.get("subExpression") {
+                        stack.push(sub_expression);
+                    }
 
-                                // Check for expression nodes
-                                if let Some(expression) = tree.get("expression") {
-                                    stack.push(expression);
-                                }
+                    if let Some(modifier_name) = tree.get("modifierName") {
+                        stack.push(modifier_name);
+                    }
 
-                                if let Some(base_expression) = tree.get("baseExpression") {
-                                    stack.push(base_expression);
-                                }
+                    if let Some(modifiers) = tree.get("modifiers").and_then(|v| v.as_array()) {
+                        for modifier in modifiers {
+                            stack.push(modifier);
+                        }
+                    }
 
-                                if let Some(index_expression) = tree.get("indexExpression") {
-                                    stack.push(index_expression);
-                                }
+                    if let Some(value) = tree.get("value")
+                        && value.is_object()
+                    {
+                        stack.push(value);
+                    }
 
-                                if let Some(left_expression) = tree.get("leftExpression") {
-                                    stack.push(left_expression);
-                                }
+                    if let Some(initial_value) = tree.get("initialValue")
+                        && initial_value.is_object()
+                    {
+                        stack.push(initial_value);
+                    }
 
-                                if let Some(right_expression) = tree.get("rightExpression") {
-                                    stack.push(right_expression);
-                                }
+                    if let Some(type_name) = tree.get("typeName") {
+                        stack.push(type_name);
+                    }
 
-                                if let Some(event_call) = tree.get("eventCall") {
-                                    stack.push(event_call);
-                                }
+                    if let Some(key_type) = tree.get("keyType") {
+                        stack.push(key_type);
+                    }
 
-                                if let Some(condition) = tree.get("condition") {
-                                    stack.push(condition);
-                                }
+                    if let Some(value_type) = tree.get("valueType") {
+                        stack.push(value_type);
+                    }
 
-                                if let Some(false_body) = tree.get("falseBody") {
-                                    stack.push(false_body);
-                                }
+                    if let Some(path_node) = tree.get("pathNode") {
+                        stack.push(path_node);
+                    }
 
-                                if let Some(true_body) = tree.get("trueBody") {
-                                    stack.push(true_body);
-                                }
+                    if let Some(left_hand_side) = tree.get("leftHandSide") {
+                        stack.push(left_hand_side);
+                    }
 
-                                if let Some(sub_expression) = tree.get("subExpression") {
-                                    stack.push(sub_expression);
-                                }
+                    if let Some(right_hand_side) = tree.get("rightHandSide") {
+                        stack.push(right_hand_side);
+                    }
 
-                                if let Some(modifier_name) = tree.get("modifierName") {
-                                    stack.push(modifier_name);
-                                }
-
-                                if let Some(modifiers) =
-                                    tree.get("modifiers").and_then(|v| v.as_array())
-                                {
-                                    for modifier in modifiers {
-                                        stack.push(modifier);
-                                    }
-                                }
-
-                                if let Some(value) = tree.get("value") {
-                                    if value.is_object() {
-                                        stack.push(value);
-                                    }
-                                }
-
-                                if let Some(initial_value) = tree.get("initialValue") {
-                                    if initial_value.is_object() {
-                                        stack.push(initial_value);
-                                    }
-                                }
-
-                                if let Some(type_name) = tree.get("typeName") {
-                                    stack.push(type_name);
-                                }
-
-                                if let Some(key_type) = tree.get("keyType") {
-                                    stack.push(key_type);
-                                }
-
-                                if let Some(value_type) = tree.get("valueType") {
-                                    stack.push(value_type);
-                                }
-
-                                if let Some(path_node) = tree.get("pathNode") {
-                                    stack.push(path_node);
-                                }
-
-                                if let Some(left_hand_side) = tree.get("leftHandSide") {
-                                    stack.push(left_hand_side);
-                                }
-
-                                if let Some(right_hand_side) = tree.get("rightHandSide") {
-                                    stack.push(right_hand_side);
-                                }
-
-                                // arguments
-                                if let Some(arguments) = tree.get("arguments") {
-                                    match arguments {
-                                        Value::Array(arr) => {
-                                            for node in arr {
-                                                stack.push(node);
-                                            }
-                                        }
-                                        Value::Object(_) => {
-                                            stack.push(arguments);
-                                        }
-                                        _ => {}
-                                    }
-                                }
-
-                                // statements
-                                if let Some(statements) = tree.get("statements") {
-                                    match statements {
-                                        Value::Array(arr) => {
-                                            for node in arr {
-                                                stack.push(node);
-                                            }
-                                        }
-                                        Value::Object(_) => {
-                                            stack.push(statements);
-                                        }
-                                        _ => {}
-                                    }
-                                }
-
-                                // parameters
-                                if let Some(parameters) = tree.get("parameters") {
-                                    match parameters {
-                                        Value::Array(arr) => {
-                                            for node in arr {
-                                                stack.push(node);
-                                            }
-                                        }
-                                        Value::Object(_) => {
-                                            stack.push(parameters);
-                                        }
-                                        _ => {}
-                                    }
-                                }
-
-                                // returnParameters
-                                if let Some(return_parameters) = tree.get("returnParameters") {
-                                    match return_parameters {
-                                        Value::Array(arr) => {
-                                            for node in arr {
-                                                stack.push(node);
-                                            }
-                                        }
-                                        Value::Object(_) => {
-                                            stack.push(return_parameters);
-                                        }
-                                        _ => {}
-                                    }
+                    // arguments
+                    if let Some(arguments) = tree.get("arguments") {
+                        match arguments {
+                            Value::Array(arr) => {
+                                for node in arr {
+                                    stack.push(node);
                                 }
                             }
+                            Value::Object(_) => {
+                                stack.push(arguments);
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    // statements
+                    if let Some(statements) = tree.get("statements") {
+                        match statements {
+                            Value::Array(arr) => {
+                                for node in arr {
+                                    stack.push(node);
+                                }
+                            }
+                            Value::Object(_) => {
+                                stack.push(statements);
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    // parameters
+                    if let Some(parameters) = tree.get("parameters") {
+                        match parameters {
+                            Value::Array(arr) => {
+                                for node in arr {
+                                    stack.push(node);
+                                }
+                            }
+                            Value::Object(_) => {
+                                stack.push(parameters);
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    // returnParameters
+                    if let Some(return_parameters) = tree.get("returnParameters") {
+                        match return_parameters {
+                            Value::Array(arr) => {
+                                for node in arr {
+                                    stack.push(node);
+                                }
+                            }
+                            Value::Object(_) => {
+                                stack.push(return_parameters);
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -316,6 +299,7 @@ pub fn cache_ids(
 
     (nodes, path_to_abs)
 }
+
 pub fn goto_bytes(
     nodes: &HashMap<String, HashMap<u64, NodeInfo>>,
     path_to_abs: &HashMap<String, String>,
@@ -323,11 +307,9 @@ pub fn goto_bytes(
     uri: &str,
     position: usize,
 ) -> Option<(String, usize)> {
-    // Extract path from URI
-    let path = if uri.starts_with("file://") {
-        &uri[7..] // Remove "file://" prefix
-    } else {
-        uri
+    let path = match uri.starts_with("file://") {
+        true => &uri[7..],
+        false => uri,
     };
 
     // Get absolute path for this file
@@ -470,15 +452,14 @@ pub fn goto_declaration(
             std::env::current_dir().ok()?.join(target_file_path)
         };
 
-        if let Ok(target_source_bytes) = std::fs::read(&absolute_path) {
-            if let Some(target_position) = bytes_to_pos(&target_source_bytes, location_bytes) {
-                if let Ok(target_uri) = Url::from_file_path(&absolute_path) {
-                    return Some(Location {
-                        uri: target_uri,
-                        range: Range { start: target_position, end: target_position },
-                    });
-                }
-            }
+        if let Ok(target_source_bytes) = std::fs::read(&absolute_path)
+            && let Some(target_position) = bytes_to_pos(&target_source_bytes, location_bytes)
+            && let Ok(target_uri) = Url::from_file_path(&absolute_path)
+        {
+            return Some(Location {
+                uri: target_uri,
+                range: Range { start: target_position, end: target_position },
+            });
         }
     }
 
@@ -542,7 +523,6 @@ mod tests {
         let ast_data = match get_ast_data() {
             Some(data) => data,
             None => {
-                println!("Skipping test - could not get AST data");
                 return;
             }
         };
@@ -568,7 +548,6 @@ mod tests {
         let ast_data = match get_ast_data() {
             Some(data) => data,
             None => {
-                println!("Skipping test - could not get AST data");
                 return;
             }
         };
@@ -640,7 +619,6 @@ mod tests {
         let ast_data = match get_ast_data() {
             Some(data) => data,
             None => {
-                println!("Skipping test - could not get AST data");
                 return;
             }
         };
@@ -664,7 +642,6 @@ mod tests {
         let ast_data = match get_ast_data() {
             Some(data) => data,
             None => {
-                println!("Skipping test - could not get AST data");
                 return;
             }
         };
@@ -689,7 +666,6 @@ mod tests {
         let ast_data = match get_ast_data() {
             Some(data) => data,
             None => {
-                println!("Skipping test - could not get AST data");
                 return;
             }
         };
@@ -702,20 +678,14 @@ mod tests {
         assert!(!path_to_abs.is_empty());
 
         // Check that nodes have the expected structure
-        for (file_path, file_nodes) in &nodes {
-            println!("File: {} has {} nodes", file_path, file_nodes.len());
-            for (id, node_info) in file_nodes {
+        nodes.iter().for_each(|(_file_path, file_nodes)| {
+            for node_info in file_nodes.values() {
                 assert!(!node_info.src.is_empty());
                 // Some nodes should have referenced declarations
                 if node_info.referenced_declaration.is_some() {
-                    println!(
-                        "Node {} references declaration {}",
-                        id,
-                        node_info.referenced_declaration.unwrap()
-                    );
                 }
             }
-        }
+        });
     }
 
     #[test]
@@ -723,7 +693,6 @@ mod tests {
         let ast_data = match get_ast_data() {
             Some(data) => data,
             None => {
-                println!("Skipping test - could not get AST data");
                 return;
             }
         };
@@ -751,17 +720,13 @@ mod tests {
         // Should find a declaration
         if let Some((file_path, _location_bytes)) = result {
             assert!(!file_path.is_empty());
-            println!("Found declaration in file: {}", file_path);
-        } else {
-            println!("No declaration found - this might be expected for some test cases");
-        }
+        } 
     }
     #[test]
     fn test_goto_declaration_and_definition_consistency() {
         let ast_data = match get_ast_data() {
             Some(data) => data,
             None => {
-                println!("Skipping test - could not get AST data");
                 return;
             }
         };
@@ -795,7 +760,6 @@ mod tests {
         let ast_data = match get_ast_data() {
             Some(data) => data,
             None => {
-                println!("Skipping test - could not get AST data");
                 return;
             }
         };
@@ -812,15 +776,14 @@ mod tests {
 
         for (position, description) in test_positions {
             let result = goto_declaration(&ast_data, &file_uri, position, &source_bytes);
-            assert!(result.is_some(), "Failed to find definition for {}", description);
+            assert!(result.is_some(), "Failed to find definition for {description}");
 
             let location = result.unwrap();
             // Verify we got a valid location
-            assert!(location.range.start.line < 100, "Invalid line number for {}", description);
+            assert!(location.range.start.line < 100, "Invalid line number for {description}");
             assert!(
                 location.range.start.character < 1000,
-                "Invalid character position for {}",
-                description
+                "Invalid character position for {description}"
             );
         }
     }
@@ -830,7 +793,6 @@ mod tests {
         let ast_data = match get_ast_data() {
             Some(data) => data,
             None => {
-                println!("Skipping test - could not get AST data");
                 return;
             }
         };
@@ -840,8 +802,8 @@ mod tests {
 
         // Verify that nodes have name_location set (either from nameLocation or nameLocations[0])
         let mut nodes_with_name_location = 0;
-        for (_file_path, file_nodes) in &nodes {
-            for (_id, node_info) in file_nodes {
+        for file_nodes in nodes.values() {
+            for node_info in file_nodes.values() {
                 if node_info.name_location.is_some() {
                     nodes_with_name_location += 1;
                 }
@@ -851,7 +813,6 @@ mod tests {
         // Should have at least some nodes with name locations
         assert!(nodes_with_name_location > 0, "Expected to find nodes with name locations");
 
-        println!("Found {} nodes with name locations", nodes_with_name_location);
     }
 
     #[test]
@@ -899,6 +860,5 @@ mod tests {
         let node3 = &test_file_nodes[&3];
         assert_eq!(node3.name_location, Some("35:5:0".to_string()));
 
-        println!("Successfully parsed nameLocations array and nameLocation field");
     }
 }
