@@ -6,7 +6,8 @@ use crate::strategies::mutators::{
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{Address, B256, I256, U256};
 use proptest::{prelude::*, test_runner::TestRunner};
-use rand::{SeedableRng, rngs::StdRng};
+use rand::{SeedableRng, prelude::IndexedMutRandom, rngs::StdRng};
+use std::mem::replace;
 
 /// The max length of arrays we fuzz for is 256.
 const MAX_ARRAY_LEN: usize = 256;
@@ -375,7 +376,8 @@ fn mutate_tuple(
 ) {
     let id = test_runner.rng().random_range(0..tuples.len());
     let param_type = &tuple_types[id];
-    let new_val = mutate_param_value(param_type, tuples[id].clone(), test_runner, state);
+    let old_val = replace(&mut tuples[id], DynSolValue::Bool(false));
+    let new_val = mutate_param_value(param_type, old_val, test_runner, state);
     tuples[id] = new_val;
 }
 
@@ -386,9 +388,10 @@ fn mutate_array(
     test_runner: &mut TestRunner,
     state: &EvmFuzzState,
 ) {
-    let id = test_runner.rng().random_range(0..array_values.len());
-    let new_val = mutate_param_value(array_type, array_values[id].clone(), test_runner, state);
-    array_values[id] = new_val;
+    let elem = array_values.choose_mut(&mut test_runner.rng()).unwrap();
+    let old_val = replace(elem, DynSolValue::Bool(false));
+    let new_val = mutate_param_value(array_type, old_val, test_runner, state);
+    *elem = new_val;
 }
 
 #[cfg(test)]
