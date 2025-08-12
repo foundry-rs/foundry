@@ -1180,13 +1180,15 @@ impl Backend {
         if let Some(factory) = &self.precompile_factory {
             inject_precompiles(&mut evm, factory.precompiles());
         }
-        let cheats_arc = Arc::new(self.cheats.clone());
 
-        let cheat_ecrecover = CheatEcrecover::new(Arc::clone(&cheats_arc));
+        let cheats = Arc::new(self.cheats.clone());
+        if cheats.has_recover_overrides() {
+            let cheat_ecrecover = CheatEcrecover::new(Arc::clone(&cheats));
+            evm.precompiles_mut().apply_precompile(&EC_RECOVER, move |_| {
+                Some(DynPrecompile::new_stateful(move |input| cheat_ecrecover.call(input)))
+            });
+        }
 
-        evm.precompiles_mut().apply_precompile(&EC_RECOVER, move |_| {
-            Some(DynPrecompile::new_stateful(move |input| cheat_ecrecover.call(input)))
-        });
         evm
     }
 
