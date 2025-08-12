@@ -1525,6 +1525,6 @@ mod tests {
         assert_eq!(extract_array_size("uint256"), None);
         assert_eq!(extract_array_size("mapping(address => uint256)"), None);
         assert_eq!(extract_array_size("uint256[]"), None); // Dynamic array
-        assert_eq!(extract_array_size("struct[42]"), Some(42));
+        assert_eq!(extract_array_size("CustomStruct[42]"), Some(42));
     }
 }
