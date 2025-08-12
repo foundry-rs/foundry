@@ -1,50 +1,15 @@
 use super::state::EvmFuzzState;
+use crate::strategies::mutators::{
+    BitFlipMutator, IncrementDecrementMutator, InterestingByteMutator, InterestingDWordMutator,
+    InterestingWordMutator,
+};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{Address, B256, I256, Sign, U256};
+use alloy_primitives::{Address, B256, I256, U256};
 use proptest::{prelude::*, test_runner::TestRunner};
-use rand::{SeedableRng, rngs::StdRng, seq::IndexedRandom};
+use rand::{SeedableRng, rngs::StdRng};
 
 /// The max length of arrays we fuzz for is 256.
 const MAX_ARRAY_LEN: usize = 256;
-
-// Interesting 8-bit values to inject.
-static INTERESTING_8: [i8; 9] = [-128, -1, 0, 1, 16, 32, 64, 100, 127];
-
-/// Interesting 16-bit values to inject.
-static INTERESTING_16: [i16; 19] = [
-    -128, -1, 0, 1, 16, 32, 64, 100, 127, -32768, -129, 128, 255, 256, 512, 1000, 1024, 4096, 32767,
-];
-
-/// Interesting 32-bit values to inject.
-static INTERESTING_32: [i32; 27] = [
-    -128,
-    -1,
-    0,
-    1,
-    16,
-    32,
-    64,
-    100,
-    127,
-    -32768,
-    -129,
-    128,
-    255,
-    256,
-    512,
-    1000,
-    1024,
-    4096,
-    32767,
-    -2147483648,
-    -100663046,
-    -32769,
-    32768,
-    65535,
-    65536,
-    100663045,
-    2147483647,
-];
 
 /// Given a parameter type, returns a strategy for generating values for that type.
 ///
@@ -287,33 +252,29 @@ pub fn mutate_param_value(
         // new value from state.
         DynSolValue::Uint(val, size) => match test_runner.rng().random_range(0..=5) {
             0 => {
-                let mutated_val = if test_runner.rng().random::<bool>() {
-                    val.saturating_add(U256::ONE) }
-                else {
-                    val.saturating_sub(U256::ONE)
-                };
+                let mutated_val = U256::increment_decrement(val, test_runner);
                 trace!(target: "abi_mutation", "U256 increment/decrement {val} -> {mutated_val}");
                 DynSolValue::Uint(mutated_val, size)
             }
-            1 => flip_random_uint_bit(val, size, test_runner)
+            1 => U256::flip_random_bit(val, Some(size), test_runner)
                 .map(|mutated_val| {
                     trace!(target: "abi_mutation", "U256 flip random bit: {val} -> {mutated_val}");
                     DynSolValue::Uint(mutated_val, size)
                 })
                 .unwrap_or_else(|| new_value(param, test_runner)),
-            2 => mutate_interesting_uint_byte(val, size, test_runner)
+            2 => U256::mutate_interesting_byte(val, size, test_runner)
                 .map(|mutated_val| {
                     trace!(target: "abi_mutation", "U256 interesting byte: {val} -> {mutated_val}");
                     DynSolValue::Uint(mutated_val, size)
                 })
                 .unwrap_or_else(|| new_value(param, test_runner)),
-            3 => mutate_interesting_uint_word(val, size, test_runner)
+            3 => U256::mutate_interesting_word(val, size, test_runner)
                 .map(|mutated_val| {
                     trace!(target: "abi_mutation", "U256 interesting word: {val} -> {mutated_val}");
                     DynSolValue::Uint(mutated_val, size)
                 })
                 .unwrap_or_else(|| new_value(param, test_runner)),
-            4 => mutate_interesting_uint_dword(val, size, test_runner)
+            4 => U256::mutate_interesting_dword(val, size, test_runner)
                 .map(|mutated_val| {
                     trace!(target: "abi_mutation", "U256 interesting dword: {val} -> {mutated_val}");
                     DynSolValue::Uint(mutated_val, size)
@@ -326,33 +287,29 @@ pub fn mutate_param_value(
         // new value from state.
         DynSolValue::Int(val, size) => match test_runner.rng().random_range(0..=5) {
             0 => {
-                let mutated_val = if test_runner.rng().random::<bool>() {
-                    val.saturating_add(I256::ONE) }
-                else {
-                    val.saturating_sub(I256::ONE)
-                };
+                let mutated_val = I256::increment_decrement(val, test_runner);
                 trace!(target: "abi_mutation", "I256 increment/decrement {val} -> {mutated_val}");
                 DynSolValue::Int(mutated_val, size)
             },
-            1 => flip_random_int_bit(val, size, test_runner)
+            1 => I256::flip_random_bit(val, Some(size), test_runner)
                 .map(|mutated_val| {
                     trace!(target: "abi_mutation", "I256 flip random bit: {val} -> {mutated_val}");
                     DynSolValue::Int(mutated_val, size)
                 })
                 .unwrap_or_else(|| new_value(param, test_runner)),
-            2 => mutate_interesting_int_byte(val, size, test_runner)
+            2 => I256::mutate_interesting_byte(val, size, test_runner)
                 .map(|mutated_val| {
                     trace!(target: "abi_mutation", "I256 interesting byte: {val} -> {mutated_val}");
                     DynSolValue::Int(mutated_val, size)
                 })
                 .unwrap_or_else(|| new_value(param, test_runner)),
-            3 => mutate_interesting_int_word(val, size, test_runner)
+            3 => I256::mutate_interesting_word(val, size, test_runner)
                 .map(|mutated_val| {
                     trace!(target: "abi_mutation", "I256 interesting word: {val} -> {mutated_val}");
                     DynSolValue::Int(mutated_val, size)
                 })
                 .unwrap_or_else(|| new_value(param, test_runner)),
-            4 => mutate_interesting_int_dword(val, size, test_runner)
+            4 => I256::mutate_interesting_dword(val, size, test_runner)
                 .map(|mutated_val| {
                     trace!(target: "abi_mutation", "I256 interesting dword: {val} -> {mutated_val}");
                     DynSolValue::Int(mutated_val, size)
@@ -363,7 +320,7 @@ pub fn mutate_param_value(
         },
         // Address: flip random bit or generate new value from state.
         DynSolValue::Address(val) => match test_runner.rng().random_range(0..=1) {
-            0 => DynSolValue::Address(flip_random_bit_address(val, test_runner)),
+            0 => DynSolValue::Address(Address::flip_random_bit(val, None, test_runner).unwrap_or_default()),
             1 => new_value(param, test_runner),
             _ => unreachable!(),
         },
@@ -447,145 +404,6 @@ fn mutate_array(
     let id = test_runner.rng().random_range(0..array_values.len());
     let new_val = mutate_param_value(array_type, array_values[id].clone(), test_runner, state);
     array_values[id] = new_val;
-}
-
-/// Flips a single random bit in the given U256 value.
-fn flip_random_uint_bit(value: U256, size: usize, test_runner: &mut TestRunner) -> Option<U256> {
-    let bit_index = test_runner.rng().random_range(0..size);
-    let mask = U256::from(1u8) << bit_index;
-    validate_uint_mutation(value, value ^ mask, size)
-}
-
-/// Mutate using interesting bytes, None if it doesn't fit in current size.
-fn mutate_interesting_uint_byte(
-    value: U256,
-    size: usize,
-    test_runner: &mut TestRunner,
-) -> Option<U256> {
-    let mut bytes: [u8; 32] = value.to_be_bytes();
-    let byte_index = test_runner.rng().random_range(0..32);
-    let interesting = *INTERESTING_8.choose(&mut test_runner.rng()).unwrap() as u8;
-    bytes[byte_index] = interesting;
-    validate_uint_mutation(value, U256::from_be_bytes(bytes), size)
-}
-
-// Function to mutate a U256 by replacing word with an interesting value.
-fn mutate_interesting_uint_word(
-    value: U256,
-    size: usize,
-    test_runner: &mut TestRunner,
-) -> Option<U256> {
-    let mut bytes: [u8; 32] = value.to_be_bytes();
-    let word_index = test_runner.rng().random_range(0..16);
-    let interesting = *INTERESTING_16.choose(&mut test_runner.rng()).unwrap() as u16;
-    let start = word_index * 2;
-    bytes[start..start + 2].copy_from_slice(&interesting.to_be_bytes());
-    validate_uint_mutation(value, U256::from_be_bytes(bytes), size)
-}
-
-// Function to mutate a U256 by replacing dword with an interesting value.
-fn mutate_interesting_uint_dword(
-    value: U256,
-    size: usize,
-    test_runner: &mut TestRunner,
-) -> Option<U256> {
-    let mut bytes: [u8; 32] = value.to_be_bytes();
-    let word_index = test_runner.rng().random_range(0..8);
-    let interesting = *INTERESTING_32.choose(&mut test_runner.rng()).unwrap() as u32;
-    // Replace the 4 bytes of the selected word
-    let start = word_index * 4;
-    bytes[start..start + 4].copy_from_slice(&interesting.to_be_bytes());
-    validate_uint_mutation(value, U256::from_be_bytes(bytes), size)
-}
-
-/// Returns mutated uint value if different than the original value and if it fits in the given
-/// size, otherwise None.
-fn validate_uint_mutation(original_value: U256, mutated_value: U256, size: usize) -> Option<U256> {
-    let max_value = if size < 256 { (U256::from(1) << size) - U256::from(1) } else { U256::MAX };
-    if original_value != mutated_value && mutated_value < max_value {
-        Some(mutated_value)
-    } else {
-        None
-    }
-}
-
-/// Flips a single random bit in the given I256 value.
-fn flip_random_int_bit(value: I256, size: usize, test_runner: &mut TestRunner) -> Option<I256> {
-    let bit_index = test_runner.rng().random_range(0..size);
-    let (sign, mut abs): (Sign, U256) = value.into_sign_and_abs();
-    abs ^= U256::from(1u8) << bit_index;
-    validate_int_mutation(value, I256::checked_from_sign_and_abs(sign, abs)?, size)
-}
-
-/// Mutate using interesting bytes, None if it doesn't fit in current size.
-fn mutate_interesting_int_byte(
-    value: I256,
-    size: usize,
-    test_runner: &mut TestRunner,
-) -> Option<I256> {
-    let mut bytes: [u8; 32] = value.to_be_bytes();
-    let byte_index = test_runner.rng().random_range(0..32);
-    let interesting = *INTERESTING_8.choose(&mut test_runner.rng()).unwrap() as u8;
-    bytes[byte_index] = interesting;
-    validate_int_mutation(value, I256::from_be_bytes(bytes), size)
-}
-
-// Function to mutate an I256 by replacing word with an interesting value.
-fn mutate_interesting_int_word(
-    value: I256,
-    size: usize,
-    test_runner: &mut TestRunner,
-) -> Option<I256> {
-    let mut bytes: [u8; 32] = value.to_be_bytes();
-    let word_index = test_runner.rng().random_range(0..16);
-    let interesting = *INTERESTING_16.choose(&mut test_runner.rng()).unwrap() as u16;
-    let start = word_index * 2;
-    bytes[start..start + 2].copy_from_slice(&interesting.to_be_bytes());
-    validate_int_mutation(value, I256::from_be_bytes(bytes), size)
-}
-
-// Function to mutate an I256 by replacing dword with an interesting value.
-fn mutate_interesting_int_dword(
-    value: I256,
-    size: usize,
-    test_runner: &mut TestRunner,
-) -> Option<I256> {
-    let mut bytes: [u8; 32] = value.to_be_bytes();
-    let word_index = test_runner.rng().random_range(0..8);
-    let interesting = *INTERESTING_32.choose(&mut test_runner.rng()).unwrap() as u32;
-    let start = word_index * 4;
-    bytes[start..start + 4].copy_from_slice(&interesting.to_be_bytes());
-    validate_int_mutation(value, I256::from_be_bytes(bytes), size)
-}
-
-/// Returns mutated int value if different than the original value and if it fits in the given size,
-/// otherwise None.
-fn validate_int_mutation(original_value: I256, mutated_value: I256, size: usize) -> Option<I256> {
-    let umax: U256 = (U256::from(1) << (size - 1)) - U256::from(1);
-    if original_value != mutated_value
-        && match mutated_value.sign() {
-            Sign::Positive => {
-                mutated_value < I256::overflowing_from_sign_and_abs(Sign::Positive, umax).0
-            }
-            Sign::Negative => {
-                mutated_value >= I256::overflowing_from_sign_and_abs(Sign::Negative, umax).0
-            }
-        }
-    {
-        Some(mutated_value)
-    } else {
-        None
-    }
-}
-
-/// Flips a single random bit in the given Address.
-fn flip_random_bit_address(addr: Address, test_runner: &mut TestRunner) -> Address {
-    let bit_index = test_runner.rng().random_range(0..160);
-    let mut bytes = addr.0;
-    bytes[bit_index / 8] ^= 1 << (bit_index % 8);
-    let mutated_val = Address::from(bytes);
-    trace!(target: "abi_mutation", "Address flip random bit: {addr} -> {mutated_val}");
-    mutated_val
 }
 
 #[cfg(test)]

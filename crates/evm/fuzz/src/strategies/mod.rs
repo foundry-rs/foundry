@@ -14,4 +14,6 @@ mod state;
 pub use state::EvmFuzzState;
 
 mod invariants;
+mod mutators;
+
 pub use invariants::{fuzz_contract_with_calldata, invariant_strat, override_call_strat};
