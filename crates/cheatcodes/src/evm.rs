@@ -103,6 +103,18 @@ struct SlotStateDiff {
     previous_value: B256,
     /// Current storage value.
     new_value: B256,
+    /// Slot Info
+    #[serde(skip_serializing_if = "Option::is_none", flatten)]
+    slot_info: Option<SlotInfo>,
+}
+
+#[derive(Serialize, Default, Debug)]
+struct SlotInfo {
+    label: String,
+    #[serde(rename = "type")]
+    storage_type: String,
+    offset: i64,
+    slot: String,
 }
 
 /// Balance diff info.
@@ -152,11 +164,23 @@ impl Display for AccountStateDiffs {
         if !&self.state_diff.is_empty() {
             writeln!(f, "- state diff:")?;
             for (slot, slot_changes) in &self.state_diff {
-                writeln!(
-                    f,
-                    "@ {slot}: {} → {}",
-                    slot_changes.previous_value, slot_changes.new_value
-                )?;
+                // If we have storage layout info, include it
+                if let Some(slot_info) = &slot_changes.slot_info {
+                    writeln!(
+                        f,
+                        "@ {slot} ({}, {}): {} → {}",
+                        slot_info.label,
+                        slot_info.storage_type,
+                        slot_changes.previous_value,
+                        slot_changes.new_value
+                    )?;
+                } else {
+                    writeln!(
+                        f,
+                        "@ {slot}: {} → {}",
+                        slot_changes.previous_value, slot_changes.new_value
+                    )?;
+                }
             }
         }
 
@@ -1225,11 +1249,30 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
         }
     }
 
-    // Look up contract names for all addresses
+    // Look up contract names and storage layouts for all addresses
     let mut contract_names = HashMap::new();
+    let mut storage_layouts = HashMap::new();
     for address in addresses_to_lookup {
         if let Some(name) = get_contract_name(ccx, address) {
             contract_names.insert(address, name);
+        }
+
+        // Also get storage layout if available
+        if let Some((artifact_id, contract_data)) = get_contract_data(ccx, address) {
+            tracing::info!(
+                "Processing contract {} at {}: storage_layout available: {}",
+                artifact_id.name,
+                address,
+                contract_data.storage_layout.is_some()
+            );
+            if let Some(storage_layout) = &contract_data.storage_layout {
+                tracing::info!(
+                    "Adding storage layout for {} with {} entries",
+                    address,
+                    storage_layout.storage.len()
+                );
+                storage_layouts.insert(address, storage_layout.clone());
+            }
         }
     }
 
@@ -1277,9 +1320,37 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                         // Update state diff. Do not overwrite the initial value if already set.
                         match account_diff.state_diff.entry(storage_access.slot) {
                             Entry::Vacant(slot_state_diff) => {
+                                // Get storage layout info for this slot if available
+                                let slot_info = storage_layouts
+                                    .get(&storage_access.account)
+                                    .and_then(|layout| {
+                                        tracing::debug!(
+                                            "Looking for slot {} in layout for account {}",
+                                            storage_access.slot,
+                                            storage_access.account
+                                        );
+                                        get_slot_info(layout, &storage_access.slot)
+                                    });
+
+                                if slot_info.is_some() {
+                                    tracing::info!(
+                                        "Found slot info for slot {} at account {}: {:?}",
+                                        storage_access.slot,
+                                        storage_access.account,
+                                        slot_info
+                                    );
+                                } else {
+                                    tracing::warn!(
+                                        "No slot info found for slot {} at account {}",
+                                        storage_access.slot,
+                                        storage_access.account
+                                    );
+                                }
+
                                 slot_state_diff.insert(SlotStateDiff {
                                     previous_value: storage_access.previousValue,
                                     new_value: storage_access.newValue,
+                                    slot_info,
                                 });
                             }
                             Entry::Occupied(mut slot_state_diff) => {
@@ -1316,6 +1387,73 @@ fn get_contract_name(ccx: &mut CheatsCtxt, address: Address) -> Option<String> {
     // Fallback to fuzzy matching if exact match fails
     if let Some((artifact_id, _)) = artifacts.find_by_deployed_code(&code_bytes) {
         return Some(artifact_id.identifier());
+    }
+
+    None
+}
+
+/// Helper function to get the contract data from the deployed code at an address.
+fn get_contract_data<'a>(
+    ccx: &'a mut CheatsCtxt,
+    address: Address,
+) -> Option<(&'a foundry_compilers::ArtifactId, &'a foundry_common::contracts::ContractData)> {
+    // Check if we have available artifacts to match against
+    let artifacts = ccx.state.config.available_artifacts.as_ref()?;
+
+    // Try to load the account and get its code
+    let account = ccx.ecx.journaled_state.load_account(address).ok()?;
+    let code = account.info.code.as_ref()?;
+
+    // Skip if code is empty
+    if code.is_empty() {
+        return None;
+    }
+
+    // Try to find the artifact by deployed code
+    let code_bytes = code.original_bytes();
+    if let Some(result) = artifacts.find_by_deployed_code_exact(&code_bytes) {
+        return Some(result);
+    }
+
+    // Fallback to fuzzy matching if exact match fails
+    artifacts.find_by_deployed_code(&code_bytes)
+}
+
+/// Helper function to get storage layout info for a specific slot.
+fn get_slot_info(
+    storage_layout: &foundry_compilers::artifacts::StorageLayout,
+    slot: &B256,
+) -> Option<SlotInfo> {
+    // Convert B256 slot to decimal string for comparison with storage layout
+    // Storage layout stores slots as decimal strings like "0", "1", "2"
+    let slot_value = U256::from_be_bytes(slot.0);
+    let slot_str = slot_value.to_string();
+
+    tracing::debug!(
+        "get_slot_info: Looking for slot {} in layout with {} entries",
+        slot_str,
+        storage_layout.storage.len()
+    );
+
+    for entry in &storage_layout.storage {
+        tracing::debug!("  Storage entry: slot={}, label={}", entry.slot, entry.label);
+    }
+
+    // Find the storage entry that matches this slot
+    for storage in &storage_layout.storage {
+        if storage.slot == slot_str {
+            // Get the type information if available
+            let storage_type = storage_layout.types.get(&storage.storage_type);
+
+            return Some(SlotInfo {
+                label: storage.label.clone(),
+                storage_type: storage_type
+                    .map(|t| t.label.clone())
+                    .unwrap_or_else(|| storage.storage_type.clone()),
+                offset: storage.offset,
+                slot: storage.slot.clone(),
+            });
+        }
     }
 
     None
