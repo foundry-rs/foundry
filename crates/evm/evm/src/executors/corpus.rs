@@ -367,7 +367,7 @@ impl CorpusManager {
 
         // Early return with first_input only if corpus dir / coverage guided fuzzing not
         // configured.
-        if !&self.config.is_coverage_guided() {
+        if !self.config.is_coverage_guided() {
             new_seq.push(self.new_tx(test_runner)?);
             return Ok(new_seq);
         };
