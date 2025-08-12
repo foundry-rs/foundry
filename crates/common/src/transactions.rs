@@ -1,16 +1,15 @@
 //! Wrappers for transactions.
 
-use alloy_consensus::{Transaction, TxEnvelope};
+use alloy_consensus::{Transaction, TxEnvelope, transaction::SignerRecoverable};
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network::AnyTransactionReceipt;
-use alloy_primitives::{Address, TxKind, U256};
+use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_provider::{
-    network::{AnyNetwork, ReceiptResponse, TransactionBuilder},
     Provider,
+    network::{AnyNetwork, ReceiptResponse, TransactionBuilder},
 };
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
-use alloy_transport::Transport;
 use eyre::Result;
 use foundry_common_fmt::UIfmt;
 use serde::{Deserialize, Serialize};
@@ -35,7 +34,7 @@ impl TransactionReceiptWithRevertReason {
 
     /// Updates the revert reason field using `eth_call` and returns an Err variant if the revert
     /// reason was not successfully updated
-    pub async fn update_revert_reason<T: Transport + Clone, P: Provider<T, AnyNetwork>>(
+    pub async fn update_revert_reason<P: Provider<AnyNetwork>>(
         &mut self,
         provider: &P,
     ) -> Result<()> {
@@ -43,12 +42,12 @@ impl TransactionReceiptWithRevertReason {
         Ok(())
     }
 
-    async fn fetch_revert_reason<T: Transport + Clone, P: Provider<T, AnyNetwork>>(
+    async fn fetch_revert_reason<P: Provider<AnyNetwork>>(
         &self,
         provider: &P,
     ) -> Result<Option<String>> {
         if !self.is_failure() {
-            return Ok(None)
+            return Ok(None);
         }
 
         let transaction = provider
@@ -58,11 +57,10 @@ impl TransactionReceiptWithRevertReason {
             .ok_or_else(|| eyre::eyre!("transaction not found"))?;
 
         if let Some(block_hash) = self.receipt.block_hash {
-            match provider
-                .call(&transaction.inner.inner.into())
-                .block(BlockId::Hash(block_hash.into()))
-                .await
-            {
+            let mut call_request: WithOtherFields<TransactionRequest> =
+                transaction.inner.inner.clone_inner().into();
+            call_request.set_from(transaction.inner.inner.signer());
+            match provider.call(call_request).block(BlockId::Hash(block_hash.into())).await {
                 Err(e) => return Ok(extract_revert_reason(e.to_string())),
                 Ok(_) => eyre::bail!("no revert reason as transaction succeeded"),
             }
@@ -94,6 +92,45 @@ revertReason         {}",
             )
         } else {
             self.receipt.pretty()
+        }
+    }
+}
+
+impl UIfmt for TransactionMaybeSigned {
+    fn pretty(&self) -> String {
+        match self {
+            Self::Signed { tx, .. } => tx.pretty(),
+            Self::Unsigned(tx) => format!(
+                "
+accessList           {}
+chainId              {}
+gasLimit             {}
+gasPrice             {}
+input                {}
+maxFeePerBlobGas     {}
+maxFeePerGas         {}
+maxPriorityFeePerGas {}
+nonce                {}
+to                   {}
+type                 {}
+value                {}",
+                tx.access_list
+                    .as_ref()
+                    .map(|a| a.iter().collect::<Vec<_>>())
+                    .unwrap_or_default()
+                    .pretty(),
+                tx.chain_id.pretty(),
+                tx.gas_limit().unwrap_or_default(),
+                tx.gas_price.pretty(),
+                tx.input.input.pretty(),
+                tx.max_fee_per_blob_gas.pretty(),
+                tx.max_fee_per_gas.pretty(),
+                tx.max_priority_fee_per_gas.pretty(),
+                tx.nonce.pretty(),
+                tx.to.as_ref().map(|a| a.to()).unwrap_or_default().pretty(),
+                tx.transaction_type.unwrap_or_default(),
+                tx.value.pretty(),
+            ),
         }
     }
 }
@@ -138,20 +175,6 @@ pub fn get_pretty_tx_receipt_attr(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_extract_revert_reason() {
-        let error_string_1 = "server returned an error response: error code 3: execution reverted: Transaction too old";
-        let error_string_2 = "server returned an error response: error code 3: Invalid signature";
-
-        assert_eq!(extract_revert_reason(error_string_1), Some("Transaction too old".to_string()));
-        assert_eq!(extract_revert_reason(error_string_2), None);
-    }
-}
-
 /// Used for broadcasting transactions
 /// A transaction can either be a [`TransactionRequest`] waiting to be signed
 /// or a [`TxEnvelope`], already signed
@@ -175,7 +198,7 @@ impl TransactionMaybeSigned {
     /// Creates a new signed transaction for broadcast.
     pub fn new_signed(
         tx: TxEnvelope,
-    ) -> core::result::Result<Self, alloy_primitives::SignatureError> {
+    ) -> core::result::Result<Self, alloy_consensus::crypto::RecoveryError> {
         let from = tx.recover_signer()?;
         Ok(Self::Signed { tx, from })
     }
@@ -198,10 +221,10 @@ impl TransactionMaybeSigned {
         }
     }
 
-    pub fn input(&self) -> Option<&[u8]> {
+    pub fn input(&self) -> Option<&Bytes> {
         match self {
             Self::Signed { tx, .. } => Some(tx.input()),
-            Self::Unsigned(tx) => tx.input.input().map(|i| i.as_ref()),
+            Self::Unsigned(tx) => tx.input.input(),
         }
     }
 
@@ -249,9 +272,23 @@ impl From<TransactionRequest> for TransactionMaybeSigned {
 }
 
 impl TryFrom<TxEnvelope> for TransactionMaybeSigned {
-    type Error = alloy_primitives::SignatureError;
+    type Error = alloy_consensus::crypto::RecoveryError;
 
     fn try_from(tx: TxEnvelope) -> core::result::Result<Self, Self::Error> {
         Self::new_signed(tx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_revert_reason() {
+        let error_string_1 = "server returned an error response: error code 3: execution reverted: Transaction too old";
+        let error_string_2 = "server returned an error response: error code 3: Invalid signature";
+
+        assert_eq!(extract_revert_reason(error_string_1), Some("Transaction too old".to_string()));
+        assert_eq!(extract_revert_reason(error_string_2), None);
     }
 }

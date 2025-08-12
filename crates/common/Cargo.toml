@@ -18,7 +18,6 @@ foundry-common-fmt.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
 
-alloy-contract.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-eips.workspace = true
 alloy-json-abi.workspace = true
@@ -45,19 +44,24 @@ alloy-transport.workspace = true
 alloy-consensus = { workspace = true, features = ["k256"] }
 alloy-network.workspace = true
 
+solar-parse.workspace = true
+solar-sema.workspace = true
+
 tower.workspace = true
 
-async-trait.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 comfy-table.workspace = true
 dunce.workspace = true
 eyre.workspace = true
 itertools.workspace = true
+jiff.workspace = true
 num-format.workspace = true
+path-slash.workspace = true
+regex.workspace = true
 reqwest.workspace = true
 semver.workspace = true
-serde_json.workspace = true
 serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
@@ -68,8 +72,14 @@ yansi.workspace = true
 anstream.workspace = true
 anstyle.workspace = true
 terminal_size.workspace = true
+ciborium.workspace = true
+
+flate2.workspace = true
+
+[build-dependencies]
+chrono.workspace = true
+vergen = { workspace = true, features = ["build", "git", "gitcl"] }
 
 [dev-dependencies]
-foundry-macros.workspace = true
-similar-asserts.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+axum = { workspace = true }

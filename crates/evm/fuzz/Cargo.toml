@@ -28,6 +28,7 @@ alloy-primitives = { workspace = true, features = [
     "getrandom",
     "arbitrary",
     "rlp",
+    "map-indexmap",
 ] }
 revm = { workspace = true, features = [
     "std",
@@ -39,7 +40,7 @@ revm = { workspace = true, features = [
     "arbitrary",
 ] }
 
-eyre .workspace = true
+eyre.workspace = true
 itertools.workspace = true
 parking_lot.workspace = true
 proptest.workspace = true
@@ -47,5 +48,3 @@ rand.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-indexmap.workspace = true
-ahash.workspace = true

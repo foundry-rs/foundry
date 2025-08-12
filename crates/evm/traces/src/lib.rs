@@ -15,10 +15,10 @@ use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     shell,
 };
-use revm::interpreter::OpCode;
+use revm::bytecode::opcode::OpCode;
 use revm_inspectors::tracing::{
-    types::{DecodedTraceStep, TraceMemberOrder},
     OpcodeFilter,
+    types::{DecodedTraceStep, TraceMemberOrder},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -30,19 +30,19 @@ use std::{
 use alloy_primitives::map::HashMap;
 
 pub use revm_inspectors::tracing::{
+    CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
+    TraceWriter, TracingInspector, TracingInspectorConfig,
     types::{
         CallKind, CallLog, CallTrace, CallTraceNode, DecodedCallData, DecodedCallLog,
         DecodedCallTrace,
     },
-    CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
-    TraceWriter, TracingInspector, TracingInspectorConfig,
 };
 
 /// Call trace address identifiers.
 ///
 /// Identifiers figure out what ABIs and labels belong to all the addresses of the trace.
 pub mod identifier;
-use identifier::{LocalTraceIdentifier, TraceIdentifier};
+use identifier::LocalTraceIdentifier;
 
 mod decoder;
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
@@ -86,7 +86,7 @@ impl SparsedTraceArena {
                     .chain(nodes[node_idx].ordering.clone().into_iter().map(Some))
                     .enumerate();
 
-                let mut iternal_calls = Vec::new();
+                let mut internal_calls = Vec::new();
                 let mut items_to_remove = BTreeSet::new();
                 for (item_idx, item) in items {
                     if let Some(end_node) = ignored.get(&(node_idx, item_idx)) {
@@ -108,17 +108,17 @@ impl SparsedTraceArena {
                         }
                         // we only remove decoded internal calls if they did not start/pause tracing
                         Some(TraceMemberOrder::Step(step_idx)) => {
-                            // If this is an internal call beginning, track it in `iternal_calls`
+                            // If this is an internal call beginning, track it in `internal_calls`
                             if let Some(DecodedTraceStep::InternalCall(_, end_step_idx)) =
                                 &nodes[node_idx].trace.steps[step_idx].decoded
                             {
-                                iternal_calls.push((item_idx, remove, *end_step_idx));
+                                internal_calls.push((item_idx, remove, *end_step_idx));
                                 // we decide if we should remove it later
                                 remove = false;
                             }
                             // Handle ends of internal calls
-                            iternal_calls.retain(|(start_item_idx, remove_start, end_step_idx)| {
-                                if *end_step_idx != step_idx {
+                            internal_calls.retain(|(start_item_idx, remove_start, end_idx)| {
+                                if *end_idx != step_idx {
                                     return true;
                                 }
                                 // only remove start if end should be removed as well
@@ -138,10 +138,11 @@ impl SparsedTraceArena {
                         items_to_remove.insert(item_idx);
                     }
 
-                    if let Some((end_node, end_step_idx)) = cur_ignore_end {
-                        if node_idx == *end_node && item_idx == *end_step_idx {
-                            *cur_ignore_end = None;
-                        }
+                    if let Some((end_node, end_step_idx)) = cur_ignore_end
+                        && node_idx == *end_node
+                        && item_idx == *end_step_idx
+                    {
+                        *cur_ignore_end = None;
                     }
                 }
 
@@ -174,14 +175,9 @@ impl DerefMut for SparsedTraceArena {
 /// Decode a collection of call traces.
 ///
 /// The traces will be decoded using the given decoder, if possible.
-pub async fn decode_trace_arena(
-    arena: &mut CallTraceArena,
-    decoder: &CallTraceDecoder,
-) -> Result<(), std::fmt::Error> {
+pub async fn decode_trace_arena(arena: &mut CallTraceArena, decoder: &CallTraceDecoder) {
     decoder.prefetch_signatures(arena.nodes()).await;
     decoder.populate_traces(arena.nodes_mut()).await;
-
-    Ok(())
 }
 
 /// Render a collection of call traces to a string.
@@ -201,10 +197,20 @@ pub fn render_trace_arena_inner(
     }
 
     let mut w = TraceWriter::new(Vec::<u8>::new())
+        .color_cheatcodes(true)
+        .use_colors(convert_color_choice(shell::color_choice()))
         .write_bytecodes(with_bytecodes)
         .with_storage_changes(with_storage_changes);
     w.write_arena(&arena.resolve_arena()).expect("Failed to write traces");
     String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8")
+}
+
+fn convert_color_choice(choice: shell::ColorChoice) -> revm_inspectors::ColorChoice {
+    match choice {
+        shell::ColorChoice::Auto => revm_inspectors::ColorChoice::Auto,
+        shell::ColorChoice::Always => revm_inspectors::ColorChoice::Always,
+        shell::ColorChoice::Never => revm_inspectors::ColorChoice::Never,
+    }
 }
 
 /// Specifies the kind of trace.
@@ -250,7 +256,7 @@ pub fn load_contracts<'a>(
     let decoder = CallTraceDecoder::new();
     let mut contracts = ContractsByAddress::new();
     for trace in traces {
-        for address in local_identifier.identify_addresses(decoder.trace_addresses(trace)) {
+        for address in decoder.identify_addresses(trace, &mut local_identifier) {
             if let (Some(contract), Some(abi)) = (address.contract, address.abi) {
                 contracts.insert(address.address, (contract, abi.into_owned()));
             }
@@ -330,11 +336,7 @@ impl TraceMode {
     }
 
     pub fn with_debug(self, yes: bool) -> Self {
-        if yes {
-            std::cmp::max(self, Self::Debug)
-        } else {
-            self
-        }
+        if yes { std::cmp::max(self, Self::Debug) } else { self }
     }
 
     pub fn with_decode_internal(self, mode: InternalTraceMode) -> Self {
@@ -342,19 +344,11 @@ impl TraceMode {
     }
 
     pub fn with_state_changes(self, yes: bool) -> Self {
-        if yes {
-            std::cmp::max(self, Self::RecordStateDiff)
-        } else {
-            self
-        }
+        if yes { std::cmp::max(self, Self::RecordStateDiff) } else { self }
     }
 
     pub fn with_verbosity(self, verbosity: u8) -> Self {
-        if verbosity >= 3 {
-            std::cmp::max(self, Self::Call)
-        } else {
-            self
-        }
+        if verbosity >= 3 { std::cmp::max(self, Self::Call) } else { self }
     }
 
     pub fn into_config(self) -> Option<TracingInspectorConfig> {

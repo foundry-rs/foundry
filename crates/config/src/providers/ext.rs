@@ -1,11 +1,11 @@
-use crate::{utils, Config};
+use crate::{Config, utils};
 use figment::{
+    Error, Figment, Metadata, Profile, Provider,
     providers::{Env, Format, Toml},
     value::{Dict, Map, Value},
-    Error, Figment, Metadata, Profile, Provider,
 };
 use foundry_compilers::ProjectPathsConfig;
-use inflector::Inflector;
+use heck::ToSnakeCase;
 use std::path::{Path, PathBuf};
 
 pub(crate) trait ProviderExt: Provider + Sized {
@@ -109,11 +109,7 @@ impl Provider for TomlFileProvider {
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        if let Some(cache) = self.cache.as_ref() {
-            cache.clone()
-        } else {
-            self.read()
-        }
+        if let Some(cache) = self.cache.as_ref() { cache.clone() } else { self.read() }
     }
 }
 
@@ -545,7 +541,7 @@ impl<P: Provider> Provider for FallbackProfileProvider<P> {
         let data = self.provider.data()?;
         if let Some(fallback) = data.get(&self.fallback) {
             let mut inner = data.get(&self.profile).cloned().unwrap_or_default();
-            for (k, v) in fallback.iter() {
+            for (k, v) in fallback {
                 if !inner.contains_key(k) {
                     inner.insert(k.to_owned(), v.clone());
                 }

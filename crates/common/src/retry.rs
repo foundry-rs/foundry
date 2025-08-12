@@ -1,11 +1,13 @@
 //! Retry utilities.
 
 use eyre::{Error, Report, Result};
-use std::{future::Future, time::Duration};
+use std::time::Duration;
 
 /// Error type for Retry.
 #[derive(Debug, thiserror::Error)]
 pub enum RetryError<E = Report> {
+    /// Continues operation without decrementing retries.
+    Continue(E),
     /// Keeps retrying operation.
     Retry(E),
     /// Stops retrying operation immediately.
@@ -74,6 +76,12 @@ impl Retry {
     {
         loop {
             match callback().await {
+                Err(RetryError::Continue(e)) => {
+                    self.log(e, false);
+                    if !self.delay.is_zero() {
+                        tokio::time::sleep(self.delay).await;
+                    }
+                }
                 Err(RetryError::Retry(e)) if self.retries > 0 => {
                     self.handle_err(e);
                     if !self.delay.is_zero() {
@@ -89,9 +97,12 @@ impl Retry {
     fn handle_err(&mut self, err: Error) {
         debug_assert!(self.retries > 0);
         self.retries -= 1;
-        let _ = sh_warn!(
-            "{msg}{delay} ({retries} tries remaining)",
-            msg = crate::errors::display_chain(&err),
+        self.log(err, true);
+    }
+
+    fn log(&self, err: Error, warn: bool) {
+        let msg = format!(
+            "{err}{delay} ({retries} tries remaining)",
             delay = if self.delay.is_zero() {
                 String::new()
             } else {
@@ -99,5 +110,10 @@ impl Retry {
             },
             retries = self.retries,
         );
+        if warn {
+            let _ = sh_warn!("{msg}");
+        } else {
+            tracing::info!("{msg}");
+        }
     }
 }

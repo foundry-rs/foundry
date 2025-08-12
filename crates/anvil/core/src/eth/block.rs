@@ -1,16 +1,9 @@
-use super::{
-    transaction::{TransactionInfo, TypedReceipt},
-    trie,
-};
-use alloy_consensus::{Header, EMPTY_OMMER_ROOT_HASH};
-use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{Address, Bloom, Bytes, B256, B64, U256};
+use super::transaction::{TransactionInfo, TypedReceipt};
+use alloy_consensus::{EMPTY_OMMER_ROOT_HASH, Header, proofs::calculate_transaction_root};
+use alloy_primitives::{Address, B64, B256, Bloom, Bytes, U256};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
 
 // Type alias to optionally support impersonated transactions
-#[cfg(not(feature = "impersonated-tx"))]
-type Transaction = crate::eth::transaction::TypedTransaction;
-#[cfg(feature = "impersonated-tx")]
 type Transaction = crate::eth::transaction::MaybeImpersonatedTransaction;
 
 /// Container type that gathers all block data
@@ -39,8 +32,9 @@ impl Block {
         T: Into<Transaction>,
     {
         let transactions: Vec<_> = transactions.into_iter().map(Into::into).collect();
-        let transactions_root =
-            trie::ordered_trie_root(transactions.iter().map(|r| r.encoded_2718()));
+        let transactions1: Vec<super::transaction::TypedTransaction> =
+            transactions.clone().into_iter().map(Into::into).collect();
+        let transactions_root = calculate_transaction_root(&transactions1);
 
         Self {
             header: Header {
@@ -240,7 +234,7 @@ mod tests {
     // Test vector from: https://github.com/ethereum/tests/blob/f47bbef4da376a49c8fc3166f09ab8a6d182f765/BlockchainTests/ValidBlocks/bcEIP1559/baseFee.json#L15-L36
     fn test_eip1559_block_header_hash() {
         let expected_hash =
-            b256!("6a251c7c3c5dca7b42407a3752ff48f3bbca1fab7f9868371d9918daf1988d1f");
+            b256!("0x6a251c7c3c5dca7b42407a3752ff48f3bbca1fab7f9868371d9918daf1988d1f");
         let header = Header {
             parent_hash: B256::from_str("e0a94a7a3c9617401586b1a27025d2d9671332d22d540e0af72b069170380f2a").unwrap(),
             ommers_hash: B256::from_str("1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347").unwrap(),

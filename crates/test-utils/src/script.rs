@@ -1,13 +1,12 @@
-use crate::{init_tracing, util::lossy_string, TestCommand};
-use alloy_primitives::Address;
+use crate::{TestCommand, init_tracing, util::lossy_string};
+use alloy_primitives::{Address, address};
 use alloy_provider::Provider;
 use eyre::Result;
-use foundry_common::provider::{get_http_provider, RetryProvider};
+use foundry_common::provider::{RetryProvider, get_http_provider};
 use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
-    str::FromStr,
 };
 
 const BROADCAST_TEST_PATH: &str = "src/Broadcast.t.sol";
@@ -70,9 +69,9 @@ impl ScriptTester {
 
         Self {
             accounts_pub: vec![
-                Address::from_str("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266").unwrap(),
-                Address::from_str("0x70997970C51812dc3A010C7d01b50e0d17dc79C8").unwrap(),
-                Address::from_str("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC").unwrap(),
+                address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
+                address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"),
+                address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
             ],
             accounts_priv: vec![
                 "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
@@ -288,12 +287,20 @@ impl ScriptOutcome {
             Self::OkNoEndpoint => "If you wish to simulate on-chain transactions pass a RPC URL.",
             Self::OkSimulation => "SIMULATION COMPLETE. To broadcast these",
             Self::OkBroadcast => "ONCHAIN EXECUTION COMPLETE & SUCCESSFUL",
-            Self::WarnSpecifyDeployer => "Warning: You have more than one deployer who could predeploy libraries. Using `--sender` instead.",
-            Self::MissingSender => "You seem to be using Foundry's default sender. Be sure to set your own --sender",
+            Self::WarnSpecifyDeployer => {
+                "Warning: You have more than one deployer who could predeploy libraries. Using `--sender` instead."
+            }
+            Self::MissingSender => {
+                "You seem to be using Foundry's default sender. Be sure to set your own --sender"
+            }
             Self::MissingWallet => "No associated wallet",
-            Self::StaticCallNotAllowed => "staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead",
+            Self::StaticCallNotAllowed => {
+                "staticcall`s are not allowed after `broadcast`; use `startBroadcast` instead"
+            }
             Self::ScriptFailed => "script failed: ",
-            Self::UnsupportedLibraries => "Multi chain deployment does not support library linking at the moment.",
+            Self::UnsupportedLibraries => {
+                "Multi chain deployment does not support library linking at the moment."
+            }
             Self::ErrorSelectForkOnBroadcast => "cannot select forks during a broadcast",
             Self::OkRun => "Script ran successfully",
         }
@@ -301,17 +308,17 @@ impl ScriptOutcome {
 
     pub fn is_err(&self) -> bool {
         match self {
-            Self::OkNoEndpoint |
-            Self::OkSimulation |
-            Self::OkBroadcast |
-            Self::WarnSpecifyDeployer |
-            Self::OkRun => false,
-            Self::MissingSender |
-            Self::MissingWallet |
-            Self::StaticCallNotAllowed |
-            Self::UnsupportedLibraries |
-            Self::ErrorSelectForkOnBroadcast |
-            Self::ScriptFailed => true,
+            Self::OkNoEndpoint
+            | Self::OkSimulation
+            | Self::OkBroadcast
+            | Self::WarnSpecifyDeployer
+            | Self::OkRun => false,
+            Self::MissingSender
+            | Self::MissingWallet
+            | Self::StaticCallNotAllowed
+            | Self::UnsupportedLibraries
+            | Self::ErrorSelectForkOnBroadcast
+            | Self::ScriptFailed => true,
         }
     }
 }

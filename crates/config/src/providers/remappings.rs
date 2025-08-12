@@ -1,12 +1,12 @@
-use crate::{foundry_toml_dirs, remappings_from_env_var, remappings_from_newline, Config};
+use crate::{Config, foundry_toml_dirs, remappings_from_env_var, remappings_from_newline};
 use figment::{
-    value::{Dict, Map},
     Error, Figment, Metadata, Profile, Provider,
+    value::{Dict, Map},
 };
 use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping};
 use std::{
     borrow::Cow,
-    collections::{btree_map::Entry, BTreeMap, HashSet},
+    collections::{BTreeMap, HashSet, btree_map::Entry},
     fs,
     path::{Path, PathBuf},
 };
@@ -35,15 +35,12 @@ impl Remappings {
     /// Extract project paths that cannot be remapped by dependencies.
     pub fn with_figment(mut self, figment: &Figment) -> Self {
         let mut add_project_remapping = |path: &str| {
-            if let Ok(path) = figment.find_value(path) {
-                if let Some(path) = path.into_string() {
-                    let remapping = Remapping {
-                        context: None,
-                        name: format!("{path}/"),
-                        path: format!("{path}/"),
-                    };
-                    self.project_paths.push(remapping);
-                }
+            if let Ok(path) = figment.find_value(path)
+                && let Some(path) = path.into_string()
+            {
+                let remapping =
+                    Remapping { context: None, name: format!("{path}/"), path: format!("{path}/") };
+                self.project_paths.push(remapping);
             }
         };
         add_project_remapping("src");
@@ -63,20 +60,41 @@ impl Remappings {
     /// Consumes the wrapper and returns the inner remappings vector.
     pub fn into_inner(self) -> Vec<Remapping> {
         let mut seen = HashSet::new();
-        let remappings =
-            self.remappings.iter().filter(|r| seen.insert(Self::filter_key(r))).cloned().collect();
-        remappings
+        self.remappings.iter().filter(|r| seen.insert(Self::filter_key(r))).cloned().collect()
     }
 
     /// Push an element to the remappings vector, but only if it's not already present.
-    pub fn push(&mut self, remapping: Remapping) {
+    fn push(&mut self, remapping: Remapping) {
+        // Special handling for .sol file remappings, only allow one remapping per source file.
+        if remapping.name.ends_with(".sol") && !remapping.path.ends_with(".sol") {
+            return;
+        }
+
         if self.remappings.iter().any(|existing| {
+            if remapping.name.ends_with(".sol") {
+                // For .sol files, only prevent duplicate source names in the same context
+                return existing.name == remapping.name
+                    && existing.context == remapping.context
+                    && existing.path == remapping.path;
+            }
+
             // What we're doing here is filtering for ambiguous paths. For example, if we have
             // @prb/math/=node_modules/@prb/math/src/ as existing, and
-            // @prb/=node_modules/@prb/  as the one being checked,
+            // @prb/=node_modules/@prb/ as the one being checked,
             // we want to keep the already existing one, which is the first one. This way we avoid
             // having to deal with ambiguous paths which is unwanted when autodetecting remappings.
-            existing.name.starts_with(&remapping.name) && existing.context == remapping.context
+            // Remappings are added from root of the project down to libraries, so
+            // we also want to exclude any conflicting remappings added from libraries. For example,
+            // if we have `@utils/=src/` added in project remappings and `@utils/libraries/=src/`
+            // added in a dependency, we don't want to add the new one as it conflicts with project
+            // existing remapping.
+            let mut existing_name_path = existing.name.clone();
+            if !existing_name_path.ends_with('/') {
+                existing_name_path.push('/')
+            }
+            let is_conflicting = remapping.name.starts_with(&existing_name_path)
+                || existing.name.starts_with(&remapping.name);
+            is_conflicting && existing.context == remapping.context
         }) {
             return;
         };
@@ -205,7 +223,7 @@ impl RemappingsProvider<'_> {
                 // this is an additional safety check for weird auto-detected remappings
                 if ["lib/", "src/", "contracts/"].contains(&r.name.as_str()) {
                     trace!(target: "forge", "- skipping the remapping");
-                    continue
+                    continue;
                 }
                 insert_closest(&mut lib_remappings, r.context, r.name, r.path.into());
             }
@@ -238,7 +256,8 @@ impl RemappingsProvider<'_> {
             })
             .flat_map(|lib: PathBuf| {
                 // load config, of the nested lib if it exists
-                let config = Config::load_with_root(&lib).sanitized();
+                let Ok(config) = Config::load_with_root(&lib) else { return vec![] };
+                let config = config.sanitized();
 
                 // if the configured _src_ directory is set to something that
                 // [Remapping::find_many()] doesn't classify as a src directory (src, contracts,
@@ -246,18 +265,17 @@ impl RemappingsProvider<'_> {
                 let mut src_remapping = None;
                 if ![Path::new("src"), Path::new("contracts"), Path::new("lib")]
                     .contains(&config.src.as_path())
+                    && let Some(name) = lib.file_name().and_then(|s| s.to_str())
                 {
-                    if let Some(name) = lib.file_name().and_then(|s| s.to_str()) {
-                        let mut r = Remapping {
-                            context: None,
-                            name: format!("{name}/"),
-                            path: format!("{}", lib.join(&config.src).display()),
-                        };
-                        if !r.path.ends_with('/') {
-                            r.path.push('/')
-                        }
-                        src_remapping = Some(r);
+                    let mut r = Remapping {
+                        context: None,
+                        name: format!("{name}/"),
+                        path: format!("{}", lib.join(&config.src).display()),
+                    };
+                    if !r.path.ends_with('/') {
+                        r.path.push('/')
                     }
+                    src_remapping = Some(r);
                 }
 
                 // Eventually, we could set context for remappings at this location,
@@ -287,7 +305,7 @@ impl Provider for RemappingsProvider<'_> {
                 if let figment::error::Kind::MissingField(_) = err.kind {
                     self.get_remappings(vec![])
                 } else {
-                    return Err(err.clone())
+                    return Err(err.clone());
                 }
             }
         }?;
@@ -306,5 +324,138 @@ impl Provider for RemappingsProvider<'_> {
 
     fn profile(&self) -> Option<Profile> {
         Some(Config::selected_profile())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sol_file_remappings() {
+        let mut remappings = Remappings::new();
+
+        // First valid remapping
+        remappings.push(Remapping {
+            context: None,
+            name: "MyContract.sol".to_string(),
+            path: "implementations/Contract1.sol".to_string(),
+        });
+
+        // Same source to different target (should be rejected)
+        remappings.push(Remapping {
+            context: None,
+            name: "MyContract.sol".to_string(),
+            path: "implementations/Contract2.sol".to_string(),
+        });
+
+        // Different source to same target (should be allowed)
+        remappings.push(Remapping {
+            context: None,
+            name: "OtherContract.sol".to_string(),
+            path: "implementations/Contract1.sol".to_string(),
+        });
+
+        // Exact duplicate (should be silently ignored)
+        remappings.push(Remapping {
+            context: None,
+            name: "MyContract.sol".to_string(),
+            path: "implementations/Contract1.sol".to_string(),
+        });
+
+        // Invalid .sol remapping (target not .sol)
+        remappings.push(Remapping {
+            context: None,
+            name: "Invalid.sol".to_string(),
+            path: "implementations/Contract1.txt".to_string(),
+        });
+
+        let result = remappings.into_inner();
+        assert_eq!(result.len(), 2, "Should only have 2 valid remappings");
+
+        // Verify the correct remappings exist
+        assert!(
+            result
+                .iter()
+                .any(|r| r.name == "MyContract.sol" && r.path == "implementations/Contract1.sol"),
+            "Should keep first mapping of MyContract.sol"
+        );
+        assert!(
+            !result
+                .iter()
+                .any(|r| r.name == "MyContract.sol" && r.path == "implementations/Contract2.sol"),
+            "Should keep first mapping of MyContract.sol"
+        );
+        assert!(result.iter().any(|r| r.name == "OtherContract.sol" && r.path == "implementations/Contract1.sol"),
+            "Should allow different source to same target");
+
+        // Verify the rejected remapping doesn't exist
+        assert!(
+            !result
+                .iter()
+                .any(|r| r.name == "MyContract.sol" && r.path == "implementations/Contract2.sol"),
+            "Should reject same source to different target"
+        );
+    }
+
+    #[test]
+    fn test_mixed_remappings() {
+        let mut remappings = Remappings::new();
+
+        remappings.push(Remapping {
+            context: None,
+            name: "@openzeppelin-contracts/".to_string(),
+            path: "lib/openzeppelin-contracts/".to_string(),
+        });
+        remappings.push(Remapping {
+            context: None,
+            name: "@openzeppelin/contracts/".to_string(),
+            path: "lib/openzeppelin/contracts/".to_string(),
+        });
+
+        remappings.push(Remapping {
+            context: None,
+            name: "MyContract.sol".to_string(),
+            path: "os/Contract.sol".to_string(),
+        });
+
+        let result = remappings.into_inner();
+        assert_eq!(result.len(), 3, "Should have 3 remappings");
+        assert_eq!(result.first().unwrap().name, "@openzeppelin-contracts/");
+        assert_eq!(result.first().unwrap().path, "lib/openzeppelin-contracts/");
+        assert_eq!(result.get(1).unwrap().name, "@openzeppelin/contracts/");
+        assert_eq!(result.get(1).unwrap().path, "lib/openzeppelin/contracts/");
+        assert_eq!(result.get(2).unwrap().name, "MyContract.sol");
+        assert_eq!(result.get(2).unwrap().path, "os/Contract.sol");
+    }
+
+    #[test]
+    fn test_remappings_with_context() {
+        let mut remappings = Remappings::new();
+
+        // Same name but different contexts
+        remappings.push(Remapping {
+            context: Some("test/".to_string()),
+            name: "MyContract.sol".to_string(),
+            path: "test/Contract.sol".to_string(),
+        });
+        remappings.push(Remapping {
+            context: Some("prod/".to_string()),
+            name: "MyContract.sol".to_string(),
+            path: "prod/Contract.sol".to_string(),
+        });
+
+        let result = remappings.into_inner();
+        assert_eq!(result.len(), 2, "Should allow same name with different contexts");
+        assert!(
+            result
+                .iter()
+                .any(|r| r.context == Some("test/".to_string()) && r.path == "test/Contract.sol")
+        );
+        assert!(
+            result
+                .iter()
+                .any(|r| r.context == Some("prod/".to_string()) && r.path == "prod/Contract.sol")
+        );
     }
 }

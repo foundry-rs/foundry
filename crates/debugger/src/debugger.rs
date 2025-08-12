@@ -1,11 +1,11 @@
 //! Debugger implementation.
 
-use crate::{tui::TUI, DebugNode, DebuggerBuilder, ExitReason, FileDumper};
+use crate::{DebugNode, DebuggerBuilder, ExitReason, tui::TUI};
 use alloy_primitives::map::AddressHashMap;
 use eyre::Result;
 use foundry_common::evm::Breakpoints;
 use foundry_evm_traces::debug::ContractSources;
-use std::path::PathBuf;
+use std::path::Path;
 
 pub struct DebuggerContext {
     pub debug_arena: Vec<DebugNode>,
@@ -64,10 +64,8 @@ impl Debugger {
     }
 
     /// Dumps debugger data to file.
-    pub fn dump_to_file(&mut self, path: &PathBuf) -> Result<()> {
+    pub fn dump_to_file(&mut self, path: &Path) -> Result<()> {
         eyre::ensure!(!self.context.debug_arena.is_empty(), "debug arena is empty");
-
-        let mut file_dumper = FileDumper::new(path, &mut self.context);
-        file_dumper.run()
+        crate::dump::dump(path, &self.context)
     }
 }

@@ -1,15 +1,17 @@
 //! Implementations of [`Testing`](spec::Group::Testing) cheatcodes.
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
-use alloy_primitives::Address;
+use alloy_chains::Chain as AlloyChain;
+use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolValue;
-use chrono::DateTime;
+use foundry_common::version::SEMVER_VERSION;
 use foundry_evm_core::constants::MAGIC_SKIP;
-use std::env;
+use std::str::FromStr;
 
 pub(crate) mod assert;
 pub(crate) mod assume;
 pub(crate) mod expect;
+pub(crate) mod revert_handlers;
 
 impl Cheatcode for breakpoint_0Call {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
@@ -28,14 +30,7 @@ impl Cheatcode for breakpoint_1Call {
 impl Cheatcode for getFoundryVersionCall {
     fn apply(&self, _state: &mut Cheatcodes) -> Result {
         let Self {} = self;
-        let cargo_version = env!("CARGO_PKG_VERSION");
-        let git_sha = env!("VERGEN_GIT_SHA");
-        let build_timestamp = DateTime::parse_from_rfc3339(env!("VERGEN_BUILD_TIMESTAMP"))
-            .expect("Invalid build timestamp format")
-            .format("%Y%m%d%H%M")
-            .to_string();
-        let foundry_version = format!("{cargo_version}+{git_sha}+{build_timestamp}");
-        Ok(foundry_version.abi_encode())
+        Ok(SEMVER_VERSION.abi_encode())
     }
 }
 
@@ -83,11 +78,27 @@ impl Cheatcode for skip_1Call {
         if *skipTest {
             // Skip should not work if called deeper than at test level.
             // Since we're not returning the magic skip bytes, this will cause a test failure.
-            ensure!(ccx.ecx.journaled_state.depth() <= 1, "`skip` can only be used at test level");
+            ensure!(ccx.ecx.journaled_state.depth <= 1, "`skip` can only be used at test level");
             Err([MAGIC_SKIP, reason.as_bytes()].concat().into())
         } else {
             Ok(Default::default())
         }
+    }
+}
+
+impl Cheatcode for getChain_0Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { chainAlias } = self;
+        get_chain(state, chainAlias)
+    }
+}
+
+impl Cheatcode for getChain_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { chainId } = self;
+        // Convert the chainId to a string and use the existing get_chain function
+        let chain_id_str = chainId.to_string();
+        get_chain(state, &chain_id_str)
     }
 }
 
@@ -106,4 +117,38 @@ fn breakpoint(state: &mut Cheatcodes, caller: &Address, s: &str, add: bool) -> R
     }
 
     Ok(Default::default())
+}
+
+/// Gets chain information for the given alias.
+fn get_chain(state: &mut Cheatcodes, chain_alias: &str) -> Result {
+    // Parse the chain alias - works for both chain names and IDs
+    let alloy_chain = AlloyChain::from_str(chain_alias)
+        .map_err(|_| fmt_err!("invalid chain alias: {chain_alias}"))?;
+    let chain_name = alloy_chain.to_string();
+    let chain_id = alloy_chain.id();
+
+    // Check if this is an unknown chain ID by comparing the name to the chain ID
+    // When a numeric ID is passed for an unknown chain, alloy_chain.to_string() will return the ID
+    // So if they match, it's likely an unknown chain ID
+    if chain_name == chain_id.to_string() {
+        return Err(fmt_err!("invalid chain alias: {chain_alias}"));
+    }
+
+    // Try to retrieve RPC URL and chain alias from user's config in foundry.toml.
+    let (rpc_url, chain_alias) = if let Some(rpc_url) =
+        state.config.rpc_endpoint(&chain_name).ok().and_then(|e| e.url().ok())
+    {
+        (rpc_url, chain_name.clone())
+    } else {
+        (String::new(), chain_alias.to_string())
+    };
+
+    let chain_struct = Chain {
+        name: chain_name,
+        chainId: U256::from(chain_id),
+        chainAlias: chain_alias,
+        rpcUrl: rpc_url,
+    };
+
+    Ok(chain_struct.abi_encode())
 }

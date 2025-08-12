@@ -1,16 +1,15 @@
 //! CLI arguments for configuring the EVM settings.
 
-use alloy_primitives::{map::HashMap, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, map::HashMap};
 use clap::Parser;
 use eyre::ContextCompat;
 use foundry_config::{
+    Chain, Config,
     figment::{
-        self,
+        self, Metadata, Profile, Provider,
         error::Kind::InvalidType,
         value::{Dict, Map, Value},
-        Metadata, Profile, Provider,
     },
-    Chain, Config,
 };
 use serde::Serialize;
 
@@ -267,6 +266,7 @@ pub struct EnvArgs {
 
     /// Whether to disable the block gas limit checks.
     #[arg(long, visible_alias = "no-gas-limit")]
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub disable_block_gas_limit: bool,
 }
 
@@ -279,7 +279,6 @@ impl EvmArgs {
 
 /// We have to serialize chain IDs and not names because when extracting an EVM `Env`, it expects
 /// `chain_id` to be `u64`.
-#[allow(clippy::trivially_copy_pass_by_ref)]
 fn id<S: serde::Serializer>(chain: &Option<Chain>, s: S) -> Result<S::Ok, S::Error> {
     if let Some(chain) = chain {
         s.serialize_u64(chain.id())
@@ -300,7 +299,7 @@ mod tests {
             env: EnvArgs { chain: Some(NamedChain::Mainnet.into()), ..Default::default() },
             ..Default::default()
         };
-        let config = Config::from_provider(Config::figment().merge(args));
+        let config = Config::from_provider(Config::figment().merge(args)).unwrap();
         assert_eq!(config.chain, Some(NamedChain::Mainnet.into()));
 
         let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "goerli"]);
@@ -313,7 +312,7 @@ mod tests {
             env: EnvArgs { chain: Some(NamedChain::Mainnet.into()), ..Default::default() },
             ..Default::default()
         };
-        let config = Config::from_provider(Config::figment().merge(args));
+        let config = Config::from_provider(Config::figment().merge(args)).unwrap();
         assert_eq!(config.memory_limit, Config::default().memory_limit);
 
         let env = EnvArgs::parse_from(["foundry-common", "--memory-limit", "100"]);
@@ -328,7 +327,7 @@ mod tests {
         let env = EnvArgs::parse_from(["foundry-common", "--chain-id", "mainnet"]);
         assert_eq!(env.chain, Some(Chain::mainnet()));
         let args = EvmArgs { env, ..Default::default() };
-        let config = Config::from_provider(Config::figment().merge(args));
+        let config = Config::from_provider(Config::figment().merge(args)).unwrap();
         assert_eq!(config.chain, Some(Chain::mainnet()));
     }
 }

@@ -2,13 +2,13 @@ use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_compilers::artifacts::remappings::Remapping;
 use foundry_config::{
-    figment,
+    Config, figment,
     figment::{
+        Metadata, Profile, Provider,
         error::Kind::InvalidType,
         value::{Dict, Map, Value},
-        Metadata, Profile, Provider,
     },
-    find_project_root, remappings_from_env_var, Config,
+    find_project_root, remappings_from_env_var,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -71,8 +71,11 @@ impl ProjectPathOpts {
     /// # Panics
     ///
     /// Panics if the project root directory cannot be found. See [`find_project_root`].
+    #[track_caller]
     pub fn project_root(&self) -> PathBuf {
-        self.root.clone().unwrap_or_else(|| find_project_root(None))
+        self.root
+            .clone()
+            .unwrap_or_else(|| find_project_root(None).expect("could not determine project root"))
     }
 
     /// Returns the remappings to add to the config

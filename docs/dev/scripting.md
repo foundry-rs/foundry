@@ -1,10 +1,10 @@
+# Scripting
 
-# Scripting - Flow Diagrams
-
-1. [High level overview](#high-level-overview)
-    1. [Notes](#notes)
-2. [Script Execution](#script-execution)
-3. [Nonce Management](#nonce-management)
+- [Scripting](#scripting)
+  - [High level overview](#high-level-overview)
+    - [Notes](#notes)
+  - [Script Execution](#script-execution)
+  - [Nonce Management](#nonce-management)
 
 ## High level overview
 
@@ -44,23 +44,23 @@ graph TD;
     MultiChainSequence::new-->ScriptArgs::multi_chain_deployment
     ScriptSequence::new-->ScriptArgs::single_deployment
     ScriptArgs::single_deployment-->ScriptArgs::send_transactions
-
 ```
 
 ### Notes
-1) `[..]` - concurrently executed
 
-2) The bit below does not actually influence the state initially defined by `--broadcast`. It only happens because there might be private keys declared inside the script that need to be collected again. `--resume` only resumes **publishing** the transactions, nothing more!
+1. `[..]` - concurrently executed
+
+2. The bit below does not actually influence the state initially defined by `--broadcast`. It only happens because there might be private keys declared inside the script that need to be collected again. `--resume` only resumes **publishing** the transactions, nothing more!
 
 ```mermaid
 graph TD;
 ScriptArgs::execute-- "(resume || verify) && !broadcast" -->ScriptArgs::resume_deployment;
 ```
-3) `ScriptArgs::execute` executes the script, while `ScriptArgs::onchain_simulation` only executes the broadcastable transactions collected by `ScriptArgs::execute`.
 
-
+3. `ScriptArgs::execute` executes the script, while `ScriptArgs::onchain_simulation` only executes the broadcastable transactions collected by `ScriptArgs::execute`.
 
 ## Script Execution
+
 ```mermaid
 graph TD;
 subgraph ScriptArgs::execute
@@ -82,9 +82,7 @@ ScriptRunner::script--"run()"-->Executor::call;
 end
 end
 Executor::call-. BroadcastableTransactions .->ScriptArgs::handle_broadcastable_transactions;
-
 ```
-
 
 ## Nonce Management
 
@@ -93,7 +91,6 @@ During the first execution stage on `forge script`, foundry has to adjust the no
 Making sure that `msg.sender` is our signer when calling `setUp()` and `run()` and that its nonce is correct (decreased by one on each call) when calling `vm.broadcast` to create a contract.
 
 We skip this, if the user hasn't set a sender and they're using the `Config::DEFAULT_SENDER`.
-
 
 ```mermaid
 graph TD

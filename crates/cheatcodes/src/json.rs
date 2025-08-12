@@ -1,8 +1,8 @@
 //! Implementations of [`Json`](spec::Group::Json) cheatcodes.
 
-use crate::{string, Cheatcode, Cheatcodes, Result, Vm::*};
-use alloy_dyn_abi::{eip712_parser::EncodeType, DynSolType, DynSolValue, Resolver};
-use alloy_primitives::{hex, Address, B256, I256};
+use crate::{Cheatcode, Cheatcodes, Result, Vm::*, string};
+use alloy_dyn_abi::{DynSolType, DynSolValue, Resolver, eip712_parser::EncodeType};
+use alloy_primitives::{Address, B256, I256, hex};
 use alloy_sol_types::SolValue;
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
@@ -493,11 +493,7 @@ fn encode(values: Vec<DynSolValue>) -> Vec<u8> {
 /// Canonicalize a json path key to always start from the root of the document.
 /// Read more about json path syntax: <https://goessner.net/articles/JsonPath/>
 pub(super) fn canonicalize_json_path(path: &str) -> Cow<'_, str> {
-    if !path.starts_with('$') {
-        format!("${path}").into()
-    } else {
-        path.into()
-    }
+    if !path.starts_with('$') { format!("${path}").into() } else { path.into() }
 }
 
 /// Converts a JSON [`Value`] to a [`DynSolValue`] by trying to guess encoded type. For safer
@@ -570,9 +566,9 @@ pub(super) fn json_value_to_token(value: &Value) -> Result<DynSolValue> {
             if let Some(mut val) = string.strip_prefix("0x") {
                 let s;
                 if val.len() == 39 {
-                    return Err(format!("Cannot parse \"{val}\" as an address. If you want to specify address, prepend zero to the value.").into())
+                    return Err(format!("Cannot parse \"{val}\" as an address. If you want to specify address, prepend zero to the value.").into());
                 }
-                if val.len() % 2 != 0 {
+                if !val.len().is_multiple_of(2) {
                     s = format!("0{val}");
                     val = &s[..];
                 }
@@ -666,7 +662,7 @@ pub(super) fn resolve_type(type_description: &str) -> Result<DynSolType> {
             resolver.ingest(t.to_owned());
         }
 
-        return Ok(resolver.resolve(main_type)?)
+        return Ok(resolver.resolve(main_type)?);
     };
 
     bail!("type description should be a valid Solidity type or a EIP712 `encodeType` string")

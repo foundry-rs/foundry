@@ -9,9 +9,10 @@
 extern crate tracing;
 
 use alloy_primitives::{
-    map::{B256HashMap, HashMap},
     Bytes,
+    map::{B256HashMap, HashMap, rustc_hash::FxHashMap},
 };
+use analysis::SourceAnalysis;
 use eyre::Result;
 use foundry_compilers::artifacts::sourcemap::SourceMap;
 use semver::Version;
@@ -28,7 +29,7 @@ pub mod analysis;
 pub mod anchors;
 
 mod inspector;
-pub use inspector::CoverageCollector;
+pub use inspector::LineCoverageCollector;
 
 /// A coverage report.
 ///
@@ -41,8 +42,10 @@ pub struct CoverageReport {
     /// A map of source paths to source IDs.
     pub source_paths_to_ids: HashMap<(Version, PathBuf), usize>,
     /// All coverage items for the codebase, keyed by the compiler version.
-    pub items: HashMap<Version, Vec<CoverageItem>>,
+    pub analyses: HashMap<Version, SourceAnalysis>,
     /// All item anchors for the codebase, keyed by their contract ID.
+    ///
+    /// `(id, (creation, runtime))`
     pub anchors: HashMap<ContractId, (Vec<ItemAnchor>, Vec<ItemAnchor>)>,
     /// All the bytecode hits for the codebase.
     pub bytecode_hits: HashMap<ContractId, HitMap>,
@@ -70,12 +73,14 @@ impl CoverageReport {
         self.source_maps.extend(source_maps);
     }
 
-    /// Add coverage items to this report.
-    pub fn add_items(&mut self, version: Version, items: impl IntoIterator<Item = CoverageItem>) {
-        self.items.entry(version).or_default().extend(items);
+    /// Add a [`SourceAnalysis`] to this report.
+    pub fn add_analysis(&mut self, version: Version, analysis: SourceAnalysis) {
+        self.analyses.insert(version, analysis);
     }
 
     /// Add anchors to this report.
+    ///
+    /// `(id, (creation, runtime))`
     pub fn add_anchors(
         &mut self,
         anchors: impl IntoIterator<Item = (ContractId, (Vec<ItemAnchor>, Vec<ItemAnchor>))>,
@@ -98,8 +103,8 @@ impl CoverageReport {
         mut f: impl FnMut(&mut T, &'a CoverageItem),
     ) -> impl Iterator<Item = (&'a Path, T)> {
         let mut by_file: BTreeMap<&Path, T> = BTreeMap::new();
-        for (version, items) in &self.items {
-            for item in items {
+        for (version, items) in &self.analyses {
+            for item in items.all_items() {
                 let key = (version.clone(), item.loc.source_id);
                 let Some(path) = self.source_paths.get(&key) else { continue };
                 f(by_file.entry(path).or_default(), item);
@@ -119,41 +124,42 @@ impl CoverageReport {
         hit_map: &HitMap,
         is_deployed_code: bool,
     ) -> Result<()> {
-        // Add bytecode level hits
+        // Add bytecode level hits.
         self.bytecode_hits
             .entry(contract_id.clone())
             .and_modify(|m| m.merge(hit_map))
             .or_insert_with(|| hit_map.clone());
 
-        // Add source level hits
+        // Add source level hits.
         if let Some(anchors) = self.anchors.get(contract_id) {
             let anchors = if is_deployed_code { &anchors.1 } else { &anchors.0 };
             for anchor in anchors {
                 if let Some(hits) = hit_map.get(anchor.instruction) {
-                    self.items
+                    self.analyses
                         .get_mut(&contract_id.version)
-                        .and_then(|items| items.get_mut(anchor.item_id))
+                        .and_then(|items| items.all_items_mut().get_mut(anchor.item_id as usize))
                         .expect("Anchor refers to non-existent coverage item")
                         .hits += hits.get();
                 }
             }
         }
+
         Ok(())
     }
 
-    /// Removes all the coverage items that should be ignored by the filter.
+    /// Retains all the coverage items specified by `predicate`.
     ///
     /// This function should only be called after all the sources were used, otherwise, the output
     /// will be missing the ones that are dependent on them.
-    pub fn filter_out_ignored_sources(&mut self, filter: impl Fn(&Path) -> bool) {
-        self.items.retain(|version, items| {
-            items.retain(|item| {
+    pub fn retain_sources(&mut self, mut predicate: impl FnMut(&Path) -> bool) {
+        self.analyses.retain(|version, analysis| {
+            analysis.all_items_mut().retain(|item| {
                 self.source_paths
                     .get(&(version.clone(), item.loc.source_id))
-                    .map(|path| filter(path))
+                    .map(|path| predicate(path))
                     .unwrap_or(false)
             });
-            !items.is_empty()
+            !analysis.all_items().is_empty()
         });
     }
 }
@@ -206,8 +212,8 @@ impl DerefMut for HitMaps {
 /// Contains low-level data about hit counters for the instructions in the bytecode of a contract.
 #[derive(Clone, Debug)]
 pub struct HitMap {
+    hits: FxHashMap<u32, u32>,
     bytecode: Bytes,
-    hits: HashMap<u32, u32>,
 }
 
 impl HitMap {
@@ -225,20 +231,20 @@ impl HitMap {
 
     /// Returns the number of hits for the given program counter.
     #[inline]
-    pub fn get(&self, pc: usize) -> Option<NonZeroU32> {
-        NonZeroU32::new(self.hits.get(&Self::cvt_pc(pc)).copied().unwrap_or(0))
+    pub fn get(&self, pc: u32) -> Option<NonZeroU32> {
+        NonZeroU32::new(self.hits.get(&pc).copied().unwrap_or(0))
     }
 
     /// Increase the hit counter by 1 for the given program counter.
     #[inline]
-    pub fn hit(&mut self, pc: usize) {
+    pub fn hit(&mut self, pc: u32) {
         self.hits(pc, 1)
     }
 
     /// Increase the hit counter by `hits` for the given program counter.
     #[inline]
-    pub fn hits(&mut self, pc: usize, hits: u32) {
-        *self.hits.entry(Self::cvt_pc(pc)).or_default() += hits;
+    pub fn hits(&mut self, pc: u32, hits: u32) {
+        *self.hits.entry(pc).or_default() += hits;
     }
 
     /// Merge another hitmap into this, assuming the bytecode is consistent
@@ -251,8 +257,8 @@ impl HitMap {
 
     /// Returns an iterator over all the program counters and their hit counts.
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = (usize, u32)> + '_ {
-        self.hits.iter().map(|(&pc, &hits)| (pc as usize, hits))
+    pub fn iter(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
+        self.hits.iter().map(|(&pc, &hits)| (pc, hits))
     }
 
     /// Returns the number of program counters hit in the hitmap.
@@ -265,11 +271,6 @@ impl HitMap {
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.hits.is_empty()
-    }
-
-    #[inline]
-    fn cvt_pc(pc: usize) -> u32 {
-        pc.try_into().expect("4GiB bytecode")
     }
 }
 
@@ -294,10 +295,10 @@ impl Display for ContractId {
 /// An item anchor describes what instruction marks a [CoverageItem] as covered.
 #[derive(Clone, Debug)]
 pub struct ItemAnchor {
-    /// The program counter for the opcode of this anchor
-    pub instruction: usize,
-    /// The item ID this anchor points to
-    pub item_id: usize,
+    /// The program counter for the opcode of this anchor.
+    pub instruction: u32,
+    /// The item ID this anchor points to.
+    pub item_id: u32,
 }
 
 impl Display for ItemAnchor {
@@ -318,18 +319,18 @@ pub enum CoverageItemKind {
         ///
         /// There may be multiple items with the same branch ID - they belong to the same branch,
         /// but represent different paths.
-        branch_id: usize,
+        branch_id: u32,
         /// The path ID for this branch.
         ///
         /// The first path has ID 0, the next ID 1, and so on.
-        path_id: usize,
+        path_id: u32,
         /// If true, then the branch anchor is the first opcode within the branch source range.
         is_first_opcode: bool,
     },
     /// A function in the code.
     Function {
         /// The name of the function.
-        name: String,
+        name: Box<str>,
     },
 }
 
@@ -359,7 +360,7 @@ impl Display for CoverageItem {
                 write!(f, r#"Function "{name}""#)?;
             }
         }
-        write!(f, " (location: {}, hits: {})", self.loc, self.hits)
+        write!(f, " (location: ({}), hits: {})", self.loc, self.hits)
     }
 }
 
@@ -378,7 +379,7 @@ pub struct SourceLocation {
 
 impl Display for SourceLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "source ID {}, lines {:?}, bytes {:?}", self.source_id, self.lines, self.bytes)
+        write!(f, "source ID: {}, lines: {:?}, bytes: {:?}", self.source_id, self.lines, self.bytes)
     }
 }
 

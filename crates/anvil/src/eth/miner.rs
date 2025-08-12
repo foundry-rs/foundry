@@ -1,18 +1,17 @@
 //! Mines transactions
 
-use crate::eth::pool::{transactions::PoolTransaction, Pool};
+use crate::eth::pool::{Pool, transactions::PoolTransaction};
 use alloy_primitives::TxHash;
 use futures::{
     channel::mpsc::Receiver,
-    stream::{Fuse, Stream, StreamExt},
+    stream::{Fuse, StreamExt},
     task::AtomicWaker,
 };
-use parking_lot::{lock_api::RwLockWriteGuard, RawRwLock, RwLock};
+use parking_lot::{RawRwLock, RwLock, lock_api::RwLockWriteGuard};
 use std::{
     fmt,
-    pin::Pin,
     sync::Arc,
-    task::{ready, Context, Poll},
+    task::{Context, Poll, ready},
     time::Duration,
 };
 use tokio::time::{Interval, MissedTickBehavior};
@@ -67,7 +66,7 @@ impl Miner {
     pub fn get_interval(&self) -> Option<u64> {
         let mode = self.mode.read();
         if let MiningMode::FixedBlockTime(ref mm) = *mode {
-            return Some(mm.interval.period().as_secs())
+            return Some(mm.interval.period().as_secs());
         }
         None
     }
@@ -136,7 +135,7 @@ pub enum MiningMode {
     /// A miner that constructs a new block every `interval` tick
     FixedBlockTime(FixedBlockTimeMiner),
 
-    /// A minner that uses both Auto and FixedBlockTime
+    /// A miner that uses both Auto and FixedBlockTime
     Mixed(ReadyTransactionMiner, FixedBlockTimeMiner),
 }
 
@@ -221,7 +220,7 @@ impl FixedBlockTimeMiner {
     fn poll(&mut self, pool: &Arc<Pool>, cx: &mut Context<'_>) -> Poll<Vec<Arc<PoolTransaction>>> {
         if self.interval.poll_tick(cx).is_ready() {
             // drain the pool
-            return Poll::Ready(pool.ready_transactions().collect())
+            return Poll::Ready(pool.ready_transactions().collect());
         }
         Poll::Pending
     }
@@ -245,13 +244,13 @@ pub struct ReadyTransactionMiner {
 
 impl ReadyTransactionMiner {
     fn poll(&mut self, pool: &Arc<Pool>, cx: &mut Context<'_>) -> Poll<Vec<Arc<PoolTransaction>>> {
-        // drain the notification stream
-        while let Poll::Ready(Some(_hash)) = Pin::new(&mut self.rx).poll_next(cx) {
+        // always drain the notification stream so that we're woken up as soon as there's a new tx
+        while let Poll::Ready(Some(_hash)) = self.rx.poll_next_unpin(cx) {
             self.has_pending_txs = Some(true);
         }
 
         if self.has_pending_txs == Some(false) {
-            return Poll::Pending
+            return Poll::Pending;
         }
 
         let transactions =
@@ -261,7 +260,7 @@ impl ReadyTransactionMiner {
         self.has_pending_txs = Some(transactions.len() >= self.max_transactions);
 
         if transactions.is_empty() {
-            return Poll::Pending
+            return Poll::Pending;
         }
 
         Poll::Ready(transactions)

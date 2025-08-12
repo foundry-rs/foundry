@@ -1,9 +1,9 @@
-use alloy_chains::Chain;
+use alloy_chains::{Chain, NamedChain};
 use alloy_network::AnyTransactionReceipt;
-use alloy_primitives::{utils::format_units, TxHash, U256};
+use alloy_primitives::{TxHash, U256, utils::format_units};
 use alloy_provider::{PendingTransactionBuilder, PendingTransactionError, Provider, WatchTxError};
-use eyre::Result;
-use foundry_common::{provider::RetryProvider, shell};
+use eyre::{Result, eyre};
+use foundry_common::{provider::RetryProvider, retry, retry::RetryError, shell};
 use std::time::Duration;
 
 /// Convenience enum for internal signalling of transaction status
@@ -30,39 +30,28 @@ pub async fn check_tx_status(
     hash: TxHash,
     timeout: u64,
 ) -> (TxHash, Result<TxStatus, eyre::Report>) {
-    // We use the inner future so that we can use ? operator in the future, but
-    // still neatly return the tuple
-    let result = async move {
-        // First check if there's a receipt
-        let receipt_opt = provider.get_transaction_receipt(hash).await?;
-        if let Some(receipt) = receipt_opt {
-            return Ok(receipt.into());
-        }
-
-        loop {
+    let result = retry::Retry::new_no_delay(3)
+        .run_async_until_break(|| async {
             match PendingTransactionBuilder::new(provider.clone(), hash)
                 .with_timeout(Some(Duration::from_secs(timeout)))
                 .get_receipt()
                 .await
             {
-                Ok(receipt) => return Ok(receipt.into()),
-                // do nothing on timeout, we will check whether tx is dropped below
-                Err(PendingTransactionError::TxWatcher(WatchTxError::Timeout)) => {}
-                // treat other errors as fatal
-                Err(e) => return Err(e.into()),
+                Ok(receipt) => Ok(receipt.into()),
+                Err(e) => match provider.get_transaction_by_hash(hash).await {
+                    Ok(_) => match e {
+                        PendingTransactionError::TxWatcher(WatchTxError::Timeout) => {
+                            Err(RetryError::Continue(eyre!(
+                                "tx is still known to the node, waiting for receipt"
+                            )))
+                        }
+                        _ => Err(RetryError::Retry(e.into())),
+                    },
+                    Err(_) => Ok(TxStatus::Dropped),
+                },
             }
-
-            if provider.get_transaction_by_hash(hash).await?.is_some() {
-                trace!("tx is still known to the node, waiting for receipt");
-            } else {
-                trace!("eth_getTransactionByHash returned null, assuming dropped");
-                break
-            }
-        }
-
-        Ok(TxStatus::Dropped)
-    }
-    .await;
+        })
+        .await;
 
     (hash, result)
 }
@@ -110,9 +99,14 @@ pub fn format_receipt(chain: Chain, receipt: &AnyTransactionReceipt) -> String {
                     .unwrap_or_else(|_| "N/A".into());
                 let gas_price =
                     format_units(U256::from(gas_price), 9).unwrap_or_else(|_| "N/A".into());
+                let token_symbol = NamedChain::try_from(chain)
+                    .unwrap_or_default()
+                    .native_currency_symbol()
+                    .unwrap_or("ETH");
                 format!(
-                    "Paid: {} ETH ({gas_used} gas * {} gwei)",
+                    "Paid: {} {} ({gas_used} gas * {} gwei)",
                     paid.trim_end_matches('0'),
+                    token_symbol,
                     gas_price.trim_end_matches('0').trim_end_matches('.')
                 )
             },

@@ -79,14 +79,14 @@ allow_paths = []
 # additional solc include paths
 include_paths = []
 force = false
-evm_version = 'shanghai'
+evm_version = 'prague'
 gas_reports = ['*']
 gas_reports_ignore = []
 ## Sets the concrete solc version to use, this overrides the `auto_detect_solc` value
 # solc = '0.8.10'
 auto_detect_solc = true
 offline = false
-optimizer = true
+optimizer = false
 optimizer_runs = 200
 model_checker = { contracts = { 'a.sol' = [
     'A1',

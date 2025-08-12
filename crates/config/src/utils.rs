@@ -4,34 +4,31 @@ use crate::Config;
 use alloy_primitives::U256;
 use figment::value::Value;
 use foundry_compilers::artifacts::{
-    remappings::{Remapping, RemappingError},
     EvmVersion,
+    remappings::{Remapping, RemappingError},
 };
-use revm_primitives::SpecId;
-use serde::{de::Error, Deserialize, Deserializer};
+use revm::primitives::hardfork::SpecId;
+use serde::{Deserialize, Deserializer, Serializer, de::Error};
 use std::{
     io,
     path::{Path, PathBuf},
     str::FromStr,
 };
 
-/// Loads the config for the current project workspace
-pub fn load_config() -> Config {
+// TODO: Why do these exist separately from `Config::load`?
+
+/// Loads the config for the current project workspace.
+pub fn load_config() -> eyre::Result<Config> {
     load_config_with_root(None)
 }
 
 /// Loads the config for the current project workspace or the provided root path.
-///
-/// # Panics
-///
-/// Panics if the project root cannot be found. See [`find_project_root`].
-#[track_caller]
-pub fn load_config_with_root(root: Option<&Path>) -> Config {
+pub fn load_config_with_root(root: Option<&Path>) -> eyre::Result<Config> {
     let root = match root {
         Some(root) => root,
-        None => &find_project_root(None),
+        None => &find_project_root(None)?,
     };
-    Config::load_with_root(root).sanitized()
+    Ok(Config::load_with_root(root)?.sanitized())
 }
 
 /// Returns the path of the top-level directory of the working git tree.
@@ -59,20 +56,10 @@ pub fn find_git_root(relative_to: &Path) -> io::Result<Option<PathBuf>> {
 ///
 /// Returns `repo` or `cwd` if no `foundry.toml` is found in the tree.
 ///
-/// # Panics
-///
-/// Panics if:
+/// Returns an error if:
 /// - `cwd` is `Some` and is not a valid directory;
 /// - `cwd` is `None` and the [`std::env::current_dir`] call fails.
-#[track_caller]
-pub fn find_project_root(cwd: Option<&Path>) -> PathBuf {
-    try_find_project_root(cwd).expect("Could not find project root")
-}
-
-/// Returns the root path to set for the project root.
-///
-/// Same as [`find_project_root`], but returns an error instead of panicking.
-pub fn try_find_project_root(cwd: Option<&Path>) -> io::Result<PathBuf> {
+pub fn find_project_root(cwd: Option<&Path>) -> io::Result<PathBuf> {
     let cwd = match cwd {
         Some(path) => path,
         None => &std::env::current_dir()?,
@@ -226,6 +213,44 @@ where
     deserialize_u64_or_max(deserializer)?.try_into().map_err(D::Error::custom)
 }
 
+/// Deserialize into `U256` from either a `u64` or a `U256` hex string.
+pub fn deserialize_u64_to_u256<'de, D>(deserializer: D) -> Result<U256, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum NumericValue {
+        U256(U256),
+        U64(u64),
+    }
+
+    match NumericValue::deserialize(deserializer)? {
+        NumericValue::U64(n) => Ok(U256::from(n)),
+        NumericValue::U256(n) => Ok(n),
+    }
+}
+
+/// Serialize `U256` as `u64` if it fits, otherwise as a hex string.
+/// If the number fits into a i64, serialize it as number without quotation marks.
+/// If the number fits into a u64, serialize it as a stringified number with quotation marks.
+/// Otherwise, serialize it as a hex string with quotation marks.
+pub fn serialize_u64_or_u256<S>(n: &U256, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    // The TOML specification handles integers as i64 so the number representation is limited to
+    // i64. If the number is larger than `i64::MAX` and up to `u64::MAX`, we serialize it as a
+    // string to avoid losing precision.
+    if let Ok(n_i64) = i64::try_from(*n) {
+        serializer.serialize_i64(n_i64)
+    } else if let Ok(n_u64) = u64::try_from(*n) {
+        serializer.serialize_str(&n_u64.to_string())
+    } else {
+        serializer.serialize_str(&format!("{n:#x}"))
+    }
+}
+
 /// Helper type to parse both `u64` and `U256`
 #[derive(Clone, Copy, Deserialize)]
 #[serde(untagged)]
@@ -276,6 +301,7 @@ pub fn evm_spec_id(evm_version: EvmVersion, odyssey: bool) -> SpecId {
         EvmVersion::Paris => SpecId::MERGE,
         EvmVersion::Shanghai => SpecId::SHANGHAI,
         EvmVersion::Cancun => SpecId::CANCUN,
-        EvmVersion::Prague => SpecId::OSAKA, // Osaka enables EOF
+        EvmVersion::Prague => SpecId::PRAGUE,
+        EvmVersion::Osaka => SpecId::OSAKA,
     }
 }

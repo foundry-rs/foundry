@@ -1,10 +1,44 @@
 use crate::multi_sequence::MultiChainSequence;
 use eyre::Result;
-use forge_script_sequence::ScriptSequence;
+use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cli::utils::Git;
+use foundry_common::fmt::UIfmt;
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
-use std::path::Path;
+use std::{
+    fmt::{Error, Write},
+    path::Path,
+};
+
+/// Format transaction details for display
+fn format_transaction(index: usize, tx: &TransactionWithMetadata) -> Result<String, Error> {
+    let mut output = String::new();
+    writeln!(output, "### Transaction {index} ###")?;
+    writeln!(output, "{}", tx.tx().pretty())?;
+
+    // Show contract name and address if available
+    if !tx.opcode.is_any_create()
+        && let (Some(name), Some(addr)) = (&tx.contract_name, &tx.contract_address)
+    {
+        writeln!(output, "contract: {name}({addr})")?;
+    }
+
+    // Show decoded function if available
+    if let (Some(func), Some(args)) = (&tx.function, &tx.arguments) {
+        if args.is_empty() {
+            writeln!(output, "data (decoded): {func}()")?;
+        } else {
+            writeln!(output, "data (decoded): {func}(")?;
+            for (i, arg) in args.iter().enumerate() {
+                writeln!(&mut output, "  {}{}", arg, if i + 1 < args.len() { "," } else { "" })?;
+            }
+            writeln!(output, ")")?;
+        }
+    }
+
+    writeln!(output)?;
+    Ok(output)
+}
 
 /// Returns the commit hash of the project if it exists
 pub fn get_commit_hash(root: &Path) -> Option<String> {
@@ -54,6 +88,20 @@ impl ScriptSequenceKind {
                     MultiChainSequence::get_paths(config, sig, target, false)?;
             }
         };
+
+        Ok(())
+    }
+
+    pub fn show_transactions(&self) -> Result<()> {
+        for sequence in self.sequences() {
+            if !sequence.transactions.is_empty() {
+                sh_println!("\nChain {}\n", sequence.chain)?;
+
+                for (i, tx) in sequence.transactions.iter().enumerate() {
+                    sh_print!("{}", format_transaction(i + 1, tx)?)?;
+                }
+            }
+        }
 
         Ok(())
     }

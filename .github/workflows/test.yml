@@ -12,6 +12,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
 
 jobs:
   nextest:
@@ -24,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
         with:
@@ -45,27 +46,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
       - run: cargo test --workspace --doc
 
-  codespell:
+  typos:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: codespell-project/actions-codespell@v2
-        with:
-          skip: "*.json"
+      - uses: actions/checkout@v5
+      - uses: crate-ci/typos@v1
 
   clippy:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@clippy
       - uses: Swatinem/rust-cache@v2
         with:
@@ -78,10 +77,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@nightly
         with:
-          toolchain: nightly-2024-02-03
           components: rustfmt
       - run: cargo fmt --all --check
 
@@ -89,7 +87,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -102,7 +100,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-hack
       - uses: Swatinem/rust-cache@v2
@@ -112,10 +110,6 @@ jobs:
 
   deny:
     uses: ithacaxyz/ci/.github/workflows/deny.yml@main
-    with:
-      # Clear out arguments to not pass `--all-features` to `cargo deny`.
-      # Many crates have an `openssl` feature which enables banned dependencies.
-      deny-flags: ""
 
   ci-success:
     runs-on: ubuntu-latest
@@ -124,7 +118,7 @@ jobs:
       - nextest
       - docs
       - doctest
-      - codespell
+      - typos
       - clippy
       - rustfmt
       - forge-fmt

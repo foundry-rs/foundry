@@ -8,11 +8,11 @@ use itertools::Itertools;
 use semver::Version;
 use std::{
     io,
-    io::{prelude::*, IsTerminal},
+    io::{IsTerminal, prelude::*},
     path::{Path, PathBuf},
     sync::{
-        mpsc::{self, TryRecvError},
         LazyLock,
+        mpsc::{self, TryRecvError},
     },
     thread,
     time::Duration,
@@ -45,7 +45,7 @@ impl TermSettings {
     }
 }
 
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub struct Spinner {
     indicator: &'static [&'static str],
     no_progress: bool,
@@ -53,8 +53,7 @@ pub struct Spinner {
     idx: usize,
 }
 
-#[allow(unused)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 impl Spinner {
     pub fn new(msg: impl Into<String>) -> Self {
         Self::with_indicator(SPINNERS[0], msg)
@@ -71,7 +70,7 @@ impl Spinner {
 
     pub fn tick(&mut self) {
         if self.no_progress {
-            return
+            return;
         }
 
         let indicator = self.indicator[self.idx % self.indicator.len()].green();
@@ -122,7 +121,7 @@ impl SpinnerReporter {
                             // end with a newline
                             let _ = sh_println!();
                             let _ = ack.send(());
-                            break
+                            break;
                         }
                         Err(TryRecvError::Disconnected) => break,
                         Err(TryRecvError::Empty) => thread::sleep(Duration::from_millis(100)),
@@ -165,7 +164,11 @@ impl Reporter for SpinnerReporter {
                 dirty_files
                     .iter()
                     .map(|path| {
-                        let trimmed_path = path.strip_prefix(&project_root).unwrap_or(path);
+                        let trimmed_path = if let Ok(project_root) = &project_root {
+                            path.strip_prefix(project_root).unwrap_or(path)
+                        } else {
+                            path
+                        };
                         format!("- {}", trimmed_path.display())
                     })
                     .sorted()

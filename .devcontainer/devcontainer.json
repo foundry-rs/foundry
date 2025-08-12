@@ -1,0 +1,49 @@
+// For format details, see https://aka.ms/devcontainer.json.
+{
+  "name": "Foundry Development",
+  "build": {
+    "context": "..",
+    "dockerfile": "Dockerfile.dev"
+  },
+
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": true,
+      "configureZshAsDefaultShell": true,
+      "installOhMyZsh": true,
+      "upgradePackages": true
+    }
+  },
+
+  "forwardPorts": [],
+
+  "postCreateCommand": "rustup default stable && rustup update",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "serayuzgur.crates",
+        "tamasfe.even-better-toml",
+        "ms-python.python",
+        "dbaeumer.vscode-eslint",
+        "oven.bun-vscode"
+      ],
+      "settings": {
+        "rust-analyzer.checkOnSave": true,
+        "rust-analyzer.cargo.features": "all"
+      }
+    }
+  },
+
+  "remoteUser": "foundry",
+
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+
+  "workspaceFolder": "/workspace",
+
+  "mounts": [
+    "source=${localEnv:HOME}/.cargo/registry,target=/home/foundry/.cargo/registry,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/.cargo/git,target=/home/foundry/.cargo/git,type=bind,consistency=cached"
+  ]
+}

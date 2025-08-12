@@ -3,20 +3,19 @@ use crate::{opts::CompilerOpts, utils::LoadConfig};
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_compilers::{
-    artifacts::{remappings::Remapping, RevertStrings},
+    Project,
+    artifacts::{RevertStrings, remappings::Remapping},
     compilers::multi::MultiCompiler,
     utils::canonicalized,
-    Project,
 };
 use foundry_config::{
-    figment,
+    Config, Remappings, figment,
     figment::{
+        Figment, Metadata, Profile, Provider,
         error::Kind::InvalidType,
         value::{Dict, Map, Value},
-        Figment, Metadata, Profile, Provider,
     },
     filter::SkipBuildFilter,
-    Config, Remappings,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -33,6 +32,11 @@ pub struct BuildOpts {
     #[arg(long)]
     #[serde(skip)]
     pub no_cache: bool,
+
+    /// Enable dynamic test linking.
+    #[arg(long, conflicts_with = "no_cache")]
+    #[serde(skip)]
+    pub dynamic_test_linking: bool,
 
     /// Set pre-linked libraries.
     #[arg(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
@@ -78,6 +82,11 @@ pub struct BuildOpts {
     #[serde(skip)]
     pub via_ir: bool,
 
+    /// Changes compilation to only use literal content and not URLs.
+    #[arg(long, help_heading = "Compiler options")]
+    #[serde(skip)]
+    pub use_literal_content: bool,
+
     /// Do not append any metadata to the bytecode.
     ///
     /// This is equivalent to setting `bytecode_hash` to `none` and `cbor_metadata` to `false`.
@@ -120,15 +129,6 @@ pub struct BuildOpts {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_info_path: Option<PathBuf>,
 
-    /// Use EOF-enabled solc binary. Enables via-ir and sets EVM version to Prague. Requires Docker
-    /// to be installed.
-    ///
-    /// Note that this is a temporary solution until the EOF support is merged into the main solc
-    /// release.
-    #[arg(long)]
-    #[serde(skip)]
-    pub eof: bool,
-
     /// Skip building files whose names contain the given filter.
     ///
     /// `test` and `script` are aliases for `.t.sol` and `.s.sol`.
@@ -152,7 +152,7 @@ impl BuildOpts {
     /// `find_project_root` and merges the cli `BuildArgs` into it before returning
     /// [`foundry_config::Config::project()`]).
     pub fn project(&self) -> Result<Project<MultiCompiler>> {
-        let config = self.try_load_config_emit_warnings()?;
+        let config = self.load_config()?;
         Ok(config.project()?)
     }
 
@@ -196,19 +196,6 @@ impl<'a> From<&'a BuildOpts> for Figment {
     }
 }
 
-impl<'a> From<&'a BuildOpts> for Config {
-    fn from(args: &'a BuildOpts) -> Self {
-        let figment: Figment = args.into();
-        let mut config = Self::from_provider(figment).sanitized();
-        // if `--config-path` is set we need to adjust the config's root path to the actual root
-        // path for the project, otherwise it will the parent dir of the `--config-path`
-        if args.project_paths.config_path.is_some() {
-            config.root = args.project_paths.project_root();
-        }
-        config
-    }
-}
-
 impl Provider for BuildOpts {
     fn metadata(&self) -> Metadata {
         Metadata::named("Core Build Args Provider")
@@ -239,6 +226,10 @@ impl Provider for BuildOpts {
             dict.insert("via_ir".to_string(), true.into());
         }
 
+        if self.use_literal_content {
+            dict.insert("use_literal_content".to_string(), true.into());
+        }
+
         if self.no_metadata {
             dict.insert("bytecode_hash".to_string(), "none".into());
             dict.insert("cbor_metadata".to_string(), false.into());
@@ -251,6 +242,10 @@ impl Provider for BuildOpts {
         // we need to ensure no_cache set accordingly
         if self.no_cache {
             dict.insert("cache".to_string(), false.into());
+        }
+
+        if self.dynamic_test_linking {
+            dict.insert("dynamic_test_linking".to_string(), true.into());
         }
 
         if self.build_info {
@@ -279,10 +274,6 @@ impl Provider for BuildOpts {
 
         if let Some(ref revert) = self.revert_strings {
             dict.insert("revert_strings".to_string(), revert.to_string().into());
-        }
-
-        if self.eof {
-            dict.insert("eof".to_string(), true.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))

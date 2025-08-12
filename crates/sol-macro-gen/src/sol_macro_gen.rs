@@ -15,10 +15,13 @@ use eyre::{Context, OptionExt, Result};
 use foundry_common::fs;
 use proc_macro2::{Span, TokenStream};
 use std::{
+    env::temp_dir,
     fmt::Write,
     path::{Path, PathBuf},
     str::FromStr,
 };
+
+use heck::ToSnakeCase;
 
 pub struct SolMacroGen {
     pub path: PathBuf,
@@ -67,9 +70,9 @@ impl MultiSolMacroGen {
         Ok(())
     }
 
-    pub fn generate_bindings(&mut self) -> Result<()> {
+    pub fn generate_bindings(&mut self, all_derives: bool) -> Result<()> {
         for instance in &mut self.instances {
-            Self::generate_binding(instance).wrap_err_with(|| {
+            Self::generate_binding(instance, all_derives).wrap_err_with(|| {
                 format!(
                     "failed to generate bindings for {}:{}",
                     instance.path.display(),
@@ -81,15 +84,52 @@ impl MultiSolMacroGen {
         Ok(())
     }
 
-    fn generate_binding(instance: &mut SolMacroGen) -> Result<()> {
-        let input = instance.get_sol_input()?.normalize_json()?;
+    fn generate_binding(instance: &mut SolMacroGen, all_derives: bool) -> Result<()> {
+        // TODO: in `get_sol_input` we currently can't handle unlinked bytecode: <https://github.com/alloy-rs/core/issues/926>
+        let input = match instance.get_sol_input() {
+            Ok(input) => input.normalize_json()?,
+            Err(error) => {
+                // TODO(mattsse): remove after <https://github.com/alloy-rs/core/issues/926>
+                if error.to_string().contains("expected bytecode, found unlinked bytecode") {
+                    // we attempt to do a little hack here until we have this properly supported by
+                    // removing the bytecode objects from the json file and using a tmpfile (very
+                    // hacky)
+                    let content = std::fs::read_to_string(&instance.path)?;
+                    let mut value = serde_json::from_str::<serde_json::Value>(&content)?;
+                    let obj = value.as_object_mut().expect("valid abi");
+
+                    // clear unlinked bytecode
+                    obj.remove("bytecode");
+                    obj.remove("deployedBytecode");
+
+                    let tmpdir = temp_dir();
+                    let mut tmp_file = tmpdir.join(instance.path.file_name().unwrap());
+                    std::fs::write(&tmp_file, serde_json::to_string(&value)?)?;
+
+                    // try again
+                    std::mem::swap(&mut tmp_file, &mut instance.path);
+                    let input = instance.get_sol_input()?.normalize_json()?;
+                    std::mem::swap(&mut tmp_file, &mut instance.path);
+                    input.normalize_json()?
+                } else {
+                    return Err(error);
+                }
+            }
+        };
 
         let SolInput { attrs: _, path: _, kind } = input;
 
         let tokens = match kind {
             SolInputKind::Sol(mut file) => {
-                let sol_attr: syn::Attribute = syn::parse_quote! {
-                    #[sol(rpc, alloy_sol_types = alloy::sol_types, alloy_contract = alloy::contract)]
+                let sol_attr: syn::Attribute = if all_derives {
+                    syn::parse_quote! {
+                            #[sol(rpc, alloy_sol_types = alloy::sol_types, alloy_contract =
+                    alloy::contract, all_derives = true, extra_derives(serde::Serialize,
+                    serde::Deserialize))]     }
+                } else {
+                    syn::parse_quote! {
+                            #[sol(rpc, alloy_sol_types = alloy::sol_types, alloy_contract =
+                    alloy::contract)]     }
                 };
                 file.attrs.push(sol_attr);
                 expand(file).wrap_err("failed to expand")?
@@ -101,18 +141,22 @@ impl MultiSolMacroGen {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn write_to_crate(
         &mut self,
         name: &str,
         version: &str,
+        description: &str,
+        license: &str,
         bindings_path: &Path,
         single_file: bool,
         alloy_version: Option<String>,
+        alloy_rev: Option<String>,
+        all_derives: bool,
     ) -> Result<()> {
-        self.generate_bindings()?;
+        self.generate_bindings(all_derives)?;
 
         let src = bindings_path.join("src");
-
         let _ = fs::create_dir_all(&src);
 
         // Write Cargo.toml
@@ -122,19 +166,30 @@ impl MultiSolMacroGen {
 name = "{name}"
 version = "{version}"
 edition = "2021"
-
-[dependencies]
 "#
         );
 
-        let alloy_dep = if let Some(alloy_version) = alloy_version {
-            format!(
-                r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", rev = "{alloy_version}", features = ["sol-types", "contract"] }}"#
-            )
-        } else {
-            r#"alloy = { git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }"#.to_string()
-        };
+        if !description.is_empty() {
+            toml_contents.push_str(&format!("description = \"{description}\"\n"));
+        }
+
+        if !license.is_empty() {
+            let formatted_licenses: Vec<String> =
+                license.split(',').map(Self::parse_license_alias).collect();
+
+            let formatted_license = formatted_licenses.join(" OR ");
+            toml_contents.push_str(&format!("license = \"{formatted_license}\"\n"));
+        }
+
+        toml_contents.push_str("\n[dependencies]\n");
+
+        let alloy_dep = Self::get_alloy_dep(alloy_version, alloy_rev);
         write!(toml_contents, "{alloy_dep}")?;
+
+        if all_derives {
+            let serde_dep = r#"serde = { version = "1.0", features = ["derive"] }"#;
+            write!(toml_contents, "\n{serde_dep}")?;
+        }
 
         fs::write(cargo_toml_path, toml_contents).wrap_err("Failed to write Cargo.toml")?;
 
@@ -156,7 +211,7 @@ edition = "2021"
         for instance in &self.instances {
             let contents = instance.expansion.as_ref().unwrap();
 
-            let name = instance.name.to_lowercase();
+            let name = instance.name.to_snake_case();
             let path = src.join(format!("{name}.rs"));
             let file = syn::parse2(contents.clone())
                 .wrap_err_with(|| parse_error(&format!("{}:{}", path.display(), name)))?;
@@ -165,7 +220,7 @@ edition = "2021"
                 write!(&mut lib_contents, "{contents}")?;
             } else {
                 fs::write(path, contents).wrap_err("failed to write to file")?;
-                writeln!(&mut lib_contents, "pub mod {name};")?;
+                write_mod_name(&mut lib_contents, &name)?;
             }
         }
 
@@ -177,8 +232,30 @@ edition = "2021"
         Ok(())
     }
 
-    pub fn write_to_module(&mut self, bindings_path: &Path, single_file: bool) -> Result<()> {
-        self.generate_bindings()?;
+    /// Attempts to detect the appropriate license.
+    pub fn parse_license_alias(license: &str) -> String {
+        match license.trim().to_lowercase().as_str() {
+            "mit" => "MIT".to_string(),
+            "apache" | "apache2" | "apache20" | "apache2.0" => "Apache-2.0".to_string(),
+            "gpl" | "gpl3" => "GPL-3.0".to_string(),
+            "lgpl" | "lgpl3" => "LGPL-3.0".to_string(),
+            "agpl" | "agpl3" => "AGPL-3.0".to_string(),
+            "bsd" | "bsd3" => "BSD-3-Clause".to_string(),
+            "bsd2" => "BSD-2-Clause".to_string(),
+            "mpl" | "mpl2" => "MPL-2.0".to_string(),
+            "isc" => "ISC".to_string(),
+            "unlicense" => "Unlicense".to_string(),
+            _ => license.trim().to_string(),
+        }
+    }
+
+    pub fn write_to_module(
+        &mut self,
+        bindings_path: &Path,
+        single_file: bool,
+        all_derives: bool,
+    ) -> Result<()> {
+        self.generate_bindings(all_derives)?;
 
         let _ = fs::create_dir_all(bindings_path);
 
@@ -191,15 +268,10 @@ edition = "2021"
         .to_string();
 
         for instance in &self.instances {
-            let name = instance.name.to_lowercase();
+            let name = instance.name.to_snake_case();
             if !single_file {
                 // Module
-                write!(
-                    mod_contents,
-                    r#"pub mod {};
-                "#,
-                    instance.name.to_lowercase()
-                )?;
+                write_mod_name(&mut mod_contents, &name)?;
                 let mut contents = String::new();
 
                 write!(contents, "{}", instance.expansion.as_ref().unwrap())?;
@@ -230,7 +302,7 @@ edition = "2021"
     ///
     /// Returns `Ok(())` if the generated bindings are up to date, otherwise it returns
     /// `Err(_)`.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn check_consistency(
         &self,
         name: &str,
@@ -240,9 +312,10 @@ edition = "2021"
         check_cargo_toml: bool,
         is_mod: bool,
         alloy_version: Option<String>,
+        alloy_rev: Option<String>,
     ) -> Result<()> {
         if check_cargo_toml {
-            self.check_cargo_toml(name, version, crate_path, alloy_version)?;
+            self.check_cargo_toml(name, version, crate_path, alloy_version, alloy_rev)?;
         }
 
         let mut super_contents = String::new();
@@ -257,7 +330,7 @@ edition = "2021"
         )?;
         if !single_file {
             for instance in &self.instances {
-                let name = instance.name.to_lowercase();
+                let name = instance.name.to_snake_case();
                 let path = if is_mod {
                     crate_path.join(format!("{name}.rs"))
                 } else {
@@ -270,12 +343,7 @@ edition = "2021"
                     .to_string();
 
                 self.check_file_contents(&path, &tokens)?;
-
-                write!(
-                    &mut super_contents,
-                    r#"pub mod {name};
-                    "#
-                )?;
+                write_mod_name(&mut super_contents, &name)?;
             }
 
             let super_path =
@@ -314,6 +382,7 @@ edition = "2021"
         version: &str,
         crate_path: &Path,
         alloy_version: Option<String>,
+        alloy_rev: Option<String>,
     ) -> Result<()> {
         eyre::ensure!(crate_path.is_dir(), "Crate path must be a directory");
 
@@ -325,16 +394,10 @@ edition = "2021"
 
         let name_check = format!("name = \"{name}\"");
         let version_check = format!("version = \"{version}\"");
-        let alloy_dep_check = if let Some(version) = alloy_version {
-            format!(
-                r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", rev = "{version}", features = ["sol-types", "contract"] }}"#,
-            )
-        } else {
-            r#"alloy = { git = "https://github.com/alloy-rs/alloy", features = ["sol-types", "contract"] }"#.to_string()
-        };
-        let toml_consistent = cargo_toml_contents.contains(&name_check) &&
-            cargo_toml_contents.contains(&version_check) &&
-            cargo_toml_contents.contains(&alloy_dep_check);
+        let alloy_dep_check = Self::get_alloy_dep(alloy_version, alloy_rev);
+        let toml_consistent = cargo_toml_contents.contains(&name_check)
+            && cargo_toml_contents.contains(&version_check)
+            && cargo_toml_contents.contains(&alloy_dep_check);
         eyre::ensure!(
             toml_consistent,
             r#"The contents of Cargo.toml do not match the expected output of the latest `sol!` version.
@@ -343,4 +406,30 @@ edition = "2021"
 
         Ok(())
     }
+
+    /// Returns the `alloy` dependency string for the Cargo.toml file.
+    /// If `alloy_version` is provided, it will use that version from crates.io.
+    /// If `alloy_rev` is provided, it will use that revision from the GitHub repository.
+    fn get_alloy_dep(alloy_version: Option<String>, alloy_rev: Option<String>) -> String {
+        if let Some(alloy_version) = alloy_version {
+            format!(
+                r#"alloy = {{ version = "{alloy_version}", features = ["sol-types", "contract"] }}"#,
+            )
+        } else if let Some(alloy_rev) = alloy_rev {
+            format!(
+                r#"alloy = {{ git = "https://github.com/alloy-rs/alloy", rev = "{alloy_rev}", features = ["sol-types", "contract"] }}"#,
+            )
+        } else {
+            r#"alloy = { version = "1.0", features = ["sol-types", "contract"] }"#.to_string()
+        }
+    }
+}
+
+fn write_mod_name(contents: &mut String, name: &str) -> Result<()> {
+    if syn::parse_str::<syn::Ident>(&format!("pub mod {name};")).is_ok() {
+        write!(contents, "pub mod {name};")?;
+    } else {
+        write!(contents, "pub mod r#{name};")?;
+    }
+    Ok(())
 }

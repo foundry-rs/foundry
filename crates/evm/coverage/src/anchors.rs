@@ -1,58 +1,39 @@
-use super::{CoverageItem, CoverageItemKind, ItemAnchor, SourceLocation};
-use alloy_primitives::map::{DefaultHashBuilder, HashMap, HashSet};
+use super::{CoverageItemKind, ItemAnchor, SourceLocation};
+use crate::analysis::SourceAnalysis;
+use alloy_primitives::map::rustc_hash::FxHashSet;
 use eyre::ensure;
 use foundry_compilers::artifacts::sourcemap::{SourceElement, SourceMap};
-use foundry_evm_core::utils::IcPcMap;
-use revm::interpreter::opcode;
+use foundry_evm_core::ic::IcPcMap;
+use revm::bytecode::opcode;
 
 /// Attempts to find anchors for the given items using the given source map and bytecode.
 pub fn find_anchors(
     bytecode: &[u8],
     source_map: &SourceMap,
     ic_pc_map: &IcPcMap,
-    items: &[CoverageItem],
-    items_by_source_id: &HashMap<usize, Vec<usize>>,
+    analysis: &SourceAnalysis,
 ) -> Vec<ItemAnchor> {
-    let mut seen = HashSet::with_hasher(DefaultHashBuilder::default());
+    let mut seen_sources = FxHashSet::default();
     source_map
         .iter()
-        .filter_map(|element| items_by_source_id.get(&(element.index()? as usize)))
-        .flatten()
-        .filter_map(|&item_id| {
-            if !seen.insert(item_id) {
-                return None;
-            }
-
-            let item = &items[item_id];
-            let find_anchor_by_first_opcode = |item: &CoverageItem| match find_anchor_simple(
-                source_map, ic_pc_map, item_id, &item.loc,
-            ) {
-                Ok(anchor) => Some(anchor),
-                Err(e) => {
-                    warn!("Could not find anchor for item {item}: {e}");
-                    None
-                }
-            };
+        .filter_map(|element| element.index())
+        .filter(|&source| seen_sources.insert(source))
+        .flat_map(|source| analysis.items_for_source_enumerated(source))
+        .filter_map(|(item_id, item)| {
             match item.kind {
-                CoverageItemKind::Branch { path_id, is_first_opcode, .. } => {
-                    if is_first_opcode {
-                        find_anchor_by_first_opcode(item)
-                    } else {
-                        match find_anchor_branch(bytecode, source_map, item_id, &item.loc) {
-                            Ok(anchors) => match path_id {
-                                0 => Some(anchors.0),
-                                1 => Some(anchors.1),
-                                _ => panic!("Too many paths for branch"),
-                            },
-                            Err(e) => {
-                                warn!("Could not find anchor for item {item}: {e}");
-                                None
-                            }
+                CoverageItemKind::Branch { path_id, is_first_opcode: false, .. } => {
+                    find_anchor_branch(bytecode, source_map, item_id, &item.loc).map(|anchors| {
+                        match path_id {
+                            0 => anchors.0,
+                            1 => anchors.1,
+                            _ => panic!("too many path IDs for branch"),
                         }
-                    }
+                    })
                 }
-                _ => find_anchor_by_first_opcode(item),
+                _ => find_anchor_simple(source_map, ic_pc_map, item_id, &item.loc),
             }
+            .inspect_err(|err| warn!(%item, %err, "could not find anchor"))
+            .ok()
         })
         .collect()
 }
@@ -61,7 +42,7 @@ pub fn find_anchors(
 pub fn find_anchor_simple(
     source_map: &SourceMap,
     ic_pc_map: &IcPcMap,
-    item_id: usize,
+    item_id: u32,
     loc: &SourceLocation,
 ) -> eyre::Result<ItemAnchor> {
     let instruction =
@@ -70,7 +51,7 @@ pub fn find_anchor_simple(
         )?;
 
     Ok(ItemAnchor {
-        instruction: ic_pc_map.get(instruction).ok_or_else(|| {
+        instruction: ic_pc_map.get(instruction as u32).ok_or_else(|| {
             eyre::eyre!("We found an anchor, but we can't translate it to a program counter")
         })?,
         item_id,
@@ -108,12 +89,9 @@ pub fn find_anchor_simple(
 pub fn find_anchor_branch(
     bytecode: &[u8],
     source_map: &SourceMap,
-    item_id: usize,
+    item_id: u32,
     loc: &SourceLocation,
 ) -> eyre::Result<(ItemAnchor, ItemAnchor)> {
-    // NOTE(onbjerg): We use `SpecId::LATEST` here since it does not matter; the only difference
-    // is the gas cost.
-
     let mut anchors: Option<(ItemAnchor, ItemAnchor)> = None;
     let mut pc = 0;
     let mut cumulative_push_size = 0;
@@ -130,7 +108,7 @@ pub fn find_anchor_branch(
             } else {
                 // NOTE(onbjerg): For some reason the last few bytes of the bytecode do not have
                 // a source map associated, so at that point we just stop searching
-                break
+                break;
             };
 
             // Do push byte accounting
@@ -151,12 +129,12 @@ pub fn find_anchor_branch(
                 let mut pc_bytes = [0u8; 8];
                 pc_bytes[8 - push_size..].copy_from_slice(push_bytes);
                 let pc_jump = u64::from_be_bytes(pc_bytes);
-                let pc_jump = usize::try_from(pc_jump).expect("PC is too big");
+                let pc_jump = u32::try_from(pc_jump).expect("PC is too big");
                 anchors = Some((
                     ItemAnchor {
                         item_id,
                         // The first branch is the opcode directly after JUMPI
-                        instruction: pc + 2,
+                        instruction: (pc + 2) as u32,
                     },
                     ItemAnchor { item_id, instruction: pc_jump },
                 ));
@@ -171,7 +149,7 @@ pub fn find_anchor_branch(
 /// Calculates whether `element` is within the range of the target `location`.
 fn is_in_source_range(element: &SourceElement, location: &SourceLocation) -> bool {
     // Source IDs must match.
-    let source_ids_match = element.index().is_some_and(|a| a as usize == location.source_id);
+    let source_ids_match = element.index_i32() == location.source_id as i32;
     if !source_ids_match {
         return false;
     }

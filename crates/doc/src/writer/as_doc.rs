@@ -1,9 +1,9 @@
 use crate::{
-    document::{read_context, DocumentContent},
+    CONTRACT_INHERITANCE_ID, CommentTag, Comments, CommentsRef, DEPLOYMENTS_ID, Document,
+    GIT_SOURCE_ID, INHERITDOC_ID, Markdown, PreprocessorOutput,
+    document::{DocumentContent, read_context},
     parser::ParseSource,
     writer::BufWriter,
-    CommentTag, Comments, CommentsRef, Document, Markdown, PreprocessorOutput,
-    CONTRACT_INHERITANCE_ID, DEPLOYMENTS_ID, GIT_SOURCE_ID, INHERITDOC_ID,
 };
 use forge_fmt::solang_ext::SafeUnwrap;
 use itertools::Itertools;
@@ -96,7 +96,7 @@ impl AsDoc for Document {
                     writer.writeln()?;
                 }
 
-                for item in items.iter() {
+                for item in items {
                     let func = item.as_function().unwrap();
                     let mut heading = item.source.ident();
                     if !func.params.is_empty() {
@@ -119,7 +119,7 @@ impl AsDoc for Document {
                     writer.writeln()?;
                 }
 
-                for item in items.iter() {
+                for item in items {
                     let var = item.as_variable().unwrap();
                     writer.write_heading(&var.name.safe_unwrap().name)?;
                     writer.write_section(&item.comments, &item.code)?;
@@ -147,7 +147,7 @@ impl AsDoc for Document {
                             let mut bases = vec![];
                             let linked =
                                 read_context!(self, CONTRACT_INHERITANCE_ID, ContractInheritance);
-                            for base in contract.base.iter() {
+                            for base in &contract.base {
                                 let base_doc = base.as_doc()?;
                                 let base_ident = &base.name.identifiers.last().unwrap().name;
 
@@ -193,7 +193,7 @@ impl AsDoc for Document {
                         if let Some(funcs) = item.functions() {
                             writer.write_subtitle("Functions")?;
 
-                            for (func, comments, code) in funcs.iter() {
+                            for (func, comments, code) in &funcs {
                                 self.write_function(&mut writer, func, comments, code)?;
                             }
                         }

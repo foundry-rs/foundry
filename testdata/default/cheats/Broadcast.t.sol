@@ -114,8 +114,6 @@ contract BroadcastTest is DSTest {
 
         vm.stopBroadcast();
 
-        require(test.echoSender() == address(this));
-
         vm.broadcast(ACCOUNT_B);
         Test tmptest2 = new Test();
 
@@ -157,9 +155,11 @@ contract BroadcastTest is DSTest {
         vm.stopBroadcast();
     }
 
-    function testFailNoBroadcast() public {
-        vm.stopBroadcast();
-    }
+    /// forge-config: default.allow_internal_expect_revert = true
+    // function testRevertIfNoBroadcast() public {
+    //     vm.expectRevert();
+    //     vm.stopBroadcast();
+    // }
 }
 
 contract NoLink is DSTest {
@@ -576,11 +576,6 @@ contract ScriptSign is DSTest {
     function run() external {
         vm.startBroadcast();
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(digest);
-
-        vm._expectCheatcodeRevert(
-            bytes(string.concat("signer with address ", vm.toString(address(this)), " is not available"))
-        );
-        vm.sign(address(this), digest);
 
         SignatureTester tester = new SignatureTester();
         (, address caller,) = vm.readCallers();

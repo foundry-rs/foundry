@@ -69,7 +69,7 @@ impl std::error::Error for InsertProfileError {}
 impl TomlFile {
     /// Insert a name as `[profile.name]`. Creating the `[profile]` table where necessary and
     /// throwing an error if there exists a conflict
-    #[allow(clippy::result_large_err)]
+    #[expect(clippy::result_large_err)]
     fn insert_profile(
         &mut self,
         profile_str: &str,
@@ -79,7 +79,7 @@ impl TomlFile {
             return Err(InsertProfileError {
                 message: format!("Expected [{profile_str}] to be a Table"),
                 value,
-            })
+            });
         }
         // get or create the profile section
         let profile_map = if let Some(map) = self.get_mut(Config::PROFILE_SECTION) {
@@ -99,7 +99,7 @@ impl TomlFile {
             return Err(InsertProfileError {
                 message: format!("Expected [{}] to be a Table", Config::PROFILE_SECTION),
                 value,
-            })
+            });
         };
         // check the profile map for structure and existing keys
         if let Some(profile) = profile_map.get(profile_str) {
@@ -112,7 +112,7 @@ impl TomlFile {
                             profile_str
                         ),
                         value,
-                    })
+                    });
                 }
             } else {
                 return Err(InsertProfileError {
@@ -122,7 +122,7 @@ impl TomlFile {
                         profile_str
                     ),
                     value,
-                })
+                });
             }
         }
         // insert the profile
@@ -187,7 +187,7 @@ pub fn fix_tomls() -> Vec<Warning> {
             Ok(toml_file) => toml_file,
             Err(err) => {
                 warnings.push(Warning::CouldNotReadToml { path: toml, err: err.to_string() });
-                continue
+                continue;
             }
         };
 
@@ -204,13 +204,11 @@ pub fn fix_tomls() -> Vec<Warning> {
             })
         }
 
-        if was_edited {
-            if let Err(err) = toml_file.save() {
-                warnings.push(Warning::CouldNotWriteToml {
-                    path: toml_file.path().into(),
-                    err: err.to_string(),
-                });
-            }
+        if was_edited && let Err(err) = toml_file.save() {
+            warnings.push(Warning::CouldNotWriteToml {
+                path: toml_file.path().into(),
+                err: err.to_string(),
+            });
         }
     }
 
@@ -230,7 +228,7 @@ mod tests {
             fn $name() {
                 Jail::expect_with(|jail| {
                     // setup home directory,
-                    // **Note** this only has an effect on unix, as [`dirs_next::home_dir()`] on windows uses `FOLDERID_Profile`
+                    // **Note** this only has an effect on unix, as [`dirs::home_dir()`] on windows uses `FOLDERID_Profile`
                     jail.set_env("HOME", jail.directory().display().to_string());
                     std::fs::create_dir(jail.directory().join(".foundry")).unwrap();
 
@@ -302,7 +300,7 @@ mod tests {
         Ok(())
     });
 
-    // mocking the `$HOME` has no effect on windows, see [`dirs_next::home_dir()`]
+    // mocking the `$HOME` has no effect on windows, see [`dirs::home_dir()`]
     fix_test!(
         #[cfg(not(windows))]
         test_global_toml_is_edited,

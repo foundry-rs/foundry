@@ -1,5 +1,5 @@
 use crate::Vm;
-use alloy_primitives::{hex, Address, Bytes};
+use alloy_primitives::{Bytes, hex};
 use alloy_signer::Error as SignerError;
 use alloy_signer_local::LocalSignerError;
 use alloy_sol_types::SolError;
@@ -8,7 +8,7 @@ use foundry_config::UnresolvedEnvVarError;
 use foundry_evm_core::backend::{BackendError, DatabaseError};
 use foundry_wallets::error::WalletSignerError;
 use k256::ecdsa::signature::Error as SignatureError;
-use revm::primitives::EVMError;
+use revm::context_interface::result::EVMError;
 use std::{borrow::Cow, fmt};
 
 /// Cheatcode result type.
@@ -63,19 +63,6 @@ macro_rules! ensure {
             return ::std::result::Result::Err(fmt_err!($fmt, $($arg)*));
         }
     };
-}
-
-macro_rules! ensure_not_precompile {
-    ($address:expr, $ctxt:expr) => {
-        if $ctxt.is_precompile($address) {
-            return Err($crate::error::precompile_error($address));
-        }
-    };
-}
-
-#[cold]
-pub(crate) fn precompile_error(address: &Address) -> Error {
-    fmt_err!("cannot use precompile {address} as an argument")
 }
 
 /// Error thrown by cheatcodes.
@@ -283,6 +270,8 @@ impl_from!(
     alloy_sol_types::Error,
     alloy_dyn_abi::Error,
     alloy_primitives::SignatureError,
+    alloy_consensus::crypto::RecoveryError,
+    eyre::Report,
     FsPathError,
     hex::FromHexError,
     BackendError,
@@ -303,12 +292,6 @@ impl_from!(
 impl<T: Into<BackendError>> From<EVMError<T>> for Error {
     fn from(err: EVMError<T>) -> Self {
         Self::display(BackendError::from(err))
-    }
-}
-
-impl From<eyre::Report> for Error {
-    fn from(err: eyre::Report) -> Self {
-        Self::from(foundry_common::errors::display_chain(&err))
     }
 }
 

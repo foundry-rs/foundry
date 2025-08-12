@@ -30,13 +30,14 @@ serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 rand.workspace = true
-snapbox = { version = "0.6", features = ["json", "regex"] }
+snapbox = { version = "0.6", features = ["json", "regex", "term-svg"] }
 tempfile.workspace = true
+ui_test = "0.30.2"
+
+# Pinned dependencies. See /Cargo.toml.
+[target.'cfg(any())'.dependencies]
+idna_adapter.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
 foundry-block-explorers.workspace = true
-
-[features]
-# feature for integration tests that test external projects
-external-integration-tests = []

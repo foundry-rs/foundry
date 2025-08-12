@@ -47,7 +47,7 @@ impl DiskStateCache {
                 }
             }
         }
-        if let Some(ref temp_dir) = self.temp_dir {
+        if let Some(temp_dir) = &self.temp_dir {
             let path = temp_dir.path().join(format!("{hash:?}.json"));
             Some(f(path))
         } else {
@@ -62,7 +62,7 @@ impl DiskStateCache {
     /// Caution: this requires a running tokio Runtime.
     pub fn write(&mut self, hash: B256, state: StateSnapshot) {
         self.with_cache_file(hash, |file| {
-            tokio::task::spawn(async move {
+            tokio::task::spawn_blocking(move || {
                 match foundry_common::fs::write_json_file(&file, &state) {
                     Ok(_) => {
                         trace!(target: "backend", ?hash, "wrote state json file");
@@ -119,11 +119,7 @@ fn build_tmp_dir(p: Option<&Path>) -> io::Result<TempDir> {
     let prefix = now.format("anvil-state-%d-%m-%Y-%H-%M").to_string();
     builder.prefix(&prefix);
 
-    if let Some(p) = p {
-        builder.tempdir_in(p)
-    } else {
-        builder.tempdir()
-    }
+    if let Some(p) = p { builder.tempdir_in(p) } else { builder.tempdir() }
 }
 
 #[cfg(test)]
@@ -136,20 +132,12 @@ mod tests {
         let dir = tempdir().unwrap();
         let p = dir.path();
         let cache_dir = build_tmp_dir(Some(p)).unwrap();
-        assert!(cache_dir
-            .path()
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .starts_with("anvil-state-"));
+        assert!(
+            cache_dir.path().file_name().unwrap().to_str().unwrap().starts_with("anvil-state-")
+        );
         let cache_dir = build_tmp_dir(None).unwrap();
-        assert!(cache_dir
-            .path()
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .starts_with("anvil-state-"));
+        assert!(
+            cache_dir.path().file_name().unwrap().to_str().unwrap().starts_with("anvil-state-")
+        );
     }
 }

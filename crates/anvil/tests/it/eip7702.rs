@@ -1,12 +1,13 @@
 use crate::utils::http_provider;
-use alloy_consensus::{transaction::TxEip7702, SignableTransaction};
+use alloy_consensus::{SignableTransaction, transaction::TxEip7702};
+use alloy_hardforks::EthereumHardfork;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TxSignerSync};
-use alloy_primitives::{bytes, U256};
-use alloy_provider::Provider;
+use alloy_primitives::{U256, bytes};
+use alloy_provider::{PendingTransactionConfig, Provider};
 use alloy_rpc_types::{Authorization, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_signer::SignerSync;
-use anvil::{spawn, EthereumHardfork, NodeConfig};
+use anvil::{NodeConfig, spawn};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_send_eip7702_tx() {
@@ -21,7 +22,7 @@ async fn can_send_eip7702_tx() {
     // PUSH1(25) RETURN
     let logger_bytecode = bytes!("66365f5f37365fa05f5260076019f3");
 
-    let eip1559_est = provider.estimate_eip1559_fees(None).await.unwrap();
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
 
     let from = wallets[0].address();
     let tx = TransactionRequest::default()
@@ -70,6 +71,82 @@ async fn can_send_eip7702_tx() {
 
     let receipt =
         provider.send_raw_transaction(&encoded).await.unwrap().get_receipt().await.unwrap();
+    let log = &receipt.inner.inner.logs()[0];
+    // assert that log was from EOA which signed authorization
+    assert_eq!(log.address(), from);
+    assert_eq!(log.topics().len(), 0);
+    assert_eq!(log.data().data, log_data);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_send_eip7702_request() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()));
+    let (api, handle) = spawn(node_config).await;
+    let provider = http_provider(&handle.http_endpoint());
+
+    let wallets = handle.dev_wallets().collect::<Vec<_>>();
+
+    // deploy simple contract forwarding calldata to LOG0
+    // PUSH7(CALLDATASIZE PUSH0 PUSH0 CALLDATACOPY CALLDATASIZE PUSH0 LOG0) PUSH0 MSTORE PUSH1(7)
+    // PUSH1(25) RETURN
+    let logger_bytecode = bytes!("66365f5f37365fa05f5260076019f3");
+
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
+
+    let from = wallets[0].address();
+    let tx = TransactionRequest::default()
+        .with_from(from)
+        .into_create()
+        .with_nonce(0)
+        .with_max_fee_per_gas(eip1559_est.max_fee_per_gas)
+        .with_max_priority_fee_per_gas(eip1559_est.max_priority_fee_per_gas)
+        .with_input(logger_bytecode);
+
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    assert!(receipt.status());
+
+    let contract = receipt.contract_address.unwrap();
+    let authorization = Authorization {
+        chain_id: U256::from(31337u64),
+        address: contract,
+        nonce: provider.get_transaction_count(from).await.unwrap(),
+    };
+    let signature = wallets[0].sign_hash_sync(&authorization.signature_hash()).unwrap();
+    let authorization = authorization.into_signed(signature);
+
+    let log_data = bytes!("11112222");
+    let tx = TxEip7702 {
+        max_fee_per_gas: eip1559_est.max_fee_per_gas,
+        max_priority_fee_per_gas: eip1559_est.max_priority_fee_per_gas,
+        gas_limit: 100000,
+        chain_id: 31337,
+        to: from,
+        input: bytes!("11112222"),
+        authorization_list: vec![authorization],
+        ..Default::default()
+    };
+
+    let sender = wallets[1].address();
+    let request = TransactionRequest::from_transaction(tx).with_from(sender);
+
+    api.anvil_impersonate_account(sender).await.unwrap();
+    let txhash = api.send_transaction(WithOtherFields::new(request)).await.unwrap();
+
+    let txhash = provider
+        .watch_pending_transaction(PendingTransactionConfig::new(txhash))
+        .await
+        .unwrap()
+        .await
+        .unwrap();
+
+    let receipt = provider.get_transaction_receipt(txhash).await.unwrap().unwrap();
     let log = &receipt.inner.inner.logs()[0];
     // assert that log was from EOA which signed authorization
     assert_eq!(log.address(), from);

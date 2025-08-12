@@ -193,10 +193,12 @@ contract PrankTest is DSTest {
         vm.stopPrank();
     }
 
-    function testFailPrankDelegateCallToEOA() public {
+    /// forge-config: default.allow_internal_expect_revert = true
+    function testRevertIfPrankDelegateCalltoEOA() public {
         uint256 privateKey = uint256(keccak256(abi.encodePacked("alice")));
         address alice = vm.addr(privateKey);
         ImplementationTest impl = new ImplementationTest();
+        vm.expectRevert("vm.prank: cannot `prank` delegate call from an EOA");
         vm.prank(alice, true);
         // Should fail when EOA pranked with delegatecall.
         address(impl).delegatecall(abi.encodeWithSignature("assertCorrectCaller(address)", alice));
@@ -336,16 +338,19 @@ contract PrankTest is DSTest {
         );
     }
 
-    function testFailOverwriteUnusedPrank(address sender, address origin) public {
+    /// forge-config: default.allow_internal_expect_revert = true
+    function testRevertIfOverwriteUnusedPrank(address sender, address origin) public {
         // Set the prank, but not use it
         address oldOrigin = tx.origin;
         Victim victim = new Victim();
         vm.startPrank(sender, origin);
         // try to overwrite the prank. This should fail.
+        vm.expectRevert("vm.startPrank: cannot overwrite a prank until it is applied at least once");
         vm.startPrank(address(this), origin);
     }
 
-    function testFailOverwriteUnusedPrankAfterSuccessfulPrank(address sender, address origin) public {
+    /// forge-config: default.allow_internal_expect_revert = true
+    function testRevertIfOverwriteUnusedPrankAfterSuccessfulPrank(address sender, address origin) public {
         // Set the prank, but not use it
         address oldOrigin = tx.origin;
         Victim victim = new Victim();
@@ -355,6 +360,7 @@ contract PrankTest is DSTest {
         );
         vm.startPrank(address(this), origin);
         // try to overwrite the prank. This should fail.
+        vm.expectRevert("vm.startPrank: cannot overwrite a prank until it is applied at least once");
         vm.startPrank(sender, origin);
     }
 
@@ -542,5 +548,66 @@ contract PrankTest is DSTest {
         victim.assertCallerAndOrigin(
             sender, "msg.sender was not set correctly", origin, "tx.origin was not set correctly"
         );
+    }
+}
+
+contract Issue9990 is DSTest {
+    Vm constant vm = Vm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+
+    function testDelegatePrank() external {
+        A a = new A();
+        vm.etch(address(0x11111), hex"11");
+        vm.startPrank(address(0x11111), true);
+        (bool success,) = address(a).delegatecall(abi.encodeWithSelector(A.foo.selector));
+        require(success, "MyTest: error calling foo on A");
+        vm.stopPrank();
+    }
+}
+
+// Contracts for DELEGATECALL test case: testDelegatePrank
+contract A {
+    function foo() external {
+        require(address(0x11111) == msg.sender, "wrong msg.sender in A");
+        require(address(0x11111) == address(this), "wrong address(this) in A");
+        B b = new B();
+        (bool success,) = address(b).call(abi.encodeWithSelector(B.bar.selector));
+        require(success, "A: error calling B.bar");
+    }
+}
+
+contract B {
+    function bar() external {
+        require(address(0x11111) == msg.sender, "wrong msg.sender in B");
+        require(0x769A6A5f81bD725e4302751162A7cb30482A222d == address(this), "wrong address(this) in B");
+        C c = new C();
+        (bool success,) = address(c).delegatecall(abi.encodeWithSelector(C.bar.selector));
+        require(success, "B: error calling C.bar");
+    }
+}
+
+contract C {
+    function bar() external view {
+        require(address(0x11111) == msg.sender, "wrong msg.sender in C");
+        require(0x769A6A5f81bD725e4302751162A7cb30482A222d == address(this), "wrong address(this) in C");
+    }
+}
+
+contract Counter {
+    uint256 number;
+
+    function increment() external {
+        number++;
+    }
+}
+
+contract Issue10528 is DSTest {
+    Vm constant vm = Vm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+
+    function testStartPrankOnContractCreation() external {
+        vm.startPrank(address(0x22222));
+        Counter counter = new Counter();
+
+        vm.startPrank(address(0x11111));
+        counter.increment();
     }
 }

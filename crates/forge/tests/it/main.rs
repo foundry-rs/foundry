@@ -1,5 +1,3 @@
-#![allow(clippy::needless_return)]
-
 pub mod config;
 pub mod test_helpers;
 
@@ -12,4 +10,5 @@ mod inline;
 mod invariant;
 mod repros;
 mod spec;
+mod table;
 mod vyper;

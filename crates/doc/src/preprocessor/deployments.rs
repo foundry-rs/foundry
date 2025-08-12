@@ -55,7 +55,7 @@ impl Preprocessor for Deployments {
             .collect::<Result<Vec<_>, _>>()?;
 
         // Iterate over all documents to find any deployments.
-        for document in documents.iter() {
+        for document in &documents {
             let mut deployments = Vec::default();
 
             // Iterate over all networks and check if there is a deployment for the given contract.

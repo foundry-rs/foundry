@@ -1,15 +1,15 @@
 use crate::{
-    build::LinkedBuildData,
-    sequence::{get_commit_hash, ScriptSequenceKind},
     ScriptArgs, ScriptConfig,
+    build::LinkedBuildData,
+    sequence::{ScriptSequenceKind, get_commit_hash},
 };
-use alloy_primitives::{hex, Address};
-use eyre::{eyre, Result};
+use alloy_primitives::{Address, hex};
+use eyre::{Result, eyre};
 use forge_script_sequence::{AdditionalContract, ScriptSequence};
-use forge_verify::{provider::VerificationProviderType, RetryArgs, VerifierArgs, VerifyArgs};
+use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs, provider::VerificationProviderType};
 use foundry_cli::opts::{EtherscanOpts, ProjectPathOpts};
 use foundry_common::ContractsByArtifact;
-use foundry_compilers::{info::ContractInfo, Project};
+use foundry_compilers::{Project, artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Chain, Config};
 use semver::Version;
 
@@ -64,7 +64,7 @@ impl VerifyBundle {
         verifier: VerifierArgs,
     ) -> Self {
         let num_of_optimizations =
-            if config.optimizer { Some(config.optimizer_runs) } else { None };
+            if config.optimizer == Some(true) { config.optimizer_runs } else { None };
 
         let config_path = config.get_config_path();
 
@@ -108,6 +108,7 @@ impl VerifyBundle {
         create2_offset: usize,
         data: &[u8],
         libraries: &[String],
+        evm_version: EvmVersion,
     ) -> Option<VerifyArgs> {
         for (artifact, contract) in self.known_contracts.iter() {
             let Some(bytecode) = contract.bytecode() else { continue };
@@ -120,9 +121,14 @@ impl VerifyBundle {
                     warn!("Skipping verification of Vyper contract: {}", artifact.name);
                 }
 
+                // Strip artifact profile from contract name when creating contract info.
                 let contract = ContractInfo {
                     path: Some(artifact.source.to_string_lossy().to_string()),
-                    name: artifact.name.clone(),
+                    name: artifact
+                        .name
+                        .strip_suffix(&format!(".{}", &artifact.profile))
+                        .unwrap_or_else(|| &artifact.name)
+                        .to_string(),
                 };
 
                 // We strip the build metadadata information, since it can lead to
@@ -152,13 +158,14 @@ impl VerifyBundle {
                     root: None,
                     verifier: self.verifier.clone(),
                     via_ir: self.via_ir,
-                    evm_version: None,
+                    evm_version: Some(evm_version),
                     show_standard_json_input: false,
                     guess_constructor_args: false,
                     compilation_profile: Some(artifact.profile.to_string()),
+                    language: None,
                 };
 
-                return Some(verify)
+                return Some(verify);
             }
         }
         None
@@ -197,7 +204,13 @@ async fn verify_contracts(
 
             // Verify contract created directly from the transaction
             if let (Some(address), Some(data)) = (receipt.contract_address, tx.tx().input()) {
-                match verify.get_verify_args(address, offset, data, &sequence.libraries) {
+                match verify.get_verify_args(
+                    address,
+                    offset,
+                    data,
+                    &sequence.libraries,
+                    config.evm_version,
+                ) {
                     Some(verify) => future_verifications.push(verify.run()),
                     None => unverifiable_contracts.push(address),
                 };
@@ -205,7 +218,13 @@ async fn verify_contracts(
 
             // Verify potential contracts created during the transaction execution
             for AdditionalContract { address, init_code, .. } in &tx.additional_contracts {
-                match verify.get_verify_args(*address, 0, init_code.as_ref(), &sequence.libraries) {
+                match verify.get_verify_args(
+                    *address,
+                    0,
+                    init_code.as_ref(),
+                    &sequence.libraries,
+                    config.evm_version,
+                ) {
                     Some(verify) => future_verifications.push(verify.run()),
                     None => unverifiable_contracts.push(*address),
                 };
@@ -231,7 +250,9 @@ async fn verify_contracts(
         }
 
         if num_of_successful_verifications < num_verifications {
-            return Err(eyre!("Not all ({num_of_successful_verifications} / {num_verifications}) contracts were verified!"))
+            return Err(eyre!(
+                "Not all ({num_of_successful_verifications} / {num_verifications}) contracts were verified!"
+            ));
         }
 
         sh_println!("All ({num_verifications}) contracts were verified!")?;

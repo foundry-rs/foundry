@@ -3,14 +3,14 @@
 use super::context::TUIContext;
 use crate::op::OpcodeParam;
 use foundry_compilers::artifacts::sourcemap::SourceElement;
-use foundry_evm_core::buffer::{get_buffer_accesses, BufferKind};
+use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
 use foundry_evm_traces::debug::SourceData;
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
-    Frame,
 };
 use revm_inspectors::tracing::types::CallKind;
 use std::{collections::VecDeque, fmt::Write, io};
@@ -199,7 +199,6 @@ impl TUIContext<'_> {
             CallKind::CallCode => "Contract callcode",
             CallKind::DelegateCall => "Contract delegatecall",
             CallKind::AuthCall => "Contract authcall",
-            CallKind::EOFCreate => "EOF contract creation",
         };
         let title = format!(
             "{} {} ",
@@ -311,14 +310,12 @@ impl TUIContext<'_> {
         }
 
         // Fill in the rest of the line as unhighlighted.
-        if let Some(last) = actual.last() {
-            if !last.ends_with('\n') {
-                if let Some(post) = after.pop_front() {
-                    if let Some(last) = lines.lines.last_mut() {
-                        last.spans.push(Span::raw(post));
-                    }
-                }
-            }
+        if let Some(last) = actual.last()
+            && !last.ends_with('\n')
+            && let Some(post) = after.pop_front()
+            && let Some(last) = lines.lines.last_mut()
+        {
+            last.spans.push(Span::raw(post));
         }
 
         // Add after highlighted text.
@@ -351,7 +348,7 @@ impl TUIContext<'_> {
             .contracts_sources
             .find_source_mapping(
                 contract_name,
-                self.current_step().pc,
+                self.current_step().pc as u32,
                 self.debug_call().kind.is_any_create(),
             )
             .ok_or_else(|| format!("No source map for contract {contract_name}"))
@@ -376,11 +373,10 @@ impl TUIContext<'_> {
             .collect::<Vec<_>>();
 
         let title = format!(
-            "Address: {} | PC: {} | Gas used in call: {} | Code section: {}",
+            "Address: {} | PC: {} | Gas used in call: {}",
             self.address(),
             self.current_step().pc,
             self.current_step().gas_used,
-            self.current_step().code_section_idx,
         );
         let block = Block::default().title(title).borders(Borders::ALL);
         let list = List::new(items)
@@ -399,7 +395,7 @@ impl TUIContext<'_> {
 
         let min_len = decimal_digits(stack_len).max(2);
 
-        let params = OpcodeParam::of(step.op.get(), step.immediate_bytes.as_ref());
+        let params = OpcodeParam::of(step.op.get());
 
         let text: Vec<Line<'_>> = stack
             .map(|stack| {
@@ -409,10 +405,7 @@ impl TUIContext<'_> {
                     .enumerate()
                     .skip(self.draw_memory.current_stack_startline)
                     .map(|(i, stack_item)| {
-                        let param = params
-                            .as_ref()
-                            .and_then(|params| params.iter().find(|param| param.index == i));
-
+                        let param = params.iter().find(|param| param.index == i);
                         let mut spans = Vec::with_capacity(1 + 32 * 2 + 3);
 
                         // Stack index.
@@ -430,11 +423,11 @@ impl TUIContext<'_> {
                             }
                         });
 
-                        if self.stack_labels {
-                            if let Some(param) = param {
-                                spans.push(Span::raw("| "));
-                                spans.push(Span::raw(param.name));
-                            }
+                        if self.stack_labels
+                            && let Some(param) = param
+                        {
+                            spans.push(Span::raw("| "));
+                            spans.push(Span::raw(param.name));
                         }
 
                         spans.push(Span::raw("\n"));
@@ -469,21 +462,20 @@ impl TUIContext<'_> {
         let mut write_size = None;
         let mut color = None;
         let stack_len = step.stack.as_ref().map_or(0, |s| s.len());
-        if stack_len > 0 {
-            if let Some(stack) = step.stack.as_ref() {
-                if let Some(accesses) = get_buffer_accesses(step.op.get(), stack) {
-                    if let Some(read_access) = accesses.read {
-                        offset = Some(read_access.1.offset);
-                        len = Some(read_access.1.len);
-                        color = Some(Color::Cyan);
-                    }
-                    if let Some(write_access) = accesses.write {
-                        if self.active_buffer == BufferKind::Memory {
-                            write_offset = Some(write_access.offset);
-                            write_size = Some(write_access.len);
-                        }
-                    }
-                }
+        if stack_len > 0
+            && let Some(stack) = step.stack.as_ref()
+            && let Some(accesses) = get_buffer_accesses(step.op.get(), stack)
+        {
+            if let Some(read_access) = accesses.read {
+                offset = Some(read_access.1.offset);
+                len = Some(read_access.1.len);
+                color = Some(Color::Cyan);
+            }
+            if let Some(write_access) = accesses.write
+                && self.active_buffer == BufferKind::Memory
+            {
+                write_offset = Some(write_access.offset);
+                write_size = Some(write_access.len);
             }
         }
 
@@ -494,16 +486,14 @@ impl TUIContext<'_> {
         if self.current_step > 0 {
             let prev_step = self.current_step - 1;
             let prev_step = &self.debug_steps()[prev_step];
-            if let Some(stack) = prev_step.stack.as_ref() {
-                if let Some(write_access) =
+            if let Some(stack) = prev_step.stack.as_ref()
+                && let Some(write_access) =
                     get_buffer_accesses(prev_step.op.get(), stack).and_then(|a| a.write)
-                {
-                    if self.active_buffer == BufferKind::Memory {
-                        offset = Some(write_access.offset);
-                        len = Some(write_access.len);
-                        color = Some(Color::Green);
-                    }
-                }
+                && self.active_buffer == BufferKind::Memory
+            {
+                offset = Some(write_access.offset);
+                len = Some(write_access.len);
+                color = Some(Color::Green);
             }
         }
 

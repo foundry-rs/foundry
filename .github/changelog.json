@@ -61,6 +61,6 @@
     "template": "${{CHANGELOG}}\n## Other\n\n${{UNCATEGORIZED}}\n## Full Changelog:\n ${{RELEASE_DIFF}}",
     "pr_template": "- ${{TITLE}} (#${{NUMBER}}) by @${{AUTHOR}}",
     "empty_template": "- No changes",
-    "max_pull_requests": 100,
-    "max_back_track_time_days": 60
+    "max_pull_requests": 500,
+    "max_back_track_time_days": 120
 }
