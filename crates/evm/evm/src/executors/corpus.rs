@@ -194,7 +194,7 @@ impl CorpusManager {
             foundry_common::fs::create_dir_all(corpus_dir)?;
         }
 
-        let can_reply_tx = |tx: &BasicTxDetails| -> bool {
+        let can_replay_tx = |tx: &BasicTxDetails| -> bool {
             fuzzed_contracts.is_some_and(|contracts| contracts.targets.lock().can_replay(tx))
                 || fuzzed_function.is_some_and(|function| {
                     tx.call_details
@@ -228,7 +228,7 @@ impl CorpusManager {
                 // Warm up history map from loaded sequences.
                 let mut executor = executor.clone();
                 for tx in &tx_seq {
-                    if can_reply_tx(tx) {
+                    if can_replay_tx(tx) {
                         let mut call_result = executor
                             .call_raw(
                                 tx.sender,
