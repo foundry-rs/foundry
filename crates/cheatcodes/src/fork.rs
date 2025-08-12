@@ -123,27 +123,6 @@ impl Cheatcode for forkBoolCall {
     }
 }
 
-fn get_bool(chain: u64, key: &str, state: &crate::Cheatcodes) -> Result {
-    let name = get_chain_name(chain)?;
-    if let Some(config) = state.config.forks.get(name) {
-        if let Some(value) = config.vars.get(key) {
-            if let Some(b) = value.as_bool() {
-                Ok(b.abi_encode())
-            } else if let Some(v) = value.as_integer() {
-                Ok((v == 0).abi_encode())
-            } else if let Some(s) = value.as_str() {
-                cast_string(key, s, &DynSolType::Bool)
-            } else {
-                bail!("Variable '{key}' in [fork.{name}] must be a boolean or a string");
-            }
-        } else {
-            bail!("Variable '{key}' not found in [fork.{name}] configuration");
-        }
-    } else {
-        bail!("[fork.{name}] subsection not found in [fork] of 'foundry.toml'");
-    }
-}
-
 impl Cheatcode for forkChainIntCall {
     fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
         let Self { chain, key } = self;
@@ -158,25 +137,6 @@ impl Cheatcode for forkIntCall {
     }
 }
 
-fn get_int256(chain: u64, key: &str, state: &crate::Cheatcodes) -> Result {
-    let name = get_chain_name(chain)?;
-    if let Some(config) = state.config.forks.get(name) {
-        if let Some(value) = config.vars.get(key) {
-            if let Some(int_value) = value.as_integer() {
-                Ok(int_value.abi_encode())
-            } else if let Some(s) = value.as_str() {
-                cast_string(key, s, &DynSolType::Int(256))
-            } else {
-                bail!("Variable '{key}' in [fork.{name}] must be an integer or a string");
-            }
-        } else {
-            bail!("Variable '{key}' not found in [fork.{name}] configuration");
-        }
-    } else {
-        bail!("[fork.{name}] subsection not found in [fork] of 'foundry.toml'");
-    }
-}
-
 impl Cheatcode for forkChainUintCall {
     fn apply(&self, state: &mut crate::Cheatcodes) -> Result {
         let Self { chain, key } = self;
@@ -188,29 +148,6 @@ impl Cheatcode for forkUintCall {
     fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let Self { key } = self;
         get_uint256(get_active_fork_chain_id(ccx)?, key, ccx.state)
-    }
-}
-
-fn get_uint256(chain: u64, key: &str, state: &crate::Cheatcodes) -> Result {
-    let name = get_chain_name(chain)?;
-    if let Some(config) = state.config.forks.get(name) {
-        if let Some(value) = config.vars.get(key) {
-            if let Some(int_value) = value.as_integer() {
-                if int_value >= 0 {
-                    Ok((int_value as u64).abi_encode())
-                } else {
-                    bail!("Variable '{key}' in [fork.{name}] is a negative integer");
-                }
-            } else if let Some(s) = value.as_str() {
-                cast_string(key, s, &DynSolType::Uint(256))
-            } else {
-                bail!("Variable '{key}' in [fork.{name}] must be an integer or a string");
-            }
-        } else {
-            bail!("Variable '{key}' not found in [fork.{name}] configuration");
-        }
-    } else {
-        bail!("[fork.{name}] subsection not found in [fork] of 'foundry.toml'");
     }
 }
 
@@ -274,6 +211,68 @@ impl Cheatcode for forkStringCall {
     }
 }
 
+fn get_toml_value<'a>(
+    name: &'a str,
+    key: &'a str,
+    state: &'a crate::Cheatcodes,
+) -> Result<&'a toml::Value> {
+    let config = state
+        .config
+        .forks
+        .get(name)
+        .ok_or_eyre("[fork.{name}] subsection not found in [fork] of 'foundry.toml'")?;
+    let value = config
+        .vars
+        .get(key)
+        .ok_or_eyre("Variable '{key}' not found in [fork.{name}] configuration")?;
+
+    Ok(value)
+}
+
+fn get_bool(chain: u64, key: &str, state: &crate::Cheatcodes) -> Result {
+    let name = get_chain_name(chain)?;
+    let value = get_toml_value(name, key, state)?;
+
+    if let Some(b) = value.as_bool() {
+        Ok(b.abi_encode())
+    } else if let Some(v) = value.as_integer() {
+        Ok((v == 0).abi_encode())
+    } else if let Some(s) = value.as_str() {
+        cast_string(key, s, &DynSolType::Bool)
+    } else {
+        bail!("Variable '{key}' in [fork.{name}] must be a boolean or a string");
+    }
+}
+
+fn get_int256(chain: u64, key: &str, state: &crate::Cheatcodes) -> Result {
+    let name = get_chain_name(chain)?;
+    let value = get_toml_value(name, key, state)?;
+    if let Some(int_value) = value.as_integer() {
+        Ok(int_value.abi_encode())
+    } else if let Some(s) = value.as_str() {
+        cast_string(key, s, &DynSolType::Int(256))
+    } else {
+        bail!("Variable '{key}' in [fork.{name}] must be an integer or a string");
+    }
+}
+
+fn get_uint256(chain: u64, key: &str, state: &crate::Cheatcodes) -> Result {
+    let name = get_chain_name(chain)?;
+    let value = get_toml_value(name, key, state)?;
+
+    if let Some(int_value) = value.as_integer() {
+        if int_value >= 0 {
+            Ok((int_value as u64).abi_encode())
+        } else {
+            bail!("Variable '{key}' in [fork.{name}] is a negative integer");
+        }
+    } else if let Some(s) = value.as_str() {
+        cast_string(key, s, &DynSolType::Uint(256))
+    } else {
+        bail!("Variable '{key}' in [fork.{name}] must be an integer or a string");
+    }
+}
+
 fn get_type_from_str_input(
     chain: u64,
     key: &str,
@@ -281,17 +280,11 @@ fn get_type_from_str_input(
     state: &crate::Cheatcodes,
 ) -> Result {
     let name = get_chain_name(chain)?;
-    if let Some(config) = state.config.forks.get(name) {
-        if let Some(value) = config.vars.get(key) {
-            if let Some(val) = value.as_str() {
-                cast_string(key, val, ty)
-            } else {
-                bail!("Variable '{key}' in [fork.{name}] must be a string");
-            }
-        } else {
-            bail!("Variable '{key}' not found in [fork.{name}] configuration");
-        }
+    let value = get_toml_value(name, key, state)?;
+
+    if let Some(val) = value.as_str() {
+        cast_string(key, val, ty)
     } else {
-        bail!("[fork.{name}] subsection not found in [fork] of 'foundry.toml'");
+        bail!("Variable '{key}' in [fork.{name}] must be a string");
     }
 }
