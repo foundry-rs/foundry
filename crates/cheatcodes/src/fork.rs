@@ -216,15 +216,13 @@ fn get_toml_value<'a>(
     key: &'a str,
     state: &'a crate::Cheatcodes,
 ) -> Result<&'a toml::Value> {
-    let config = state
-        .config
-        .forks
-        .get(name)
-        .ok_or_eyre("[fork.{name}] subsection not found in [fork] of 'foundry.toml'")?;
+    let config = state.config.forks.get(name).ok_or_else(|| {
+        fmt_err!("[fork.{name}] subsection not found in [fork] of 'foundry.toml'")
+    })?;
     let value = config
         .vars
         .get(key)
-        .ok_or_eyre("Variable '{key}' not found in [fork.{name}] configuration")?;
+        .ok_or_else(|| fmt_err!("Variable '{key}' not found in [fork.{name}] configuration"))?;
 
     Ok(value)
 }

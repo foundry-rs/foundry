@@ -3235,6 +3235,10 @@ Error: script failed: call to non-contract address [..]
 
 // Tests that can access the fork config for each chain from `foundry.toml`
 forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
+    prj.insert_vm();
+    prj.insert_console();
+    prj.insert_ds_test();
+
     prj.update_config(|config| {
         config.forks = vec![
             (
@@ -3291,67 +3295,54 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
         )]);
     });
 
-    prj.add_script(
+    prj.add_source(
             "ForkScript.s.sol",
             r#"
-            import {console} from "forge-std/Script.sol";
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+import {console} from "./Console.sol";
 
-        interface Vm {
-            function forkChains() external view returns (string[] memory);
-            function forkChainIds() external view returns (uint256[] memory);
-            function forkChainId(uint256 chain) external view returns (uint256);
-            function forkChainRpcUrl(uint256 chain) external view returns (string memory);
-            function forkChainInt(uint256 chain, string memory key) external view returns (int256);
-            function forkChainUint(uint256 chain, string memory key) external view returns (uint256);
-            function forkChainBool(uint256 chain, string memory key) external view returns (bool);
-            function forkChainAddress(uint256 chain, string memory key) external view returns (address);
-            function forkChainBytes32(uint256 chain, string memory key) external view returns (bytes32);
-            function forkChainString(uint256 chain, string memory key) external view returns (string memory);
-            function forkChainBytes(uint256 chain, string memory key) external view returns (bytes memory);
+contract ForkScript is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+
+    function run() public view {
+        (uint256[2] memory chainIds,  string[2] memory chains) = ([uint256(1), uint256(10)], ["mainnet", "optimism"]);
+        (uint256[] memory cheatChainIds, string[] memory cheatChains) = (vm.forkChainIds(), vm.forkChains());
+
+        for (uint256 i = 0; i < chains.length; i++) {
+            assert(chainIds[i] == cheatChainIds[0] || chainIds[i] == cheatChainIds[1]);
+            assert(eqString(chains[i], cheatChains[0]) || eqString(chains[i], cheatChains[1]));
+            console.log("chain:", chains[i]);
+            console.log("id:", chainIds[i]);
+
+            string memory rpc = vm.forkChainRpcUrl(chainIds[i]);
+            int256 i256 = vm.forkChainInt(chainIds[i], "i256");
+            uint256 u256 = vm.forkChainUint(chainIds[i], "u256");
+            bool boolean = vm.forkChainBool(chainIds[i], "bool");
+            address addr = vm.forkChainAddress(chainIds[i], "addr");
+            bytes32 b256 = vm.forkChainBytes32(chainIds[i], "b256");
+            bytes memory byytes = vm.forkChainBytes(chainIds[i], "bytes");
+            string memory str = vm.forkChainString(chainIds[i], "str");
+
+            console.log(" > rpc:", rpc);
+            console.log(" > vars:");
+            console.log("   > i256:", i256);
+            console.log("   > u256:", u256);
+            console.log("   > bool:", boolean);
+            console.log("   > addr:", addr);
+            console.log("   > string:", str);
+
+            assert(
+                b256 == 0xdeadbeaf00000000000000000000000000000000000000000000000000000000
+                    || b256 == 0x000000000000000000000000000000000000000000000000000000deadc0ffee
+            );
         }
+    }
 
-        contract ForkScript {
-            address internal constant HEVM_ADDRESS = address(uint160(uint256(keccak256("hevm cheat code"))));
-            Vm constant vm = Vm(HEVM_ADDRESS);
-
-            function run() public view {
-                (uint256[2] memory chainIds,  string[2] memory chains) = ([uint256(1), uint256(10)], ["mainnet", "optimism"]);
-                (uint256[] memory cheatChainIds, string[] memory cheatChains) = (vm.forkChainIds(), vm.forkChains());
-
-                for (uint256 i = 0; i < chains.length; i++) {
-                    assert(chainIds[i] == cheatChainIds[0] || chainIds[i] == cheatChainIds[1]);
-                    assert(eqString(chains[i], cheatChains[0]) || eqString(chains[i], cheatChains[1]));
-                    console.log("chain:", chains[i]);
-                    console.log("id:", chainIds[i]);
-
-                    string memory rpc = vm.forkChainRpcUrl(chainIds[i]);
-                    int256 i256 = vm.forkChainInt(chainIds[i], "i256");
-                    uint256 u256 = vm.forkChainUint(chainIds[i], "u256");
-                    bool boolean = vm.forkChainBool(chainIds[i], "bool");
-                    address addr = vm.forkChainAddress(chainIds[i], "addr");
-                    bytes32 b256 = vm.forkChainBytes32(chainIds[i], "b256");
-                    bytes memory byytes = vm.forkChainBytes(chainIds[i], "bytes");
-                    string memory str = vm.forkChainString(chainIds[i], "str");
-
-                    console.log(" > rpc:", rpc);
-                    console.log(" > vars:");
-                    console.log("   > i256:", i256);
-                    console.log("   > u256:", u256);
-                    console.log("   > bool:", boolean);
-                    console.log("   > addr:", addr);
-                    console.log("   > string:", str);
-
-                    assert(
-                        b256 == 0xdeadbeaf00000000000000000000000000000000000000000000000000000000
-                            || b256 == 0x000000000000000000000000000000000000000000000000000000deadc0ffee
-                    );
-                }
-            }
-
-            function eqString(string memory s1, string memory s2) public pure returns(bool) {
-                return keccak256(bytes(s1)) == keccak256(bytes(s2));
-            }
-        }
+    function eqString(string memory s1, string memory s2) public pure returns(bool) {
+        return keccak256(bytes(s1)) == keccak256(bytes(s2));
+    }
+}
         "#,
         )
         .unwrap();
@@ -3382,6 +3373,9 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
 
 // Tests that can derive chain id of the active fork + get the config from `foundry.toml`
 forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
+    prj.insert_vm();
+    prj.insert_console();
+    prj.insert_ds_test();
     let mainnet_endpoint = rpc::next_http_rpc_endpoint();
 
     prj.update_config(|config| {
@@ -3440,69 +3434,56 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
         )]);
     });
 
-    prj.add_test(
-            "ForkTest.t.sol",
-            &r#"
-    import {console} from "forge-std/Test.sol";
+    prj.add_source(
+        "ForkTest.t.sol",
+        &r#"
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+import {console} from "./Console.sol";
 
-    interface Vm {
-        function createSelectFork(string memory) external view;
-        function forkChain() external view returns (string memory);
-        function forkChainId() external view returns (uint256);
-        function forkRpcUrl() external view returns (string memory);
-        function forkInt(string memory key) external view returns (int256);
-        function forkUint(string memory key) external view returns (uint256);
-        function forkBool(string memory key) external view returns (bool);
-        function forkAddress(string memory key) external view returns (address);
-        function forkBytes32(string memory key) external view returns (bytes32);
-        function forkString(string memory key) external view returns (string memory);
-        function forkBytes(string memory key) external view returns (bytes memory);
+contract ForkTest is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+
+    function test_panicsWhithoutSelectedFork() public {
+        vm.forkChain();
     }
 
-    contract ForkTest {
-        address internal constant HEVM_ADDRESS = address(uint160(uint256(keccak256("hevm cheat code"))));
-        Vm constant vm = Vm(HEVM_ADDRESS);
+    function test_forkVars() public {
+        vm.createSelectFork("<url>");
 
-        function test_panicsWhithoutSelectedFork() public {
-            vm.forkChain();
-        }
+        console.log("chain:", vm.forkChain());
+        console.log("id:", vm.forkChainId());
+        assert(eqString(vm.forkRpcUrl(), "<url>"));
 
-        function test_forkVars() public {
-            vm.createSelectFork("<url>");
+        int256 i256 = vm.forkInt("i256");
+        uint256 u256 = vm.forkUint("u256");
+        bool boolean = vm.forkBool("bool");
+        address addr = vm.forkAddress("addr");
+        bytes32 b256 = vm.forkBytes32("b256");
+        bytes memory byytes = vm.forkBytes("bytes");
+        string memory str = vm.forkString("str");
 
-            console.log("chain:", vm.forkChain());
-            console.log("id:", vm.forkChainId());
-            assert(eqString(vm.forkRpcUrl(), "<url>"));
+        console.log(" > vars:");
+        console.log("   > i256:", i256);
+        console.log("   > u256:", u256);
+        console.log("   > bool:", boolean);
+        console.log("   > addr:", addr);
+        console.log("   > string:", str);
 
-            int256 i256 = vm.forkInt("i256");
-            uint256 u256 = vm.forkUint("u256");
-            bool boolean = vm.forkBool("bool");
-            address addr = vm.forkAddress("addr");
-            bytes32 b256 = vm.forkBytes32("b256");
-            bytes memory byytes = vm.forkBytes("bytes");
-            string memory str = vm.forkString("str");
-
-            console.log(" > vars:");
-            console.log("   > i256:", i256);
-            console.log("   > u256:", u256);
-            console.log("   > bool:", boolean);
-            console.log("   > addr:", addr);
-            console.log("   > string:", str);
-
-            assert(
-                b256 == 0xdeadbeaf00000000000000000000000000000000000000000000000000000000
-                || b256 == 0x000000000000000000000000000000000000000000000000000000deadc0ffee
-            );
-        }
-
-        function eqString(string memory s1, string memory s2) public pure returns(bool) {
-            return keccak256(bytes(s1)) == keccak256(bytes(s2));
-        }
+        assert(
+            b256 == 0xdeadbeaf00000000000000000000000000000000000000000000000000000000
+            || b256 == 0x000000000000000000000000000000000000000000000000000000deadc0ffee
+        );
     }
+
+    function eqString(string memory s1, string memory s2) public pure returns(bool) {
+        return keccak256(bytes(s1)) == keccak256(bytes(s2));
+    }
+}
        "#
-            .replace("<url>", &mainnet_endpoint),
-        )
-        .unwrap();
+        .replace("<url>", &mainnet_endpoint),
+    )
+    .unwrap();
 
     cmd.args(["test", "-vvv", "ForkTest"]).assert_failure().stdout_eq(str![[r#"
 ...
