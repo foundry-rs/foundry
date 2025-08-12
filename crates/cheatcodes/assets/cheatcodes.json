@@ -5868,7 +5868,7 @@
       "func": {
         "id": "forkAddress",
         "description": "Gets the value for the key `key` from the currently active fork and parses it as `address`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkAddress(string memory key) external view returns (address);",
+        "declaration": "function forkAddress(string calldata key) external view returns (address);",
         "visibility": "external",
         "mutability": "view",
         "signature": "forkAddress(string)",
@@ -5888,7 +5888,7 @@
       "func": {
         "id": "forkBool",
         "description": "Gets the value for the key `key` from the currently active fork and parses it as `bool`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkBool(string memory key) external view returns (bool);",
+        "declaration": "function forkBool(string calldata key) external view returns (bool);",
         "visibility": "external",
         "mutability": "view",
         "signature": "forkBool(string)",
@@ -5908,7 +5908,7 @@
       "func": {
         "id": "forkBytes",
         "description": "Gets the value for the key `key` from the currently active fork and parses it as `bytes`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkBytes(string memory key) external view returns (bytes memory);",
+        "declaration": "function forkBytes(string calldata key) external view returns (bytes memory);",
         "visibility": "external",
         "mutability": "view",
         "signature": "forkBytes(string)",
@@ -5928,7 +5928,7 @@
       "func": {
         "id": "forkBytes32",
         "description": "Gets the value for the key `key` from the currently active fork and parses it as `bytes32`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkBytes32(string memory key) external view returns (bytes32);",
+        "declaration": "function forkBytes32(string calldata key) external view returns (bytes32);",
         "visibility": "external",
         "mutability": "view",
         "signature": "forkBytes32(string)",
@@ -5968,7 +5968,7 @@
       "func": {
         "id": "forkChainAddress",
         "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `address`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkChainAddress(uint256 chain, string memory key) external view returns (address);",
+        "declaration": "function forkChainAddress(uint256 chain, string calldata key) external view returns (address);",
         "visibility": "external",
         "mutability": "view",
         "signature": "forkChainAddress(uint256,string)",
@@ -5988,7 +5988,7 @@
       "func": {
         "id": "forkChainBool",
         "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bool`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkChainBool(uint256 chain, string memory key) external view returns (bool);",
+        "declaration": "function forkChainBool(uint256 chain, string calldata key) external view returns (bool);",
         "visibility": "external",
         "mutability": "view",
         "signature": "forkChainBool(uint256,string)",
@@ -6008,7 +6008,7 @@
       "func": {
         "id": "forkChainBytes",
         "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bytes`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkChainBytes(uint256 chain, string memory key) external view returns (bytes memory);",
+        "declaration": "function forkChainBytes(uint256 chain, string calldata key) external view returns (bytes memory);",
         "visibility": "external",
         "mutability": "view",
         "signature": "forkChainBytes(uint256,string)",
@@ -6028,7 +6028,7 @@
       "func": {
         "id": "forkChainBytes32",
         "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bytes32`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkChainBytes32(uint256 chain, string memory key) external view returns (bytes32);",
+        "declaration": "function forkChainBytes32(uint256 chain, string calldata key) external view returns (bytes32);",
         "visibility": "external",
         "mutability": "view",
         "signature": "forkChainBytes32(uint256,string)",
@@ -6088,7 +6088,7 @@
       "func": {
         "id": "forkChainInt",
         "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `int256`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkChainInt(uint256 chain, string memory key) external view returns (int256);",
+        "declaration": "function forkChainInt(uint256 chain, string calldata key) external view returns (int256);",
         "visibility": "external",
         "mutability": "view",
         "signature": "forkChainInt(uint256,string)",
@@ -6128,7 +6128,7 @@
       "func": {
         "id": "forkChainString",
         "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `string`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkChainString(uint256 chain, string memory key) external view returns (string memory);",
+        "declaration": "function forkChainString(uint256 chain, string calldata key) external view returns (string memory);",
         "visibility": "external",
         "mutability": "view",
         "signature": "forkChainString(uint256,string)",
@@ -6148,7 +6148,7 @@
       "func": {
         "id": "forkChainUint",
         "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `uint256`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkChainUint(uint256 chain, string memory key) external view returns (uint256);",
+        "declaration": "function forkChainUint(uint256 chain, string calldata key) external view returns (uint256);",
         "visibility": "external",
         "mutability": "view",
         "signature": "forkChainUint(uint256,string)",
@@ -6188,7 +6188,7 @@
       "func": {
         "id": "forkInt",
         "description": "Gets the value for the key `key` from the currently active fork and parses it as `int256`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkInt(string memory key) external view returns (int256);",
+        "declaration": "function forkInt(string calldata key) external view returns (int256);",
         "visibility": "external",
         "mutability": "view",
         "signature": "forkInt(string)",
@@ -6228,7 +6228,7 @@
       "func": {
         "id": "forkString",
         "description": "Gets the value for the key `key` from the currently active fork and parses it as `string`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkString(string memory key) external view returns (string memory);",
+        "declaration": "function forkString(string calldata key) external view returns (string memory);",
         "visibility": "external",
         "mutability": "view",
         "signature": "forkString(string)",
@@ -6248,7 +6248,7 @@
       "func": {
         "id": "forkUint",
         "description": "Gets the value for the key `key` from the currently active fork and parses it as `uint256`.\nReverts if the key was not found or the value could not be parsed.",
-        "declaration": "function forkUint(string memory key) external view returns (uint256);",
+        "declaration": "function forkUint(string calldata key) external view returns (uint256);",
         "visibility": "external",
         "mutability": "view",
         "signature": "forkUint(string)",
