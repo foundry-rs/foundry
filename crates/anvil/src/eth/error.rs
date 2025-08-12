@@ -42,7 +42,7 @@ pub enum BlockchainError {
     FailedToDecodeReceipt,
     #[error("Failed to decode state")]
     FailedToDecodeStateDump,
-    #[error("Prevrandao not in th EVM's environment after merge")]
+    #[error("Prevrandao not in the EVM's environment after merge")]
     PrevrandaoNotSet,
     #[error(transparent)]
     SignatureError(#[from] SignatureError),
