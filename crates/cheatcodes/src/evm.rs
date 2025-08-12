@@ -1260,10 +1260,10 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
         }
 
         // Also get storage layout if available
-        if let Some((_artifact_id, contract_data)) = get_contract_data(ccx, address) {
-            if let Some(storage_layout) = &contract_data.storage_layout {
-                storage_layouts.insert(address, storage_layout.clone());
-            }
+        if let Some((_artifact_id, contract_data)) = get_contract_data(ccx, address)
+            && let Some(storage_layout) = &contract_data.storage_layout
+        {
+            storage_layouts.insert(address, storage_layout.clone());
         }
     }
 
@@ -1454,7 +1454,7 @@ fn check_array_slot_match(
     };
 
     // Each slot is 32 bytes
-    let total_slots = (total_bytes + 31) / 32;
+    let total_slots = total_bytes.div_ceil(32);
 
     // Check if current slot is within the array range
     if slot <= base_slot || slot >= base_slot + U256::from(total_slots) {
