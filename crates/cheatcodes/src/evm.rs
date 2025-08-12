@@ -1404,8 +1404,23 @@ fn check_exact_slot_match(
     trace!(type_label = %storage.storage_type, "checking type");
     if storage.slot == slot_str {
         let storage_type = storage_layout.types.get(&storage.storage_type);
+
+        // Check if this is a static array - if so, label the base slot as element [0]
+        let label = if let Some(type_info) = storage_type {
+            if type_info.encoding == "inplace"
+                && type_info.label.contains('[')
+                && type_info.label.contains(']')
+            {
+                format!("{}[0]", storage.label)
+            } else {
+                storage.label.clone()
+            }
+        } else {
+            storage.label.clone()
+        };
+
         return Some(SlotInfo {
-            label: storage.label.clone(),
+            label,
             storage_type: storage_type
                 .map(|t| t.label.clone())
                 .unwrap_or_else(|| storage.storage_type.clone()),
