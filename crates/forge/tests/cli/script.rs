@@ -423,6 +423,41 @@ Script ran successfully.
 "#]]);
 });
 
+// Tests that the run command can run functions with arguments without specifying the signature
+// <https://github.com/foundry-rs/foundry/issues/11240>
+forgetest!(can_execute_script_command_with_args_no_sig, |prj, cmd| {
+    let script = prj
+        .add_source(
+            "Foo",
+            r#"
+contract Demo {
+    event log_string(string);
+    event log_uint(uint);
+    function run(uint256 a, uint256 b) external {
+        emit log_string("script ran");
+        emit log_uint(a);
+        emit log_uint(b);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("script").arg(script).arg("1").arg("2").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+== Logs ==
+  script ran
+  1
+  2
+
+"#]]);
+});
+
 // Tests that the run command can run functions with return values
 forgetest!(can_execute_script_command_with_returned, |prj, cmd| {
     let script = prj
@@ -2579,13 +2614,13 @@ Chain 31337
 accessList           []
 chainId              31337
 gasLimit             [..]
-gasPrice             
+gasPrice
 input                [..]
-maxFeePerBlobGas     
-maxFeePerGas         
-maxPriorityFeePerGas 
+maxFeePerBlobGas
+maxFeePerGas
+maxPriorityFeePerGas
 nonce                0
-to                   
+to
 type                 0
 value                0
 
@@ -2594,11 +2629,11 @@ value                0
 accessList           []
 chainId              31337
 gasLimit             93856
-gasPrice             
+gasPrice
 input                0x7357f5d2000000000000000000000000000000000000000000000000000000000000007b00000000000000000000000000000000000000000000000000000000000001c8
-maxFeePerBlobGas     
-maxFeePerGas         
-maxPriorityFeePerGas 
+maxFeePerBlobGas
+maxFeePerGas
+maxPriorityFeePerGas
 nonce                1
 to                   0x5FbDB2315678afecb367f032d93F642f64180aa3
 type                 0
@@ -3103,6 +3138,101 @@ contract FactoryScript is Script {
     assert_eq!(counter_contract.contract_name, Some("Counter".to_string()));
 });
 
+// <https://github.com/foundry-rs/foundry/issues/11213>
+forgetest_async!(call_to_non_contract_address_does_not_panic, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+
+    let endpoint = rpc::next_http_archive_rpc_url();
+
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+    function increment() public {
+        number++;
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    let deploy_script = prj
+        .add_script(
+            "Counter.s.sol",
+            &r#"
+import "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+contract CounterScript is Script {
+    Counter public counter;
+    function setUp() public {}
+    function run() public {
+        vm.createSelectFork("<url>");
+        vm.startBroadcast();
+        counter = new Counter();
+        vm.stopBroadcast();
+        vm.createSelectFork("<url>");
+        vm.startBroadcast();
+        counter.increment();
+        vm.stopBroadcast();
+    }
+}
+   "#
+            .replace("<url>", &endpoint),
+        )
+        .unwrap();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.args([
+        "script",
+        &deploy_script.display().to_string(),
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--slow",
+        "--broadcast",
+        "--private-key",
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_failure()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Traces:
+  [..] → new CounterScript@[..]
+    └─ ← [Return] 2200 bytes of code
+
+  [..] CounterScript::setUp()
+    └─ ← [Stop]
+
+  [..] CounterScript::run()
+    ├─ [..] VM::createSelectFork("<rpc url>")
+    │   └─ ← [Return] 1
+    ├─ [..] VM::startBroadcast()
+    │   └─ ← [Return]
+    ├─ [..] → new Counter@[..]
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [..] VM::stopBroadcast()
+    │   └─ ← [Return]
+    ├─ [..] VM::createSelectFork("<rpc url>")
+    │   └─ ← [Return] 2
+    ├─ [..] VM::startBroadcast()
+    │   └─ ← [Return]
+    └─ ← [Revert] call to non-contract address [..]
+
+
+
+"#]])
+    .stderr_eq(str![[r#"
+Error: script failed: call to non-contract address [..]
+"#]]);
+});
+
 // Tests that can access the fork config for each chain from `foundry.toml`
 forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
     prj.update_config(|config| {
@@ -3162,93 +3292,93 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
     });
 
     prj.add_script(
-        "ForkScript.s.sol",
-        r#"
-        import {console} from "forge-std/Script.sol";
+            "ForkScript.s.sol",
+            r#"
+            import {console} from "forge-std/Script.sol";
 
-    interface Vm {
-        function forkChains() external view returns (string[] memory);
-        function forkChainIds() external view returns (uint256[] memory);
-        function forkChainId(uint256 chain) external view returns (uint256);
-        function forkChainRpcUrl(uint256 chain) external view returns (string memory);
-        function forkChainInt(uint256 chain, string memory key) external view returns (int256);
-        function forkChainUint(uint256 chain, string memory key) external view returns (uint256);
-        function forkChainBool(uint256 chain, string memory key) external view returns (bool);
-        function forkChainAddress(uint256 chain, string memory key) external view returns (address);
-        function forkChainBytes32(uint256 chain, string memory key) external view returns (bytes32);
-        function forkChainString(uint256 chain, string memory key) external view returns (string memory);
-        function forkChainBytes(uint256 chain, string memory key) external view returns (bytes memory);
-    }
+        interface Vm {
+            function forkChains() external view returns (string[] memory);
+            function forkChainIds() external view returns (uint256[] memory);
+            function forkChainId(uint256 chain) external view returns (uint256);
+            function forkChainRpcUrl(uint256 chain) external view returns (string memory);
+            function forkChainInt(uint256 chain, string memory key) external view returns (int256);
+            function forkChainUint(uint256 chain, string memory key) external view returns (uint256);
+            function forkChainBool(uint256 chain, string memory key) external view returns (bool);
+            function forkChainAddress(uint256 chain, string memory key) external view returns (address);
+            function forkChainBytes32(uint256 chain, string memory key) external view returns (bytes32);
+            function forkChainString(uint256 chain, string memory key) external view returns (string memory);
+            function forkChainBytes(uint256 chain, string memory key) external view returns (bytes memory);
+        }
 
-    contract ForkScript {
-        address internal constant HEVM_ADDRESS = address(uint160(uint256(keccak256("hevm cheat code"))));
-        Vm constant vm = Vm(HEVM_ADDRESS);
+        contract ForkScript {
+            address internal constant HEVM_ADDRESS = address(uint160(uint256(keccak256("hevm cheat code"))));
+            Vm constant vm = Vm(HEVM_ADDRESS);
 
-        function run() public view {
-            (uint256[2] memory chainIds,  string[2] memory chains) = ([uint256(1), uint256(10)], ["mainnet", "optimism"]);
-            (uint256[] memory cheatChainIds, string[] memory cheatChains) = (vm.forkChainIds(), vm.forkChains());
+            function run() public view {
+                (uint256[2] memory chainIds,  string[2] memory chains) = ([uint256(1), uint256(10)], ["mainnet", "optimism"]);
+                (uint256[] memory cheatChainIds, string[] memory cheatChains) = (vm.forkChainIds(), vm.forkChains());
 
-            for (uint256 i = 0; i < chains.length; i++) {
-                assert(chainIds[i] == cheatChainIds[0] || chainIds[i] == cheatChainIds[1]);
-                assert(eqString(chains[i], cheatChains[0]) || eqString(chains[i], cheatChains[1]));
-                console.log("chain:", chains[i]);
-                console.log("id:", chainIds[i]);
+                for (uint256 i = 0; i < chains.length; i++) {
+                    assert(chainIds[i] == cheatChainIds[0] || chainIds[i] == cheatChainIds[1]);
+                    assert(eqString(chains[i], cheatChains[0]) || eqString(chains[i], cheatChains[1]));
+                    console.log("chain:", chains[i]);
+                    console.log("id:", chainIds[i]);
 
-                string memory rpc = vm.forkChainRpcUrl(chainIds[i]);
-                int256 i256 = vm.forkChainInt(chainIds[i], "i256");
-                uint256 u256 = vm.forkChainUint(chainIds[i], "u256");
-                bool boolean = vm.forkChainBool(chainIds[i], "bool");
-                address addr = vm.forkChainAddress(chainIds[i], "addr");
-                bytes32 b256 = vm.forkChainBytes32(chainIds[i], "b256");
-                bytes memory byytes = vm.forkChainBytes(chainIds[i], "bytes");
-                string memory str = vm.forkChainString(chainIds[i], "str");
+                    string memory rpc = vm.forkChainRpcUrl(chainIds[i]);
+                    int256 i256 = vm.forkChainInt(chainIds[i], "i256");
+                    uint256 u256 = vm.forkChainUint(chainIds[i], "u256");
+                    bool boolean = vm.forkChainBool(chainIds[i], "bool");
+                    address addr = vm.forkChainAddress(chainIds[i], "addr");
+                    bytes32 b256 = vm.forkChainBytes32(chainIds[i], "b256");
+                    bytes memory byytes = vm.forkChainBytes(chainIds[i], "bytes");
+                    string memory str = vm.forkChainString(chainIds[i], "str");
 
-                console.log(" > rpc:", rpc);
-                console.log(" > vars:");
-                console.log("   > i256:", i256);
-                console.log("   > u256:", u256);
-                console.log("   > bool:", boolean);
-                console.log("   > addr:", addr);
-                console.log("   > string:", str);
+                    console.log(" > rpc:", rpc);
+                    console.log(" > vars:");
+                    console.log("   > i256:", i256);
+                    console.log("   > u256:", u256);
+                    console.log("   > bool:", boolean);
+                    console.log("   > addr:", addr);
+                    console.log("   > string:", str);
 
-                assert(
-                    b256 == 0xdeadbeaf00000000000000000000000000000000000000000000000000000000
-                        || b256 == 0x000000000000000000000000000000000000000000000000000000deadc0ffee
-                );
+                    assert(
+                        b256 == 0xdeadbeaf00000000000000000000000000000000000000000000000000000000
+                            || b256 == 0x000000000000000000000000000000000000000000000000000000deadc0ffee
+                    );
+                }
+            }
+
+            function eqString(string memory s1, string memory s2) public pure returns(bool) {
+                return keccak256(bytes(s1)) == keccak256(bytes(s2));
             }
         }
-
-        function eqString(string memory s1, string memory s2) public pure returns(bool) {
-            return keccak256(bytes(s1)) == keccak256(bytes(s2));
-        }
-    }
-    "#,
-    )
-    .unwrap();
+        "#,
+        )
+        .unwrap();
 
     cmd.arg("script").arg("ForkScript").assert_success().stdout_eq(str![[r#"
-...
-== Logs ==
-  chain: mainnet
-  id: 1
-   > rpc: mainnet-rpc
-   > vars:
-     > i256: -1234
-     > u256: 1234
-     > bool: true
-     > addr: 0xdEADBEeF00000000000000000000000000000000
-     > string: bar
-  chain: optimism
-  id: 10
-   > rpc: optimism-rpc
-   > vars:
-     > i256: -4321
-     > u256: 4321
-     > bool: false
-     > addr: 0x00000000000000000000000000000000DeaDBeef
-     > string: bazz
+    ...
+    == Logs ==
+      chain: mainnet
+      id: 1
+       > rpc: mainnet-rpc
+       > vars:
+         > i256: -1234
+         > u256: 1234
+         > bool: true
+         > addr: 0xdEADBEeF00000000000000000000000000000000
+         > string: bar
+      chain: optimism
+      id: 10
+       > rpc: optimism-rpc
+       > vars:
+         > i256: -4321
+         > u256: 4321
+         > bool: false
+         > addr: 0x00000000000000000000000000000000DeaDBeef
+         > string: bazz
 
-"#]]);
+    "#]]);
 });
 
 // Tests that can derive chain id of the active fork + get the config from `foundry.toml`
@@ -3312,83 +3442,83 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
     });
 
     prj.add_test(
-        "ForkTest.t.sol",
-        &r#"
-import {console} from "forge-std/Test.sol";
+            "ForkTest.t.sol",
+            &r#"
+    import {console} from "forge-std/Test.sol";
 
-interface Vm {
-    function createSelectFork(string memory) external view;
-    function forkChain() external view returns (string memory);
-    function forkChainId() external view returns (uint256);
-    function forkRpcUrl() external view returns (string memory);
-    function forkInt(string memory key) external view returns (int256);
-    function forkUint(string memory key) external view returns (uint256);
-    function forkBool(string memory key) external view returns (bool);
-    function forkAddress(string memory key) external view returns (address);
-    function forkBytes32(string memory key) external view returns (bytes32);
-    function forkString(string memory key) external view returns (string memory);
-    function forkBytes(string memory key) external view returns (bytes memory);
-}
-
-contract ForkTest {
-    address internal constant HEVM_ADDRESS = address(uint160(uint256(keccak256("hevm cheat code"))));
-    Vm constant vm = Vm(HEVM_ADDRESS);
-
-    function test_panicsWhithoutSelectedFork() public {
-        vm.forkChain();
+    interface Vm {
+        function createSelectFork(string memory) external view;
+        function forkChain() external view returns (string memory);
+        function forkChainId() external view returns (uint256);
+        function forkRpcUrl() external view returns (string memory);
+        function forkInt(string memory key) external view returns (int256);
+        function forkUint(string memory key) external view returns (uint256);
+        function forkBool(string memory key) external view returns (bool);
+        function forkAddress(string memory key) external view returns (address);
+        function forkBytes32(string memory key) external view returns (bytes32);
+        function forkString(string memory key) external view returns (string memory);
+        function forkBytes(string memory key) external view returns (bytes memory);
     }
 
-    function test_forkVars() public {
-        vm.createSelectFork("<url>");
+    contract ForkTest {
+        address internal constant HEVM_ADDRESS = address(uint160(uint256(keccak256("hevm cheat code"))));
+        Vm constant vm = Vm(HEVM_ADDRESS);
 
-        console.log("chain:", vm.forkChain());
-        console.log("id:", vm.forkChainId());
-        assert(eqString(vm.forkRpcUrl(), "<url>"));
+        function test_panicsWhithoutSelectedFork() public {
+            vm.forkChain();
+        }
 
-        int256 i256 = vm.forkInt("i256");
-        uint256 u256 = vm.forkUint("u256");
-        bool boolean = vm.forkBool("bool");
-        address addr = vm.forkAddress("addr");
-        bytes32 b256 = vm.forkBytes32("b256");
-        bytes memory byytes = vm.forkBytes("bytes");
-        string memory str = vm.forkString("str");
+        function test_forkVars() public {
+            vm.createSelectFork("<url>");
 
-        console.log(" > vars:");
-        console.log("   > i256:", i256);
-        console.log("   > u256:", u256);
-        console.log("   > bool:", boolean);
-        console.log("   > addr:", addr);
-        console.log("   > string:", str);
+            console.log("chain:", vm.forkChain());
+            console.log("id:", vm.forkChainId());
+            assert(eqString(vm.forkRpcUrl(), "<url>"));
 
-        assert(
-            b256 == 0xdeadbeaf00000000000000000000000000000000000000000000000000000000
-            || b256 == 0x000000000000000000000000000000000000000000000000000000deadc0ffee
-        );
+            int256 i256 = vm.forkInt("i256");
+            uint256 u256 = vm.forkUint("u256");
+            bool boolean = vm.forkBool("bool");
+            address addr = vm.forkAddress("addr");
+            bytes32 b256 = vm.forkBytes32("b256");
+            bytes memory byytes = vm.forkBytes("bytes");
+            string memory str = vm.forkString("str");
+
+            console.log(" > vars:");
+            console.log("   > i256:", i256);
+            console.log("   > u256:", u256);
+            console.log("   > bool:", boolean);
+            console.log("   > addr:", addr);
+            console.log("   > string:", str);
+
+            assert(
+                b256 == 0xdeadbeaf00000000000000000000000000000000000000000000000000000000
+                || b256 == 0x000000000000000000000000000000000000000000000000000000deadc0ffee
+            );
+        }
+
+        function eqString(string memory s1, string memory s2) public pure returns(bool) {
+            return keccak256(bytes(s1)) == keccak256(bytes(s2));
+        }
     }
-
-    function eqString(string memory s1, string memory s2) public pure returns(bool) {
-        return keccak256(bytes(s1)) == keccak256(bytes(s2));
-    }
-}
-   "#
-        .replace("<url>", &mainnet_endpoint),
-    )
-    .unwrap();
+       "#
+            .replace("<url>", &mainnet_endpoint),
+        )
+        .unwrap();
 
     cmd.args(["test", "-vvv", "ForkTest"]).assert_failure().stdout_eq(str![[r#"
-...
-[PASS] test_forkVars() ([GAS])
-Logs:
-  chain: mainnet
-  id: 1
-   > vars:
-     > i256: -1234
-     > u256: 1234
-     > bool: true
-     > addr: 0xdEADBEeF00000000000000000000000000000000
-     > string: bar
+    ...
+    [PASS] test_forkVars() ([GAS])
+    Logs:
+      chain: mainnet
+      id: 1
+       > vars:
+         > i256: -1234
+         > u256: 1234
+         > bool: true
+         > addr: 0xdEADBEeF00000000000000000000000000000000
+         > string: bar
 
-[FAIL: vm.forkChain: a fork must be selected] test_panicsWhithoutSelectedFork() ([GAS])
-...
+    [FAIL: vm.forkChain: a fork must be selected] test_panicsWhithoutSelectedFork() ([GAS])
+    ...
 "#]]);
 });

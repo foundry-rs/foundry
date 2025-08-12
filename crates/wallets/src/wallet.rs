@@ -90,6 +90,11 @@ impl WalletOpts {
     pub async fn signer(&self) -> Result<WalletSigner> {
         trace!("start finding signer");
 
+        let get_env = |key: &str| {
+            std::env::var(key)
+                .map_err(|_| eyre::eyre!("{key} environment variable is required for signer"))
+        };
+
         let signer = if self.ledger {
             utils::create_ledger_signer(self.raw.hd_path.as_deref(), self.raw.mnemonic_index)
                 .await?
@@ -97,14 +102,16 @@ impl WalletOpts {
             utils::create_trezor_signer(self.raw.hd_path.as_deref(), self.raw.mnemonic_index)
                 .await?
         } else if self.aws {
-            let key_id = std::env::var("AWS_KMS_KEY_ID")?;
+            let key_id = get_env("AWS_KMS_KEY_ID")?;
             WalletSigner::from_aws(key_id).await?
         } else if self.gcp {
-            let project_id = std::env::var("GCP_PROJECT_ID")?;
-            let location = std::env::var("GCP_LOCATION")?;
-            let keyring = std::env::var("GCP_KEYRING")?;
-            let key_name = std::env::var("GCP_KEY_NAME")?;
-            let key_version = std::env::var("GCP_KEY_VERSION")?.parse()?;
+            let project_id = get_env("GCP_PROJECT_ID")?;
+            let location = get_env("GCP_LOCATION")?;
+            let keyring = get_env("GCP_KEYRING")?;
+            let key_name = get_env("GCP_NAME")?;
+            let key_version = get_env("GCP_KEY_VERSION")?
+                .parse()
+                .map_err(|_| eyre::eyre!("GCP_KEY_VERSION could not be be parsed into u64"))?;
             WalletSigner::from_gcp(project_id, location, keyring, key_name, key_version).await?
         } else if let Some(raw_wallet) = self.raw.signer()? {
             raw_wallet
