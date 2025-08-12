@@ -544,7 +544,7 @@ impl Cheatcode for ffiCall {
             let stderr = String::from_utf8_lossy(&output.stderr);
             warn!(target: "cheatcodes", ?input, ?stderr, "ffi command wrote to stderr");
         }
-        
+
         // We already hex-decoded the stdout in the `ffi` helper function.
         Ok(output.stdout.abi_encode())
     }
@@ -900,7 +900,7 @@ mod tests {
     #[test]
     fn test_ffi_fails_on_error_code() {
         let mut cheats = cheats();
-        
+
         // Use a command that is guaranteed to fail with a non-zero exit code on any platform.
         #[cfg(unix)]
         let args = vec!["false".to_string()];
@@ -911,10 +911,13 @@ mod tests {
 
         // Assert that the cheatcode returned an error.
         assert!(result.is_err(), "Expected ffi cheatcode to fail, but it succeeded");
-        
+
         // Assert that the error message contains the expected information.
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("exited with code 1"), "Error message did not contain exit code: {}", err_msg);
+        assert!(
+            err_msg.contains("exited with code 1"),
+            "Error message did not contain exit code: {err_msg}"
+        );
     }
 
     #[test]
