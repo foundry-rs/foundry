@@ -181,12 +181,12 @@ pub struct Config {
     #[serde(default = "root_default", skip_serializing)]
     pub root: PathBuf,
 
-    /// Path to another foundry.toml (base) file to inherit from.
+    /// Path to another foundry.toml (base) file that should be extended (inherited).
     ///
     /// This is a relative path from this config file.
-    /// Base files cannot inherit from other files.
+    /// Base files cannot extend (inherit) other files.
     #[serde(default, skip_serializing)]
-    pub inherit_from: Option<PathBuf>,
+    pub extends: Option<PathBuf>,
 
     /// path of the source contracts dir, like `src` or `contracts`
     pub src: PathBuf,
@@ -2357,7 +2357,7 @@ impl Default for Config {
             fs_permissions: FsPermissions::new([PathPermission::read("out")]),
             isolate: cfg!(feature = "isolate-by-default"),
             root: root_default(),
-            inherit_from: None,
+            extends: None,
             src: "src".into(),
             test: "test".into(),
             script: "script".into(),
@@ -5234,7 +5234,7 @@ mod tests {
                 "foundry.toml",
                 r#"
                     [profile.default]
-                    inherit_from = "base-config.toml"
+                    extends = "base-config.toml"
 
                     [invariant]
                     runs = 333
@@ -5248,7 +5248,7 @@ mod tests {
             let config = Config::load().unwrap();
 
             assert_eq!(
-                config.inherit_from.map(|path| path.to_string_lossy().to_string()).unwrap(),
+                config.extends.map(|path| path.to_string_lossy().to_string()).unwrap(),
                 "base-config.toml".to_string()
             );
 
@@ -5279,12 +5279,12 @@ mod tests {
     #[test]
     fn test_inheritance_validation() {
         figment::Jail::expect_with(|jail| {
-            // Test 1: Base file with inherit_from should fail
+            // Test 1: Base file with 'extends' should fail
             jail.create_file(
                 "base-with-inherit.toml",
                 r#"
                     [profile.default]
-                    inherit_from = "another.toml"
+                    extends = "another.toml"
                     optimizer_runs = 800
                     "#,
             )?;
@@ -5293,11 +5293,11 @@ mod tests {
                 "foundry.toml",
                 r#"
                     [profile.default]
-                    inherit_from = "base-with-inherit.toml"
+                    extends = "base-with-inherit.toml"
                     "#,
             )?;
 
-            // Should fail because base file has inherit_from
+            // Should fail because base file has 'extends'
             let result = Config::load();
             assert!(result.is_err());
             assert!(result.unwrap_err().to_string().contains("Nested inheritance is not allowed"));
@@ -5307,7 +5307,7 @@ mod tests {
                 "foundry.toml",
                 r#"
                     [profile.default]
-                    inherit_from = "foundry.toml"
+                    extends = "foundry.toml"
                     "#,
             )?;
 
@@ -5320,7 +5320,7 @@ mod tests {
                 "foundry.toml",
                 r#"
                     [profile.default]
-                    inherit_from = "non-existent.toml"
+                    extends = "non-existent.toml"
                     "#,
             )?;
 
@@ -5330,8 +5330,7 @@ mod tests {
             assert!(
                 err_msg.contains("does not exist")
                     || err_msg.contains("Failed to resolve inherited config path"),
-                "Error message: {}",
-                err_msg
+                "Error message: {err_msg}"
             );
 
             Ok(())
@@ -5371,7 +5370,7 @@ mod tests {
                 "foundry.toml",
                 r#"
                     [profile.default]
-                    inherit_from = "base.toml"
+                    extends = "base.toml"
                     optimizer_runs = 200  # Override
                     via_ir = true        # Override
                     # optimizer and solc are inherited
@@ -5442,7 +5441,7 @@ mod tests {
                 "foundry.toml",
                 r#"
                     [profile.default]
-                    inherit_from = "base.toml"
+                    extends = "base.toml"
                     verbosity = 3
 
                     [profile.ci]
@@ -5456,12 +5455,12 @@ mod tests {
             assert_eq!(config.optimizer_runs, Some(200));
             assert_eq!(config.verbosity, 3);
 
-            // Test CI profile (NO inherit_from, so doesn't inherit from base)
+            // Test CI profile (NO 'extends', so doesn't inherit from base)
             jail.set_env("FOUNDRY_PROFILE", "ci");
             let config = Config::load().unwrap();
             assert_eq!(config.optimizer_runs, Some(5000));
             assert_eq!(config.optimizer, Some(true));
-            // via_ir is not set in local ci profile and there's no inherit_from, so default
+            // via_ir is not set in local ci profile and there's no 'extends', so default
             assert_eq!(config.via_ir, false);
 
             Ok(())
@@ -5485,7 +5484,7 @@ mod tests {
                 "foundry.toml",
                 r#"
                     [profile.default]
-                    inherit_from = "base.toml"
+                    extends = "base.toml"
                     verbosity = 2
                     "#,
             )?;
@@ -5527,7 +5526,7 @@ mod tests {
                 "foundry.toml",
                 r#"
                     [profile.default]
-                    inherit_from = "configs/base.toml"
+                    extends = "configs/base.toml"
                     test = "tests"
                     "#,
             )?;
@@ -5551,7 +5550,7 @@ mod tests {
                 "project/foundry.toml",
                 r#"
                     [profile.default]
-                    inherit_from = "../shared-base.toml"
+                    extends = "../shared-base.toml"
                     "#,
             )?;
 
@@ -5578,7 +5577,7 @@ mod tests {
                 "foundry.toml",
                 r#"
                     [profile.default]
-                    inherit_from = "base.toml"
+                    extends = "base.toml"
                     optimizer_runs = 300
                     "#,
             )?;
@@ -5586,7 +5585,7 @@ mod tests {
             let config = Config::load().unwrap();
             assert_eq!(config.optimizer_runs, Some(300));
 
-            // Empty local file (only inherit_from)
+            // Empty local file (only 'extends')
             jail.create_file(
                 "base2.toml",
                 r#"
@@ -5600,7 +5599,7 @@ mod tests {
                 "foundry.toml",
                 r#"
                     [profile.default]
-                    inherit_from = "base2.toml"
+                    extends = "base2.toml"
                     "#,
             )?;
 
@@ -5638,7 +5637,7 @@ mod tests {
                 "foundry.toml",
                 r#"
                     [profile.default]
-                    inherit_from = "base.toml"
+                    extends = "base.toml"
                     libs = ["custom-lib"]  # Replaces base array
                     ignored_error_codes = [2018]  # Replaces base array
 
@@ -5688,7 +5687,7 @@ mod tests {
                 "base.toml",
                 r#"
                     [profile.default]
-                    # Base file should not have inherit_from to avoid nested inheritance
+                    # Base file should not have 'extends' to avoid nested inheritance
 
                     [labels]
                     "0x0000000000000000000000000000000000000001" = "Alice"
@@ -5708,7 +5707,7 @@ mod tests {
                 "foundry.toml",
                 r#"
                     [profile.default]
-                    inherit_from = "base.toml"
+                    extends = "base.toml"
 
                     [labels]
                     "0x0000000000000000000000000000000000000002" = "Bob Updated"
@@ -5789,7 +5788,7 @@ mod tests {
                 "foundry.toml",
                 r#"
                     [profile.default]
-                    inherit_from = "base.toml"
+                    extends = "base.toml"
                     evm_version = "shanghai"  # Override
                     optimizer_runs = 1000  # Override
 
@@ -5849,7 +5848,7 @@ mod tests {
                 "foundry.toml",
                 r#"
                     [profile.default]
-                    inherit_from = "base.toml"
+                    extends = "base.toml"
                     remappings = [
                         "@custom/=lib/custom/",
                         "ds-test/=lib/forge-std/lib/ds-test/src/"  # Override ds-test
@@ -5903,11 +5902,11 @@ mod tests {
                 "foundry.toml",
                 r#"
                     [profile.prod]
-                    inherit_from = "base.toml"
+                    extends = "base.toml"
                     evm_version = "shanghai"  # Additional setting
 
                     [profile.test]
-                    inherit_from = "base.toml"
+                    extends = "base.toml"
 
                     [profile.test.fuzz]
                     runs = 500  # Override
@@ -5959,11 +5958,11 @@ mod tests {
                 "foundry.toml",
                 r#"
                     [profile.dev]
-                    inherit_from = "dev.toml"
+                    extends = "dev.toml"
                     sender = "0x0000000000000000000000000000000000000001"
 
                     [profile.prod]
-                    inherit_from = "prod.toml"
+                    extends = "prod.toml"
                     sender = "0x0000000000000000000000000000000000000002"
                     "#,
             )?;

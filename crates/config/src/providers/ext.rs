@@ -84,15 +84,15 @@ impl TomlFileProvider {
         use std::collections::HashMap;
 
         #[derive(Deserialize, Default)]
-        struct InheritConfig {
+        struct ExtendConfig {
             #[serde(default)]
-            inherit_from: Option<PathBuf>,
+            extends: Option<PathBuf>,
         }
 
         #[derive(Deserialize, Default)]
         struct PartialConfig {
             #[serde(default)]
-            profile: Option<HashMap<String, InheritConfig>>,
+            profile: Option<HashMap<String, ExtendConfig>>,
         }
 
         let local_path = self.file();
@@ -127,7 +127,7 @@ impl TomlFileProvider {
                 let profile_str = selected_profile.to_string();
                 profiles.get(&profile_str)
             })
-            .and_then(|profile| profile.inherit_from.clone());
+            .and_then(|profile| profile.extends.clone());
 
         if let Some(relative_base_path) = inherit_from {
             let local_dir = local_path.parent().ok_or_else(|| {
@@ -175,11 +175,11 @@ impl TomlFileProvider {
                     let profile_str = selected_profile.to_string();
                     profiles.get(&profile_str)
                 })
-                .and_then(|profile| profile.inherit_from.as_ref());
+                .and_then(|profile| profile.extends.as_ref());
 
             if base_inherit_from.is_some() {
                 return Err(Error::custom(format!(
-                    "Nested inheritance is not allowed. Base file '{}' cannot have an 'inherit_from' field in profile '{}'.",
+                    "Nested inheritance is not allowed. Base file '{}' cannot have an 'extends' field in profile '{}'.",
                     base_path.display(),
                     selected_profile
                 )));
