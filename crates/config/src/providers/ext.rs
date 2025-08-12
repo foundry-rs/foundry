@@ -80,34 +80,6 @@ impl TomlFileProvider {
     }
 
     /// Reads and processes the TOML configuration file, handling inheritance if configured.
-    ///
-    /// This function performs the following steps:
-    /// 1. Loads the TOML file (from env var or default path)
-    /// 2. Checks if the current profile has an `extends` field
-    /// 3. If inheritance is configured:
-    ///    - Resolves the base config file path relative to the current config
-    ///    - Validates that the base file exists and isn't self-referential
-    ///    - Ensures no nested inheritance (base files cannot have `extends`)
-    ///    - Merges base and local configurations using `admerge` strategy
-    /// 4. Returns the final configuration data
-    ///
-    /// # Inheritance Behavior
-    ///
-    /// When a profile specifies `extends = "path/to/base.toml"`:
-    /// - The base configuration is loaded first
-    /// - Local configuration is applied on top using `admerge`:
-    ///   - Arrays are concatenated (base + local)
-    ///   - Other values are replaced (local overrides base)
-    /// - The `extends` field itself is preserved in the final config
-    ///
-    /// # Error Conditions
-    ///
-    /// Returns an error if:
-    /// - Config file specified in env var doesn't exist
-    /// - Base config file doesn't exist or isn't a file
-    /// - Config attempts to inherit from itself
-    /// - Base config also has an `extends` field (nested inheritance)
-    /// - TOML parsing fails for either file
     fn read(&self) -> Result<Map<Profile, Dict>, Error> {
         use serde::de::Error as _;
 
