@@ -184,10 +184,10 @@ impl ConsoleFmt for String {
         match spec {
             FormatSpec::String => self.clone(),
             FormatSpec::Object => format!("'{}'", self.clone()),
-            FormatSpec::Number |
-            FormatSpec::Integer |
-            FormatSpec::Exponential(_) |
-            FormatSpec::Hexadecimal => Self::from("NaN"),
+            FormatSpec::Number
+            | FormatSpec::Integer
+            | FormatSpec::Exponential(_)
+            | FormatSpec::Hexadecimal => Self::from("NaN"),
         }
     }
 }
@@ -410,7 +410,7 @@ fn format_spec<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::B256;
+    use alloy_primitives::{B256, address};
     use foundry_macros::ConsoleFmt;
     use std::str::FromStr;
 
@@ -453,7 +453,7 @@ mod tests {
         p_3: U256,
     }
 
-    #[allow(unused)]
+    #[expect(unused)]
     #[derive(Clone, Debug, ConsoleFmt)]
     enum Logs {
         Log1(Log1),
@@ -502,7 +502,7 @@ mod tests {
             fmt_1("%o", &b32)
         );
 
-        let addr = Address::from_str("0xdEADBEeF00000000000000000000000000000000").unwrap();
+        let addr = address!("0xdEADBEeF00000000000000000000000000000000");
         assert_eq!("0xdEADBEeF00000000000000000000000000000000", fmt_1("%s", &addr));
         assert_eq!("NaN", fmt_1("%d", &addr));
         assert_eq!("NaN", fmt_1("%i", &addr));
@@ -582,7 +582,7 @@ mod tests {
 
         let log3 = Log3 {
             p_0: String::from("foo %s %%s %s and %d foo %%"),
-            p_1: Address::from_str("0xdEADBEeF00000000000000000000000000000000").unwrap(),
+            p_1: address!("0xdEADBEeF00000000000000000000000000000000"),
             p_2: true,
             p_3: U256::from(21),
         };

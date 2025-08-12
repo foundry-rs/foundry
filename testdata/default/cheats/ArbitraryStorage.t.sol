@@ -123,3 +123,33 @@ contract SymbolicStorageWithSeedTest is DSTest {
         assertEq(uint256(storage_value), 0);
     }
 }
+
+// <https://github.com/foundry-rs/foundry/issues/10084>
+contract ArbitraryStorageOverwriteWithSeedTest is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+    uint256 _value;
+
+    function testArbitraryStorageFalse(uint256 value) public {
+        _value = value;
+        vm.setArbitraryStorage(address(this), false);
+        assertEq(_value, value);
+    }
+
+    function testArbitraryStorageTrue(uint256 value) public {
+        _value = value;
+        vm.setArbitraryStorage(address(this), true);
+        assertTrue(_value != value);
+    }
+
+    function testArbitraryStorageFalse_setAfter(uint256 value) public {
+        vm.setArbitraryStorage(address(this), false);
+        _value = value;
+        assertEq(_value, value);
+    }
+
+    function testArbitraryStorageTrue_setAfter(uint256 value) public {
+        vm.setArbitraryStorage(address(this), true);
+        _value = value;
+        assertEq(_value, value);
+    }
+}

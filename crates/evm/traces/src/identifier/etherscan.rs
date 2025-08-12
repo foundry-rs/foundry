@@ -1,4 +1,4 @@
-use super::{AddressIdentity, TraceIdentifier};
+use super::{IdentifiedAddress, TraceIdentifier};
 use crate::debug::ContractSources;
 use alloy_primitives::Address;
 use foundry_block_explorers::{
@@ -8,17 +8,18 @@ use foundry_block_explorers::{
 use foundry_common::compile::etherscan_project;
 use foundry_config::{Chain, Config};
 use futures::{
-    future::{join_all, Future},
+    future::join_all,
     stream::{FuturesUnordered, Stream, StreamExt},
     task::{Context, Poll},
 };
+use revm_inspectors::tracing::types::CallTraceNode;
 use std::{
     borrow::Cow,
     collections::BTreeMap,
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
 use tokio::time::{Duration, Interval};
@@ -92,19 +93,31 @@ impl EtherscanIdentifier {
 
         Ok(sources)
     }
+
+    fn identify_from_metadata(
+        &self,
+        address: Address,
+        metadata: &Metadata,
+    ) -> IdentifiedAddress<'static> {
+        let label = metadata.contract_name.clone();
+        let abi = metadata.abi().ok().map(Cow::Owned);
+        IdentifiedAddress {
+            address,
+            label: Some(label.clone()),
+            contract: Some(label),
+            abi,
+            artifact_id: None,
+        }
+    }
 }
 
 impl TraceIdentifier for EtherscanIdentifier {
-    fn identify_addresses<'a, A>(&mut self, addresses: A) -> Vec<AddressIdentity<'_>>
-    where
-        A: Iterator<Item = (&'a Address, Option<&'a [u8]>, Option<&'a [u8]>)>,
-    {
-        trace!(target: "evm::traces", "identify {:?} addresses", addresses.size_hint().1);
-
-        if self.invalid_api_key.load(Ordering::Relaxed) {
-            // api key was marked as invalid
-            return Vec::new()
+    fn identify_addresses(&mut self, nodes: &[&CallTraceNode]) -> Vec<IdentifiedAddress<'_>> {
+        if self.invalid_api_key.load(Ordering::Relaxed) || nodes.is_empty() {
+            return Vec::new();
         }
+
+        trace!(target: "evm::traces::etherscan", "identify {} addresses", nodes.len());
 
         let mut identities = Vec::new();
         let mut fetcher = EtherscanFetcher::new(
@@ -114,39 +127,23 @@ impl TraceIdentifier for EtherscanIdentifier {
             Arc::clone(&self.invalid_api_key),
         );
 
-        for (addr, _, _) in addresses {
-            if let Some(metadata) = self.contracts.get(addr) {
-                let label = metadata.contract_name.clone();
-                let abi = metadata.abi().ok().map(Cow::Owned);
-
-                identities.push(AddressIdentity {
-                    address: *addr,
-                    label: Some(label.clone()),
-                    contract: Some(label),
-                    abi,
-                    artifact_id: None,
-                });
+        for &node in nodes {
+            let address = node.trace.address;
+            if let Some(metadata) = self.contracts.get(&address) {
+                identities.push(self.identify_from_metadata(address, metadata));
             } else {
-                fetcher.push(*addr);
+                fetcher.push(address);
             }
         }
 
         let fetched_identities = foundry_common::block_on(
             fetcher
                 .map(|(address, metadata)| {
-                    let label = metadata.contract_name.clone();
-                    let abi = metadata.abi().ok().map(Cow::Owned);
+                    let addr = self.identify_from_metadata(address, &metadata);
                     self.contracts.insert(address, metadata);
-
-                    AddressIdentity {
-                        address,
-                        label: Some(label.clone()),
-                        contract: Some(label),
-                        abi,
-                        artifact_id: None,
-                    }
+                    addr
                 })
-                .collect::<Vec<AddressIdentity<'_>>>(),
+                .collect::<Vec<IdentifiedAddress<'_>>>(),
         );
 
         identities.extend(fetched_identities);
@@ -219,11 +216,11 @@ impl Stream for EtherscanFetcher {
         let pin = self.get_mut();
 
         loop {
-            if let Some(mut backoff) = pin.backoff.take() {
-                if backoff.poll_tick(cx).is_pending() {
-                    pin.backoff = Some(backoff);
-                    return Poll::Pending
-                }
+            if let Some(mut backoff) = pin.backoff.take()
+                && backoff.poll_tick(cx).is_pending()
+            {
+                pin.backoff = Some(backoff);
+                return Poll::Pending;
             }
 
             pin.queue_next_reqs();
@@ -237,7 +234,7 @@ impl Stream for EtherscanFetcher {
                     match res {
                         Ok(mut metadata) => {
                             if let Some(item) = metadata.items.pop() {
-                                return Poll::Ready(Some((addr, item)))
+                                return Poll::Ready(Some((addr, item)));
                             }
                         }
                         Err(EtherscanError::RateLimitExceeded) => {
@@ -249,13 +246,13 @@ impl Stream for EtherscanFetcher {
                             warn!(target: "traces::etherscan", "invalid api key");
                             // mark key as invalid
                             pin.invalid_api_key.store(true, Ordering::Relaxed);
-                            return Poll::Ready(None)
+                            return Poll::Ready(None);
                         }
                         Err(EtherscanError::BlockedByCloudflare) => {
                             warn!(target: "traces::etherscan", "blocked by cloudflare");
                             // mark key as invalid
                             pin.invalid_api_key.store(true, Ordering::Relaxed);
-                            return Poll::Ready(None)
+                            return Poll::Ready(None);
                         }
                         Err(err) => {
                             warn!(target: "traces::etherscan", "could not get etherscan info: {:?}", err);
@@ -265,7 +262,7 @@ impl Stream for EtherscanFetcher {
             }
 
             if !made_progress_this_iter {
-                return Poll::Pending
+                return Poll::Pending;
             }
         }
     }

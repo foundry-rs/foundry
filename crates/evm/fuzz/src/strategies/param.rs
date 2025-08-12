@@ -2,7 +2,7 @@ use super::state::EvmFuzzState;
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{Address, B256, I256, U256};
 use proptest::prelude::*;
-use rand::{rngs::StdRng, SeedableRng};
+use rand::{SeedableRng, rngs::StdRng};
 
 /// The max length of arrays we fuzz for is 256.
 const MAX_ARRAY_LEN: usize = 256;
@@ -41,11 +41,11 @@ fn fuzz_param_inner(
     param: &DynSolType,
     mut fuzz_fixtures: Option<(&[DynSolValue], &str)>,
 ) -> BoxedStrategy<DynSolValue> {
-    if let Some((fixtures, name)) = fuzz_fixtures {
-        if !fixtures.iter().all(|f| f.matches(param)) {
-            error!("fixtures for {name:?} do not match type {param}");
-            fuzz_fixtures = None;
-        }
+    if let Some((fixtures, name)) = fuzz_fixtures
+        && !fixtures.iter().all(|f| f.matches(param))
+    {
+        error!("fixtures for {name:?} do not match type {param}");
+        fuzz_fixtures = None;
     }
     let fuzz_fixtures = fuzz_fixtures.map(|(f, _)| f);
 
@@ -135,9 +135,7 @@ pub fn fuzz_param_from_state(
             value()
                 .prop_map(move |value| {
                     let mut fuzzed_addr = Address::from_word(value);
-                    if !deployed_libs.contains(&fuzzed_addr) {
-                        DynSolValue::Address(fuzzed_addr)
-                    } else {
+                    if deployed_libs.contains(&fuzzed_addr) {
                         let mut rng = StdRng::seed_from_u64(0x1337); // use deterministic rng
 
                         // Do not use addresses of deployed libraries as fuzz input, instead return
@@ -151,9 +149,8 @@ pub fn fuzz_param_from_state(
                                 break;
                             }
                         }
-
-                        DynSolValue::Address(fuzzed_addr)
                     }
+                    DynSolValue::Address(fuzzed_addr)
                 })
                 .boxed()
         }
@@ -230,12 +227,12 @@ pub fn fuzz_param_from_state(
 #[cfg(test)]
 mod tests {
     use crate::{
-        strategies::{fuzz_calldata, fuzz_calldata_from_state, EvmFuzzState},
         FuzzFixtures,
+        strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state},
     };
     use foundry_common::abi::get_func;
     use foundry_config::FuzzDictionaryConfig;
-    use revm::db::{CacheDB, EmptyDB};
+    use revm::database::{CacheDB, EmptyDB};
 
     #[test]
     fn can_fuzz_array() {

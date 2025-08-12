@@ -1,21 +1,21 @@
 use crate::{
-    broadcast::BundledState, execute::LinkedState, multi_sequence::MultiChainSequence,
-    sequence::ScriptSequenceKind, ScriptArgs, ScriptConfig,
+    ScriptArgs, ScriptConfig, broadcast::BundledState, execute::LinkedState,
+    multi_sequence::MultiChainSequence, sequence::ScriptSequenceKind,
 };
-use alloy_primitives::{Bytes, B256};
+use alloy_primitives::{B256, Bytes};
 use alloy_provider::Provider;
 use eyre::{OptionExt, Result};
 use forge_script_sequence::ScriptSequence;
 use foundry_cheatcodes::Wallets;
 use foundry_common::{
-    compile::ProjectCompiler, provider::try_get_http_provider, ContractData, ContractsByArtifact,
+    ContractData, ContractsByArtifact, compile::ProjectCompiler, provider::try_get_http_provider,
 };
 use foundry_compilers::{
+    ArtifactId, ProjectCompileOutput,
     artifacts::{BytecodeObject, Libraries},
-    compilers::{multi::MultiCompilerLanguage, Language},
+    compilers::{Language, multi::MultiCompilerLanguage},
     info::ContractInfo,
     utils::source_files_iter,
-    ArtifactId, ProjectCompileOutput,
 };
 use foundry_evm::traces::debug::ContractSources;
 use foundry_linking::Linker;
@@ -182,7 +182,7 @@ impl PreprocessedState {
             }
         };
 
-        #[allow(clippy::redundant_clone)]
+        #[expect(clippy::redundant_clone)]
         let sources_to_compile = source_files_iter(
             project.paths.sources.as_path(),
             MultiCompilerLanguage::FILE_EXTENSIONS,
@@ -199,8 +199,8 @@ impl PreprocessedState {
                 if id.name != *name {
                     continue;
                 }
-            } else if contract.abi.as_ref().is_none_or(|abi| abi.is_empty()) ||
-                contract.bytecode.as_ref().is_none_or(|b| match &b.object {
+            } else if contract.abi.as_ref().is_none_or(|abi| abi.is_empty())
+                || contract.bytecode.as_ref().is_none_or(|b| match &b.object {
                     BytecodeObject::Bytecode(b) => b.is_empty(),
                     BytecodeObject::Unlinked(_) => false,
                 })
@@ -217,7 +217,9 @@ impl PreprocessedState {
                 let target_name = target.name.split('.').next().unwrap();
                 let id_name = id.name.split('.').next().unwrap();
                 if target_name != id_name {
-                    eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `--tc ContractName`")
+                    eyre::bail!(
+                        "Multiple contracts in the target path. Please specify the contract name with `--tc ContractName`"
+                    )
                 }
             }
             target_id = Some(id);
@@ -229,7 +231,7 @@ impl PreprocessedState {
             args,
             script_config,
             script_wallets,
-            build_data: BuildData { output, target, project_root: project.root().clone() },
+            build_data: BuildData { output, target, project_root: project.root().to_path_buf() },
         })
     }
 }

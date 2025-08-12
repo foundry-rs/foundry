@@ -1,23 +1,27 @@
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, Bytes, map::HashMap};
 use eyre::{Result, WrapErr};
-use foundry_common::{compile::ProjectCompiler, fs, shell, ContractsByArtifact, TestFunctionExt};
+use foundry_common::{
+    ContractsByArtifact, TestFunctionExt, compile::ProjectCompiler, fs, selectors::SelectorKind,
+    shell,
+};
 use foundry_compilers::{
+    Artifact, ArtifactId, ProjectCompileOutput,
     artifacts::{CompactBytecode, Settings},
     cache::{CacheEntry, CompilerCache},
     utils::read_json_file,
-    Artifact, ArtifactId, ProjectCompileOutput,
 };
-use foundry_config::{error::ExtractConfigError, figment::Figment, Chain, Config, NamedChain};
+use foundry_config::{Chain, Config, NamedChain, error::ExtractConfigError, figment::Figment};
 use foundry_debugger::Debugger;
 use foundry_evm::{
     executors::{DeployResult, EvmError, RawCallResult},
     opts::EvmOpts,
     traces::{
+        CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
         debug::{ContractSources, DebugTraceIdentifier},
         decode_trace_arena,
-        identifier::{CachedSignatures, SignaturesIdentifier, TraceIdentifiers},
-        render_trace_arena_inner, CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, Traces,
+        identifier::{SignaturesCache, SignaturesIdentifier, TraceIdentifiers},
+        render_trace_arena_inner,
     },
 };
 use std::{
@@ -45,14 +49,14 @@ pub fn remove_contract(
         }
     }) else {
         let mut err = format!("could not find artifact: `{name}`");
-        if let Some(suggestion) = super::did_you_mean(name, other).pop() {
-            if suggestion != name {
-                err = format!(
-                    r#"{err}
+        if let Some(suggestion) = super::did_you_mean(name, other).pop()
+            && suggestion != name
+        {
+            err = format!(
+                r#"{err}
 
         Did you mean `{suggestion}`?"#
-                );
-            }
+            );
         }
         eyre::bail!(err)
     };
@@ -80,8 +84,8 @@ pub fn get_cached_entry_by_name(
     let mut cached_entry = None;
     let mut alternatives = Vec::new();
 
-    for (abs_path, entry) in cache.files.iter() {
-        for (artifact_name, _) in entry.artifacts.iter() {
+    for (abs_path, entry) in &cache.files {
+        for artifact_name in entry.artifacts.keys() {
             if artifact_name == name {
                 if cached_entry.is_some() {
                     eyre::bail!(
@@ -113,10 +117,12 @@ pub fn get_cached_entry_by_name(
 
 /// Returns error if constructor has arguments.
 pub fn ensure_clean_constructor(abi: &JsonAbi) -> Result<()> {
-    if let Some(constructor) = &abi.constructor {
-        if !constructor.inputs.is_empty() {
-            eyre::bail!("Contract constructor should have no arguments. Add those arguments to  `run(...)` instead, and call it with `--sig run(...)`.");
-        }
+    if let Some(constructor) = &abi.constructor
+        && !constructor.inputs.is_empty()
+    {
+        eyre::bail!(
+            "Contract constructor should have no arguments. Add those arguments to  `run(...)` instead, and call it with `--sig run(...)`."
+        );
     }
     Ok(())
 }
@@ -124,7 +130,7 @@ pub fn ensure_clean_constructor(abi: &JsonAbi) -> Result<()> {
 pub fn needs_setup(abi: &JsonAbi) -> bool {
     let setup_fns: Vec<_> = abi.functions().filter(|func| func.name.is_setup()).collect();
 
-    for setup_fn in setup_fns.iter() {
+    for setup_fn in &setup_fns {
         if setup_fn.name != "setUp" {
             let _ = sh_warn!(
                 "Found invalid setup function \"{}\" did you mean \"setUp()\"?",
@@ -159,24 +165,25 @@ pub fn init_progress(len: u64, label: &str) -> indicatif::ProgressBar {
 /// True if the network calculates gas costs differently.
 pub fn has_different_gas_calc(chain_id: u64) -> bool {
     if let Some(chain) = Chain::from(chain_id).named() {
-        return chain.is_arbitrum() ||
-            matches!(
+        return chain.is_arbitrum()
+            || chain.is_elastic()
+            || matches!(
                 chain,
-                NamedChain::Acala |
-                    NamedChain::AcalaMandalaTestnet |
-                    NamedChain::AcalaTestnet |
-                    NamedChain::Etherlink |
-                    NamedChain::EtherlinkTestnet |
-                    NamedChain::Karura |
-                    NamedChain::KaruraTestnet |
-                    NamedChain::Mantle |
-                    NamedChain::MantleSepolia |
-                    NamedChain::MantleTestnet |
-                    NamedChain::Moonbase |
-                    NamedChain::Moonbeam |
-                    NamedChain::MoonbeamDev |
-                    NamedChain::Moonriver |
-                    NamedChain::Metis
+                NamedChain::Acala
+                    | NamedChain::AcalaMandalaTestnet
+                    | NamedChain::AcalaTestnet
+                    | NamedChain::Etherlink
+                    | NamedChain::EtherlinkTestnet
+                    | NamedChain::Karura
+                    | NamedChain::KaruraTestnet
+                    | NamedChain::Mantle
+                    | NamedChain::MantleSepolia
+                    | NamedChain::MantleTestnet
+                    | NamedChain::Moonbase
+                    | NamedChain::Moonbeam
+                    | NamedChain::MoonbeamDev
+                    | NamedChain::Moonriver
+                    | NamedChain::Metis
             );
     }
     false
@@ -326,14 +333,17 @@ impl TryFrom<Result<RawCallResult>> for TraceResult {
 }
 
 /// labels the traces, conditionally prints them or opens the debugger
+#[expect(clippy::too_many_arguments)]
 pub async fn handle_traces(
     mut result: TraceResult,
     config: &Config,
     chain: Option<Chain>,
+    contracts_bytecode: &HashMap<Address, Bytes>,
     labels: Vec<String>,
     with_local_artifacts: bool,
     debug: bool,
     decode_internal: bool,
+    disable_label: bool,
 ) -> Result<()> {
     let (known_contracts, mut sources) = if with_local_artifacts {
         let _ = sh_println!("Compiling project to generate artifacts");
@@ -353,10 +363,10 @@ pub async fn handle_traces(
     let labels = labels.iter().filter_map(|label_str| {
         let mut iter = label_str.split(':');
 
-        if let Some(addr) = iter.next() {
-            if let (Ok(address), Some(label)) = (Address::from_str(addr), iter.next()) {
-                return Some((address, label.to_string()));
-            }
+        if let Some(addr) = iter.next()
+            && let (Ok(address), Some(label)) = (Address::from_str(addr), iter.next())
+        {
+            return Some((address, label.to_string()));
         }
         None
     });
@@ -364,14 +374,12 @@ pub async fn handle_traces(
 
     let mut builder = CallTraceDecoderBuilder::new()
         .with_labels(labels.chain(config_labels))
-        .with_signature_identifier(SignaturesIdentifier::new(
-            Config::foundry_cache_dir(),
-            config.offline,
-        )?);
+        .with_signature_identifier(SignaturesIdentifier::from_config(config)?)
+        .with_label_disabled(disable_label);
     let mut identifier = TraceIdentifiers::new().with_etherscan(config, chain)?;
     if let Some(contracts) = &known_contracts {
         builder = builder.with_known_contracts(contracts);
-        identifier = identifier.with_local(contracts);
+        identifier = identifier.with_local_and_bytecodes(contracts, contracts_bytecode);
     }
 
     let mut decoder = builder.build();
@@ -392,7 +400,7 @@ pub async fn handle_traces(
                 .sources(sources)
                 .build();
             debugger.try_run_tui()?;
-            return Ok(())
+            return Ok(());
         }
 
         decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources));
@@ -416,7 +424,7 @@ pub async fn print_traces(
     }
 
     for (_, arena) in traces {
-        decode_trace_arena(arena, decoder).await?;
+        decode_trace_arena(arena, decoder).await;
         sh_println!("{}", render_trace_arena_inner(arena, verbose, state_changes))?;
     }
 
@@ -437,34 +445,24 @@ pub async fn print_traces(
 
 /// Traverse the artifacts in the project to generate local signatures and merge them into the cache
 /// file.
-pub fn cache_local_signatures(output: &ProjectCompileOutput, cache_path: PathBuf) -> Result<()> {
-    let path = cache_path.join("signatures");
-    let mut cached_signatures = CachedSignatures::load(cache_path);
-    output.artifacts().for_each(|(_, artifact)| {
+pub fn cache_local_signatures(output: &ProjectCompileOutput) -> Result<()> {
+    let Some(cache_dir) = Config::foundry_cache_dir() else {
+        eyre::bail!("Failed to get `cache_dir` to generate local signatures.");
+    };
+    let path = cache_dir.join("signatures");
+    let mut signatures = SignaturesCache::load(&path);
+    for (_, artifact) in output.artifacts() {
         if let Some(abi) = &artifact.abi {
-            for func in abi.functions() {
-                cached_signatures.functions.insert(func.selector().to_string(), func.signature());
-            }
-            for event in abi.events() {
-                cached_signatures
-                    .events
-                    .insert(event.selector().to_string(), event.full_signature());
-            }
-            for error in abi.errors() {
-                cached_signatures.errors.insert(error.selector().to_string(), error.signature());
-            }
-            // External libraries doesn't have functions included in abi, but `methodIdentifiers`.
-            if let Some(method_identifiers) = &artifact.method_identifiers {
-                method_identifiers.iter().for_each(|(signature, selector)| {
-                    cached_signatures
-                        .functions
-                        .entry(format!("0x{selector}"))
-                        .or_insert(signature.to_string());
-                });
-            }
+            signatures.extend_from_abi(abi);
         }
-    });
 
-    fs::write_json_file(&path, &cached_signatures)?;
+        // External libraries don't have functions included in the ABI, but `methodIdentifiers`.
+        if let Some(method_identifiers) = &artifact.method_identifiers {
+            signatures.extend(method_identifiers.iter().filter_map(|(signature, selector)| {
+                Some((SelectorKind::Function(selector.parse().ok()?), signature.clone()))
+            }));
+        }
+    }
+    signatures.save(&path);
     Ok(())
 }

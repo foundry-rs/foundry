@@ -1,8 +1,8 @@
 use super::{fuzz_calldata, fuzz_param_from_state};
 use crate::{
-    invariant::{BasicTxDetails, CallDetails, FuzzRunIdentifiedContracts, SenderFilters},
-    strategies::{fuzz_calldata_from_state, fuzz_param, EvmFuzzState},
     FuzzFixtures,
+    invariant::{BasicTxDetails, CallDetails, FuzzRunIdentifiedContracts, SenderFilters},
+    strategies::{EvmFuzzState, fuzz_calldata_from_state, fuzz_param},
 };
 use alloy_json_abi::Function;
 use alloy_primitives::Address;
@@ -34,7 +34,7 @@ pub fn override_call_strat(
                 // Choose a random contract if target selected by lazy strategy is not in fuzz run
                 // identified contracts. This can happen when contract is created in `setUp` call
                 // but is not included in targetContracts.
-                contracts.values().choose(&mut rand::thread_rng()).unwrap()
+                contracts.values().choose(&mut rand::rng()).unwrap()
             });
             let fuzzed_functions: Vec<_> = contract.abi_fuzzed_functions().cloned().collect();
             any::<prop::sample::Index>().prop_map(move |index| index.get(&fuzzed_functions).clone())
@@ -88,7 +88,7 @@ fn select_random_sender(
     fuzz_state: &EvmFuzzState,
     senders: Rc<SenderFilters>,
     dictionary_weight: u32,
-) -> impl Strategy<Value = Address> {
+) -> impl Strategy<Value = Address> + use<> {
     if !senders.targeted.is_empty() {
         any::<prop::sample::Index>().prop_map(move |index| *index.get(&senders.targeted)).boxed()
     } else {
@@ -111,11 +111,10 @@ pub fn fuzz_contract_with_calldata(
     fuzz_fixtures: &FuzzFixtures,
     target: Address,
     func: Function,
-) -> impl Strategy<Value = CallDetails> {
+) -> impl Strategy<Value = CallDetails> + use<> {
     // We need to compose all the strategies generated for each parameter in all possible
     // combinations.
     // `prop_oneof!` / `TupleUnion` `Arc`s for cheap cloning.
-    #[allow(clippy::arc_with_non_send_sync)]
     prop_oneof![
         60 => fuzz_calldata(func.clone(), fuzz_fixtures),
         40 => fuzz_calldata_from_state(func, fuzz_state),

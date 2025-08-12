@@ -1,10 +1,10 @@
 //! Debugger context and event handler implementation.
 
-use crate::{debugger::DebuggerContext, DebugNode, ExitReason};
-use alloy_primitives::{hex, Address};
+use crate::{DebugNode, ExitReason, debugger::DebuggerContext};
+use alloy_primitives::{Address, hex};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use foundry_evm_core::buffer::BufferKind;
-use revm::interpreter::OpCode;
+use revm::bytecode::opcode::OpCode;
 use revm_inspectors::tracing::types::{CallKind, CallTraceStep};
 use std::ops::ControlFlow;
 
@@ -124,11 +124,12 @@ impl TUIContext<'_> {
 
     fn handle_key_event(&mut self, event: KeyEvent) -> ControlFlow<ExitReason> {
         // Breakpoints
-        if let KeyCode::Char(c) = event.code {
-            if c.is_alphabetic() && self.key_buffer.starts_with('\'') {
-                self.handle_breakpoint(c);
-                return ControlFlow::Continue(());
-            }
+        if let KeyCode::Char(c) = event.code
+            && c.is_alphabetic()
+            && self.key_buffer.starts_with('\'')
+        {
+            self.handle_breakpoint(c);
+            return ControlFlow::Continue(());
         }
 
         let control = event.modifiers.contains(KeyModifiers::CONTROL);
@@ -262,12 +263,12 @@ impl TUIContext<'_> {
         // this pc)
         if let Some((caller, pc)) = self.debugger_context.breakpoints.get(&c) {
             for (i, node) in self.debug_arena().iter().enumerate() {
-                if node.address == *caller {
-                    if let Some(step) = node.steps.iter().position(|step| step.pc == *pc) {
-                        self.draw_memory.inner_call_index = i;
-                        self.current_step = step;
-                        break;
-                    }
+                if node.address == *caller
+                    && let Some(step) = node.steps.iter().position(|step| step.pc == *pc)
+                {
+                    self.draw_memory.inner_call_index = i;
+                    self.current_step = step;
+                    break;
                 }
             }
         }
@@ -330,25 +331,11 @@ fn pretty_opcode(step: &CallTraceStep) -> String {
 }
 
 fn is_jump(step: &CallTraceStep, prev: &CallTraceStep) -> bool {
-    if !matches!(
-        prev.op,
-        OpCode::JUMP |
-            OpCode::JUMPI |
-            OpCode::JUMPF |
-            OpCode::RJUMP |
-            OpCode::RJUMPI |
-            OpCode::RJUMPV |
-            OpCode::CALLF |
-            OpCode::RETF
-    ) {
-        return false
+    if !matches!(prev.op, OpCode::JUMP | OpCode::JUMPI) {
+        return false;
     }
 
     let immediate_len = prev.immediate_bytes.as_ref().map_or(0, |b| b.len());
 
-    if step.pc != prev.pc + 1 + immediate_len {
-        true
-    } else {
-        step.code_section_idx != prev.code_section_idx
-    }
+    step.pc != prev.pc + 1 + immediate_len
 }

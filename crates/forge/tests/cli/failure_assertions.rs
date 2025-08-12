@@ -50,8 +50,8 @@ forgetest!(expect_revert_tests_should_fail, |prj, cmd| {
 [FAIL: next call did not revert as expected] testShouldFailExpectRevertDidNotRevert() ([GAS])
 [FAIL: Error != expected error: but reverts with this message != should revert with this message] testShouldFailExpectRevertErrorDoesNotMatch() ([GAS])
 [FAIL: next call did not revert as expected] testShouldFailRevertNotOnImmediateNextCall() ([GAS])
-[FAIL: revert: some message] testShouldFailexpectCheatcodeRevertForCreate() ([GAS])
-[FAIL: revert: revert] testShouldFailexpectCheatcodeRevertForExtCall() ([GAS])
+[FAIL: some message] testShouldFailexpectCheatcodeRevertForCreate() ([GAS])
+[FAIL: revert] testShouldFailexpectCheatcodeRevertForExtCall() ([GAS])
 Suite result: FAILED. 0 passed; 7 failed; 0 skipped; [ELAPSED]
 ...
 "#,
@@ -75,12 +75,13 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
         .stdout_eq(
             r#"No files changed, compilation skipped
 ...
+[FAIL: call reverted with 'my cool error' when it was expected not to revert] testShouldFailIfExpectRevertWrongString() ([GAS])
 [FAIL: call reverted when it was expected not to revert] testShouldFailNoRevert() ([GAS])
 [FAIL: expected 0 reverts with reason: revert, but got one] testShouldFailNoRevertSpecific() ([GAS])
-[FAIL: Error != expected error: second-revert != revert] testShouldFailReverCountSpecifc() ([GAS])
 [FAIL: next call did not revert as expected] testShouldFailRevertCountAny() ([GAS])
 [FAIL: Error != expected error: wrong revert != called a function and then reverted] testShouldFailRevertCountCallsThenReverts() ([GAS])
-Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
+[FAIL: Error != expected error: second-revert != revert] testShouldFailRevertCountSpecific() ([GAS])
+Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#,
         );
@@ -90,11 +91,13 @@ Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
         .assert_failure()
         .stdout_eq(r#"No files changed, compilation skipped
 ...
+[FAIL: call reverted with 'revert' from 0x2e234DAe75C793f67A35089C9d99245E1C58470b, but expected 0 reverts from 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f] testNoRevertWithWrongReverter() ([GAS])
+[FAIL: call reverted with 'revert2' from 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f, but expected 0 reverts with reason 'revert' from 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f] testNoReverterCountWithData() ([GAS])
 [FAIL: expected 0 reverts from address: 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f, but got one] testShouldFailNoRevertWithReverter() ([GAS])
 [FAIL: Reverter != expected reverter: 0x2e234DAe75C793f67A35089C9d99245E1C58470b != 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f] testShouldFailRevertCountWithReverter() ([GAS])
 [FAIL: Error != expected error: wrong revert != revert] testShouldFailReverterCountWithWrongData() ([GAS])
 [FAIL: Reverter != expected reverter: 0x2e234DAe75C793f67A35089C9d99245E1C58470b != 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f] testShouldFailWrongReverterCountWithData() ([GAS])
-Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#);
 });
@@ -188,29 +191,28 @@ forgetest!(expect_emit_tests_should_fail, |prj, cmd| {
 
     prj.add_source("ExpectEmitFailures.sol", expect_emit_failure_tests).unwrap();
 
-    cmd.forge_fuse().args(["test", "--mc", "ExpectEmitFailureTest"]).assert_failure().stdout_eq(
-        r#"[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
+    cmd.forge_fuse().arg("build").assert_success();
+
+    cmd.forge_fuse().args(["test", "--mc", "ExpectEmitFailureTest"]).assert_failure().stdout_eq(str![[r#"No files changed, compilation skipped
 ...
-[FAIL: log != expected log] testShouldFailCanMatchConsecutiveEvents() ([GAS])
-[FAIL: log != expected log] testShouldFailDifferentIndexedParameters() ([GAS])
+[FAIL: E != expected A] testShouldFailCanMatchConsecutiveEvents() ([GAS])
+[FAIL: log != expected SomethingElse] testShouldFailDifferentIndexedParameters() ([GAS])
 [FAIL: log != expected log] testShouldFailEmitOnlyAppliesToNextCall() ([GAS])
 [FAIL: next call did not revert as expected] testShouldFailEmitWindowWithRevertDisallowed() ([GAS])
-[FAIL: log != expected log] testShouldFailEventsOnTwoCalls() ([GAS])
-[FAIL: log != expected log; counterexample: calldata=[..] args=[..]] testShouldFailExpectEmit(bool,bool,bool,bool,uint128,uint128,uint128,uint128) (runs: 0, [AVG_GAS])
-[FAIL: log != expected log] testShouldFailExpectEmitAddress() ([GAS])
-[FAIL: log != expected log] testShouldFailExpectEmitAddressWithArgs() ([GAS])
-[FAIL: log != expected log] testShouldFailExpectEmitCanMatchWithoutExactOrder() ([GAS])
+[FAIL: E != expected A] testShouldFailEventsOnTwoCalls() ([GAS])
+[FAIL: Something param mismatch at [..]: expected=[..], got=[..]; counterexample: calldata=[..] args=[..]] testShouldFailExpectEmit(bool,bool,bool,bool,uint128,uint128,uint128,uint128) (runs: 0, [AVG_GAS])
+[FAIL: log emitter mismatch: expected=[..], got=[..]] testShouldFailExpectEmitAddress() ([GAS])
+[FAIL: log emitter mismatch: expected=[..], got=[..]] testShouldFailExpectEmitAddressWithArgs() ([GAS])
+[FAIL: Something != expected SomethingElse] testShouldFailExpectEmitCanMatchWithoutExactOrder() ([GAS])
 [FAIL: expected an emit, but no logs were emitted afterwards. you might have mismatched events or not enough events were emitted] testShouldFailExpectEmitDanglingNoReference() ([GAS])
 [FAIL: expected an emit, but no logs were emitted afterwards. you might have mismatched events or not enough events were emitted] testShouldFailExpectEmitDanglingWithReference() ([GAS])
-[FAIL: log != expected log; counterexample: calldata=[..] args=[..]] testShouldFailExpectEmitNested(bool,bool,bool,bool,uint128,uint128,uint128,uint128) (runs: 0, [AVG_GAS])
+[FAIL: Something param mismatch at [..]: expected=[..], got=[..]; counterexample: calldata=[..] args=[..]] testShouldFailExpectEmitNested(bool,bool,bool,bool,uint128,uint128,uint128,uint128) (runs: 0, [AVG_GAS])
 [FAIL: log != expected log] testShouldFailLowLevelWithoutEmit() ([GAS])
 [FAIL: log != expected log] testShouldFailMatchRepeatedEventsOutOfOrder() ([GAS])
 [FAIL: log != expected log] testShouldFailNoEmitDirectlyOnNextCall() ([GAS])
 Suite result: FAILED. 0 passed; 15 failed; 0 skipped; [ELAPSED]
 ...
-"#,
-    );
+"#]]);
 
     cmd.forge_fuse()
         .args(["test", "--mc", "ExpectEmitCountFailureTest"])
@@ -220,13 +222,46 @@ Suite result: FAILED. 0 passed; 15 failed; 0 skipped; [ELAPSED]
 ...
 [FAIL: log != expected log] testShouldFailCountEmitsFromAddress() ([GAS])
 [FAIL: log != expected log] testShouldFailCountLessEmits() ([GAS])
-[FAIL: log != expected log] testShouldFailEmitSomethingElse() ([GAS])
+[FAIL: log != expected Something] testShouldFailEmitSomethingElse() ([GAS])
 [FAIL: log emitted 1 times, expected 0] testShouldFailNoEmit() ([GAS])
 [FAIL: log emitted 1 times, expected 0] testShouldFailNoEmitFromAddress() ([GAS])
 Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
 ...
 "#,
         );
+});
+
+forgetest!(expect_emit_params_tests_should_fail, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.insert_vm();
+
+    let expect_emit_failure_src = include_str!("../fixtures/ExpectEmitParamHarness.sol");
+    let expect_emit_failure_tests = include_str!("../fixtures/ExpectEmitParamFailures.t.sol");
+
+    prj.add_source("ExpectEmitParamHarness.sol", expect_emit_failure_src).unwrap();
+    prj.add_source("ExpectEmitParamFailures.sol", expect_emit_failure_tests).unwrap();
+
+    cmd.forge_fuse().arg("build").assert_success();
+
+    cmd.forge_fuse().args(["test", "--mc", "ExpectEmitParamFailures"]).assert_failure().stdout_eq(
+        r#"No files changed, compilation skipped
+...
+[PASS] testSelectiveChecks() ([GAS])
+Suite result: FAILED. 1 passed; 8 failed; 0 skipped; [ELAPSED]
+...
+[FAIL: anonymous log mismatch at param 0: expected=0x0000000000000000000000000000000000000000000000000000000000000064, got=0x00000000000000000000000000000000000000000000000000000000000003e7] testAnonymousEventMismatch() ([GAS])
+[FAIL: ComplexEvent != expected SimpleEvent] testCompletelyDifferentEvent() ([GAS])
+[FAIL: SimpleEvent param mismatch at b: expected=200, got=999] testIndexedParamMismatch() ([GAS])
+[FAIL: ManyParams param mismatch at a: expected=100, got=111, b: expected=200, got=222, c: expected=300, got=333, d: expected=400, got=444, e: expected=500, got=555] testManyParameterMismatches() ([GAS])
+[FAIL: SimpleEvent param mismatch at c: expected=300, got=999] testMixedEventNonIndexedMismatch() ([GAS])
+[FAIL: SimpleEvent param mismatch at a: expected=100, got=999, b: expected=200, got=888, c: expected=300, got=777] testMultipleMismatches() ([GAS])
+[FAIL: SimpleEvent param mismatch at c: expected=300, got=999] testNonIndexedParamMismatch() ([GAS])
+[FAIL: MixedEventNumbering param mismatch at param2: expected=300, got=999] testParameterNumbering() ([GAS])
+
+Encountered a total of 8 failing tests, 1 tests succeeded
+...
+"#,
+    );
 });
 
 forgetest!(mem_safety_test_should_fail, |prj, cmd| {
@@ -241,7 +276,7 @@ forgetest!(mem_safety_test_should_fail, |prj, cmd| {
         r#"[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 ...
-[FAIL: revert: Expected call to fail] testShouldFailExpectSafeMemoryCall() ([GAS])
+[FAIL: Expected call to fail] testShouldFailExpectSafeMemoryCall() ([GAS])
 [FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_CALL() ([GAS])
 [FAIL: memory write at offset 0x100 of size 0x60 not allowed; safe range: (0x00, 0x60] U (0x80, 0x100]] testShouldFailExpectSafeMemory_CALLCODE() ([GAS])
 [FAIL: memory write at offset 0xA0 of size 0x20 not allowed; safe range: (0x00, 0x60] U (0x80, 0xA0]; counterexample: calldata=[..] args=[..]] testShouldFailExpectSafeMemory_CALLDATACOPY(uint256) (runs: 0, [AVG_GAS])
@@ -339,7 +374,7 @@ contract FailingSetupTest is DSTest {
         r#"[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 ...
-[FAIL: revert: setup failed predictably] setUp() ([GAS])
+[FAIL: setup failed predictably] setUp() ([GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#

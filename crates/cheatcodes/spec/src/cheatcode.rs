@@ -86,6 +86,12 @@ pub enum Group {
     ///
     /// Safety: safe.
     Scripting,
+    /// Cheatcodes that interact with the program's forking configuration.
+    ///
+    /// Examples: `forkChains`, `forkChainRpcUrl`, `forkUint`.
+    ///
+    /// Safety: safe.
+    Forking,
     /// Cheatcodes that interact with the OS or filesystem.
     ///
     /// Examples: `ffi`, `projectRoot`, `writeFile`.
@@ -139,14 +145,15 @@ impl Group {
     pub const fn safety(self) -> Option<Safety> {
         match self {
             Self::Evm | Self::Testing => None,
-            Self::Scripting |
-            Self::Filesystem |
-            Self::Environment |
-            Self::String |
-            Self::Json |
-            Self::Toml |
-            Self::Crypto |
-            Self::Utilities => Some(Safety::Safe),
+            Self::Scripting
+            | Self::Forking
+            | Self::Filesystem
+            | Self::Environment
+            | Self::String
+            | Self::Json
+            | Self::Toml
+            | Self::Crypto
+            | Self::Utilities => Some(Safety::Safe),
         }
     }
 
@@ -157,6 +164,7 @@ impl Group {
             Self::Evm => "evm",
             Self::Testing => "testing",
             Self::Scripting => "scripting",
+            Self::Forking => "forking",
             Self::Filesystem => "filesystem",
             Self::Environment => "environment",
             Self::String => "string",

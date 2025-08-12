@@ -1,8 +1,8 @@
-use crate::receipts::{check_tx_status, format_receipt, TxStatus};
+use crate::receipts::{TxStatus, check_tx_status, format_receipt};
 use alloy_chains::Chain;
 use alloy_primitives::{
-    map::{B256HashMap, HashMap},
     B256,
+    map::{B256HashMap, HashMap},
 };
 use eyre::Result;
 use forge_script_sequence::ScriptSequence;
@@ -68,7 +68,7 @@ impl SequenceProgressState {
             Self { top_spinner, txs, receipts, tx_spinners: Default::default(), multi }
         };
 
-        for tx_hash in sequence.pending.iter() {
+        for tx_hash in &sequence.pending {
             state.tx_sent(*tx_hash);
         }
 
@@ -134,7 +134,7 @@ impl SequenceProgressState {
     }
 }
 
-/// Clonable wrapper around [SequenceProgressState].
+/// Cloneable wrapper around [SequenceProgressState].
 #[derive(Debug, Clone)]
 pub struct SequenceProgress {
     pub inner: Arc<RwLock<SequenceProgressState>>,

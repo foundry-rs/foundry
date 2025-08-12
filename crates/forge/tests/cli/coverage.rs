@@ -1,9 +1,14 @@
 use foundry_common::fs::{self, files_with_ext};
 use foundry_test_utils::{
-    snapbox::{Data, IntoData},
     TestCommand, TestProject,
+    snapbox::{Data, IntoData},
 };
 use std::path::Path;
+
+#[track_caller]
+fn assert_lcov(cmd: &mut TestCommand, data: impl IntoData) {
+    cmd.args(["--report=lcov", "--report-file"]).assert_file(data.into_data());
+}
 
 fn basic_base(prj: TestProject, mut cmd: TestCommand) {
     cmd.args(["coverage", "--report=lcov", "--report=summary"]).assert_success().stdout_eq(str![[
@@ -1753,7 +1758,226 @@ contract AContractTest is DSTest {
     assert!(files.is_empty());
 });
 
-#[track_caller]
-fn assert_lcov(cmd: &mut TestCommand, data: impl IntoData) {
-    cmd.args(["--report=lcov", "--report-file"]).assert_file(data.into_data());
+// <https://github.com/foundry-rs/foundry/issues/10172>
+forgetest!(constructor_with_args, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "ArrayCondition.sol",
+        r#"
+contract ArrayCondition {
+    uint8 public constant MAX_SIZE = 32;
+    error TooLarge();
+    error EmptyArray();
+    // Storage variable to ensure the constructor does something
+    uint256 private _arrayLength;
+
+    constructor(uint256[] memory values) {
+        // Check for empty array
+        if (values.length == 0) {
+            revert EmptyArray();
+        }
+
+        if (values.length > MAX_SIZE) {
+            revert TooLarge();
+        }
+
+        // Store the array length
+        _arrayLength = values.length;
+    }
+
+    function getArrayLength() external view returns (uint256) {
+        return _arrayLength;
+    }
 }
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "ArrayConditionTest.sol",
+        r#"
+import "./test.sol";
+import {ArrayCondition} from "./ArrayCondition.sol";
+
+interface Vm {
+    function expectRevert(bytes4 revertData) external;
+}
+
+contract ArrayConditionTest is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
+    function testValidSize() public {
+        uint256[] memory values = new uint256[](10);
+        ArrayCondition condition = new ArrayCondition(values);
+        assertEq(condition.getArrayLength(), 10);
+    }
+
+    // Test with maximum array size (should NOT revert)
+    function testMaxSize() public {
+        uint256[] memory values = new uint256[](32);
+        ArrayCondition condition = new ArrayCondition(values);
+        assertEq(condition.getArrayLength(), 32);
+    }
+
+    // Test with too large array size (should revert)
+    function testTooLarge() public {
+        uint256[] memory values = new uint256[](33);
+        vm.expectRevert(ArrayCondition.TooLarge.selector);
+        new ArrayCondition(values);
+    }
+
+    // Test with empty array (should revert)
+    function testEmptyArray() public {
+        uint256[] memory values = new uint256[](0);
+        vm.expectRevert(ArrayCondition.EmptyArray.selector);
+        new ArrayCondition(values);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.arg("coverage").assert_success().stdout_eq(str![[r#"
+...
+╭------------------------+---------------+---------------+---------------+---------------╮
+| File                   | % Lines       | % Statements  | % Branches    | % Funcs       |
++========================================================================================+
+| src/ArrayCondition.sol | 100.00% (8/8) | 100.00% (6/6) | 100.00% (2/2) | 100.00% (2/2) |
+|------------------------+---------------+---------------+---------------+---------------|
+| Total                  | 100.00% (8/8) | 100.00% (6/6) | 100.00% (2/2) | 100.00% (2/2) |
+╰------------------------+---------------+---------------+---------------+---------------╯
+...
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10422>
+// Test that line hits are properly recorded in lcov report.
+forgetest!(do_while_lcov, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number = 21;
+
+    function increment() public {
+        uint256 i = 0;
+        do {
+            number++;
+            if (number > 20) {
+                number -= 2;
+            }
+        } while (++i < 10);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "Counter.t.sol",
+        r#"
+import "./test.sol";
+import "./Counter.sol";
+
+contract CounterTest is DSTest {
+    function test_do_while() public {
+        Counter counter = new Counter();
+        counter.increment();
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/Counter.sol
+DA:7,1
+FN:7,Counter.increment
+FNDA:1,Counter.increment
+DA:8,1
+DA:14,10
+DA:10,10
+DA:11,10
+BRDA:11,0,0,6
+DA:12,6
+FNF:1
+FNH:1
+LF:3
+LH:3
+BRF:1
+BRH:1
+end_of_record
+
+"#]],
+    );
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11183>
+// Test that overridden functions are disambiguated in the LCOV report.
+forgetest!(disambiguate_functions, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number++;
+    }
+    function increment(uint256 amount) public {
+        number += amount;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    prj.add_source(
+        "Counter.t.sol",
+        r#"
+import "./test.sol";
+import "./Counter.sol";
+
+contract CounterTest is DSTest {
+    function test_overridden() public {
+        Counter counter = new Counter();
+        counter.increment();
+        counter.increment(1);
+        counter.increment(2);
+        counter.increment(3);
+        assertEq(counter.number(), 7);
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    assert_lcov(
+        cmd.arg("coverage"),
+        str![[r#"
+TN:
+SF:src/Counter.sol
+DA:7,1
+FN:7,Counter.increment.0
+FNDA:1,Counter.increment.0
+DA:8,1
+DA:10,3
+FN:10,Counter.increment.1
+FNDA:3,Counter.increment.1
+DA:11,3
+FNF:2
+FNH:2
+LF:4
+LH:4
+BRF:0
+BRH:0
+end_of_record
+
+"#]],
+    );
+});

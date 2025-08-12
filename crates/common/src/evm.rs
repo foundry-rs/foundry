@@ -1,16 +1,15 @@
 //! CLI arguments for configuring the EVM settings.
 
-use alloy_primitives::{map::HashMap, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, map::HashMap};
 use clap::Parser;
 use eyre::ContextCompat;
 use foundry_config::{
+    Chain, Config,
     figment::{
-        self,
+        self, Metadata, Profile, Provider,
         error::Kind::InvalidType,
         value::{Dict, Map, Value},
-        Metadata, Profile, Provider,
     },
-    Chain, Config,
 };
 use serde::Serialize;
 
@@ -280,7 +279,6 @@ impl EvmArgs {
 
 /// We have to serialize chain IDs and not names because when extracting an EVM `Env`, it expects
 /// `chain_id` to be `u64`.
-#[allow(clippy::trivially_copy_pass_by_ref)]
 fn id<S: serde::Serializer>(chain: &Option<Chain>, s: S) -> Result<S::Ok, S::Error> {
     if let Some(chain) = chain {
         s.serialize_u64(chain.id())

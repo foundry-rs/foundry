@@ -15,7 +15,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-alloy-json-abi.workspace = true
 alloy-sol-macro-input.workspace = true
 alloy-sol-macro-expander = { workspace = true, features = ["json"] }
 foundry-common.workspace = true
@@ -24,6 +23,8 @@ proc-macro2.workspace = true
 quote.workspace = true
 syn.workspace = true
 prettyplease.workspace = true
-
 serde_json.workspace = true
+
 eyre.workspace = true
+
+heck.workspace = true

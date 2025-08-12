@@ -8,7 +8,7 @@ use alloy_pubsub::Subscription;
 use alloy_rpc_types::{Block as AlloyBlock, Filter, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
-use anvil::{spawn, NodeConfig};
+use anvil::{NodeConfig, spawn};
 use futures::StreamExt;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -49,7 +49,7 @@ async fn test_sub_logs_legacy() {
     let contract = EmitLogs::new(contract_addr, provider.clone());
 
     let val = contract.getValue().call().await.unwrap();
-    assert_eq!(val._0, msg);
+    assert_eq!(val, msg);
 
     // subscribe to events from the contract
     let filter = Filter::new().address(contract.address().to_owned());
@@ -89,7 +89,7 @@ async fn test_sub_logs() {
     let contract = EmitLogs::new(contract_addr, provider.clone());
 
     let val = contract.getValue().call().await.unwrap();
-    assert_eq!(val._0, msg);
+    assert_eq!(val, msg);
 
     // subscribe to events from the contract
     let filter = Filter::new().address(contract.address().to_owned());
@@ -247,7 +247,7 @@ async fn test_subscriptions() {
     assert_eq!(blocks, vec![1, 2, 3])
 }
 
-#[allow(clippy::disallowed_macros)]
+#[expect(clippy::disallowed_macros)]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_sub_new_heads_fast() {
     let (api, handle) = spawn(NodeConfig::test()).await;

@@ -1,17 +1,17 @@
 //! Test config.
 
 use forge::{
-    result::{SuiteResult, TestStatus},
     MultiContractRunner,
+    result::{SuiteResult, TestStatus},
 };
 use foundry_evm::{
     decode::decode_console_logs,
-    revm::primitives::SpecId,
-    traces::{decode_trace_arena, render_trace_arena, CallTraceDecoderBuilder},
+    traces::{CallTraceDecoderBuilder, decode_trace_arena, render_trace_arena},
 };
-use foundry_test_utils::{init_tracing, Filter};
+use foundry_test_utils::{Filter, init_tracing};
 use futures::future::join_all;
 use itertools::Itertools;
+use revm::primitives::hardfork::SpecId;
 use std::collections::BTreeMap;
 
 /// How to execute a test run.
@@ -46,7 +46,7 @@ impl TestConfig {
     }
 
     /// Executes the test runner
-    pub fn test(&mut self) -> BTreeMap<String, SuiteResult> {
+    pub fn test(&mut self) -> eyre::Result<BTreeMap<String, SuiteResult>> {
         self.runner.test_collect(&self.filter)
     }
 
@@ -60,14 +60,14 @@ impl TestConfig {
     ///    * filter matched 0 test cases
     ///    * a test results deviates from the configured `should_fail` setting
     pub async fn try_run(&mut self) -> eyre::Result<()> {
-        let suite_result = self.test();
+        let suite_result = self.test()?;
         if suite_result.is_empty() {
             eyre::bail!("empty test result");
         }
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, mut result) in test_results {
-                if self.should_fail && (result.status == TestStatus::Success) ||
-                    !self.should_fail && (result.status == TestStatus::Failure)
+                if self.should_fail && (result.status == TestStatus::Success)
+                    || !self.should_fail && (result.status == TestStatus::Failure)
                 {
                     let logs = decode_console_logs(&result.logs);
                     let outcome = if self.should_fail { "fail" } else { "pass" };
@@ -77,9 +77,7 @@ impl TestConfig {
                     let decoded_traces = join_all(result.traces.iter_mut().map(|(_, arena)| {
                         let decoder = &call_trace_decoder;
                         async move {
-                            decode_trace_arena(arena, decoder)
-                                .await
-                                .expect("Failed to decode traces");
+                            decode_trace_arena(arena, decoder).await;
                             render_trace_arena(arena)
                         }
                     }))
@@ -104,7 +102,7 @@ impl TestConfig {
 
 /// A helper to assert the outcome of multiple tests with helpful assert messages
 #[track_caller]
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 pub fn assert_multiple(
     actuals: &BTreeMap<String, SuiteResult>,
     expecteds: BTreeMap<
