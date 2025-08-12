@@ -185,7 +185,11 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 }
 
                 if resp.status == "0" {
-                    return Err(RetryError::Break(eyre!("Contract verification failed:\nStatus: `{}`\nResult: `{}`", resp.status, resp.result)));
+                    return Err(RetryError::Break(eyre!(
+                        "Contract verification failed:\nStatus: `{}`\nResult: `{}`",
+                        resp.status,
+                        resp.result
+                    )));
                 }
 
                 if resp.result == "Pass - Verified" {
