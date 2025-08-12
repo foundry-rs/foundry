@@ -106,10 +106,8 @@ impl TomlFileProvider {
         let partial_config: extend::ExtendsPartialConfig = toml::from_str(&local_content)
             .map_err(|e| Error::custom(e.to_string()).with_path(&local_path_str))?;
 
-        // Determine which profile is active (e.g., "default", "test", etc.)
+        // Check if the currently active profile has an 'extends' field
         let selected_profile = Config::selected_profile();
-
-        // Check if the current profile has an 'extends' field
         let extends_config = partial_config.profile.as_ref().and_then(|profiles| {
             let profile_str = selected_profile.to_string();
             profiles.get(&profile_str).and_then(|cfg| cfg.extends.as_ref())
@@ -229,8 +227,7 @@ impl TomlFileProvider {
                         }
                     }
 
-                    // No collisions, merge the configs (base values only where local doesn't have
-                    // them)
+                    // Safe to merge the configs without collisions
                     Figment::new().merge(base_provider).merge(local_provider).data()
                 }
             }
