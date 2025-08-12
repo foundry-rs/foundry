@@ -140,7 +140,7 @@ impl TomlFileProvider {
         // Check if the current profile has an 'extends' field
         let extends_config = partial_config.profile.as_ref().and_then(|profiles| {
             let profile_str = selected_profile.to_string();
-            profiles.get(&profile_str).and_then(|cfg| cfg.extends.clone())
+            profiles.get(&profile_str).and_then(|cfg| cfg.extends.as_ref())
         });
 
         // If inheritance is configured, load and merge the base config
@@ -240,13 +240,12 @@ impl TomlFileProvider {
 
                         // Find colliding keys
                         if let (Some(local_dict), Some(base_dict)) = (local_dict, base_dict) {
-                            let collisions: Vec<&str> = local_dict
+                            let collisions: Vec<&String> = local_dict
                                 .keys()
                                 .filter(|key| {
                                     // Ignore the "extends" key as it's expected
                                     *key != "extends" && base_dict.contains_key(*key)
                                 })
-                                .cloned()
                                 .collect();
 
                             if !collisions.is_empty() {

@@ -60,7 +60,7 @@ impl Extends {
     pub fn strategy(&self) -> ExtendStrategy {
         match self {
             Self::Path(_) => ExtendStrategy::default(),
-            Self::Config(config) => config.strategy.clone().unwrap_or_default(),
+            Self::Config(config) => config.strategy.unwrap_or_default(),
         }
     }
 }
