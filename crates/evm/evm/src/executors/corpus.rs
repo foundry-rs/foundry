@@ -493,7 +493,7 @@ impl CorpusManager {
         // Early return if not running with coverage guided fuzzing.
         if !&self.config.is_coverage_guided() {
             return Ok(self.new_tx(test_runner)?.call_details.calldata);
-        };
+        }
 
         let tx = if !self.in_memory_corpus.is_empty() {
             self.evict_oldest_corpus()?;
