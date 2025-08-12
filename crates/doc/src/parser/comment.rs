@@ -1,10 +1,10 @@
 use alloy_primitives::map::HashMap;
-use derive_more::{Deref, DerefMut};
+use derive_more::{Deref, DerefMut, derive::Display};
 use solang_parser::doccomment::DocCommentTag;
 
 /// The natspec comment tag explaining the purpose of the comment.
 /// See: <https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags>.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Display, PartialEq, Eq)]
 pub enum CommentTag {
     /// A title that should describe the contract/interface
     Title,
@@ -46,7 +46,7 @@ impl CommentTag {
             }
             _ => {
                 warn!(target: "forge::doc", tag=trimmed, "unknown comment tag. custom tags must be preceded by `custom:`");
-                return None
+                return None;
             }
         };
         Some(tag)
@@ -88,13 +88,14 @@ impl Comment {
     pub fn match_first_word(&self, expected: &str) -> Option<&str> {
         self.split_first_word().and_then(
             |(word, rest)| {
-                if word == expected {
-                    Some(rest)
-                } else {
-                    None
-                }
+                if word == expected { Some(rest) } else { None }
             },
         )
+    }
+
+    /// Check if this comment is a custom tag.
+    pub fn is_custom(&self) -> bool {
+        matches!(self.tag, CommentTag::Custom(_))
     }
 }
 
@@ -157,21 +158,21 @@ impl From<Vec<DocCommentTag>> for Comments {
 pub struct CommentsRef<'a>(Vec<&'a Comment>);
 
 impl<'a> CommentsRef<'a> {
-    /// Filter a collection of comments and return only those that match a provided tag
+    /// Filter a collection of comments and return only those that match a provided tag.
     pub fn include_tag(&self, tag: CommentTag) -> Self {
         self.include_tags(&[tag])
     }
 
-    /// Filter a collection of comments and return only those that match provided tags
+    /// Filter a collection of comments and return only those that match provided tags.
     pub fn include_tags(&self, tags: &[CommentTag]) -> Self {
         // Cloning only references here
-        CommentsRef(self.iter().cloned().filter(|c| tags.contains(&c.tag)).collect())
+        CommentsRef(self.iter().copied().filter(|c| tags.contains(&c.tag)).collect())
     }
 
-    /// Filter a collection of comments and return  only those that do not match provided tags
+    /// Filter a collection of comments and return only those that do not match provided tags.
     pub fn exclude_tags(&self, tags: &[CommentTag]) -> Self {
         // Cloning only references here
-        CommentsRef(self.iter().cloned().filter(|c| !tags.contains(&c.tag)).collect())
+        CommentsRef(self.iter().copied().filter(|c| !tags.contains(&c.tag)).collect())
     }
 
     /// Check if the collection contains a target comment.
@@ -179,8 +180,8 @@ impl<'a> CommentsRef<'a> {
         self.iter().any(|c| match (&c.tag, &target.tag) {
             (CommentTag::Inheritdoc, CommentTag::Inheritdoc) => c.value == target.value,
             (CommentTag::Param, CommentTag::Param) | (CommentTag::Return, CommentTag::Return) => {
-                c.split_first_word().map(|(name, _)| name) ==
-                    target.split_first_word().map(|(name, _)| name)
+                c.split_first_word().map(|(name, _)| name)
+                    == target.split_first_word().map(|(name, _)| name)
             }
             (tag1, tag2) => tag1 == tag2,
         })
@@ -191,6 +192,11 @@ impl<'a> CommentsRef<'a> {
         self.iter()
             .find(|c| matches!(c.tag, CommentTag::Inheritdoc))
             .and_then(|c| c.value.split_whitespace().next())
+    }
+
+    /// Filter a collection of comments and only return the custom tags.
+    pub fn get_custom_tags(&self) -> Self {
+        CommentsRef(self.iter().copied().filter(|c| c.is_custom()).collect())
     }
 }
 
@@ -227,5 +233,33 @@ mod tests {
         assert_eq!(CommentTag::from_str(""), None);
         assert_eq!(CommentTag::from_str("custom"), None);
         assert_eq!(CommentTag::from_str("sometag"), None);
+    }
+
+    #[test]
+    fn test_is_custom() {
+        // Test custom tag.
+        let custom_comment = Comment::new(
+            CommentTag::from_str("custom:test").unwrap(),
+            "dummy custom tag".to_owned(),
+        );
+        assert!(custom_comment.is_custom(), "Custom tag should return true for is_custom");
+
+        // Test non-custom tags.
+        let non_custom_tags = [
+            CommentTag::Title,
+            CommentTag::Author,
+            CommentTag::Notice,
+            CommentTag::Dev,
+            CommentTag::Param,
+            CommentTag::Return,
+            CommentTag::Inheritdoc,
+        ];
+        for tag in non_custom_tags {
+            let comment = Comment::new(tag.clone(), "Non-custom comment".to_string());
+            assert!(
+                !comment.is_custom(),
+                "Non-custom tag {tag:?} should return false for is_custom"
+            );
+        }
     }
 }

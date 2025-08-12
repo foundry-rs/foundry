@@ -99,13 +99,63 @@ impl EnvExternalities {
         })
     }
 
-    pub fn sepolia() -> Option<Self> {
+    pub fn sepolia_etherscan() -> Option<Self> {
         Some(Self {
             chain: NamedChain::Sepolia,
             rpc: network_rpc_key("sepolia")?,
             pk: network_private_key("sepolia")?,
             etherscan: etherscan_key(NamedChain::Sepolia)?,
             verifier: "etherscan".to_string(),
+        })
+    }
+
+    pub fn sepolia_sourcify() -> Option<Self> {
+        Some(Self {
+            chain: NamedChain::Sepolia,
+            rpc: network_rpc_key("sepolia")?,
+            pk: network_private_key("sepolia")?,
+            etherscan: String::new(),
+            verifier: "sourcify".to_string(),
+        })
+    }
+
+    pub fn sepolia_sourcify_with_etherscan_api_key_set() -> Option<Self> {
+        Some(Self {
+            chain: NamedChain::Sepolia,
+            rpc: network_rpc_key("sepolia")?,
+            pk: network_private_key("sepolia")?,
+            etherscan: etherscan_key(NamedChain::Sepolia)?,
+            verifier: "sourcify".to_string(),
+        })
+    }
+
+    pub fn sepolia_blockscout() -> Option<Self> {
+        Some(Self {
+            chain: NamedChain::Sepolia,
+            rpc: network_rpc_key("sepolia")?,
+            pk: network_private_key("sepolia")?,
+            etherscan: String::new(),
+            verifier: "blockscout".to_string(),
+        })
+    }
+
+    pub fn sepolia_blockscout_with_etherscan_api_key_set() -> Option<Self> {
+        Some(Self {
+            chain: NamedChain::Sepolia,
+            rpc: network_rpc_key("sepolia")?,
+            pk: network_private_key("sepolia")?,
+            etherscan: etherscan_key(NamedChain::Sepolia)?,
+            verifier: "blockscout".to_string(),
+        })
+    }
+
+    pub fn sepolia_empty_verifier() -> Option<Self> {
+        Some(Self {
+            chain: NamedChain::Sepolia,
+            rpc: network_rpc_key("sepolia")?,
+            pk: network_private_key("sepolia")?,
+            etherscan: String::new(),
+            verifier: String::new(),
         })
     }
 
@@ -126,7 +176,7 @@ impl EnvExternalities {
 pub fn parse_deployed_address(out: &str) -> Option<String> {
     for line in out.lines() {
         if line.starts_with("Deployed to") {
-            return Some(line.trim_start_matches("Deployed to: ").to_string())
+            return Some(line.trim_start_matches("Deployed to: ").to_string());
         }
     }
     None
@@ -135,8 +185,28 @@ pub fn parse_deployed_address(out: &str) -> Option<String> {
 pub fn parse_verification_guid(out: &str) -> Option<String> {
     for line in out.lines() {
         if line.contains("GUID") {
-            return Some(line.replace("GUID:", "").replace('`', "").trim().to_string())
+            return Some(line.replace("GUID:", "").replace('`', "").trim().to_string());
         }
     }
     None
+}
+
+/// Generates a string containing the code of a Solidity contract.
+///
+/// This contract compiles to a large init bytecode size, but small runtime size.
+pub fn generate_large_init_contract(n: usize) -> String {
+    let data = vec![0xff; n];
+    let hex = alloy_primitives::hex::encode(data);
+    format!(
+        "\
+contract LargeContract {{
+    constructor() {{
+        bytes memory data = hex\"{hex}\";
+        assembly {{
+            pop(mload(data))
+        }}
+    }}
+}}    
+"
+    )
 }

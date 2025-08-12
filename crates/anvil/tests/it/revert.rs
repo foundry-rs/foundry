@@ -1,11 +1,11 @@
 use crate::abi::VendingMachine;
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{bytes, U256};
+use alloy_primitives::{U256, bytes};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::sol;
-use anvil::{spawn, NodeConfig};
+use anvil::{NodeConfig, spawn};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_deploy_reverting() {
@@ -18,7 +18,7 @@ async fn test_deploy_reverting() {
     let tx = WithOtherFields::new(tx);
 
     // Calling/estimating gas fails early.
-    let err = provider.call(&tx).await.unwrap_err();
+    let err = provider.call(tx.clone()).await.unwrap_err();
     let s = err.to_string();
     assert!(s.contains("execution reverted"), "{s:?}");
 

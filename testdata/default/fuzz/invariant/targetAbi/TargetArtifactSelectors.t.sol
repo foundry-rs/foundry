@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 
@@ -15,7 +15,7 @@ contract Hi {
         world = true;
     }
 
-    function changee() public {
+    function change() public {
         world = false;
     }
 }

@@ -132,18 +132,6 @@ pub fn format_tokens_raw(tokens: &[DynSolValue]) -> impl Iterator<Item = String>
     tokens.iter().map(format_token_raw)
 }
 
-/// Prints slice of tokens using [`format_tokens`] or [`format_tokens_raw`] depending on `json`
-/// parameter.
-pub fn print_tokens(tokens: &[DynSolValue], json: bool) {
-    if json {
-        let tokens: Vec<String> = format_tokens_raw(tokens).collect();
-        println!("{}", serde_json::to_string_pretty(&tokens).unwrap());
-    } else {
-        let tokens = format_tokens(tokens);
-        tokens.for_each(|t| println!("{t}"));
-    }
-}
-
 /// Pretty-prints the given value into a string suitable for user output.
 pub fn format_token(value: &DynSolValue) -> String {
     DynValueDisplay::new(value, false).to_string()
@@ -161,7 +149,7 @@ pub fn format_token_raw(value: &DynSolValue) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{address, U256};
+    use alloy_primitives::{U256, address};
 
     #[test]
     fn parse_hex_uint() {
@@ -181,7 +169,7 @@ mod tests {
         // copied from testcases in https://github.com/ethereum/EIPs/blob/master/EIPS/eip-55.md
         assert_eq!(
             format_token(&DynSolValue::Address(address!(
-                "5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"
+                "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"
             ))),
             "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
         );
@@ -189,7 +177,7 @@ mod tests {
         // copied from testcases in https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1191.md
         assert_ne!(
             format_token(&DynSolValue::Address(address!(
-                "Fb6916095cA1Df60bb79ce92cE3EA74c37c5d359"
+                "0xFb6916095cA1Df60bb79ce92cE3EA74c37c5d359"
             ))),
             "0xFb6916095cA1Df60bb79ce92cE3EA74c37c5d359"
         );

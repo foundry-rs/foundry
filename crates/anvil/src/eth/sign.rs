@@ -2,13 +2,10 @@ use crate::eth::error::BlockchainError;
 use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
 use alloy_network::TxSignerSync;
-use alloy_primitives::{map::AddressHashMap, Address, Signature, B256};
+use alloy_primitives::{Address, B256, Signature, map::AddressHashMap};
 use alloy_signer::Signer as AlloySigner;
 use alloy_signer_local::PrivateKeySigner;
-use anvil_core::eth::transaction::{
-    optimism::{DepositTransaction, DepositTransactionRequest},
-    TypedTransaction, TypedTransactionRequest,
-};
+use anvil_core::eth::transaction::{TypedTransaction, TypedTransactionRequest};
 
 /// A transaction signer
 #[async_trait::async_trait]
@@ -52,7 +49,7 @@ pub struct DevSigner {
 impl DevSigner {
     pub fn new(accounts: Vec<PrivateKeySigner>) -> Self {
         let addresses = accounts.iter().map(|wallet| wallet.address()).collect::<Vec<_>>();
-        let accounts = addresses.iter().cloned().zip(accounts).collect();
+        let accounts = addresses.iter().copied().zip(accounts).collect();
         Self { addresses, accounts }
     }
 }
@@ -104,8 +101,11 @@ impl Signer for DevSigner {
             TypedTransactionRequest::Legacy(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
             TypedTransactionRequest::EIP2930(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
             TypedTransactionRequest::EIP1559(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            TypedTransactionRequest::EIP7702(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
             TypedTransactionRequest::EIP4844(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
-            TypedTransactionRequest::Deposit(mut tx) => Ok(signer.sign_transaction_sync(&mut tx)?),
+            TypedTransactionRequest::Deposit(_) => {
+                unreachable!("op deposit txs should not be signed")
+            }
         }
     }
 }
@@ -127,33 +127,13 @@ pub fn build_typed_transaction(
         TypedTransactionRequest::EIP1559(tx) => {
             TypedTransaction::EIP1559(tx.into_signed(signature))
         }
+        TypedTransactionRequest::EIP7702(tx) => {
+            TypedTransaction::EIP7702(tx.into_signed(signature))
+        }
         TypedTransactionRequest::EIP4844(tx) => {
             TypedTransaction::EIP4844(tx.into_signed(signature))
         }
-        TypedTransactionRequest::Deposit(tx) => {
-            let DepositTransactionRequest {
-                from,
-                gas_limit,
-                kind,
-                value,
-                input,
-                source_hash,
-                mint,
-                is_system_tx,
-                ..
-            } = tx;
-            TypedTransaction::Deposit(DepositTransaction {
-                from,
-                gas_limit,
-                kind,
-                value,
-                input,
-                source_hash,
-                mint,
-                is_system_tx,
-                nonce: 0,
-            })
-        }
+        TypedTransactionRequest::Deposit(tx) => TypedTransaction::Deposit(tx),
     };
 
     Ok(tx)

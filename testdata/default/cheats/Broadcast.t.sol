@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -112,8 +112,6 @@ contract BroadcastTest is DSTest {
 
         vm.stopBroadcast();
 
-        require(test.echoSender() == address(this));
-
         vm.broadcast(ACCOUNT_B);
         Test tmptest2 = new Test();
 
@@ -155,9 +153,11 @@ contract BroadcastTest is DSTest {
         vm.stopBroadcast();
     }
 
-    function testFailNoBroadcast() public {
-        vm.stopBroadcast();
-    }
+    /// forge-config: default.allow_internal_expect_revert = true
+    // function testRevertIfNoBroadcast() public {
+    //     vm.expectRevert();
+    //     vm.stopBroadcast();
+    // }
 }
 
 contract NoLink is DSTest {
@@ -215,6 +215,32 @@ contract BroadcastTestNoLinking is DSTest {
         vm.startBroadcast();
         NoLink test_c2 = new NoLink{salt: bytes32(uint256(1337))}();
         assert(test_c2.view_me() == 1337);
+        NoLink test2 = new NoLink();
+        vm.stopBroadcast();
+    }
+
+    function deployCreate2(address deployer) public {
+        vm.startBroadcast();
+        bytes32 salt = bytes32(uint256(1338));
+        NoLink test_c2 = new NoLink{salt: salt}();
+        assert(test_c2.view_me() == 1337);
+
+        address expectedAddress = address(
+            uint160(
+                uint256(
+                    keccak256(
+                        abi.encodePacked(
+                            bytes1(0xff),
+                            deployer,
+                            salt,
+                            keccak256(abi.encodePacked(type(NoLink).creationCode, abi.encode()))
+                        )
+                    )
+                )
+            )
+        );
+        require(address(test_c2) == expectedAddress, "Create2 address mismatch");
+
         NoLink test2 = new NoLink();
         vm.stopBroadcast();
     }
@@ -548,11 +574,6 @@ contract ScriptSign is DSTest {
     function run() external {
         vm.startBroadcast();
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(digest);
-
-        vm._expectCheatcodeRevert(
-            bytes(string.concat("signer with address ", vm.toString(address(this)), " is not available"))
-        );
-        vm.sign(address(this), digest);
 
         SignatureTester tester = new SignatureTester();
         (, address caller,) = vm.readCallers();

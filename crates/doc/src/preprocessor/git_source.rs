@@ -27,7 +27,7 @@ impl Preprocessor for GitSource {
         if let Some(ref repo) = self.repository {
             let repo = repo.trim_end_matches('/');
             let commit = self.commit.clone().unwrap_or("master".to_owned());
-            for document in documents.iter() {
+            for document in &documents {
                 if document.from_library {
                     continue;
                 }

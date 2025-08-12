@@ -7,8 +7,10 @@ use serde::{Deserialize, Serialize};
 pub struct FormatterConfig {
     /// Maximum line length where formatter will try to wrap the line
     pub line_length: usize,
-    /// Number of spaces per indentation level
+    /// Number of spaces per indentation level. Ignored if style is Tab
     pub tab_width: usize,
+    /// Style of indent
+    pub style: IndentStyle,
     /// Print spaces between brackets
     pub bracket_spacing: bool,
     /// Style of uint/int256 types
@@ -162,6 +164,17 @@ pub enum MultilineFuncHeaderStyle {
     /// If function params or attrs are multiline.
     /// split the rest
     All,
+    /// Same as `All` but writes function params multiline even when there is a single param.
+    AllParams,
+}
+
+/// Style of indent
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IndentStyle {
+    #[default]
+    Space,
+    Tab,
 }
 
 impl Default for FormatterConfig {
@@ -169,6 +182,7 @@ impl Default for FormatterConfig {
         Self {
             line_length: 120,
             tab_width: 4,
+            style: IndentStyle::Space,
             bracket_spacing: false,
             int_types: IntTypes::Long,
             multiline_func_header: MultilineFuncHeaderStyle::AttributesFirst,

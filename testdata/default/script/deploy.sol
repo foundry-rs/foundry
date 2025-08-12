@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import {DSTest} from "lib/ds-test/src/test.sol";
 import {Vm} from "cheats/Vm.sol";

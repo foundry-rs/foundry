@@ -1,5 +1,5 @@
 use crate::Vm;
-use alloy_primitives::{hex, Address, Bytes};
+use alloy_primitives::{Bytes, hex};
 use alloy_signer::Error as SignerError;
 use alloy_signer_local::LocalSignerError;
 use alloy_sol_types::SolError;
@@ -8,7 +8,7 @@ use foundry_config::UnresolvedEnvVarError;
 use foundry_evm_core::backend::{BackendError, DatabaseError};
 use foundry_wallets::error::WalletSignerError;
 use k256::ecdsa::signature::Error as SignatureError;
-use revm::primitives::EVMError;
+use revm::context_interface::result::EVMError;
 use std::{borrow::Cow, fmt};
 
 /// Cheatcode result type.
@@ -63,19 +63,6 @@ macro_rules! ensure {
             return ::std::result::Result::Err(fmt_err!($fmt, $($arg)*));
         }
     };
-}
-
-macro_rules! ensure_not_precompile {
-    ($address:expr, $ctxt:expr) => {
-        if $ctxt.is_precompile($address) {
-            return Err($crate::error::precompile_error($address));
-        }
-    };
-}
-
-#[cold]
-pub(crate) fn precompile_error(address: &Address) -> Error {
-    fmt_err!("cannot use precompile {address} as an argument")
 }
 
 /// Error thrown by cheatcodes.
@@ -206,7 +193,6 @@ impl Error {
 }
 
 impl Drop for Error {
-    #[inline]
     fn drop(&mut self) {
         if self.drop {
             drop(unsafe { Box::<[u8]>::from_raw(self.data.cast_mut()) });
@@ -224,21 +210,18 @@ impl From<Cow<'static, str>> for Error {
 }
 
 impl From<String> for Error {
-    #[inline]
     fn from(value: String) -> Self {
         Self::new_string(value)
     }
 }
 
 impl From<&'static str> for Error {
-    #[inline]
     fn from(value: &'static str) -> Self {
         Self::new_str(value)
     }
 }
 
 impl From<Cow<'static, [u8]>> for Error {
-    #[inline]
     fn from(value: Cow<'static, [u8]>) -> Self {
         match value {
             Cow::Borrowed(bytes) => Self::new_bytes(bytes),
@@ -248,21 +231,18 @@ impl From<Cow<'static, [u8]>> for Error {
 }
 
 impl From<&'static [u8]> for Error {
-    #[inline]
     fn from(value: &'static [u8]) -> Self {
         Self::new_bytes(value)
     }
 }
 
 impl<const N: usize> From<&'static [u8; N]> for Error {
-    #[inline]
     fn from(value: &'static [u8; N]) -> Self {
         Self::new_bytes(value)
     }
 }
 
 impl From<Vec<u8>> for Error {
-    #[inline]
     fn from(value: Vec<u8>) -> Self {
         Self::new_vec(value)
     }
@@ -279,7 +259,6 @@ impl From<Bytes> for Error {
 macro_rules! impl_from {
     ($($t:ty),* $(,)?) => {$(
         impl From<$t> for Error {
-            #[inline]
             fn from(value: $t) -> Self {
                 Self::display(value)
             }
@@ -291,9 +270,10 @@ impl_from!(
     alloy_sol_types::Error,
     alloy_dyn_abi::Error,
     alloy_primitives::SignatureError,
+    alloy_consensus::crypto::RecoveryError,
+    eyre::Report,
     FsPathError,
     hex::FromHexError,
-    eyre::Error,
     BackendError,
     DatabaseError,
     jsonpath_lib::JsonPathError,
@@ -310,7 +290,6 @@ impl_from!(
 );
 
 impl<T: Into<BackendError>> From<EVMError<T>> for Error {
-    #[inline]
     fn from(err: EVMError<T>) -> Self {
         Self::display(BackendError::from(err))
     }

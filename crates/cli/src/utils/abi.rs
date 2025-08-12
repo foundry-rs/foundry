@@ -1,19 +1,16 @@
 use alloy_chains::Chain;
+use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
-use alloy_primitives::{hex, Address};
-use alloy_provider::{network::AnyNetwork, Provider};
-use alloy_transport::Transport;
+use alloy_primitives::{Address, hex};
+use alloy_provider::{Provider, network::AnyNetwork};
 use eyre::{OptionExt, Result};
-use foundry_common::{
-    abi::{encode_function_args, get_func, get_func_etherscan},
-    ens::NameOrAddress,
+use foundry_block_explorers::EtherscanApiVersion;
+use foundry_common::abi::{
+    encode_function_args, encode_function_args_raw, get_func, get_func_etherscan,
 };
 use futures::future::join_all;
 
-async fn resolve_name_args<T: Transport + Clone, P: Provider<T, AnyNetwork>>(
-    args: &[String],
-    provider: &P,
-) -> Vec<String> {
+async fn resolve_name_args<P: Provider<AnyNetwork>>(args: &[String], provider: &P) -> Vec<String> {
     join_all(args.iter().map(|arg| async {
         if arg.contains('.') {
             let addr = NameOrAddress::Name(arg.to_string()).resolve(provider).await;
@@ -28,13 +25,14 @@ async fn resolve_name_args<T: Transport + Clone, P: Provider<T, AnyNetwork>>(
     .await
 }
 
-pub async fn parse_function_args<T: Transport + Clone, P: Provider<T, AnyNetwork>>(
+pub async fn parse_function_args<P: Provider<AnyNetwork>>(
     sig: &str,
     args: Vec<String>,
     to: Option<Address>,
     chain: Chain,
     provider: &P,
     etherscan_api_key: Option<&str>,
+    etherscan_api_version: EtherscanApiVersion,
 ) -> Result<(Vec<u8>, Option<Function>)> {
     if sig.trim().is_empty() {
         eyre::bail!("Function signature or calldata must be provided.")
@@ -43,7 +41,7 @@ pub async fn parse_function_args<T: Transport + Clone, P: Provider<T, AnyNetwork
     let args = resolve_name_args(&args, provider).await;
 
     if let Ok(data) = hex::decode(sig) {
-        return Ok((data, None))
+        return Ok((data, None));
     }
 
     let func = if sig.contains('(') {
@@ -51,11 +49,16 @@ pub async fn parse_function_args<T: Transport + Clone, P: Provider<T, AnyNetwork
         get_func(sig)?
     } else {
         let etherscan_api_key = etherscan_api_key.ok_or_eyre(
-            "If you wish to fetch function data from EtherScan, please provide an API key.",
+            "If you wish to fetch function data from Etherscan, please provide an Etherscan API key.",
         )?;
         let to = to.ok_or_eyre("A 'to' address must be provided to fetch function data.")?;
-        get_func_etherscan(sig, to, &args, chain, etherscan_api_key).await?
+        get_func_etherscan(sig, to, &args, chain, etherscan_api_key, etherscan_api_version).await?
     };
 
-    Ok((encode_function_args(&func, &args)?, Some(func)))
+    if to.is_none() {
+        // if this is a CREATE call we must exclude the (constructor) function selector: https://github.com/foundry-rs/foundry/issues/10947
+        Ok((encode_function_args_raw(&func, &args)?, Some(func)))
+    } else {
+        Ok((encode_function_args(&func, &args)?, Some(func)))
+    }
 }

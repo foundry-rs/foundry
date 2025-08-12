@@ -1,17 +1,27 @@
 //! # foundry-debugger
 //!
-//! Interactive Solidity TUI debugger.
+//! Interactive Solidity TUI debugger and debugger data file dumper
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+
+#[macro_use]
+extern crate foundry_common;
 
 #[macro_use]
 extern crate tracing;
 
 mod op;
 
+mod builder;
+mod debugger;
+mod dump;
 mod tui;
-pub use tui::{Debugger, DebuggerBuilder, ExitReason};
 
 mod node;
+
 pub use node::DebugNode;
+
+pub use builder::DebuggerBuilder;
+pub use debugger::Debugger;
+pub use tui::{ExitReason, TUI};

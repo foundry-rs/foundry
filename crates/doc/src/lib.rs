@@ -6,6 +6,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 #[macro_use]
+extern crate foundry_common;
+
+#[macro_use]
 extern crate tracing;
 
 mod builder;
@@ -18,7 +21,7 @@ mod helpers;
 
 mod parser;
 pub use parser::{
-    error, Comment, CommentTag, Comments, CommentsRef, ParseItem, ParseSource, Parser,
+    Comment, CommentTag, Comments, CommentsRef, ParseItem, ParseSource, Parser, error,
 };
 
 mod preprocessor;

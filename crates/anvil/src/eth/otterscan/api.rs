@@ -1,85 +1,26 @@
 use crate::eth::{
+    EthApi,
     error::{BlockchainError, Result},
     macros::node_info,
-    EthApi,
 };
-use alloy_network::BlockResponse;
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_consensus::Transaction as TransactionTrait;
+use alloy_network::{
+    AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, BlockResponse,
+    TransactionResponse,
+};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types::{
+    Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
     trace::{
         otterscan::{
             BlockDetails, ContractCreator, InternalOperation, OtsBlock, OtsBlockTransactions,
             OtsReceipt, OtsSlimBlock, OtsTransactionReceipt, TraceEntry, TransactionsWithReceipts,
         },
-        parity::{
-            Action, CallAction, CallType, CreateAction, CreateOutput, LocalizedTransactionTrace,
-            RewardAction, TraceOutput,
-        },
+        parity::{Action, CreateAction, CreateOutput, TraceOutput},
     },
-    AnyNetworkBlock, Block, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
-    Transaction,
 };
-use alloy_serde::WithOtherFields;
-use itertools::Itertools;
-
 use futures::future::join_all;
-
-pub fn mentions_address(trace: LocalizedTransactionTrace, address: Address) -> Option<B256> {
-    match (trace.trace.action, trace.trace.result) {
-        (Action::Call(CallAction { from, to, .. }), _) if from == address || to == address => {
-            trace.transaction_hash
-        }
-        (_, Some(TraceOutput::Create(CreateOutput { address: created_address, .. })))
-            if created_address == address =>
-        {
-            trace.transaction_hash
-        }
-        (Action::Create(CreateAction { from, .. }), _) if from == address => trace.transaction_hash,
-        (Action::Reward(RewardAction { author, .. }), _) if author == address => {
-            trace.transaction_hash
-        }
-        _ => None,
-    }
-}
-
-/// Converts the list of traces for a transaction into the expected Otterscan format.
-///
-/// Follows format specified in the [`ots_traceTransaction`](https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md#ots_tracetransaction) spec.
-pub fn batch_build_ots_traces(traces: Vec<LocalizedTransactionTrace>) -> Vec<TraceEntry> {
-    traces
-        .into_iter()
-        .filter_map(|trace| {
-            let output = trace
-                .trace
-                .result
-                .map(|r| match r {
-                    TraceOutput::Call(output) => output.output,
-                    TraceOutput::Create(output) => output.code,
-                })
-                .unwrap_or_default();
-            match trace.trace.action {
-                Action::Call(call) => Some(TraceEntry {
-                    r#type: match call.call_type {
-                        CallType::Call => "CALL",
-                        CallType::CallCode => "CALLCODE",
-                        CallType::DelegateCall => "DELEGATECALL",
-                        CallType::StaticCall => "STATICCALL",
-                        CallType::AuthCall => "AUTHCALL",
-                        CallType::None => "NONE",
-                    }
-                    .to_string(),
-                    depth: trace.trace.trace_address.len() as u32,
-                    from: call.from,
-                    to: call.to,
-                    value: call.value,
-                    input: call.input,
-                    output,
-                }),
-                Action::Create(_) | Action::Selfdestruct(_) | Action::Reward(_) => None,
-            }
-        })
-        .collect()
-}
+use itertools::Itertools;
 
 impl EthApi {
     /// Otterscan currently requires this endpoint, even though it's not part of the `ots_*`.
@@ -90,7 +31,7 @@ impl EthApi {
     pub async fn erigon_get_header_by_number(
         &self,
         number: BlockNumber,
-    ) -> Result<Option<AnyNetworkBlock>> {
+    ) -> Result<Option<AnyRpcBlock>> {
         node_info!("ots_getApiLevel");
 
         self.backend.block_by_number(number).await
@@ -120,24 +61,33 @@ impl EthApi {
     pub async fn ots_has_code(&self, address: Address, block_number: BlockNumber) -> Result<bool> {
         node_info!("ots_hasCode");
         let block_id = Some(BlockId::Number(block_number));
-        Ok(self.get_code(address, block_id).await?.len() > 0)
+        Ok(!self.get_code(address, block_id).await?.is_empty())
     }
 
     /// Trace a transaction and generate a trace call tree.
+    /// Converts the list of traces for a transaction into the expected Otterscan format.
+    ///
+    /// Follows format specified in the [`ots_traceTransaction`](https://docs.otterscan.io/api-docs/ots-api#ots_tracetransaction) spec.
     pub async fn ots_trace_transaction(&self, hash: B256) -> Result<Vec<TraceEntry>> {
         node_info!("ots_traceTransaction");
-
-        Ok(batch_build_ots_traces(self.backend.trace_transaction(hash).await?))
+        let traces = self
+            .backend
+            .trace_transaction(hash)
+            .await?
+            .into_iter()
+            .filter_map(|trace| TraceEntry::from_transaction_trace(&trace.trace))
+            .collect();
+        Ok(traces)
     }
 
     /// Given a transaction hash, returns its raw revert reason.
     pub async fn ots_get_transaction_error(&self, hash: B256) -> Result<Bytes> {
         node_info!("ots_getTransactionError");
 
-        if let Some(receipt) = self.backend.mined_transaction_receipt(hash) {
-            if !receipt.inner.inner.as_receipt_with_bloom().receipt.status.coerce_status() {
-                return Ok(receipt.out.map(|b| b.0.into()).unwrap_or(Bytes::default()));
-            }
+        if let Some(receipt) = self.backend.mined_transaction_receipt(hash)
+            && !receipt.inner.inner.as_receipt_with_bloom().receipt.status.coerce_status()
+        {
+            return Ok(receipt.out.map(|b| b.0.into()).unwrap_or(Bytes::default()));
         }
 
         Ok(Bytes::default())
@@ -146,7 +96,10 @@ impl EthApi {
     /// For simplicity purposes, we return the entire block instead of emptying the values that
     /// Otterscan doesn't want. This is the original purpose of the endpoint (to save bandwidth),
     /// but it doesn't seem necessary in the context of an anvil node
-    pub async fn ots_get_block_details(&self, number: BlockNumber) -> Result<BlockDetails> {
+    pub async fn ots_get_block_details(
+        &self,
+        number: BlockNumber,
+    ) -> Result<BlockDetails<AnyRpcHeader>> {
         node_info!("ots_getBlockDetails");
 
         if let Some(block) = self.backend.block_by_number(number).await? {
@@ -160,7 +113,10 @@ impl EthApi {
     /// For simplicity purposes, we return the entire block instead of emptying the values that
     /// Otterscan doesn't want. This is the original purpose of the endpoint (to save bandwidth),
     /// but it doesn't seem necessary in the context of an anvil node
-    pub async fn ots_get_block_details_by_hash(&self, hash: B256) -> Result<BlockDetails> {
+    pub async fn ots_get_block_details_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<BlockDetails<AnyRpcHeader>> {
         node_info!("ots_getBlockDetailsByHash");
 
         if let Some(block) = self.backend.block_by_hash(hash).await? {
@@ -178,7 +134,7 @@ impl EthApi {
         number: u64,
         page: usize,
         page_size: usize,
-    ) -> Result<OtsBlockTransactions<WithOtherFields<Transaction>>> {
+    ) -> Result<OtsBlockTransactions<AnyRpcTransaction, AnyRpcHeader>> {
         node_info!("ots_getBlockTransactions");
 
         match self.backend.block_by_number_full(number.into()).await? {
@@ -193,7 +149,7 @@ impl EthApi {
         address: Address,
         block_number: u64,
         page_size: usize,
-    ) -> Result<TransactionsWithReceipts> {
+    ) -> Result<TransactionsWithReceipts<alloy_rpc_types::Transaction<AnyTxEnvelope>>> {
         node_info!("ots_searchTransactionsBefore");
 
         let best = self.backend.best_number();
@@ -212,7 +168,8 @@ impl EthApi {
                 let hashes = traces
                     .into_iter()
                     .rev()
-                    .filter_map(|trace| mentions_address(trace, address))
+                    .filter(|trace| trace.contains_address(address))
+                    .filter_map(|trace| trace.transaction_hash)
                     .unique();
 
                 if res.len() >= page_size {
@@ -236,7 +193,7 @@ impl EthApi {
         address: Address,
         block_number: u64,
         page_size: usize,
-    ) -> Result<TransactionsWithReceipts> {
+    ) -> Result<TransactionsWithReceipts<alloy_rpc_types::Transaction<AnyTxEnvelope>>> {
         node_info!("ots_searchTransactionsAfter");
 
         let best = self.backend.best_number();
@@ -259,7 +216,8 @@ impl EthApi {
                 let hashes = traces
                     .into_iter()
                     .rev()
-                    .filter_map(|trace| mentions_address(trace, address))
+                    .filter(|trace| trace.contains_address(address))
+                    .filter_map(|trace| trace.transaction_hash)
                     .unique();
 
                 if res.len() >= page_size {
@@ -295,8 +253,8 @@ impl EthApi {
         for n in (from..=to).rev() {
             if let Some(txs) = self.backend.mined_transactions_by_block_number(n.into()).await {
                 for tx in txs {
-                    if U256::from(tx.nonce) == nonce && tx.from == address {
-                        return Ok(Some(tx.hash));
+                    if U256::from(tx.nonce()) == nonce && tx.from() == address {
+                        return Ok(Some(tx.tx_hash()));
                     }
                 }
             }
@@ -342,7 +300,7 @@ impl EthApi {
     /// their `gas_used`. This would be extremely inefficient in a real blockchain RPC, but we can
     /// get away with that in this context.
     ///
-    /// The [original spec](https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md#ots_getblockdetails)
+    /// The [original spec](https://docs.otterscan.io/api-docs/ots-api#ots_getblockdetails)
     /// also mentions we can hardcode `transactions` and `logsBloom` to an empty array to save
     /// bandwidth, because fields weren't intended to be used in the Otterscan UI at this point.
     ///
@@ -352,7 +310,10 @@ impl EthApi {
     ///     based on the existing list.
     ///
     /// Therefore we keep it simple by keeping the data in the response
-    pub async fn build_ots_block_details(&self, block: AnyNetworkBlock) -> Result<BlockDetails> {
+    pub async fn build_ots_block_details(
+        &self,
+        block: AnyRpcBlock,
+    ) -> Result<BlockDetails<alloy_rpc_types::Header<AnyHeader>>> {
         if block.transactions.is_uncle() {
             return Err(BlockchainError::DataUnavailable);
         }
@@ -373,17 +334,12 @@ impl EthApi {
 
         let total_fees = receipts
             .iter()
-            .fold(0, |acc, receipt| acc + receipt.gas_used * receipt.effective_gas_price);
+            .fold(0, |acc, receipt| acc + (receipt.gas_used as u128) * receipt.effective_gas_price);
 
-        let Block { header, uncles, transactions, size, withdrawals } = block.inner;
+        let Block { header, uncles, transactions, withdrawals } = block.into_inner();
 
-        let block = OtsSlimBlock {
-            header,
-            uncles,
-            transaction_count: transactions.len(),
-            size,
-            withdrawals,
-        };
+        let block =
+            OtsSlimBlock { header, uncles, transaction_count: transactions.len(), withdrawals };
 
         Ok(BlockDetails {
             block,
@@ -396,13 +352,13 @@ impl EthApi {
     /// Fetches all receipts for the blocks's transactions, as required by the
     /// [`ots_getBlockTransactions`] endpoint spec, and returns the final response object.
     ///
-    /// [`ots_getBlockTransactions`]: https://github.com/otterscan/otterscan/blob/develop/docs/custom-jsonrpc.md#ots_getblockdetails
+    /// [`ots_getBlockTransactions`]: https://docs.otterscan.io/api-docs/ots-api#ots_getblocktransactions
     pub async fn build_ots_block_tx(
         &self,
-        mut block: AnyNetworkBlock,
+        mut block: AnyRpcBlock,
         page: usize,
         page_size: usize,
-    ) -> Result<OtsBlockTransactions<WithOtherFields<Transaction>>> {
+    ) -> Result<OtsBlockTransactions<AnyRpcTransaction, AnyRpcHeader>> {
         if block.transactions.is_uncle() {
             return Err(BlockchainError::DataUnavailable);
         }
@@ -412,7 +368,7 @@ impl EthApi {
                 txs.iter().skip(page * page_size).take(page_size).cloned().collect(),
             ),
             BlockTransactions::Hashes(txs) => BlockTransactions::Hashes(
-                txs.iter().skip(page * page_size).take(page_size).cloned().collect(),
+                txs.iter().skip(page * page_size).take(page_size).copied().collect(),
             ),
             BlockTransactions::Uncle => unreachable!(),
         };
@@ -434,10 +390,9 @@ impl EthApi {
         .collect::<Result<Vec<_>>>()?;
 
         let transaction_count = block.transactions().len();
-        let fullblock = OtsBlock { block: block.inner, transaction_count };
+        let fullblock = OtsBlock { block: block.inner.clone(), transaction_count };
 
-        let ots_block_txs =
-            OtsBlockTransactions::<WithOtherFields<Transaction>> { fullblock, receipts };
+        let ots_block_txs = OtsBlockTransactions { fullblock, receipts };
 
         Ok(ots_block_txs)
     }
@@ -447,14 +402,14 @@ impl EthApi {
         hashes: Vec<B256>,
         first_page: bool,
         last_page: bool,
-    ) -> Result<TransactionsWithReceipts> {
+    ) -> Result<TransactionsWithReceipts<alloy_rpc_types::Transaction<AnyTxEnvelope>>> {
         let txs_futs = hashes.iter().map(|hash| async { self.transaction_by_hash(*hash).await });
 
         let txs = join_all(txs_futs)
             .await
             .into_iter()
             .map(|t| match t {
-                Ok(Some(t)) => Ok(t.inner),
+                Ok(Some(t)) => Ok(t.into_inner()),
                 _ => Err(BlockchainError::DataUnavailable),
             })
             .collect::<Result<Vec<_>>>()?;

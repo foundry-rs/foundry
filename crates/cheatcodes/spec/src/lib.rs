@@ -1,4 +1,5 @@
-#![doc = include_str!("../README.md")]
+//! Cheatcode specification for Foundry.
+
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
@@ -82,14 +83,21 @@ impl Cheatcodes<'static> {
                 Vm::Wallet::STRUCT.clone(),
                 Vm::FfiResult::STRUCT.clone(),
                 Vm::ChainInfo::STRUCT.clone(),
+                Vm::Chain::STRUCT.clone(),
                 Vm::AccountAccess::STRUCT.clone(),
                 Vm::StorageAccess::STRUCT.clone(),
                 Vm::Gas::STRUCT.clone(),
+                Vm::DebugStep::STRUCT.clone(),
+                Vm::BroadcastTxSummary::STRUCT.clone(),
+                Vm::SignedDelegation::STRUCT.clone(),
+                Vm::PotentialRevert::STRUCT.clone(),
+                Vm::AccessListItem::STRUCT.clone(),
             ]),
             enums: Cow::Owned(vec![
                 Vm::CallerMode::ENUM.clone(),
                 Vm::AccountAccessKind::ENUM.clone(),
                 Vm::ForgeContext::ENUM.clone(),
+                Vm::BroadcastTxType::ENUM.clone(),
             ]),
             errors: Vm::VM_ERRORS.iter().copied().cloned().collect(),
             events: Cow::Borrowed(&[]),
@@ -100,6 +108,7 @@ impl Cheatcodes<'static> {
 }
 
 #[cfg(test)]
+#[expect(clippy::disallowed_macros)]
 mod tests {
     use super::*;
     use std::{fs, path::Path};
@@ -161,11 +170,11 @@ interface Vm {{
     /// Checks that the `file` has the specified `contents`. If that is not the
     /// case, updates the file and then fails the test.
     fn ensure_file_contents(file: &Path, contents: &str) {
-        if let Ok(old_contents) = fs::read_to_string(file) {
-            if normalize_newlines(&old_contents) == normalize_newlines(contents) {
-                // File is already up to date.
-                return
-            }
+        if let Ok(old_contents) = fs::read_to_string(file)
+            && normalize_newlines(&old_contents) == normalize_newlines(contents)
+        {
+            // File is already up to date.
+            return;
         }
 
         eprintln!("\n\x1b[31;1merror\x1b[0m: {} was not up-to-date, updating\n", file.display());

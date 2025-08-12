@@ -1,4 +1,4 @@
-use forge_fmt::{format_to, parse, solang_ext::AstEq, FormatterConfig};
+use forge_fmt::{FormatterConfig, format_to, parse, solang_ext::AstEq};
 use itertools::Itertools;
 use std::{fs, path::PathBuf};
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
@@ -60,7 +60,7 @@ fn test_directory(base_name: &str, test_config: TestConfig) {
                             .try_into()
                             .unwrap_or_else(|err| panic!("Invalid config for {filename}: {err}"));
 
-                        return Some((filename.to_string(), config, lines.join("\n")))
+                        return Some((filename.to_string(), config, lines.join("\n")));
                     }
                 }
 
@@ -107,8 +107,14 @@ fn test_formatter(
 
     assert_eof(expected_source);
 
-    let source_parsed = parse(source).unwrap();
-    let expected_parsed = parse(expected_source).unwrap();
+    let source_parsed = match parse(source) {
+        Ok(p) => p,
+        Err(e) => panic!("{e}"),
+    };
+    let expected_parsed = match parse(expected_source) {
+        Ok(p) => p,
+        Err(e) => panic!("{e}"),
+    };
 
     if !test_config.skip_compare_ast_eq && !source_parsed.pt.ast_eq(&expected_parsed.pt) {
         similar_asserts::assert_eq!(
@@ -165,7 +171,7 @@ macro_rules! test_dir {
         test_dir!($dir, Default::default());
     };
     ($dir:ident, $config:expr $(,)?) => {
-        #[allow(non_snake_case)]
+        #[expect(non_snake_case)]
         #[test]
         fn $dir() {
             test_directory(stringify!($dir), $config);
@@ -235,3 +241,4 @@ test_directories! {
 }
 
 test_dir!(SortedImports, TestConfig::skip_compare_ast_eq());
+test_dir!(NonKeywords, TestConfig::skip_compare_ast_eq());

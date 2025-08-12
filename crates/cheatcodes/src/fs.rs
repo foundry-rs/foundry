@@ -4,12 +4,16 @@ use super::string::parse;
 use crate::{Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*};
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
-use alloy_primitives::{hex, map::Entry, Bytes, U256};
+use alloy_network::AnyTransactionReceipt;
+use alloy_primitives::{Bytes, U256, hex, map::Entry};
+use alloy_provider::network::ReceiptResponse;
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
+use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::fs;
 use foundry_config::fs_permissions::FsAccessKind;
-use revm::interpreter::CreateInputs;
+use revm::{context::CreateScheme, interpreter::CreateInputs};
+use revm_inspectors::tracing::types::CallKind;
 use semver::Version;
 use std::{
     io::{BufRead, BufReader, Write},
@@ -93,7 +97,7 @@ impl Cheatcode for closeFileCall {
         let Self { path } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
-        state.context.opened_read_files.remove(&path);
+        state.test_context.opened_read_files.remove(&path);
 
         Ok(Default::default())
     }
@@ -163,7 +167,7 @@ impl Cheatcode for readLineCall {
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
 
         // Get reader for previously opened file to continue reading OR initialize new reader
-        let reader = match state.context.opened_read_files.entry(path.clone()) {
+        let reader = match state.test_context.opened_read_files.entry(path.clone()) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => entry.insert(BufReader::new(fs::open(path)?)),
         };
@@ -208,7 +212,7 @@ impl Cheatcode for removeFileCall {
         state.config.ensure_not_foundry_toml(&path)?;
 
         // also remove from the set if opened previously
-        state.context.opened_read_files.remove(&path);
+        state.test_context.opened_read_files.remove(&path);
 
         if state.fs_commit {
             fs::remove_file(&path)?;
@@ -293,46 +297,95 @@ impl Cheatcode for getDeployedCodeCall {
 impl Cheatcode for deployCode_0Call {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
         let Self { artifactPath: path } = self;
-        let bytecode = get_artifact_code(ccx.state, path, false)?;
-        let address = executor
-            .exec_create(
-                CreateInputs {
-                    caller: ccx.caller,
-                    scheme: revm::primitives::CreateScheme::Create,
-                    value: U256::ZERO,
-                    init_code: bytecode,
-                    gas_limit: ccx.gas_limit,
-                },
-                ccx,
-            )?
-            .address
-            .ok_or_else(|| fmt_err!("contract creation failed"))?;
-
-        Ok(address.abi_encode())
+        deploy_code(ccx, executor, path, None, None, None)
     }
 }
 
 impl Cheatcode for deployCode_1Call {
     fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
-        let Self { artifactPath: path, constructorArgs } = self;
-        let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
-        bytecode.extend_from_slice(constructorArgs);
-        let address = executor
-            .exec_create(
-                CreateInputs {
-                    caller: ccx.caller,
-                    scheme: revm::primitives::CreateScheme::Create,
-                    value: U256::ZERO,
-                    init_code: bytecode.into(),
-                    gas_limit: ccx.gas_limit,
-                },
-                ccx,
-            )?
-            .address
-            .ok_or_else(|| fmt_err!("contract creation failed"))?;
-
-        Ok(address.abi_encode())
+        let Self { artifactPath: path, constructorArgs: args } = self;
+        deploy_code(ccx, executor, path, Some(args), None, None)
     }
+}
+
+impl Cheatcode for deployCode_2Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, value } = self;
+        deploy_code(ccx, executor, path, None, Some(*value), None)
+    }
+}
+
+impl Cheatcode for deployCode_3Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, constructorArgs: args, value } = self;
+        deploy_code(ccx, executor, path, Some(args), Some(*value), None)
+    }
+}
+
+impl Cheatcode for deployCode_4Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, salt } = self;
+        deploy_code(ccx, executor, path, None, None, Some((*salt).into()))
+    }
+}
+
+impl Cheatcode for deployCode_5Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, constructorArgs: args, salt } = self;
+        deploy_code(ccx, executor, path, Some(args), None, Some((*salt).into()))
+    }
+}
+
+impl Cheatcode for deployCode_6Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, value, salt } = self;
+        deploy_code(ccx, executor, path, None, Some(*value), Some((*salt).into()))
+    }
+}
+
+impl Cheatcode for deployCode_7Call {
+    fn apply_full(&self, ccx: &mut CheatsCtxt, executor: &mut dyn CheatcodesExecutor) -> Result {
+        let Self { artifactPath: path, constructorArgs: args, value, salt } = self;
+        deploy_code(ccx, executor, path, Some(args), Some(*value), Some((*salt).into()))
+    }
+}
+
+/// Helper function to deploy contract from artifact code.
+/// Uses CREATE2 scheme if salt specified.
+fn deploy_code(
+    ccx: &mut CheatsCtxt,
+    executor: &mut dyn CheatcodesExecutor,
+    path: &str,
+    constructor_args: Option<&Bytes>,
+    value: Option<U256>,
+    salt: Option<U256>,
+) -> Result {
+    let mut bytecode = get_artifact_code(ccx.state, path, false)?.to_vec();
+    if let Some(args) = constructor_args {
+        bytecode.extend_from_slice(args);
+    }
+
+    let scheme =
+        if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create };
+
+    let outcome = executor.exec_create(
+        CreateInputs {
+            caller: ccx.caller,
+            scheme,
+            value: value.unwrap_or(U256::ZERO),
+            init_code: bytecode.into(),
+            gas_limit: ccx.gas_limit,
+        },
+        ccx,
+    )?;
+
+    if !outcome.result.result.is_ok() {
+        return Err(crate::Error::from(outcome.result.output));
+    }
+
+    let address = outcome.address.ok_or_else(|| fmt_err!("contract creation failed"))?;
+
+    Ok(address.abi_encode())
 }
 
 /// Returns the path to the json artifact depending on the input
@@ -385,23 +438,22 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
                     // name might be in the form of "Counter.0.8.23"
                     let id_name = id.name.split('.').next().unwrap();
 
-                    if let Some(path) = &file {
-                        if !id.source.ends_with(path) {
-                            return false;
-                        }
+                    if let Some(path) = &file
+                        && !id.source.ends_with(path)
+                    {
+                        return false;
                     }
-                    if let Some(name) = contract_name {
-                        if id_name != name {
-                            return false;
-                        }
+                    if let Some(name) = contract_name
+                        && id_name != name
+                    {
+                        return false;
                     }
-                    if let Some(ref version) = version {
-                        if id.version.minor != version.minor ||
-                            id.version.major != version.major ||
-                            id.version.patch != version.patch
-                        {
-                            return false;
-                        }
+                    if let Some(ref version) = version
+                        && (id.version.minor != version.minor
+                            || id.version.major != version.major
+                            || id.version.patch != version.patch)
+                    {
+                        return false;
                     }
                     true
                 })
@@ -409,19 +461,27 @@ fn get_artifact_code(state: &Cheatcodes, path: &str, deployed: bool) -> Result<B
 
             let artifact = match &filtered[..] {
                 [] => Err(fmt_err!("no matching artifact found")),
-                [artifact] => Ok(artifact),
+                [artifact] => Ok(*artifact),
                 filtered => {
+                    let mut filtered = filtered.to_vec();
                     // If we know the current script/test contract solc version, try to filter by it
                     state
                         .config
-                        .running_version
+                        .running_artifact
                         .as_ref()
-                        .and_then(|version| {
-                            let filtered = filtered
-                                .iter()
-                                .filter(|(id, _)| id.version == *version)
-                                .collect::<Vec<_>>();
-                            (filtered.len() == 1).then(|| filtered[0])
+                        .and_then(|running| {
+                            // Firstly filter by version
+                            filtered.retain(|(id, _)| id.version == running.version);
+
+                            // Return artifact if only one matched
+                            if filtered.len() == 1 {
+                                return Some(filtered[0]);
+                            }
+
+                            // Try filtering by profile as well
+                            filtered.retain(|(id, _)| id.profile == running.profile);
+
+                            if filtered.len() == 1 { Some(filtered[0]) } else { None }
                         })
                         .ok_or_else(|| fmt_err!("multiple matching artifacts found"))
                 }
@@ -467,12 +527,25 @@ impl Cheatcode for ffiCall {
         let Self { commandInput: input } = self;
 
         let output = ffi(state, input)?;
-        // TODO: check exit code?
+
+        // Check the exit code of the command.
+        if output.exitCode != 0 {
+            // If the command failed, return an error with the exit code and stderr.
+            return Err(fmt_err!(
+                "ffi command {:?} exited with code {}. stderr: {}",
+                input,
+                output.exitCode,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+
+        // If the command succeeded but still wrote to stderr, log it as a warning.
         if !output.stderr.is_empty() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            error!(target: "cheatcodes", ?input, ?stderr, "non-empty stderr");
+            warn!(target: "cheatcodes", ?input, ?stderr, "ffi command wrote to stderr");
         }
-        // we already hex-decoded the stdout in `ffi`
+
+        // We already hex-decoded the stdout in the `ffi` helper function.
         Ok(output.stdout.abi_encode())
     }
 }
@@ -616,14 +689,179 @@ fn prompt(
 
     match rx.recv_timeout(timeout) {
         Ok(res) => res.map_err(|err| {
-            println!();
+            let _ = sh_println!();
             err.to_string().into()
         }),
         Err(_) => {
-            println!();
+            let _ = sh_eprintln!();
             Err("Prompt timed out".into())
         }
     }
+}
+
+impl Cheatcode for getBroadcastCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { contractName, chainId, txType } = self;
+
+        let latest_broadcast = latest_broadcast(
+            contractName,
+            *chainId,
+            &state.config.broadcast,
+            vec![map_broadcast_tx_type(*txType)],
+        )?;
+
+        Ok(latest_broadcast.abi_encode())
+    }
+}
+
+impl Cheatcode for getBroadcasts_0Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { contractName, chainId, txType } = self;
+
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
+            .with_tx_type(map_broadcast_tx_type(*txType));
+
+        let broadcasts = reader.read()?;
+
+        let summaries = broadcasts
+            .into_iter()
+            .flat_map(|broadcast| {
+                let results = reader.into_tx_receipts(broadcast);
+                parse_broadcast_results(results)
+            })
+            .collect::<Vec<_>>();
+
+        Ok(summaries.abi_encode())
+    }
+}
+
+impl Cheatcode for getBroadcasts_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { contractName, chainId } = self;
+
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?;
+
+        let broadcasts = reader.read()?;
+
+        let summaries = broadcasts
+            .into_iter()
+            .flat_map(|broadcast| {
+                let results = reader.into_tx_receipts(broadcast);
+                parse_broadcast_results(results)
+            })
+            .collect::<Vec<_>>();
+
+        Ok(summaries.abi_encode())
+    }
+}
+
+impl Cheatcode for getDeployment_0Call {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let Self { contractName } = self;
+        let chain_id = ccx.ecx.cfg.chain_id;
+
+        let latest_broadcast = latest_broadcast(
+            contractName,
+            chain_id,
+            &ccx.state.config.broadcast,
+            vec![CallKind::Create, CallKind::Create2],
+        )?;
+
+        Ok(latest_broadcast.contractAddress.abi_encode())
+    }
+}
+
+impl Cheatcode for getDeployment_1Call {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { contractName, chainId } = self;
+
+        let latest_broadcast = latest_broadcast(
+            contractName,
+            *chainId,
+            &state.config.broadcast,
+            vec![CallKind::Create, CallKind::Create2],
+        )?;
+
+        Ok(latest_broadcast.contractAddress.abi_encode())
+    }
+}
+
+impl Cheatcode for getDeploymentsCall {
+    fn apply(&self, state: &mut Cheatcodes) -> Result {
+        let Self { contractName, chainId } = self;
+
+        let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
+            .with_tx_type(CallKind::Create)
+            .with_tx_type(CallKind::Create2);
+
+        let broadcasts = reader.read()?;
+
+        let summaries = broadcasts
+            .into_iter()
+            .flat_map(|broadcast| {
+                let results = reader.into_tx_receipts(broadcast);
+                parse_broadcast_results(results)
+            })
+            .collect::<Vec<_>>();
+
+        let deployed_addresses =
+            summaries.into_iter().map(|summary| summary.contractAddress).collect::<Vec<_>>();
+
+        Ok(deployed_addresses.abi_encode())
+    }
+}
+
+fn map_broadcast_tx_type(tx_type: BroadcastTxType) -> CallKind {
+    match tx_type {
+        BroadcastTxType::Call => CallKind::Call,
+        BroadcastTxType::Create => CallKind::Create,
+        BroadcastTxType::Create2 => CallKind::Create2,
+        _ => unreachable!("invalid tx type"),
+    }
+}
+
+fn parse_broadcast_results(
+    results: Vec<(TransactionWithMetadata, AnyTransactionReceipt)>,
+) -> Vec<BroadcastTxSummary> {
+    results
+        .into_iter()
+        .map(|(tx, receipt)| BroadcastTxSummary {
+            txHash: receipt.transaction_hash,
+            blockNumber: receipt.block_number.unwrap_or_default(),
+            txType: match tx.opcode {
+                CallKind::Call => BroadcastTxType::Call,
+                CallKind::Create => BroadcastTxType::Create,
+                CallKind::Create2 => BroadcastTxType::Create2,
+                _ => unreachable!("invalid tx type"),
+            },
+            contractAddress: tx.contract_address.unwrap_or_default(),
+            success: receipt.status(),
+        })
+        .collect()
+}
+
+fn latest_broadcast(
+    contract_name: &String,
+    chain_id: u64,
+    broadcast_path: &Path,
+    filters: Vec<CallKind>,
+) -> Result<BroadcastTxSummary> {
+    let mut reader = BroadcastReader::new(contract_name.clone(), chain_id, broadcast_path)?;
+
+    for filter in filters {
+        reader = reader.with_tx_type(filter);
+    }
+
+    let broadcast = reader.read_latest()?;
+
+    let results = reader.into_tx_receipts(broadcast);
+
+    let summaries = parse_broadcast_results(results);
+
+    summaries
+        .first()
+        .ok_or_else(|| fmt_err!("no deployment found for {contract_name} on chain {chain_id}"))
+        .cloned()
 }
 
 #[cfg(test)]
@@ -657,6 +895,29 @@ mod tests {
         let args = ["echo".to_string(), msg.to_string()];
         let output = ffi(&cheats, &args).unwrap();
         assert_eq!(output.stdout, Bytes::from(msg.as_bytes()));
+    }
+
+    #[test]
+    fn test_ffi_fails_on_error_code() {
+        let mut cheats = cheats();
+
+        // Use a command that is guaranteed to fail with a non-zero exit code on any platform.
+        #[cfg(unix)]
+        let args = vec!["false".to_string()];
+        #[cfg(windows)]
+        let args = vec!["cmd".to_string(), "/c".to_string(), "exit 1".to_string()];
+
+        let result = ffiCall { commandInput: args }.apply(&mut cheats);
+
+        // Assert that the cheatcode returned an error.
+        assert!(result.is_err(), "Expected ffi cheatcode to fail, but it succeeded");
+
+        // Assert that the error message contains the expected information.
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("exited with code 1"),
+            "Error message did not contain exit code: {err_msg}"
+        );
     }
 
     #[test]

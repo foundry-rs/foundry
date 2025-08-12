@@ -8,10 +8,11 @@ use async_trait::async_trait;
 use eyre::{OptionExt, Result};
 use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
-    artifacts::{output_selection::OutputSelection, Metadata, Source},
-    compilers::{multi::MultiCompilerParsedSource, solc::SolcCompiler, CompilerSettings},
-    solc::Solc,
     Graph, Project,
+    artifacts::{Metadata, Source, output_selection::OutputSelection},
+    compilers::{multi::MultiCompilerParsedSource, solc::SolcCompiler},
+    multi::MultiCompilerSettings,
+    solc::Solc,
 };
 use foundry_config::Config;
 use semver::Version;
@@ -25,6 +26,7 @@ pub struct VerificationContext {
     pub target_path: PathBuf,
     pub target_name: String,
     pub compiler_version: Version,
+    pub compiler_settings: MultiCompilerSettings,
 }
 
 impl VerificationContext {
@@ -33,6 +35,7 @@ impl VerificationContext {
         target_name: String,
         compiler_version: Version,
         config: Config,
+        compiler_settings: MultiCompilerSettings,
     ) -> Result<Self> {
         let mut project = config.project()?;
         project.no_artifacts = true;
@@ -40,13 +43,13 @@ impl VerificationContext {
         let solc = Solc::find_or_install(&compiler_version)?;
         project.compiler.solc = Some(SolcCompiler::Specific(solc));
 
-        Ok(Self { config, project, target_name, target_path, compiler_version })
+        Ok(Self { config, project, target_name, target_path, compiler_version, compiler_settings })
     }
 
     /// Compiles target contract requesting only ABI and returns it.
     pub fn get_target_abi(&self) -> Result<JsonAbi> {
         let mut project = self.project.clone();
-        project.settings.update_output_selection(|selection| {
+        project.update_output_selection(|selection| {
             *selection = OutputSelection::common_output_selection(["abi".to_string()])
         });
 
@@ -65,7 +68,7 @@ impl VerificationContext {
     /// Compiles target file requesting only metadata and returns it.
     pub fn get_target_metadata(&self) -> Result<Metadata> {
         let mut project = self.project.clone();
-        project.settings.update_output_selection(|selection| {
+        project.update_output_selection(|selection| {
             *selection = OutputSelection::common_output_selection(["metadata".to_string()]);
         });
 
@@ -88,7 +91,7 @@ impl VerificationContext {
         let graph =
             Graph::<MultiCompilerParsedSource>::resolve_sources(&self.project.paths, sources)?;
 
-        Ok(graph.imports(&self.target_path).into_iter().cloned().collect())
+        Ok(graph.imports(&self.target_path).into_iter().map(Into::into).collect())
     }
 }
 
@@ -124,6 +127,7 @@ impl FromStr for VerificationProviderType {
             "s" | "sourcify" => Ok(Self::Sourcify),
             "b" | "blockscout" => Ok(Self::Blockscout),
             "o" | "oklink" => Ok(Self::Oklink),
+            "c" | "custom" => Ok(Self::Custom),
             _ => Err(format!("Unknown provider: {s}")),
         }
     }
@@ -144,6 +148,9 @@ impl fmt::Display for VerificationProviderType {
             Self::Oklink => {
                 write!(f, "oklink")?;
             }
+            Self::Custom => {
+                write!(f, "custom")?;
+            }
         };
         Ok(())
     }
@@ -151,26 +158,58 @@ impl fmt::Display for VerificationProviderType {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum VerificationProviderType {
-    #[default]
     Etherscan,
+    #[default]
     Sourcify,
     Blockscout,
     Oklink,
+    /// Custom verification provider, requires compatibility with the Etherscan API.
+    Custom,
 }
 
 impl VerificationProviderType {
     /// Returns the corresponding `VerificationProvider` for the key
-    pub fn client(&self, key: &Option<String>) -> Result<Box<dyn VerificationProvider>> {
-        match self {
-            Self::Etherscan => {
-                if key.as_ref().map_or(true, |key| key.is_empty()) {
-                    eyre::bail!("ETHERSCAN_API_KEY must be set")
-                }
-                Ok(Box::<EtherscanVerificationProvider>::default())
-            }
-            Self::Sourcify => Ok(Box::<SourcifyVerificationProvider>::default()),
-            Self::Blockscout => Ok(Box::<EtherscanVerificationProvider>::default()),
-            Self::Oklink => Ok(Box::<EtherscanVerificationProvider>::default()),
+    pub fn client(&self, key: Option<&str>) -> Result<Box<dyn VerificationProvider>> {
+        let has_key = key.as_ref().is_some_and(|k| !k.is_empty());
+        // 1. If no verifier or `--verifier sourcify` is set and no API key provided, use Sourcify.
+        if !has_key && self.is_sourcify() {
+            sh_println!(
+                "Attempting to verify on Sourcify. Pass the --etherscan-api-key <API_KEY> to verify on Etherscan, \
+            or use the --verifier flag to verify on another provider."
+            )?;
+            return Ok(Box::<SourcifyVerificationProvider>::default());
         }
+
+        // 2. If `--verifier etherscan` is explicitly set, enforce the API key requirement.
+        if self.is_etherscan() {
+            if !has_key {
+                eyre::bail!("ETHERSCAN_API_KEY must be set to use Etherscan as a verifier")
+            }
+            return Ok(Box::<EtherscanVerificationProvider>::default());
+        }
+
+        // 3. If `--verifier blockscout | oklink | custom` is explicitly set, use the chosen
+        //    verifier.
+        if matches!(self, Self::Blockscout | Self::Oklink | Self::Custom) {
+            return Ok(Box::<EtherscanVerificationProvider>::default());
+        }
+
+        // 4. If no `--verifier` is specified but `ETHERSCAN_API_KEY` is set, default to Etherscan.
+        if has_key {
+            return Ok(Box::<EtherscanVerificationProvider>::default());
+        }
+
+        // 5. If no valid provider is specified, bail.
+        eyre::bail!(
+            "No valid verification provider specified. Pass the --verifier flag to specify a provider or set the ETHERSCAN_API_KEY environment variable to use Etherscan as a verifier."
+        )
+    }
+
+    pub fn is_sourcify(&self) -> bool {
+        matches!(self, Self::Sourcify)
+    }
+
+    pub fn is_etherscan(&self) -> bool {
+        matches!(self, Self::Etherscan)
     }
 }

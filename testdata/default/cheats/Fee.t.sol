@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -12,7 +12,7 @@ contract FeeTest is DSTest {
         assertEq(block.basefee, 10, "fee failed");
     }
 
-    function testFeeFuzzed(uint256 fee) public {
+    function testFeeFuzzed(uint64 fee) public {
         vm.fee(fee);
         assertEq(block.basefee, fee, "fee failed");
     }

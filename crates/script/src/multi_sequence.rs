@@ -1,7 +1,8 @@
-use super::sequence::{sig_to_file_name, ScriptSequence, SensitiveScriptSequence, DRY_RUN_DIR};
 use eyre::{ContextCompat, Result, WrapErr};
-use foundry_cli::utils::now;
-use foundry_common::fs;
+use forge_script_sequence::{
+    DRY_RUN_DIR, ScriptSequence, SensitiveScriptSequence, now, sig_to_file_name,
+};
+use foundry_common::{fs, shell};
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
 use serde::{Deserialize, Serialize};
@@ -18,7 +19,7 @@ pub struct MultiChainSequence {
     pub path: PathBuf,
     #[serde(skip)]
     pub sensitive_path: PathBuf,
-    pub timestamp: u64,
+    pub timestamp: u128,
 }
 
 /// Sensitive values from script sequences.
@@ -45,7 +46,7 @@ impl MultiChainSequence {
     ) -> Result<Self> {
         let (path, sensitive_path) = Self::get_paths(config, sig, target, dry_run)?;
 
-        Ok(Self { deployments, path, sensitive_path, timestamp: now().as_secs() })
+        Ok(Self { deployments, path, sensitive_path, timestamp: now().as_millis() })
     }
 
     /// Gets paths in the formats
@@ -112,7 +113,7 @@ impl MultiChainSequence {
     pub fn save(&mut self, silent: bool, save_ts: bool) -> Result<()> {
         self.deployments.iter_mut().for_each(|sequence| sequence.sort_receipts());
 
-        self.timestamp = now().as_secs();
+        self.timestamp = now().as_millis();
 
         let sensitive_sequence = SensitiveMultiChainSequence::from_multi_sequence(self.clone());
 
@@ -145,8 +146,19 @@ impl MultiChainSequence {
         }
 
         if !silent {
-            println!("\nTransactions saved to: {}\n", self.path.display());
-            println!("Sensitive details saved to: {}\n", self.sensitive_path.display());
+            if shell::is_json() {
+                sh_println!(
+                    "{}",
+                    serde_json::json!({
+                        "status": "success",
+                        "transactions": self.path.display().to_string(),
+                        "sensitive": self.sensitive_path.display().to_string(),
+                    })
+                )?;
+            } else {
+                sh_println!("\nTransactions saved to: {}\n", self.path.display())?;
+                sh_println!("Sensitive details saved to: {}\n", self.sensitive_path.display())?;
+            }
         }
 
         Ok(())

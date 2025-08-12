@@ -1,22 +1,21 @@
 //! TUI draw implementation.
 
-use super::context::{BufferKind, DebuggerContext};
+use super::context::TUIContext;
 use crate::op::OpcodeParam;
-use alloy_primitives::U256;
 use foundry_compilers::artifacts::sourcemap::SourceElement;
+use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
 use foundry_evm_traces::debug::SourceData;
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
-    Frame,
 };
-use revm::interpreter::opcode;
 use revm_inspectors::tracing::types::CallKind;
 use std::{collections::VecDeque, fmt::Write, io};
 
-impl DebuggerContext<'_> {
+impl TUIContext<'_> {
     /// Draws the TUI layout and subcomponents to the given terminal.
     pub(crate) fn draw(&self, terminal: &mut super::DebuggerTerminal) -> io::Result<()> {
         terminal.draw(|f| self.draw_layout(f)).map(drop)
@@ -200,7 +199,6 @@ impl DebuggerContext<'_> {
             CallKind::CallCode => "Contract callcode",
             CallKind::DelegateCall => "Contract delegatecall",
             CallKind::AuthCall => "Contract authcall",
-            CallKind::EOFCreate => "EOF contract creation",
         };
         let title = format!(
             "{} {} ",
@@ -312,14 +310,12 @@ impl DebuggerContext<'_> {
         }
 
         // Fill in the rest of the line as unhighlighted.
-        if let Some(last) = actual.last() {
-            if !last.ends_with('\n') {
-                if let Some(post) = after.pop_front() {
-                    if let Some(last) = lines.lines.last_mut() {
-                        last.spans.push(Span::raw(post));
-                    }
-                }
-            }
+        if let Some(last) = actual.last()
+            && !last.ends_with('\n')
+            && let Some(post) = after.pop_front()
+            && let Some(last) = lines.lines.last_mut()
+        {
+            last.spans.push(Span::raw(post));
         }
 
         // Add after highlighted text.
@@ -344,15 +340,15 @@ impl DebuggerContext<'_> {
     /// Returns source map, source code and source name of the current line.
     fn src_map(&self) -> Result<(SourceElement, &SourceData), String> {
         let address = self.address();
-        let Some(contract_name) = self.debugger.identified_contracts.get(address) else {
+        let Some(contract_name) = self.debugger_context.identified_contracts.get(address) else {
             return Err(format!("Unknown contract at address {address}"));
         };
 
-        self.debugger
+        self.debugger_context
             .contracts_sources
             .find_source_mapping(
                 contract_name,
-                self.current_step().pc,
+                self.current_step().pc as u32,
                 self.debug_call().kind.is_any_create(),
             )
             .ok_or_else(|| format!("No source map for contract {contract_name}"))
@@ -377,11 +373,10 @@ impl DebuggerContext<'_> {
             .collect::<Vec<_>>();
 
         let title = format!(
-            "Address: {} | PC: {} | Gas used in call: {} | Code section: {}",
+            "Address: {} | PC: {} | Gas used in call: {}",
             self.address(),
             self.current_step().pc,
             self.current_step().gas_used,
-            self.current_step().code_section_idx,
         );
         let block = Block::default().title(title).borders(Borders::ALL);
         let list = List::new(items)
@@ -400,7 +395,7 @@ impl DebuggerContext<'_> {
 
         let min_len = decimal_digits(stack_len).max(2);
 
-        let params = OpcodeParam::of(step.op.get(), step.immediate_bytes.as_ref());
+        let params = OpcodeParam::of(step.op.get());
 
         let text: Vec<Line<'_>> = stack
             .map(|stack| {
@@ -410,10 +405,7 @@ impl DebuggerContext<'_> {
                     .enumerate()
                     .skip(self.draw_memory.current_stack_startline)
                     .map(|(i, stack_item)| {
-                        let param = params
-                            .as_ref()
-                            .and_then(|params| params.iter().find(|param| param.index == i));
-
+                        let param = params.iter().find(|param| param.index == i);
                         let mut spans = Vec::with_capacity(1 + 32 * 2 + 3);
 
                         // Stack index.
@@ -431,11 +423,11 @@ impl DebuggerContext<'_> {
                             }
                         });
 
-                        if self.stack_labels {
-                            if let Some(param) = param {
-                                spans.push(Span::raw("| "));
-                                spans.push(Span::raw(param.name));
-                            }
+                        if self.stack_labels
+                            && let Some(param) = param
+                        {
+                            spans.push(Span::raw("| "));
+                            spans.push(Span::raw(param.name));
                         }
 
                         spans.push(Span::raw("\n"));
@@ -470,21 +462,20 @@ impl DebuggerContext<'_> {
         let mut write_size = None;
         let mut color = None;
         let stack_len = step.stack.as_ref().map_or(0, |s| s.len());
-        if stack_len > 0 {
-            if let Some(stack) = step.stack.as_ref() {
-                if let Some(accesses) = get_buffer_accesses(step.op.get(), stack) {
-                    if let Some(read_access) = accesses.read {
-                        offset = Some(read_access.1.offset);
-                        len = Some(read_access.1.len);
-                        color = Some(Color::Cyan);
-                    }
-                    if let Some(write_access) = accesses.write {
-                        if self.active_buffer == BufferKind::Memory {
-                            write_offset = Some(write_access.offset);
-                            write_size = Some(write_access.len);
-                        }
-                    }
-                }
+        if stack_len > 0
+            && let Some(stack) = step.stack.as_ref()
+            && let Some(accesses) = get_buffer_accesses(step.op.get(), stack)
+        {
+            if let Some(read_access) = accesses.read {
+                offset = Some(read_access.1.offset);
+                len = Some(read_access.1.len);
+                color = Some(Color::Cyan);
+            }
+            if let Some(write_access) = accesses.write
+                && self.active_buffer == BufferKind::Memory
+            {
+                write_offset = Some(write_access.offset);
+                write_size = Some(write_access.len);
             }
         }
 
@@ -495,16 +486,14 @@ impl DebuggerContext<'_> {
         if self.current_step > 0 {
             let prev_step = self.current_step - 1;
             let prev_step = &self.debug_steps()[prev_step];
-            if let Some(stack) = prev_step.stack.as_ref() {
-                if let Some(write_access) =
+            if let Some(stack) = prev_step.stack.as_ref()
+                && let Some(write_access) =
                     get_buffer_accesses(prev_step.op.get(), stack).and_then(|a| a.write)
-                {
-                    if self.active_buffer == BufferKind::Memory {
-                        offset = Some(write_access.offset);
-                        len = Some(write_access.len);
-                        color = Some(Color::Green);
-                    }
-                }
+                && self.active_buffer == BufferKind::Memory
+            {
+                offset = Some(write_access.offset);
+                len = Some(write_access.len);
+                color = Some(Color::Green);
             }
         }
 
@@ -621,91 +610,6 @@ impl<'a> SourceLines<'a> {
         line_spans.extend_from_slice(spans);
 
         self.lines.push(Line::from(line_spans));
-    }
-}
-
-/// Container for buffer access information.
-struct BufferAccess {
-    offset: usize,
-    len: usize,
-}
-
-/// Container for read and write buffer access information.
-struct BufferAccesses {
-    /// The read buffer kind and access information.
-    read: Option<(BufferKind, BufferAccess)>,
-    /// The only mutable buffer is the memory buffer, so don't store the buffer kind.
-    write: Option<BufferAccess>,
-}
-
-/// The memory_access variable stores the index on the stack that indicates the buffer
-/// offset/len accessed by the given opcode:
-///    (read buffer, buffer read offset, buffer read len, write memory offset, write memory len)
-///    \>= 1: the stack index
-///    0: no memory access
-///    -1: a fixed len of 32 bytes
-///    -2: a fixed len of 1 byte
-///
-/// The return value is a tuple about accessed buffer region by the given opcode:
-///    (read buffer, buffer read offset, buffer read len, write memory offset, write memory len)
-fn get_buffer_accesses(op: u8, stack: &[U256]) -> Option<BufferAccesses> {
-    let buffer_access = match op {
-        opcode::KECCAK256 | opcode::RETURN | opcode::REVERT => {
-            (Some((BufferKind::Memory, 1, 2)), None)
-        }
-        opcode::CALLDATACOPY => (Some((BufferKind::Calldata, 2, 3)), Some((1, 3))),
-        opcode::RETURNDATACOPY => (Some((BufferKind::Returndata, 2, 3)), Some((1, 3))),
-        opcode::CALLDATALOAD => (Some((BufferKind::Calldata, 1, -1)), None),
-        opcode::CODECOPY => (None, Some((1, 3))),
-        opcode::EXTCODECOPY => (None, Some((2, 4))),
-        opcode::MLOAD => (Some((BufferKind::Memory, 1, -1)), None),
-        opcode::MSTORE => (None, Some((1, -1))),
-        opcode::MSTORE8 => (None, Some((1, -2))),
-        opcode::LOG0 | opcode::LOG1 | opcode::LOG2 | opcode::LOG3 | opcode::LOG4 => {
-            (Some((BufferKind::Memory, 1, 2)), None)
-        }
-        opcode::CREATE | opcode::CREATE2 => (Some((BufferKind::Memory, 2, 3)), None),
-        opcode::CALL | opcode::CALLCODE => (Some((BufferKind::Memory, 4, 5)), None),
-        opcode::DELEGATECALL | opcode::STATICCALL => (Some((BufferKind::Memory, 3, 4)), None),
-        opcode::MCOPY => (Some((BufferKind::Memory, 2, 3)), Some((1, 3))),
-        opcode::RETURNDATALOAD => (Some((BufferKind::Returndata, 1, -1)), None),
-        opcode::EOFCREATE => (Some((BufferKind::Memory, 3, 4)), None),
-        opcode::RETURNCONTRACT => (Some((BufferKind::Memory, 1, 2)), None),
-        opcode::DATACOPY => (None, Some((1, 3))),
-        opcode::EXTCALL | opcode::EXTSTATICCALL | opcode::EXTDELEGATECALL => {
-            (Some((BufferKind::Memory, 2, 3)), None)
-        }
-        _ => Default::default(),
-    };
-
-    let stack_len = stack.len();
-    let get_size = |stack_index| match stack_index {
-        -2 => Some(1),
-        -1 => Some(32),
-        0 => None,
-        1.. => {
-            if (stack_index as usize) <= stack_len {
-                Some(stack[stack_len - stack_index as usize].saturating_to())
-            } else {
-                None
-            }
-        }
-        _ => panic!("invalid stack index"),
-    };
-
-    if buffer_access.0.is_some() || buffer_access.1.is_some() {
-        let (read, write) = buffer_access;
-        let read_access = read.and_then(|b| {
-            let (buffer, offset, len) = b;
-            Some((buffer, BufferAccess { offset: get_size(offset)?, len: get_size(len)? }))
-        });
-        let write_access = write.and_then(|b| {
-            let (offset, len) = b;
-            Some(BufferAccess { offset: get_size(offset)?, len: get_size(len)? })
-        });
-        Some(BufferAccesses { read: read_access, write: write_access })
-    } else {
-        None
     }
 }
 

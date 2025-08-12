@@ -2,10 +2,10 @@ use crate::error::WalletSignerError;
 use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
 use alloy_network::TxSigner;
-use alloy_primitives::{hex, Address, ChainId, B256};
-use alloy_signer::{Signature, Signer};
+use alloy_primitives::{Address, B256, ChainId, Signature, hex};
+use alloy_signer::Signer;
 use alloy_signer_ledger::{HDPath as LedgerHDPath, LedgerSigner};
-use alloy_signer_local::{coins_bip39::English, MnemonicBuilder, PrivateKeySigner};
+use alloy_signer_local::{MnemonicBuilder, PrivateKeySigner, coins_bip39::English};
 use alloy_signer_trezor::{HDPath as TrezorHDPath, TrezorSigner};
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use async_trait::async_trait;
@@ -18,8 +18,8 @@ use {alloy_signer_aws::AwsSigner, aws_config::BehaviorVersion, aws_sdk_kms::Clie
 use {
     alloy_signer_gcp::{GcpKeyRingRef, GcpSigner, GcpSignerError, KeySpecifier},
     gcloud_sdk::{
-        google::cloud::kms::v1::key_management_service_client::KeyManagementServiceClient,
         GoogleApi,
+        google::cloud::kms::v1::key_management_service_client::KeyManagementServiceClient,
     },
 };
 

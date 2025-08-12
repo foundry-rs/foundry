@@ -1,90 +1,83 @@
-use alloy_primitives::{Bytes, Log};
+use alloy_primitives::Log;
 use alloy_sol_types::{SolEvent, SolInterface, SolValue};
-use foundry_common::{fmt::ConsoleFmt, ErrorExt};
-use foundry_evm_core::{
-    abi::{patch_hh_console_selector, Console, HardhatConsole},
-    constants::HARDHAT_CONSOLE_ADDRESS,
-    InspectorExt,
-};
+use foundry_common::{ErrorExt, fmt::ConsoleFmt};
+use foundry_evm_core::{InspectorExt, abi::console, constants::HARDHAT_CONSOLE_ADDRESS};
 use revm::{
+    Inspector,
+    context::ContextTr,
     interpreter::{
         CallInputs, CallOutcome, Gas, InstructionResult, Interpreter, InterpreterResult,
+        interpreter::EthInterpreter,
     },
-    Database, EvmContext, Inspector,
 };
 
 /// An inspector that collects logs during execution.
 ///
-/// The inspector collects logs from the `LOG` opcodes as well as Hardhat-style logs.
+/// The inspector collects logs from the `LOG` opcodes as well as Hardhat-style `console.sol` logs.
 #[derive(Clone, Debug, Default)]
 pub struct LogCollector {
-    /// The collected logs. Includes both `LOG` opcodes and Hardhat-style logs.
+    /// The collected logs. Includes both `LOG` opcodes and Hardhat-style `console.sol` logs.
     pub logs: Vec<Log>,
 }
 
 impl LogCollector {
-    fn hardhat_log(&mut self, mut input: Vec<u8>) -> (InstructionResult, Bytes) {
-        // Patch the Hardhat-style selector (`uint` instead of `uint256`)
-        patch_hh_console_selector(&mut input);
+    #[cold]
+    fn do_hardhat_log<CTX>(&mut self, context: &mut CTX, inputs: &CallInputs) -> Option<CallOutcome>
+    where
+        CTX: ContextTr,
+    {
+        if let Err(err) = self.hardhat_log(&inputs.input.bytes(context)) {
+            let result = InstructionResult::Revert;
+            let output = err.abi_encode_revert();
+            return Some(CallOutcome {
+                result: InterpreterResult { result, output, gas: Gas::new(inputs.gas_limit) },
+                memory_offset: inputs.return_memory_offset.clone(),
+            });
+        }
+        None
+    }
 
-        // Decode the call
-        let decoded = match HardhatConsole::HardhatConsoleCalls::abi_decode(&input, false) {
-            Ok(inner) => inner,
-            Err(err) => return (InstructionResult::Revert, err.abi_encode_revert()),
-        };
-
-        // Convert the decoded call to a DS `log(string)` event
-        self.logs.push(convert_hh_log_to_event(decoded));
-
-        (InstructionResult::Continue, Bytes::new())
+    fn hardhat_log(&mut self, data: &[u8]) -> alloy_sol_types::Result<()> {
+        let decoded = console::hh::ConsoleCalls::abi_decode(data)?;
+        self.logs.push(hh_to_ds(&decoded));
+        Ok(())
     }
 }
 
-impl<DB: Database> Inspector<DB> for LogCollector {
-    fn log(&mut self, _interp: &mut Interpreter, _context: &mut EvmContext<DB>, log: &Log) {
-        self.logs.push(log.clone());
+impl<CTX> Inspector<CTX, EthInterpreter> for LogCollector
+where
+    CTX: ContextTr,
+{
+    fn log(&mut self, _interp: &mut Interpreter, _context: &mut CTX, log: Log) {
+        self.logs.push(log);
     }
 
-    fn call(
-        &mut self,
-        _context: &mut EvmContext<DB>,
-        inputs: &mut CallInputs,
-    ) -> Option<CallOutcome> {
+    fn call(&mut self, context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
         if inputs.target_address == HARDHAT_CONSOLE_ADDRESS {
-            let (res, out) = self.hardhat_log(inputs.input.to_vec());
-            if res != InstructionResult::Continue {
-                return Some(CallOutcome {
-                    result: InterpreterResult {
-                        result: res,
-                        output: out,
-                        gas: Gas::new(inputs.gas_limit),
-                    },
-                    memory_offset: inputs.return_memory_offset.clone(),
-                });
-            }
+            return self.do_hardhat_log(context, inputs);
         }
-
         None
     }
 }
 
 impl InspectorExt for LogCollector {
-    fn console_log(&mut self, input: String) {
-        self.logs.push(Log::new_unchecked(
-            HARDHAT_CONSOLE_ADDRESS,
-            vec![Console::log::SIGNATURE_HASH],
-            input.abi_encode().into(),
-        ));
+    fn console_log(&mut self, msg: &str) {
+        self.logs.push(new_console_log(msg));
     }
 }
 
-/// Converts a call to Hardhat's `console.log` to a DSTest `log(string)` event.
-fn convert_hh_log_to_event(call: HardhatConsole::HardhatConsoleCalls) -> Log {
+/// Converts a Hardhat `console.log` call to a DSTest `log(string)` event.
+fn hh_to_ds(call: &console::hh::ConsoleCalls) -> Log {
     // Convert the parameters of the call to their string representation using `ConsoleFmt`.
-    let fmt = call.fmt(Default::default());
+    let msg = call.fmt(Default::default());
+    new_console_log(&msg)
+}
+
+/// Creates a `console.log(string)` event.
+fn new_console_log(msg: &str) -> Log {
     Log::new_unchecked(
         HARDHAT_CONSOLE_ADDRESS,
-        vec![Console::log::SIGNATURE_HASH],
-        fmt.abi_encode().into(),
+        vec![console::ds::log::SIGNATURE_HASH],
+        msg.abi_encode().into(),
     )
 }

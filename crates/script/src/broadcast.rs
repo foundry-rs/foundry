@@ -1,58 +1,60 @@
 use crate::{
-    build::LinkedBuildData, progress::ScriptProgress, sequence::ScriptSequenceKind,
-    verify::BroadcastedState, ScriptArgs, ScriptConfig,
+    ScriptArgs, ScriptConfig, build::LinkedBuildData, progress::ScriptProgress,
+    sequence::ScriptSequenceKind, verify::BroadcastedState,
 };
-use alloy_chains::Chain;
+use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::TxEnvelope;
-use alloy_eips::eip2718::Encodable2718;
+use alloy_eips::{BlockId, eip2718::Encodable2718};
 use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{
+    Address, TxHash,
     map::{AddressHashMap, AddressHashSet},
     utils::format_units,
-    Address, TxHash,
 };
-use alloy_provider::{utils::Eip1559Estimation, Provider};
+use alloy_provider::{Provider, utils::Eip1559Estimation};
 use alloy_rpc_types::TransactionRequest;
 use alloy_serde::WithOtherFields;
-use alloy_transport::Transport;
-use eyre::{bail, Context, Result};
+use eyre::{Context, Result, bail};
 use forge_verify::provider::VerificationProviderType;
-use foundry_cheatcodes::ScriptWallets;
+use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
 use foundry_common::{
-    provider::{get_http_provider, try_get_http_provider, RetryProvider},
-    shell, TransactionMaybeSigned,
+    TransactionMaybeSigned,
+    provider::{RetryProvider, get_http_provider, try_get_http_provider},
+    shell,
 };
 use foundry_config::Config;
-use futures::{future::join_all, StreamExt};
+use futures::{StreamExt, future::join_all};
 use itertools::Itertools;
-use std::sync::Arc;
+use std::{cmp::Ordering, sync::Arc};
 
-pub async fn estimate_gas<P, T>(
+pub async fn estimate_gas<P: Provider<AnyNetwork>>(
     tx: &mut WithOtherFields<TransactionRequest>,
     provider: &P,
     estimate_multiplier: u64,
-) -> Result<()>
-where
-    P: Provider<T, AnyNetwork>,
-    T: Transport + Clone,
-{
+) -> Result<()> {
     // if already set, some RPC endpoints might simply return the gas value that is already
     // set in the request and omit the estimate altogether, so we remove it here
     tx.gas = None;
 
     tx.set_gas_limit(
-        provider.estimate_gas(tx).await.wrap_err("Failed to estimate gas for tx")? *
-            estimate_multiplier /
-            100,
+        provider.estimate_gas(tx.clone()).await.wrap_err("Failed to estimate gas for tx")?
+            * estimate_multiplier
+            / 100,
     );
     Ok(())
 }
 
-pub async fn next_nonce(caller: Address, provider_url: &str) -> eyre::Result<u64> {
+pub async fn next_nonce(
+    caller: Address,
+    provider_url: &str,
+    block_number: Option<u64>,
+) -> eyre::Result<u64> {
     let provider = try_get_http_provider(provider_url)
         .wrap_err_with(|| format!("bad fork_url provider: {provider_url}"))?;
-    Ok(provider.get_transaction_count(caller).await?)
+
+    let block_id = block_number.map_or(BlockId::latest(), BlockId::number);
+    Ok(provider.get_transaction_count(caller).block_id(block_id).await?)
 }
 
 pub async fn send_transaction(
@@ -67,11 +69,31 @@ pub async fn send_transaction(
         if sequential_broadcast {
             let from = tx.from.expect("no sender");
 
-            let nonce = provider.get_transaction_count(from).await?;
-
             let tx_nonce = tx.nonce.expect("no nonce");
-            if nonce != tx_nonce {
-                bail!("EOA nonce changed unexpectedly while sending transactions. Expected {tx_nonce} got {nonce} from provider.")
+            for attempt in 0..5 {
+                let nonce = provider.get_transaction_count(from).await?;
+                match nonce.cmp(&tx_nonce) {
+                    Ordering::Greater => {
+                        bail!(
+                            "EOA nonce changed unexpectedly while sending transactions. Expected {tx_nonce} got {nonce} from provider."
+                        )
+                    }
+                    Ordering::Less => {
+                        if attempt == 4 {
+                            bail!(
+                                "After 5 attempts, provider nonce ({nonce}) is still behind expected nonce ({tx_nonce})."
+                            )
+                        }
+                        warn!(
+                            "Expected nonce ({tx_nonce}) is ahead of provider nonce ({nonce}). Retrying in 1 second..."
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                    }
+                    Ordering::Equal => {
+                        // Nonces are equal, we can proceed
+                        break;
+                    }
+                }
             }
         }
 
@@ -149,12 +171,12 @@ impl SendTransactionsKind {
 }
 
 /// State after we have bundled all
-/// [`TransactionWithMetadata`](crate::transaction::TransactionWithMetadata) objects into a single
-/// [`ScriptSequenceKind`] object containing one or more script sequences.
+/// [`TransactionWithMetadata`](forge_script_sequence::TransactionWithMetadata) objects into a
+/// single [`ScriptSequenceKind`] object containing one or more script sequences.
 pub struct BundledState {
     pub args: ScriptArgs,
     pub script_config: ScriptConfig,
-    pub script_wallets: ScriptWallets,
+    pub script_wallets: Wallets,
     pub build_data: LinkedBuildData,
     pub sequence: ScriptSequenceKind,
 }
@@ -199,7 +221,12 @@ impl BundledState {
             .sequence
             .sequences()
             .iter()
-            .flat_map(|sequence| sequence.transactions().map(|tx| tx.from().expect("missing from")))
+            .flat_map(|sequence| {
+                sequence
+                    .transactions()
+                    .filter(|tx| tx.is_unsigned())
+                    .map(|tx| tx.from().expect("missing from"))
+            })
             .collect::<AddressHashSet>();
 
         if required_addresses.contains(&Config::DEFAULT_SENDER) {
@@ -264,7 +291,7 @@ impl BundledState {
                         }),
                     ),
                     (false, _, _) => {
-                        let mut fees = provider.estimate_eip1559_fees(None).await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+                        let mut fees = provider.estimate_eip1559_fees().await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
 
                         if let Some(gas_price) = self.args.with_gas_price {
                             fees.max_fee_per_gas = gas_price.to();
@@ -328,10 +355,10 @@ impl BundledState {
                 // their order otherwise.
                 // Or if the chain does not support batched transactions (eg. Arbitrum).
                 // Or if we need to invoke eth_estimateGas before sending transactions.
-                let sequential_broadcast = estimate_via_rpc ||
-                    self.args.slow ||
-                    required_addresses.len() != 1 ||
-                    !has_batch_support(sequence.chain);
+                let sequential_broadcast = estimate_via_rpc
+                    || self.args.slow
+                    || required_addresses.len() != 1
+                    || !has_batch_support(sequence.chain);
 
                 // We send transactions and wait for receipts in batches.
                 let batch_size = if sequential_broadcast { 1 } else { self.args.batch_size };
@@ -394,24 +421,31 @@ impl BundledState {
             let (total_gas, total_gas_price, total_paid) =
                 sequence.receipts.iter().fold((0, 0, 0), |acc, receipt| {
                     let gas_used = receipt.gas_used;
-                    let gas_price = receipt.effective_gas_price;
+                    let gas_price = receipt.effective_gas_price as u64;
                     (acc.0 + gas_used, acc.1 + gas_price, acc.2 + gas_used * gas_price)
                 });
             let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
-            let avg_gas_price = format_units(total_gas_price / sequence.receipts.len() as u128, 9)
+            let avg_gas_price = format_units(total_gas_price / sequence.receipts.len() as u64, 9)
                 .unwrap_or_else(|_| "N/A".to_string());
 
+            let token_symbol = NamedChain::try_from(sequence.chain)
+                .unwrap_or_default()
+                .native_currency_symbol()
+                .unwrap_or("ETH");
             seq_progress.inner.write().set_status(&format!(
-                "Total Paid: {} ETH ({} gas * avg {} gwei)\n",
+                "Total Paid: {} {} ({} gas * avg {} gwei)\n",
                 paid.trim_end_matches('0'),
+                token_symbol,
                 total_gas,
                 avg_gas_price.trim_end_matches('0').trim_end_matches('.')
             ));
             seq_progress.inner.write().finish();
         }
 
-        shell::println("\n\n==========================")?;
-        shell::println("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
+        if !shell::is_json() {
+            sh_println!("\n\n==========================")?;
+            sh_println!("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL.")?;
+        }
 
         Ok(BroadcastedState {
             args: self.args,
@@ -423,8 +457,9 @@ impl BundledState {
 
     pub fn verify_preflight_check(&self) -> Result<()> {
         for sequence in self.sequence.sequences() {
-            if self.args.verifier.verifier == VerificationProviderType::Etherscan &&
-                self.script_config
+            if self.args.verifier.verifier == VerificationProviderType::Etherscan
+                && self
+                    .script_config
                     .config
                     .get_etherscan_api_key(Some(sequence.chain.into()))
                     .is_none()

@@ -3,19 +3,23 @@ use foundry_compilers::{
     artifacts::remappings::Remapping,
     report::{self, BasicStdoutReporter, Reporter},
 };
+use foundry_config::find_project_root;
+use itertools::Itertools;
 use semver::Version;
 use std::{
     io,
-    io::{prelude::*, IsTerminal},
+    io::{IsTerminal, prelude::*},
     path::{Path, PathBuf},
     sync::{
-        mpsc::{self, TryRecvError},
         LazyLock,
+        mpsc::{self, TryRecvError},
     },
     thread,
     time::Duration,
 };
 use yansi::Paint;
+
+use crate::shell;
 
 /// Some spinners
 // https://github.com/gernest/wow/blob/master/spin/spinners.go
@@ -41,7 +45,7 @@ impl TermSettings {
     }
 }
 
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub struct Spinner {
     indicator: &'static [&'static str],
     no_progress: bool,
@@ -49,8 +53,7 @@ pub struct Spinner {
     idx: usize,
 }
 
-#[allow(unused)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 impl Spinner {
     pub fn new(msg: impl Into<String>) -> Self {
         Self::with_indicator(SPINNERS[0], msg)
@@ -67,12 +70,12 @@ impl Spinner {
 
     pub fn tick(&mut self) {
         if self.no_progress {
-            return
+            return;
         }
 
         let indicator = self.indicator[self.idx % self.indicator.len()].green();
         let indicator = Paint::new(format!("[{indicator}]")).bold();
-        print!("\r\x33[2K\r{indicator} {}", self.message);
+        let _ = sh_print!("\r\x33[2K\r{indicator} {}", self.message);
         io::stdout().flush().unwrap();
 
         self.idx = self.idx.wrapping_add(1);
@@ -112,13 +115,13 @@ impl SpinnerReporter {
                         Ok(SpinnerMsg::Msg(msg)) => {
                             spinner.message(msg);
                             // new line so past messages are not overwritten
-                            println!();
+                            let _ = sh_println!();
                         }
                         Ok(SpinnerMsg::Shutdown(ack)) => {
                             // end with a newline
-                            println!();
+                            let _ = sh_println!();
                             let _ = ack.send(());
-                            break
+                            break;
                         }
                         Err(TryRecvError::Disconnected) => break,
                         Err(TryRecvError::Empty) => thread::sleep(Duration::from_millis(100)),
@@ -151,6 +154,28 @@ impl Drop for SpinnerReporter {
 
 impl Reporter for SpinnerReporter {
     fn on_compiler_spawn(&self, compiler_name: &str, version: &Version, dirty_files: &[PathBuf]) {
+        // Verbose message with dirty files displays first to avoid being overlapped
+        // by the spinner in .tick() which prints repeatedly over the same line.
+        if shell::verbosity() >= 5 {
+            let project_root = find_project_root(None);
+
+            self.send_msg(format!(
+                "Files to compile:\n{}",
+                dirty_files
+                    .iter()
+                    .map(|path| {
+                        let trimmed_path = if let Ok(project_root) = &project_root {
+                            path.strip_prefix(project_root).unwrap_or(path)
+                        } else {
+                            path
+                        };
+                        format!("- {}", trimmed_path.display())
+                    })
+                    .sorted()
+                    .format("\n")
+            ));
+        }
+
         self.send_msg(format!(
             "Compiling {} files with {} {}.{}.{}",
             dirty_files.len(),
@@ -197,21 +222,6 @@ pub fn with_spinner_reporter<T>(f: impl FnOnce() -> T) -> T {
     };
     report::with_scoped(&reporter, f)
 }
-
-#[macro_export]
-/// Displays warnings on the cli
-macro_rules! cli_warn {
-    ($($arg:tt)*) => {
-        eprintln!(
-            "{}{} {}",
-            yansi::Painted::new("warning").yellow().bold(),
-            yansi::Painted::new(":").bold(),
-            format_args!($($arg)*)
-        )
-    }
-}
-
-pub use cli_warn;
 
 #[cfg(test)]
 mod tests {

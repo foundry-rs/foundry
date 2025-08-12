@@ -1,33 +1,41 @@
 //! Helper types for working with [revm](foundry_evm::revm)
 
-use crate::{mem::storage::MinedTransaction, revm::primitives::AccountInfo};
+use std::{
+    collections::BTreeMap,
+    fmt::{self, Debug},
+    path::Path,
+};
+
 use alloy_consensus::Header;
-use alloy_primitives::{keccak256, Address, Bytes, B256, U256, U64};
+use alloy_primitives::{Address, B256, Bytes, U256, keccak256, map::HashMap};
 use alloy_rpc_types::BlockId;
 use anvil_core::eth::{
     block::Block,
     transaction::{MaybeImpersonatedTransaction, TransactionInfo, TypedReceipt, TypedTransaction},
 };
 use foundry_common::errors::FsPathError;
-use foundry_evm::{
-    backend::{
-        BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertStateSnapshotAction,
-        StateSnapshot,
-    },
-    revm::{
-        db::{CacheDB, DatabaseRef, DbAccount},
-        primitives::{BlockEnv, Bytecode, HashMap, KECCAK_EMPTY},
-        Database, DatabaseCommit,
-    },
+use foundry_evm::backend::{
+    BlockchainDb, DatabaseError, DatabaseResult, MemDb, RevertStateSnapshotAction, StateSnapshot,
+};
+use revm::{
+    Database, DatabaseCommit,
+    bytecode::Bytecode,
+    context::BlockEnv,
+    context_interface::block::BlobExcessGasAndPrice,
+    database::{CacheDB, DatabaseRef, DbAccount},
+    primitives::{KECCAK_EMPTY, eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
+    state::AccountInfo,
 };
 use serde::{
-    de::{MapAccess, Visitor},
     Deserialize, Deserializer, Serialize,
+    de::{Error as DeError, MapAccess, Visitor},
 };
-use std::{collections::BTreeMap, fmt, path::Path};
+use serde_json::Value;
+
+use crate::mem::storage::MinedTransaction;
 
 /// Helper trait get access to the full state data of the database
-pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> {
+pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> + Debug {
     /// Returns a reference to the database as a `dyn DatabaseRef`.
     // TODO: Required until trait upcasting is stabilized: <https://github.com/rust-lang/rust/issues/65991>
     fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError>;
@@ -115,7 +123,7 @@ pub trait Db:
         Ok(())
     }
 
-    /// Sets the balance of the given address
+    /// Sets the code of the given address
     fn set_code(&mut self, address: Address, code: Bytes) -> DatabaseResult<()> {
         let mut info = self.basic(address)?.unwrap_or_default();
         let code_hash = if code.as_ref().is_empty() {
@@ -129,7 +137,7 @@ pub trait Db:
         Ok(())
     }
 
-    /// Sets the balance of the given address
+    /// Sets the storage value at the given slot for the address
     fn set_storage_at(&mut self, address: Address, slot: B256, val: B256) -> DatabaseResult<()>;
 
     /// inserts a blockhash for the given number
@@ -139,7 +147,7 @@ pub trait Db:
     fn dump_state(
         &self,
         at: BlockEnv,
-        best_number: U64,
+        best_number: u64,
         blocks: Vec<SerializableBlock>,
         transactions: Vec<SerializableTransaction>,
         historical_states: Option<SerializableHistoricalStates>,
@@ -215,13 +223,13 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
     }
 
     fn insert_block_hash(&mut self, number: U256, hash: B256) {
-        self.block_hashes.insert(number, hash);
+        self.cache.block_hashes.insert(number, hash);
     }
 
     fn dump_state(
         &self,
         _at: BlockEnv,
-        _best_number: U64,
+        _best_number: u64,
         _blocks: Vec<SerializableBlock>,
         _transaction: Vec<SerializableTransaction>,
         _historical_states: Option<SerializableHistoricalStates>,
@@ -242,43 +250,43 @@ impl<T: DatabaseRef<Error = DatabaseError> + Send + Sync + Clone + fmt::Debug> D
     }
 }
 
-impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
+impl<T: DatabaseRef<Error = DatabaseError> + Debug> MaybeFullDatabase for CacheDB<T> {
     fn as_dyn(&self) -> &dyn DatabaseRef<Error = DatabaseError> {
         self
     }
 
     fn maybe_as_full_db(&self) -> Option<&HashMap<Address, DbAccount>> {
-        Some(&self.accounts)
+        Some(&self.cache.accounts)
     }
 
     fn clear_into_state_snapshot(&mut self) -> StateSnapshot {
-        let db_accounts = std::mem::take(&mut self.accounts);
+        let db_accounts = std::mem::take(&mut self.cache.accounts);
         let mut accounts = HashMap::default();
         let mut account_storage = HashMap::default();
 
         for (addr, mut acc) in db_accounts {
             account_storage.insert(addr, std::mem::take(&mut acc.storage));
             let mut info = acc.info;
-            info.code = self.contracts.remove(&info.code_hash);
+            info.code = self.cache.contracts.remove(&info.code_hash);
             accounts.insert(addr, info);
         }
-        let block_hashes = std::mem::take(&mut self.block_hashes);
+        let block_hashes = std::mem::take(&mut self.cache.block_hashes);
         StateSnapshot { accounts, storage: account_storage, block_hashes }
     }
 
     fn read_as_state_snapshot(&self) -> StateSnapshot {
-        let db_accounts = self.accounts.clone();
+        let db_accounts = self.cache.accounts.clone();
         let mut accounts = HashMap::default();
         let mut account_storage = HashMap::default();
 
         for (addr, acc) in db_accounts {
             account_storage.insert(addr, acc.storage.clone());
             let mut info = acc.info;
-            info.code = self.contracts.get(&info.code_hash).cloned();
+            info.code = self.cache.contracts.get(&info.code_hash).cloned();
             accounts.insert(addr, info);
         }
 
-        let block_hashes = self.block_hashes.clone();
+        let block_hashes = self.cache.block_hashes.clone();
         StateSnapshot { accounts, storage: account_storage, block_hashes }
     }
 
@@ -291,9 +299,9 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
 
         for (addr, mut acc) in accounts {
             if let Some(code) = acc.code.take() {
-                self.contracts.insert(acc.code_hash, code);
+                self.cache.contracts.insert(acc.code_hash, code);
             }
-            self.accounts.insert(
+            self.cache.accounts.insert(
                 addr,
                 DbAccount {
                     info: acc,
@@ -302,7 +310,7 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeFullDatabase for CacheDB<T> {
                 },
             );
         }
-        self.block_hashes = block_hashes;
+        self.cache.block_hashes = block_hashes;
     }
 }
 
@@ -321,6 +329,7 @@ impl<T: DatabaseRef<Error = DatabaseError>> MaybeForkedDatabase for CacheDB<T> {
 }
 
 /// Represents a state at certain point
+#[derive(Debug)]
 pub struct StateDb(pub(crate) Box<dyn MaybeFullDatabase + Send + Sync>);
 
 impl StateDb {
@@ -380,15 +389,132 @@ impl MaybeFullDatabase for StateDb {
     }
 }
 
+/// Legacy block environment from before v1.3.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct LegacyBlockEnv {
+    pub number: Option<StringOrU64>,
+    #[serde(alias = "coinbase")]
+    pub beneficiary: Option<Address>,
+    pub timestamp: Option<StringOrU64>,
+    pub gas_limit: Option<StringOrU64>,
+    pub basefee: Option<StringOrU64>,
+    pub difficulty: Option<StringOrU64>,
+    pub prevrandao: Option<B256>,
+    pub blob_excess_gas_and_price: Option<LegacyBlobExcessGasAndPrice>,
+}
+
+/// Legacy blob excess gas and price structure from before v1.3.
+#[derive(Debug, Deserialize)]
+pub struct LegacyBlobExcessGasAndPrice {
+    pub excess_blob_gas: u64,
+    pub blob_gasprice: u64,
+}
+
+/// Legacy string or u64 type from before v1.3.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum StringOrU64 {
+    Hex(String),
+    Dec(u64),
+}
+
+impl StringOrU64 {
+    pub fn to_u64(&self) -> Option<u64> {
+        match self {
+            Self::Dec(n) => Some(*n),
+            Self::Hex(s) => s.strip_prefix("0x").and_then(|s| u64::from_str_radix(s, 16).ok()),
+        }
+    }
+
+    pub fn to_u256(&self) -> Option<U256> {
+        match self {
+            Self::Dec(n) => Some(U256::from(*n)),
+            Self::Hex(s) => s.strip_prefix("0x").and_then(|s| U256::from_str_radix(s, 16).ok()),
+        }
+    }
+}
+
+/// Converts a `LegacyBlockEnv` to a `BlockEnv`, handling the conversion of legacy fields.
+impl TryFrom<LegacyBlockEnv> for BlockEnv {
+    type Error = &'static str;
+
+    fn try_from(legacy: LegacyBlockEnv) -> Result<Self, Self::Error> {
+        Ok(Self {
+            number: legacy.number.and_then(|v| v.to_u256()).unwrap_or(U256::ZERO),
+            beneficiary: legacy.beneficiary.unwrap_or(Address::ZERO),
+            timestamp: legacy.timestamp.and_then(|v| v.to_u256()).unwrap_or(U256::ONE),
+            gas_limit: legacy.gas_limit.and_then(|v| v.to_u64()).unwrap_or(u64::MAX),
+            basefee: legacy.basefee.and_then(|v| v.to_u64()).unwrap_or(0),
+            difficulty: legacy.difficulty.and_then(|v| v.to_u256()).unwrap_or(U256::ZERO),
+            prevrandao: legacy.prevrandao.or(Some(B256::ZERO)),
+            blob_excess_gas_and_price: legacy
+                .blob_excess_gas_and_price
+                .map(|v| BlobExcessGasAndPrice::new(v.excess_blob_gas, v.blob_gasprice))
+                .or_else(|| {
+                    Some(BlobExcessGasAndPrice::new(0, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE))
+                }),
+        })
+    }
+}
+
+/// Custom deserializer for `BlockEnv` that handles both v1.2 and v1.3+ formats.
+fn deserialize_block_env_compat<'de, D>(deserializer: D) -> Result<Option<BlockEnv>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value: Option<Value> = Option::deserialize(deserializer)?;
+    let Some(value) = value else {
+        return Ok(None);
+    };
+
+    if let Ok(env) = BlockEnv::deserialize(&value) {
+        return Ok(Some(env));
+    }
+
+    let legacy: LegacyBlockEnv = serde_json::from_value(value).map_err(|e| {
+        D::Error::custom(format!("Legacy deserialization of `BlockEnv` failed: {e}"))
+    })?;
+
+    Ok(Some(BlockEnv::try_from(legacy).map_err(D::Error::custom)?))
+}
+
+/// Custom deserializer for `best_block_number` that handles both v1.2 and v1.3+ formats.
+fn deserialize_best_block_number_compat<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value: Option<Value> = Option::deserialize(deserializer)?;
+    let Some(value) = value else {
+        return Ok(None);
+    };
+
+    let number = match value {
+        Value::Number(n) => n.as_u64(),
+        Value::String(s) => {
+            if let Some(s) = s.strip_prefix("0x") {
+                u64::from_str_radix(s, 16).ok()
+            } else {
+                s.parse().ok()
+            }
+        }
+        _ => None,
+    };
+
+    Ok(number)
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SerializableState {
     /// The block number of the state
     ///
     /// Note: This is an Option for backwards compatibility: <https://github.com/foundry-rs/foundry/issues/5460>
+    #[serde(deserialize_with = "deserialize_block_env_compat")]
     pub block: Option<BlockEnv>,
     pub accounts: BTreeMap<Address, SerializableAccountRecord>,
     /// The best block number of the state, can be different from block number (Arbitrum chain).
-    pub best_block_number: Option<U64>,
+    #[serde(deserialize_with = "deserialize_best_block_number_compat")]
+    pub best_block_number: Option<u64>,
     #[serde(default)]
     pub blocks: Vec<SerializableBlock>,
     #[serde(default)]
@@ -412,6 +538,7 @@ impl SerializableState {
     }
 
     /// This is used as the clap `value_parser` implementation
+    #[allow(dead_code)]
     pub(crate) fn parse(path: &str) -> Result<Self, String> {
         Self::load(path).map_err(|err| err.to_string())
     }
@@ -482,7 +609,7 @@ impl From<Block> for SerializableBlock {
         Self {
             header: block.header,
             transactions: block.transactions.into_iter().map(Into::into).collect(),
-            ommers: block.ommers.into_iter().map(Into::into).collect(),
+            ommers: block.ommers.into_iter().collect(),
         }
     }
 }
@@ -492,7 +619,7 @@ impl From<SerializableBlock> for Block {
         Self {
             header: block.header,
             transactions: block.transactions.into_iter().map(Into::into).collect(),
-            ommers: block.ommers.into_iter().map(Into::into).collect(),
+            ommers: block.ommers.into_iter().collect(),
         }
     }
 }
@@ -557,5 +684,59 @@ impl IntoIterator for SerializableHistoricalStates {
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_deser_block() {
+        let block = r#"{
+            "header": {
+                "parentHash": "0xceb0fe420d6f14a8eeec4319515b89acbb0bb4861cad9983d529ab4b1e4af929",
+                "sha3Uncles": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+                "miner": "0x0000000000000000000000000000000000000000",
+                "stateRoot": "0xe1423fd180478ab4fd05a7103277d64496b15eb914ecafe71eeec871b552efd1",
+                "transactionsRoot": "0x2b5598ef261e5f88e4303bb2b3986b3d5c0ebf4cd9977daebccae82a6469b988",
+                "receiptsRoot": "0xf78dfb743fbd92ade140711c8bbc542b5e307f0ab7984eff35d751969fe57efa",
+                "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+                "difficulty": "0x0",
+                "number": "0x2",
+                "gasLimit": "0x1c9c380",
+                "gasUsed": "0x5208",
+                "timestamp": "0x66cdc823",
+                "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                "nonce": "0x0000000000000000",
+                "baseFeePerGas": "0x342a1c58",
+                "blobGasUsed": "0x0",
+                "excessBlobGas": "0x0",
+                "extraData": "0x"
+            },
+            "transactions": [
+                {
+                    "EIP1559": {
+                        "chainId": "0x7a69",
+                        "nonce": "0x0",
+                        "gas": "0x5209",
+                        "maxFeePerGas": "0x77359401",
+                        "maxPriorityFeePerGas": "0x1",
+                        "to": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+                        "value": "0x0",
+                        "accessList": [],
+                        "input": "0x",
+                        "r": "0x85c2794a580da137e24ccc823b45ae5cea99371ae23ee13860fcc6935f8305b0",
+                        "s": "0x41de7fa4121dab284af4453d30928241208bafa90cdb701fe9bc7054759fe3cd",
+                        "yParity": "0x0",
+                        "hash": "0x8c9b68e8947ace33028dba167354fde369ed7bbe34911b772d09b3c64b861515"
+                    }
+                }
+            ],
+            "ommers": []
+        }
+        "#;
+
+        let _block: SerializableBlock = serde_json::from_str(block).unwrap();
     }
 }

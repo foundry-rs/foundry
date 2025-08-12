@@ -1,16 +1,9 @@
-use super::{
-    transaction::{TransactionInfo, TypedReceipt},
-    trie,
-};
-use alloy_consensus::Header;
-use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{Address, Bloom, Bytes, B256, B64, U256};
+use super::transaction::{TransactionInfo, TypedReceipt};
+use alloy_consensus::{EMPTY_OMMER_ROOT_HASH, Header, proofs::calculate_transaction_root};
+use alloy_primitives::{Address, B64, B256, Bloom, Bytes, U256};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
 
 // Type alias to optionally support impersonated transactions
-#[cfg(not(feature = "impersonated-tx"))]
-type Transaction = crate::eth::transaction::TypedTransaction;
-#[cfg(feature = "impersonated-tx")]
 type Transaction = crate::eth::transaction::MaybeImpersonatedTransaction;
 
 /// Container type that gathers all block data
@@ -34,27 +27,20 @@ impl Block {
     ///
     /// Note: if the `impersonate-tx` feature is enabled this will also accept
     /// `MaybeImpersonatedTransaction`.
-    pub fn new<T>(
-        partial_header: PartialHeader,
-        transactions: impl IntoIterator<Item = T>,
-        ommers: Vec<Header>,
-    ) -> Self
+    pub fn new<T>(partial_header: PartialHeader, transactions: impl IntoIterator<Item = T>) -> Self
     where
         T: Into<Transaction>,
     {
         let transactions: Vec<_> = transactions.into_iter().map(Into::into).collect();
-        let mut encoded_ommers: Vec<u8> = Vec::new();
-        alloy_rlp::encode_list(&ommers, &mut encoded_ommers);
-        let ommers_hash =
-            B256::from_slice(alloy_primitives::utils::keccak256(encoded_ommers).as_slice());
-        let transactions_root =
-            trie::ordered_trie_root(transactions.iter().map(|r| r.encoded_2718()));
+        let transactions1: Vec<super::transaction::TypedTransaction> =
+            transactions.clone().into_iter().map(Into::into).collect();
+        let transactions_root = calculate_transaction_root(&transactions1);
 
         Self {
             header: Header {
                 parent_hash: partial_header.parent_hash,
                 beneficiary: partial_header.beneficiary,
-                ommers_hash,
+                ommers_hash: EMPTY_OMMER_ROOT_HASH,
                 state_root: partial_header.state_root,
                 transactions_root,
                 receipts_root: partial_header.receipts_root,
@@ -66,16 +52,16 @@ impl Block {
                 timestamp: partial_header.timestamp,
                 extra_data: partial_header.extra_data,
                 mix_hash: partial_header.mix_hash,
-                withdrawals_root: None,
+                withdrawals_root: partial_header.withdrawals_root,
                 blob_gas_used: partial_header.blob_gas_used,
                 excess_blob_gas: partial_header.excess_blob_gas,
                 parent_beacon_block_root: partial_header.parent_beacon_block_root,
                 nonce: partial_header.nonce,
                 base_fee_per_gas: partial_header.base_fee,
-                requests_root: None,
+                requests_hash: partial_header.requests_hash,
             },
             transactions,
-            ommers,
+            ommers: vec![],
         }
     }
 }
@@ -100,6 +86,8 @@ pub struct PartialHeader {
     pub parent_beacon_block_root: Option<B256>,
     pub nonce: B64,
     pub base_fee: Option<u64>,
+    pub withdrawals_root: Option<B256>,
+    pub requests_hash: Option<B256>,
 }
 
 impl From<Header> for PartialHeader {
@@ -122,6 +110,8 @@ impl From<Header> for PartialHeader {
             blob_gas_used: value.blob_gas_used,
             excess_blob_gas: value.excess_blob_gas,
             parent_beacon_block_root: value.parent_beacon_block_root,
+            requests_hash: value.requests_hash,
+            withdrawals_root: value.withdrawals_root,
         }
     }
 }
@@ -160,7 +150,7 @@ mod tests {
             excess_blob_gas: Default::default(),
             parent_beacon_block_root: Default::default(),
             base_fee_per_gas: None,
-            requests_root: None,
+            requests_hash: None,
         };
 
         let encoded = alloy_rlp::encode(&header);
@@ -201,7 +191,7 @@ mod tests {
             parent_beacon_block_root: None,
             nonce: B64::ZERO,
             base_fee_per_gas: None,
-            requests_root: None,
+            requests_hash: None,
         };
 
         header.encode(&mut data);
@@ -234,7 +224,7 @@ mod tests {
             excess_blob_gas: None,
             parent_beacon_block_root: None,
             base_fee_per_gas: None,
-            requests_root: None,
+            requests_hash: None,
         };
         let header = Header::decode(&mut data.as_slice()).unwrap();
         assert_eq!(header, expected);
@@ -244,7 +234,7 @@ mod tests {
     // Test vector from: https://github.com/ethereum/tests/blob/f47bbef4da376a49c8fc3166f09ab8a6d182f765/BlockchainTests/ValidBlocks/bcEIP1559/baseFee.json#L15-L36
     fn test_eip1559_block_header_hash() {
         let expected_hash =
-            b256!("6a251c7c3c5dca7b42407a3752ff48f3bbca1fab7f9868371d9918daf1988d1f");
+            b256!("0x6a251c7c3c5dca7b42407a3752ff48f3bbca1fab7f9868371d9918daf1988d1f");
         let header = Header {
             parent_hash: B256::from_str("e0a94a7a3c9617401586b1a27025d2d9671332d22d540e0af72b069170380f2a").unwrap(),
             ommers_hash: B256::from_str("1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347").unwrap(),
@@ -266,7 +256,7 @@ mod tests {
             blob_gas_used: None,
             excess_blob_gas: None,
             parent_beacon_block_root: None,
-            requests_root: None,
+            requests_hash: None,
         };
         assert_eq!(header.hash_slow(), expected_hash);
     }

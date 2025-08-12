@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -121,5 +121,35 @@ contract SymbolicStorageWithSeedTest is DSTest {
     function testEmptyInitialStorage(uint256 slot) public {
         bytes32 storage_value = vm.load(address(vm), bytes32(slot));
         assertEq(uint256(storage_value), 0);
+    }
+}
+
+// <https://github.com/foundry-rs/foundry/issues/10084>
+contract ArbitraryStorageOverwriteWithSeedTest is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+    uint256 _value;
+
+    function testArbitraryStorageFalse(uint256 value) public {
+        _value = value;
+        vm.setArbitraryStorage(address(this), false);
+        assertEq(_value, value);
+    }
+
+    function testArbitraryStorageTrue(uint256 value) public {
+        _value = value;
+        vm.setArbitraryStorage(address(this), true);
+        assertTrue(_value != value);
+    }
+
+    function testArbitraryStorageFalse_setAfter(uint256 value) public {
+        vm.setArbitraryStorage(address(this), false);
+        _value = value;
+        assertEq(_value, value);
+    }
+
+    function testArbitraryStorageTrue_setAfter(uint256 value) public {
+        vm.setArbitraryStorage(address(this), true);
+        _value = value;
+        assertEq(_value, value);
     }
 }

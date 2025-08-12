@@ -1,5 +1,5 @@
-use crate::{error::PrivateKeyError, PendingSigner, WalletSigner};
-use alloy_primitives::{hex::FromHex, B256};
+use crate::{PendingSigner, WalletSigner, error::PrivateKeyError};
+use alloy_primitives::{B256, hex::FromHex};
 use alloy_signer_ledger::HDPath as LedgerHDPath;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_signer_trezor::HDPath as TrezorHDPath;
@@ -42,10 +42,11 @@ pub fn create_mnemonic_signer(
     index: u32,
 ) -> Result<WalletSigner> {
     let mnemonic = if Path::new(mnemonic).is_file() {
-        fs::read_to_string(mnemonic)?.replace('\n', "")
+        fs::read_to_string(mnemonic)?
     } else {
         mnemonic.to_owned()
     };
+    let mnemonic = mnemonic.split_whitespace().collect::<Vec<_>>().join(" ");
 
     Ok(WalletSigner::from_mnemonic(&mnemonic, passphrase, hd_path, index)?)
 }

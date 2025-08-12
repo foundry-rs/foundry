@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-pragma solidity 0.8.18;
+pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
 import "cheats/Vm.sol";
@@ -12,7 +12,7 @@ contract WarpTest is DSTest {
         assertEq(block.timestamp, 10, "warp failed");
     }
 
-    function testWarpFuzzed(uint128 jump) public {
+    function testWarpFuzzed(uint32 jump) public {
         uint256 pre = block.timestamp;
         vm.warp(block.timestamp + jump);
         assertEq(block.timestamp, pre + jump, "warp failed");

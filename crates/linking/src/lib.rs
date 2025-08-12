@@ -5,11 +5,11 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{Address, B256, Bytes};
 use foundry_compilers::{
+    Artifact, ArtifactId,
     artifacts::{CompactContractBytecodeCow, Libraries},
     contracts::ArtifactContracts,
-    Artifact, ArtifactId,
 };
 use semver::Version;
 use std::{
@@ -79,10 +79,10 @@ impl<'a> Linker<'a> {
         version: Option<&Version>,
     ) -> Option<&'a ArtifactId> {
         for id in self.contracts.keys() {
-            if let Some(version) = version {
-                if id.version != *version {
-                    continue;
-                }
+            if let Some(version) = version
+                && id.version != *version
+            {
+                continue;
             }
             let (artifact_path, artifact_name) = self.convert_artifact_id_to_lib_path(id);
 
@@ -106,10 +106,10 @@ impl<'a> Linker<'a> {
         if let Some(bytecode) = &contract.bytecode {
             references.extend(bytecode.link_references.clone());
         }
-        if let Some(deployed_bytecode) = &contract.deployed_bytecode {
-            if let Some(bytecode) = &deployed_bytecode.bytecode {
-                references.extend(bytecode.link_references.clone());
-            }
+        if let Some(deployed_bytecode) = &contract.deployed_bytecode
+            && let Some(bytecode) = &deployed_bytecode.bytecode
+        {
+            references.extend(bytecode.link_references.clone());
         }
 
         for (file, libs) in &references {
@@ -283,8 +283,12 @@ impl<'a> Linker<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{fixed_bytes, map::HashMap};
-    use foundry_compilers::{Project, ProjectCompileOutput, ProjectPathsConfig};
+    use alloy_primitives::{address, fixed_bytes, map::HashMap};
+    use foundry_compilers::{
+        Project, ProjectCompileOutput, ProjectPathsConfig,
+        multi::MultiCompiler,
+        solc::{Solc, SolcCompiler},
+    };
 
     struct LinkerTest {
         project: Project,
@@ -303,11 +307,12 @@ mod tests {
                 .build()
                 .unwrap();
 
+            let solc = Solc::find_or_install(&Version::new(0, 8, 18)).unwrap();
             let project = Project::builder()
                 .paths(paths)
                 .ephemeral()
                 .no_artifacts()
-                .build(Default::default())
+                .build(MultiCompiler { solc: Some(SolcCompiler::Specific(solc)), vyper: None })
                 .unwrap();
 
             let mut output = project.compile().unwrap();
@@ -393,7 +398,7 @@ mod tests {
             for (dep_identifier, address) in assertions {
                 let (file, name) = dep_identifier.split_once(':').unwrap();
                 if let Some(lib_address) =
-                    libraries.libs.get(&PathBuf::from(file)).and_then(|libs| libs.get(name))
+                    libraries.libs.get(Path::new(file)).and_then(|libs| libs.get(name))
                 {
                     assert_eq!(
                         *lib_address,
@@ -422,14 +427,14 @@ mod tests {
                     "default/linking/simple/Simple.t.sol:LibraryConsumer".to_string(),
                     vec![(
                         "default/linking/simple/Simple.t.sol:Lib".to_string(),
-                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                        address!("0x5a443704dd4b594b382c22a083e2bd3090a6fef3"),
                     )],
                 )
                 .assert_dependencies(
                     "default/linking/simple/Simple.t.sol:SimpleLibraryLinkingTest".to_string(),
                     vec![(
                         "default/linking/simple/Simple.t.sol:Lib".to_string(),
-                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                        address!("0x5a443704dd4b594b382c22a083e2bd3090a6fef3"),
                     )],
                 )
                 .test_with_sender_and_nonce(Address::default(), 1);
@@ -445,7 +450,7 @@ mod tests {
                     "default/linking/nested/Nested.t.sol:NestedLib".to_string(),
                     vec![(
                         "default/linking/nested/Nested.t.sol:Lib".to_string(),
-                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                        address!("0x5a443704dd4b594b382c22a083e2bd3090a6fef3"),
                     )],
                 )
                 .assert_dependencies(
@@ -500,14 +505,14 @@ mod tests {
                     "default/linking/duplicate/Duplicate.t.sol:C".to_string(),
                     vec![(
                         "default/linking/duplicate/Duplicate.t.sol:A".to_string(),
-                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                        address!("0x5a443704dd4b594b382c22a083e2bd3090a6fef3"),
                     )],
                 )
                 .assert_dependencies(
                     "default/linking/duplicate/Duplicate.t.sol:D".to_string(),
                     vec![(
                         "default/linking/duplicate/Duplicate.t.sol:B".to_string(),
-                        Address::from_str("0x5a443704dd4b594b382c22a083e2bd3090a6fef3").unwrap(),
+                        address!("0x5a443704dd4b594b382c22a083e2bd3090a6fef3"),
                     )],
                 )
                 .assert_dependencies(
@@ -637,7 +642,7 @@ mod tests {
                     "default/linking/nested/Nested.t.sol:NestedLib".to_string(),
                     vec![(
                         "default/linking/nested/Nested.t.sol:Lib".to_string(),
-                        Address::from_str("0xCD3864eB2D88521a5477691EE589D9994b796834").unwrap(),
+                        address!("0xddb1Cd2497000DAeA687CEa3dc34Af44084BEa74"),
                     )],
                 )
                 .assert_dependencies(
@@ -647,12 +652,12 @@ mod tests {
                         // have the same address and nonce.
                         (
                             "default/linking/nested/Nested.t.sol:Lib".to_string(),
-                            Address::from_str("0xCD3864eB2D88521a5477691EE589D9994b796834")
+                            Address::from_str("0xddb1Cd2497000DAeA687CEa3dc34Af44084BEa74")
                                 .unwrap(),
                         ),
                         (
                             "default/linking/nested/Nested.t.sol:NestedLib".to_string(),
-                            Address::from_str("0x023d9a6bfA39c45997572dC4F87b3E2713b6EBa4")
+                            Address::from_str("0xfebE2F30641170642f317Ff6F644Cee60E7Ac369")
                                 .unwrap(),
                         ),
                     ],
@@ -662,12 +667,12 @@ mod tests {
                     vec![
                         (
                             "default/linking/nested/Nested.t.sol:Lib".to_string(),
-                            Address::from_str("0xCD3864eB2D88521a5477691EE589D9994b796834")
+                            Address::from_str("0xddb1Cd2497000DAeA687CEa3dc34Af44084BEa74")
                                 .unwrap(),
                         ),
                         (
                             "default/linking/nested/Nested.t.sol:NestedLib".to_string(),
-                            Address::from_str("0x023d9a6bfA39c45997572dC4F87b3E2713b6EBa4")
+                            Address::from_str("0xfebE2F30641170642f317Ff6F644Cee60E7Ac369")
                                 .unwrap(),
                         ),
                     ],

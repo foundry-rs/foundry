@@ -21,24 +21,21 @@ revm = { workspace = true, default-features = false, features = [
     "memory_limit",
     "c-kzg",
 ] }
+op-revm.workspace = true
 
-alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-primitives = { workspace = true, features = ["serde", "rlp"] }
 alloy-rpc-types = { workspace = true, features = ["anvil", "trace"] }
 alloy-serde.workspace = true
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
-alloy-trie.workspace = true
-
-serde = { workspace = true, optional = true }
+op-alloy-consensus = { workspace = true, features = ["serde"] }
+alloy-network.workspace = true
+serde.workspace = true
 serde_json.workspace = true
-bytes = "1.4"
+bytes.workspace = true
 
 # misc
-rand = "0.8"
-
-[features]
-default = ["serde"]
-impersonated-tx = []
-serde = ["dep:serde"]
+rand.workspace = true
+thiserror.workspace = true
