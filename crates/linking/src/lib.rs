@@ -29,8 +29,8 @@ pub enum LinkerError {
     InvalidAddress(<Address as std::str::FromStr>::Err),
     #[error("cyclic dependency found, can't link libraries via CREATE2")]
     CyclicDependency,
-    #[error("linking failed for library at {file}")]
-    LinkingFailed { file: String },
+    #[error("failed linking {artifact}")]
+    LinkingFailed { artifact: String },
 }
 
 pub struct Linker<'a> {
@@ -252,27 +252,32 @@ impl<'a> Linker<'a> {
         let mut contract =
             self.contracts.get(target).ok_or(LinkerError::MissingTargetArtifact)?.clone();
         for (file, libs) in &libraries.libs {
-            // Track if any linking succeeded
-            let mut linked = false;
             for (name, address) in libs {
                 let address = Address::from_str(address).map_err(LinkerError::InvalidAddress)?;
 
                 if let Some(bytecode) = contract.bytecode.as_mut() {
-                    linked |= bytecode.to_mut().link(&file.to_string_lossy(), name, address);
+                    bytecode.to_mut().link(&file.to_string_lossy(), name, address);
                 }
                 if let Some(deployed_bytecode) =
                     contract.deployed_bytecode.as_mut().and_then(|b| b.to_mut().bytecode.as_mut())
                 {
-                    linked |= deployed_bytecode.link(&file.to_string_lossy(), name, address);
+                    deployed_bytecode.link(&file.to_string_lossy(), name, address);
                 }
             }
-
-            if !linked {
-                return Err(LinkerError::LinkingFailed {
-                    file: file.to_string_lossy().into_owned(),
-                });
-            }
         }
+
+        if contract.bytecode.as_deref().is_some_and(|b| b.object.is_unlinked())
+            || contract
+                .deployed_bytecode
+                .as_deref()
+                .and_then(|b| b.bytecode.as_ref())
+                .is_some_and(|b| b.object.is_unlinked())
+        {
+            return Err(LinkerError::LinkingFailed {
+                artifact: target.source.to_string_lossy().into(),
+            });
+        }
+
         Ok(contract)
     }
 
@@ -722,8 +727,8 @@ mod tests {
 
         // Verify we get a LinkingFailed error
         match result {
-            Err(LinkerError::LinkingFailed { file }) => {
-                assert_eq!(file, "default/linking/simple/Simple.t.sol");
+            Err(LinkerError::LinkingFailed { artifact }) => {
+                assert_eq!(artifact, "default/linking/simple/Simple.t.sol");
             }
             _ => panic!("Expected LinkingFailed error, got: {result:?}"),
         }
