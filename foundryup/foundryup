@@ -273,7 +273,9 @@ main() {
     if check_cmd tar; then
       say "downloading manpages"
       mkdir -p "$FOUNDRY_MAN_DIR"
-      download "$MAN_TARBALL_URL" | tar -xzC "$FOUNDRY_MAN_DIR"
+      if ! download "$MAN_TARBALL_URL" | tar -xzC "$FOUNDRY_MAN_DIR"; then
+        warn "skipping manpage download: unavailable or invalid archive"
+      fi
     else
       say 'skipping manpage download: missing "tar"'
     fi
