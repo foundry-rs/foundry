@@ -52,9 +52,9 @@ macro_rules! impl_increment_decrement {
             impl IncrementDecrementMutator for $t {
                 fn increment_decrement(self, test_runner: &mut TestRunner) -> Self {
                     if test_runner.rng().random::<bool>() {
-                        self.saturating_add(Self::ONE)
+                        self.wrapping_add(Self::ONE)
                     } else {
-                        self.saturating_sub(Self::ONE)
+                        self.wrapping_sub(Self::ONE)
                     }
                 }
             }
