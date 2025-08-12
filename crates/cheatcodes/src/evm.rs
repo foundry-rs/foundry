@@ -11,7 +11,7 @@ use alloy_primitives::{Address, B256, U256, map::HashMap};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use foundry_common::fs::{read_json_file, write_json_file};
-use foundry_compilers::artifacts::{Storage, StorageLayout};
+use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
 use foundry_evm_core::{
     ContextExt,
     backend::{DatabaseExt, RevertStateSnapshotAction},
@@ -1421,8 +1421,7 @@ fn check_array_slot_match(
     storage: &Storage,
     type_info: &StorageType,
     base_slot: U256,
-    slot_value: U256,
-    slot_str: &str,
+    slot: U256,
 ) -> Option<SlotInfo> {
     // Check for static arrays by looking for encoding == "inplace" and array syntax in label
     trace!(type_label = %type_info.label, "checking if type is a static_array");
@@ -1443,12 +1442,12 @@ fn check_array_slot_match(
     let total_slots = (total_bytes + 31) / 32;
 
     // Check if current slot is within the array range
-    if slot_value <= base_slot || slot_value >= base_slot + U256::from(total_slots) {
+    if slot <= base_slot || slot >= base_slot + U256::from(total_slots) {
         return None;
     }
 
     // Calculate index based on slot offset
-    let slot_offset = (slot_value - base_slot).to::<u64>();
+    let slot_offset = (slot - base_slot).to::<u64>();
 
     // Extract array size from label to calculate proper index
     let array_size = extract_array_size(&type_info.label)?;
@@ -1458,8 +1457,8 @@ fn check_array_slot_match(
     Some(SlotInfo {
         label: format!("{}[{}]", storage.label, index),
         storage_type: type_info.label.clone(),
-        offset: 0, // Array elements always start at offset 0
-        slot: slot_str.to_string(),
+        offset: 0,
+        slot: slot.to_string(),
     })
 }
 
@@ -1467,8 +1466,8 @@ fn check_array_slot_match(
 fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo> {
     // Convert B256 slot to decimal string for comparison with storage layout
     // Storage layout stores slots as decimal strings like "0", "1", "2"
-    let slot_value = U256::from_be_bytes(slot.0);
-    let slot_str = slot_value.to_string();
+    let slot = U256::from_be_bytes(slot.0);
+    let slot_str = slot.to_string();
 
     // Single loop to check both exact matches and array ranges
     for storage in &storage_layout.storage {
@@ -1483,12 +1482,10 @@ fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo
         }
 
         // Check if this is a static array with inplace encoding (contiguous storage)
-        if let Some(type_info) = storage_layout.types.get(&storage.storage_type) {
-            if let Some(slot_info) =
-                check_array_slot_match(storage, type_info, base_slot, slot_value, &slot_str)
-            {
-                return Some(slot_info);
-            }
+        if let Some(type_info) = storage_layout.types.get(&storage.storage_type)
+            && let Some(slot_info) = check_array_slot_match(storage, type_info, base_slot, slot)
+        {
+            return Some(slot_info);
         }
     }
 
@@ -1497,12 +1494,11 @@ fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo
 
 /// Helper function to extract array size from a type string like "uint256[3]"
 fn extract_array_size(type_str: &str) -> Option<u64> {
-    if let Some(start) = type_str.rfind('[') {
-        if let Some(end) = type_str.rfind(']') {
-            if let Ok(size) = type_str[start + 1..end].parse::<u64>() {
-                return Some(size);
-            }
-        }
+    if let Some(start) = type_str.rfind('[')
+        && let Some(end) = type_str.rfind(']')
+        && let Ok(size) = type_str[start + 1..end].parse::<u64>()
+    {
+        return Some(size);
     }
     None
 }
