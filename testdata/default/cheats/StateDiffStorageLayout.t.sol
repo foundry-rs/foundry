@@ -60,14 +60,53 @@ contract VariousArrays {
     }
 }
 
+contract TwoDArrayStorage {
+    // 2D array: 2 arrays of 3 uint256 elements each
+    // Total slots: 6 (slots 0-5)
+    // [0][0] at slot 0, [0][1] at slot 1, [0][2] at slot 2
+    // [1][0] at slot 3, [1][1] at slot 4, [1][2] at slot 5
+    uint256[3][2] public matrix;
+
+    // Another 2D array starting at slot 6
+    // 3 arrays of 2 addresses each
+    // Total slots: 6 (slots 6-11)
+    address[2][3] public addresses2D;
+
+    // Mixed size 2D array starting at slot 12
+    // 4 arrays of 2 bytes32 each
+    // Total slots: 8 (slots 12-19)
+    bytes32[2][4] public data2D;
+
+    function setMatrix(uint256[3] memory row0, uint256[3] memory row1) public {
+        matrix[0] = row0;
+        matrix[1] = row1;
+    }
+
+    function setMatrixElement(uint256 i, uint256 j, uint256 value) public {
+        matrix[i][j] = value;
+    }
+
+    function setAddresses2D(address[2] memory row0, address[2] memory row1, address[2] memory row2) public {
+        addresses2D[0] = row0;
+        addresses2D[1] = row1;
+        addresses2D[2] = row2;
+    }
+
+    function setData2D(uint256 i, uint256 j, bytes32 value) public {
+        data2D[i][j] = value;
+    }
+}
+
 contract StateDiffStorageLayoutTest is DSTest {
     Vm constant vm = Vm(HEVM_ADDRESS);
     SimpleStorage simpleStorage;
     VariousArrays variousArrays;
+    TwoDArrayStorage twoDArrayStorage;
 
     function setUp() public {
         simpleStorage = new SimpleStorage();
         variousArrays = new VariousArrays();
+        twoDArrayStorage = new TwoDArrayStorage();
     }
 
     function testSimpleStorageLayout() public {
@@ -182,6 +221,70 @@ contract StateDiffStorageLayoutTest is DSTest {
         assertContains(stateDiffJson, "\"type\":", "JSON should contain type field");
         assertContains(stateDiffJson, "\"offset\":", "JSON should contain offset field");
         assertContains(stateDiffJson, "\"slot\":", "JSON should contain slot field");
+
+        vm.stopAndReturnStateDiff();
+    }
+
+    function test2DArrayStorageLayout() public {
+        // Start recording state diffs
+        vm.startStateDiffRecording();
+
+        // Set matrix values
+        // matrix[0][0] = 100, matrix[0][1] = 101, matrix[0][2] = 102
+        // matrix[1][0] = 200, matrix[1][1] = 201, matrix[1][2] = 202
+        uint256[3] memory row0 = [uint256(100), 101, 102];
+        uint256[3] memory row1 = [uint256(200), 201, 202];
+        twoDArrayStorage.setMatrix(row0, row1);
+
+        // Get the state diff and check labels
+        string memory stateDiffJson = vm.getStateDiffJson();
+
+        // Verify the labels for 2D array elements
+        assertContains(stateDiffJson, "\"label\":\"matrix[0][0]\"", "Should contain matrix[0][0] label");
+        assertContains(stateDiffJson, "\"label\":\"matrix[0][1]\"", "Should contain matrix[0][1] label");
+        assertContains(stateDiffJson, "\"label\":\"matrix[0][2]\"", "Should contain matrix[0][2] label");
+        assertContains(stateDiffJson, "\"label\":\"matrix[1][0]\"", "Should contain matrix[1][0] label");
+        assertContains(stateDiffJson, "\"label\":\"matrix[1][1]\"", "Should contain matrix[1][1] label");
+        assertContains(stateDiffJson, "\"label\":\"matrix[1][2]\"", "Should contain matrix[1][2] label");
+
+        // Check that we have the right type
+        assertContains(stateDiffJson, "\"type\":\"uint256[3][2]\"", "Should contain 2D array type");
+
+        vm.stopAndReturnStateDiff();
+    }
+
+    function testMixed2DArrays() public {
+        vm.startStateDiffRecording();
+
+        // Test address 2D array
+        address[2] memory addrRow0 = [address(0x1), address(0x2)];
+        address[2] memory addrRow1 = [address(0x3), address(0x4)];
+        address[2] memory addrRow2 = [address(0x5), address(0x6)];
+        twoDArrayStorage.setAddresses2D(addrRow0, addrRow1, addrRow2);
+
+        // Test bytes32 2D array
+        twoDArrayStorage.setData2D(0, 0, keccak256("data00"));
+        twoDArrayStorage.setData2D(0, 1, keccak256("data01"));
+        twoDArrayStorage.setData2D(1, 0, keccak256("data10"));
+        twoDArrayStorage.setData2D(1, 1, keccak256("data11"));
+
+        string memory stateDiffJson = vm.getStateDiffJson();
+
+        // Check for proper types
+        assertContains(stateDiffJson, "\"type\":\"address[2][3]\"", "Should contain address 2D array type");
+        assertContains(stateDiffJson, "\"type\":\"bytes32[2][4]\"", "Should contain bytes32 2D array type");
+
+        // Verify address 2D array labels
+        assertContains(stateDiffJson, "\"label\":\"addresses2D[0][0]\"", "Should contain addresses2D[0][0] label");
+        assertContains(stateDiffJson, "\"label\":\"addresses2D[0][1]\"", "Should contain addresses2D[0][1] label");
+        assertContains(stateDiffJson, "\"label\":\"addresses2D[1][0]\"", "Should contain addresses2D[1][0] label");
+        assertContains(stateDiffJson, "\"label\":\"addresses2D[2][1]\"", "Should contain addresses2D[2][1] label");
+
+        // Verify data 2D array labels
+        assertContains(stateDiffJson, "\"label\":\"data2D[0][0]\"", "Should contain data2D[0][0] label");
+        assertContains(stateDiffJson, "\"label\":\"data2D[0][1]\"", "Should contain data2D[0][1] label");
+        assertContains(stateDiffJson, "\"label\":\"data2D[1][0]\"", "Should contain data2D[1][0] label");
+        assertContains(stateDiffJson, "\"label\":\"data2D[1][1]\"", "Should contain data2D[1][1] label");
 
         vm.stopAndReturnStateDiff();
     }

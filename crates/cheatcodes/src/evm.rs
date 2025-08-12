@@ -1405,13 +1405,24 @@ fn check_exact_slot_match(
     if storage.slot == slot_str {
         let storage_type = storage_layout.types.get(&storage.storage_type);
 
-        // Check if this is a static array - if so, label the base slot as element [0]
+        // Check if this is a static array - if so, label the base slot as element [0] or [0][0]
         let label = if let Some(type_info) = storage_type {
             if type_info.encoding == "inplace"
                 && type_info.label.contains('[')
                 && type_info.label.contains(']')
             {
-                format!("{}[0]", storage.label)
+                // Check if it's a 2D array
+                if let Some((_, inner_size)) = extract_array_dimensions(&type_info.label) {
+                    if inner_size > 0 {
+                        // 2D array: label as [0][0]
+                        format!("{}[0][0]", storage.label)
+                    } else {
+                        // 1D array: label as [0]
+                        format!("{}[0]", storage.label)
+                    }
+                } else {
+                    storage.label.clone()
+                }
             } else {
                 storage.label.clone()
             }
@@ -1464,13 +1475,26 @@ fn check_array_slot_match(
     // Calculate index based on slot offset
     let slot_offset = (slot - base_slot).to::<u64>();
 
-    // Extract array size from label to calculate proper index
-    let array_size = extract_array_size(&type_info.label)?;
-    let slots_per_element = total_slots / array_size;
-    let index = slot_offset / slots_per_element;
+    // Extract array dimensions to handle both 1D and 2D arrays
+    let (outer_size, inner_size) = extract_array_dimensions(&type_info.label)?;
+    
+    let label = if inner_size > 0 {
+        // 2D array: calculate indices
+        // For uint256[3][2], we have 2 outer arrays of 3 elements each
+        // Slots are laid out as: [0][0], [0][1], [0][2], [1][0], [1][1], [1][2]
+        let elements_per_outer = inner_size;
+        let outer_index = slot_offset / elements_per_outer;
+        let inner_index = slot_offset % elements_per_outer;
+        format!("{}[{}][{}]", storage.label, outer_index, inner_index)
+    } else {
+        // 1D array
+        let slots_per_element = total_slots / outer_size;
+        let index = slot_offset / slots_per_element;
+        format!("{}[{}]", storage.label, index)
+    };
 
     Some(SlotInfo {
-        label: format!("{}[{}]", storage.label, index),
+        label,
         storage_type: type_info.label.clone(),
         offset: 0,
         slot: slot.to_string(),
@@ -1507,16 +1531,48 @@ fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo
     None
 }
 
-/// Helper function to extract array size from a type string like "uint256\[3\]"
-fn extract_array_size(type_str: &str) -> Option<u64> {
-    if let Some(start) = type_str.rfind('[')
-        && let Some(end) = type_str.rfind(']')
-        && let Ok(size) = type_str[start + 1..end].parse::<u64>()
-    {
-        return Some(size);
+/// Helper function to extract array dimensions from a type string
+/// Returns (outer_size, inner_size) for 2D arrays, or (size, 0) for 1D arrays
+fn extract_array_dimensions(type_str: &str) -> Option<(u64, u64)> {
+    // Count brackets to determine if it's 1D or 2D
+    let bracket_pairs: Vec<(usize, usize)> = type_str
+        .char_indices()
+        .filter_map(|(i, c)| {
+            if c == '[' {
+                // Find matching ']'
+                type_str[i+1..].find(']').map(|j| (i, i+1+j))
+            } else {
+                None
+            }
+        })
+        .collect();
+    
+    if bracket_pairs.is_empty() {
+        return None;
     }
+    
+    if bracket_pairs.len() == 1 {
+        // 1D array like uint256[3]
+        let (start, end) = bracket_pairs[0];
+        if let Ok(size) = type_str[start + 1..end].parse::<u64>() {
+            return Some((size, 0));
+        }
+    } else if bracket_pairs.len() == 2 {
+        // 2D array like uint256[3][2]
+        // In Solidity, uint256[3][2] means 2 arrays of 3 elements each
+        // The outer dimension is 2, inner dimension is 3
+        let (inner_start, inner_end) = bracket_pairs[0];
+        let (outer_start, outer_end) = bracket_pairs[1];
+        
+        if let Ok(inner_size) = type_str[inner_start + 1..inner_end].parse::<u64>()
+            && let Ok(outer_size) = type_str[outer_start + 1..outer_end].parse::<u64>() {
+            return Some((outer_size, inner_size));
+        }
+    }
+    
     None
 }
+
 
 /// Helper function to set / unset cold storage slot of the target address.
 fn set_cold_slot(ccx: &mut CheatsCtxt, target: Address, slot: U256, cold: bool) {
