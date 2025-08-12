@@ -7,19 +7,20 @@
 // the concrete `Executor` type.
 
 use crate::{
-    inspectors::{
-        cheatcodes::BroadcastableTransactions, Cheatcodes, InspectorData, InspectorStack,
-    },
     Env,
+    inspectors::{
+        Cheatcodes, InspectorData, InspectorStack, cheatcodes::BroadcastableTransactions,
+    },
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{
+    Address, Bytes, Log, TxKind, U256, keccak256,
     map::{AddressHashMap, HashMap},
-    Address, Bytes, Log, TxKind, U256,
 };
-use alloy_sol_types::{sol, SolCall};
+use alloy_sol_types::{SolCall, sol};
 use foundry_evm_core::{
+    EvmEnv,
     backend::{Backend, BackendError, BackendResult, CowBackend, DatabaseExt, GLOBAL_FAIL_SLOT},
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
@@ -27,7 +28,6 @@ use foundry_evm_core::{
     },
     decode::{RevertDecoder, SkipReason},
     utils::StateChangeset,
-    EvmEnv, InspectorExt,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_traces::{SparsedTraceArena, TraceMode};
@@ -39,7 +39,7 @@ use revm::{
         transaction::SignedAuthorization,
     },
     database::{DatabaseCommit, DatabaseRef},
-    interpreter::{return_ok, InstructionResult},
+    interpreter::{InstructionResult, return_ok},
     primitives::hardfork::SpecId,
 };
 use std::{
@@ -258,6 +258,36 @@ impl Executor {
         Ok(self.backend().basic_ref(address)?.map(|acc| acc.nonce).unwrap_or_default())
     }
 
+    /// Set the code of an account.
+    pub fn set_code(&mut self, address: Address, code: Bytecode) -> BackendResult<()> {
+        let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
+        account.code_hash = keccak256(code.original_byte_slice());
+        account.code = Some(code);
+        self.backend_mut().insert_account_info(address, account);
+        Ok(())
+    }
+
+    /// Set the storage of an account.
+    pub fn set_storage(
+        &mut self,
+        address: Address,
+        storage: HashMap<U256, U256>,
+    ) -> BackendResult<()> {
+        self.backend_mut().replace_account_storage(address, storage)?;
+        Ok(())
+    }
+
+    /// Set a storage slot of an account.
+    pub fn set_storage_slot(
+        &mut self,
+        address: Address,
+        slot: U256,
+        value: U256,
+    ) -> BackendResult<()> {
+        self.backend_mut().insert_account_storage(address, slot, value)?;
+        Ok(())
+    }
+
     /// Returns `true` if the account has no code.
     pub fn is_empty_code(&self, address: Address) -> BackendResult<bool> {
         Ok(self.backend().basic_ref(address)?.map(|acc| acc.is_empty_code_hash()).unwrap_or(true))
@@ -282,7 +312,7 @@ impl Executor {
 
     #[inline]
     pub fn create2_deployer(&self) -> Address {
-        self.inspector().create2_deployer()
+        self.inspector().create2_deployer
     }
 
     /// Deploys a contract and commits the new state to the underlying database.
@@ -459,20 +489,20 @@ impl Executor {
     /// The state after the call is **not** persisted.
     #[instrument(name = "call", level = "debug", skip_all)]
     pub fn call_with_env(&self, mut env: Env) -> eyre::Result<RawCallResult> {
-        let mut inspector = self.inspector().clone();
+        let mut stack = self.inspector().clone();
         let mut backend = CowBackend::new_borrowed(self.backend());
-        let result = backend.inspect(&mut env, &mut inspector)?;
-        convert_executed_result(env, inspector, result, backend.has_state_snapshot_failure())
+        let result = backend.inspect(&mut env, stack.as_inspector())?;
+        convert_executed_result(env, stack, result, backend.has_state_snapshot_failure())
     }
 
     /// Execute the transaction configured in `env.tx`.
     #[instrument(name = "transact", level = "debug", skip_all)]
     pub fn transact_with_env(&mut self, mut env: Env) -> eyre::Result<RawCallResult> {
-        let mut inspector = self.inspector().clone();
+        let mut stack = self.inspector().clone();
         let backend = self.backend_mut();
-        let result = backend.inspect(&mut env, &mut inspector)?;
+        let result = backend.inspect(&mut env, stack.as_inspector())?;
         let mut result =
-            convert_executed_result(env, inspector, result, backend.has_state_snapshot_failure())?;
+            convert_executed_result(env, stack, result, backend.has_state_snapshot_failure())?;
         self.commit(&mut result);
         Ok(result)
     }
@@ -589,17 +619,16 @@ impl Executor {
         }
 
         // Check the global failure slot.
-        if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS) {
-            if let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT) {
-                if !failed_slot.present_value().is_zero() {
-                    return false;
-                }
-            }
+        if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS)
+            && let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT)
+            && !failed_slot.present_value().is_zero()
+        {
+            return false;
         }
-        if let Ok(failed_slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT) {
-            if !failed_slot.is_zero() {
-                return false;
-            }
+        if let Ok(failed_slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
+            && !failed_slot.is_zero()
+        {
+            return false;
         }
 
         if !self.legacy_assertions {
@@ -780,7 +809,7 @@ impl From<DeployResult> for RawCallResult {
 #[derive(Debug)]
 pub struct RawCallResult {
     /// The status of the call
-    pub exit_reason: InstructionResult,
+    pub exit_reason: Option<InstructionResult>,
     /// Whether the call reverted or not
     pub reverted: bool,
     /// Whether the call includes a snapshot failure
@@ -802,8 +831,10 @@ pub struct RawCallResult {
     pub labels: AddressHashMap<String>,
     /// The traces of the call
     pub traces: Option<SparsedTraceArena>,
-    /// The coverage info collected during the call
-    pub coverage: Option<HitMaps>,
+    /// The line coverage info collected during the call
+    pub line_coverage: Option<HitMaps>,
+    /// The edge coverage info collected during the call
+    pub edge_coverage: Option<Vec<u8>>,
     /// Scripted transactions generated from this call
     pub transactions: Option<BroadcastableTransactions>,
     /// The changeset of the state.
@@ -811,17 +842,18 @@ pub struct RawCallResult {
     /// The `revm::Env` after the call
     pub env: Env,
     /// The cheatcode states after execution
-    pub cheatcodes: Option<Cheatcodes>,
+    pub cheatcodes: Option<Box<Cheatcodes>>,
     /// The raw output of the execution
     pub out: Option<Output>,
     /// The chisel state
-    pub chisel_state: Option<(Vec<U256>, Vec<u8>, InstructionResult)>,
+    pub chisel_state: Option<(Vec<U256>, Vec<u8>, Option<InstructionResult>)>,
+    pub reverter: Option<Address>,
 }
 
 impl Default for RawCallResult {
     fn default() -> Self {
         Self {
-            exit_reason: InstructionResult::Continue,
+            exit_reason: None,
             reverted: false,
             has_state_snapshot_failure: false,
             result: Bytes::new(),
@@ -831,13 +863,15 @@ impl Default for RawCallResult {
             logs: Vec::new(),
             labels: HashMap::default(),
             traces: None,
-            coverage: None,
+            line_coverage: None,
+            edge_coverage: None,
             transactions: None,
             state_changeset: HashMap::default(),
             env: Env::default(),
             cheatcodes: Default::default(),
             out: None,
             chisel_state: None,
+            reverter: None,
         }
     }
 }
@@ -865,7 +899,7 @@ impl RawCallResult {
         if let Some(reason) = SkipReason::decode(&self.result) {
             return EvmError::Skip(reason);
         }
-        let reason = rd.unwrap_or_default().decode(&self.result, Some(self.exit_reason));
+        let reason = rd.unwrap_or_default().decode(&self.result, self.exit_reason);
         EvmError::Execution(Box::new(self.into_execution_error(reason)))
     }
 
@@ -876,7 +910,9 @@ impl RawCallResult {
 
     /// Returns an `EvmError` if the call failed, otherwise returns `self`.
     pub fn into_result(self, rd: Option<&RevertDecoder>) -> Result<Self, EvmError> {
-        if self.exit_reason.is_ok() {
+        if let Some(reason) = self.exit_reason
+            && reason.is_ok()
+        {
             Ok(self)
         } else {
             Err(self.into_evm_error(rd))
@@ -903,6 +939,48 @@ impl RawCallResult {
     /// Returns the transactions generated from this call.
     pub fn transactions(&self) -> Option<&BroadcastableTransactions> {
         self.cheatcodes.as_ref().map(|c| &c.broadcastable_transactions)
+    }
+
+    /// Update provided history map with edge coverage info collected during this call.
+    /// Uses AFL binning algo <https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L57-L85>
+    pub fn merge_edge_coverage(&mut self, history_map: &mut [u8]) -> (bool, bool) {
+        let mut new_coverage = false;
+        let mut is_edge = false;
+        if let Some(x) = &mut self.edge_coverage {
+            // Iterate over the current map and the history map together and update
+            // the history map, if we discover some new coverage, report true
+            for (curr, hist) in std::iter::zip(x, history_map) {
+                // If we got a hitcount of at least 1
+                if *curr > 0 {
+                    // Convert hitcount into bucket count
+                    let bucket = match *curr {
+                        0 => 0,
+                        1 => 1,
+                        2 => 2,
+                        3 => 4,
+                        4..=7 => 8,
+                        8..=15 => 16,
+                        16..=31 => 32,
+                        32..=127 => 64,
+                        128..=255 => 128,
+                    };
+
+                    // If the old record for this edge pair is lower, update
+                    if *hist < bucket {
+                        if *hist == 0 {
+                            // Counts as an edge the first time we see it, otherwise it's a feature.
+                            is_edge = true;
+                        }
+                        *hist = bucket;
+                        new_coverage = true;
+                    }
+
+                    // Zero out the current map for next iteration.
+                    *curr = 0;
+                }
+            }
+        }
+        (new_coverage, is_edge)
     }
 }
 
@@ -963,8 +1041,16 @@ fn convert_executed_result(
         _ => Bytes::new(),
     };
 
-    let InspectorData { mut logs, labels, traces, coverage, cheatcodes, chisel_state } =
-        inspector.collect();
+    let InspectorData {
+        mut logs,
+        labels,
+        traces,
+        line_coverage,
+        edge_coverage,
+        cheatcodes,
+        chisel_state,
+        reverter,
+    } = inspector.collect();
 
     if logs.is_empty() {
         logs = exec_logs;
@@ -976,7 +1062,7 @@ fn convert_executed_result(
         .filter(|txs| !txs.is_empty());
 
     Ok(RawCallResult {
-        exit_reason,
+        exit_reason: Some(exit_reason),
         reverted: !matches!(exit_reason, return_ok!()),
         has_state_snapshot_failure,
         result,
@@ -986,13 +1072,15 @@ fn convert_executed_result(
         logs,
         labels,
         traces,
-        coverage,
+        line_coverage,
+        edge_coverage,
         transactions,
         state_changeset,
         env,
         cheatcodes,
         out,
         chisel_state,
+        reverter,
     })
 }
 

@@ -99,7 +99,19 @@ impl InlineConfig {
                 InlineConfigItem::DisableLine => {
                     let mut prev_newline =
                         src[..loc.start()].char_indices().rev().skip_while(|(_, ch)| *ch != '\n');
-                    let start = prev_newline.next().map(|(idx, _)| idx).unwrap_or_default();
+                    let start = prev_newline
+                        .next()
+                        .map(|(idx, _)| {
+                            if let Some((idx, ch)) = prev_newline.next() {
+                                match ch {
+                                    '\r' => idx,
+                                    _ => idx + 1,
+                                }
+                            } else {
+                                idx
+                            }
+                        })
+                        .unwrap_or_default();
 
                     let end_offset = loc.end();
                     let mut next_newline =
@@ -130,14 +142,14 @@ impl InlineConfig {
                 }
                 InlineConfigItem::DisableEnd => {
                     disabled_depth = disabled_depth.saturating_sub(1);
-                    if disabled_depth == 0 {
-                        if let Some(start) = disabled_range_start.take() {
-                            disabled_ranges.push(DisabledRange {
-                                start,
-                                end: loc.start(),
-                                loose: false,
-                            })
-                        }
+                    if disabled_depth == 0
+                        && let Some(start) = disabled_range_start.take()
+                    {
+                        disabled_ranges.push(DisabledRange {
+                            start,
+                            end: loc.start(),
+                            loose: false,
+                        })
                     }
                 }
             }

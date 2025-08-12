@@ -30,7 +30,7 @@ foundry-evm.workspace = true
 foundry-evm-core.workspace = true
 
 # alloy
-alloy-evm.workspace = true
+alloy-evm = { workspace = true, features = ["call-util"] }
 alloy-op-evm.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["k256", "kzg"] }
@@ -55,6 +55,8 @@ alloy-transport.workspace = true
 alloy-chains.workspace = true
 alloy-genesis.workspace = true
 alloy-trie.workspace = true
+alloy-hardforks.workspace = true
+alloy-op-hardforks.workspace = true
 op-alloy-consensus = { workspace = true, features = ["serde"] }
 
 # revm
@@ -82,14 +84,13 @@ futures.workspace = true
 async-trait.workspace = true
 
 # misc
-flate2 = "1.0"
+flate2.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 yansi.workspace = true
 tempfile.workspace = true
 itertools.workspace = true
-rand.workspace = true
 rand_08.workspace = true
 eyre.workspace = true
 
@@ -108,6 +109,7 @@ clap_complete_fig = "4"
 [dev-dependencies]
 alloy-provider = { workspace = true, features = ["txpool-api"] }
 alloy-pubsub.workspace = true
+rand.workspace = true
 foundry-test-utils.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
@@ -128,3 +130,4 @@ cmd = [
     "anvil-server/clap",
     "tokio/signal",
 ]
+js-tracer = ["revm-inspectors/js-tracer"]

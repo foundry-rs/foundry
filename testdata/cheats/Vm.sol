@@ -19,7 +19,7 @@ interface Vm {
     struct FfiResult { int32 exitCode; bytes stdout; bytes stderr; }
     struct ChainInfo { uint256 forkId; uint256 chainId; }
     struct Chain { string name; uint256 chainId; string chainAlias; string rpcUrl; }
-    struct AccountAccess { ChainInfo chainInfo; AccountAccessKind kind; address account; address accessor; bool initialized; uint256 oldBalance; uint256 newBalance; bytes deployedCode; uint256 value; bytes data; bool reverted; StorageAccess[] storageAccesses; uint64 depth; }
+    struct AccountAccess { ChainInfo chainInfo; AccountAccessKind kind; address account; address accessor; bool initialized; uint256 oldBalance; uint256 newBalance; bytes deployedCode; uint256 value; bytes data; bool reverted; StorageAccess[] storageAccesses; uint64 depth; uint64 oldNonce; uint64 newNonce; }
     struct StorageAccess { address account; bytes32 slot; bool isWrite; bytes32 previousValue; bytes32 newValue; bool reverted; }
     struct Gas { uint64 gasLimit; uint64 gasTotalUsed; uint64 gasMemoryUsed; int64 gasRefunded; uint64 gasRemaining; }
     struct DebugStep { uint256[] stack; bytes memoryInput; uint8 opcode; uint64 depth; bool isOutOfGas; address contractAddr; }
@@ -208,6 +208,11 @@ interface Vm {
     function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index, string calldata language) external pure returns (uint256 privateKey);
     function difficulty(uint256 newDifficulty) external;
     function dumpState(string calldata pathToStateJson) external;
+    function eip712HashStruct(string calldata typeNameOrDefinition, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);
+    function eip712HashStruct(string calldata bindingsPath, string calldata typeName, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);
+    function eip712HashType(string calldata typeNameOrDefinition) external pure returns (bytes32 typeHash);
+    function eip712HashType(string calldata bindingsPath, string calldata typeName) external pure returns (bytes32 typeHash);
+    function eip712HashTypedData(string calldata jsonData) external pure returns (bytes32 digest);
     function ensNamehash(string calldata name) external pure returns (bytes32);
     function envAddress(string calldata name) external view returns (address value);
     function envAddress(string calldata name, string calldata delim) external view returns (address[] memory value);
@@ -281,6 +286,26 @@ interface Vm {
     function expectSafeMemoryCall(uint64 min, uint64 max) external;
     function fee(uint256 newBasefee) external;
     function ffi(string[] calldata commandInput) external returns (bytes memory result);
+    function forkAddress(string calldata key) external view returns (address);
+    function forkBool(string calldata key) external view returns (bool);
+    function forkBytes(string calldata key) external view returns (bytes memory);
+    function forkBytes32(string calldata key) external view returns (bytes32);
+    function forkChain() external view returns (string memory);
+    function forkChainAddress(uint256 chain, string calldata key) external view returns (address);
+    function forkChainBool(uint256 chain, string calldata key) external view returns (bool);
+    function forkChainBytes(uint256 chain, string calldata key) external view returns (bytes memory);
+    function forkChainBytes32(uint256 chain, string calldata key) external view returns (bytes32);
+    function forkChainId() external view returns (uint256);
+    function forkChainIds() external view returns (uint256[] memory);
+    function forkChainInt(uint256 chain, string calldata key) external view returns (int256);
+    function forkChainRpcUrl(uint256 id) external view returns (string memory);
+    function forkChainString(uint256 chain, string calldata key) external view returns (string memory);
+    function forkChainUint(uint256 chain, string calldata key) external view returns (uint256);
+    function forkChains() external view returns (string[] memory);
+    function forkInt(string calldata key) external view returns (int256);
+    function forkRpcUrl() external view returns (string memory);
+    function forkString(string calldata key) external view returns (string memory);
+    function forkUint(string calldata key) external view returns (uint256);
     function foundryVersionAtLeast(string calldata version) external view returns (bool);
     function foundryVersionCmp(string calldata version) external view returns (int256);
     function fsMetadata(string calldata path) external view returns (FsMetadata memory metadata);
@@ -307,6 +332,7 @@ interface Vm {
     function getMappingSlotAt(address target, bytes32 mappingSlot, uint256 idx) external returns (bytes32 value);
     function getNonce(address account) external view returns (uint64 nonce);
     function getNonce(Wallet calldata wallet) external returns (uint64 nonce);
+    function getRawBlockHeader(uint256 blockNumber) external view returns (bytes memory rlpHeader);
     function getRecordedLogs() external returns (Log[] memory logs);
     function getStateDiff() external view returns (string memory diff);
     function getStateDiffJson() external view returns (string memory diff);
@@ -401,15 +427,15 @@ interface Vm {
     function promptSecretUint(string calldata promptText) external returns (uint256);
     function promptUint(string calldata promptText) external returns (uint256);
     function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);
-    function randomAddress() external returns (address);
+    function randomAddress() external view returns (address);
     function randomBool() external view returns (bool);
     function randomBytes(uint256 len) external view returns (bytes memory);
     function randomBytes4() external view returns (bytes4);
     function randomBytes8() external view returns (bytes8);
     function randomInt() external view returns (int256);
     function randomInt(uint256 bits) external view returns (int256);
-    function randomUint() external returns (uint256);
-    function randomUint(uint256 min, uint256 max) external returns (uint256);
+    function randomUint() external view returns (uint256);
+    function randomUint(uint256 min, uint256 max) external view returns (uint256);
     function randomUint(uint256 bits) external view returns (uint256);
     function readCallers() external returns (CallerMode callerMode, address msgSender, address txOrigin);
     function readDir(string calldata path) external view returns (DirEntry[] memory entries);
@@ -472,6 +498,7 @@ interface Vm {
     function setEnv(string calldata name, string calldata value) external;
     function setNonce(address account, uint64 newNonce) external;
     function setNonceUnsafe(address account, uint64 newNonce) external;
+    function setSeed(uint256 seed) external;
     function shuffle(uint256[] calldata array) external returns (uint256[] memory);
     function signAndAttachDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);
     function signAndAttachDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);

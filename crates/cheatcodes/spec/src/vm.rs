@@ -278,6 +278,10 @@ interface Vm {
         StorageAccess[] storageAccesses;
         /// Call depth traversed during the recording of state differences
         uint64 depth;
+        /// The previous nonce of the accessed account.
+        uint64 oldNonce;
+        /// The new nonce of the accessed account.
+        uint64 newNonce;
     }
 
     /// The result of the `stopDebugTraceRecording` call
@@ -521,6 +525,11 @@ interface Vm {
     /// See https://github.com/foundry-rs/foundry/issues/6180
     #[cheatcode(group = Evm, safety = Safe)]
     function getBlockTimestamp() external view returns (uint256 timestamp);
+
+    /// Gets the RLP encoded block header for a given block number.
+    /// Returns the block header in the same format as `cast block <block_number> --raw`.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getRawBlockHeader(uint256 blockNumber) external view returns (bytes memory rlpHeader);
 
     /// Sets `block.blobbasefee`
     #[cheatcode(group = Evm, safety = Unsafe)]
@@ -2170,8 +2179,113 @@ interface Vm {
     #[cheatcode(group = Environment)]
     function isContext(ForgeContext context) external view returns (bool result);
 
-    // ======== Scripts ========
+    // ======== Forks ========
 
+    /// Returns an array with the name of all the configured fork chains.
+    ///
+    /// Note that the configured fork chains are subsections of the `[fork]` section of 'foundry.toml'.
+    #[cheatcode(group = Forking)]
+    function forkChains() external view returns (string[] memory);
+
+    /// Returns an array with the ids of all the configured fork chains.
+    ///
+    /// Note that the configured fork chains are subsections of the `[fork]` section of 'foundry.toml'.
+    #[cheatcode(group = Forking)]
+    function forkChainIds() external view returns (uint256[] memory);
+
+    /// Returns the chain name of the currently selected fork.
+    #[cheatcode(group = Forking)]
+    function forkChain() external view returns (string memory);
+
+    /// Returns the chain id of the currently selected fork.
+    #[cheatcode(group = Forking)]
+    function forkChainId() external view returns (uint256);
+
+    /// Returns the rpc url of the currently selected fork.
+    ///
+    /// By default, the rpc url of each fork is derived from the `[rpc_endpoints]`, unless
+    /// the rpc config is specifically informed in the fork config for that specific chain.
+    #[cheatcode(group = Forking)]
+    function forkRpcUrl() external view returns (string memory);
+
+    /// Returns the rpc url of the corresponding chain id.
+    ///
+    /// By default, the rpc url of each fork is derived from the `[rpc_endpoints]`, unless
+    /// the rpc config is specifically informed in the fork config for that specific chain.
+    #[cheatcode(group = Forking)]
+    function forkChainRpcUrl(uint256 id) external view returns (string memory);
+
+    /// Gets the value for the key `key` from the currently active fork and parses it as `bool`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkBool(string calldata key) external view returns (bool);
+
+    /// Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bool`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkChainBool(uint256 chain, string calldata key) external view returns (bool);
+
+    /// Gets the value for the key `key` from the currently active fork and parses it as `int256`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkInt(string calldata key) external view returns (int256);
+
+    /// Gets the value for the key `key` from the fork config for chain `chain` and parses it as `int256`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkChainInt(uint256 chain, string calldata key) external view returns (int256);
+
+    /// Gets the value for the key `key` from the currently active fork and parses it as `uint256`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkUint(string calldata key) external view returns (uint256);
+
+    /// Gets the value for the key `key` from the fork config for chain `chain` and parses it as `uint256`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkChainUint(uint256 chain, string calldata key) external view returns (uint256);
+
+    /// Gets the value for the key `key` from the currently active fork and parses it as `address`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkAddress(string calldata key) external view returns (address);
+
+    /// Gets the value for the key `key` from the fork config for chain `chain` and parses it as `address`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkChainAddress(uint256 chain, string calldata key) external view returns (address);
+
+    /// Gets the value for the key `key` from the currently active fork and parses it as `bytes32`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkBytes32(string calldata key) external view returns (bytes32);
+
+    /// Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bytes32`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkChainBytes32(uint256 chain, string calldata key) external view returns (bytes32);
+
+    /// Gets the value for the key `key` from the currently active fork and parses it as `string`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkString(string calldata key) external view returns (string memory);
+
+    /// Gets the value for the key `key` from the fork config for chain `chain` and parses it as `string`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkChainString(uint256 chain, string calldata key) external view returns (string memory);
+
+    /// Gets the value for the key `key` from the currently active fork and parses it as `bytes`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkBytes(string calldata key) external view returns (bytes memory);
+
+    /// Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bytes`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkChainBytes(uint256 chain, string calldata key) external view returns (bytes memory);
+
+    // ======== Scripts ========
     // -------- Broadcasting Transactions --------
 
     /// Has the next call (at this call depth only) create transactions that can later be signed and sent onchain.
@@ -2723,25 +2837,25 @@ interface Vm {
     #[cheatcode(group = Crypto)]
     function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);
 
-    /// Derive a private key from a provided mnenomic string (or mnenomic file path)
+    /// Derive a private key from a provided mnemonic string (or mnemonic file path)
     /// at the derivation path `m/44'/60'/0'/0/{index}`.
     #[cheatcode(group = Crypto)]
     function deriveKey(string calldata mnemonic, uint32 index) external pure returns (uint256 privateKey);
-    /// Derive a private key from a provided mnenomic string (or mnenomic file path)
+    /// Derive a private key from a provided mnemonic string (or mnemonic file path)
     /// at `{derivationPath}{index}`.
     #[cheatcode(group = Crypto)]
     function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index)
         external
         pure
         returns (uint256 privateKey);
-    /// Derive a private key from a provided mnenomic string (or mnenomic file path) in the specified language
+    /// Derive a private key from a provided mnemonic string (or mnemonic file path) in the specified language
     /// at the derivation path `m/44'/60'/0'/0/{index}`.
     #[cheatcode(group = Crypto)]
     function deriveKey(string calldata mnemonic, uint32 index, string calldata language)
         external
         pure
         returns (uint256 privateKey);
-    /// Derive a private key from a provided mnenomic string (or mnenomic file path) in the specified language
+    /// Derive a private key from a provided mnemonic string (or mnemonic file path) in the specified language
     /// at `{derivationPath}{index}`.
     #[cheatcode(group = Crypto)]
     function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index, string calldata language)
@@ -2811,11 +2925,11 @@ interface Vm {
 
     /// Returns a random uint256 value.
     #[cheatcode(group = Utilities)]
-    function randomUint() external returns (uint256);
+    function randomUint() external view returns (uint256);
 
     /// Returns random uint256 value between the provided range (=min..=max).
     #[cheatcode(group = Utilities)]
-    function randomUint(uint256 min, uint256 max) external returns (uint256);
+    function randomUint(uint256 min, uint256 max) external view returns (uint256);
 
     /// Returns a random `uint256` value of given bits.
     #[cheatcode(group = Utilities)]
@@ -2823,7 +2937,7 @@ interface Vm {
 
     /// Returns a random `address`.
     #[cheatcode(group = Utilities)]
-    function randomAddress() external returns (address);
+    function randomAddress() external view returns (address);
 
     /// Returns a random `int256` value.
     #[cheatcode(group = Utilities)]
@@ -2879,6 +2993,10 @@ interface Vm {
     #[cheatcode(group = Utilities)]
     function shuffle(uint256[] calldata array) external returns (uint256[] memory);
 
+    /// Set RNG seed.
+    #[cheatcode(group = Utilities)]
+    function setSeed(uint256 seed) external;
+
     /// Causes the next contract creation (via new) to fail and return its initcode in the returndata buffer.
     /// This allows type-safe access to the initcode payload that would be used for contract creation.
     /// Example usage:
@@ -2888,6 +3006,55 @@ interface Vm {
     /// catch (bytes memory interceptedInitcode) { initcode = interceptedInitcode; }
     #[cheatcode(group = Utilities, safety = Unsafe)]
     function interceptInitcode() external;
+
+    /// Generates the hash of the canonical EIP-712 type representation.
+    ///
+    /// Supports 2 different inputs:
+    ///  1. Name of the type (i.e. "Transaction"):
+    ///     * requires previous binding generation with `forge bind-json`.
+    ///     * bindings will be retrieved from the path configured in `foundry.toml`.
+    ///
+    ///  2. String representation of the type (i.e. "Foo(Bar bar) Bar(uint256 baz)").
+    ///     * Note: the cheatcode will output the canonical type even if the input is malformated
+    ///             with the wrong order of elements or with extra whitespaces.
+    #[cheatcode(group = Utilities)]
+    function eip712HashType(string calldata typeNameOrDefinition) external pure returns (bytes32 typeHash);
+
+    /// Generates the hash of the canonical EIP-712 type representation.
+    /// Requires previous binding generation with `forge bind-json`.
+    ///
+    /// Params:
+    ///  * `bindingsPath`: path where the output of `forge bind-json` is stored.
+    ///  * `typeName`: Name of the type (i.e. "Transaction").
+    #[cheatcode(group = Utilities)]
+    function eip712HashType(string calldata bindingsPath, string calldata typeName) external pure returns (bytes32 typeHash);
+
+    /// Generates the struct hash of the canonical EIP-712 type representation and its abi-encoded data.
+    ///
+    /// Supports 2 different inputs:
+    ///  1. Name of the type (i.e. "PermitSingle"):
+    ///     * requires previous binding generation with `forge bind-json`.
+    ///     * bindings will be retrieved from the path configured in `foundry.toml`.
+    ///
+    ///  2. String representation of the type (i.e. "Foo(Bar bar) Bar(uint256 baz)").
+    ///     * Note: the cheatcode will use the canonical type even if the input is malformated
+    ///             with the wrong order of elements or with extra whitespaces.
+    #[cheatcode(group = Utilities)]
+    function eip712HashStruct(string calldata typeNameOrDefinition, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);
+
+    /// Generates the struct hash of the canonical EIP-712 type representation and its abi-encoded data.
+    /// Requires previous binding generation with `forge bind-json`.
+    ///
+    /// Params:
+    ///  * `bindingsPath`: path where the output of `forge bind-json` is stored.
+    ///  * `typeName`: Name of the type (i.e. "PermitSingle").
+    ///  * `abiEncodedData`: ABI-encoded data for the struct that is being hashed.
+    #[cheatcode(group = Utilities)]
+    function eip712HashStruct(string calldata bindingsPath, string calldata typeName, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);
+
+    /// Generates a ready-to-sign digest of human-readable typed data following the EIP-712 standard.
+    #[cheatcode(group = Utilities)]
+    function eip712HashTypedData(string calldata jsonData) external pure returns (bytes32 digest);
 }
 }
 
@@ -2902,13 +3069,13 @@ impl PartialEq for ForgeContext {
             (_, Self::ScriptGroup) => {
                 matches!(self, Self::ScriptDryRun | Self::ScriptBroadcast | Self::ScriptResume)
             }
-            (Self::Test, Self::Test) |
-            (Self::Snapshot, Self::Snapshot) |
-            (Self::Coverage, Self::Coverage) |
-            (Self::ScriptDryRun, Self::ScriptDryRun) |
-            (Self::ScriptBroadcast, Self::ScriptBroadcast) |
-            (Self::ScriptResume, Self::ScriptResume) |
-            (Self::Unknown, Self::Unknown) => true,
+            (Self::Test, Self::Test)
+            | (Self::Snapshot, Self::Snapshot)
+            | (Self::Coverage, Self::Coverage)
+            | (Self::ScriptDryRun, Self::ScriptDryRun)
+            | (Self::ScriptBroadcast, Self::ScriptBroadcast)
+            | (Self::ScriptResume, Self::ScriptResume)
+            | (Self::Unknown, Self::Unknown) => true,
             _ => false,
         }
     }

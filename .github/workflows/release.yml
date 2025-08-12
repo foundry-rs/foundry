@@ -15,7 +15,7 @@ env:
   CARGO_TERM_COLOR: always
   IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
   PROFILE: maxperf
-  STABLE_VERSION: "v1.1.0"
+  STABLE_VERSION: "v1.2.3"
 
 jobs:
   prepare:
@@ -27,7 +27,7 @@ jobs:
       release_name: ${{ steps.release_info.outputs.release_name }}
       changelog: ${{ steps.build_changelog.outputs.changelog }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -128,7 +128,7 @@ jobs:
             platform: win32
             arch: amd64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -158,8 +158,8 @@ jobs:
         shell: bash
         run: |
           set -eo pipefail
-          flags=(--target $TARGET --profile $PROFILE --bins 
-            --no-default-features --features aws-kms,gcp-kms,cli,asm-keccak)
+          flags=(--target $TARGET --profile $PROFILE --bins
+            --no-default-features --features aws-kms,gcp-kms,cli,asm-keccak,js-tracer)
 
           # `jemalloc` is not fully supported on MSVC or aarch64 Linux.
           if [[ "$TARGET" != *msvc* && "$TARGET" != "aarch64-unknown-linux-gnu" ]]; then
@@ -208,6 +208,7 @@ jobs:
             mv "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" ../../../
             echo "file_name=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" >> $GITHUB_OUTPUT
           fi
+          echo "foundry_attestation=foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.attestation.txt" >> $GITHUB_OUTPUT
 
       - name: Build man page
         id: man
@@ -229,19 +230,8 @@ jobs:
           tar -czvf "foundry_man_${VERSION_NAME}.tar.gz" forge.1.gz cast.1.gz anvil.1.gz chisel.1.gz
           echo "foundry_man=foundry_man_${VERSION_NAME}.tar.gz" >> $GITHUB_OUTPUT
 
-      # Creates the release for this specific version
-      - name: Create release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: ${{ needs.prepare.outputs.release_name }}
-          tag_name: ${{ needs.prepare.outputs.tag_name }}
-          prerelease: ${{ env.IS_NIGHTLY == 'true' }}
-          body: ${{ needs.prepare.outputs.changelog }}
-          files: |
-            ${{ steps.artifacts.outputs.file_name }}
-            ${{ steps.man.outputs.foundry_man }}
-
       - name: Binaries attestation
+        id: attestation
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
@@ -250,11 +240,28 @@ jobs:
             ${{ env.chisel_bin_path }}
             ${{ env.forge_bin_path }}
 
+      - name: Record attestation URL
+        run: |
+          echo "${{ steps.attestation.outputs.attestation-url }}" > ${{ steps.artifacts.outputs.foundry_attestation }}
+
+      # Creates the release for this specific version
+      - name: Create release
+        uses: softprops/action-gh-release@v2.2.2
+        with:
+          name: ${{ needs.prepare.outputs.release_name }}
+          tag_name: ${{ needs.prepare.outputs.tag_name }}
+          prerelease: ${{ env.IS_NIGHTLY == 'true' }}
+          body: ${{ needs.prepare.outputs.changelog }}
+          files: |
+            ${{ steps.artifacts.outputs.file_name }}
+            ${{ steps.artifacts.outputs.foundry_attestation }}
+            ${{ steps.man.outputs.foundry_man }}
+
       # If this is a nightly release, it also updates the release
       # tagged `nightly` for compatibility with `foundryup`
       - name: Update nightly release
         if: ${{ env.IS_NIGHTLY == 'true' }}
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v2.2.2
         with:
           name: "Nightly"
           tag_name: "nightly"
@@ -262,6 +269,7 @@ jobs:
           body: ${{ needs.prepare.outputs.changelog }}
           files: |
             ${{ steps.artifacts.outputs.file_name }}
+            ${{ steps.artifacts.outputs.foundry_attestation }}
             ${{ steps.man.outputs.foundry_man }}
 
   cleanup:
@@ -271,7 +279,7 @@ jobs:
     needs: release
     if: always()
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Moves the `nightly` tag to `HEAD`
       - name: Move nightly tag
@@ -296,7 +304,7 @@ jobs:
     needs: [prepare, release-docker, release, cleanup]
     if: failure()
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: JasonEtco/create-an-issue@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
