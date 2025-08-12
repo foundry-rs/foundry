@@ -491,7 +491,7 @@ impl CorpusManager {
         function: &Function,
     ) -> eyre::Result<Bytes> {
         // Early return if not running with coverage guided fuzzing.
-        if !&self.config.is_coverage_guided() {
+        if !self.config.is_coverage_guided() {
             return Ok(self.new_tx(test_runner)?.call_details.calldata);
         }
 
