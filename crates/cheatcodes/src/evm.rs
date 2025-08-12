@@ -1507,7 +1507,7 @@ fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo
     None
 }
 
-/// Helper function to extract array size from a type string like "uint256[3]"
+/// Helper function to extract array size from a type string like "uint256\[3\]"
 fn extract_array_size(type_str: &str) -> Option<u64> {
     if let Some(start) = type_str.rfind('[')
         && let Some(end) = type_str.rfind(']')
