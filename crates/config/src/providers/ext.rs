@@ -80,22 +80,118 @@ impl TomlFileProvider {
     }
 
     fn read(&self) -> Result<Map<Profile, Dict>, Error> {
-        use serde::de::Error as _;
-        if let Some(file) = self.env_val() {
-            let path = Path::new(&file);
-            if !path.exists() {
+        use serde::{Deserialize, de::Error as _};
+        use std::collections::HashMap;
+
+        #[derive(Deserialize, Default)]
+        struct InheritConfig {
+            #[serde(default)]
+            inherit_from: Option<PathBuf>,
+        }
+
+        #[derive(Deserialize, Default)]
+        struct PartialConfig {
+            #[serde(default)]
+            profile: Option<HashMap<String, InheritConfig>>,
+        }
+
+        let local_path = self.file();
+        if !local_path.exists() {
+            if let Some(file) = self.env_val() {
                 return Err(Error::custom(format!(
                     "Config file `{}` set in env var `{}` does not exist",
                     file,
                     self.env_var.unwrap()
                 )));
             }
-            Toml::file(file)
-        } else {
-            Toml::file(&self.default)
+            return Ok(Map::new());
         }
-        .nested()
-        .data()
+
+        let local_provider = Toml::file(local_path.clone()).nested();
+
+        let local_path_str = local_path.to_string_lossy();
+        let local_content = std::fs::read_to_string(&local_path)
+            .map_err(|e| Error::custom(e.to_string()).with_path(&local_path_str))?;
+        let partial_config: PartialConfig = toml::from_str(&local_content)
+            .map_err(|e| Error::custom(e.to_string()).with_path(&local_path_str))?;
+
+        // Get the currently selected profile
+        let selected_profile = Config::selected_profile();
+
+        // Check if the current profile has an inherit_from field
+        let inherit_from = partial_config
+            .profile
+            .as_ref()
+            .and_then(|profiles| {
+                // Convert Profile to String for HashMap lookup
+                let profile_str = selected_profile.to_string();
+                profiles.get(&profile_str)
+            })
+            .and_then(|profile| profile.inherit_from.clone());
+
+        if let Some(relative_base_path) = inherit_from {
+            let local_dir = local_path.parent().ok_or_else(|| {
+                Error::custom(format!(
+                    "Could not determine parent directory of config file: {}",
+                    local_path.display()
+                ))
+            })?;
+
+            let base_path =
+                foundry_compilers::utils::canonicalize(local_dir.join(&relative_base_path))
+                    .map_err(|e| {
+                        Error::custom(format!(
+                            "Failed to resolve inherited config path: {}: {e}",
+                            relative_base_path.display()
+                        ))
+                    })?;
+
+            if !base_path.is_file() {
+                return Err(Error::custom(format!(
+                    "Inherited config file does not exist or is not a file: {}",
+                    base_path.display()
+                )));
+            }
+
+            if foundry_compilers::utils::canonicalize(&local_path).ok() == Some(base_path.clone()) {
+                return Err(Error::custom(format!(
+                    "Config file {} cannot inherit from itself.",
+                    local_path.display()
+                )));
+            }
+
+            let base_path_str = base_path.to_string_lossy();
+            let base_content = std::fs::read_to_string(&base_path)
+                .map_err(|e| Error::custom(e.to_string()).with_path(&base_path_str))?;
+            let base_partial: PartialConfig = toml::from_str(&base_content)
+                .map_err(|e| Error::custom(e.to_string()).with_path(&base_path_str))?;
+
+            // Check if the base file's same profile also has inherit_from
+            let base_inherit_from = base_partial
+                .profile
+                .as_ref()
+                .and_then(|profiles| {
+                    // Convert Profile to String for HashMap lookup
+                    let profile_str = selected_profile.to_string();
+                    profiles.get(&profile_str)
+                })
+                .and_then(|profile| profile.inherit_from.as_ref());
+
+            if base_inherit_from.is_some() {
+                return Err(Error::custom(format!(
+                    "Nested inheritance is not allowed. Base file '{}' cannot have an 'inherit_from' field in profile '{}'.",
+                    base_path.display(),
+                    selected_profile
+                )));
+            }
+
+            let base_provider = Toml::file(base_path).nested();
+
+            // Merge base configuration first, then apply local overrides
+            Figment::new().merge(base_provider).merge(local_provider).data()
+        } else {
+            local_provider.data()
+        }
     }
 }
 

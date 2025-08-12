@@ -33,7 +33,7 @@ jobs:
     runs-on: foundry-runner
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install build dependencies
         run: |
@@ -153,7 +153,7 @@ jobs:
     runs-on: foundry-runner
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download benchmark results
         uses: actions/download-artifact@v4
