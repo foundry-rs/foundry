@@ -105,7 +105,7 @@ pub enum BlockchainError {
         "op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--optimism'."
     )]
     DepositTransactionUnsupported,
-    #[error("UnknownTransactionType not supported ")]
+    #[error("Unknown transaction type not supported")]
     UnknownTransactionType,
     #[error("Excess blob gas not set.")]
     ExcessBlobGasNotSet,
@@ -179,18 +179,18 @@ where
 impl From<WalletError> for BlockchainError {
     fn from(value: WalletError) -> Self {
         match value {
-            WalletError::ValueNotZero => Self::Message("tx value not zero".to_string()),
-            WalletError::FromSet => Self::Message("tx from field is set".to_string()),
-            WalletError::NonceSet => Self::Message("tx nonce is set".to_string()),
+            WalletError::ValueNotZero => Self::Message("Transaction value must be zero for delegated transactions".to_string()),
+            WalletError::FromSet => Self::Message("Transaction 'from' field should not be set for delegated transactions".to_string()),
+            WalletError::NonceSet => Self::Message("Transaction nonce should not be set for delegated transactions".to_string()),
             WalletError::InvalidAuthorization => {
-                Self::Message("invalid authorization address".to_string())
+                Self::Message("Invalid authorization address: contract is not whitelisted for delegation".to_string())
             }
             WalletError::IllegalDestination => Self::Message(
-                "the destination of the transaction is not a delegated account".to_string(),
+                "Transaction destination is not a valid delegated account".to_string(),
             ),
-            WalletError::InternalError => Self::Message("internal error".to_string()),
+            WalletError::InternalError => Self::Message("Internal server error occurred".to_string()),
             WalletError::InvalidTransactionRequest => {
-                Self::Message("invalid tx request".to_string())
+                Self::Message("Invalid transaction request format".to_string())
             }
         }
     }
