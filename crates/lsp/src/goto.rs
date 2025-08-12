@@ -167,7 +167,6 @@ pub fn cache_ids(
                     push_if_node_or_array(tree, "options", &mut stack);
                     push_if_node_or_array(tree, "returnParameters", &mut stack);
                     push_if_node_or_array(tree, "overrides", &mut stack);
-                    push_if_node_or_array(tree, "abstract", &mut stack);
                     push_if_node_or_array(tree, "storageLayout", &mut stack);
                     push_if_node_or_array(tree, "unitAlias", &mut stack);
                     push_if_node_or_array(tree, "file", &mut stack);
