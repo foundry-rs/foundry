@@ -246,7 +246,7 @@ pub fn mutate_param_value(
         // flip boolean value
         DynSolValue::Bool(val) => {
             trace!(target: "abi_mutation", "Bool flip {val}");
-            DynSolValue::Bool(!val)
+            Some(DynSolValue::Bool(!val))
         }
         // Uint: increment / decrement, flip random bit, mutate with interesting words or generate
         // new value from state.
@@ -254,33 +254,25 @@ pub fn mutate_param_value(
             0 => {
                 let mutated_val = U256::increment_decrement(val, test_runner);
                 trace!(target: "abi_mutation", "U256 increment/decrement {val} -> {mutated_val}");
-                DynSolValue::Uint(mutated_val, size)
+                Some(DynSolValue::Uint(mutated_val, size))
             }
-            1 => U256::flip_random_bit(val, Some(size), test_runner)
-                .map(|mutated_val| {
-                    trace!(target: "abi_mutation", "U256 flip random bit: {val} -> {mutated_val}");
-                    DynSolValue::Uint(mutated_val, size)
-                })
-                .unwrap_or_else(|| new_value(param, test_runner)),
-            2 => U256::mutate_interesting_byte(val, size, test_runner)
-                .map(|mutated_val| {
-                    trace!(target: "abi_mutation", "U256 interesting byte: {val} -> {mutated_val}");
-                    DynSolValue::Uint(mutated_val, size)
-                })
-                .unwrap_or_else(|| new_value(param, test_runner)),
-            3 => U256::mutate_interesting_word(val, size, test_runner)
-                .map(|mutated_val| {
-                    trace!(target: "abi_mutation", "U256 interesting word: {val} -> {mutated_val}");
-                    DynSolValue::Uint(mutated_val, size)
-                })
-                .unwrap_or_else(|| new_value(param, test_runner)),
-            4 => U256::mutate_interesting_dword(val, size, test_runner)
-                .map(|mutated_val| {
-                    trace!(target: "abi_mutation", "U256 interesting dword: {val} -> {mutated_val}");
-                    DynSolValue::Uint(mutated_val, size)
-                })
-                .unwrap_or_else(|| new_value(param, test_runner)),
-            5 => new_value(param, test_runner),
+            1 => U256::flip_random_bit(val, Some(size), test_runner).map(|mutated_val| {
+                trace!(target: "abi_mutation", "U256 flip random bit: {val} -> {mutated_val}");
+                DynSolValue::Uint(mutated_val, size)
+            }),
+            2 => U256::mutate_interesting_byte(val, size, test_runner).map(|mutated_val| {
+                trace!(target: "abi_mutation", "U256 interesting byte: {val} -> {mutated_val}");
+                DynSolValue::Uint(mutated_val, size)
+            }),
+            3 => U256::mutate_interesting_word(val, size, test_runner).map(|mutated_val| {
+                trace!(target: "abi_mutation", "U256 interesting word: {val} -> {mutated_val}");
+                DynSolValue::Uint(mutated_val, size)
+            }),
+            4 => U256::mutate_interesting_dword(val, size, test_runner).map(|mutated_val| {
+                trace!(target: "abi_mutation", "U256 interesting dword: {val} -> {mutated_val}");
+                DynSolValue::Uint(mutated_val, size)
+            }),
+            5 => None,
             _ => unreachable!(),
         },
         // Int: increment / decrement, flip random bit, mutate with interesting words or generate
@@ -289,39 +281,31 @@ pub fn mutate_param_value(
             0 => {
                 let mutated_val = I256::increment_decrement(val, test_runner);
                 trace!(target: "abi_mutation", "I256 increment/decrement {val} -> {mutated_val}");
+                Some(DynSolValue::Int(mutated_val, size))
+            }
+            1 => I256::flip_random_bit(val, Some(size), test_runner).map(|mutated_val| {
+                trace!(target: "abi_mutation", "I256 flip random bit: {val} -> {mutated_val}");
                 DynSolValue::Int(mutated_val, size)
-            },
-            1 => I256::flip_random_bit(val, Some(size), test_runner)
-                .map(|mutated_val| {
-                    trace!(target: "abi_mutation", "I256 flip random bit: {val} -> {mutated_val}");
-                    DynSolValue::Int(mutated_val, size)
-                })
-                .unwrap_or_else(|| new_value(param, test_runner)),
-            2 => I256::mutate_interesting_byte(val, size, test_runner)
-                .map(|mutated_val| {
-                    trace!(target: "abi_mutation", "I256 interesting byte: {val} -> {mutated_val}");
-                    DynSolValue::Int(mutated_val, size)
-                })
-                .unwrap_or_else(|| new_value(param, test_runner)),
-            3 => I256::mutate_interesting_word(val, size, test_runner)
-                .map(|mutated_val| {
-                    trace!(target: "abi_mutation", "I256 interesting word: {val} -> {mutated_val}");
-                    DynSolValue::Int(mutated_val, size)
-                })
-                .unwrap_or_else(|| new_value(param, test_runner)),
-            4 => I256::mutate_interesting_dword(val, size, test_runner)
-                .map(|mutated_val| {
-                    trace!(target: "abi_mutation", "I256 interesting dword: {val} -> {mutated_val}");
-                    DynSolValue::Int(mutated_val, size)
-                })
-                .unwrap_or_else(|| new_value(param, test_runner)),
-            5 => new_value(param, test_runner),
+            }),
+            2 => I256::mutate_interesting_byte(val, size, test_runner).map(|mutated_val| {
+                trace!(target: "abi_mutation", "I256 interesting byte: {val} -> {mutated_val}");
+                DynSolValue::Int(mutated_val, size)
+            }),
+            3 => I256::mutate_interesting_word(val, size, test_runner).map(|mutated_val| {
+                trace!(target: "abi_mutation", "I256 interesting word: {val} -> {mutated_val}");
+                DynSolValue::Int(mutated_val, size)
+            }),
+            4 => I256::mutate_interesting_dword(val, size, test_runner).map(|mutated_val| {
+                trace!(target: "abi_mutation", "I256 interesting dword: {val} -> {mutated_val}");
+                DynSolValue::Int(mutated_val, size)
+            }),
+            5 => None,
             _ => unreachable!(),
         },
         // Address: flip random bit or generate new value from state.
         DynSolValue::Address(val) => match test_runner.rng().random_range(0..=1) {
-            0 => DynSolValue::Address(Address::flip_random_bit(val, None, test_runner).unwrap_or_default()),
-            1 => new_value(param, test_runner),
+            0 => Address::flip_random_bit(val, None, test_runner).map(DynSolValue::Address),
+            1 => None,
             _ => unreachable!(),
         },
         DynSolValue::Array(mut values) => {
@@ -339,9 +323,9 @@ pub fn mutate_param_value(
                     2 => mutate_array(&mut values, param_type, test_runner, state),
                     _ => unreachable!(),
                 }
-                DynSolValue::Array(values)
+                Some(DynSolValue::Array(values))
             } else {
-                new_value(param, test_runner)
+                None
             }
         }
         DynSolValue::FixedArray(mut values) => {
@@ -349,9 +333,9 @@ pub fn mutate_param_value(
                 && !values.is_empty()
             {
                 mutate_array(&mut values, param_type, test_runner, state);
-                DynSolValue::FixedArray(values)
+                Some(DynSolValue::FixedArray(values))
             } else {
-                new_value(param, test_runner)
+                None
             }
         }
         DynSolValue::CustomStruct { name, prop_names, tuple: mut values } => {
@@ -361,9 +345,9 @@ pub fn mutate_param_value(
             {
                 // Mutate random struct element.
                 mutate_tuple(&mut values, tuple_types, test_runner, state);
-                DynSolValue::CustomStruct { name, prop_names, tuple: values }
+                Some(DynSolValue::CustomStruct { name, prop_names, tuple: values })
             } else {
-                new_value(param, test_runner)
+                None
             }
         }
         DynSolValue::Tuple(mut values) => {
@@ -372,13 +356,14 @@ pub fn mutate_param_value(
             {
                 // Mutate random tuple element.
                 mutate_tuple(&mut values, tuple_types, test_runner, state);
-                DynSolValue::Tuple(values)
+                Some(DynSolValue::Tuple(values))
             } else {
-                new_value(param, test_runner)
+                None
             }
         }
-        _ => new_value(param, test_runner),
+        _ => None,
     }
+    .unwrap_or_else(|| new_value(param, test_runner))
 }
 
 /// Mutates random value from given tuples.
