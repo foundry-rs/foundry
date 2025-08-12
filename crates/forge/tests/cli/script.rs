@@ -3357,28 +3357,27 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
         .unwrap();
 
     cmd.arg("script").arg("ForkScript").assert_success().stdout_eq(str![[r#"
-    ...
-    == Logs ==
-      chain: mainnet
-      id: 1
-       > rpc: mainnet-rpc
-       > vars:
-         > i256: -1234
-         > u256: 1234
-         > bool: true
-         > addr: 0xdEADBEeF00000000000000000000000000000000
-         > string: bar
-      chain: optimism
-      id: 10
-       > rpc: optimism-rpc
-       > vars:
-         > i256: -4321
-         > u256: 4321
-         > bool: false
-         > addr: 0x00000000000000000000000000000000DeaDBeef
-         > string: bazz
+...
+  chain: mainnet
+  id: 1
+   > rpc: mainnet-rpc
+   > vars:
+     > i256: -1234
+     > u256: 1234
+     > bool: true
+     > addr: 0xdEADBEeF00000000000000000000000000000000
+     > string: bar
+  chain: optimism
+  id: 10
+   > rpc: optimism-rpc
+   > vars:
+     > i256: -4321
+     > u256: 4321
+     > bool: false
+     > addr: 0x00000000000000000000000000000000DeaDBeef
+     > string: bazz
 
-    "#]]);
+"#]]);
 });
 
 // Tests that can derive chain id of the active fork + get the config from `foundry.toml`
@@ -3506,19 +3505,19 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
         .unwrap();
 
     cmd.args(["test", "-vvv", "ForkTest"]).assert_failure().stdout_eq(str![[r#"
-    ...
-    [PASS] test_forkVars() ([GAS])
-    Logs:
-      chain: mainnet
-      id: 1
-       > vars:
-         > i256: -1234
-         > u256: 1234
-         > bool: true
-         > addr: 0xdEADBEeF00000000000000000000000000000000
-         > string: bar
+...
+[PASS] test_forkVars() ([GAS])
+Logs:
+  chain: mainnet
+  id: 1
+   > vars:
+     > i256: -1234
+     > u256: 1234
+     > bool: true
+     > addr: 0xdEADBEeF00000000000000000000000000000000
+     > string: bar
 
-    [FAIL: vm.forkChain: a fork must be selected] test_panicsWhithoutSelectedFork() ([GAS])
-    ...
+[FAIL: vm.forkChain: a fork must be selected] test_panicsWhithoutSelectedFork() ([GAS])
+...
 "#]]);
 });
