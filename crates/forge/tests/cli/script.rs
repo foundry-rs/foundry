@@ -3300,7 +3300,7 @@ forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
             r#"
 import {Vm} from "./Vm.sol";
 import {DSTest} from "./test.sol";
-import {console} from "./Console.sol";
+import {console} from "./console.sol";
 
 contract ForkScript is DSTest {
     Vm vm = Vm(HEVM_ADDRESS);
