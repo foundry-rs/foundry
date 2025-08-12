@@ -2,21 +2,21 @@ use super::state::EvmFuzzState;
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{Address, B256, I256, Sign, U256};
 use proptest::{prelude::*, test_runner::TestRunner};
-use rand::{SeedableRng, rngs::StdRng};
+use rand::{SeedableRng, rngs::StdRng, seq::IndexedRandom};
 
 /// The max length of arrays we fuzz for is 256.
 const MAX_ARRAY_LEN: usize = 256;
 
 // Interesting 8-bit values to inject.
-const INTERESTING_8: [i8; 9] = [-128, -1, 0, 1, 16, 32, 64, 100, 127];
+static INTERESTING_8: [i8; 9] = [-128, -1, 0, 1, 16, 32, 64, 100, 127];
 
 /// Interesting 16-bit values to inject.
-const INTERESTING_16: [i16; 19] = [
+static INTERESTING_16: [i16; 19] = [
     -128, -1, 0, 1, 16, 32, 64, 100, 127, -32768, -129, 128, 255, 256, 512, 1000, 1024, 4096, 32767,
 ];
 
 /// Interesting 32-bit values to inject.
-const INTERESTING_32: [i32; 27] = [
+static INTERESTING_32: [i32; 27] = [
     -128,
     -1,
     0,
@@ -319,7 +319,8 @@ pub fn mutate_param_value(
                     DynSolValue::Uint(mutated_val, size)
                 })
                 .unwrap_or_else(|| new_value(param, test_runner)),
-            _ => new_value(param, test_runner)
+            5 => new_value(param, test_runner),
+            _ => unreachable!(),
         },
         // Int: increment / decrement, flip random bit, mutate with interesting words or generate
         // new value from state.
@@ -357,12 +358,14 @@ pub fn mutate_param_value(
                     DynSolValue::Int(mutated_val, size)
                 })
                 .unwrap_or_else(|| new_value(param, test_runner)),
-            _ => new_value(param, test_runner),
+            5 => new_value(param, test_runner),
+            _ => unreachable!(),
         },
         // Address: flip random bit or generate new value from state.
         DynSolValue::Address(val) => match test_runner.rng().random_range(0..=1) {
             0 => DynSolValue::Address(flip_random_bit_address(val, test_runner)),
-            _ => new_value(param, test_runner),
+            1 => new_value(param, test_runner),
+            _ => unreachable!(),
         },
         DynSolValue::Array(mut values) => {
             if let DynSolType::Array(param_type) = param
@@ -376,7 +379,8 @@ pub fn mutate_param_value(
                     // Increase array size.
                     1 => values.push(new_value(param_type, test_runner)),
                     // Mutate random array element.
-                    _ => mutate_array(&mut values, param_type, test_runner, state),
+                    2 => mutate_array(&mut values, param_type, test_runner, state),
+                    _ => unreachable!(),
                 }
                 DynSolValue::Array(values)
             } else {
@@ -460,7 +464,7 @@ fn mutate_interesting_uint_byte(
 ) -> Option<U256> {
     let mut bytes: [u8; 32] = value.to_be_bytes();
     let byte_index = test_runner.rng().random_range(0..32);
-    let interesting = INTERESTING_8[test_runner.rng().random_range(0..INTERESTING_8.len())] as u8;
+    let interesting = *INTERESTING_8.choose(&mut test_runner.rng()).unwrap() as u8;
     bytes[byte_index] = interesting;
     validate_uint_mutation(value, U256::from_be_bytes(bytes), size)
 }
@@ -473,8 +477,7 @@ fn mutate_interesting_uint_word(
 ) -> Option<U256> {
     let mut bytes: [u8; 32] = value.to_be_bytes();
     let word_index = test_runner.rng().random_range(0..16);
-    let interesting =
-        INTERESTING_16[test_runner.rng().random_range(0..INTERESTING_16.len())] as u16;
+    let interesting = *INTERESTING_16.choose(&mut test_runner.rng()).unwrap() as u16;
     let start = word_index * 2;
     bytes[start..start + 2].copy_from_slice(&interesting.to_be_bytes());
     validate_uint_mutation(value, U256::from_be_bytes(bytes), size)
@@ -488,8 +491,7 @@ fn mutate_interesting_uint_dword(
 ) -> Option<U256> {
     let mut bytes: [u8; 32] = value.to_be_bytes();
     let word_index = test_runner.rng().random_range(0..8);
-    let interesting =
-        INTERESTING_32[test_runner.rng().random_range(0..INTERESTING_32.len())] as u32;
+    let interesting = *INTERESTING_32.choose(&mut test_runner.rng()).unwrap() as u32;
     // Replace the 4 bytes of the selected word
     let start = word_index * 4;
     bytes[start..start + 4].copy_from_slice(&interesting.to_be_bytes());
@@ -523,7 +525,7 @@ fn mutate_interesting_int_byte(
 ) -> Option<I256> {
     let mut bytes: [u8; 32] = value.to_be_bytes();
     let byte_index = test_runner.rng().random_range(0..32);
-    let interesting = INTERESTING_8[test_runner.rng().random_range(0..INTERESTING_8.len())] as u8;
+    let interesting = *INTERESTING_8.choose(&mut test_runner.rng()).unwrap() as u8;
     bytes[byte_index] = interesting;
     validate_int_mutation(value, I256::from_be_bytes(bytes), size)
 }
@@ -536,8 +538,7 @@ fn mutate_interesting_int_word(
 ) -> Option<I256> {
     let mut bytes: [u8; 32] = value.to_be_bytes();
     let word_index = test_runner.rng().random_range(0..16);
-    let interesting =
-        INTERESTING_16[test_runner.rng().random_range(0..INTERESTING_16.len())] as u16;
+    let interesting = *INTERESTING_16.choose(&mut test_runner.rng()).unwrap() as u16;
     let start = word_index * 2;
     bytes[start..start + 2].copy_from_slice(&interesting.to_be_bytes());
     validate_int_mutation(value, I256::from_be_bytes(bytes), size)
@@ -551,9 +552,7 @@ fn mutate_interesting_int_dword(
 ) -> Option<I256> {
     let mut bytes: [u8; 32] = value.to_be_bytes();
     let word_index = test_runner.rng().random_range(0..8);
-    let interesting =
-        INTERESTING_32[test_runner.rng().random_range(0..INTERESTING_32.len())] as u32;
-    // Replace the 4 bytes of the selected word
+    let interesting = *INTERESTING_32.choose(&mut test_runner.rng()).unwrap() as u32;
     let start = word_index * 4;
     bytes[start..start + 4].copy_from_slice(&interesting.to_be_bytes());
     validate_int_mutation(value, I256::from_be_bytes(bytes), size)

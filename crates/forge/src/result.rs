@@ -736,7 +736,7 @@ impl fmt::Display for TestKindReport {
                 if *failed_corpus_replays != 0 {
                     write!(
                         f,
-                        "(runs: {runs}, μ: {mean_gas}, ~: {median_gas}), failed corpus replays: {failed_corpus_replays}"
+                        "(runs: {runs}, μ: {mean_gas}, ~: {median_gas}, failed corpus replays: {failed_corpus_replays})"
                     )
                 } else {
                     write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")

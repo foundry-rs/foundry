@@ -151,9 +151,9 @@ async fn test_persist_fuzz_failure() {
     }
 
     // write new failure in different dir.
-    let new_calldata = match run_fail!(|config| {
-        config.fuzz.failure_persist_dir = Some(tempfile::tempdir().unwrap().keep())
-    }) {
+    let persist_dir = tempfile::tempdir().unwrap().keep();
+    let new_calldata = match run_fail!(|config| config.fuzz.failure_persist_dir = Some(persist_dir))
+    {
         Some(CounterExample::Single(counterexample)) => counterexample.calldata,
         _ => Bytes::new(),
     };
