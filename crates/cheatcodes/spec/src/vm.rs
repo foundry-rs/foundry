@@ -2218,72 +2218,72 @@ interface Vm {
     /// Gets the value for the key `key` from the currently active fork and parses it as `bool`.
     /// Reverts if the key was not found or the value could not be parsed.
     #[cheatcode(group = Forking)]
-    function forkBool(string memory key) external view returns (bool);
+    function forkBool(string calldata key) external view returns (bool);
 
     /// Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bool`.
     /// Reverts if the key was not found or the value could not be parsed.
     #[cheatcode(group = Forking)]
-    function forkChainBool(uint256 chain, string memory key) external view returns (bool);
+    function forkChainBool(uint256 chain, string calldata key) external view returns (bool);
 
     /// Gets the value for the key `key` from the currently active fork and parses it as `int256`.
     /// Reverts if the key was not found or the value could not be parsed.
     #[cheatcode(group = Forking)]
-    function forkInt(string memory key) external view returns (int256);
+    function forkInt(string calldata key) external view returns (int256);
 
     /// Gets the value for the key `key` from the fork config for chain `chain` and parses it as `int256`.
     /// Reverts if the key was not found or the value could not be parsed.
     #[cheatcode(group = Forking)]
-    function forkChainInt(uint256 chain, string memory key) external view returns (int256);
+    function forkChainInt(uint256 chain, string calldata key) external view returns (int256);
 
     /// Gets the value for the key `key` from the currently active fork and parses it as `uint256`.
     /// Reverts if the key was not found or the value could not be parsed.
     #[cheatcode(group = Forking)]
-    function forkUint(string memory key) external view returns (uint256);
+    function forkUint(string calldata key) external view returns (uint256);
 
     /// Gets the value for the key `key` from the fork config for chain `chain` and parses it as `uint256`.
     /// Reverts if the key was not found or the value could not be parsed.
     #[cheatcode(group = Forking)]
-    function forkChainUint(uint256 chain, string memory key) external view returns (uint256);
+    function forkChainUint(uint256 chain, string calldata key) external view returns (uint256);
 
     /// Gets the value for the key `key` from the currently active fork and parses it as `address`.
     /// Reverts if the key was not found or the value could not be parsed.
     #[cheatcode(group = Forking)]
-    function forkAddress(string memory key) external view returns (address);
+    function forkAddress(string calldata key) external view returns (address);
 
     /// Gets the value for the key `key` from the fork config for chain `chain` and parses it as `address`.
     /// Reverts if the key was not found or the value could not be parsed.
     #[cheatcode(group = Forking)]
-    function forkChainAddress(uint256 chain, string memory key) external view returns (address);
+    function forkChainAddress(uint256 chain, string calldata key) external view returns (address);
 
     /// Gets the value for the key `key` from the currently active fork and parses it as `bytes32`.
     /// Reverts if the key was not found or the value could not be parsed.
     #[cheatcode(group = Forking)]
-    function forkBytes32(string memory key) external view returns (bytes32);
+    function forkBytes32(string calldata key) external view returns (bytes32);
 
     /// Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bytes32`.
     /// Reverts if the key was not found or the value could not be parsed.
     #[cheatcode(group = Forking)]
-    function forkChainBytes32(uint256 chain, string memory key) external view returns (bytes32);
+    function forkChainBytes32(uint256 chain, string calldata key) external view returns (bytes32);
 
     /// Gets the value for the key `key` from the currently active fork and parses it as `string`.
     /// Reverts if the key was not found or the value could not be parsed.
     #[cheatcode(group = Forking)]
-    function forkString(string memory key) external view returns (string memory);
+    function forkString(string calldata key) external view returns (string memory);
 
     /// Gets the value for the key `key` from the fork config for chain `chain` and parses it as `string`.
     /// Reverts if the key was not found or the value could not be parsed.
     #[cheatcode(group = Forking)]
-    function forkChainString(uint256 chain, string memory key) external view returns (string memory);
+    function forkChainString(uint256 chain, string calldata key) external view returns (string memory);
 
     /// Gets the value for the key `key` from the currently active fork and parses it as `bytes`.
     /// Reverts if the key was not found or the value could not be parsed.
     #[cheatcode(group = Forking)]
-    function forkBytes(string memory key) external view returns (bytes memory);
+    function forkBytes(string calldata key) external view returns (bytes memory);
 
     /// Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bytes`.
     /// Reverts if the key was not found or the value could not be parsed.
     #[cheatcode(group = Forking)]
-    function forkChainBytes(uint256 chain, string memory key) external view returns (bytes memory);
+    function forkChainBytes(uint256 chain, string calldata key) external view returns (bytes memory);
 
     // ======== Scripts ========
     // -------- Broadcasting Transactions --------
