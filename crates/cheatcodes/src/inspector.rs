@@ -933,12 +933,15 @@ impl Cheatcodes {
             // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code
             let initialized;
             let old_balance;
+            let old_nonce;
             if let Ok(acc) = ecx.journaled_state.load_account(call.target_address) {
                 initialized = acc.info.exists();
                 old_balance = acc.info.balance;
+                old_nonce = acc.info.nonce;
             } else {
                 initialized = false;
                 old_balance = U256::ZERO;
+                old_nonce = 0;
             }
             let kind = match call.scheme {
                 CallScheme::Call => crate::Vm::AccountAccessKind::Call,
@@ -962,6 +965,8 @@ impl Cheatcodes {
                 initialized,
                 oldBalance: old_balance,
                 newBalance: U256::ZERO, // updated on call_end
+                oldNonce: old_nonce,
+                newNonce: 0, // updated on call_end
                 value: call.call_value(),
                 data: call.input.bytes(ecx),
                 reverted: false,
@@ -1327,6 +1332,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                     {
                         debug_assert!(access_is_call(call_access.kind));
                         call_access.newBalance = acc.info.balance;
+                        call_access.newNonce = acc.info.nonce;
                     }
                     // Merge the last depth's AccountAccesses into the AccountAccesses at the
                     // current depth, or push them back onto the pending
@@ -1642,6 +1648,8 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                 initialized: true,
                 oldBalance: U256::ZERO, // updated on create_end
                 newBalance: U256::ZERO, // updated on create_end
+                oldNonce: 0,            // new contract starts with nonce 0
+                newNonce: 1,            // updated on create_end (contracts start with nonce 1)
                 value: input.value(),
                 data: input.init_code(),
                 reverted: false,
@@ -1748,6 +1756,7 @@ impl Inspector<EthEvmContext<&mut dyn DatabaseExt>> for Cheatcodes {
                             && let Ok(created_acc) = ecx.journaled_state.load_account(address)
                         {
                             create_access.newBalance = created_acc.info.balance;
+                            create_access.newNonce = created_acc.info.nonce;
                             create_access.deployedCode =
                                 created_acc.info.code.clone().unwrap_or_default().original_bytes();
                         }
@@ -1945,13 +1954,15 @@ impl Cheatcodes {
                 // Ensure that we're not selfdestructing a context recording was initiated on
                 let Some(last) = account_accesses.last_mut() else { return };
 
-                // get previous balance and initialized status of the target account
+                // get previous balance, nonce and initialized status of the target account
                 let target = try_or_return!(interpreter.stack.peek(0));
                 let target = Address::from_word(B256::from(target));
-                let (initialized, old_balance) = ecx
+                let (initialized, old_balance, old_nonce) = ecx
                     .journaled_state
                     .load_account(target)
-                    .map(|account| (account.info.exists(), account.info.balance))
+                    .map(|account| {
+                        (account.info.exists(), account.info.balance, account.info.nonce)
+                    })
                     .unwrap_or_default();
 
                 // load balance of this account
@@ -1972,6 +1983,8 @@ impl Cheatcodes {
                     initialized,
                     oldBalance: old_balance,
                     newBalance: old_balance + value,
+                    oldNonce: old_nonce,
+                    newNonce: old_nonce, // nonce doesn't change on selfdestruct
                     value,
                     data: Bytes::new(),
                     reverted: false,
@@ -2059,12 +2072,15 @@ impl Cheatcodes {
                     Address::from_word(B256::from(try_or_return!(interpreter.stack.peek(0))));
                 let initialized;
                 let balance;
+                let nonce;
                 if let Ok(acc) = ecx.journaled_state.load_account(address) {
                     initialized = acc.info.exists();
                     balance = acc.info.balance;
+                    nonce = acc.info.nonce;
                 } else {
                     initialized = false;
                     balance = U256::ZERO;
+                    nonce = 0;
                 }
                 let curr_depth = ecx
                     .journaled_state
@@ -2082,6 +2098,8 @@ impl Cheatcodes {
                     initialized,
                     oldBalance: balance,
                     newBalance: balance,
+                    oldNonce: nonce,
+                    newNonce: nonce, // EXT* operations don't change nonce
                     value: U256::ZERO,
                     data: Bytes::new(),
                     reverted: false,
@@ -2360,6 +2378,8 @@ fn append_storage_access(
                     // The remaining fields are defaults
                     oldBalance: U256::ZERO,
                     newBalance: U256::ZERO,
+                    oldNonce: 0,
+                    newNonce: 0,
                     value: U256::ZERO,
                     data: Bytes::new(),
                     deployedCode: Bytes::new(),
