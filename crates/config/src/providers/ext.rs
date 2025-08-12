@@ -1,4 +1,4 @@
-use crate::{Config, utils};
+use crate::{Config, extend, utils};
 use figment::{
     Error, Figment, Metadata, Profile, Provider,
     providers::{Env, Format, Toml},
@@ -109,21 +109,7 @@ impl TomlFileProvider {
     /// - Base config also has an `extends` field (nested inheritance)
     /// - TOML parsing fails for either file
     fn read(&self) -> Result<Map<Profile, Dict>, Error> {
-        use serde::{Deserialize, de::Error as _};
-        use std::collections::HashMap;
-
-        // Helper structs to extract just the extends field from profiles
-        #[derive(Deserialize, Default)]
-        struct ExtendConfig {
-            #[serde(default)]
-            extends: Option<String>,
-        }
-
-        #[derive(Deserialize, Default)]
-        struct PartialConfig {
-            #[serde(default)]
-            profile: Option<HashMap<String, ExtendConfig>>,
-        }
+        use serde::de::Error as _;
 
         // Get the config file path and validate it exists
         let local_path = self.file();
@@ -145,26 +131,23 @@ impl TomlFileProvider {
         let local_path_str = local_path.to_string_lossy();
         let local_content = std::fs::read_to_string(&local_path)
             .map_err(|e| Error::custom(e.to_string()).with_path(&local_path_str))?;
-        let partial_config: PartialConfig = toml::from_str(&local_content)
+        let partial_config: extend::ExtendsPartialConfig = toml::from_str(&local_content)
             .map_err(|e| Error::custom(e.to_string()).with_path(&local_path_str))?;
 
         // Determine which profile is active (e.g., "default", "test", etc.)
         let selected_profile = Config::selected_profile();
 
-        // Check if the current profile has an extends field
-        let extends_value = partial_config
-            .profile
-            .as_ref()
-            .and_then(|profiles| {
-                // Convert Profile to String for HashMap lookup
-                let profile_str = selected_profile.to_string();
-                profiles.get(&profile_str)
-            })
-            .and_then(|profile| profile.extends.clone());
+        // Check if the current profile has an 'extends' field
+        let extends_config = partial_config.profile.as_ref().and_then(|profiles| {
+            let profile_str = selected_profile.to_string();
+            profiles.get(&profile_str).and_then(|cfg| cfg.extends.clone())
+        });
 
         // If inheritance is configured, load and merge the base config
-        if let Some(extends) = extends_value {
-            let relative_base_path = PathBuf::from(&extends);
+        if let Some(extends_config) = extends_config {
+            let extends_path = extends_config.path();
+            let extends_strategy = extends_config.strategy();
+            let relative_base_path = PathBuf::from(extends_path);
             let local_dir = local_path.parent().ok_or_else(|| {
                 Error::custom(format!(
                     "Could not determine parent directory of config file: {}",
@@ -202,7 +185,7 @@ impl TomlFileProvider {
             let base_path_str = base_path.to_string_lossy();
             let base_content = std::fs::read_to_string(&base_path)
                 .map_err(|e| Error::custom(e.to_string()).with_path(&base_path_str))?;
-            let base_partial: PartialConfig = toml::from_str(&base_content)
+            let base_partial: extend::ExtendsPartialConfig = toml::from_str(&base_content)
                 .map_err(|e| Error::custom(e.to_string()).with_path(&base_path_str))?;
 
             // Check if the base file's same profile also has extends (nested inheritance)
@@ -218,21 +201,68 @@ impl TomlFileProvider {
             // Prevent nested inheritance to avoid complexity and potential cycles
             if base_extends.is_some() {
                 return Err(Error::custom(format!(
-                    "Nested inheritance is not allowed. Base file '{}' cannot have an 'extends' field in profile '{}'.",
-                    base_path.display(),
-                    selected_profile
+                    "Nested inheritance is not allowed. Base file '{}' cannot have an 'extends' field in profile '{selected_profile}'.",
+                    base_path.display()
                 )));
             }
 
             // Load base configuration as a Figment provider
             let base_provider = Toml::file(base_path).nested();
 
-            // Merge configurations: base first, then local overrides
-            // Using admerge strategy:
-            // - Arrays are concatenated (base elements + local elements)
-            // - Other values are replaced (local values override base values)
-            // - The extends field is preserved in the final configuration
-            Figment::new().merge(base_provider).admerge(local_provider).data()
+            // Apply the selected merge strategy
+            match extends_strategy {
+                extend::ExtendStrategy::ExtendArrays => {
+                    // Using 'admerge' strategy:
+                    // - Arrays are concatenated (base elements + local elements)
+                    // - Other values are replaced (local values override base values)
+                    // - The extends field is preserved in the final configuration
+                    Figment::new().merge(base_provider).admerge(local_provider).data()
+                }
+                extend::ExtendStrategy::ReplaceArrays => {
+                    // Using 'merge' strategy:
+                    // - Arrays are replaced entirely (local arrays replace base arrays)
+                    // - Other values are replaced (local values override base values)
+                    Figment::new().merge(base_provider).merge(local_provider).data()
+                }
+                extend::ExtendStrategy::NoCollision => {
+                    // Check for key collisions between base and local configs
+                    let base_data = base_provider.data()?;
+                    let local_data = local_provider.data()?;
+
+                    let profile_key = Profile::new("profile");
+                    if let (Some(local_profiles), Some(base_profiles)) =
+                        (local_data.get(&profile_key), base_data.get(&profile_key))
+                    {
+                        // Extract dicts for the selected profile
+                        let profile_str = selected_profile.to_string();
+                        let base_dict = base_profiles.get(&profile_str).and_then(|v| v.as_dict());
+                        let local_dict = local_profiles.get(&profile_str).and_then(|v| v.as_dict());
+
+                        // Find colliding keys
+                        if let (Some(local_dict), Some(base_dict)) = (local_dict, base_dict) {
+                            let collisions: Vec<&str> = local_dict
+                                .keys()
+                                .filter(|key| {
+                                    // Ignore the "extends" key as it's expected
+                                    *key != "extends" && base_dict.contains_key(*key)
+                                })
+                                .cloned()
+                                .collect();
+
+                            if !collisions.is_empty() {
+                                return Err(Error::custom(format!(
+                                    "Key collision detected in profile '{profile_str}' when extending '{extends_path}'. \
+                                    Conflicting keys: {collisions:?}. Use 'extends.strategy' or 'extends_strategy' to specify how to handle conflicts."
+                                )));
+                            }
+                        }
+                    }
+
+                    // No collisions, merge the configs (base values only where local doesn't have
+                    // them)
+                    Figment::new().merge(base_provider).merge(local_provider).data()
+                }
+            }
         } else {
             // No inheritance - return the local config as-is
             local_provider.data()

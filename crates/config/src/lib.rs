@@ -127,6 +127,9 @@ use bind_json::BindJsonConfig;
 mod compilation;
 pub use compilation::{CompilationRestrictions, SettingsOverrides};
 
+pub mod extend;
+use extend::Extends;
+
 /// Foundry configuration
 ///
 /// # Defaults
@@ -181,12 +184,12 @@ pub struct Config {
     #[serde(default = "root_default", skip_serializing)]
     pub root: PathBuf,
 
-    /// Path to another foundry.toml (base) file that should be extended (inherited).
+    /// Configuration for extending from another foundry.toml (base) file.
     ///
-    /// This is a relative path from this config file.
+    /// Can be either a string path or an object with path and strategy.
     /// Base files cannot extend (inherit) other files.
     #[serde(default, skip_serializing)]
-    pub extends: Option<String>,
+    pub extends: Option<Extends>,
 
     /// path of the source contracts dir, like `src` or `contracts`
     pub src: PathBuf,
@@ -5246,7 +5249,7 @@ mod tests {
             )?;
 
             let config = Config::load().unwrap();
-            assert_eq!(config.extends, Some("base-config.toml".to_string()));
+            assert_eq!(config.extends, Some(Extends::Path("base-config.toml".to_string())));
 
             // optimizer_runs should be inherited from base-config.toml
             assert_eq!(config.optimizer_runs, Some(800));
@@ -5887,7 +5890,6 @@ mod tests {
             let config = Config::load().unwrap();
 
             // Remappings array is now concatenated with admerge (base + local)
-            // All remappings from base and local should be present
             assert!(config.remappings.iter().any(|r| r.to_string().contains("@custom/")));
             assert!(config.remappings.iter().any(|r| r.to_string().contains("ds-test/")));
             assert!(config.remappings.iter().any(|r| r.to_string().contains("forge-std/")));
@@ -6015,6 +6017,283 @@ mod tests {
                     .parse::<alloy_primitives::Address>()
                     .unwrap()
             );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_extends_strategy_extend_arrays() {
+        figment::Jail::expect_with(|jail| {
+            // Create base config with arrays
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default]
+                    libs = ["lib", "node_modules"]
+                    ignored_error_codes = [5667, 1878]
+                    optimizer_runs = 200
+                    "#,
+            )?;
+
+            // Local config extends with extend-arrays strategy (concatenates arrays)
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+                    libs = ["mylib", "customlib"]
+                    ignored_error_codes = [1234]
+                    optimizer_runs = 500
+                    "#,
+            )?;
+
+            let config = Config::load().unwrap();
+
+            // Arrays should be concatenated (base + local)
+            assert_eq!(config.libs.len(), 4);
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("lib")));
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("node_modules")));
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("mylib")));
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("customlib")));
+
+            assert_eq!(config.ignored_error_codes.len(), 3);
+            assert!(
+                config.ignored_error_codes.contains(&SolidityErrorCode::UnusedFunctionParameter)
+            ); // 5667
+            assert!(
+                config.ignored_error_codes.contains(&SolidityErrorCode::SpdxLicenseNotProvided)
+            ); // 1878
+            assert!(config.ignored_error_codes.contains(&SolidityErrorCode::from(1234u64))); // 1234 - generic
+
+            // Non-array values should be replaced
+            assert_eq!(config.optimizer_runs, Some(500));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_extends_strategy_replace_arrays() {
+        figment::Jail::expect_with(|jail| {
+            // Create base config with arrays
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default]
+                    libs = ["lib", "node_modules"]
+                    ignored_error_codes = [5667, 1878]
+                    optimizer_runs = 200
+                    "#,
+            )?;
+
+            // Local config extends with replace-arrays strategy (replaces arrays entirely)
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = { path = "base.toml", strategy = "replace-arrays" }
+                    libs = ["mylib", "customlib"]
+                    ignored_error_codes = [1234]
+                    optimizer_runs = 500
+                    "#,
+            )?;
+
+            let config = Config::load().unwrap();
+
+            // Arrays should be replaced entirely (only local values)
+            assert_eq!(config.libs.len(), 2);
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("mylib")));
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("customlib")));
+            assert!(!config.libs.iter().any(|l| l.to_str() == Some("lib")));
+            assert!(!config.libs.iter().any(|l| l.to_str() == Some("node_modules")));
+
+            assert_eq!(config.ignored_error_codes.len(), 1);
+            assert!(config.ignored_error_codes.contains(&SolidityErrorCode::from(1234u64))); // 1234
+            assert!(
+                !config.ignored_error_codes.contains(&SolidityErrorCode::UnusedFunctionParameter)
+            ); // 5667
+
+            // Non-array values should be replaced
+            assert_eq!(config.optimizer_runs, Some(500));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_extends_strategy_no_collision_success() {
+        figment::Jail::expect_with(|jail| {
+            // Create base config
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default]
+                    optimizer = true
+                    optimizer_runs = 200
+                    src = "src"
+                    "#,
+            )?;
+
+            // Local config extends with no-collision strategy and no conflicts
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = { path = "base.toml", strategy = "no-collision" }
+                    test = "tests"
+                    libs = ["lib"]
+                    "#,
+            )?;
+
+            let config = Config::load().unwrap();
+
+            // Values from base should be present
+            assert_eq!(config.optimizer, Some(true));
+            assert_eq!(config.optimizer_runs, Some(200));
+            assert_eq!(config.src, PathBuf::from("src"));
+
+            // Values from local should be present
+            assert_eq!(config.test, PathBuf::from("tests"));
+            assert_eq!(config.libs.len(), 1);
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("lib")));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_extends_strategy_no_collision_error() {
+        figment::Jail::expect_with(|jail| {
+            // Create base config
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default]
+                    optimizer = true
+                    optimizer_runs = 200
+                    libs = ["lib", "node_modules"]
+                    "#,
+            )?;
+
+            // Local config extends with no-collision strategy but has conflicts
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = { path = "base.toml", strategy = "no-collision" }
+                    optimizer_runs = 500
+                    libs = ["mylib"]
+                    "#,
+            )?;
+
+            // Loading should fail due to key collision
+            let result = Config::load();
+
+            if let Ok(config) = result {
+                panic!(
+                    "Expected error but got config with optimizer_runs: {:?}, libs: {:?}",
+                    config.optimizer_runs, config.libs
+                );
+            }
+
+            let err = result.unwrap_err();
+            let err_str = err.to_string();
+            assert!(
+                err_str.contains("Key collision detected") || err_str.contains("collision"),
+                "Error message doesn't mention collision: {err_str}"
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_extends_both_syntaxes() {
+        figment::Jail::expect_with(|jail| {
+            // Create base config
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default]
+                    libs = ["lib"]
+                    optimizer = true
+                    "#,
+            )?;
+
+            // Test 1: Simple string syntax (should use default extend-arrays)
+            jail.create_file(
+                "foundry_string.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+                    libs = ["custom"]
+                    "#,
+            )?;
+
+            // Test 2: Object syntax with explicit strategy
+            jail.create_file(
+                "foundry_object.toml",
+                r#"
+                    [profile.default]
+                    extends = { path = "base.toml", strategy = "replace-arrays" }
+                    libs = ["custom"]
+                    "#,
+            )?;
+
+            // Test string syntax (default extend-arrays)
+            jail.set_env("FOUNDRY_CONFIG", "foundry_string.toml");
+            let config = Config::load().unwrap();
+            assert_eq!(config.libs.len(), 2); // Should concatenate
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("lib")));
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("custom")));
+
+            // Test object syntax (replace-arrays)
+            jail.set_env("FOUNDRY_CONFIG", "foundry_object.toml");
+            let config = Config::load().unwrap();
+            assert_eq!(config.libs.len(), 1); // Should replace
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("custom")));
+            assert!(!config.libs.iter().any(|l| l.to_str() == Some("lib")));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_extends_strategy_default_is_extend_arrays() {
+        figment::Jail::expect_with(|jail| {
+            // Create base config
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default]
+                    libs = ["lib", "node_modules"]
+                    optimizer = true
+                    "#,
+            )?;
+
+            // Local config extends without specifying strategy (should default to extend-arrays)
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+                    libs = ["custom"]
+                    optimizer = false
+                    "#,
+            )?;
+
+            // Should work with default extend-arrays strategy
+            let config = Config::load().unwrap();
+
+            // Arrays should be concatenated by default
+            assert_eq!(config.libs.len(), 3);
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("lib")));
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("node_modules")));
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("custom")));
+
+            // Non-array values should be replaced
+            assert_eq!(config.optimizer, Some(false));
 
             Ok(())
         });
