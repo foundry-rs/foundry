@@ -27,6 +27,7 @@ use thiserror::Error;
 #[macro_use]
 pub mod macros;
 
+pub mod codesize;
 pub mod gas;
 pub mod high;
 pub mod info;
@@ -38,6 +39,7 @@ static ALL_REGISTERED_LINTS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     lints.extend_from_slice(med::REGISTERED_LINTS);
     lints.extend_from_slice(info::REGISTERED_LINTS);
     lints.extend_from_slice(gas::REGISTERED_LINTS);
+    lints.extend_from_slice(codesize::REGISTERED_LINTS);
     lints.into_iter().map(|lint| lint.id()).collect()
 });
 
@@ -109,23 +111,35 @@ impl SolidityLinter {
         passes_and_lints.extend(med::create_early_lint_passes());
         passes_and_lints.extend(info::create_early_lint_passes());
 
-        // Do not apply gas-severity rules on tests and scripts
+        // Do not apply 'gas' and 'codesize' severity rules on tests and scripts
         if !self.path_config.is_test_or_script(path) {
             passes_and_lints.extend(gas::create_early_lint_passes());
+            passes_and_lints.extend(codesize::create_early_lint_passes());
         }
 
         // Filter passes based on linter config
-        let mut passes: Vec<Box<dyn EarlyLintPass<'_>>> = passes_and_lints
+        let (mut passes, lints): (Vec<Box<dyn EarlyLintPass<'_>>>, Vec<_>) = passes_and_lints
             .into_iter()
-            .filter_map(|(pass, lint)| if self.include_lint(lint) { Some(pass) } else { None })
-            .collect();
+            .fold((Vec::new(), Vec::new()), |(mut passes, mut ids), (pass, lints)| {
+                let included_ids: Vec<_> = lints
+                    .iter()
+                    .filter_map(|lint| if self.include_lint(*lint) { Some(lint.id) } else { None })
+                    .collect();
+
+                if !included_ids.is_empty() {
+                    passes.push(pass);
+                    ids.extend(included_ids);
+                }
+
+                (passes, ids)
+            });
 
         // Process the inline-config
         let comments = Comments::new(file);
         let inline_config = parse_inline_config(sess, &comments, InlineConfigSource::Ast(ast));
 
         // Initialize and run the early lint visitor
-        let ctx = LintContext::new(sess, self.with_description, inline_config);
+        let ctx = LintContext::new(sess, self.with_description, inline_config, lints);
         let mut early_visitor = EarlyLintVisitor::new(&ctx, &mut passes);
         _ = early_visitor.visit_source_unit(ast);
         early_visitor.post_source_unit(ast);
@@ -146,18 +160,30 @@ impl SolidityLinter {
         passes_and_lints.extend(med::create_late_lint_passes());
         passes_and_lints.extend(info::create_late_lint_passes());
 
-        // Do not apply gas-severity rules on tests and scripts
+        // Do not apply 'gas' and 'codesize' severity rules on tests and scripts
         if let FileName::Real(ref path) = file.name
             && !self.path_config.is_test_or_script(path)
         {
             passes_and_lints.extend(gas::create_late_lint_passes());
+            passes_and_lints.extend(codesize::create_late_lint_passes());
         }
 
         // Filter passes based on config
-        let mut passes: Vec<Box<dyn LateLintPass<'_>>> = passes_and_lints
+        let (mut passes, lints): (Vec<Box<dyn LateLintPass<'_>>>, Vec<_>) = passes_and_lints
             .into_iter()
-            .filter_map(|(pass, lint)| if self.include_lint(lint) { Some(pass) } else { None })
-            .collect();
+            .fold((Vec::new(), Vec::new()), |(mut passes, mut ids), (pass, lints)| {
+                let included_ids: Vec<_> = lints
+                    .iter()
+                    .filter_map(|lint| if self.include_lint(*lint) { Some(lint.id) } else { None })
+                    .collect();
+
+                if !included_ids.is_empty() {
+                    passes.push(pass);
+                    ids.extend(included_ids);
+                }
+
+                (passes, ids)
+            });
 
         // Process the inline-config
         let comments = Comments::new(file);
@@ -165,7 +191,7 @@ impl SolidityLinter {
             parse_inline_config(sess, &comments, InlineConfigSource::Hir((&gcx.hir, source_id)));
 
         // Run late lint visitor
-        let ctx = LintContext::new(sess, self.with_description, inline_config);
+        let ctx = LintContext::new(sess, self.with_description, inline_config, lints);
         let mut late_visitor = LateLintVisitor::new(&ctx, &mut passes, &gcx.hir);
 
         // Visit this specific source
@@ -199,13 +225,12 @@ impl Linter for SolidityLinter {
         sess
     }
 
-    /// Run AST-based lints
-    fn early_lint<'sess>(&self, input: &[PathBuf], mut pcx: ParsingContext<'sess>) {
+    /// Run AST-based lints.
+    ///
+    /// Note: the `ParsingContext` should already have the sources loaded.
+    fn early_lint<'sess>(&self, input: &[PathBuf], pcx: ParsingContext<'sess>) {
         let sess = pcx.sess;
         _ = sess.enter_parallel(|| -> Result<(), diagnostics::ErrorGuaranteed> {
-            // Load all files into the parsing ctx
-            pcx.load_files(input)?;
-
             // Parse the sources
             let ast_arena = solar_sema::thread_local::ThreadLocal::new();
             let ast_result = pcx.parse(&ast_arena);
@@ -223,13 +248,12 @@ impl Linter for SolidityLinter {
         });
     }
 
-    /// Run HIR-based lints
-    fn late_lint<'sess>(&self, input: &[PathBuf], mut pcx: ParsingContext<'sess>) {
+    /// Run HIR-based lints.
+    ///
+    /// Note: the `ParsingContext` should already have the sources loaded.
+    fn late_lint<'sess>(&self, input: &[PathBuf], pcx: ParsingContext<'sess>) {
         let sess = pcx.sess;
         _ = sess.enter_parallel(|| -> Result<(), diagnostics::ErrorGuaranteed> {
-            // Load all files into the parsing ctx
-            pcx.load_files(input)?;
-
             // Parse and lower to HIR
             let hir_arena = solar_sema::thread_local::ThreadLocal::new();
             let hir_result = pcx.parse_and_lower(&hir_arena);
@@ -341,6 +365,12 @@ impl<'a> TryFrom<&'a str> for SolLint {
         }
 
         for &lint in gas::REGISTERED_LINTS {
+            if lint.id() == value {
+                return Ok(lint);
+            }
+        }
+
+        for &lint in codesize::REGISTERED_LINTS {
             if lint.id() == value {
                 return Ok(lint);
             }

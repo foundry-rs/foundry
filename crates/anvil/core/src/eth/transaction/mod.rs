@@ -81,7 +81,7 @@ pub fn transaction_request_to_typed(
             to: to?.into_to()?,
             chain_id: 0,
             access_list: access_list.unwrap_or_default(),
-            authorization_list: authorization_list.unwrap(),
+            authorization_list: authorization_list.unwrap_or_default(),
         }));
     }
 
@@ -378,6 +378,17 @@ impl PendingTransaction {
             transaction: MaybeImpersonatedTransaction::impersonated(transaction, sender),
             sender,
             hash,
+        }
+    }
+
+    /// Converts a [`MaybeImpersonatedTransaction`] into a [`PendingTransaction`].
+    pub fn from_maybe_impersonated(
+        transaction: MaybeImpersonatedTransaction,
+    ) -> Result<Self, alloy_primitives::SignatureError> {
+        if let Some(impersonated) = transaction.impersonated_sender {
+            Ok(Self::with_impersonated(transaction.transaction, impersonated))
+        } else {
+            Self::new(transaction.transaction)
         }
     }
 
@@ -790,7 +801,7 @@ impl TypedTransaction {
                 input: t.tx().tx().input.clone(),
                 nonce: t.tx().tx().nonce,
                 gas_limit: t.tx().tx().gas_limit,
-                gas_price: Some(t.tx().tx().max_fee_per_blob_gas),
+                gas_price: None,
                 max_fee_per_gas: Some(t.tx().tx().max_fee_per_gas),
                 max_priority_fee_per_gas: Some(t.tx().tx().max_priority_fee_per_gas),
                 max_fee_per_blob_gas: Some(t.tx().tx().max_fee_per_blob_gas),
@@ -804,7 +815,7 @@ impl TypedTransaction {
                 input: t.tx().input.clone(),
                 nonce: t.tx().nonce,
                 gas_limit: t.tx().gas_limit,
-                gas_price: Some(t.tx().max_fee_per_gas),
+                gas_price: None,
                 max_fee_per_gas: Some(t.tx().max_fee_per_gas),
                 max_priority_fee_per_gas: Some(t.tx().max_priority_fee_per_gas),
                 max_fee_per_blob_gas: None,

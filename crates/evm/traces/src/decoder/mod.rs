@@ -167,6 +167,7 @@ impl CallTraceDecoder {
         INIT.get_or_init(Self::init)
     }
 
+    #[instrument(name = "CallTraceDecoder::init", level = "debug")]
     fn init() -> Self {
         Self {
             contracts: Default::default(),
@@ -410,18 +411,18 @@ impl CallTraceDecoder {
                     None
                 };
 
-                if let Some(func) = functions.first() {
-                    return DecodedCallTrace {
+                return if let Some(func) = functions.first() {
+                    DecodedCallTrace {
                         label,
                         call_data: Some(self.decode_function_input(trace, func)),
                         return_data,
-                    };
+                    }
                 } else {
-                    return DecodedCallTrace {
+                    DecodedCallTrace {
                         label,
                         call_data: self.fallback_call_data(trace),
                         return_data,
-                    };
+                    }
                 };
             }
 

@@ -83,11 +83,26 @@ impl<T: AsRef<Path>> FoundryPathExt for T {
 
 /// Initializes a tracing Subscriber for logging
 pub fn subscriber() {
-    let registry = tracing_subscriber::Registry::default()
-        .with(tracing_subscriber::EnvFilter::from_default_env());
+    let registry = tracing_subscriber::Registry::default().with(env_filter());
     #[cfg(feature = "tracy")]
     let registry = registry.with(tracing_tracy::TracyLayer::default());
     registry.with(tracing_subscriber::fmt::layer()).init()
+}
+
+fn env_filter() -> tracing_subscriber::EnvFilter {
+    const DEFAULT_DIRECTIVES: &[&str] = &[
+        // Hyper
+        "hyper=off",
+        "hyper_util=off",
+        "h2=off",
+        // Tokio
+        "mio=off",
+    ];
+    let mut filter = tracing_subscriber::EnvFilter::from_default_env();
+    for &directive in DEFAULT_DIRECTIVES {
+        filter = filter.add_directive(directive.parse().unwrap());
+    }
+    filter
 }
 
 pub fn abi_to_solidity(abi: &JsonAbi, name: &str) -> Result<String> {
@@ -474,6 +489,10 @@ impl<'a> Git<'a> {
         self.cmd().args(["rev-parse", "--is-inside-work-tree"]).status().map(|s| s.success())
     }
 
+    pub fn is_repo_root(self) -> Result<bool> {
+        self.cmd().args(["rev-parse", "--show-cdup"]).exec().map(|out| out.stdout.is_empty())
+    }
+
     pub fn is_clean(self) -> Result<bool> {
         self.cmd().args(["status", "--porcelain"]).exec().map(|out| out.stdout.is_empty())
     }
@@ -671,7 +690,7 @@ ignore them in the `.gitignore` file."
     /// If the status is prefix with `-`, the submodule is not initialized.
     ///
     /// Ref: <https://git-scm.com/docs/git-submodule#Documentation/git-submodule.txt-status--cached--recursive--ltpathgt82308203>
-    pub fn submodules_unintialized(self) -> Result<bool> {
+    pub fn submodules_uninitialized(self) -> Result<bool> {
         self.cmd()
             .args(["submodule", "status"])
             .get_stdout_lossy()

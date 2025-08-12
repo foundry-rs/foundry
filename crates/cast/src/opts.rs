@@ -115,6 +115,8 @@ pub enum CastSubcommand {
     ToCheckSumAddress {
         /// The address to convert.
         address: Option<Address>,
+        /// EIP-155 chain ID to encode the address using EIP-1191.
+        chain_id: Option<u64>,
     },
 
     /// Convert hex data to an ASCII string.
@@ -147,6 +149,25 @@ pub enum CastSubcommand {
     ToBytes32 {
         /// The hex data to convert.
         bytes: Option<String>,
+    },
+
+    /// Pads hex data to a specified length.
+    #[command(visible_aliases = &["pd"])]
+    Pad {
+        /// The hex data to pad.
+        data: Option<String>,
+
+        /// Right-pad the data (instead of left-pad).
+        #[arg(long)]
+        right: bool,
+
+        /// Left-pad the data (default).
+        #[arg(long, conflicts_with = "right")]
+        left: bool,
+
+        /// Target length in bytes (default: 32).
+        #[arg(long, default_value = "32")]
+        len: usize,
     },
 
     /// Convert an integer into a fixed point number.
@@ -494,6 +515,10 @@ pub enum CastSubcommand {
 
         #[command(flatten)]
         rpc: RpcOpts,
+
+        /// If specified, the transaction will be converted to a TransactionRequest JSON format.
+        #[arg(long)]
+        to_request: bool,
     },
 
     /// Get the transaction receipt for a transaction.
@@ -549,7 +574,12 @@ pub enum CastSubcommand {
         sig: String,
 
         /// The ABI-encoded calldata.
-        calldata: String,
+        #[arg(required_unless_present = "file", index = 2)]
+        calldata: Option<String>,
+
+        /// Load ABI-encoded calldata from a file instead.
+        #[arg(long = "file", short = 'f', conflicts_with = "calldata")]
+        file: Option<PathBuf>,
     },
 
     /// Decode ABI-encoded string.

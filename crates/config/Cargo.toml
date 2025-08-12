@@ -43,7 +43,7 @@ serde.workspace = true
 soldeer-core.workspace = true
 thiserror.workspace = true
 toml = { workspace = true, features = ["preserve_order"] }
-toml_edit = "0.22"
+toml_edit = "0.23"
 tracing.workspace = true
 walkdir.workspace = true
 yansi.workspace = true

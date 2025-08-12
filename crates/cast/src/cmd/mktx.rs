@@ -1,11 +1,11 @@
 use crate::tx::{self, CastTxBuilder};
 use alloy_ens::NameOrAddress;
 use alloy_network::{EthereumWallet, TransactionBuilder, eip2718::Encodable2718};
-use alloy_primitives::hex;
+use alloy_primitives::{Address, hex};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use clap::Parser;
-use eyre::{OptionExt, Result};
+use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{LoadConfig, get_provider},
@@ -25,6 +25,7 @@ pub struct MakeTxArgs {
     sig: Option<String>,
 
     /// The arguments of the function to call.
+    #[arg(allow_negative_numbers = true)]
     args: Vec<String>,
 
     #[command(subcommand)]
@@ -49,7 +50,7 @@ pub struct MakeTxArgs {
     /// Generate a raw RLP-encoded unsigned transaction.
     ///
     /// Relaxes the wallet requirement.
-    #[arg(long, requires = "from")]
+    #[arg(long)]
     raw_unsigned: bool,
 
     /// Call `eth_signTransaction` using the `--from` argument or $ETH_FROM as sender
@@ -69,6 +70,7 @@ pub enum MakeTxSubcommands {
         sig: Option<String>,
 
         /// The constructor arguments.
+        #[arg(allow_negative_numbers = true)]
         args: Vec<String>,
     },
 }
@@ -96,7 +98,7 @@ impl MakeTxArgs {
 
         let provider = get_provider(&config)?;
 
-        let tx_builder = CastTxBuilder::new(&provider, tx, &config)
+        let tx_builder = CastTxBuilder::new(&provider, tx.clone(), &config)
             .await?
             .with_to(to)
             .await?
@@ -106,7 +108,17 @@ impl MakeTxArgs {
 
         if raw_unsigned {
             // Build unsigned raw tx
-            let from = eth.wallet.from.ok_or_eyre("missing `--from` address")?;
+            // Check if nonce is provided when --from is not specified
+            // See: <https://github.com/foundry-rs/foundry/issues/11110>
+            if eth.wallet.from.is_none() && tx.nonce.is_none() {
+                eyre::bail!(
+                    "Missing required parameters for raw unsigned transaction. When --from is not provided, you must specify: --nonce"
+                );
+            }
+
+            // Use zero address as placeholder for unsigned transactions
+            let from = eth.wallet.from.unwrap_or(Address::ZERO);
+
             let raw_tx = tx_builder.build_unsigned_raw(from).await?;
 
             sh_println!("{raw_tx}")?;

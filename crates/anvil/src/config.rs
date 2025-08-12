@@ -65,6 +65,7 @@ use tokio::sync::RwLock as TokioRwLock;
 use yansi::Paint;
 
 pub use foundry_common::version::SHORT_VERSION as VERSION_MESSAGE;
+use foundry_evm::traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier};
 
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
@@ -183,6 +184,8 @@ pub struct NodeConfig {
     pub transaction_block_keeper: Option<usize>,
     /// Disable the default CREATE2 deployer
     pub disable_default_create2_deployer: bool,
+    /// Disable pool balance checks
+    pub disable_pool_balance_checks: bool,
     /// Enable Optimism deposit transaction
     pub enable_optimism: bool,
     /// Slots in an epoch
@@ -483,6 +486,7 @@ impl Default for NodeConfig {
             init_state: None,
             transaction_block_keeper: None,
             disable_default_create2_deployer: false,
+            disable_pool_balance_checks: false,
             enable_optimism: false,
             slots_in_an_epoch: 32,
             memory_limit: None,
@@ -992,6 +996,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets whether to disable pool balance checks
+    #[must_use]
+    pub fn with_disable_pool_balance_checks(mut self, yes: bool) -> Self {
+        self.disable_pool_balance_checks = yes;
+        self
+    }
+
     /// Injects precompiles to `anvil`'s EVM.
     #[must_use]
     pub fn with_precompile_factory(mut self, factory: impl PrecompileFactory + 'static) -> Self {
@@ -1102,6 +1113,15 @@ impl NodeConfig {
             genesis_init: self.genesis.clone(),
         };
 
+        let mut decoder_builder = CallTraceDecoderBuilder::new();
+        if self.print_traces {
+            // if traces should get printed we configure the decoder with the signatures cache
+            if let Ok(identifier) = SignaturesIdentifier::new(false) {
+                debug!(target: "node", "using signature identifier");
+                decoder_builder = decoder_builder.with_signature_identifier(identifier);
+            }
+        }
+
         // only memory based backend for now
         let backend = mem::Backend::with_genesis(
             db,
@@ -1112,6 +1132,7 @@ impl NodeConfig {
             self.enable_steps_tracing,
             self.print_logs,
             self.print_traces,
+            Arc::new(decoder_builder.build()),
             self.odyssey,
             self.prune_history,
             self.max_persisted_states,

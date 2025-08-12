@@ -1,6 +1,11 @@
 //! Helper types for working with [revm](foundry_evm::revm)
 
-use crate::mem::storage::MinedTransaction;
+use std::{
+    collections::BTreeMap,
+    fmt::{self, Debug},
+    path::Path,
+};
+
 use alloy_consensus::Header;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256, map::HashMap};
 use alloy_rpc_types::BlockId;
@@ -16,19 +21,18 @@ use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
     context::BlockEnv,
+    context_interface::block::BlobExcessGasAndPrice,
     database::{CacheDB, DatabaseRef, DbAccount},
-    primitives::KECCAK_EMPTY,
+    primitives::{KECCAK_EMPTY, eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
     state::AccountInfo,
 };
 use serde::{
     Deserialize, Deserializer, Serialize,
-    de::{MapAccess, Visitor},
+    de::{Error as DeError, MapAccess, Visitor},
 };
-use std::{
-    collections::BTreeMap,
-    fmt::{self, Debug},
-    path::Path,
-};
+use serde_json::Value;
+
+use crate::mem::storage::MinedTransaction;
 
 /// Helper trait get access to the full state data of the database
 pub trait MaybeFullDatabase: DatabaseRef<Error = DatabaseError> + Debug {
@@ -119,7 +123,7 @@ pub trait Db:
         Ok(())
     }
 
-    /// Sets the balance of the given address
+    /// Sets the code of the given address
     fn set_code(&mut self, address: Address, code: Bytes) -> DatabaseResult<()> {
         let mut info = self.basic(address)?.unwrap_or_default();
         let code_hash = if code.as_ref().is_empty() {
@@ -133,7 +137,7 @@ pub trait Db:
         Ok(())
     }
 
-    /// Sets the balance of the given address
+    /// Sets the storage value at the given slot for the address
     fn set_storage_at(&mut self, address: Address, slot: B256, val: B256) -> DatabaseResult<()>;
 
     /// inserts a blockhash for the given number
@@ -385,14 +389,131 @@ impl MaybeFullDatabase for StateDb {
     }
 }
 
+/// Legacy block environment from before v1.3.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct LegacyBlockEnv {
+    pub number: Option<StringOrU64>,
+    #[serde(alias = "coinbase")]
+    pub beneficiary: Option<Address>,
+    pub timestamp: Option<StringOrU64>,
+    pub gas_limit: Option<StringOrU64>,
+    pub basefee: Option<StringOrU64>,
+    pub difficulty: Option<StringOrU64>,
+    pub prevrandao: Option<B256>,
+    pub blob_excess_gas_and_price: Option<LegacyBlobExcessGasAndPrice>,
+}
+
+/// Legacy blob excess gas and price structure from before v1.3.
+#[derive(Debug, Deserialize)]
+pub struct LegacyBlobExcessGasAndPrice {
+    pub excess_blob_gas: u64,
+    pub blob_gasprice: u64,
+}
+
+/// Legacy string or u64 type from before v1.3.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum StringOrU64 {
+    Hex(String),
+    Dec(u64),
+}
+
+impl StringOrU64 {
+    pub fn to_u64(&self) -> Option<u64> {
+        match self {
+            Self::Dec(n) => Some(*n),
+            Self::Hex(s) => s.strip_prefix("0x").and_then(|s| u64::from_str_radix(s, 16).ok()),
+        }
+    }
+
+    pub fn to_u256(&self) -> Option<U256> {
+        match self {
+            Self::Dec(n) => Some(U256::from(*n)),
+            Self::Hex(s) => s.strip_prefix("0x").and_then(|s| U256::from_str_radix(s, 16).ok()),
+        }
+    }
+}
+
+/// Converts a `LegacyBlockEnv` to a `BlockEnv`, handling the conversion of legacy fields.
+impl TryFrom<LegacyBlockEnv> for BlockEnv {
+    type Error = &'static str;
+
+    fn try_from(legacy: LegacyBlockEnv) -> Result<Self, Self::Error> {
+        Ok(Self {
+            number: legacy.number.and_then(|v| v.to_u256()).unwrap_or(U256::ZERO),
+            beneficiary: legacy.beneficiary.unwrap_or(Address::ZERO),
+            timestamp: legacy.timestamp.and_then(|v| v.to_u256()).unwrap_or(U256::ONE),
+            gas_limit: legacy.gas_limit.and_then(|v| v.to_u64()).unwrap_or(u64::MAX),
+            basefee: legacy.basefee.and_then(|v| v.to_u64()).unwrap_or(0),
+            difficulty: legacy.difficulty.and_then(|v| v.to_u256()).unwrap_or(U256::ZERO),
+            prevrandao: legacy.prevrandao.or(Some(B256::ZERO)),
+            blob_excess_gas_and_price: legacy
+                .blob_excess_gas_and_price
+                .map(|v| BlobExcessGasAndPrice::new(v.excess_blob_gas, v.blob_gasprice))
+                .or_else(|| {
+                    Some(BlobExcessGasAndPrice::new(0, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE))
+                }),
+        })
+    }
+}
+
+/// Custom deserializer for `BlockEnv` that handles both v1.2 and v1.3+ formats.
+fn deserialize_block_env_compat<'de, D>(deserializer: D) -> Result<Option<BlockEnv>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value: Option<Value> = Option::deserialize(deserializer)?;
+    let Some(value) = value else {
+        return Ok(None);
+    };
+
+    if let Ok(env) = BlockEnv::deserialize(&value) {
+        return Ok(Some(env));
+    }
+
+    let legacy: LegacyBlockEnv = serde_json::from_value(value).map_err(|e| {
+        D::Error::custom(format!("Legacy deserialization of `BlockEnv` failed: {e}"))
+    })?;
+
+    Ok(Some(BlockEnv::try_from(legacy).map_err(D::Error::custom)?))
+}
+
+/// Custom deserializer for `best_block_number` that handles both v1.2 and v1.3+ formats.
+fn deserialize_best_block_number_compat<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value: Option<Value> = Option::deserialize(deserializer)?;
+    let Some(value) = value else {
+        return Ok(None);
+    };
+
+    let number = match value {
+        Value::Number(n) => n.as_u64(),
+        Value::String(s) => {
+            if let Some(s) = s.strip_prefix("0x") {
+                u64::from_str_radix(s, 16).ok()
+            } else {
+                s.parse().ok()
+            }
+        }
+        _ => None,
+    };
+
+    Ok(number)
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SerializableState {
     /// The block number of the state
     ///
     /// Note: This is an Option for backwards compatibility: <https://github.com/foundry-rs/foundry/issues/5460>
+    #[serde(deserialize_with = "deserialize_block_env_compat")]
     pub block: Option<BlockEnv>,
     pub accounts: BTreeMap<Address, SerializableAccountRecord>,
     /// The best block number of the state, can be different from block number (Arbitrum chain).
+    #[serde(deserialize_with = "deserialize_best_block_number_compat")]
     pub best_block_number: Option<u64>,
     #[serde(default)]
     pub blocks: Vec<SerializableBlock>,

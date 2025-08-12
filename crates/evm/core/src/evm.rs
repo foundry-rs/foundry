@@ -38,11 +38,11 @@ use revm::{
     primitives::hardfork::SpecId,
 };
 
-pub fn new_evm_with_inspector<'i, 'db, I: InspectorExt + ?Sized>(
+pub fn new_evm_with_inspector<'db, I: InspectorExt>(
     db: &'db mut dyn DatabaseExt,
     env: Env,
-    inspector: &'i mut I,
-) -> FoundryEvm<'db, &'i mut I> {
+    inspector: I,
+) -> FoundryEvm<'db, I> {
     let mut ctx = EthEvmContext {
         journaled_state: {
             let mut journal = Journal::new(db);
@@ -178,12 +178,24 @@ impl<'db, I: InspectorExt> Evm for FoundryEvm<'db, I> {
     type Spec = SpecId;
     type Tx = TxEnv;
 
+    fn block(&self) -> &BlockEnv {
+        &self.inner.block
+    }
+
     fn chain_id(&self) -> u64 {
         self.inner.ctx.cfg.chain_id
     }
 
-    fn block(&self) -> &BlockEnv {
-        &self.inner.block
+    fn components(&self) -> (&Self::DB, &Self::Inspector, &Self::Precompiles) {
+        (&self.inner.ctx.journaled_state.database, &self.inner.inspector, &self.inner.precompiles)
+    }
+
+    fn components_mut(&mut self) -> (&mut Self::DB, &mut Self::Inspector, &mut Self::Precompiles) {
+        (
+            &mut self.inner.ctx.journaled_state.database,
+            &mut self.inner.inspector,
+            &mut self.inner.precompiles,
+        )
     }
 
     fn db_mut(&mut self) -> &mut Self::DB {
@@ -311,8 +323,9 @@ impl<'db, I: InspectorExt> FoundryHandler<'db, I> {
                     return Ok(Some(FrameResult::Call(CallOutcome {
                         result: InterpreterResult {
                             result: InstructionResult::Revert,
-                            output: Bytes::copy_from_slice(
-                                format!("missing CREATE2 deployer: {create2_deployer}").as_bytes(),
+                            output: Bytes::from(
+                                format!("missing CREATE2 deployer: {create2_deployer}")
+                                    .into_bytes(),
                             ),
                             gas: Gas::new(gas_limit),
                         },

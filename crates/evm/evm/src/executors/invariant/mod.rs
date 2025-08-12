@@ -357,6 +357,10 @@ impl<'a> InvariantExecutor<'a> {
             runs < self.config.runs
         };
 
+        // Invariant runs with edge coverage if corpus dir is set or showing edge coverage.
+        let edge_coverage_enabled =
+            self.config.corpus_dir.is_some() || self.config.show_edge_coverage;
+
         'stop: while continue_campaign(runs) {
             let initial_seq = corpus_manager.new_sequence(&invariant_test)?;
 
@@ -407,9 +411,9 @@ impl<'a> InvariantExecutor<'a> {
 
                 // Collect line coverage from last fuzzed call.
                 invariant_test.merge_coverage(call_result.line_coverage.clone());
-                // If coverage guided fuzzing is enabled then merge edge count with current history
+                // If running with edge coverage then merge edge count with the current history
                 // map and set new coverage in current run.
-                if self.config.corpus_dir.is_some() {
+                if edge_coverage_enabled {
                     let (new_coverage, is_edge) =
                         call_result.merge_edge_coverage(&mut self.history_map);
                     if new_coverage {
@@ -514,15 +518,14 @@ impl<'a> InvariantExecutor<'a> {
 
             // End current invariant test run.
             invariant_test.end_run(current_run, self.config.gas_report_samples as usize);
-
             if let Some(progress) = progress {
                 // If running with progress then increment completed runs.
                 progress.inc(1);
                 // Display metrics in progress bar.
-                if self.config.corpus_dir.is_some() {
+                if edge_coverage_enabled {
                     progress.set_message(format!("{}", &corpus_manager.metrics));
                 }
-            } else if self.config.corpus_dir.is_some()
+            } else if edge_coverage_enabled
                 && last_metrics_report.elapsed() > DURATION_BETWEEN_METRICS_REPORT
             {
                 // Display metrics inline if corpus dir set.
@@ -606,8 +609,11 @@ impl<'a> InvariantExecutor<'a> {
             ));
         }
 
-        self.executor.inspector_mut().fuzzer =
-            Some(Fuzzer { call_generator, fuzz_state: fuzz_state.clone(), collect: true });
+        self.executor.inspector_mut().set_fuzzer(Fuzzer {
+            call_generator,
+            fuzz_state: fuzz_state.clone(),
+            collect: true,
+        });
 
         // Let's make sure the invariant is sound before actually starting the run:
         // We'll assert the invariant in its initial state, and if it fails, we'll
@@ -784,7 +790,11 @@ impl<'a> InvariantExecutor<'a> {
                     && self.artifact_filters.matches(identifier)
             })
             .map(|(addr, (identifier, abi))| {
-                (*addr, TargetedContract::new(identifier.clone(), abi.clone()))
+                (
+                    *addr,
+                    TargetedContract::new(identifier.clone(), abi.clone())
+                        .with_project_contracts(self.project_contracts),
+                )
             })
             .collect();
         let mut contracts = TargetedContracts { inner: contracts };
@@ -827,8 +837,12 @@ impl<'a> InvariantExecutor<'a> {
             // Identifiers are specified as an array, so we loop through them.
             for identifier in artifacts {
                 // Try to find the contract by name or identifier in the project's contracts.
-                if let Some(abi) = self.project_contracts.find_abi_by_name_or_identifier(identifier)
+                if let Some((_, contract_data)) =
+                    self.project_contracts.iter().find(|(artifact, _)| {
+                        &artifact.name == identifier || &artifact.identifier() == identifier
+                    })
                 {
+                    let abi = &contract_data.abi;
                     combined
                         // Check if there's an entry for the given key in the 'combined' map.
                         .entry(*addr)
@@ -838,7 +852,13 @@ impl<'a> InvariantExecutor<'a> {
                             entry.abi.functions.extend(abi.functions.clone());
                         })
                         // Otherwise insert it into the map.
-                        .or_insert_with(|| TargetedContract::new(identifier.to_string(), abi));
+                        .or_insert_with(|| {
+                            let mut contract =
+                                TargetedContract::new(identifier.to_string(), abi.clone());
+                            contract.storage_layout =
+                                contract_data.storage_layout.as_ref().map(Arc::clone);
+                            contract
+                        });
                 }
             }
         }
@@ -938,7 +958,10 @@ impl<'a> InvariantExecutor<'a> {
                         address
                     )
                 })?;
-                entry.insert(TargetedContract::new(identifier.clone(), abi.clone()))
+                entry.insert(
+                    TargetedContract::new(identifier.clone(), abi.clone())
+                        .with_project_contracts(self.project_contracts),
+                )
             }
         };
         contract.add_selectors(selectors.iter().copied(), should_exclude)?;

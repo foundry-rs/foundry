@@ -123,7 +123,7 @@ impl DependencyInstallOpts {
             // Check if submodules are uninitialized, if so, we need to fetch all submodules
             // This is to ensure that foundry.lock syncs successfully and doesn't error out, when
             // looking for commits/tags in submodules
-            if git.submodules_unintialized()? {
+            if git.submodules_uninitialized()? {
                 trace!(lib = %libs.display(), "submodules uninitialized");
                 git.submodule_update(false, false, false, true, Some(&libs))?;
             }

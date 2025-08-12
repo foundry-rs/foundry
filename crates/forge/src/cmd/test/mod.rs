@@ -208,6 +208,7 @@ impl TestArgs {
     /// Returns sources which include any tests to be executed.
     /// If no filters are provided, sources are filtered by existence of test/invariant methods in
     /// them, If filters are provided, sources are additionally filtered by them.
+    #[instrument(target = "forge::test", skip_all)]
     pub fn get_sources_to_compile(
         &self,
         config: &Config,
@@ -612,9 +613,7 @@ impl TestArgs {
 
                 // Clear the addresses and labels from previous runs.
                 decoder.clear_addresses();
-                decoder
-                    .labels
-                    .extend(result.labeled_addresses.iter().map(|(k, v)| (*k, v.clone())));
+                decoder.labels.extend(result.labels.iter().map(|(k, v)| (*k, v.clone())));
 
                 // Identify addresses and decode traces.
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());

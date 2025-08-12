@@ -28,12 +28,12 @@ env:
   DEFAULT_REPOS: "ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22"
 
 jobs:
-  setup:
-    name: Setup and Build
+  run-benchmarks:
+    name: Run All Benchmarks
     runs-on: foundry-runner
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install build dependencies
         run: |
@@ -59,22 +59,16 @@ jobs:
       - name: Build benchmark binary
         run: cargo build --release --bin foundry-bench
 
-      - name: Upload benchmark binary
-        uses: actions/upload-artifact@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          name: foundry-bench
-          path: target/release/foundry-bench
+          node-version: "24"
 
-  forge-test-bench:
-    name: Forge Test Benchmarks
-    needs: setup
-    runs-on: foundry-runner
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Benchmark setup
-        uses: ./.github/actions/benchmark-setup
+      - name: Install hyperfine
+        run: |
+          curl -L https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine-v1.19.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+          sudo mv hyperfine-v1.19.0-x86_64-unknown-linux-gnu/hyperfine /usr/local/bin/
+          rm -rf hyperfine-v1.19.0-x86_64-unknown-linux-gnu
 
       - name: Run forge test benchmarks
         env:
@@ -83,28 +77,25 @@ jobs:
           VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
           REPOS="${{ github.event.inputs.repos || env.DEFAULT_REPOS }}"
 
-          ./foundry-bench --output-dir ./benches --force-install \
+          ./target/release/foundry-bench --output-dir ./benches --force-install \
             --versions $VERSIONS \
             --repos $REPOS \
             --benchmarks forge_test,forge_fuzz_test \
             --output-file forge_test_bench.md
 
-      - name: Upload test benchmark results
-        uses: actions/upload-artifact@v4
-        with:
-          name: forge-test-results
-          path: benches/forge_test_bench.md
+      - name: Run forge isolate test benchmarks
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: |
+          VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
+          # Isolate tests default to Vectorized/solady but can be overridden
+          REPOS="${{ github.event.inputs.repos || env.VECTORIZED_SOLADY }}"
 
-  forge-build-bench:
-    name: Forge Build Benchmarks
-    needs: setup
-    runs-on: foundry-runner
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Benchmark setup
-        uses: ./.github/actions/benchmark-setup
+          ./target/release/foundry-bench --output-dir ./benches --force-install \
+            --versions $VERSIONS \
+            --repos $REPOS \
+            --benchmarks forge_isolate_test \
+            --output-file forge_isolate_test_bench.md
 
       - name: Run forge build benchmarks
         env:
@@ -113,28 +104,11 @@ jobs:
           VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
           REPOS="${{ github.event.inputs.repos || env.DEFAULT_REPOS }}"
 
-          ./foundry-bench --output-dir ./benches --force-install \
+          ./target/release/foundry-bench --output-dir ./benches --force-install \
             --versions $VERSIONS \
             --repos $REPOS \
             --benchmarks forge_build_no_cache,forge_build_with_cache \
             --output-file forge_build_bench.md
-
-      - name: Upload build benchmark results
-        uses: actions/upload-artifact@v4
-        with:
-          name: forge-build-results
-          path: benches/forge_build_bench.md
-
-  forge-coverage-bench:
-    name: Forge Coverage Benchmarks
-    needs: setup
-    runs-on: foundry-runner
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Benchmark setup
-        uses: ./.github/actions/benchmark-setup
 
       - name: Run forge coverage benchmarks
         env:
@@ -143,32 +117,11 @@ jobs:
           VERSIONS="${{ github.event.inputs.versions || 'stable,nightly' }}"
           # Coverage only runs on ithacaxyz/account:v0.3.2
 
-          ./foundry-bench --output-dir ./benches --force-install \
+          ./target/release/foundry-bench --output-dir ./benches --force-install \
             --versions $VERSIONS \
             --repos ${{ env.ITHACAXYZ_ACCOUNT }} \
             --benchmarks forge_coverage \
             --output-file forge_coverage_bench.md
-
-      - name: Upload coverage benchmark results
-        uses: actions/upload-artifact@v4
-        with:
-          name: forge-coverage-results
-          path: benches/forge_coverage_bench.md
-
-  combine-results:
-    name: Combine and Publish Results
-    needs: [forge-test-bench, forge-build-bench, forge-coverage-bench]
-    runs-on: foundry-runner
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Download all benchmark results
-        uses: actions/download-artifact@v4
-        with:
-          pattern: forge-*-results
-          path: benches/
-          merge-multiple: true
 
       - name: Combine benchmark results
         run: ./.github/scripts/combine-benchmarks.sh benches
@@ -179,19 +132,48 @@ jobs:
           GITHUB_HEAD_REF: ${{ github.head_ref }}
         run: ./.github/scripts/commit-and-read-benchmarks.sh benches "${{ github.event_name }}" "${{ github.repository }}"
 
+      - name: Upload benchmark results as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: |
+            benches/forge_test_bench.md
+            benches/forge_isolate_test_bench.md
+            benches/forge_build_bench.md
+            benches/forge_coverage_bench.md
+            benches/LATEST.md
+
+    outputs:
+      branch_name: ${{ steps.benchmark_results.outputs.branch_name }}
+      pr_comment: ${{ steps.benchmark_results.outputs.pr_comment }}
+
+  publish-results:
+    name: Publish Results
+    needs: run-benchmarks
+    runs-on: foundry-runner
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Download benchmark results
+        uses: actions/download-artifact@v4
+        with:
+          name: benchmark-results
+          path: benches/
+
       - name: Push branch for manual runs
         if: github.event_name == 'workflow_dispatch'
         run: |
-          git push origin "${{ steps.benchmark_results.outputs.branch_name }}"
-          echo "Pushed branch: ${{ steps.benchmark_results.outputs.branch_name }}"
+          git push origin "${{ needs.run-benchmarks.outputs.branch_name }}"
+          echo "Pushed branch: ${{ needs.run-benchmarks.outputs.branch_name }}"
 
       - name: Create PR for manual runs
         if: github.event_name == 'workflow_dispatch'
         uses: actions/github-script@v7
         with:
           script: |
-            const branchName = '${{ steps.benchmark_results.outputs.branch_name }}';
-            const prComment = `${{ steps.benchmark_results.outputs.pr_comment }}`;
+            const branchName = '${{ needs.run-benchmarks.outputs.branch_name }}';
+            const prComment = `${{ needs.run-benchmarks.outputs.pr_comment }}`;
 
             // Create the pull request
             const { data: pr } = await github.rest.pulls.create({
@@ -219,7 +201,7 @@ jobs:
         with:
           script: |
             const prNumber = ${{ github.event.inputs.pr_number || github.event.pull_request.number }};
-            const prComment = `${{ steps.benchmark_results.outputs.pr_comment }}`;
+            const prComment = `${{ needs.run-benchmarks.outputs.pr_comment }}`;
 
             const comment = `${prComment}
 

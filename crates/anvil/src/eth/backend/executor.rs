@@ -24,7 +24,10 @@ use anvil_core::eth::{
         DepositReceipt, PendingTransaction, TransactionInfo, TypedReceipt, TypedTransaction,
     },
 };
-use foundry_evm::{backend::DatabaseError, traces::CallTraceNode};
+use foundry_evm::{
+    backend::DatabaseError,
+    traces::{CallTraceDecoder, CallTraceNode},
+};
 use foundry_evm_core::either_evm::EitherEvm;
 use op_revm::{L1BlockInfo, OpContext, precompiles::OpPrecompiles};
 use revm::{
@@ -119,6 +122,8 @@ pub struct TransactionExecutor<'a, Db: ?Sized, V: TransactionValidator> {
     pub optimism: bool,
     pub print_logs: bool,
     pub print_traces: bool,
+    /// Recorder used for decoding traces, used together with print_traces
+    pub call_trace_decoder: Arc<CallTraceDecoder>,
     /// Precompiles to inject to the EVM.
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
     pub blob_params: BlobParams,
@@ -367,7 +372,7 @@ impl<DB: Db + ?Sized, V: TransactionValidator> Iterator for &mut TransactionExec
         };
 
         if self.print_traces {
-            inspector.print_traces();
+            inspector.print_traces(self.call_trace_decoder.clone());
         }
         inspector.print_logs();
 
