@@ -79,14 +79,44 @@ impl TomlFileProvider {
         self
     }
 
+    /// Reads and processes the TOML configuration file, handling inheritance if configured.
+    ///
+    /// This function performs the following steps:
+    /// 1. Loads the TOML file (from env var or default path)
+    /// 2. Checks if the current profile has an `extends` field
+    /// 3. If inheritance is configured:
+    ///    - Resolves the base config file path relative to the current config
+    ///    - Validates that the base file exists and isn't self-referential
+    ///    - Ensures no nested inheritance (base files cannot have `extends`)
+    ///    - Merges base and local configurations using `admerge` strategy
+    /// 4. Returns the final configuration data
+    ///
+    /// # Inheritance Behavior
+    ///
+    /// When a profile specifies `extends = "path/to/base.toml"`:
+    /// - The base configuration is loaded first
+    /// - Local configuration is applied on top using `admerge`:
+    ///   - Arrays are concatenated (base + local)
+    ///   - Other values are replaced (local overrides base)
+    /// - The `extends` field itself is preserved in the final config
+    ///
+    /// # Error Conditions
+    ///
+    /// Returns an error if:
+    /// - Config file specified in env var doesn't exist
+    /// - Base config file doesn't exist or isn't a file
+    /// - Config attempts to inherit from itself
+    /// - Base config also has an `extends` field (nested inheritance)
+    /// - TOML parsing fails for either file
     fn read(&self) -> Result<Map<Profile, Dict>, Error> {
         use serde::{Deserialize, de::Error as _};
         use std::collections::HashMap;
 
+        // Helper structs to extract just the extends field from profiles
         #[derive(Deserialize, Default)]
         struct ExtendConfig {
             #[serde(default)]
-            extends: Option<PathBuf>,
+            extends: Option<String>,
         }
 
         #[derive(Deserialize, Default)]
@@ -95,6 +125,7 @@ impl TomlFileProvider {
             profile: Option<HashMap<String, ExtendConfig>>,
         }
 
+        // Get the config file path and validate it exists
         let local_path = self.file();
         if !local_path.exists() {
             if let Some(file) = self.env_val() {
@@ -107,19 +138,21 @@ impl TomlFileProvider {
             return Ok(Map::new());
         }
 
+        // Create a provider for the local config file
         let local_provider = Toml::file(local_path.clone()).nested();
 
+        // Parse the local config to check for extends field
         let local_path_str = local_path.to_string_lossy();
         let local_content = std::fs::read_to_string(&local_path)
             .map_err(|e| Error::custom(e.to_string()).with_path(&local_path_str))?;
         let partial_config: PartialConfig = toml::from_str(&local_content)
             .map_err(|e| Error::custom(e.to_string()).with_path(&local_path_str))?;
 
-        // Get the currently selected profile
+        // Determine which profile is active (e.g., "default", "test", etc.)
         let selected_profile = Config::selected_profile();
 
-        // Check if the current profile has an inherit_from field
-        let inherit_from = partial_config
+        // Check if the current profile has an extends field
+        let extends_value = partial_config
             .profile
             .as_ref()
             .and_then(|profiles| {
@@ -129,7 +162,9 @@ impl TomlFileProvider {
             })
             .and_then(|profile| profile.extends.clone());
 
-        if let Some(relative_base_path) = inherit_from {
+        // If inheritance is configured, load and merge the base config
+        if let Some(extends) = extends_value {
+            let relative_base_path = PathBuf::from(&extends);
             let local_dir = local_path.parent().ok_or_else(|| {
                 Error::custom(format!(
                     "Could not determine parent directory of config file: {}",
@@ -146,6 +181,7 @@ impl TomlFileProvider {
                         ))
                     })?;
 
+            // Validate the base config file exists
             if !base_path.is_file() {
                 return Err(Error::custom(format!(
                     "Inherited config file does not exist or is not a file: {}",
@@ -153,31 +189,34 @@ impl TomlFileProvider {
                 )));
             }
 
-            if foundry_compilers::utils::canonicalize(&local_path).ok() == Some(base_path.clone()) {
+            // Prevent self-inheritance which would cause infinite recursion
+            if foundry_compilers::utils::canonicalize(&local_path).ok().as_ref() == Some(&base_path)
+            {
                 return Err(Error::custom(format!(
                     "Config file {} cannot inherit from itself.",
                     local_path.display()
                 )));
             }
 
+            // Parse the base config to check for nested inheritance
             let base_path_str = base_path.to_string_lossy();
             let base_content = std::fs::read_to_string(&base_path)
                 .map_err(|e| Error::custom(e.to_string()).with_path(&base_path_str))?;
             let base_partial: PartialConfig = toml::from_str(&base_content)
                 .map_err(|e| Error::custom(e.to_string()).with_path(&base_path_str))?;
 
-            // Check if the base file's same profile also has inherit_from
-            let base_inherit_from = base_partial
+            // Check if the base file's same profile also has extends (nested inheritance)
+            let base_extends = base_partial
                 .profile
                 .as_ref()
                 .and_then(|profiles| {
-                    // Convert Profile to String for HashMap lookup
                     let profile_str = selected_profile.to_string();
                     profiles.get(&profile_str)
                 })
                 .and_then(|profile| profile.extends.as_ref());
 
-            if base_inherit_from.is_some() {
+            // Prevent nested inheritance to avoid complexity and potential cycles
+            if base_extends.is_some() {
                 return Err(Error::custom(format!(
                     "Nested inheritance is not allowed. Base file '{}' cannot have an 'extends' field in profile '{}'.",
                     base_path.display(),
@@ -185,11 +224,17 @@ impl TomlFileProvider {
                 )));
             }
 
+            // Load base configuration as a Figment provider
             let base_provider = Toml::file(base_path).nested();
 
-            // Merge base configuration first, then apply local overrides
-            Figment::new().merge(base_provider).merge(local_provider).data()
+            // Merge configurations: base first, then local overrides
+            // Using admerge strategy:
+            // - Arrays are concatenated (base elements + local elements)
+            // - Other values are replaced (local values override base values)
+            // - The extends field is preserved in the final configuration
+            Figment::new().merge(base_provider).admerge(local_provider).data()
         } else {
+            // No inheritance - return the local config as-is
             local_provider.data()
         }
     }

@@ -186,7 +186,7 @@ pub struct Config {
     /// This is a relative path from this config file.
     /// Base files cannot extend (inherit) other files.
     #[serde(default, skip_serializing)]
-    pub extends: Option<PathBuf>,
+    pub extends: Option<String>,
 
     /// path of the source contracts dir, like `src` or `contracts`
     pub src: PathBuf,
@@ -5246,11 +5246,7 @@ mod tests {
             )?;
 
             let config = Config::load().unwrap();
-
-            assert_eq!(
-                config.extends.map(|path| path.to_string_lossy().to_string()).unwrap(),
-                "base-config.toml".to_string()
-            );
+            assert_eq!(config.extends, Some("base-config.toml".to_string()));
 
             // optimizer_runs should be inherited from base-config.toml
             assert_eq!(config.optimizer_runs, Some(800));
@@ -5638,8 +5634,8 @@ mod tests {
                 r#"
                     [profile.default]
                     extends = "base.toml"
-                    libs = ["custom-lib"]  # Replaces base array
-                    ignored_error_codes = [2018]  # Replaces base array
+                    libs = ["custom-lib"]  # Concatenates with base array
+                    ignored_error_codes = [2018]  # Concatenates with base array
 
                     [profile.default.model_checker]
                     timeout = 5000  # Overrides base value
@@ -5653,11 +5649,22 @@ mod tests {
 
             let config = Config::load().unwrap();
 
-            // Arrays are completely replaced
-            assert_eq!(config.libs, vec![PathBuf::from("custom-lib")]);
+            // Arrays are now concatenated with admerge (base + local)
+            assert_eq!(
+                config.libs,
+                vec![
+                    PathBuf::from("lib"),
+                    PathBuf::from("node_modules"),
+                    PathBuf::from("custom-lib")
+                ]
+            );
             assert_eq!(
                 config.ignored_error_codes,
-                vec![SolidityErrorCode::FunctionStateMutabilityCanBeRestricted]
+                vec![
+                    SolidityErrorCode::UnusedFunctionParameter, // 5667 from base.toml
+                    SolidityErrorCode::SpdxLicenseNotProvided,  // 1878 from base.toml
+                    SolidityErrorCode::FunctionStateMutabilityCanBeRestricted  // 2018 from local
+                ]
             );
 
             // Tables are deep-merged
@@ -5747,9 +5754,30 @@ mod tests {
                 Some(&"Charlie".to_string())
             );
 
-            // fs_permissions array should be replaced
-            assert_eq!(config.fs_permissions.permissions.len(), 1);
-            assert_eq!(config.fs_permissions.permissions[0].path.to_str().unwrap(), "./test");
+            // fs_permissions array is now concatenated with addmerge (base + local)
+            assert_eq!(config.fs_permissions.permissions.len(), 3); // 2 from base + 1 from local
+            // Check that all permissions are present
+            assert!(
+                config
+                    .fs_permissions
+                    .permissions
+                    .iter()
+                    .any(|p| p.path.to_str().unwrap() == "./src")
+            );
+            assert!(
+                config
+                    .fs_permissions
+                    .permissions
+                    .iter()
+                    .any(|p| p.path.to_str().unwrap() == "./cache")
+            );
+            assert!(
+                config
+                    .fs_permissions
+                    .permissions
+                    .iter()
+                    .any(|p| p.path.to_str().unwrap() == "./test")
+            );
 
             Ok(())
         });
@@ -5851,24 +5879,19 @@ mod tests {
                     extends = "base.toml"
                     remappings = [
                         "@custom/=lib/custom/",
-                        "ds-test/=lib/forge-std/lib/ds-test/src/"  # Override ds-test
+                        "ds-test/=lib/forge-std/lib/ds-test/src/"  # Note: This will be added alongside base remappings
                     ]
                     "#,
             )?;
 
             let config = Config::load().unwrap();
 
-            // Remappings array should be replaced entirely
-            assert_eq!(config.remappings.len(), 2);
+            // Remappings array is now concatenated with admerge (base + local)
+            // All remappings from base and local should be present
             assert!(config.remappings.iter().any(|r| r.to_string().contains("@custom/")));
             assert!(config.remappings.iter().any(|r| r.to_string().contains("ds-test/")));
-            // forge-std from base should not be present (array replaced not merged)
-            assert!(
-                !config
-                    .remappings
-                    .iter()
-                    .any(|r| r.to_string().contains("forge-std/=lib/forge-std/src/"))
-            );
+            assert!(config.remappings.iter().any(|r| r.to_string().contains("forge-std/")));
+            assert!(config.remappings.iter().any(|r| r.to_string().contains("@openzeppelin/")));
 
             // auto_detect_remappings should be inherited
             assert!(!config.auto_detect_remappings);
