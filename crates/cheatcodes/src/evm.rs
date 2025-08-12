@@ -6,6 +6,7 @@ use crate::{
     inspector::{Ecx, RecordDebugStepInfo},
 };
 use alloy_consensus::TxEnvelope;
+use alloy_dyn_abi::DynSolType;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, U256, map::HashMap};
 use alloy_rlp::Decodable;
@@ -1403,26 +1404,16 @@ fn check_exact_slot_match(
 ) -> Option<SlotInfo> {
     trace!(type_label = %storage.storage_type, "checking type");
     if storage.slot == slot_str {
-        let storage_type = storage_layout.types.get(&storage.storage_type);
+        // Get the StorageType which contains the clean label
+        let storage_type = storage_layout.types.get(&storage.storage_type)?;
+        let type_label = storage_type.label.clone();
 
-        // Check if this is a static array - if so, label the base slot as element [0] or [0][0]
-        let label = if let Some(type_info) = storage_type {
-            if type_info.encoding == "inplace"
-                && type_info.label.contains('[')
-                && type_info.label.contains(']')
-            {
-                // Check if it's a 2D array
-                if let Some((_, inner_size)) = extract_array_dimensions(&type_info.label) {
-                    if inner_size > 0 {
-                        // 2D array: label as [0][0]
-                        format!("{}[0][0]", storage.label)
-                    } else {
-                        // 1D array: label as [0]
-                        format!("{}[0]", storage.label)
-                    }
-                } else {
-                    storage.label.clone()
-                }
+        // Parse the type to check if it's an array
+        let label = if let Ok(dyn_type) = DynSolType::parse(&type_label) {
+            if let DynSolType::FixedArray(_, _) = &dyn_type {
+                // For arrays, label the base slot with indices
+                let indices = get_array_base_indices(&dyn_type);
+                format!("{}{}", storage.label, indices)
             } else {
                 storage.label.clone()
             }
@@ -1432,9 +1423,7 @@ fn check_exact_slot_match(
 
         return Some(SlotInfo {
             label,
-            storage_type: storage_type
-                .map(|t| t.label.clone())
-                .unwrap_or_else(|| storage.storage_type.clone()),
+            storage_type: type_label,
             offset: storage.offset,
             slot: storage.slot.clone(),
         });
@@ -1449,17 +1438,19 @@ fn check_array_slot_match(
     base_slot: U256,
     slot: U256,
 ) -> Option<SlotInfo> {
-    // Check for static arrays by looking for encoding == "inplace" and array syntax in label
-    trace!(type_label = %type_info.label, "checking if type is a static_array");
-    let is_static_array = type_info.encoding == "inplace"
-        && type_info.label.contains('[')
-        && type_info.label.contains(']');
+    // StorageType.label already contains the clean type string without 't_' prefix
+    let type_label = type_info.label.clone();
 
-    if !is_static_array {
+    // Parse the type using DynSolType
+    trace!(type_label = %type_label, "checking if type is a static_array");
+    let dyn_type = DynSolType::parse(&type_label).ok()?;
+
+    // Check if it's a static array
+    if !matches!(dyn_type, DynSolType::FixedArray(_, _)) {
         return None;
     }
 
-    // For arrays, calculate the number of slots based on total size
+    // For arrays, calculate the number of slots based on the actual storage size
     let Ok(total_bytes) = type_info.number_of_bytes.parse::<u64>() else {
         return None;
     };
@@ -1467,38 +1458,18 @@ fn check_array_slot_match(
     // Each slot is 32 bytes
     let total_slots = total_bytes.div_ceil(32);
 
-    // Check if current slot is within the array range
+    // Check if slot is within array range
     if slot <= base_slot || slot >= base_slot + U256::from(total_slots) {
         return None;
     }
 
-    // Calculate index based on slot offset
-    let slot_offset = (slot - base_slot).to::<u64>();
+    let index = slot - base_slot;
+    let index_u64 = index.to::<u64>();
 
-    // Extract array dimensions to handle both 1D and 2D arrays
-    let (outer_size, inner_size) = extract_array_dimensions(&type_info.label)?;
-    
-    let label = if inner_size > 0 {
-        // 2D array: calculate indices
-        // For uint256[3][2], we have 2 outer arrays of 3 elements each
-        // Slots are laid out as: [0][0], [0][1], [0][2], [1][0], [1][1], [1][2]
-        let elements_per_outer = inner_size;
-        let outer_index = slot_offset / elements_per_outer;
-        let inner_index = slot_offset % elements_per_outer;
-        format!("{}[{}][{}]", storage.label, outer_index, inner_index)
-    } else {
-        // 1D array
-        let slots_per_element = total_slots / outer_size;
-        let index = slot_offset / slots_per_element;
-        format!("{}[{}]", storage.label, index)
-    };
+    // Generate the label with the correct index
+    let label = format_array_element_label(&storage.label, &dyn_type, index_u64);
 
-    Some(SlotInfo {
-        label,
-        storage_type: type_info.label.clone(),
-        offset: 0,
-        slot: slot.to_string(),
-    })
+    Some(SlotInfo { label, storage_type: type_label, offset: 0, slot: slot.to_string() })
 }
 
 /// Helper function to get storage layout info for a specific slot.
@@ -1531,48 +1502,39 @@ fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo
     None
 }
 
-/// Helper function to extract array dimensions from a type string
-/// Returns (outer_size, inner_size) for 2D arrays, or (size, 0) for 1D arrays
-fn extract_array_dimensions(type_str: &str) -> Option<(u64, u64)> {
-    // Count brackets to determine if it's 1D or 2D
-    let bracket_pairs: Vec<(usize, usize)> = type_str
-        .char_indices()
-        .filter_map(|(i, c)| {
-            if c == '[' {
-                // Find matching ']'
-                type_str[i+1..].find(']').map(|j| (i, i+1+j))
+/// Returns "[0]" for 1D arrays, "[0][0]" for 2D arrays, etc.
+fn get_array_base_indices(dyn_type: &DynSolType) -> String {
+    match dyn_type {
+        DynSolType::FixedArray(inner, _) => {
+            if let DynSolType::FixedArray(_, _) = inner.as_ref() {
+                // Nested array (2D or higher)
+                format!("[0]{}", get_array_base_indices(inner))
             } else {
-                None
+                // Simple 1D array
+                "[0]".to_string()
             }
-        })
-        .collect();
-    
-    if bracket_pairs.is_empty() {
-        return None;
-    }
-    
-    if bracket_pairs.len() == 1 {
-        // 1D array like uint256[3]
-        let (start, end) = bracket_pairs[0];
-        if let Ok(size) = type_str[start + 1..end].parse::<u64>() {
-            return Some((size, 0));
         }
-    } else if bracket_pairs.len() == 2 {
-        // 2D array like uint256[3][2]
-        // In Solidity, uint256[3][2] means 2 arrays of 3 elements each
-        // The outer dimension is 2, inner dimension is 3
-        let (inner_start, inner_end) = bracket_pairs[0];
-        let (outer_start, outer_end) = bracket_pairs[1];
-        
-        if let Ok(inner_size) = type_str[inner_start + 1..inner_end].parse::<u64>()
-            && let Ok(outer_size) = type_str[outer_start + 1..outer_end].parse::<u64>() {
-            return Some((outer_size, inner_size));
-        }
+        _ => String::new(),
     }
-    
-    None
 }
 
+/// Helper function to format an array element label given its index
+fn format_array_element_label(base_label: &str, dyn_type: &DynSolType, index: u64) -> String {
+    match dyn_type {
+        DynSolType::FixedArray(inner, _size) => {
+            if let DynSolType::FixedArray(_, inner_size) = inner.as_ref() {
+                // 2D array: calculate row and column
+                let row = index / (*inner_size as u64);
+                let col = index % (*inner_size as u64);
+                format!("{base_label}[{row}][{col}]")
+            } else {
+                // 1D array
+                format!("{base_label}[{index}]")
+            }
+        }
+        _ => base_label.to_string(),
+    }
+}
 
 /// Helper function to set / unset cold storage slot of the target address.
 fn set_cold_slot(ccx: &mut CheatsCtxt, target: Address, slot: U256, cold: bool) {
@@ -1580,22 +1542,5 @@ fn set_cold_slot(ccx: &mut CheatsCtxt, target: Address, slot: U256, cold: bool) 
         && let Some(storage_slot) = account.storage.get_mut(&slot)
     {
         storage_slot.is_cold = cold;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_extract_array_size() {
-        assert_eq!(extract_array_size("uint256[3]"), Some(3));
-        assert_eq!(extract_array_size("address[10]"), Some(10));
-        assert_eq!(extract_array_size("bool[5]"), Some(5));
-        assert_eq!(extract_array_size("bytes32[100]"), Some(100));
-        assert_eq!(extract_array_size("uint256"), None);
-        assert_eq!(extract_array_size("mapping(address => uint256)"), None);
-        assert_eq!(extract_array_size("uint256[]"), None); // Dynamic array
-        assert_eq!(extract_array_size("CustomStruct[42]"), Some(42));
     }
 }
