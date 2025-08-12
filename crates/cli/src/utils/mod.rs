@@ -585,9 +585,10 @@ ignore them in the `.gitignore` file."
 
         let paths = SUBMODULE_BRANCH_REGEX
             .captures_iter(&gitmodules)
-            .map(|cap| {
-                let path_str = cap.get(1).unwrap().as_str();
-                let path = PathBuf::from_str(path_str).unwrap();
+            .filter_map(|cap| {
+                // Safely extract path from capture group 1
+                let path_str = cap.get(1)?.as_str();
+                let path = PathBuf::from_str(path_str).ok()?;
                 trace!(path = %path.display(), "unstripped path");
 
                 // Keep only the components that come after the lib directory.
@@ -602,8 +603,9 @@ ignore them in the `.gitignore` file."
                     .skip(lib_pos.map(|(i, _)| i).unwrap_or(0))
                     .collect::<PathBuf>();
 
-                let branch = cap.get(2).unwrap().as_str().to_string();
-                (path, branch)
+                // Safely extract branch from capture group 2
+                let branch = cap.get(2)?.as_str().to_string();
+                Some((path, branch))
             })
             .collect::<HashMap<_, _>>();
 
@@ -765,10 +767,19 @@ impl FromStr for Submodule {
             .captures(s)
             .ok_or_else(|| eyre::eyre!("Invalid submodule status format"))?;
 
-        Ok(Self {
-            rev: caps.get(1).unwrap().as_str().to_string(),
-            path: PathBuf::from(caps.get(2).unwrap().as_str()),
-        })
+        // Safely extract rev and path from capture groups
+        let rev = caps
+            .get(1)
+            .ok_or_else(|| eyre::eyre!("Missing revision in submodule status"))?
+            .as_str()
+            .to_string();
+        let path = PathBuf::from(
+            caps.get(2)
+                .ok_or_else(|| eyre::eyre!("Missing path in submodule status"))?
+                .as_str(),
+        );
+
+        Ok(Self { rev, path })
     }
 }
 
@@ -896,11 +907,11 @@ mod tests {
 
         let paths = SUBMODULE_BRANCH_REGEX
             .captures_iter(gitmodules)
-            .map(|cap| {
-                (
-                    PathBuf::from_str(cap.get(1).unwrap().as_str()).unwrap(),
-                    String::from(cap.get(2).unwrap().as_str()),
-                )
+            .filter_map(|cap| {
+                let path_str = cap.get(1)?.as_str();
+                let path = PathBuf::from_str(path_str).ok()?;
+                let branch = cap.get(2)?.as_str().to_string();
+                Some((path, branch))
             })
             .collect::<HashMap<_, _>>();
 
@@ -923,11 +934,11 @@ mod tests {
 "#;
         let paths = SUBMODULE_BRANCH_REGEX
             .captures_iter(no_branch_gitmodules)
-            .map(|cap| {
-                (
-                    PathBuf::from_str(cap.get(1).unwrap().as_str()).unwrap(),
-                    String::from(cap.get(2).unwrap().as_str()),
-                )
+            .filter_map(|cap| {
+                let path_str = cap.get(1)?.as_str();
+                let path = PathBuf::from_str(path_str).ok()?;
+                let branch = cap.get(2)?.as_str().to_string();
+                Some((path, branch))
             })
             .collect::<HashMap<_, _>>();
 
@@ -948,11 +959,11 @@ mod tests {
 
         let paths = SUBMODULE_BRANCH_REGEX
             .captures_iter(branch_in_between)
-            .map(|cap| {
-                (
-                    PathBuf::from_str(cap.get(1).unwrap().as_str()).unwrap(),
-                    String::from(cap.get(2).unwrap().as_str()),
-                )
+            .filter_map(|cap| {
+                let path_str = cap.get(1)?.as_str();
+                let path = PathBuf::from_str(path_str).ok()?;
+                let branch = cap.get(2)?.as_str().to_string();
+                Some((path, branch))
             })
             .collect::<HashMap<_, _>>();
 
