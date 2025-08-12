@@ -3439,7 +3439,7 @@ forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
         &r#"
 import {Vm} from "./Vm.sol";
 import {DSTest} from "./test.sol";
-import {console} from "./Console.sol";
+import {console} from "./console.sol";
 
 contract ForkTest is DSTest {
     Vm vm = Vm(HEVM_ADDRESS);
