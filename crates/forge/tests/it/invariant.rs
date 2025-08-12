@@ -3,14 +3,14 @@
 use crate::{config::*, test_helpers::TEST_DATA_DEFAULT};
 use alloy_primitives::U256;
 use forge::fuzz::CounterExample;
-use foundry_config::{Config, InvariantConfig};
-use foundry_test_utils::{forgetest_init, str, Filter};
+use foundry_test_utils::{Filter, forgetest_init, str};
 use std::collections::BTreeMap;
 
 macro_rules! get_counterexample {
     ($runner:ident, $filter:expr) => {
         $runner
             .test_collect($filter)
+            .unwrap()
             .values()
             .last()
             .expect("Invariant contract should be testable.")
@@ -27,17 +27,17 @@ macro_rules! get_counterexample {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invariant_with_alias() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantTest1.t.sol");
-    let results = TEST_DATA_DEFAULT.runner().test_collect(&filter);
+    let results = TEST_DATA_DEFAULT.runner().test_collect(&filter).unwrap();
     assert_multiple(
         &results,
         BTreeMap::from([(
             "default/fuzz/invariant/common/InvariantTest1.t.sol:InvariantTest",
             vec![
-                ("invariant_neverFalse()", false, Some("revert: false".into()), None, None),
+                ("invariant_neverFalse()", false, Some("false".into()), None, None),
                 (
                     "statefulFuzz_neverFalseWithInvariantAlias()",
                     false,
-                    Some("revert: false".into()),
+                    Some("false".into()),
                     None,
                     None,
                 ),
@@ -54,11 +54,13 @@ async fn test_invariant_filters() {
 
     // Contracts filter tests.
     assert_multiple(
-        &runner.test_collect(&Filter::new(
-            ".*",
-            ".*",
-            ".*fuzz/invariant/target/(ExcludeContracts|TargetContracts).t.sol",
-        )),
+        &runner
+            .test_collect(&Filter::new(
+                ".*",
+                ".*",
+                ".*fuzz/invariant/target/(ExcludeContracts|TargetContracts).t.sol",
+            ))
+            .unwrap(),
         BTreeMap::from([
             (
                 "default/fuzz/invariant/target/ExcludeContracts.t.sol:ExcludeContracts",
@@ -73,11 +75,13 @@ async fn test_invariant_filters() {
 
     // Senders filter tests.
     assert_multiple(
-        &runner.test_collect(&Filter::new(
-            ".*",
-            ".*",
-            ".*fuzz/invariant/target/(ExcludeSenders|TargetSenders).t.sol",
-        )),
+        &runner
+            .test_collect(&Filter::new(
+                ".*",
+                ".*",
+                ".*fuzz/invariant/target/(ExcludeSenders|TargetSenders).t.sol",
+            ))
+            .unwrap(),
         BTreeMap::from([
             (
                 "default/fuzz/invariant/target/ExcludeSenders.t.sol:ExcludeSenders",
@@ -85,37 +89,35 @@ async fn test_invariant_filters() {
             ),
             (
                 "default/fuzz/invariant/target/TargetSenders.t.sol:TargetSenders",
-                vec![(
-                    "invariantTrueWorld()",
-                    false,
-                    Some("revert: false world".into()),
-                    None,
-                    None,
-                )],
+                vec![("invariantTrueWorld()", false, Some("false world".into()), None, None)],
             ),
         ]),
     );
 
     // Interfaces filter tests.
     assert_multiple(
-        &runner.test_collect(&Filter::new(
-            ".*",
-            ".*",
-            ".*fuzz/invariant/target/TargetInterfaces.t.sol",
-        )),
+        &runner
+            .test_collect(&Filter::new(
+                ".*",
+                ".*",
+                ".*fuzz/invariant/target/TargetInterfaces.t.sol",
+            ))
+            .unwrap(),
         BTreeMap::from([(
             "default/fuzz/invariant/target/TargetInterfaces.t.sol:TargetWorldInterfaces",
-            vec![("invariantTrueWorld()", false, Some("revert: false world".into()), None, None)],
+            vec![("invariantTrueWorld()", false, Some("false world".into()), None, None)],
         )]),
     );
 
     // Selectors filter tests.
     assert_multiple(
-        &runner.test_collect(&Filter::new(
-            ".*",
-            ".*",
-            ".*fuzz/invariant/target/(ExcludeSelectors|TargetSelectors).t.sol",
-        )),
+        &runner
+            .test_collect(&Filter::new(
+                ".*",
+                ".*",
+                ".*fuzz/invariant/target/(ExcludeSelectors|TargetSelectors).t.sol",
+            ))
+            .unwrap(),
         BTreeMap::from([
             (
                 "default/fuzz/invariant/target/ExcludeSelectors.t.sol:ExcludeSelectors",
@@ -134,7 +136,7 @@ async fn test_invariant_filters() {
             ".*",
             ".*",
             ".*fuzz/invariant/targetAbi/(ExcludeArtifacts|TargetArtifacts|TargetArtifactSelectors|TargetArtifactSelectors2).t.sol",
-        )),
+        )).unwrap(),
         BTreeMap::from([
             (
                 "default/fuzz/invariant/targetAbi/ExcludeArtifacts.t.sol:ExcludeArtifacts",
@@ -147,7 +149,7 @@ async fn test_invariant_filters() {
                     (
                         "invariantShouldFail()",
                         false,
-                        Some("revert: false world".into()),
+                        Some("false world".into()),
                         None,
                         None,
                     ),
@@ -162,7 +164,7 @@ async fn test_invariant_filters() {
                 vec![(
                     "invariantShouldFail()",
                     false,
-                    Some("revert: it's false".into()),
+                    Some("it's false".into()),
                     None,
                     None,
                 )],
@@ -178,12 +180,12 @@ async fn test_invariant_override() {
         config.invariant.fail_on_revert = false;
         config.invariant.call_override = true;
     });
-    let results = runner.test_collect(&filter);
+    let results = runner.test_collect(&filter).unwrap();
     assert_multiple(
         &results,
         BTreeMap::from([(
             "default/fuzz/invariant/common/InvariantReentrancy.t.sol:InvariantReentrancy",
-            vec![("invariantNotStolen()", false, Some("revert: stolen".into()), None, None)],
+            vec![("invariantNotStolen()", false, Some("stolen".into()), None, None)],
         )]),
     );
 }
@@ -196,7 +198,7 @@ async fn test_invariant_fail_on_revert() {
         config.invariant.runs = 1;
         config.invariant.depth = 10;
     });
-    let results = runner.test_collect(&filter);
+    let results = runner.test_collect(&filter).unwrap();
     assert_multiple(
         &results,
         BTreeMap::from([(
@@ -204,7 +206,7 @@ async fn test_invariant_fail_on_revert() {
             vec![(
                 "statefulFuzz_BrokenInvariant()",
                 false,
-                Some("revert: failed on revert".into()),
+                Some("failed on revert".into()),
                 None,
                 None,
             )],
@@ -223,7 +225,7 @@ async fn test_invariant_storage() {
         }
         config.fuzz.seed = Some(U256::from(6u32));
     });
-    let results = runner.test_collect(&filter);
+    let results = runner.test_collect(&filter).unwrap();
     assert_multiple(
         &results,
         BTreeMap::from([(
@@ -241,18 +243,12 @@ async fn test_invariant_storage() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invariant_inner_contract() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantInnerContract.t.sol");
-    let results = TEST_DATA_DEFAULT.runner().test_collect(&filter);
+    let results = TEST_DATA_DEFAULT.runner().test_collect(&filter).unwrap();
     assert_multiple(
         &results,
         BTreeMap::from([(
             "default/fuzz/invariant/common/InvariantInnerContract.t.sol:InvariantInnerContract",
-            vec![(
-                "invariantHideJesus()",
-                false,
-                Some("revert: jesus betrayed".into()),
-                None,
-                None,
-            )],
+            vec![("invariantHideJesus()", false, Some("jesus betrayed".into()), None, None)],
         )]),
     );
 }
@@ -261,15 +257,13 @@ async fn test_invariant_inner_contract() {
 #[cfg_attr(windows, ignore = "for some reason there's different rng")]
 async fn test_invariant_shrink() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantInnerContract.t.sol");
-    let mut runner = TEST_DATA_DEFAULT.runner_with(|config| {
-        config.fuzz.seed = Some(U256::from(119u32));
-        config.optimizer = Some(true);
-    });
+    let mut runner =
+        TEST_DATA_DEFAULT.runner_with(|config| config.fuzz.seed = Some(U256::from(119u32)));
 
     match get_counterexample!(runner, &filter) {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
         // `fuzz_seed` at 119 makes this sequence shrinkable from 4 to 2.
-        CounterExample::Sequence(sequence) => {
+        CounterExample::Sequence(_, sequence) => {
             assert!(sequence.len() <= 3);
 
             if sequence.len() == 2 {
@@ -317,7 +311,7 @@ async fn check_shrink_sequence(test_pattern: &str, expected_len: usize) {
 
     match get_counterexample!(runner, &filter) {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
-        CounterExample::Sequence(sequence) => {
+        CounterExample::Sequence(_, sequence) => {
             assert_eq!(sequence.len(), expected_len);
         }
     };
@@ -336,6 +330,7 @@ async fn test_shrink_big_sequence() {
 
     let initial_counterexample = runner
         .test_collect(&filter)
+        .unwrap()
         .values()
         .last()
         .expect("Invariant contract should be testable.")
@@ -349,13 +344,13 @@ async fn test_shrink_big_sequence() {
 
     let initial_sequence = match initial_counterexample {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
-        CounterExample::Sequence(sequence) => sequence,
+        CounterExample::Sequence(_, sequence) => sequence,
     };
     // ensure shrinks to same sequence of 77
     assert_eq!(initial_sequence.len(), 77);
 
     // test failure persistence
-    let results = runner.test_collect(&filter);
+    let results = runner.test_collect(&filter).unwrap();
     assert_multiple(
         &results,
         BTreeMap::from([(
@@ -382,7 +377,7 @@ async fn test_shrink_big_sequence() {
         .unwrap()
     {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
-        CounterExample::Sequence(sequence) => sequence,
+        CounterExample::Sequence(_, sequence) => sequence,
     };
     // ensure shrinks to same sequence of 77
     assert_eq!(new_sequence.len(), 77);
@@ -410,7 +405,7 @@ async fn test_shrink_fail_on_revert() {
 
     match get_counterexample!(runner, &filter) {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
-        CounterExample::Sequence(sequence) => {
+        CounterExample::Sequence(_, sequence) => {
             // ensure shrinks to sequence of 10
             assert_eq!(sequence.len(), 10);
         }
@@ -423,7 +418,7 @@ async fn test_invariant_preserve_state() {
     let mut runner = TEST_DATA_DEFAULT.runner_with(|config| {
         config.invariant.fail_on_revert = true;
     });
-    let results = runner.test_collect(&filter);
+    let results = runner.test_collect(&filter).unwrap();
     assert_multiple(
         &results,
         BTreeMap::from([(
@@ -442,11 +437,13 @@ async fn test_invariant_preserve_state() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invariant_with_address_fixture() {
     let mut runner = TEST_DATA_DEFAULT.runner();
-    let results = runner.test_collect(&Filter::new(
-        ".*",
-        ".*",
-        ".*fuzz/invariant/common/InvariantCalldataDictionary.t.sol",
-    ));
+    let results = runner
+        .test_collect(&Filter::new(
+            ".*",
+            ".*",
+            ".*fuzz/invariant/common/InvariantCalldataDictionary.t.sol",
+        ))
+        .unwrap();
     assert_multiple(
         &results,
         BTreeMap::from([(
@@ -469,7 +466,7 @@ async fn test_invariant_assume_does_not_revert() {
         // Should not treat vm.assume as revert.
         config.invariant.fail_on_revert = true;
     });
-    let results = runner.test_collect(&filter);
+    let results = runner.test_collect(&filter).unwrap();
     assert_multiple(
         &results,
         BTreeMap::from([(
@@ -487,7 +484,7 @@ async fn test_invariant_assume_respects_restrictions() {
         config.invariant.depth = 10;
         config.invariant.max_assume_rejects = 1;
     });
-    let results = runner.test_collect(&filter);
+    let results = runner.test_collect(&filter).unwrap();
     assert_multiple(
         &results,
         BTreeMap::from([(
@@ -509,7 +506,7 @@ async fn test_invariant_decode_custom_error() {
     let mut runner = TEST_DATA_DEFAULT.runner_with(|config| {
         config.invariant.fail_on_revert = true;
     });
-    let results = runner.test_collect(&filter);
+    let results = runner.test_collect(&filter).unwrap();
     assert_multiple(
         &results,
         BTreeMap::from([(
@@ -531,7 +528,7 @@ async fn test_invariant_fuzzed_selected_targets() {
     let mut runner = TEST_DATA_DEFAULT.runner_with(|config| {
         config.invariant.fail_on_revert = true;
     });
-    let results = runner.test_collect(&filter);
+    let results = runner.test_collect(&filter).unwrap();
     assert_multiple(
         &results,
         BTreeMap::from([
@@ -544,7 +541,7 @@ async fn test_invariant_fuzzed_selected_targets() {
                 vec![(
                     "invariant_dynamic_targets()",
                     false,
-                    Some("revert: wrong target selector called".into()),
+                    Some("wrong target selector called".into()),
                     None,
                     None,
                 )],
@@ -560,7 +557,7 @@ async fn test_invariant_fixtures() {
         config.invariant.runs = 1;
         config.invariant.depth = 100;
     });
-    let results = runner.test_collect(&filter);
+    let results = runner.test_collect(&filter).unwrap();
     assert_multiple(
         &results,
         BTreeMap::from([(
@@ -579,7 +576,7 @@ async fn test_invariant_fixtures() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_invariant_scrape_values() {
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantScrapeValues.t.sol");
-    let results = TEST_DATA_DEFAULT.runner().test_collect(&filter);
+    let results = TEST_DATA_DEFAULT.runner().test_collect(&filter).unwrap();
     assert_multiple(
         &results,
         BTreeMap::from([
@@ -588,7 +585,7 @@ async fn test_invariant_scrape_values() {
                 vec![(
                     "invariant_value_not_found()",
                     false,
-                    Some("revert: value from return found".into()),
+                    Some("value from return found".into()),
                     None,
                     None,
                 )],
@@ -598,7 +595,7 @@ async fn test_invariant_scrape_values() {
                 vec![(
                     "invariant_value_not_found()",
                     false,
-                    Some("revert: value from logs found".into()),
+                    Some("value from logs found".into()),
                     None,
                     None,
                 )],
@@ -613,7 +610,7 @@ async fn test_invariant_roll_fork_handler() {
     let mut runner = TEST_DATA_DEFAULT.runner_with(|config| {
         config.fuzz.seed = Some(U256::from(119u32));
     });
-    let results = runner.test_collect(&filter);
+    let results = runner.test_collect(&filter).unwrap();
     assert_multiple(
         &results,
         BTreeMap::from([
@@ -622,7 +619,7 @@ async fn test_invariant_roll_fork_handler() {
                 vec![(
                     "invariant_fork_handler_block()",
                     false,
-                    Some("revert: too many blocks mined".into()),
+                    Some("too many blocks mined".into()),
                     None,
                     None,
                 )],
@@ -632,7 +629,7 @@ async fn test_invariant_roll_fork_handler() {
                 vec![(
                     "invariant_fork_handler_state()",
                     false,
-                    Some("revert: wrong supply".into()),
+                    Some("wrong supply".into()),
                     None,
                     None,
                 )],
@@ -647,7 +644,7 @@ async fn test_invariant_excluded_senders() {
     let mut runner = TEST_DATA_DEFAULT.runner_with(|config| {
         config.invariant.fail_on_revert = true;
     });
-    let results = runner.test_collect(&filter);
+    let results = runner.test_collect(&filter).unwrap();
     assert_multiple(
         &results,
         BTreeMap::from([(
@@ -661,7 +658,7 @@ async fn test_invariant_excluded_senders() {
 async fn test_invariant_after_invariant() {
     // Check failure on passing invariant and failed `afterInvariant` condition
     let filter = Filter::new(".*", ".*", ".*fuzz/invariant/common/InvariantAfterInvariant.t.sol");
-    let results = TEST_DATA_DEFAULT.runner().test_collect(&filter);
+    let results = TEST_DATA_DEFAULT.runner().test_collect(&filter).unwrap();
     assert_multiple(
         &results,
         BTreeMap::from([(
@@ -670,17 +667,11 @@ async fn test_invariant_after_invariant() {
                 (
                     "invariant_after_invariant_failure()",
                     false,
-                    Some("revert: afterInvariant failure".into()),
+                    Some("afterInvariant failure".into()),
                     None,
                     None,
                 ),
-                (
-                    "invariant_failure()",
-                    false,
-                    Some("revert: invariant failure".into()),
-                    None,
-                    None,
-                ),
+                ("invariant_failure()", false, Some("invariant failure".into()), None, None),
                 ("invariant_success()", true, None, None, None),
             ],
         )]),
@@ -699,7 +690,7 @@ async fn test_no_reverts_in_counterexample() {
 
     match get_counterexample!(runner, &filter) {
         CounterExample::Single(_) => panic!("CounterExample should be a sequence."),
-        CounterExample::Sequence(sequence) => {
+        CounterExample::Sequence(_, sequence) => {
             // ensure original counterexample len is 10 (even without shrinking)
             assert_eq!(sequence.len(), 10);
         }
@@ -708,13 +699,10 @@ async fn test_no_reverts_in_counterexample() {
 
 // Tests that a persisted failure doesn't fail due to assume revert if test driver is changed.
 forgetest_init!(should_not_fail_replay_assume, |prj, cmd| {
-    let config = Config {
-        invariant: {
-            InvariantConfig { fail_on_revert: true, max_assume_rejects: 10, ..Default::default() }
-        },
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = true;
+        config.invariant.max_assume_rejects = 10;
+    });
 
     // Add initial test that breaks invariant.
     prj.add_test(
@@ -740,7 +728,7 @@ contract AssumeTest is Test {
 
     cmd.args(["test", "--mt", "invariant_assume"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: revert: Invariant failure]
+[FAIL: Invariant failure]
 ...
 "#]]);
 
@@ -777,14 +765,11 @@ contract AssumeTest is Test {
 // Test too many inputs rejected for `assumePrecompile`/`assumeForgeAddress`.
 // <https://github.com/foundry-rs/foundry/issues/9054>
 forgetest_init!(should_revert_with_assume_code, |prj, cmd| {
-    let config = Config {
-        optimizer: Some(true),
-        invariant: {
-            InvariantConfig { fail_on_revert: true, max_assume_rejects: 10, ..Default::default() }
-        },
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = true;
+        config.invariant.max_assume_rejects = 10;
+        config.fuzz.seed = Some(U256::from(100u32));
+    });
 
     // Add initial test that breaks invariant.
     prj.add_test(
@@ -824,7 +809,7 @@ contract BalanceAssumeTest is Test {
 
     cmd.args(["test", "--mt", "invariant_balance"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_balance() (runs: 0, calls: 0, reverts: 0)
+[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_balance() (runs: 5, calls: 2500, reverts: 0)
 ...
 "#]]);
 });
@@ -991,6 +976,13 @@ Compiler run successful!
 
 Ran 1 test for test/TimeoutTest.t.sol:TimeoutTest
 [PASS] invariant_counter_timeout() (runs: 0, calls: 0, reverts: 0)
+
+╭----------------+-----------+-------+---------+----------╮
+| Contract       | Selector  | Calls | Reverts | Discards |
++=========================================================+
+| TimeoutHandler | increment | [..]  | [..]    | [..]     |
+╰----------------+-----------+-------+---------+----------╯
+
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
@@ -1001,10 +993,9 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 // Tests that selector hits are uniformly distributed
 // <https://github.com/foundry-rs/foundry/issues/2986>
 forgetest_init!(invariant_selectors_weight, |prj, cmd| {
-    prj.write_config(Config {
-        optimizer: Some(true),
-        invariant: { InvariantConfig { runs: 1, depth: 10, ..Default::default() } },
-        ..Default::default()
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
     });
     prj.add_source(
         "InvariantHandlers.sol",
@@ -1061,9 +1052,9 @@ contract InvariantSelectorsWeightTest is Test {
     function afterInvariant() public {
         assertEq(handlerOne.hit1(), 2);
         assertEq(handlerTwo.hit2(), 2);
-        assertEq(handlerTwo.hit3(), 3);
+        assertEq(handlerTwo.hit3(), 2);
         assertEq(handlerTwo.hit4(), 1);
-        assertEq(handlerTwo.hit5(), 2);
+        assertEq(handlerTwo.hit5(), 3);
     }
 
     function invariant_selectors_weight() public view {}
@@ -1073,4 +1064,502 @@ contract InvariantSelectorsWeightTest is Test {
     .unwrap();
 
     cmd.args(["test", "--fuzz-seed", "119", "--mt", "invariant_selectors_weight"]).assert_success();
+});
+
+// Tests original and new counterexample lengths are displayed on failure.
+// Tests switch from regular sequence output to solidity.
+forgetest_init!(invariant_sequence_len, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(10u32));
+    });
+
+    prj.add_test(
+        "InvariantSequenceLenTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import "src/Counter.sol";
+
+contract InvariantSequenceLenTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        targetContract(address(counter));
+    }
+
+    function invariant_increment() public {
+        require(counter.number() / 2 < 100000000000000000000000000000000, "invariant increment failure");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: invariant increment failure]
+	[Sequence] (original: 3, shrunk: 1)
+...
+"#]]);
+
+    // Check regular sequence output. Shrink disabled to show several lines.
+    cmd.forge_fuse().arg("clean").assert_success();
+    prj.update_config(|config| {
+        config.invariant.shrink_run_limit = 0;
+    });
+    cmd.forge_fuse().args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
+[FAIL: invariant increment failure]
+	[Sequence] (original: 3, shrunk: 3)
+		sender=0x00000000000000000000000000000000000014aD addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
+		sender=0x8ef7F804bAd9183981A366EA618d9D47D3124649 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
+		sender=0x00000000000000000000000000000000000016Ac addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
+ invariant_increment() (runs: 0, calls: 0, reverts: 0)
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+"#]],
+    );
+
+    // Check solidity sequence output on same failure.
+    cmd.forge_fuse().arg("clean").assert_success();
+    prj.update_config(|config| {
+        config.invariant.show_solidity = true;
+    });
+    cmd.forge_fuse().args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
+[FAIL: invariant increment failure]
+	[Sequence] (original: 3, shrunk: 3)
+		vm.prank(0x00000000000000000000000000000000000014aD);
+		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
+		vm.prank(0x8ef7F804bAd9183981A366EA618d9D47D3124649);
+		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
+		vm.prank(0x00000000000000000000000000000000000016Ac);
+		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(284406551521730736391345481857560031052359183671404042152984097777);
+ invariant_increment() (runs: 0, calls: 0, reverts: 0)
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+"#]],
+    );
+
+    // Persisted failures should be able to switch output.
+    prj.update_config(|config| {
+        config.invariant.show_solidity = false;
+    });
+    cmd.forge_fuse().args(["test", "--mt", "invariant_increment"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
+[FAIL: invariant_increment replay failure]
+	[Sequence] (original: 3, shrunk: 3)
+		sender=0x00000000000000000000000000000000000014aD addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
+		sender=0x8ef7F804bAd9183981A366EA618d9D47D3124649 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
+		sender=0x00000000000000000000000000000000000016Ac addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
+ invariant_increment() (runs: 1, calls: 1, reverts: 1)
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+"#]],
+    );
+});
+
+// Tests that persisted failure is discarded if test contract was modified.
+// <https://github.com/foundry-rs/foundry/issues/9965>
+forgetest_init!(invariant_replay_with_different_bytecode, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 5;
+    });
+    prj.add_source(
+        "Ownable.sol",
+        r#"
+contract Ownable {
+    address public owner = address(777);
+
+    function backdoor(address _owner) external {
+        owner = address(888);
+    }
+
+    function changeOwner(address _owner) external {
+    }
+}
+   "#,
+    )
+    .unwrap();
+    prj.add_test(
+        "OwnableTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import "src/Ownable.sol";
+
+contract OwnableTest is Test {
+    Ownable ownable;
+
+    function setUp() public {
+        ownable = new Ownable();
+    }
+
+    function invariant_never_owner() public {
+        require(ownable.owner() != address(888), "never owner");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "invariant_never_owner"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: never owner]
+...
+"#]]);
+
+    // Should replay failure if same test.
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: invariant_never_owner replay failure]
+...
+"#]]);
+
+    // Different test driver that should not fail the invariant.
+    prj.add_test(
+        "OwnableTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import "src/Ownable.sol";
+
+contract OwnableTest is Test {
+    Ownable ownable;
+
+    function setUp() public {
+        ownable = new Ownable();
+        // Ignore selector that fails invariant.
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = Ownable.changeOwner.selector;
+        targetSelector(FuzzSelector({addr: address(ownable), selectors: selectors}));
+    }
+
+    function invariant_never_owner() public {
+        require(ownable.owner() != address(888), "never owner");
+    }
+}
+   "#,
+    )
+    .unwrap();
+    cmd.assert_success().stderr_eq(str![[r#"
+...
+Warning: Failure from "[..]/invariant/failures/OwnableTest/invariant_never_owner" file was ignored because test contract bytecode has changed.
+...
+"#]])
+    .stdout_eq(str![[r#"
+...
+[PASS] invariant_never_owner() (runs: 5, calls: 25, reverts: 0)
+...
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10253>
+forgetest_init!(invariant_test_target, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 5;
+    });
+    prj.add_test(
+        "InvariantTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantTest is Test {
+    uint256 count;
+
+    function setCount(uint256  _count) public {
+        count = _count;
+    }
+
+    function setUp() public {
+    }
+
+    function invariant_check_count() public {
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "invariant_check_count"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: failed to set up invariant testing environment: No contracts to fuzz.] invariant_check_count() (runs: 0, calls: 0, reverts: 0)
+...
+"#]]);
+
+    prj.add_test(
+        "InvariantTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantTest is Test {
+    uint256 count;
+
+    function setCount(uint256  _count) public {
+        count = _count;
+    }
+
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function invariant_check_count() public {
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.forge_fuse().args(["test", "--mt", "invariant_check_count"]).assert_success().stdout_eq(
+        str![[r#"
+...
+[PASS] invariant_check_count() (runs: 5, calls: 25, reverts: 0)
+...
+"#]],
+    );
+});
+
+// Tests that reserved test functions are not fuzzed when test is set as target.
+// <https://github.com/foundry-rs/foundry/issues/10469>
+forgetest_init!(invariant_target_test_contract_selectors, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 10;
+        config.invariant.depth = 100;
+    });
+    prj.add_test(
+        "InvariantTargetTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantTargetTest is Test {
+    bool fooCalled;
+    bool testSanityCalled;
+    bool testTableCalled;
+    uint256 invariantCalledNum;
+    uint256 setUpCalledNum;
+
+    function setUp() public {
+       targetContract(address(this));
+    }
+
+    function beforeTestSetup() public {
+    }
+
+    // Only this selector should be targeted.
+    function foo() public {
+        fooCalled = true;
+    }
+
+    function fixtureCalled() public returns (bool[] memory) {
+    }
+
+    function table_sanity(bool called) public {
+        testTableCalled = called;
+    }
+
+    function test_sanity() public {
+        testSanityCalled = true;
+    }
+
+    function afterInvariant() public {
+    }
+
+    function invariant_foo_called() public view {
+    }
+
+    function invariant_testSanity_considered_target() public {
+    }
+
+    function invariant_setUp_considered_target() public {
+        setUpCalledNum++;
+    }
+
+    function invariant_considered_target() public {
+        invariantCalledNum++;
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mc", "InvariantTargetTest", "--mt", "invariant"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 4 tests for test/InvariantTargetTest.t.sol:InvariantTargetTest
+[PASS] invariant_considered_target() (runs: 10, calls: 1000, reverts: 0)
+
+╭---------------------+----------+-------+---------+----------╮
+| Contract            | Selector | Calls | Reverts | Discards |
++=============================================================+
+| InvariantTargetTest | foo      | 1000  | 0       | 0        |
+╰---------------------+----------+-------+---------+----------╯
+
+[PASS] invariant_foo_called() (runs: 10, calls: 1000, reverts: 0)
+
+╭---------------------+----------+-------+---------+----------╮
+| Contract            | Selector | Calls | Reverts | Discards |
++=============================================================+
+| InvariantTargetTest | foo      | 1000  | 0       | 0        |
+╰---------------------+----------+-------+---------+----------╯
+
+[PASS] invariant_setUp_considered_target() (runs: 10, calls: 1000, reverts: 0)
+
+╭---------------------+----------+-------+---------+----------╮
+| Contract            | Selector | Calls | Reverts | Discards |
++=============================================================+
+| InvariantTargetTest | foo      | 1000  | 0       | 0        |
+╰---------------------+----------+-------+---------+----------╯
+
+[PASS] invariant_testSanity_considered_target() (runs: 10, calls: 1000, reverts: 0)
+
+╭---------------------+----------+-------+---------+----------╮
+| Contract            | Selector | Calls | Reverts | Discards |
++=============================================================+
+| InvariantTargetTest | foo      | 1000  | 0       | 0        |
+╰---------------------+----------+-------+---------+----------╯
+
+Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
+
+"#]]);
+});
+
+// Tests that `targetSelector` and `excludeSelector` applied on test contract selectors are
+// applied.
+// <https://github.com/foundry-rs/foundry/issues/11006>
+forgetest_init!(invariant_target_test_include_exclude_selectors, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 10;
+        config.invariant.depth = 100;
+    });
+    prj.add_test(
+        "InvariantTargetTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantTargetIncludeTest is Test {
+    bool include = true;
+    function setUp() public {
+       targetContract(address(this));
+       bytes4[] memory selectors = new bytes4[](2);
+       selectors[0] = this.shouldInclude1.selector;
+       selectors[1] = this.shouldInclude2.selector;
+       targetSelector(FuzzSelector({addr: address(this), selectors: selectors}));
+    }
+
+    function shouldExclude1() public {
+        include = false;
+    }
+
+    function shouldInclude1() public {
+        include = true;
+    }
+
+    function shouldExclude2() public {
+        include = false;
+    }
+
+    function shouldInclude2() public {
+        include = true;
+    }
+
+    function invariant_include() public view {
+        require(include, "does not include");
+    }
+}
+
+contract InvariantTargetExcludeTest is Test {
+    bool include = true;
+    function setUp() public {
+       targetContract(address(this));
+       bytes4[] memory selectors = new bytes4[](2);
+       selectors[0] = this.shouldExclude1.selector;
+       selectors[1] = this.shouldExclude2.selector;
+       excludeSelector(FuzzSelector({addr: address(this), selectors: selectors}));
+    }
+
+    function shouldExclude1() public {
+        include = false;
+    }
+
+    function shouldInclude1() public {
+        include = true;
+    }
+
+    function shouldExclude2() public {
+        include = false;
+    }
+
+    function shouldInclude2() public {
+        include = true;
+    }
+
+    function invariant_exclude() public view {
+        require(include, "does not include");
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "--mt", "invariant_include"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetIncludeTest
+[PASS] invariant_include() (runs: 10, calls: 1000, reverts: 0)
+
+╭----------------------------+----------------+-------+---------+----------╮
+| Contract                   | Selector       | Calls | Reverts | Discards |
++==========================================================================+
+| InvariantTargetIncludeTest | shouldInclude1 | [..]   | 0       | 0        |
+|----------------------------+----------------+-------+---------+----------|
+| InvariantTargetIncludeTest | shouldInclude2 | [..]   | 0       | 0        |
+╰----------------------------+----------------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    cmd.forge_fuse().args(["test", "--mt", "invariant_exclude"]).assert_success().stdout_eq(str![
+        [r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetExcludeTest
+[PASS] invariant_exclude() (runs: 10, calls: 1000, reverts: 0)
+
+╭----------------------------+----------------+-------+---------+----------╮
+| Contract                   | Selector       | Calls | Reverts | Discards |
++==========================================================================+
+| InvariantTargetExcludeTest | shouldInclude1 | [..]   | 0       | 0        |
+|----------------------------+----------------+-------+---------+----------|
+| InvariantTargetExcludeTest | shouldInclude2 | [..]   | 0       | 0        |
+╰----------------------------+----------------+-------+---------+----------╯
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]
+    ]);
 });

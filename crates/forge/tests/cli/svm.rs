@@ -11,7 +11,7 @@ use svm::Platform;
 /// 3. svm bumped in foundry-compilers
 /// 4. foundry-compilers update with any breaking changes
 /// 5. upgrade the `LATEST_SOLC`
-const LATEST_SOLC: Version = Version::new(0, 8, 27);
+const LATEST_SOLC: Version = Version::new(0, 8, 30);
 
 macro_rules! ensure_svm_releases {
     ($($test:ident => $platform:ident),* $(,)?) => {$(
@@ -57,6 +57,12 @@ contract CounterTest is Test {{
     "#
     );
     prj.add_test("Counter", &src).unwrap();
+
+    // we need to remove the pinned solc version for this
+    prj.update_config(|c| {
+        c.solc.take();
+    });
+
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/Counter.sol:CounterTest

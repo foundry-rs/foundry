@@ -1,7 +1,7 @@
-use crate::{Config, Warning, DEPRECATIONS};
+use crate::{Config, DEPRECATIONS, Warning};
 use figment::{
-    value::{Dict, Map, Value},
     Error, Figment, Metadata, Profile, Provider,
+    value::{Dict, Map, Value},
 };
 use std::collections::BTreeMap;
 
@@ -47,8 +47,8 @@ impl<P: Provider> WarningsProvider<P> {
         out.extend(
             data.keys()
                 .filter(|k| {
-                    **k != Config::PROFILE_SECTION &&
-                        !Config::STANDALONE_SECTIONS.iter().any(|s| s == k)
+                    **k != Config::PROFILE_SECTION
+                        && !Config::STANDALONE_SECTIONS.iter().any(|s| s == k)
                 })
                 .map(|unknown_section| {
                     let source = self.provider.metadata().source.map(|s| s.to_string());

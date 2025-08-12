@@ -1,6 +1,6 @@
 use super::{Preprocessor, PreprocessorId};
 use crate::{
-    document::DocumentContent, Comments, Document, ParseItem, ParseSource, PreprocessorOutput,
+    Comments, Document, ParseItem, ParseSource, PreprocessorOutput, document::DocumentContent,
 };
 use alloy_primitives::map::HashMap;
 use forge_fmt::solang_ext::SafeUnwrap;
@@ -23,7 +23,7 @@ impl Preprocessor for Inheritdoc {
     }
 
     fn preprocess(&self, documents: Vec<Document>) -> Result<Vec<Document>, eyre::Error> {
-        for document in documents.iter() {
+        for document in &documents {
             if let DocumentContent::Single(ref item) = document.content {
                 let context = self.visit_item(item, &documents);
                 if !context.is_empty() {
@@ -50,7 +50,7 @@ impl Inheritdoc {
         }
 
         // Match item's children.
-        for ch in item.children.iter() {
+        for ch in &item.children {
             let matched = ch
                 .comments
                 .find_inheritdoc_base()
@@ -70,19 +70,18 @@ impl Inheritdoc {
         documents: &Vec<Document>,
     ) -> Option<(String, Comments)> {
         for candidate in documents {
-            if let DocumentContent::Single(ref item) = candidate.content {
-                if let ParseSource::Contract(ref contract) = item.source {
-                    if base == contract.name.safe_unwrap().name {
-                        // Not matched for the contract because it's a noop
-                        // https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags
+            if let DocumentContent::Single(ref item) = candidate.content
+                && let ParseSource::Contract(ref contract) = item.source
+                && base == contract.name.safe_unwrap().name
+            {
+                // Not matched for the contract because it's a noop
+                // https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags
 
-                        for children in item.children.iter() {
-                            // TODO: improve matching logic
-                            if source.ident() == children.source.ident() {
-                                let key = format!("{}.{}", base, source.ident());
-                                return Some((key, children.comments.clone()))
-                            }
-                        }
+                for children in &item.children {
+                    // TODO: improve matching logic
+                    if source.ident() == children.source.ident() {
+                        let key = format!("{}.{}", base, source.ident());
+                        return Some((key, children.comments.clone()));
                     }
                 }
             }

@@ -3,17 +3,17 @@
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use eyre::Result;
 use ratatui::{
-    backend::{Backend, CrosstermBackend},
     Terminal,
+    backend::{Backend, CrosstermBackend},
 };
 use std::{
     io,
     ops::ControlFlow,
-    sync::{mpsc, Arc},
+    sync::{Arc, mpsc},
     thread,
     time::{Duration, Instant},
 };
@@ -100,7 +100,7 @@ impl<'a> TUI<'a> {
 }
 
 // TODO: Update once on 1.82
-#[allow(deprecated)]
+#[expect(deprecated)]
 type PanicHandler = Box<dyn Fn(&std::panic::PanicInfo<'_>) + 'static + Sync + Send>;
 
 /// Handles terminal state.

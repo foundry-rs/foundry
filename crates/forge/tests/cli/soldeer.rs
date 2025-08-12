@@ -10,7 +10,7 @@ forgesoldeer!(install_dependency, |prj, cmd| {
     let mut foundry_contents = r#"[profile.default]
 src = "src"
 out = "out"
-libs = ["lib"]
+libs = ["lib", "dependencies"]
 
 [dependencies]
 
@@ -37,7 +37,7 @@ libs = ["lib"]
     foundry_contents = r#"[profile.default]
 src = "src"
 out = "out"
-libs = ["lib"]
+libs = ["lib", "dependencies"]
 
 [dependencies]
 forge-std = "1.8.1"
@@ -51,12 +51,13 @@ forge-std = "1.8.1"
 forgesoldeer!(install_dependency_git, |prj, cmd| {
     let command = "install";
     let dependency = "forge-std~1.8.1";
+    let git_arg = "--git";
     let git = "https://gitlab.com/mario4582928/Mario.git";
 
     let mut foundry_contents = r#"[profile.default]
 src = "src"
 out = "out"
-libs = ["lib"]
+libs = ["lib", "dependencies"]
 
 [dependencies]
 
@@ -65,7 +66,7 @@ libs = ["lib"]
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_contents).unwrap();
 
-    cmd.arg("soldeer").args([command, dependency, git]).assert_success();
+    cmd.arg("soldeer").args([command, dependency, git_arg, git]).assert_success();
 
     // Making sure the path was created to the dependency and that README.md exists
     // meaning that the dependencies were installed correctly
@@ -82,7 +83,7 @@ libs = ["lib"]
     foundry_contents = r#"[profile.default]
 src = "src"
 out = "out"
-libs = ["lib"]
+libs = ["lib", "dependencies"]
 
 [dependencies]
 forge-std = { version = "1.8.1", git = "https://gitlab.com/mario4582928/Mario.git", rev = "22868f426bd4dd0e682b5ec5f9bd55507664240c" }
@@ -96,6 +97,7 @@ forge-std = { version = "1.8.1", git = "https://gitlab.com/mario4582928/Mario.gi
 forgesoldeer!(install_dependency_git_commit, |prj, cmd| {
     let command = "install";
     let dependency = "forge-std~1.8.1";
+    let git_arg = "--git";
     let git = "https://gitlab.com/mario4582928/Mario.git";
     let rev_flag = "--rev";
     let commit = "7a0663eaf7488732f39550be655bad6694974cb3";
@@ -103,7 +105,7 @@ forgesoldeer!(install_dependency_git_commit, |prj, cmd| {
     let mut foundry_contents = r#"[profile.default]
 src = "src"
 out = "out"
-libs = ["lib"]
+libs = ["lib", "dependencies"]
 
 [dependencies]
 
@@ -112,7 +114,7 @@ libs = ["lib"]
     let foundry_file = prj.root().join("foundry.toml");
     fs::write(&foundry_file, foundry_contents).unwrap();
 
-    cmd.arg("soldeer").args([command, dependency, git, rev_flag, commit]).assert_success();
+    cmd.arg("soldeer").args([command, dependency, git_arg, git, rev_flag, commit]).assert_success();
 
     // Making sure the path was created to the dependency and that README.md exists
     // meaning that the dependencies were installed correctly
@@ -130,7 +132,7 @@ libs = ["lib"]
     foundry_contents = r#"[profile.default]
 src = "src"
 out = "out"
-libs = ["lib"]
+libs = ["lib", "dependencies"]
 
 [dependencies]
 forge-std = { version = "1.8.1", git = "https://gitlab.com/mario4582928/Mario.git", rev = "7a0663eaf7488732f39550be655bad6694974cb3" }
@@ -148,7 +150,7 @@ forgesoldeer!(update_dependencies, |prj, cmd| {
     let foundry_updates = r#"[profile.default]
 src = "src"
 out = "out"
-libs = ["lib"]
+libs = ["lib", "dependencies"]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 
@@ -192,7 +194,7 @@ mario-custom-branch = { version = "1.0", git = "https://gitlab.com/mario4582928/
     let foundry_contents = r#"[profile.default]
 src = "src"
 out = "out"
-libs = ["lib"]
+libs = ["lib", "dependencies"]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 
@@ -215,7 +217,7 @@ forgesoldeer!(update_dependencies_simple_version, |prj, cmd| {
     let foundry_updates = r#"[profile.default]
 src = "src"
 out = "out"
-libs = ["lib"]
+libs = ["lib", "dependencies"]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 
@@ -243,7 +245,7 @@ forge-std = "1.8.1"
     let foundry_contents = r#"[profile.default]
 src = "src"
 out = "out"
-libs = ["lib"]
+libs = ["lib", "dependencies"]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 

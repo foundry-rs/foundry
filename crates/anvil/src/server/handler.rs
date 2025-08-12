@@ -1,14 +1,14 @@
 //! Contains RPC handlers
 use crate::{
+    EthApi,
     eth::error::to_rpc_result,
     pubsub::{EthSubscription, LogsSubscription},
-    EthApi,
 };
 use alloy_rpc_types::{
-    pubsub::{Params, SubscriptionKind},
     FilteredParams,
+    pubsub::{Params, SubscriptionKind},
 };
-use anvil_core::eth::{subscription::SubscriptionId, EthPubSub, EthRequest, EthRpcCall};
+use anvil_core::eth::{EthPubSub, EthRequest, EthRpcCall, subscription::SubscriptionId};
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use anvil_server::{PubSubContext, PubSubRpcHandler, RpcHandler};
 
@@ -58,20 +58,22 @@ impl PubSubEthRpcHandler {
                 let canceled = cx.remove_subscription(&id).is_some();
                 ResponseResult::Success(canceled.into())
             }
-            EthPubSub::EthSubscribe(kind, params) => {
-                let filter = match *params {
+            EthPubSub::EthSubscribe(kind, raw_params) => {
+                let filter = match &*raw_params {
                     Params::None => None,
-                    Params::Logs(filter) => Some(*filter),
-                    Params::Bool(_) => {
-                        return ResponseResult::Error(RpcError::invalid_params(
-                            "Expected params for logs subscription",
-                        ))
-                    }
+                    Params::Logs(filter) => Some(filter.clone()),
+                    Params::Bool(_) => None,
                 };
-                let params = FilteredParams::new(filter);
+                let params = FilteredParams::new(filter.map(|b| *b));
 
                 let subscription = match kind {
                     SubscriptionKind::Logs => {
+                        if raw_params.is_bool() {
+                            return ResponseResult::Error(RpcError::invalid_params(
+                                "Expected params for logs subscription",
+                            ));
+                        }
+
                         trace!(target: "rpc::ws", "received logs subscription {:?}", params);
                         let blocks = self.api.new_block_notifications();
                         let storage = self.api.storage_info();
@@ -91,13 +93,26 @@ impl PubSubEthRpcHandler {
                     }
                     SubscriptionKind::NewPendingTransactions => {
                         trace!(target: "rpc::ws", "received pending transactions subscription");
-                        EthSubscription::PendingTransactions(
-                            self.api.new_ready_transactions(),
-                            id.clone(),
-                        )
+                        match *raw_params {
+                            Params::Bool(true) => EthSubscription::FullPendingTransactions(
+                                self.api.full_pending_transactions(),
+                                id.clone(),
+                            ),
+                            Params::Bool(false) | Params::None => {
+                                EthSubscription::PendingTransactions(
+                                    self.api.new_ready_transactions(),
+                                    id.clone(),
+                                )
+                            }
+                            _ => {
+                                return ResponseResult::Error(RpcError::invalid_params(
+                                    "Expected boolean parameter for newPendingTransactions",
+                                ));
+                            }
+                        }
                     }
                     SubscriptionKind::Syncing => {
-                        return RpcError::internal_error_with("Not implemented").into()
+                        return RpcError::internal_error_with("Not implemented").into();
                     }
                 };
 

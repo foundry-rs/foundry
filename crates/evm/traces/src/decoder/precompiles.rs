@@ -1,6 +1,6 @@
 use crate::{CallTrace, DecodedCallData};
-use alloy_primitives::{hex, B256, U256};
-use alloy_sol_types::{abi, sol, SolCall};
+use alloy_primitives::{Address, B256, U256, hex};
+use alloy_sol_types::{SolCall, abi, sol};
 use foundry_evm_core::precompiles::{
     BLAKE_2F, EC_ADD, EC_MUL, EC_PAIRING, EC_RECOVER, IDENTITY, MOD_EXP, POINT_EVALUATION,
     RIPEMD_160, SHA_256,
@@ -46,9 +46,26 @@ macro_rules! tri {
     };
 }
 
+pub(super) fn is_known_precompile(address: Address, _chain_id: u64) -> bool {
+    address[..19].iter().all(|&x| x == 0)
+        && matches!(
+            address,
+            EC_RECOVER
+                | SHA_256
+                | RIPEMD_160
+                | IDENTITY
+                | MOD_EXP
+                | EC_ADD
+                | EC_MUL
+                | EC_PAIRING
+                | BLAKE_2F
+                | POINT_EVALUATION
+        )
+}
+
 /// Tries to decode a precompile call. Returns `Some` if successful.
 pub(super) fn decode(trace: &CallTrace, _chain_id: u64) -> Option<DecodedCallTrace> {
-    if !trace.address[..19].iter().all(|&x| x == 0) {
+    if !is_known_precompile(trace.address, _chain_id) {
         return None;
     }
 
@@ -89,13 +106,13 @@ pub(super) fn decode(trace: &CallTrace, _chain_id: u64) -> Option<DecodedCallTra
 // convenient way to decode the data.
 
 fn decode_modexp(data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
-    let mut decoder = abi::Decoder::new(data, false);
+    let mut decoder = abi::Decoder::new(data);
     let b_size = decoder.take_offset()?;
     let e_size = decoder.take_offset()?;
     let m_size = decoder.take_offset()?;
-    let b = decoder.take_slice_unchecked(b_size)?;
-    let e = decoder.take_slice_unchecked(e_size)?;
-    let m = decoder.take_slice_unchecked(m_size)?;
+    let b = decoder.take_slice(b_size)?;
+    let e = decoder.take_slice(e_size)?;
+    let m = decoder.take_slice(m_size)?;
     Ok(vec![
         b_size.to_string(),
         e_size.to_string(),
@@ -107,7 +124,7 @@ fn decode_modexp(data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
 }
 
 fn decode_ecpairing(data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
-    let mut decoder = abi::Decoder::new(data, false);
+    let mut decoder = abi::Decoder::new(data);
     let mut values = Vec::new();
     // input must be either empty or a multiple of 6 32-byte values
     let mut tmp = <[&B256; 6]>::default();
@@ -121,14 +138,14 @@ fn decode_ecpairing(data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
 }
 
 fn decode_blake2f<'a>(data: &'a [u8]) -> alloy_sol_types::Result<Vec<String>> {
-    let mut decoder = abi::Decoder::new(data, false);
-    let rounds = u32::from_be_bytes(decoder.take_slice_unchecked(4)?.try_into().unwrap());
+    let mut decoder = abi::Decoder::new(data);
+    let rounds = u32::from_be_bytes(decoder.take_slice(4)?.try_into().unwrap());
     let u64_le_list =
         |x: &'a [u8]| x.chunks_exact(8).map(|x| u64::from_le_bytes(x.try_into().unwrap()));
-    let h = u64_le_list(decoder.take_slice_unchecked(64)?);
-    let m = u64_le_list(decoder.take_slice_unchecked(128)?);
-    let t = u64_le_list(decoder.take_slice_unchecked(16)?);
-    let f = decoder.take_slice_unchecked(1)?[0];
+    let h = u64_le_list(decoder.take_slice(64)?);
+    let m = u64_le_list(decoder.take_slice(128)?);
+    let t = u64_le_list(decoder.take_slice(16)?);
+    let f = decoder.take_slice(1)?[0];
     Ok(vec![
         rounds.to_string(),
         iter_to_string(h),
@@ -139,12 +156,12 @@ fn decode_blake2f<'a>(data: &'a [u8]) -> alloy_sol_types::Result<Vec<String>> {
 }
 
 fn decode_kzg(data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
-    let mut decoder = abi::Decoder::new(data, false);
+    let mut decoder = abi::Decoder::new(data);
     let versioned_hash = decoder.take_word()?;
     let z = decoder.take_word()?;
     let y = decoder.take_word()?;
-    let commitment = decoder.take_slice_unchecked(48)?;
-    let proof = decoder.take_slice_unchecked(48)?;
+    let commitment = decoder.take_slice(48)?;
+    let proof = decoder.take_slice(48)?;
     Ok(vec![
         versioned_hash.to_string(),
         z.to_string(),
@@ -156,7 +173,7 @@ fn decode_kzg(data: &[u8]) -> alloy_sol_types::Result<Vec<String>> {
 
 fn abi_decode_call<T: SolCall>(data: &[u8]) -> alloy_sol_types::Result<(&'static str, T)> {
     // raw because there are no selectors here
-    Ok((T::SIGNATURE, T::abi_decode_raw(data, false)?))
+    Ok((T::SIGNATURE, T::abi_decode_raw(data)?))
 }
 
 fn iter_to_string<I: Iterator<Item = T>, T: std::fmt::Display>(iter: I) -> String {

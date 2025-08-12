@@ -1,8 +1,11 @@
 pragma solidity ^0.8.18;
 
 import "ds-test/test.sol";
+import "cheats/Vm.sol";
 
 contract DebugLogsTest is DSTest {
+    Vm constant vm = Vm(HEVM_ADDRESS);
+
     constructor() {
         emit log_uint(0);
     }
@@ -19,14 +22,17 @@ contract DebugLogsTest is DSTest {
         emit log_uint(3);
     }
 
-    function testFailWithRevert() public {
+    function testRevertIfWithRevert() public {
         Fails fails = new Fails();
         emit log_uint(4);
+        vm.expectRevert();
         fails.failure();
     }
 
-    function testFailWithRequire() public {
+    /// forge-config: default.allow_internal_expect_revert = true
+    function testRevertIfWithRequire() public {
         emit log_uint(5);
+        vm.expectRevert();
         require(false);
     }
 

@@ -201,7 +201,138 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 "#]]);
 });
 
-forgetest_init!(evm_version, |prj, cmd| {
+#[cfg(not(feature = "isolate-by-default"))]
+forgetest_init!(config_inline_isolate, |prj, cmd| {
+    use serde::{Deserialize, Deserializer};
+    use std::{fs, path::Path};
+
+    prj.wipe_contracts();
+    prj.add_test(
+        "inline.sol",
+        r#"
+        import {Test} from "forge-std/Test.sol";
+
+        contract Dummy {
+            uint256 public number;
+
+            function setNumber(uint256 newNumber) public {
+                number = newNumber;
+            }
+        }
+
+        contract FunctionConfig is Test {
+            Dummy dummy;
+
+            function setUp() public {
+                dummy = new Dummy();
+            }
+
+            /// forge-config: default.isolate = true
+            function test_isolate() public {
+                vm.startSnapshotGas("testIsolatedFunction");
+                dummy.setNumber(1);
+                vm.stopSnapshotGas();
+            }
+
+            function test_non_isolate() public {
+                vm.startSnapshotGas("testNonIsolatedFunction");
+                dummy.setNumber(2);
+                vm.stopSnapshotGas();
+            }
+        }
+
+        /// forge-config: default.isolate = true
+        contract ContractConfig is Test {
+            Dummy dummy;
+
+            function setUp() public {
+                dummy = new Dummy();
+            }
+
+            function test_non_isolate() public {
+                vm.startSnapshotGas("testIsolatedContract");
+                dummy.setNumber(3);
+                vm.stopSnapshotGas();
+            }
+        }
+    "#,
+    )
+    .unwrap();
+
+    cmd.args(["test", "-j1"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/inline.sol:ContractConfig
+[PASS] test_non_isolate() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 2 tests for test/inline.sol:FunctionConfig
+[PASS] test_isolate() ([GAS])
+[PASS] test_non_isolate() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+
+"#]]);
+
+    assert!(prj.root().join("snapshots/FunctionConfig.json").exists());
+    assert!(prj.root().join("snapshots/ContractConfig.json").exists());
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct FunctionConfig {
+        #[serde(deserialize_with = "string_to_u64")]
+        test_isolated_function: u64,
+
+        #[serde(deserialize_with = "string_to_u64")]
+        test_non_isolated_function: u64,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ContractConfig {
+        #[serde(deserialize_with = "string_to_u64")]
+        test_isolated_contract: u64,
+    }
+
+    fn string_to_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s: serde_json::Value = Deserialize::deserialize(deserializer)?;
+        match s {
+            serde_json::Value::String(s) => s.parse::<u64>().map_err(serde::de::Error::custom),
+            serde_json::Value::Number(n) if n.is_u64() => Ok(n.as_u64().unwrap()),
+            _ => Err(serde::de::Error::custom("Expected a string or number")),
+        }
+    }
+
+    fn read_snapshot<T: for<'de> Deserialize<'de>>(path: &Path) -> T {
+        let content = fs::read_to_string(path).expect("Failed to read file");
+        serde_json::from_str(&content).expect("Failed to parse snapshot")
+    }
+
+    let function_config: FunctionConfig =
+        read_snapshot(&prj.root().join("snapshots/FunctionConfig.json"));
+    let contract_config: ContractConfig =
+        read_snapshot(&prj.root().join("snapshots/ContractConfig.json"));
+
+    // FunctionConfig {
+    //     test_isolated_function: 48926,
+    //     test_non_isolated_function: 27722,
+    // }
+
+    // ContractConfig {
+    //     test_isolated_contract: 48926,
+    // }
+
+    assert!(function_config.test_isolated_function > function_config.test_non_isolated_function);
+    assert_eq!(function_config.test_isolated_function, contract_config.test_isolated_contract);
+});
+
+forgetest_init!(config_inline_evm_version, |prj, cmd| {
     prj.wipe_contracts();
     prj.add_test(
         "inline.sol",

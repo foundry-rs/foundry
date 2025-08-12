@@ -65,10 +65,10 @@ impl FromStr for Dependency {
             let mut dependency = dependency.to_string();
             // this will autocorrect wrong conventional aliases for tag, but only autocorrect if
             // it's not used as alias
-            for (alias, real_org) in COMMON_ORG_ALIASES.iter() {
+            for (alias, real_org) in COMMON_ORG_ALIASES {
                 if dependency.starts_with(alias) {
                     dependency = dependency.replacen(alias, real_org, 1);
-                    break
+                    break;
                 }
             }
 
@@ -117,11 +117,11 @@ impl FromStr for Dependency {
 
             if tag_or_branch.is_none() {
                 let maybe_tag_or_branch = split.next().unwrap();
-                if let Some(actual_url) = split.next() {
-                    if !maybe_tag_or_branch.contains('/') {
-                        tag_or_branch = Some(maybe_tag_or_branch.to_string());
-                        url = actual_url;
-                    }
+                if let Some(actual_url) = split.next()
+                    && !maybe_tag_or_branch.contains('/')
+                {
+                    tag_or_branch = Some(maybe_tag_or_branch.to_string());
+                    url = actual_url;
                 }
             }
 

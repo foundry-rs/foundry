@@ -2,14 +2,13 @@
 
 #![allow(rustdoc::private_doc_tests)]
 
-use crate::{shutdown::Shutdown, tasks::block_listener::BlockListener, EthApi};
+use crate::{EthApi, shutdown::Shutdown, tasks::block_listener::BlockListener};
 use alloy_network::{AnyHeader, AnyNetwork};
 use alloy_primitives::B256;
 use alloy_provider::Provider;
 use alloy_rpc_types::anvil::Forking;
-use alloy_transport::Transport;
 use futures::StreamExt;
-use std::{fmt, future::Future};
+use std::fmt;
 use tokio::{runtime::Handle, task::JoinHandle};
 
 pub mod block_listener;
@@ -53,7 +52,7 @@ impl TaskManager {
     /// ```
     /// use alloy_network::Ethereum;
     /// use alloy_provider::RootProvider;
-    /// use anvil::{spawn, NodeConfig};
+    /// use anvil::{NodeConfig, spawn};
     ///
     /// # async fn t() {
     /// let endpoint = "http://....";
@@ -64,16 +63,15 @@ impl TaskManager {
     /// handle.task_manager().spawn_reset_on_new_polled_blocks(provider, api);
     /// # }
     /// ```
-    pub fn spawn_reset_on_new_polled_blocks<P, T>(&self, provider: P, api: EthApi)
+    pub fn spawn_reset_on_new_polled_blocks<P>(&self, provider: P, api: EthApi)
     where
-        P: Provider<T, AnyNetwork> + Clone + Unpin + 'static,
-        T: Transport + Clone,
+        P: Provider<AnyNetwork> + Clone + Unpin + 'static,
     {
         self.spawn_block_poll_listener(provider.clone(), move |hash| {
             let provider = provider.clone();
             let api = api.clone();
             async move {
-                if let Ok(Some(block)) = provider.get_block(hash.into(), false.into()).await {
+                if let Ok(Some(block)) = provider.get_block(hash.into()).await {
                     let _ = api
                         .anvil_reset(Some(Forking {
                             json_rpc_url: None,
@@ -88,10 +86,9 @@ impl TaskManager {
     /// Spawns a new [`BlockListener`] task that listens for new blocks (poll-based) See also
     /// [`Provider::watch_blocks`] and executes the future the `task_factory` returns for the new
     /// block hash
-    pub fn spawn_block_poll_listener<P, T, F, Fut>(&self, provider: P, task_factory: F)
+    pub fn spawn_block_poll_listener<P, F, Fut>(&self, provider: P, task_factory: F)
     where
-        P: Provider<T, AnyNetwork> + 'static,
-        T: Transport + Clone,
+        P: Provider<AnyNetwork> + 'static,
         F: Fn(B256) -> Fut + Unpin + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send,
     {
@@ -113,7 +110,7 @@ impl TaskManager {
     /// ```
     /// use alloy_network::Ethereum;
     /// use alloy_provider::RootProvider;
-    /// use anvil::{spawn, NodeConfig};
+    /// use anvil::{NodeConfig, spawn};
     ///
     /// # async fn t() {
     /// let (api, handle) = spawn(NodeConfig::default().with_eth_rpc_url(Some("http://...."))).await;
@@ -124,10 +121,9 @@ impl TaskManager {
     ///
     /// # }
     /// ```
-    pub fn spawn_reset_on_subscribed_blocks<P, T>(&self, provider: P, api: EthApi)
+    pub fn spawn_reset_on_subscribed_blocks<P>(&self, provider: P, api: EthApi)
     where
-        P: Provider<T, AnyNetwork> + 'static,
-        T: Transport + Clone,
+        P: Provider<AnyNetwork> + 'static,
     {
         self.spawn_block_subscription(provider, move |header| {
             let api = api.clone();
@@ -145,10 +141,9 @@ impl TaskManager {
     /// Spawns a new [`BlockListener`] task that listens for new blocks (via subscription) See also
     /// [`Provider::subscribe_blocks()`] and executes the future the `task_factory` returns for the
     /// new block hash
-    pub fn spawn_block_subscription<P, T, F, Fut>(&self, provider: P, task_factory: F)
+    pub fn spawn_block_subscription<P, F, Fut>(&self, provider: P, task_factory: F)
     where
-        P: Provider<T, AnyNetwork> + 'static,
-        T: Transport + Clone,
+        P: Provider<AnyNetwork> + 'static,
         F: Fn(alloy_rpc_types::Header<AnyHeader>) -> Fut + Unpin + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send,
     {

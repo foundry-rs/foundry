@@ -1,38 +1,38 @@
 //! Forge test runner for multiple contracts.
 
 use crate::{
-    progress::TestsProgress, result::SuiteResult, runner::LIBRARY_DEPLOYER, ContractRunner,
-    TestFilter,
+    ContractRunner, TestFilter, progress::TestsProgress, result::SuiteResult,
+    runner::LIBRARY_DEPLOYER,
 };
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
-use foundry_common::{get_contract_name, shell::verbosity, ContractsByArtifact, TestFunctionExt};
+use foundry_common::{ContractsByArtifact, TestFunctionExt, get_contract_name, shell::verbosity};
 use foundry_compilers::{
+    Artifact, ArtifactId, ProjectCompileOutput,
     artifacts::{Contract, Libraries},
     compilers::Compiler,
-    Artifact, ArtifactId, ProjectCompileOutput,
 };
 use foundry_config::{Config, InlineConfig};
 use foundry_evm::{
+    Env,
     backend::Backend,
     decode::RevertDecoder,
     executors::{Executor, ExecutorBuilder},
     fork::CreateFork,
     inspectors::CheatsConfig,
     opts::EvmOpts,
-    revm,
     traces::{InternalTraceMode, TraceMode},
 };
 use foundry_linking::{LinkOutput, Linker};
 use rayon::prelude::*;
-use revm::primitives::SpecId;
+use revm::primitives::hardfork::SpecId;
 use std::{
     borrow::Borrow,
     collections::BTreeMap,
     fmt::Debug,
     path::Path,
-    sync::{mpsc, Arc},
+    sync::{Arc, mpsc},
     time::Instant,
 };
 
@@ -136,8 +136,11 @@ impl MultiContractRunner {
     /// The same as [`test`](Self::test), but returns the results instead of streaming them.
     ///
     /// Note that this method returns only when all tests have been executed.
-    pub fn test_collect(&mut self, filter: &dyn TestFilter) -> BTreeMap<String, SuiteResult> {
-        self.test_iter(filter).collect()
+    pub fn test_collect(
+        &mut self,
+        filter: &dyn TestFilter,
+    ) -> Result<BTreeMap<String, SuiteResult>> {
+        Ok(self.test_iter(filter)?.collect())
     }
 
     /// Executes _all_ tests that match the given `filter`.
@@ -148,10 +151,10 @@ impl MultiContractRunner {
     pub fn test_iter(
         &mut self,
         filter: &dyn TestFilter,
-    ) -> impl Iterator<Item = (String, SuiteResult)> {
+    ) -> Result<impl Iterator<Item = (String, SuiteResult)>> {
         let (tx, rx) = mpsc::channel();
-        self.test(filter, tx, false);
-        rx.into_iter()
+        self.test(filter, tx, false)?;
+        Ok(rx.into_iter())
     }
 
     /// Executes _all_ tests that match the given `filter`.
@@ -165,12 +168,12 @@ impl MultiContractRunner {
         filter: &dyn TestFilter,
         tx: mpsc::Sender<(String, SuiteResult)>,
         show_progress: bool,
-    ) {
+    ) -> Result<()> {
         let tokio_handle = tokio::runtime::Handle::current();
         trace!("running all tests");
 
         // The DB backend that serves all the data.
-        let db = Backend::spawn(self.fork.take());
+        let db = Backend::spawn(self.fork.take())?;
 
         let find_timer = Instant::now();
         let contracts = self.matching_contracts(filter).collect::<Vec<_>>();
@@ -221,6 +224,8 @@ impl MultiContractRunner {
                 let _ = tx.send((id.identifier(), result));
             })
         }
+
+        Ok(())
     }
 
     fn run_test_suite(
@@ -244,10 +249,11 @@ impl MultiContractRunner {
 
         debug!("start executing all tests in contract");
 
+        let executor = self.tcfg.executor(self.known_contracts.clone(), artifact_id, db.clone());
         let runner = ContractRunner::new(
             &identifier,
             contract,
-            self.tcfg.executor(self.known_contracts.clone(), artifact_id, db.clone()),
+            executor,
             progress,
             tokio_handle,
             span,
@@ -274,14 +280,14 @@ pub struct TestRunnerConfig {
     /// EVM configuration.
     pub evm_opts: EvmOpts,
     /// EVM environment.
-    pub env: revm::primitives::Env,
+    pub env: Env,
     /// EVM version.
     pub spec_id: SpecId,
     /// The address which will be used to deploy the initial contracts and send all transactions.
     pub sender: Address,
 
-    /// Whether to collect coverage info
-    pub coverage: bool,
+    /// Whether to collect line coverage info
+    pub line_coverage: bool,
     /// Whether to collect debug info
     pub debug: bool,
     /// Whether to enable steps tracking in the tracer.
@@ -294,18 +300,21 @@ pub struct TestRunnerConfig {
 
 impl TestRunnerConfig {
     /// Reconfigures all fields using the given `config`.
+    /// This is for example used to override the configuration with inline config.
     pub fn reconfigure_with(&mut self, config: Arc<Config>) {
         debug_assert!(!Arc::ptr_eq(&self.config, &config));
 
-        // TODO: self.evm_opts
-        // TODO: self.env
         self.spec_id = config.evm_spec_id();
         self.sender = config.sender;
+        self.odyssey = config.odyssey;
+        self.isolation = config.isolate;
+
+        // Specific to Forge, not present in config.
+        // TODO: self.evm_opts
+        // TODO: self.env
         // self.coverage = N/A;
         // self.debug = N/A;
         // self.decode_internal = N/A;
-        // self.isolation = N/A;
-        self.odyssey = config.odyssey;
 
         self.config = config;
     }
@@ -321,7 +330,7 @@ impl TestRunnerConfig {
                 Arc::new(cheatcodes.config.clone_with(&self.config, self.evm_opts.clone()));
         }
         inspector.tracing(self.trace_mode());
-        inspector.collect_coverage(self.coverage);
+        inspector.collect_line_coverage(self.line_coverage);
         inspector.enable_isolation(self.isolation);
         inspector.odyssey(self.odyssey);
         // inspector.set_create2_deployer(self.evm_opts.create2_deployer);
@@ -350,7 +359,7 @@ impl TestRunnerConfig {
                 stack
                     .cheatcodes(cheats_config)
                     .trace_mode(self.trace_mode())
-                    .coverage(self.coverage)
+                    .line_coverage(self.line_coverage)
                     .enable_isolation(self.isolation)
                     .odyssey(self.odyssey)
                     .create2_deployer(self.evm_opts.create2_deployer)
@@ -385,8 +394,8 @@ pub struct MultiContractRunnerBuilder {
     pub fork: Option<CreateFork>,
     /// Project config.
     pub config: Arc<Config>,
-    /// Whether or not to collect coverage info
-    pub coverage: bool,
+    /// Whether or not to collect line coverage info
+    pub line_coverage: bool,
     /// Whether or not to collect debug info
     pub debug: bool,
     /// Whether to enable steps tracking in the tracer.
@@ -405,7 +414,7 @@ impl MultiContractRunnerBuilder {
             initial_balance: Default::default(),
             evm_spec: Default::default(),
             fork: Default::default(),
-            coverage: Default::default(),
+            line_coverage: Default::default(),
             debug: Default::default(),
             isolation: Default::default(),
             decode_internal: Default::default(),
@@ -434,7 +443,7 @@ impl MultiContractRunnerBuilder {
     }
 
     pub fn set_coverage(mut self, enable: bool) -> Self {
-        self.coverage = enable;
+        self.line_coverage = enable;
         self
     }
 
@@ -464,7 +473,7 @@ impl MultiContractRunnerBuilder {
         self,
         root: &Path,
         output: &ProjectCompileOutput,
-        env: revm::primitives::Env,
+        env: Env,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner> {
         let contracts = output
@@ -496,8 +505,8 @@ impl MultiContractRunnerBuilder {
             let Some(abi) = &contract.abi else { continue };
 
             // if it's a test, link it and add to deployable contracts
-            if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
-                abi.functions().any(|func| func.name.is_any_test())
+            if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
+                && abi.functions().any(|func| func.name.is_any_test())
             {
                 let Some(bytecode) =
                     contract.get_bytecode_bytes().map(|b| b.into_owned()).filter(|b| !b.is_empty())
@@ -510,7 +519,10 @@ impl MultiContractRunnerBuilder {
             }
         }
 
-        let known_contracts = ContractsByArtifact::new(linked_contracts);
+        // Create known contracts with storage layout information
+        let known_contracts = ContractsByArtifact::with_storage_layout(
+            output.clone().with_stripped_file_prefixes(root),
+        );
 
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
@@ -527,7 +539,7 @@ impl MultiContractRunnerBuilder {
                 spec_id: self.evm_spec.unwrap_or_else(|| self.config.evm_spec_id()),
                 sender: self.sender.unwrap_or(self.config.sender),
 
-                coverage: self.coverage,
+                line_coverage: self.line_coverage,
                 debug: self.debug,
                 decode_internal: self.decode_internal,
                 inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
@@ -541,8 +553,8 @@ impl MultiContractRunnerBuilder {
 }
 
 pub fn matches_contract(id: &ArtifactId, abi: &JsonAbi, filter: &dyn TestFilter) -> bool {
-    (filter.matches_path(&id.source) && filter.matches_contract(&id.name)) &&
-        abi.functions().any(|func| is_matching_test(func, filter))
+    (filter.matches_path(&id.source) && filter.matches_contract(&id.name))
+        && abi.functions().any(|func| is_matching_test(func, filter))
 }
 
 /// Returns `true` if the function is a test function that matches the given filter.

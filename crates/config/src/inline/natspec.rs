@@ -1,17 +1,17 @@
-use super::{InlineConfigError, InlineConfigErrorKind, INLINE_CONFIG_PREFIX};
+use super::{INLINE_CONFIG_PREFIX, InlineConfigError, InlineConfigErrorKind};
 use figment::Profile;
 use foundry_compilers::{
-    artifacts::{ast::NodeType, Node},
     ProjectCompileOutput,
+    artifacts::{Node, ast::NodeType},
 };
 use itertools::Itertools;
 use serde_json::Value;
 use solar_parse::{
-    ast::{
-        interface::{self, Session},
-        Arena, CommentKind, Item, ItemKind,
-    },
     Parser,
+    ast::{
+        Arena, CommentKind, Item, ItemKind,
+        interface::{self, Session},
+    },
 };
 use std::{collections::BTreeMap, path::Path};
 
@@ -45,17 +45,15 @@ impl NatSpec {
             let contract = format!("{}:{}", path.display(), id.name);
 
             let mut used_solc_ast = false;
-            if let Some(ast) = &artifact.ast {
-                if let Some(node) = solc.contract_root_node(&ast.nodes, &contract) {
-                    solc.parse(&mut natspecs, &contract, node, true);
-                    used_solc_ast = true;
-                }
+            if let Some(ast) = &artifact.ast
+                && let Some(node) = solc.contract_root_node(&ast.nodes, &contract)
+            {
+                solc.parse(&mut natspecs, &contract, node, true);
+                used_solc_ast = true;
             }
 
-            if !used_solc_ast {
-                if let Ok(src) = std::fs::read_to_string(abs_path) {
-                    solar.parse(&mut natspecs, &src, &contract, contract_name);
-                }
+            if !used_solc_ast && let Ok(src) = std::fs::read_to_string(abs_path) {
+                solar.parse(&mut natspecs, &src, &contract, contract_name);
             }
         }
 
@@ -123,13 +121,13 @@ impl SolcParser {
     /// Given a list of nodes, find a "ContractDefinition" node that matches
     /// the provided contract_id.
     fn contract_root_node<'a>(&self, nodes: &'a [Node], contract_id: &str) -> Option<&'a Node> {
-        for n in nodes.iter() {
+        for n in nodes {
             if n.node_type == NodeType::ContractDefinition {
                 let contract_data = &n.other;
-                if let Value::String(contract_name) = contract_data.get("name")? {
-                    if contract_id.ends_with(contract_name) {
-                        return Some(n)
-                    }
+                if let Value::String(contract_name) = contract_data.get("name")?
+                    && contract_id.ends_with(contract_name)
+                {
+                    return Some(n);
                 }
             }
         }
@@ -140,12 +138,10 @@ impl SolcParser {
     /// If a natspec is found it is added to `natspecs`
     fn parse(&self, natspecs: &mut Vec<NatSpec>, contract: &str, node: &Node, root: bool) {
         // If we're at the root contract definition node, try parsing contract-level natspec
-        if root {
-            if let Some((docs, line)) = self.get_node_docs(&node.other) {
-                natspecs.push(NatSpec { contract: contract.into(), function: None, docs, line })
-            }
+        if root && let Some((docs, line)) = self.get_node_docs(&node.other) {
+            natspecs.push(NatSpec { contract: contract.into(), function: None, docs, line })
         }
-        for n in node.nodes.iter() {
+        for n in &node.nodes {
             if let Some((function, docs, line)) = self.get_fn_data(n) {
                 natspecs.push(NatSpec {
                     contract: contract.into(),
@@ -170,7 +166,7 @@ impl SolcParser {
             let fn_data = &node.other;
             let fn_name: String = self.get_fn_name(fn_data)?;
             let (fn_docs, docs_src_line) = self.get_node_docs(fn_data)?;
-            return Some((fn_name, fn_docs, docs_src_line))
+            return Some((fn_name, fn_docs, docs_src_line));
         }
 
         None
@@ -190,18 +186,17 @@ impl SolcParser {
     ///   "raw:col:length".
     /// - `None` in case the function has not natspec comments.
     fn get_node_docs(&self, data: &BTreeMap<String, Value>) -> Option<(String, String)> {
-        if let Value::Object(fn_docs) = data.get("documentation")? {
-            if let Value::String(comment) = fn_docs.get("text")? {
-                if comment.contains(INLINE_CONFIG_PREFIX) {
-                    let mut src_line = fn_docs
-                        .get("src")
-                        .map(|src| src.to_string())
-                        .unwrap_or_else(|| String::from("<no-src-line-available>"));
+        if let Value::Object(fn_docs) = data.get("documentation")?
+            && let Value::String(comment) = fn_docs.get("text")?
+            && comment.contains(INLINE_CONFIG_PREFIX)
+        {
+            let mut src_line = fn_docs
+                .get("src")
+                .map(|src| src.to_string())
+                .unwrap_or_else(|| String::from("<no-src-line-available>"));
 
-                    src_line.retain(|c| c != '"');
-                    return Some((comment.into(), src_line))
-                }
-            }
+            src_line.retain(|c| c != '"');
+            return Some((comment.into(), src_line));
         }
         None
     }
@@ -238,7 +233,7 @@ impl SolarParser {
                 .filter_map(|d| {
                     let s = d.symbol.as_str();
                     if !s.contains(INLINE_CONFIG_PREFIX) {
-                        return None
+                        return None;
                     }
                     match d.kind {
                         CommentKind::Line => Some(s.trim().to_string()),

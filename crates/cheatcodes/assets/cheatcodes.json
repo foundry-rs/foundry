@@ -370,6 +370,32 @@
       ]
     },
     {
+      "name": "Chain",
+      "description": "Information about a blockchain.",
+      "fields": [
+        {
+          "name": "name",
+          "ty": "string",
+          "description": "The chain name."
+        },
+        {
+          "name": "chainId",
+          "ty": "uint256",
+          "description": "The chain's Chain ID."
+        },
+        {
+          "name": "chainAlias",
+          "ty": "string",
+          "description": "The chain's alias. (i.e. what gets specified in `foundry.toml`)."
+        },
+        {
+          "name": "rpcUrl",
+          "ty": "string",
+          "description": "A default RPC endpoint for this chain."
+        }
+      ]
+    },
+    {
       "name": "AccountAccess",
       "description": "The result of a `stopAndReturnStateDiff` call.",
       "fields": [
@@ -437,6 +463,16 @@
           "name": "depth",
           "ty": "uint64",
           "description": "Call depth traversed during the recording of state differences"
+        },
+        {
+          "name": "oldNonce",
+          "ty": "uint64",
+          "description": "The previous nonce of the accessed account."
+        },
+        {
+          "name": "newNonce",
+          "ty": "uint64",
+          "description": "The new nonce of the accessed account."
         }
       ]
     },
@@ -625,6 +661,22 @@
           "description": "The data to use to match encountered reverts"
         }
       ]
+    },
+    {
+      "name": "AccessListItem",
+      "description": "An EIP-2930 access list item.",
+      "fields": [
+        {
+          "name": "target",
+          "ty": "address",
+          "description": "The address to be added in access list."
+        },
+        {
+          "name": "storageKeys",
+          "ty": "bytes32[]",
+          "description": "The storage keys to be added in access list."
+        }
+      ]
     }
   ],
   "cheatcodes": [
@@ -686,6 +738,26 @@
       },
       "group": "testing",
       "status": "internal",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "accessList",
+        "description": "Utility cheatcode to set an EIP-2930 access list for all subsequent transactions.",
+        "declaration": "function accessList(AccessListItem[] calldata access) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "accessList((address,bytes32[])[])",
+        "selector": "0x743e4cb7",
+        "selectorBytes": [
+          116,
+          62,
+          76,
+          183
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
       "safety": "unsafe"
     },
     {
@@ -3170,7 +3242,27 @@
     },
     {
       "func": {
-        "id": "attachDelegation",
+        "id": "attachBlob",
+        "description": "Attach an EIP-4844 blob to the next call",
+        "declaration": "function attachBlob(bytes calldata blob) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "attachBlob(bytes)",
+        "selector": "0x10cb385c",
+        "selectorBytes": [
+          16,
+          203,
+          56,
+          92
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "attachDelegation_0",
         "description": "Designate the next call as an EIP-7702 transaction",
         "declaration": "function attachDelegation(SignedDelegation calldata signedDelegation) external;",
         "visibility": "external",
@@ -3182,6 +3274,26 @@
           174,
           53,
           25
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "attachDelegation_1",
+        "description": "Designate the next call as an EIP-7702 transaction, with optional cross-chain validity.",
+        "declaration": "function attachDelegation(SignedDelegation calldata signedDelegation, bool crossChain) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "attachDelegation((uint8,bytes32,bytes32,uint64,address),bool)",
+        "selector": "0xf4460d34",
+        "selectorBytes": [
+          244,
+          70,
+          13,
+          52
         ]
       },
       "group": "scripting",
@@ -3545,7 +3657,27 @@
         ]
       },
       "group": "evm",
-      "status": "experimental",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "coolSlot",
+        "description": "Utility cheatcode to mark specific storage slot as cold, simulating no prior read.",
+        "declaration": "function coolSlot(address target, bytes32 slot) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "coolSlot(address,bytes32)",
+        "selector": "0x8c78e654",
+        "selectorBytes": [
+          140,
+          120,
+          230,
+          84
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
       "safety": "unsafe"
     },
     {
@@ -3934,8 +4066,128 @@
     },
     {
       "func": {
+        "id": "deployCode_2",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts `msg.value`.",
+        "declaration": "function deployCode(string calldata artifactPath, uint256 value) external returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deployCode(string,uint256)",
+        "selector": "0x0af6a701",
+        "selectorBytes": [
+          10,
+          246,
+          167,
+          1
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "deployCode_3",
+        "description": "Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts abi-encoded constructor arguments and `msg.value`.",
+        "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value) external returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deployCode(string,bytes,uint256)",
+        "selector": "0xff5d64e4",
+        "selectorBytes": [
+          255,
+          93,
+          100,
+          228
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "deployCode_4",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.",
+        "declaration": "function deployCode(string calldata artifactPath, bytes32 salt) external returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deployCode(string,bytes32)",
+        "selector": "0x17ab1d79",
+        "selectorBytes": [
+          23,
+          171,
+          29,
+          121
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "deployCode_5",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts abi-encoded constructor arguments.",
+        "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs, bytes32 salt) external returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deployCode(string,bytes,bytes32)",
+        "selector": "0x016155bf",
+        "selectorBytes": [
+          1,
+          97,
+          85,
+          191
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "deployCode_6",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts `msg.value`.",
+        "declaration": "function deployCode(string calldata artifactPath, uint256 value, bytes32 salt) external returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deployCode(string,uint256,bytes32)",
+        "selector": "0x002cb687",
+        "selectorBytes": [
+          0,
+          44,
+          182,
+          135
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "deployCode_7",
+        "description": "Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the\nartifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.\nAdditionally accepts abi-encoded constructor arguments and `msg.value`.",
+        "declaration": "function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value, bytes32 salt) external returns (address deployedAddress);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "deployCode(string,bytes,uint256,bytes32)",
+        "selector": "0x3aa773ea",
+        "selectorBytes": [
+          58,
+          167,
+          115,
+          234
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "deriveKey_0",
-        "description": "Derive a private key from a provided mnenomic string (or mnenomic file path)\nat the derivation path `m/44'/60'/0'/0/{index}`.",
+        "description": "Derive a private key from a provided mnemonic string (or mnemonic file path)\nat the derivation path `m/44'/60'/0'/0/{index}`.",
         "declaration": "function deriveKey(string calldata mnemonic, uint32 index) external pure returns (uint256 privateKey);",
         "visibility": "external",
         "mutability": "pure",
@@ -3955,7 +4207,7 @@
     {
       "func": {
         "id": "deriveKey_1",
-        "description": "Derive a private key from a provided mnenomic string (or mnenomic file path)\nat `{derivationPath}{index}`.",
+        "description": "Derive a private key from a provided mnemonic string (or mnemonic file path)\nat `{derivationPath}{index}`.",
         "declaration": "function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index) external pure returns (uint256 privateKey);",
         "visibility": "external",
         "mutability": "pure",
@@ -3975,7 +4227,7 @@
     {
       "func": {
         "id": "deriveKey_2",
-        "description": "Derive a private key from a provided mnenomic string (or mnenomic file path) in the specified language\nat the derivation path `m/44'/60'/0'/0/{index}`.",
+        "description": "Derive a private key from a provided mnemonic string (or mnemonic file path) in the specified language\nat the derivation path `m/44'/60'/0'/0/{index}`.",
         "declaration": "function deriveKey(string calldata mnemonic, uint32 index, string calldata language) external pure returns (uint256 privateKey);",
         "visibility": "external",
         "mutability": "pure",
@@ -3995,7 +4247,7 @@
     {
       "func": {
         "id": "deriveKey_3",
-        "description": "Derive a private key from a provided mnenomic string (or mnenomic file path) in the specified language\nat `{derivationPath}{index}`.",
+        "description": "Derive a private key from a provided mnemonic string (or mnemonic file path) in the specified language\nat `{derivationPath}{index}`.",
         "declaration": "function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index, string calldata language) external pure returns (uint256 privateKey);",
         "visibility": "external",
         "mutability": "pure",
@@ -4051,6 +4303,106 @@
       "group": "evm",
       "status": "stable",
       "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "eip712HashStruct_0",
+        "description": "Generates the struct hash of the canonical EIP-712 type representation and its abi-encoded data.\nSupports 2 different inputs:\n 1. Name of the type (i.e. \"PermitSingle\"):\n    * requires previous binding generation with `forge bind-json`.\n    * bindings will be retrieved from the path configured in `foundry.toml`.\n 2. String representation of the type (i.e. \"Foo(Bar bar) Bar(uint256 baz)\").\n    * Note: the cheatcode will use the canonical type even if the input is malformated\n            with the wrong order of elements or with extra whitespaces.",
+        "declaration": "function eip712HashStruct(string calldata typeNameOrDefinition, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "eip712HashStruct(string,bytes)",
+        "selector": "0xaedeaebc",
+        "selectorBytes": [
+          174,
+          222,
+          174,
+          188
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "eip712HashStruct_1",
+        "description": "Generates the struct hash of the canonical EIP-712 type representation and its abi-encoded data.\nRequires previous binding generation with `forge bind-json`.\nParams:\n * `bindingsPath`: path where the output of `forge bind-json` is stored.\n * `typeName`: Name of the type (i.e. \"PermitSingle\").\n * `abiEncodedData`: ABI-encoded data for the struct that is being hashed.",
+        "declaration": "function eip712HashStruct(string calldata bindingsPath, string calldata typeName, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "eip712HashStruct(string,string,bytes)",
+        "selector": "0x6d06c57c",
+        "selectorBytes": [
+          109,
+          6,
+          197,
+          124
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "eip712HashType_0",
+        "description": "Generates the hash of the canonical EIP-712 type representation.\nSupports 2 different inputs:\n 1. Name of the type (i.e. \"Transaction\"):\n    * requires previous binding generation with `forge bind-json`.\n    * bindings will be retrieved from the path configured in `foundry.toml`.\n 2. String representation of the type (i.e. \"Foo(Bar bar) Bar(uint256 baz)\").\n    * Note: the cheatcode will output the canonical type even if the input is malformated\n            with the wrong order of elements or with extra whitespaces.",
+        "declaration": "function eip712HashType(string calldata typeNameOrDefinition) external pure returns (bytes32 typeHash);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "eip712HashType(string)",
+        "selector": "0x6792e9e2",
+        "selectorBytes": [
+          103,
+          146,
+          233,
+          226
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "eip712HashType_1",
+        "description": "Generates the hash of the canonical EIP-712 type representation.\nRequires previous binding generation with `forge bind-json`.\nParams:\n * `bindingsPath`: path where the output of `forge bind-json` is stored.\n * `typeName`: Name of the type (i.e. \"Transaction\").",
+        "declaration": "function eip712HashType(string calldata bindingsPath, string calldata typeName) external pure returns (bytes32 typeHash);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "eip712HashType(string,string)",
+        "selector": "0x18fb6406",
+        "selectorBytes": [
+          24,
+          251,
+          100,
+          6
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "eip712HashTypedData",
+        "description": "Generates a ready-to-sign digest of human-readable typed data following the EIP-712 standard.",
+        "declaration": "function eip712HashTypedData(string calldata jsonData) external pure returns (bytes32 digest);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "eip712HashTypedData(string)",
+        "selector": "0xea25e615",
+        "selectorBytes": [
+          234,
+          37,
+          230,
+          21
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
     },
     {
       "func": {
@@ -4874,6 +5226,46 @@
     },
     {
       "func": {
+        "id": "expectCreate",
+        "description": "Expects the deployment of the specified bytecode by the specified address using the CREATE opcode",
+        "declaration": "function expectCreate(bytes calldata bytecode, address deployer) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectCreate(bytes,address)",
+        "selector": "0x73cdce36",
+        "selectorBytes": [
+          115,
+          205,
+          206,
+          54
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "expectCreate2",
+        "description": "Expects the deployment of the specified bytecode by the specified address using the CREATE2 opcode",
+        "declaration": "function expectCreate2(bytes calldata bytecode, address deployer) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectCreate2(bytes,address)",
+        "selector": "0xea54a472",
+        "selectorBytes": [
+          234,
+          84,
+          164,
+          114
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "expectEmitAnonymous_0",
         "description": "Prepare an expected anonymous log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData.).\nCall this function, then emit an anonymous event, then call a function. Internally after the call, we check if\nlogs were emitted in the expected order with the expected topics and data (as specified by the booleans).",
         "declaration": "function expectEmitAnonymous(bool checkTopic0, bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData) external;",
@@ -5474,6 +5866,446 @@
     },
     {
       "func": {
+        "id": "forkAddress",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as `address`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkAddress(string memory key) external view returns (address);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkAddress(string)",
+        "selector": "0x27b1efc0",
+        "selectorBytes": [
+          39,
+          177,
+          239,
+          192
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkBool",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as `bool`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkBool(string memory key) external view returns (bool);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkBool(string)",
+        "selector": "0xc06e85dd",
+        "selectorBytes": [
+          192,
+          110,
+          133,
+          221
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkBytes",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as `bytes`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkBytes(string memory key) external view returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkBytes(string)",
+        "selector": "0x7c055631",
+        "selectorBytes": [
+          124,
+          5,
+          86,
+          49
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkBytes32",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as `bytes32`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkBytes32(string memory key) external view returns (bytes32);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkBytes32(string)",
+        "selector": "0xa912a3f4",
+        "selectorBytes": [
+          169,
+          18,
+          163,
+          244
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChain",
+        "description": "Returns the chain name of the currently selected fork.",
+        "declaration": "function forkChain() external view returns (string memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChain()",
+        "selector": "0xe6075d94",
+        "selectorBytes": [
+          230,
+          7,
+          93,
+          148
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChainAddress",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `address`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkChainAddress(uint256 chain, string memory key) external view returns (address);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChainAddress(uint256,string)",
+        "selector": "0x5dc00a35",
+        "selectorBytes": [
+          93,
+          192,
+          10,
+          53
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChainBool",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bool`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkChainBool(uint256 chain, string memory key) external view returns (bool);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChainBool(uint256,string)",
+        "selector": "0x8f947e16",
+        "selectorBytes": [
+          143,
+          148,
+          126,
+          22
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChainBytes",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bytes`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkChainBytes(uint256 chain, string memory key) external view returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChainBytes(uint256,string)",
+        "selector": "0x0e73256d",
+        "selectorBytes": [
+          14,
+          115,
+          37,
+          109
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChainBytes32",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bytes32`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkChainBytes32(uint256 chain, string memory key) external view returns (bytes32);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChainBytes32(uint256,string)",
+        "selector": "0x05dd6d07",
+        "selectorBytes": [
+          5,
+          221,
+          109,
+          7
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChainId",
+        "description": "Returns the chain id of the currently selected fork.",
+        "declaration": "function forkChainId() external view returns (uint256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChainId()",
+        "selector": "0xe6b661e2",
+        "selectorBytes": [
+          230,
+          182,
+          97,
+          226
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChainIds",
+        "description": "Returns an array with the ids of all the configured fork chains.\nNote that the configured fork chains are subsections of the `[fork]` section of 'foundry.toml'.",
+        "declaration": "function forkChainIds() external view returns (uint256[] memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChainIds()",
+        "selector": "0x04dc8feb",
+        "selectorBytes": [
+          4,
+          220,
+          143,
+          235
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChainInt",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `int256`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkChainInt(uint256 chain, string memory key) external view returns (int256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChainInt(uint256,string)",
+        "selector": "0xc1ff595f",
+        "selectorBytes": [
+          193,
+          255,
+          89,
+          95
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChainRpcUrl",
+        "description": "Returns the rpc url of the corresponding chain id.\nBy default, the rpc url of each fork is derived from the `[rpc_endpoints]`, unless\nthe rpc config is specifically informed in the fork config for that specific chain.",
+        "declaration": "function forkChainRpcUrl(uint256 id) external view returns (string memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChainRpcUrl(uint256)",
+        "selector": "0xa2c51cca",
+        "selectorBytes": [
+          162,
+          197,
+          28,
+          202
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChainString",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `string`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkChainString(uint256 chain, string memory key) external view returns (string memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChainString(uint256,string)",
+        "selector": "0x24062881",
+        "selectorBytes": [
+          36,
+          6,
+          40,
+          129
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChainUint",
+        "description": "Gets the value for the key `key` from the fork config for chain `chain` and parses it as `uint256`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkChainUint(uint256 chain, string memory key) external view returns (uint256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChainUint(uint256,string)",
+        "selector": "0x2bfffa5c",
+        "selectorBytes": [
+          43,
+          255,
+          250,
+          92
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkChains",
+        "description": "Returns an array with the name of all the configured fork chains.\nNote that the configured fork chains are subsections of the `[fork]` section of 'foundry.toml'.",
+        "declaration": "function forkChains() external view returns (string[] memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkChains()",
+        "selector": "0x081f64cd",
+        "selectorBytes": [
+          8,
+          31,
+          100,
+          205
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkInt",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as `int256`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkInt(string memory key) external view returns (int256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkInt(string)",
+        "selector": "0x4b326af0",
+        "selectorBytes": [
+          75,
+          50,
+          106,
+          240
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkRpcUrl",
+        "description": "Returns the rpc url of the currently selected fork.\nBy default, the rpc url of each fork is derived from the `[rpc_endpoints]`, unless\nthe rpc config is specifically informed in the fork config for that specific chain.",
+        "declaration": "function forkRpcUrl() external view returns (string memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkRpcUrl()",
+        "selector": "0x66d48d21",
+        "selectorBytes": [
+          102,
+          212,
+          141,
+          33
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkString",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as `string`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkString(string memory key) external view returns (string memory);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkString(string)",
+        "selector": "0xd8525752",
+        "selectorBytes": [
+          216,
+          82,
+          87,
+          82
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "forkUint",
+        "description": "Gets the value for the key `key` from the currently active fork and parses it as `uint256`.\nReverts if the key was not found or the value could not be parsed.",
+        "declaration": "function forkUint(string memory key) external view returns (uint256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "forkUint(string)",
+        "selector": "0xbe0fe4a8",
+        "selectorBytes": [
+          190,
+          15,
+          228,
+          168
+        ]
+      },
+      "group": "forking",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "foundryVersionAtLeast",
+        "description": "Returns true if the current Foundry version is greater than or equal to the given version.\nThe given version string must be in the format `major.minor.patch`.\nThis is equivalent to `foundryVersionCmp(version) >= 0`.",
+        "declaration": "function foundryVersionAtLeast(string calldata version) external view returns (bool);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "foundryVersionAtLeast(string)",
+        "selector": "0x6248be1f",
+        "selectorBytes": [
+          98,
+          72,
+          190,
+          31
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "foundryVersionCmp",
+        "description": "Compares the current Foundry version with the given version string.\nThe given version string must be in the format `major.minor.patch`.\nReturns:\n-1 if current Foundry version is less than the given version\n0 if current Foundry version equals the given version\n1 if current Foundry version is greater than the given version\nThis result can then be used with a comparison operator against `0`.\nFor example, to check if the current Foundry version is greater than or equal to `1.0.0`:\n`if (foundryVersionCmp(\"1.0.0\") >= 0) { ... }`",
+        "declaration": "function foundryVersionCmp(string calldata version) external view returns (int256);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "foundryVersionCmp(string)",
+        "selector": "0xca7b0a09",
+        "selectorBytes": [
+          202,
+          123,
+          10,
+          9
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "fsMetadata",
         "description": "Given a path, query the file system to get information about a file, directory, etc.",
         "declaration": "function fsMetadata(string calldata path) external view returns (FsMetadata memory metadata);",
@@ -5669,6 +6501,46 @@
         ]
       },
       "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getChain_0",
+        "description": "Returns a Chain struct for specific alias",
+        "declaration": "function getChain(string calldata chainAlias) external view returns (Chain memory chain);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getChain(string)",
+        "selector": "0x4cc1c2bb",
+        "selectorBytes": [
+          76,
+          193,
+          194,
+          187
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "getChain_1",
+        "description": "Returns a Chain struct for specific chainId",
+        "declaration": "function getChain(uint256 chainId) external view returns (Chain memory chain);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getChain(uint256)",
+        "selector": "0xb6791ad4",
+        "selectorBytes": [
+          182,
+          121,
+          26,
+          212
+        ]
+      },
+      "group": "testing",
       "status": "stable",
       "safety": "safe"
     },
@@ -5914,6 +6786,26 @@
     },
     {
       "func": {
+        "id": "getRawBlockHeader",
+        "description": "Gets the RLP encoded block header for a given block number.\nReturns the block header in the same format as `cast block <block_number> --raw`.",
+        "declaration": "function getRawBlockHeader(uint256 blockNumber) external view returns (bytes memory rlpHeader);",
+        "visibility": "external",
+        "mutability": "view",
+        "signature": "getRawBlockHeader(uint256)",
+        "selector": "0x2c667606",
+        "selectorBytes": [
+          44,
+          102,
+          118,
+          6
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "getRecordedLogs",
         "description": "Gets all the recorded logs.",
         "declaration": "function getRecordedLogs() external returns (Log[] memory logs);",
@@ -6011,6 +6903,26 @@
       "group": "string",
       "status": "stable",
       "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "interceptInitcode",
+        "description": "Causes the next contract creation (via new) to fail and return its initcode in the returndata buffer.\nThis allows type-safe access to the initcode payload that would be used for contract creation.\nExample usage:\nvm.interceptInitcode();\nbytes memory initcode;\ntry new MyContract(param1, param2) { assert(false); }\ncatch (bytes memory interceptedInitcode) { initcode = interceptedInitcode; }",
+        "declaration": "function interceptInitcode() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "interceptInitcode()",
+        "selector": "0x838653c7",
+        "selectorBytes": [
+          131,
+          134,
+          83,
+          199
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "unsafe"
     },
     {
       "func": {
@@ -6528,6 +7440,26 @@
           248,
           77,
           33
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "noAccessList",
+        "description": "Utility cheatcode to remove any EIP-2930 access list set by `accessList` cheatcode.",
+        "declaration": "function noAccessList() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "noAccessList()",
+        "selector": "0x238ad778",
+        "selectorBytes": [
+          35,
+          138,
+          215,
+          120
         ]
       },
       "group": "evm",
@@ -7758,9 +8690,9 @@
       "func": {
         "id": "randomAddress",
         "description": "Returns a random `address`.",
-        "declaration": "function randomAddress() external returns (address);",
+        "declaration": "function randomAddress() external view returns (address);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "randomAddress()",
         "selector": "0xd5bee9f5",
         "selectorBytes": [
@@ -7898,9 +8830,9 @@
       "func": {
         "id": "randomUint_0",
         "description": "Returns a random uint256 value.",
-        "declaration": "function randomUint() external returns (uint256);",
+        "declaration": "function randomUint() external view returns (uint256);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "randomUint()",
         "selector": "0x25124730",
         "selectorBytes": [
@@ -7918,9 +8850,9 @@
       "func": {
         "id": "randomUint_1",
         "description": "Returns random uint256 value between the provided range (=min..=max).",
-        "declaration": "function randomUint(uint256 min, uint256 max) external returns (uint256);",
+        "declaration": "function randomUint(uint256 min, uint256 max) external view returns (uint256);",
         "visibility": "external",
-        "mutability": "",
+        "mutability": "view",
         "signature": "randomUint(uint256,uint256)",
         "selector": "0xd61b051b",
         "selectorBytes": [
@@ -8117,7 +9049,7 @@
     {
       "func": {
         "id": "record",
-        "description": "Records all storage reads and writes.",
+        "description": "Records all storage reads and writes. Use `accesses` to get the recorded data.\nSubsequent calls to `record` will clear the previous data.",
         "declaration": "function record() external;",
         "visibility": "external",
         "mutability": "",
@@ -9060,7 +9992,7 @@
     },
     {
       "func": {
-        "id": "setArbitraryStorage",
+        "id": "setArbitraryStorage_0",
         "description": "Utility cheatcode to set arbitrary storage for given target address.",
         "declaration": "function setArbitraryStorage(address target) external;",
         "visibility": "external",
@@ -9072,6 +10004,26 @@
           99,
           24,
           55
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "setArbitraryStorage_1",
+        "description": "Utility cheatcode to set arbitrary storage for given target address and overwrite\nany storage slots that have been previously set.",
+        "declaration": "function setArbitraryStorage(address target, bool overwrite) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "setArbitraryStorage(address,bool)",
+        "selector": "0xd3ec2a0b",
+        "selectorBytes": [
+          211,
+          236,
+          42,
+          11
         ]
       },
       "group": "utilities",
@@ -9160,7 +10112,47 @@
     },
     {
       "func": {
-        "id": "signAndAttachDelegation",
+        "id": "setSeed",
+        "description": "Set RNG seed.",
+        "declaration": "function setSeed(uint256 seed) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "setSeed(uint256)",
+        "selector": "0xc32a50f9",
+        "selectorBytes": [
+          195,
+          42,
+          80,
+          249
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "shuffle",
+        "description": "Randomly shuffles an array.",
+        "declaration": "function shuffle(uint256[] calldata array) external returns (uint256[] memory);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "shuffle(uint256[])",
+        "selector": "0x54f1469c",
+        "selectorBytes": [
+          84,
+          241,
+          70,
+          156
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signAndAttachDelegation_0",
         "description": "Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction",
         "declaration": "function signAndAttachDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);",
         "visibility": "external",
@@ -9172,6 +10164,46 @@
           250,
           114,
           136
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signAndAttachDelegation_1",
+        "description": "Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction for specific nonce",
+        "declaration": "function signAndAttachDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "signAndAttachDelegation(address,uint256,uint64)",
+        "selector": "0xcde3e5be",
+        "selectorBytes": [
+          205,
+          227,
+          229,
+          190
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signAndAttachDelegation_2",
+        "description": "Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction, with optional cross-chain validity.",
+        "declaration": "function signAndAttachDelegation(address implementation, uint256 privateKey, bool crossChain) external returns (SignedDelegation memory signedDelegation);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "signAndAttachDelegation(address,uint256,bool)",
+        "selector": "0xd936e146",
+        "selectorBytes": [
+          217,
+          54,
+          225,
+          70
         ]
       },
       "group": "scripting",
@@ -9260,7 +10292,7 @@
     },
     {
       "func": {
-        "id": "signDelegation",
+        "id": "signDelegation_0",
         "description": "Sign an EIP-7702 authorization for delegation",
         "declaration": "function signDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);",
         "visibility": "external",
@@ -9272,6 +10304,46 @@
           89,
           60,
           123
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signDelegation_1",
+        "description": "Sign an EIP-7702 authorization for delegation for specific nonce",
+        "declaration": "function signDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "signDelegation(address,uint256,uint64)",
+        "selector": "0xceba2ec3",
+        "selectorBytes": [
+          206,
+          186,
+          46,
+          195
+        ]
+      },
+      "group": "scripting",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "signDelegation_2",
+        "description": "Sign an EIP-7702 authorization for delegation, with optional cross-chain validity.",
+        "declaration": "function signDelegation(address implementation, uint256 privateKey, bool crossChain) external returns (SignedDelegation memory signedDelegation);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "signDelegation(address,uint256,bool)",
+        "selector": "0xcdd7563d",
+        "selectorBytes": [
+          205,
+          215,
+          86,
+          61
         ]
       },
       "group": "scripting",
@@ -9559,6 +10631,26 @@
       "group": "evm",
       "status": "stable",
       "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "sort",
+        "description": "Sorts an array in ascending order.",
+        "declaration": "function sort(uint256[] calldata array) external returns (uint256[] memory);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "sort(uint256[])",
+        "selector": "0x9ec8b026",
+        "selectorBytes": [
+          158,
+          200,
+          176,
+          38
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
     },
     {
       "func": {
@@ -9939,6 +11031,26 @@
       "group": "evm",
       "status": "stable",
       "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "stopRecord",
+        "description": "Stops recording storage reads and writes.",
+        "declaration": "function stopRecord() external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "stopRecord()",
+        "selector": "0x996be76d",
+        "selectorBytes": [
+          153,
+          107,
+          231,
+          109
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "safe"
     },
     {
       "func": {
@@ -10379,6 +11491,26 @@
       "group": "filesystem",
       "status": "stable",
       "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "warmSlot",
+        "description": "Utility cheatcode to mark specific storage slot as warm, simulating a prior read.",
+        "declaration": "function warmSlot(address target, bytes32 slot) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "warmSlot(address,bytes32)",
+        "selector": "0xb23184cf",
+        "selectorBytes": [
+          178,
+          49,
+          132,
+          207
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
     },
     {
       "func": {

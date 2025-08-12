@@ -5,31 +5,32 @@ use alloy_consensus::Account;
 use alloy_eips::eip2930::AccessListResult;
 use alloy_network::{AnyRpcBlock, AnyRpcTransaction, BlockResponse, TransactionResponse};
 use alloy_primitives::{
+    Address, B256, Bytes, StorageValue, U256,
     map::{FbHashMap, HashMap},
-    Address, Bytes, StorageValue, B256, U256,
 };
 use alloy_provider::{
-    ext::{DebugApi, TraceApi},
     Provider,
+    ext::{DebugApi, TraceApi},
 };
 use alloy_rpc_types::{
+    BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions, EIP1186AccountProofResponse,
+    FeeHistory, Filter, Log,
     request::TransactionRequest,
+    simulate::{SimulatePayload, SimulatedBlock},
     trace::{
         geth::{GethDebugTracingOptions, GethTrace},
         parity::LocalizedTransactionTrace as Trace,
     },
-    BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions, EIP1186AccountProofResponse,
-    FeeHistory, Filter, Log,
 };
 use alloy_serde::WithOtherFields;
 use alloy_transport::TransportError;
-use anvil_core::eth::transaction::{convert_to_anvil_receipt, ReceiptResponse};
+use anvil_core::eth::transaction::{ReceiptResponse, convert_to_anvil_receipt};
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
 use parking_lot::{
-    lock_api::{RwLockReadGuard, RwLockWriteGuard},
     RawRwLock, RwLock,
+    lock_api::{RwLockReadGuard, RwLockWriteGuard},
 };
-use revm::primitives::BlobExcessGasAndPrice;
+use revm::context_interface::block::BlobExcessGasAndPrice;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::RwLock as AsyncRwLock;
 
@@ -82,10 +83,8 @@ impl ClientFork {
         }
 
         let provider = self.provider();
-        let block = provider
-            .get_block(block_number, false.into())
-            .await?
-            .ok_or(BlockchainError::BlockNotFound)?;
+        let block =
+            provider.get_block(block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
         let block_hash = block.header.hash;
         let timestamp = block.header.timestamp;
         let base_fee = block.header.base_fee_per_gas;
@@ -194,19 +193,35 @@ impl ClientFork {
         block: Option<BlockNumber>,
     ) -> Result<Bytes, TransportError> {
         let block = block.unwrap_or(BlockNumber::Latest);
-        let res = self.provider().call(request).block(block.into()).await?;
+        let res = self.provider().call(request.clone()).block(block.into()).await?;
 
         Ok(res)
     }
 
-    /// Sends `eth_call`
+    /// Sends `eth_simulateV1`
+    pub async fn simulate_v1(
+        &self,
+        request: &SimulatePayload,
+        block: Option<BlockNumber>,
+    ) -> Result<Vec<SimulatedBlock<AnyRpcBlock>>, TransportError> {
+        let mut simulate_call = self.provider().simulate(request);
+        if let Some(n) = block {
+            simulate_call = simulate_call.number(n.as_number().unwrap());
+        }
+
+        let res = simulate_call.await?;
+
+        Ok(res)
+    }
+
+    /// Sends `eth_estimateGas`
     pub async fn estimate_gas(
         &self,
         request: &WithOtherFields<TransactionRequest>,
         block: Option<BlockNumber>,
     ) -> Result<u128, TransportError> {
         let block = block.unwrap_or_default();
-        let res = self.provider().estimate_gas(request).block(block.into()).await?;
+        let res = self.provider().estimate_gas(request.clone()).block(block.into()).await?;
 
         Ok(res as u128)
     }
@@ -382,6 +397,14 @@ impl ClientFork {
         Ok(trace)
     }
 
+    pub async fn debug_code_by_hash(
+        &self,
+        code_hash: B256,
+        block_id: Option<BlockId>,
+    ) -> Result<Option<Bytes>, TransportError> {
+        self.provider().debug_code_by_hash(code_hash, block_id).await
+    }
+
     pub async fn trace_block(&self, number: u64) -> Result<Vec<Trace>, TransportError> {
         if let Some(traces) = self.storage_read().block_traces.get(&number).cloned() {
             return Ok(traces);
@@ -514,7 +537,7 @@ impl ClientFork {
         &self,
         block_id: impl Into<BlockId>,
     ) -> Result<Option<AnyRpcBlock>, TransportError> {
-        if let Some(block) = self.provider().get_block(block_id.into(), true.into()).await? {
+        if let Some(block) = self.provider().get_block(block_id.into()).full().await? {
             let hash = block.header.hash;
             let block_number = block.header.number;
             let mut storage = self.storage_write();

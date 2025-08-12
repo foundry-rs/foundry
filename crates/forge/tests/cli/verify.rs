@@ -73,7 +73,7 @@ contract Verify is Unique {
     .unwrap();
 }
 
-#[allow(clippy::disallowed_macros)]
+#[expect(clippy::disallowed_macros)]
 fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Result<()> {
     // Give Etherscan some time to verify the contract.
     Retry::new(retries, Duration::from_secs(30)).run(|| -> eyre::Result<()> {
@@ -81,7 +81,7 @@ fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Resul
         let out = String::from_utf8_lossy(&output.stdout);
         println!("{out}");
         if out.contains("Contract successfully verified") {
-            return Ok(())
+            return Ok(());
         }
         eyre::bail!(
             "Failed to get verification, stdout: {}, stderr: {}",
@@ -158,7 +158,7 @@ fn deploy_contract(
         .unwrap_or_else(|| panic!("Failed to parse deployer {output}"))
 }
 
-#[allow(clippy::disallowed_macros)]
+#[expect(clippy::disallowed_macros)]
 fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand) {
     // only execute if keys present
     if let Some(info) = info {
@@ -189,7 +189,7 @@ fn verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: Te
     }
 }
 
-#[allow(clippy::disallowed_macros)]
+#[expect(clippy::disallowed_macros)]
 fn guess_constructor_args(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand) {
     // only execute if keys present
     if let Some(info) = info {
@@ -230,7 +230,7 @@ fn guess_constructor_args(info: Option<EnvExternalities>, prj: TestProject, mut 
     }
 }
 
-#[allow(clippy::disallowed_macros)]
+#[expect(clippy::disallowed_macros)]
 /// Executes create --verify on the given chain
 fn create_verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut cmd: TestCommand) {
     // only execute if keys present
@@ -263,16 +263,49 @@ forgetest!(can_verify_random_contract_optimism_kovan, |prj, cmd| {
 
 // tests `create && contract-verify && verify-check` on Sepolia testnet if correct env vars are set
 forgetest!(can_verify_random_contract_sepolia, |prj, cmd| {
-    verify_on_chain(EnvExternalities::sepolia(), prj, cmd);
+    // Implicitly tests `--verifier etherscan` on Sepolia testnet
+    verify_on_chain(EnvExternalities::sepolia_etherscan(), prj, cmd);
 });
 
 // tests `create --verify on Sepolia testnet if correct env vars are set
 // SEPOLIA_RPC_URL=https://rpc.sepolia.org
 // TEST_PRIVATE_KEY=0x...
-// ETHERSCAN_API_KEY=
-forgetest!(can_create_verify_random_contract_sepolia, |prj, cmd| {
-    create_verify_on_chain(EnvExternalities::sepolia(), prj, cmd);
+// ETHERSCAN_API_KEY=<API_KEY>
+forgetest!(can_create_verify_random_contract_sepolia_etherscan, |prj, cmd| {
+    // Implicitly tests `--verifier etherscan` on Sepolia testnet
+    create_verify_on_chain(EnvExternalities::sepolia_etherscan(), prj, cmd);
 });
+
+// tests `create --verify --verifier sourcify` on Sepolia testnet
+forgetest!(can_create_verify_random_contract_sepolia_sourcify, |prj, cmd| {
+    verify_on_chain(EnvExternalities::sepolia_sourcify(), prj, cmd);
+});
+
+// tests `create --verify --verifier sourcify` with etherscan api key set
+// <https://github.com/foundry-rs/foundry/issues/10000>
+forgetest!(
+    can_create_verify_random_contract_sepolia_sourcify_with_etherscan_api_key_set,
+    |prj, cmd| {
+        verify_on_chain(EnvExternalities::sepolia_sourcify_with_etherscan_api_key_set(), prj, cmd);
+    }
+);
+
+// tests `create --verify --verifier blockscout` on Sepolia testnet
+forgetest!(can_create_verify_random_contract_sepolia_blockscout, |prj, cmd| {
+    verify_on_chain(EnvExternalities::sepolia_blockscout(), prj, cmd);
+});
+
+// tests `create --verify --verifier blockscout` on Sepolia testnet with etherscan api key set
+forgetest!(
+    can_create_verify_random_contract_sepolia_blockscout_with_etherscan_api_key_set,
+    |prj, cmd| {
+        verify_on_chain(
+            EnvExternalities::sepolia_blockscout_with_etherscan_api_key_set(),
+            prj,
+            cmd,
+        );
+    }
+);
 
 // tests `create && contract-verify --guess-constructor-args && verify-check` on Goerli testnet if
 // correct env vars are set

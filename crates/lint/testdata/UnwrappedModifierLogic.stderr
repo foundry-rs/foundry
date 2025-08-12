@@ -1,0 +1,277 @@
+note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+  --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
+   |
+89 |     modifier multipleBeforePlaceholder() {
+   |              -------------------------
+   |
+   = note: wrap modifier logic to reduce code size
+           
+           - modifier multipleBeforePlaceholder() {
+           -     checkPublic(msg.sender); // These should become _multipleBeforePlaceholder()
+           -     checkPrivate(msg.sender);
+           -     checkInternal(msg.sender);
+           -     _;
+           - }
+           + modifier multipleBeforePlaceholder() {
+           +     _multipleBeforePlaceholder();
+           +     _;
+           + }
+           + 
+           + function _multipleBeforePlaceholder() internal {
+           +     checkPublic(msg.sender);
+           +     checkPrivate(msg.sender);
+           +     checkInternal(msg.sender);
+           + }
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+  --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
+   |
+97 |     modifier multipleAfterPlaceholder() {
+   |              ------------------------
+   |
+   = note: wrap modifier logic to reduce code size
+           
+           - modifier multipleAfterPlaceholder() {
+           -     _;
+           -     checkPublic(msg.sender); // These should become _multipleAfterPlaceholder()
+           -     checkPrivate(msg.sender);
+           -     checkInternal(msg.sender);
+           - }
+           + modifier multipleAfterPlaceholder() {
+           +     _;
+           +     _multipleAfterPlaceholder();
+           + }
+           + 
+           + function _multipleAfterPlaceholder() internal {
+           +     checkPublic(msg.sender);
+           +     checkPrivate(msg.sender);
+           +     checkInternal(msg.sender);
+           + }
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
+    |
+105 |     modifier multipleBeforeAfterPlaceholder(address sender) {
+    |              ------------------------------
+    |
+    = note: wrap modifier logic to reduce code size
+            
+            - modifier multipleBeforeAfterPlaceholder(address sender) {
+            -     checkPublic(sender); // These should become _multipleBeforeAfterPlaceholderBefore(sender)
+            -     checkPrivate(sender);
+            -     _;
+            -     checkInternal(sender); // These should become _multipleBeforeAfterPlaceholderAfter(sender)
+            -     checkPublic(sender);
+            - }
+            + modifier multipleBeforeAfterPlaceholder(address sender) {
+            +     _multipleBeforeAfterPlaceholderBefore(sender);
+            +     _;
+            +     _multipleBeforeAfterPlaceholderAfter(sender);
+            + }
+            + 
+            + function _multipleBeforeAfterPlaceholderBefore(address sender) internal {
+            +     checkPublic(sender);
+            +     checkPrivate(sender);
+            + }
+            + 
+            + function _multipleBeforeAfterPlaceholderAfter(address sender) internal {
+            +     checkInternal(sender);
+            +     checkPublic(sender);
+            + }
+            
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
+    |
+118 |     modifier onlyOwner() {
+    |              ---------
+    |
+    = note: wrap modifier logic to reduce code size
+            
+            - modifier onlyOwner() {
+            -     require(isOwner[msg.sender], "Not owner"); // _onlyOwner();
+            -     _;
+            - }
+            + modifier onlyOwner() {
+            +     _onlyOwner();
+            +     _;
+            + }
+            + 
+            + function _onlyOwner() internal {
+            +     require(isOwner[msg.sender], "Not owner");
+            + }
+            
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
+    |
+124 |     modifier onlyRole(bytes32 role) {
+    |              --------
+    |
+    = note: wrap modifier logic to reduce code size
+            
+            - modifier onlyRole(bytes32 role) {
+            -     if(!hasRole[msg.sender][role]) revert("Not authorized"); // _onlyRole(role);
+            -     _;
+            - }
+            + modifier onlyRole(bytes32 role) {
+            +     _onlyRole(role);
+            +     _;
+            + }
+            + 
+            + function _onlyRole(bytes32 role) internal {
+            +     if(!hasRole[msg.sender][role]) revert("Not authorized");
+            + }
+            
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
+    |
+130 |     modifier onlyRoleOrOpenRole(bytes32 role) {
+    |              ------------------
+    |
+    = note: wrap modifier logic to reduce code size
+            
+            - modifier onlyRoleOrOpenRole(bytes32 role) {
+            -     assert(hasRole[msg.sender][role] || hasRole[address(0)][role]); // _onlyRoleOrOpenRole(role);
+            -     _;
+            - }
+            + modifier onlyRoleOrOpenRole(bytes32 role) {
+            +     _onlyRoleOrOpenRole(role);
+            +     _;
+            + }
+            + 
+            + function _onlyRoleOrOpenRole(bytes32 role) internal {
+            +     assert(hasRole[msg.sender][role] || hasRole[address(0)][role]);
+            + }
+            
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
+    |
+136 |     modifier onlyRoleOrAdmin(bytes32 role, address admin) {
+    |              ---------------
+    |
+    = note: wrap modifier logic to reduce code size
+            
+            - modifier onlyRoleOrAdmin(bytes32 role, address admin) {
+            -     assert(hasRole[msg.sender][role] || msg.sender == admin); // _onlyRoleOrAdmin(role, admin);
+            -     _;
+            - }
+            + modifier onlyRoleOrAdmin(bytes32 role, address admin) {
+            +     _onlyRoleOrAdmin(role, admin);
+            +     _;
+            + }
+            + 
+            + function _onlyRoleOrAdmin(bytes32 role, address admin) internal {
+            +     assert(hasRole[msg.sender][role] || msg.sender == admin);
+            + }
+            
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
+    |
+146 |     modifier assign(address sender) {
+    |              ------
+    |
+    = note: wrap modifier logic to reduce code size
+            
+            - modifier assign(address sender) {
+            -     bool _isOwner = true;
+            -     isOwner[sender] = _isOwner;
+            -     _;
+            - }
+            + modifier assign(address sender) {
+            +     _assign(sender);
+            +     _;
+            + }
+            + 
+            + function _assign(address sender) internal {
+            +     bool _isOwner = true;
+            +     isOwner[sender] = _isOwner;
+            + }
+            
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
+    |
+153 |     modifier uncheckedBlock(address sender) {
+    |              --------------
+    |
+    = note: wrap modifier logic to reduce code size
+            
+            - modifier uncheckedBlock(address sender) {
+            -     unchecked {
+            -         sender;
+            -     }
+            -     _;
+            - }
+            + modifier uncheckedBlock(address sender) {
+            +     _uncheckedBlock(sender);
+            +     _;
+            + }
+            + 
+            + function _uncheckedBlock(address sender) internal {
+            +     unchecked {
+            +         sender;
+            +     }
+            + }
+            
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
+    |
+161 |     modifier emitEvent(address sender) {
+    |              ---------
+    |
+    = note: wrap modifier logic to reduce code size
+            
+            - modifier emitEvent(address sender) {
+            -     emit DidSomething(sender);
+            -     _;
+            - }
+            + modifier emitEvent(address sender) {
+            +     _emitEvent(sender);
+            +     _;
+            + }
+            + 
+            + function _emitEvent(address sender) internal {
+            +     emit DidSomething(sender);
+            + }
+            
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+
+note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size
+   --> ROOT/testdata/UnwrappedModifierLogic.sol:LL:CC
+    |
+171 |     modifier onlyOwnerContract(address sender) {
+    |              -----------------
+    |
+    = note: wrap modifier logic to reduce code size
+            
+            - modifier onlyOwnerContract(address sender) {
+            -     c.onlyOwner(sender);
+            -     _;
+            - }
+            + modifier onlyOwnerContract(address sender) {
+            +     _onlyOwnerContract(sender);
+            +     _;
+            + }
+            + 
+            + function _onlyOwnerContract(address sender) internal {
+            +     c.onlyOwner(sender);
+            + }
+            
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic
+

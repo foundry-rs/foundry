@@ -1,7 +1,7 @@
 use alloy_primitives::hex::ToHexExt;
 use revm_inspectors::tracing::{
-    types::{CallTraceNode, CallTraceStep, DecodedTraceStep, TraceMemberOrder},
     CallTraceArena,
+    types::{CallTraceNode, CallTraceStep, DecodedTraceStep, TraceMemberOrder},
 };
 
 /// Builds a folded stack trace from a call trace arena.
@@ -181,7 +181,7 @@ impl FoldedStackTraceBuilder {
     /// the children function calls.
     fn build_without_subtraction(&mut self) -> Vec<String> {
         let mut lines = Vec::new();
-        for TraceEntry { names, gas } in self.traces.iter() {
+        for TraceEntry { names, gas } in &self.traces {
             lines.push(format!("{} {}", names.join(";"), gas));
         }
         lines

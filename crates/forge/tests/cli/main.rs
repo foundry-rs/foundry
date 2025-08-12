@@ -16,10 +16,12 @@ mod create;
 mod debug;
 mod doc;
 mod eip712;
+mod failure_assertions;
 mod geiger;
 mod inline_config;
+mod install;
+mod lint;
 mod multi_script;
-mod odyssey;
 mod script;
 mod soldeer;
 mod svm;
@@ -29,3 +31,4 @@ mod verify_bytecode;
 mod version;
 
 mod ext_integration;
+mod test_optimizer;

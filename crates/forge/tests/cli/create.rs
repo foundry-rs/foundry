@@ -4,10 +4,9 @@ use crate::{
     constants::*,
     utils::{self, EnvExternalities},
 };
-use alloy_primitives::{hex, Address};
-use anvil::{spawn, NodeConfig};
-use foundry_compilers::artifacts::{remappings::Remapping, BytecodeHash};
-use foundry_config::Config;
+use alloy_primitives::{Address, hex};
+use anvil::{NodeConfig, spawn};
+use foundry_compilers::artifacts::{BytecodeHash, remappings::Remapping};
 use foundry_test_utils::{
     forgetest, forgetest_async,
     snapbox::IntoData,
@@ -26,12 +25,10 @@ use std::str::FromStr;
 /// returns the contract argument for the create command
 fn setup_with_simple_remapping(prj: &TestProject) -> String {
     // explicitly set remapping and libraries
-    let config = Config {
-        remappings: vec![Remapping::from_str("remapping/=lib/remapping/").unwrap().into()],
-        libraries: vec![format!("remapping/MyLib.sol:MyLib:{:?}", Address::random())],
-        ..Default::default()
-    };
-    prj.write_config(config);
+    prj.update_config(|config| {
+        config.remappings = vec![Remapping::from_str("remapping/=lib/remapping/").unwrap().into()];
+        config.libraries = vec![format!("remapping/MyLib.sol:MyLib:{:?}", Address::random())];
+    });
 
     prj.add_source(
         "LinkTest",
@@ -62,14 +59,12 @@ library MyLib {
 }
 
 fn setup_oracle(prj: &TestProject) -> String {
-    let config = Config {
-        libraries: vec![format!(
+    prj.update_config(|c| {
+        c.libraries = vec![format!(
             "./src/libraries/ChainlinkTWAP.sol:ChainlinkTWAP:{:?}",
             Address::random()
-        )],
-        ..Default::default()
-    };
-    prj.write_config(config);
+        )];
+    });
 
     prj.add_source(
         "Contract",
@@ -144,8 +139,7 @@ forgetest_async!(can_create_template_contract, |prj, cmd| {
     let pk = hex::encode(wallet.credential().to_bytes());
 
     // explicitly byte code hash for consistent checks
-    let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|c| c.bytecode_hash = BytecodeHash::None);
 
     // Dry-run without the `--broadcast` flag
     cmd.forge_fuse().args([
@@ -296,8 +290,7 @@ forgetest_async!(can_create_using_unlocked, |prj, cmd| {
     let dev = handle.dev_accounts().next().unwrap();
 
     // explicitly byte code hash for consistent checks
-    let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|c| c.bytecode_hash = BytecodeHash::None);
 
     cmd.forge_fuse().args([
         "create",
@@ -339,8 +332,7 @@ forgetest_async!(can_create_with_constructor_args, |prj, cmd| {
     let pk = hex::encode(wallet.credential().to_bytes());
 
     // explicitly byte code hash for consistent checks
-    let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|c| c.bytecode_hash = BytecodeHash::None);
 
     prj.add_source(
         "ConstructorContract",
@@ -428,8 +420,7 @@ forgetest_async!(can_create_and_call, |prj, cmd| {
     let pk = hex::encode(wallet.credential().to_bytes());
 
     // explicitly byte code hash for consistent checks
-    let config = Config { bytecode_hash: BytecodeHash::None, ..Default::default() };
-    prj.write_config(config);
+    prj.update_config(|c| c.bytecode_hash = BytecodeHash::None);
 
     prj.add_source(
         "UniswapV2Swap",
@@ -469,6 +460,45 @@ Warning (2018): Function state mutability can be restricted to pure
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
 [TX_HASH]
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10156>
+forgetest_async!(should_err_if_no_bytecode, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+
+    prj.add_source(
+        "AbstractCounter.sol",
+        r#"
+abstract contract AbstractCounter {
+    uint256 public number;
+
+    function setNumberV1(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function incrementV1() public {
+        number++;
+    }
+}
+    "#,
+    )
+    .unwrap();
+
+    cmd.args([
+        "create",
+        "./src/AbstractCounter.sol:AbstractCounter",
+        "--rpc-url",
+        rpc.as_str(),
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--broadcast",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: no bytecode found in bin object for AbstractCounter
 
 "#]]);
 });

@@ -6,7 +6,6 @@ use super::*;
 use crate::Vm::ForgeContext;
 use alloy_sol_types::sol;
 use foundry_macros::Cheatcode;
-use std::fmt;
 
 sol! {
 // Cheatcodes are marked as view/pure/none using the following rules:
@@ -207,6 +206,18 @@ interface Vm {
         uint256 chainId;
     }
 
+    /// Information about a blockchain.
+    struct Chain {
+        /// The chain name.
+        string name;
+        /// The chain's Chain ID.
+        uint256 chainId;
+        /// The chain's alias. (i.e. what gets specified in `foundry.toml`).
+        string chainAlias;
+        /// A default RPC endpoint for this chain.
+        string rpcUrl;
+    }
+
     /// The storage accessed during an `AccountAccess`.
     struct StorageAccess {
         /// The account whose storage was accessed.
@@ -221,6 +232,14 @@ interface Vm {
         bytes32 newValue;
         /// If the access was reverted.
         bool reverted;
+    }
+
+    /// An EIP-2930 access list item.
+    struct AccessListItem {
+        /// The address to be added in access list.
+        address target;
+        /// The storage keys to be added in access list.
+        bytes32[] storageKeys;
     }
 
     /// The result of a `stopAndReturnStateDiff` call.
@@ -259,6 +278,10 @@ interface Vm {
         StorageAccess[] storageAccesses;
         /// Call depth traversed during the recording of state differences
         uint64 depth;
+        /// The previous nonce of the accessed account.
+        uint64 oldNonce;
+        /// The new nonce of the accessed account.
+        uint64 newNonce;
     }
 
     /// The result of the `stopDebugTraceRecording` call
@@ -379,9 +402,14 @@ interface Vm {
 
     // -------- Record Storage --------
 
-    /// Records all storage reads and writes.
+    /// Records all storage reads and writes. Use `accesses` to get the recorded data.
+    /// Subsequent calls to `record` will clear the previous data.
     #[cheatcode(group = Evm, safety = Safe)]
     function record() external;
+
+    /// Stops recording storage reads and writes.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function stopRecord() external;
 
     /// Gets all accessed reads and write slot from a `vm.record` session, for a given address.
     #[cheatcode(group = Evm, safety = Safe)]
@@ -498,6 +526,11 @@ interface Vm {
     #[cheatcode(group = Evm, safety = Safe)]
     function getBlockTimestamp() external view returns (uint256 timestamp);
 
+    /// Gets the RLP encoded block header for a given block number.
+    /// Returns the block header in the same format as `cast block <block_number> --raw`.
+    #[cheatcode(group = Evm, safety = Safe)]
+    function getRawBlockHeader(uint256 blockNumber) external view returns (bytes memory rlpHeader);
+
     /// Sets `block.blobbasefee`
     #[cheatcode(group = Evm, safety = Unsafe)]
     function blobBaseFee(uint256 newBlobBaseFee) external;
@@ -541,8 +574,24 @@ interface Vm {
     function store(address target, bytes32 slot, bytes32 value) external;
 
     /// Marks the slots of an account and the account address as cold.
-    #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
+    #[cheatcode(group = Evm, safety = Unsafe)]
     function cool(address target) external;
+
+    /// Utility cheatcode to set an EIP-2930 access list for all subsequent transactions.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function accessList(AccessListItem[] calldata access) external;
+
+    /// Utility cheatcode to remove any EIP-2930 access list set by `accessList` cheatcode.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function noAccessList() external;
+
+    /// Utility cheatcode to mark specific storage slot as warm, simulating a prior read.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function warmSlot(address target, bytes32 slot) external;
+
+    /// Utility cheatcode to mark specific storage slot as cold, simulating no prior read.
+    #[cheatcode(group = Evm, safety = Unsafe)]
+    function coolSlot(address target, bytes32 slot) external;
 
     // -------- Call Manipulation --------
     // --- Mocks ---
@@ -943,6 +992,14 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Safe)]
     function rpcUrlStructs() external view returns (Rpc[] memory urls);
 
+    /// Returns a Chain struct for specific alias
+    #[cheatcode(group = Testing, safety = Safe)]
+    function getChain(string calldata chainAlias) external view returns (Chain memory chain);
+
+    /// Returns a Chain struct for specific chainId
+    #[cheatcode(group = Testing, safety = Safe)]
+    function getChain(uint256 chainId) external view returns (Chain memory chain);
+
     /// Suspends execution of the main thread for `duration` milliseconds.
     #[cheatcode(group = Testing, safety = Safe)]
     function sleep(uint256 duration) external;
@@ -1039,6 +1096,14 @@ interface Vm {
     /// Same as the previous method, but also checks supplied address against emitting contract.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectEmitAnonymous(address emitter) external;
+
+    /// Expects the deployment of the specified bytecode by the specified address using the CREATE opcode
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectCreate(bytes calldata bytecode, address deployer) external;
+
+    /// Expects the deployment of the specified bytecode by the specified address using the CREATE2 opcode
+    #[cheatcode(group = Testing, safety = Unsafe)]
+    function expectCreate2(bytes calldata bytecode, address deployer) external;
 
     /// Expects an error on next call with any revert data.
     #[cheatcode(group = Testing, safety = Unsafe)]
@@ -1677,6 +1742,27 @@ interface Vm {
         string calldata error
     ) external pure;
 
+    /// Returns true if the current Foundry version is greater than or equal to the given version.
+    /// The given version string must be in the format `major.minor.patch`.
+    ///
+    /// This is equivalent to `foundryVersionCmp(version) >= 0`.
+    #[cheatcode(group = Testing, safety = Safe)]
+    function foundryVersionAtLeast(string calldata version) external view returns (bool);
+
+    /// Compares the current Foundry version with the given version string.
+    /// The given version string must be in the format `major.minor.patch`.
+    ///
+    /// Returns:
+    /// -1 if current Foundry version is less than the given version
+    /// 0 if current Foundry version equals the given version
+    /// 1 if current Foundry version is greater than the given version
+    ///
+    /// This result can then be used with a comparison operator against `0`.
+    /// For example, to check if the current Foundry version is greater than or equal to `1.0.0`:
+    /// `if (foundryVersionCmp("1.0.0") >= 0) { ... }`
+    #[cheatcode(group = Testing, safety = Safe)]
+    function foundryVersionCmp(string calldata version) external view returns (int256);
+
     // ======== OS and Filesystem ========
 
     // -------- Metadata --------
@@ -1819,6 +1905,46 @@ interface Vm {
     /// Additionally accepts abi-encoded constructor arguments.
     #[cheatcode(group = Filesystem)]
     function deployCode(string calldata artifactPath, bytes calldata constructorArgs) external returns (address deployedAddress);
+
+    /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    ///
+    /// Additionally accepts `msg.value`.
+    #[cheatcode(group = Filesystem)]
+    function deployCode(string calldata artifactPath, uint256 value) external returns (address deployedAddress);
+
+    /// Deploys a contract from an artifact file. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    ///
+    /// Additionally accepts abi-encoded constructor arguments and `msg.value`.
+    #[cheatcode(group = Filesystem)]
+    function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value) external returns (address deployedAddress);
+
+    /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    #[cheatcode(group = Filesystem)]
+    function deployCode(string calldata artifactPath, bytes32 salt) external returns (address deployedAddress);
+
+    /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    ///
+    /// Additionally accepts abi-encoded constructor arguments.
+    #[cheatcode(group = Filesystem)]
+    function deployCode(string calldata artifactPath, bytes calldata constructorArgs, bytes32 salt) external returns (address deployedAddress);
+
+    /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    ///
+    /// Additionally accepts `msg.value`.
+    #[cheatcode(group = Filesystem)]
+    function deployCode(string calldata artifactPath, uint256 value, bytes32 salt) external returns (address deployedAddress);
+
+    /// Deploys a contract from an artifact file, using the CREATE2 salt. Takes in the relative path to the json file or the path to the
+    /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
+    ///
+    /// Additionally accepts abi-encoded constructor arguments and `msg.value`.
+    #[cheatcode(group = Filesystem)]
+    function deployCode(string calldata artifactPath, bytes calldata constructorArgs, uint256 value, bytes32 salt) external returns (address deployedAddress);
 
     /// Gets the deployed bytecode from an artifact file. Takes in the relative path to the json file or the path to the
     /// artifact in the form of <path>:<contract>:<version> where <contract> and <version> parts are optional.
@@ -2053,8 +2179,113 @@ interface Vm {
     #[cheatcode(group = Environment)]
     function isContext(ForgeContext context) external view returns (bool result);
 
-    // ======== Scripts ========
+    // ======== Forks ========
 
+    /// Returns an array with the name of all the configured fork chains.
+    ///
+    /// Note that the configured fork chains are subsections of the `[fork]` section of 'foundry.toml'.
+    #[cheatcode(group = Forking)]
+    function forkChains() external view returns (string[] memory);
+
+    /// Returns an array with the ids of all the configured fork chains.
+    ///
+    /// Note that the configured fork chains are subsections of the `[fork]` section of 'foundry.toml'.
+    #[cheatcode(group = Forking)]
+    function forkChainIds() external view returns (uint256[] memory);
+
+    /// Returns the chain name of the currently selected fork.
+    #[cheatcode(group = Forking)]
+    function forkChain() external view returns (string memory);
+
+    /// Returns the chain id of the currently selected fork.
+    #[cheatcode(group = Forking)]
+    function forkChainId() external view returns (uint256);
+
+    /// Returns the rpc url of the currently selected fork.
+    ///
+    /// By default, the rpc url of each fork is derived from the `[rpc_endpoints]`, unless
+    /// the rpc config is specifically informed in the fork config for that specific chain.
+    #[cheatcode(group = Forking)]
+    function forkRpcUrl() external view returns (string memory);
+
+    /// Returns the rpc url of the corresponding chain id.
+    ///
+    /// By default, the rpc url of each fork is derived from the `[rpc_endpoints]`, unless
+    /// the rpc config is specifically informed in the fork config for that specific chain.
+    #[cheatcode(group = Forking)]
+    function forkChainRpcUrl(uint256 id) external view returns (string memory);
+
+    /// Gets the value for the key `key` from the currently active fork and parses it as `bool`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkBool(string memory key) external view returns (bool);
+
+    /// Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bool`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkChainBool(uint256 chain, string memory key) external view returns (bool);
+
+    /// Gets the value for the key `key` from the currently active fork and parses it as `int256`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkInt(string memory key) external view returns (int256);
+
+    /// Gets the value for the key `key` from the fork config for chain `chain` and parses it as `int256`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkChainInt(uint256 chain, string memory key) external view returns (int256);
+
+    /// Gets the value for the key `key` from the currently active fork and parses it as `uint256`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkUint(string memory key) external view returns (uint256);
+
+    /// Gets the value for the key `key` from the fork config for chain `chain` and parses it as `uint256`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkChainUint(uint256 chain, string memory key) external view returns (uint256);
+
+    /// Gets the value for the key `key` from the currently active fork and parses it as `address`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkAddress(string memory key) external view returns (address);
+
+    /// Gets the value for the key `key` from the fork config for chain `chain` and parses it as `address`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkChainAddress(uint256 chain, string memory key) external view returns (address);
+
+    /// Gets the value for the key `key` from the currently active fork and parses it as `bytes32`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkBytes32(string memory key) external view returns (bytes32);
+
+    /// Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bytes32`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkChainBytes32(uint256 chain, string memory key) external view returns (bytes32);
+
+    /// Gets the value for the key `key` from the currently active fork and parses it as `string`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkString(string memory key) external view returns (string memory);
+
+    /// Gets the value for the key `key` from the fork config for chain `chain` and parses it as `string`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkChainString(uint256 chain, string memory key) external view returns (string memory);
+
+    /// Gets the value for the key `key` from the currently active fork and parses it as `bytes`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkBytes(string memory key) external view returns (bytes memory);
+
+    /// Gets the value for the key `key` from the fork config for chain `chain` and parses it as `bytes`.
+    /// Reverts if the key was not found or the value could not be parsed.
+    #[cheatcode(group = Forking)]
+    function forkChainBytes(uint256 chain, string memory key) external view returns (bytes memory);
+
+    // ======== Scripts ========
     // -------- Broadcasting Transactions --------
 
     /// Has the next call (at this call depth only) create transactions that can later be signed and sent onchain.
@@ -2107,13 +2338,37 @@ interface Vm {
     #[cheatcode(group = Scripting)]
     function signDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);
 
+    /// Sign an EIP-7702 authorization for delegation for specific nonce
+    #[cheatcode(group = Scripting)]
+    function signDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);
+
+    /// Sign an EIP-7702 authorization for delegation, with optional cross-chain validity.
+    #[cheatcode(group = Scripting)]
+    function signDelegation(address implementation, uint256 privateKey, bool crossChain) external returns (SignedDelegation memory signedDelegation);
+
     /// Designate the next call as an EIP-7702 transaction
     #[cheatcode(group = Scripting)]
     function attachDelegation(SignedDelegation calldata signedDelegation) external;
 
+    /// Designate the next call as an EIP-7702 transaction, with optional cross-chain validity.
+    #[cheatcode(group = Scripting)]
+    function attachDelegation(SignedDelegation calldata signedDelegation, bool crossChain) external;
+
     /// Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction
     #[cheatcode(group = Scripting)]
     function signAndAttachDelegation(address implementation, uint256 privateKey) external returns (SignedDelegation memory signedDelegation);
+
+    /// Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction for specific nonce
+    #[cheatcode(group = Scripting)]
+    function signAndAttachDelegation(address implementation, uint256 privateKey, uint64 nonce) external returns (SignedDelegation memory signedDelegation);
+
+    /// Sign an EIP-7702 authorization and designate the next call as an EIP-7702 transaction, with optional cross-chain validity.
+    #[cheatcode(group = Scripting)]
+    function signAndAttachDelegation(address implementation, uint256 privateKey, bool crossChain) external returns (SignedDelegation memory signedDelegation);
+
+    /// Attach an EIP-4844 blob to the next call
+    #[cheatcode(group = Scripting)]
+    function attachBlob(bytes calldata blob) external;
 
     /// Returns addresses of available unlocked wallets in the script environment.
     #[cheatcode(group = Scripting)]
@@ -2582,25 +2837,25 @@ interface Vm {
     #[cheatcode(group = Crypto)]
     function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);
 
-    /// Derive a private key from a provided mnenomic string (or mnenomic file path)
+    /// Derive a private key from a provided mnemonic string (or mnemonic file path)
     /// at the derivation path `m/44'/60'/0'/0/{index}`.
     #[cheatcode(group = Crypto)]
     function deriveKey(string calldata mnemonic, uint32 index) external pure returns (uint256 privateKey);
-    /// Derive a private key from a provided mnenomic string (or mnenomic file path)
+    /// Derive a private key from a provided mnemonic string (or mnemonic file path)
     /// at `{derivationPath}{index}`.
     #[cheatcode(group = Crypto)]
     function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index)
         external
         pure
         returns (uint256 privateKey);
-    /// Derive a private key from a provided mnenomic string (or mnenomic file path) in the specified language
+    /// Derive a private key from a provided mnemonic string (or mnemonic file path) in the specified language
     /// at the derivation path `m/44'/60'/0'/0/{index}`.
     #[cheatcode(group = Crypto)]
     function deriveKey(string calldata mnemonic, uint32 index, string calldata language)
         external
         pure
         returns (uint256 privateKey);
-    /// Derive a private key from a provided mnenomic string (or mnenomic file path) in the specified language
+    /// Derive a private key from a provided mnemonic string (or mnemonic file path) in the specified language
     /// at `{derivationPath}{index}`.
     #[cheatcode(group = Crypto)]
     function deriveKey(string calldata mnemonic, string calldata derivationPath, uint32 index, string calldata language)
@@ -2670,11 +2925,11 @@ interface Vm {
 
     /// Returns a random uint256 value.
     #[cheatcode(group = Utilities)]
-    function randomUint() external returns (uint256);
+    function randomUint() external view returns (uint256);
 
     /// Returns random uint256 value between the provided range (=min..=max).
     #[cheatcode(group = Utilities)]
-    function randomUint(uint256 min, uint256 max) external returns (uint256);
+    function randomUint(uint256 min, uint256 max) external view returns (uint256);
 
     /// Returns a random `uint256` value of given bits.
     #[cheatcode(group = Utilities)]
@@ -2682,7 +2937,7 @@ interface Vm {
 
     /// Returns a random `address`.
     #[cheatcode(group = Utilities)]
-    function randomAddress() external returns (address);
+    function randomAddress() external view returns (address);
 
     /// Returns a random `int256` value.
     #[cheatcode(group = Utilities)]
@@ -2724,6 +2979,82 @@ interface Vm {
     /// Utility cheatcode to set arbitrary storage for given target address.
     #[cheatcode(group = Utilities)]
     function setArbitraryStorage(address target) external;
+
+    /// Utility cheatcode to set arbitrary storage for given target address and overwrite
+    /// any storage slots that have been previously set.
+    #[cheatcode(group = Utilities)]
+    function setArbitraryStorage(address target, bool overwrite) external;
+
+    /// Sorts an array in ascending order.
+    #[cheatcode(group = Utilities)]
+    function sort(uint256[] calldata array) external returns (uint256[] memory);
+
+    /// Randomly shuffles an array.
+    #[cheatcode(group = Utilities)]
+    function shuffle(uint256[] calldata array) external returns (uint256[] memory);
+
+    /// Set RNG seed.
+    #[cheatcode(group = Utilities)]
+    function setSeed(uint256 seed) external;
+
+    /// Causes the next contract creation (via new) to fail and return its initcode in the returndata buffer.
+    /// This allows type-safe access to the initcode payload that would be used for contract creation.
+    /// Example usage:
+    /// vm.interceptInitcode();
+    /// bytes memory initcode;
+    /// try new MyContract(param1, param2) { assert(false); }
+    /// catch (bytes memory interceptedInitcode) { initcode = interceptedInitcode; }
+    #[cheatcode(group = Utilities, safety = Unsafe)]
+    function interceptInitcode() external;
+
+    /// Generates the hash of the canonical EIP-712 type representation.
+    ///
+    /// Supports 2 different inputs:
+    ///  1. Name of the type (i.e. "Transaction"):
+    ///     * requires previous binding generation with `forge bind-json`.
+    ///     * bindings will be retrieved from the path configured in `foundry.toml`.
+    ///
+    ///  2. String representation of the type (i.e. "Foo(Bar bar) Bar(uint256 baz)").
+    ///     * Note: the cheatcode will output the canonical type even if the input is malformated
+    ///             with the wrong order of elements or with extra whitespaces.
+    #[cheatcode(group = Utilities)]
+    function eip712HashType(string calldata typeNameOrDefinition) external pure returns (bytes32 typeHash);
+
+    /// Generates the hash of the canonical EIP-712 type representation.
+    /// Requires previous binding generation with `forge bind-json`.
+    ///
+    /// Params:
+    ///  * `bindingsPath`: path where the output of `forge bind-json` is stored.
+    ///  * `typeName`: Name of the type (i.e. "Transaction").
+    #[cheatcode(group = Utilities)]
+    function eip712HashType(string calldata bindingsPath, string calldata typeName) external pure returns (bytes32 typeHash);
+
+    /// Generates the struct hash of the canonical EIP-712 type representation and its abi-encoded data.
+    ///
+    /// Supports 2 different inputs:
+    ///  1. Name of the type (i.e. "PermitSingle"):
+    ///     * requires previous binding generation with `forge bind-json`.
+    ///     * bindings will be retrieved from the path configured in `foundry.toml`.
+    ///
+    ///  2. String representation of the type (i.e. "Foo(Bar bar) Bar(uint256 baz)").
+    ///     * Note: the cheatcode will use the canonical type even if the input is malformated
+    ///             with the wrong order of elements or with extra whitespaces.
+    #[cheatcode(group = Utilities)]
+    function eip712HashStruct(string calldata typeNameOrDefinition, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);
+
+    /// Generates the struct hash of the canonical EIP-712 type representation and its abi-encoded data.
+    /// Requires previous binding generation with `forge bind-json`.
+    ///
+    /// Params:
+    ///  * `bindingsPath`: path where the output of `forge bind-json` is stored.
+    ///  * `typeName`: Name of the type (i.e. "PermitSingle").
+    ///  * `abiEncodedData`: ABI-encoded data for the struct that is being hashed.
+    #[cheatcode(group = Utilities)]
+    function eip712HashStruct(string calldata bindingsPath, string calldata typeName, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);
+
+    /// Generates a ready-to-sign digest of human-readable typed data following the EIP-712 standard.
+    #[cheatcode(group = Utilities)]
+    function eip712HashTypedData(string calldata jsonData) external pure returns (bytes32 digest);
 }
 }
 
@@ -2738,13 +3069,13 @@ impl PartialEq for ForgeContext {
             (_, Self::ScriptGroup) => {
                 matches!(self, Self::ScriptDryRun | Self::ScriptBroadcast | Self::ScriptResume)
             }
-            (Self::Test, Self::Test) |
-            (Self::Snapshot, Self::Snapshot) |
-            (Self::Coverage, Self::Coverage) |
-            (Self::ScriptDryRun, Self::ScriptDryRun) |
-            (Self::ScriptBroadcast, Self::ScriptBroadcast) |
-            (Self::ScriptResume, Self::ScriptResume) |
-            (Self::Unknown, Self::Unknown) => true,
+            (Self::Test, Self::Test)
+            | (Self::Snapshot, Self::Snapshot)
+            | (Self::Coverage, Self::Coverage)
+            | (Self::ScriptDryRun, Self::ScriptDryRun)
+            | (Self::ScriptBroadcast, Self::ScriptBroadcast)
+            | (Self::ScriptResume, Self::ScriptResume)
+            | (Self::Unknown, Self::Unknown) => true,
             _ => false,
         }
     }

@@ -149,7 +149,7 @@ pub fn format_token_raw(value: &DynSolValue) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{address, U256};
+    use alloy_primitives::{U256, address};
 
     #[test]
     fn parse_hex_uint() {
@@ -169,7 +169,7 @@ mod tests {
         // copied from testcases in https://github.com/ethereum/EIPs/blob/master/EIPS/eip-55.md
         assert_eq!(
             format_token(&DynSolValue::Address(address!(
-                "5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"
+                "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"
             ))),
             "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
         );
@@ -177,7 +177,7 @@ mod tests {
         // copied from testcases in https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1191.md
         assert_ne!(
             format_token(&DynSolValue::Address(address!(
-                "Fb6916095cA1Df60bb79ce92cE3EA74c37c5d359"
+                "0xFb6916095cA1Df60bb79ce92cE3EA74c37c5d359"
             ))),
             "0xFb6916095cA1Df60bb79ce92cE3EA74c37c5d359"
         );
