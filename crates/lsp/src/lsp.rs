@@ -1,11 +1,15 @@
-use crate::runner::{ForgeRunner, Runner};
+use crate::{
+    analyzer::Analyzer,
+    runner::{ForgeRunner, Runner},
+};
 use foundry_common::version::SHORT_VERSION;
-use std::sync::Arc;
-use tower_lsp::{Client, LanguageServer, lsp_types::*};
+use std::sync::{Arc, Mutex};
+use tower_lsp::{Client, LanguageServer, jsonrpc, lsp_types::*};
 
 pub struct ForgeLsp {
     client: Client,
     compiler: Arc<dyn Runner>,
+    analyzer: Arc<Mutex<Analyzer>>,
 }
 
 #[allow(dead_code)]
@@ -17,43 +21,25 @@ struct TextDocumentItem<'a> {
 }
 
 impl ForgeLsp {
-    pub fn new(client: Client) -> Self {
+    pub fn new(client: Client, analyzer: Analyzer) -> Self {
         let compiler = Arc::new(ForgeRunner) as Arc<dyn Runner>;
-        Self { client, compiler }
+        let analyzer = Arc::new(Mutex::new(analyzer));
+        Self { client, compiler, analyzer }
     }
 
     async fn on_change<'a>(&self, params: TextDocumentItem<'a>) {
-        let uri = params.uri.clone();
-        let version = params.version;
-
-        let (lint_result, build_result) = tokio::join!(
-            self.compiler.get_lint_diagnostics(&uri),
-            self.compiler.get_build_diagnostics(&uri)
-        );
-
-        let mut all_diagnostics = vec![];
-
-        match lint_result {
-            Ok(mut lints) => {
-                self.client
-                    .log_message(
-                        MessageType::INFO,
-                        format!("Found {} linting diagnostics", lints.len()),
-                    )
-                    .await;
-                all_diagnostics.append(&mut lints);
-            }
-            Err(e) => {
-                self.client
-                    .log_message(
-                        MessageType::WARNING,
-                        format!("Forge linting diagnostics failed: {e}"),
-                    )
-                    .await;
-            }
+        let update_result = { self.analyzer.lock().unwrap().analyze() };
+        if let Err(e) = update_result {
+            self.client
+                .log_message(MessageType::ERROR, format!("Failed to update project: {e}"))
+                .await;
         }
 
-        match build_result {
+        let uri = params.uri.clone();
+        let version = params.version;
+        let mut all_diagnostics = vec![];
+
+        match self.compiler.get_build_diagnostics(&uri).await {
             Ok(mut builds) => {
                 self.client
                     .log_message(
@@ -72,6 +58,20 @@ impl ForgeLsp {
                     .await;
             }
         }
+        let lint_diagnostics = self.analyzer.lock().unwrap().get_lint_diagnostics(&uri);
+        if let Some(mut lints) = lint_diagnostics {
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    format!("Found {} linting diagnostics", lints.len()),
+                )
+                .await;
+            all_diagnostics.append(&mut lints);
+        } else {
+            self.client
+                .log_message(MessageType::WARNING, format!("Forge linting diagnostics failed"))
+                .await;
+        }
 
         self.client.publish_diagnostics(uri, all_diagnostics, version).await;
     }
@@ -79,10 +79,7 @@ impl ForgeLsp {
 
 #[tower_lsp::async_trait]
 impl LanguageServer for ForgeLsp {
-    async fn initialize(
-        &self,
-        _: InitializeParams,
-    ) -> tower_lsp::jsonrpc::Result<InitializeResult> {
+    async fn initialize(&self, _: InitializeParams) -> jsonrpc::Result<InitializeResult> {
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
                 name: "forge lsp".to_string(),
@@ -92,6 +89,7 @@ impl LanguageServer for ForgeLsp {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
                 )),
+                definition_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
         })
@@ -101,7 +99,7 @@ impl LanguageServer for ForgeLsp {
         self.client.log_message(MessageType::INFO, "lsp server initialized!").await;
     }
 
-    async fn shutdown(&self) -> tower_lsp::jsonrpc::Result<()> {
+    async fn shutdown(&self) -> jsonrpc::Result<()> {
         self.client.log_message(MessageType::INFO, "lsp server shutting down").await;
         Ok(())
     }
@@ -171,7 +169,7 @@ impl LanguageServer for ForgeLsp {
     async fn execute_command(
         &self,
         _: ExecuteCommandParams,
-    ) -> tower_lsp::jsonrpc::Result<Option<serde_json::Value>> {
+    ) -> jsonrpc::Result<Option<serde_json::Value>> {
         self.client.log_message(MessageType::INFO, "command executed!").await;
 
         match self.client.apply_edit(WorkspaceEdit::default()).await {
@@ -180,5 +178,17 @@ impl LanguageServer for ForgeLsp {
             Err(err) => self.client.log_message(MessageType::ERROR, err).await,
         }
         Ok(None)
+    }
+
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> jsonrpc::Result<Option<GotoDefinitionResponse>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        let location = self.analyzer.lock().unwrap().goto_definition(&uri, position);
+
+        Ok(location.map(GotoDefinitionResponse::Scalar))
     }
 }

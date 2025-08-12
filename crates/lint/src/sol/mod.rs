@@ -17,6 +17,7 @@ use solar_interface::{
 use solar_sema::{
     ParsingContext,
     hir::{self, Visit as VisitHIR},
+    ty::Gcx,
 };
 use std::{
     path::{Path, PathBuf},
@@ -147,6 +148,19 @@ impl SolidityLinter {
         Ok(())
     }
 
+    /// Processes each HIR source in parallel.
+    ///
+    /// Note: requires having had called `sess.enter_parallel` beforehand.
+    pub fn process_parallel_sources_hir(&self, input: &[PathBuf], gcx: Gcx<'_>) {
+        gcx.hir.sources_enumerated().par_bridge().for_each(|(source_id, source)| {
+            if let FileName::Real(ref path) = source.file.name
+                && input.iter().any(|input_path| path.ends_with(input_path))
+            {
+                _ = self.process_source_hir(gcx.sess, &gcx, source_id, &source.file);
+            }
+        });
+    }
+
     fn process_source_hir<'hir>(
         &self,
         sess: &Session,
@@ -260,15 +274,7 @@ impl Linter for SolidityLinter {
 
             if let Ok(Some(gcx_wrapper)) = hir_result {
                 let gcx = gcx_wrapper.get();
-
-                // Process each source in parallel
-                gcx.hir.sources_enumerated().par_bridge().for_each(|(source_id, source)| {
-                    if let FileName::Real(ref path) = source.file.name
-                        && input.iter().any(|input_path| path.ends_with(input_path))
-                    {
-                        _ = self.process_source_hir(sess, &gcx, source_id, &source.file);
-                    }
-                });
+                self.process_parallel_sources_hir(input, gcx);
             }
 
             Ok(())

@@ -1,6 +1,5 @@
-use crate::{build::build_output_to_diagnostics, lint::lint_output_to_diagnostics};
+use crate::build::build_output_to_diagnostics;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use thiserror::Error;
 use tokio::process::Command;
 use tower_lsp::{
@@ -14,36 +13,10 @@ pub struct ForgeRunner;
 pub trait Runner: Send + Sync {
     async fn build(&self, file: &str) -> Result<serde_json::Value, RunnerError>;
     async fn get_build_diagnostics(&self, file: &Url) -> Result<Vec<Diagnostic>, RunnerError>;
-    async fn get_lint_diagnostics(&self, file: &Url) -> Result<Vec<Diagnostic>, RunnerError>;
-    async fn lint(&self, file: &str) -> Result<serde_json::Value, RunnerError>;
 }
 
 #[async_trait]
 impl Runner for ForgeRunner {
-    async fn lint(&self, file_path: &str) -> Result<serde_json::Value, RunnerError> {
-        let output =
-            Command::new("forge").arg("lint").arg(file_path).arg("--json").output().await?;
-
-        let stderr_str = String::from_utf8_lossy(&output.stderr);
-
-        // Parse JSON output line by line
-        let mut diagnostics = Vec::new();
-        for line in stderr_str.lines() {
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            match serde_json::from_str::<serde_json::Value>(line) {
-                Ok(value) => diagnostics.push(value),
-                Err(_e) => {
-                    continue;
-                }
-            }
-        }
-
-        Ok(serde_json::Value::Array(diagnostics))
-    }
-
     async fn build(&self, file_path: &str) -> Result<serde_json::Value, RunnerError> {
         let output = Command::new("forge")
             .arg("build")
@@ -58,14 +31,6 @@ impl Runner for ForgeRunner {
         let parsed: serde_json::Value = serde_json::from_str(&stdout_str)?;
 
         Ok(parsed)
-    }
-
-    async fn get_lint_diagnostics(&self, file: &Url) -> Result<Vec<Diagnostic>, RunnerError> {
-        let path: PathBuf = file.to_file_path().map_err(|_| RunnerError::InvalidUrl)?;
-        let path_str = path.to_str().ok_or(RunnerError::InvalidUrl)?;
-        let lint_output = self.lint(path_str).await?;
-        let diagnostics = lint_output_to_diagnostics(&lint_output, path_str);
-        Ok(diagnostics)
     }
 
     async fn get_build_diagnostics(&self, file: &Url) -> Result<Vec<Diagnostic>, RunnerError> {

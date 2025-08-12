@@ -14,12 +14,21 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+solar-interface.workspace = true
+solar-sema.workspace = true
+
+foundry-compilers.workspace = true
 foundry-common.workspace = true
+foundry-config.workspace = true
+foundry-cli.workspace = true
+forge-lint.workspace = true
+
 tower-lsp = "0.20"
 tokio = { workspace = true, features = ["full"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+dunce.workspace = true
 
 [dev-dependencies]
 foundry-test-utils.workspace = true

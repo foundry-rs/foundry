@@ -35,17 +35,14 @@ pub fn position_to_byte_offset(source: &str, line: u32, character: u32) -> usize
             return i;
         }
 
-        match ch {
-            '\n' => {
-                if current_line == line && current_col < character {
-                    return i; // clamp to end of line
-                }
-                current_line += 1;
-                current_col = 0;
+        if ch == '\n' {
+            if current_line == line && current_col < character {
+                return i; // clamp to end of line
             }
-            _ => {
-                current_col += 1;
-            }
+            current_line += 1;
+            current_col = 0;
+        } else if ch != '\r' {
+            current_col += 1;
         }
     }
 
