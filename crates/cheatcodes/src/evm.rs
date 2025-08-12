@@ -11,6 +11,7 @@ use alloy_primitives::{Address, B256, U256, map::HashMap};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use foundry_common::fs::{read_json_file, write_json_file};
+use foundry_compilers::artifacts::{Storage, StorageLayout};
 use foundry_evm_core::{
     ContextExt,
     backend::{DatabaseExt, RevertStateSnapshotAction},
@@ -30,6 +31,7 @@ use std::{
     collections::{BTreeMap, HashSet, btree_map::Entry},
     fmt::Display,
     path::Path,
+    str::FromStr,
 };
 
 mod record_debug_step;
@@ -1258,19 +1260,8 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
         }
 
         // Also get storage layout if available
-        if let Some((artifact_id, contract_data)) = get_contract_data(ccx, address) {
-            tracing::info!(
-                "Processing contract {} at {}: storage_layout available: {}",
-                artifact_id.name,
-                address,
-                contract_data.storage_layout.is_some()
-            );
+        if let Some((_artifact_id, contract_data)) = get_contract_data(ccx, address) {
             if let Some(storage_layout) = &contract_data.storage_layout {
-                tracing::info!(
-                    "Adding storage layout for {} with {} entries",
-                    address,
-                    storage_layout.storage.len()
-                );
                 storage_layouts.insert(address, storage_layout.clone());
             }
         }
@@ -1331,21 +1322,6 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                                         );
                                         get_slot_info(layout, &storage_access.slot)
                                     });
-
-                                if slot_info.is_some() {
-                                    tracing::info!(
-                                        "Found slot info for slot {} at account {}: {:?}",
-                                        storage_access.slot,
-                                        storage_access.account,
-                                        slot_info
-                                    );
-                                } else {
-                                    tracing::warn!(
-                                        "No slot info found for slot {} at account {}",
-                                        storage_access.slot,
-                                        storage_access.account
-                                    );
-                                }
 
                                 slot_state_diff.insert(SlotStateDiff {
                                     previous_value: storage_access.previousValue,
@@ -1419,43 +1395,115 @@ fn get_contract_data<'a>(
     artifacts.find_by_deployed_code(&code_bytes)
 }
 
-/// Helper function to get storage layout info for a specific slot.
-fn get_slot_info(
-    storage_layout: &foundry_compilers::artifacts::StorageLayout,
-    slot: &B256,
+/// Helper function to check if a storage entry matches the given slot exactly.
+fn check_exact_slot_match(
+    storage: &Storage,
+    storage_layout: &StorageLayout,
+    slot_str: &str,
 ) -> Option<SlotInfo> {
+    trace!(type_label = %storage.storage_type, "checking type");
+    if storage.slot == slot_str {
+        let storage_type = storage_layout.types.get(&storage.storage_type);
+        return Some(SlotInfo {
+            label: storage.label.clone(),
+            storage_type: storage_type
+                .map(|t| t.label.clone())
+                .unwrap_or_else(|| storage.storage_type.clone()),
+            offset: storage.offset,
+            slot: storage.slot.clone(),
+        });
+    }
+    None
+}
+
+/// Helper function to check if a slot is part of a static array.
+fn check_array_slot_match(
+    storage: &Storage,
+    type_info: &StorageType,
+    base_slot: U256,
+    slot_value: U256,
+    slot_str: &str,
+) -> Option<SlotInfo> {
+    // Check for static arrays by looking for encoding == "inplace" and array syntax in label
+    trace!(type_label = %type_info.label, "checking if type is a static_array");
+    let is_static_array = type_info.encoding == "inplace"
+        && type_info.label.contains('[')
+        && type_info.label.contains(']');
+
+    if !is_static_array {
+        return None;
+    }
+
+    // For arrays, calculate the number of slots based on total size
+    let Ok(total_bytes) = type_info.number_of_bytes.parse::<u64>() else {
+        return None;
+    };
+
+    // Each slot is 32 bytes
+    let total_slots = (total_bytes + 31) / 32;
+
+    // Check if current slot is within the array range
+    if slot_value <= base_slot || slot_value >= base_slot + U256::from(total_slots) {
+        return None;
+    }
+
+    // Calculate index based on slot offset
+    let slot_offset = (slot_value - base_slot).to::<u64>();
+
+    // Extract array size from label to calculate proper index
+    let array_size = extract_array_size(&type_info.label)?;
+    let slots_per_element = total_slots / array_size;
+    let index = slot_offset / slots_per_element;
+
+    Some(SlotInfo {
+        label: format!("{}[{}]", storage.label, index),
+        storage_type: type_info.label.clone(),
+        offset: 0, // Array elements always start at offset 0
+        slot: slot_str.to_string(),
+    })
+}
+
+/// Helper function to get storage layout info for a specific slot.
+fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo> {
     // Convert B256 slot to decimal string for comparison with storage layout
     // Storage layout stores slots as decimal strings like "0", "1", "2"
     let slot_value = U256::from_be_bytes(slot.0);
     let slot_str = slot_value.to_string();
 
-    tracing::debug!(
-        "get_slot_info: Looking for slot {} in layout with {} entries",
-        slot_str,
-        storage_layout.storage.len()
-    );
-
-    for entry in &storage_layout.storage {
-        tracing::debug!("  Storage entry: slot={}, label={}", entry.slot, entry.label);
-    }
-
-    // Find the storage entry that matches this slot
+    // Single loop to check both exact matches and array ranges
     for storage in &storage_layout.storage {
-        if storage.slot == slot_str {
-            // Get the type information if available
-            let storage_type = storage_layout.types.get(&storage.storage_type);
+        // Parse base slot as U256 to handle large slot numbers
+        let Ok(base_slot) = U256::from_str(&storage.slot) else {
+            continue;
+        };
 
-            return Some(SlotInfo {
-                label: storage.label.clone(),
-                storage_type: storage_type
-                    .map(|t| t.label.clone())
-                    .unwrap_or_else(|| storage.storage_type.clone()),
-                offset: storage.offset,
-                slot: storage.slot.clone(),
-            });
+        // First check for exact match
+        if let Some(slot_info) = check_exact_slot_match(storage, storage_layout, &slot_str) {
+            return Some(slot_info);
+        }
+
+        // Check if this is a static array with inplace encoding (contiguous storage)
+        if let Some(type_info) = storage_layout.types.get(&storage.storage_type) {
+            if let Some(slot_info) =
+                check_array_slot_match(storage, type_info, base_slot, slot_value, &slot_str)
+            {
+                return Some(slot_info);
+            }
         }
     }
 
+    None
+}
+
+/// Helper function to extract array size from a type string like "uint256[3]"
+fn extract_array_size(type_str: &str) -> Option<u64> {
+    if let Some(start) = type_str.rfind('[') {
+        if let Some(end) = type_str.rfind(']') {
+            if let Ok(size) = type_str[start + 1..end].parse::<u64>() {
+                return Some(size);
+            }
+        }
+    }
     None
 }
 
@@ -1465,5 +1513,22 @@ fn set_cold_slot(ccx: &mut CheatsCtxt, target: Address, slot: U256, cold: bool) 
         && let Some(storage_slot) = account.storage.get_mut(&slot)
     {
         storage_slot.is_cold = cold;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_array_size() {
+        assert_eq!(extract_array_size("uint256[3]"), Some(3));
+        assert_eq!(extract_array_size("address[10]"), Some(10));
+        assert_eq!(extract_array_size("bool[5]"), Some(5));
+        assert_eq!(extract_array_size("bytes32[100]"), Some(100));
+        assert_eq!(extract_array_size("uint256"), None);
+        assert_eq!(extract_array_size("mapping(address => uint256)"), None);
+        assert_eq!(extract_array_size("uint256[]"), None); // Dynamic array
+        assert_eq!(extract_array_size("struct[42]"), Some(42));
     }
 }
