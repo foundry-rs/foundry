@@ -44,7 +44,7 @@ impl<Handler: PubSubRpcHandler> IpcEndpoint<Handler> {
             }
         }
 
-        let name = to_name(path.as_ref())?;
+        let name = to_name(std::path::Path::new(&path).as_os_str())?;
         let listener = ls::ListenerOptions::new().name(name).create_tokio()?;
         let connections = futures::stream::unfold(listener, |listener| async move {
             let conn = listener.accept().await;
