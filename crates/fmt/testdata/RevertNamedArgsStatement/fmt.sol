@@ -19,12 +19,11 @@ contract RevertNamedArgsStatement {
             message: "some reason"
         });
 
-        revert
-            SomeVeryVeryVeryLongErrorNameWithNamedArgumentsThatExceedsMaximumLength({
-                val: 0,
-                ts: 0x00,
-                message: "something unpredictable happened that caused execution to revert"
-            });
+        revert SomeVeryVeryVeryLongErrorNameWithNamedArgumentsThatExceedsMaximumLength({
+            val: 0,
+            ts: 0x00,
+            message: "something unpredictable happened that caused execution to revert"
+        });
 
         revert({}); // comment1
 

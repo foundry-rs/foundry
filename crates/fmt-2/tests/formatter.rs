@@ -189,15 +189,15 @@ fmt_tests! {
     InlineDisable, // OK
     IntTypes, // OK
     LiteralExpression, // OK
-    MappingType, // OK? is it acceptable?
+    MappingType, // OK
     ModifierDefinition, // OK
     NamedFunctionCallExpression, // Okish. Is it acceptable?
     NumberLiteralUnderscore, // OK
     OperatorExpressions, // OK
     PragmaDirective, // OK
-    Repros, // OK? is it acceptable?
+    Repros, // OK
     ReturnStatement, // OK? is it acceptable? (inline block logic is inconsistent with 'if stmt' unit test)
-    RevertNamedArgsStatement, // OK? is it acceptable? (properly break long calls?)
+    RevertNamedArgsStatement, // OK? (properly break long calls?)
     RevertStatement, // OK
     SimpleComments, // OK
     SortedImports, // OK
@@ -205,7 +205,7 @@ fmt_tests! {
     StructDefinition, // OK
     ThisExpression, // OK? is it acceptable?
     TrailingComma, // OK (solar error)
-    TryStatement, // OK? is it acceptable?
+    TryStatement, // OK
     TypeDefinition, // OK
     UnitExpression, // OK (subdenom word won't have a span in solar)
     UsingDirective, // OK

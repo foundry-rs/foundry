@@ -37,11 +37,10 @@ contract HelloWorld {
      * @return s The calculated surface.
      * @return p The calculated perimeter.
      */
-    function rectangle(uint256 w, uint256 h)
-        public
-        pure
-        returns (uint256 s, uint256 p)
-    {
+    function rectangle(
+        uint256 w,
+        uint256 h
+    ) public pure returns (uint256 s, uint256 p) {
         s = w * h;
         p = 2 * (w + h);
     }

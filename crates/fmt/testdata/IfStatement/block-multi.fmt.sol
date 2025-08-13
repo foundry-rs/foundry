@@ -50,8 +50,8 @@ contract IfStatement {
         /* comment9 */
         else if ( /* comment10 */
             anotherLongCondition // comment11
-        ) {
             /* comment12 */
+        ) {
             execute();
         } // comment13
         /* comment14 */
@@ -93,8 +93,8 @@ contract IfStatement {
         }
 
         if (condition) {
-            execute();
-        } // comment18
+            execute(); // comment18
+        }
 
         if (condition) {
             executeWithMultipleParameters(condition, anotherLongCondition);

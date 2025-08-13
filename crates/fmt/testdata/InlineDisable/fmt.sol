@@ -29,7 +29,7 @@ enum States {
 enum States { State1, State2, State3, State4, State5, State6, State7, State8, State9 }
 
 // forgefmt: disable-next-line
-bytes32 constant private BYTES = 0x035aff83d86937d35b32e04f0ddc6ff469290eef2f1b692d8a815c89404d4749;
+bytes32 constant BYTES = 0x035aff83d86937d35b32e04f0ddc6ff469290eef2f1b692d8a815c89404d4749;
 
 // forgefmt: disable-start
 
@@ -469,11 +469,8 @@ function testWhile() {
 }
 
 function testLine() {}
-
 function   /* forgefmt: disable-line */ testLine(   ) { }
-
 function testLine() {}
-
 function   testLine(   ) { }  // forgefmt: disable-line
 
 // forgefmt: disable-start

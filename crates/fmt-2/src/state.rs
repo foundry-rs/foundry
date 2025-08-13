@@ -47,6 +47,7 @@ pub(super) struct State<'sess, 'ast> {
 
     contract: Option<&'ast ast::ItemContract<'ast>>,
     single_line_stmt: Option<bool>,
+    call_expr_named: bool,
     binary_expr: bool,
     member_expr: bool,
     var_init: bool,
@@ -86,6 +87,7 @@ impl<'sess> State<'sess, '_> {
             cursor: SourcePos { pos: BytePos::from_u32(0), enabled: true },
             contract: None,
             single_line_stmt: None,
+            call_expr_named: false,
             binary_expr: false,
             member_expr: false,
             var_init: false,
@@ -598,14 +600,15 @@ impl<'sess> State<'sess, '_> {
                 {
                     self.hardbreak();
                 }
-                self.print_comments(
+                let last_style = self.print_comments(
                     first_pos,
                     CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
                 );
                 // If mixed comment before the 1st item, manually handle breaks.
-                match (style.is_mixed(), format.breaks_comments()) {
-                    (true, true) => self.hardbreak(),
-                    (true, false) => self.space(),
+                match (style.is_mixed(), last_style.unwrap().is_mixed(), format.breaks_comments()) {
+                    (true, true, true) => self.hardbreak(),
+                    (true, true, false) => self.space(),
+                    (false, true, _) => self.nbsp(),
                     _ => {}
                 };
                 skip_first_break = true;
@@ -1203,7 +1206,7 @@ impl<'ast> State<'_, 'ast> {
         self.end();
 
         // Map attributes to their corresponding comments
-        let (mut map, attributes, first_attrib_pos, use_nbsp) =
+        let (mut map, attributes, first_attrib_pos) =
             AttributeCommentMapper::new(returns.as_ref(), body_span.lo()).build(self, header);
 
         let mut handle_pre_cmnts = |this: &mut Self, span: Span| -> bool {
@@ -1242,33 +1245,25 @@ impl<'ast> State<'_, 'ast> {
         if !(skip_attribs || skip_returns) {
             // Print fn attributes in correct order
             if let Some(v) = visibility {
-                self.print_fn_attribute(v.span, &mut map, &mut |s| s.word(v.to_str()), use_nbsp);
+                self.print_fn_attribute(v.span, &mut map, &mut |s| s.word(v.to_str()));
             }
             if let Some(sm) = sm {
                 if !matches!(*sm, ast::StateMutability::NonPayable) {
-                    self.print_fn_attribute(
-                        sm.span,
-                        &mut map,
-                        &mut |s| s.word(sm.to_str()),
-                        use_nbsp,
-                    );
+                    self.print_fn_attribute(sm.span, &mut map, &mut |s| s.word(sm.to_str()));
                 }
             }
             if let Some(v) = virtual_ {
-                self.print_fn_attribute(v, &mut map, &mut |s| s.word("virtual"), use_nbsp);
+                self.print_fn_attribute(v, &mut map, &mut |s| s.word("virtual"));
             }
             if let Some(o) = override_ {
-                self.print_fn_attribute(o.span, &mut map, &mut |s| s.print_override(o), use_nbsp);
+                self.print_fn_attribute(o.span, &mut map, &mut |s| s.print_override(o));
             }
             for m in attributes.iter().filter(|a| matches!(a.kind, AttributeKind::Modifier(_))) {
                 if let AttributeKind::Modifier(modifier) = m.kind {
                     let is_base = self.is_modifier_a_base_contract(kind, modifier);
-                    self.print_fn_attribute(
-                        m.span,
-                        &mut map,
-                        &mut |s| s.print_modifier_call(modifier, is_base),
-                        false,
-                    );
+                    self.print_fn_attribute(m.span, &mut map, &mut |s| {
+                        s.print_modifier_call(modifier, is_base)
+                    });
                 }
             }
         }
@@ -1296,25 +1291,27 @@ impl<'ast> State<'_, 'ast> {
             if self.handle_span(self.cursor.span(body_span.lo()), false) {
                 // Print spacing if necessary. Updates cursor.
             } else {
-                if self
-                    .peek_comment_before(body_span.lo())
-                    .map_or(true, |cmnt| cmnt.style.is_mixed())
-                {
-                    // These shouldn't update the cursor, as we've already dealt with it above
-                    if use_nbsp {
-                        self.neverbreak();
-                        self.nbsp();
-                        self.zerobreak();
-                    } else {
+                if let Some(cmnt) = self.peek_comment_before(body_span.lo()) {
+                    if cmnt.style.is_mixed() {
+                        // These shouldn't update the cursor, as we've already dealt with it above
                         self.space();
-                    }
-                    self.s.offset(-self.ind);
-                    self.print_comments(body_span.lo(), CommentConfig::skip_ws());
-                } else {
-                    if !use_nbsp {
+                        self.s.offset(-self.ind);
+                        self.print_comments(body_span.lo(), CommentConfig::skip_ws());
+                    } else {
                         self.zerobreak();
                         self.s.offset(-self.ind);
                         self.print_comments(body_span.lo(), CommentConfig::skip_ws());
+                        self.s.offset(-self.ind);
+                    }
+                } else {
+                    // If there are no comments, and just a fn name, never break
+                    if parameters.is_empty()
+                        && returns.as_ref().is_none_or(|r| r.is_empty())
+                        && attributes.is_empty()
+                    {
+                        self.nbsp();
+                    } else {
+                        self.space();
                         self.s.offset(-self.ind);
                     }
                 }
@@ -1324,34 +1321,11 @@ impl<'ast> State<'_, 'ast> {
             self.end();
             self.end();
 
-            // if let Some(first) = body.first().map(|stmt| stmt.span)
-            //     && let Some(last) = body.last().map(|stmt| stmt.span)
-            //     && self.inline_config.is_disabled(Span::new(first.lo(), last.hi()))
-            // {
-            //     if !self.inline_config.is_disabled(Span::new(self.cursor, first.lo())) {
-            //         // We don't use `print_sep()` because we want to introduce the breakpoint
-            //         Separator::Space.print(&mut self.s, &mut self.cursor);
-            //     }
-            //     _ = self.handle_span(Span::new(first.lo(), last.hi()), false);
-            //     if !self.handle_span(Span::new(last.hi(), body_span.hi()), false) {
-            //         if self
-            //             .print_comments(body_span.hi(), CommentConfig::default())
-            //             .map_or(true, |cmnt| cmnt.is_mixed())
-            //         {
-            //             self.hardbreak_if_not_bol();
-            //         }
-            //         if self.cursor < body_span.hi() {
-            //             self.print_word("}");
-            //             self.cursor = body_span.hi();
-            //         }
-            //     }
-            // } else {
             self.print_block_without_braces(body, body_span.hi(), Some(self.ind));
             if self.cursor.enabled || self.cursor.pos < body_span.hi() {
                 self.print_word("}");
                 self.cursor.advance_to(body_span.hi(), true);
             }
-            // }
         } else {
             self.print_comments(body_span.lo(), CommentConfig::skip_ws().mixed_prev_space());
             self.end();
@@ -1399,7 +1373,7 @@ impl<'ast> State<'_, 'ast> {
         self.print_parameter_list(
             parameters,
             parameters.span,
-            ListFormat::Consistent { cmnts_break: false, with_space: false },
+            ListFormat::Compact { cmnts_break: false, with_space: false },
         );
         self.word(";");
     }
@@ -1411,7 +1385,7 @@ impl<'ast> State<'_, 'ast> {
         self.print_parameter_list(
             parameters,
             parameters.span,
-            ListFormat::Consistent { cmnts_break: true, with_space: false },
+            ListFormat::Compact { cmnts_break: true, with_space: false },
         );
         if *anonymous {
             self.word(" anonymous");
@@ -1947,7 +1921,10 @@ impl<'ast> State<'_, 'ast> {
                     if self
                         .print_comments(
                             ident.span.lo(),
-                            CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
+                            CommentConfig::skip_ws()
+                                .mixed_no_break()
+                                .mixed_prev_space()
+                                .mixed_post_nbsp(),
                         )
                         .is_none()
                     {
@@ -2322,11 +2299,15 @@ impl<'ast> State<'_, 'ast> {
     }
 
     fn print_named_args(&mut self, args: &'ast [ast::NamedArg<'ast>], pos_hi: BytePos) {
-        self.word("{");
+        let parent_call = self.call_expr_named;
+        if !parent_call {
+            self.call_expr_named = true;
+        }
 
+        self.word("{");
         // Use the start position of the first argument's name for comment processing.
         let list_lo = args.first().map_or(pos_hi, |arg| arg.name.span.lo());
-        let ind = self.ind;
+        let ind = if parent_call { self.ind } else { 0 };
 
         self.commasep(
             args,
@@ -2354,6 +2335,10 @@ impl<'ast> State<'_, 'ast> {
             true,
         );
         self.word("}");
+
+        if parent_call {
+            self.call_expr_named = false;
+        }
     }
 
     /* --- Statements --- */
@@ -2763,7 +2748,7 @@ impl<'ast> State<'_, 'ast> {
             return;
         }
 
-        self.word("{");
+        self.print_word("{");
         self.print_block_inner(
             block,
             BlockFormat::NoBraces(Some(self.ind)),
@@ -2771,7 +2756,7 @@ impl<'ast> State<'_, 'ast> {
             |b| b.span,
             span.hi(),
         );
-        self.word("}");
+        self.print_word("}");
     }
 
     fn print_block_inner<T: Debug>(
@@ -3300,7 +3285,6 @@ impl<'ast> State<'_, 'ast> {
         span: Span,
         map: &mut HashMap<BytePos, (Vec<Comment>, Vec<Comment>)>,
         print_fn: &mut dyn FnMut(&mut Self),
-        is_only: bool,
     ) {
         match map.remove(&span.lo()) {
             Some((pre_comments, post_comments)) => {
@@ -3313,7 +3297,7 @@ impl<'ast> State<'_, 'ast> {
                 let mut enabled = false;
                 if !self.handle_span(span, false) {
                     if !self.is_bol_or_only_ind() {
-                        self.space_or_nbsp(!is_only);
+                        self.space();
                     }
                     self.ibox(0);
                     print_fn(self);
@@ -3333,7 +3317,7 @@ impl<'ast> State<'_, 'ast> {
             // Fallback for attributes not in the map (should never happen)
             None => {
                 if !self.is_bol_or_only_ind() {
-                    self.space_or_nbsp(!is_only);
+                    self.space();
                 }
                 print_fn(self);
                 self.cursor.advance_to(span.hi(), true);
@@ -3492,12 +3476,10 @@ impl<'ast> AttributeCommentMapper<'ast> {
         mut self,
         state: &mut State<'_, 'ast>,
         header: &'ast ast::FunctionHeader<'ast>,
-    ) -> (HashMap<BytePos, (Vec<Comment>, Vec<Comment>)>, Vec<AttributeInfo<'ast>>, BytePos, bool)
-    {
+    ) -> (HashMap<BytePos, (Vec<Comment>, Vec<Comment>)>, Vec<AttributeInfo<'ast>>, BytePos) {
         let (first_attr, empty_override) = self.collect_attributes(header);
         self.cache_comments(state);
-        let use_nbsp = empty_override && self.empty_returns && self.attributes.len() <= 1;
-        (self.map(), self.attributes, first_attr, use_nbsp)
+        (self.map(), self.attributes, first_attr)
     }
 
     fn map(&mut self) -> HashMap<BytePos, (Vec<Comment>, Vec<Comment>)> {
@@ -3633,9 +3615,8 @@ fn item_needs_iso(item: &ast::ItemKind<'_>) -> bool {
         ast::ItemKind::Struct(strukt) => !strukt.fields.is_empty(),
         // is this logic correct? that's what i figured out based on unit tests
         ast::ItemKind::Function(func) => {
-            func.body.is_some()
-                && !(matches!(func.kind, ast::FunctionKind::Modifier)
-                    && func.body.as_ref().is_none_or(|b| b.is_empty()))
+            func.body.as_ref().is_some_and(|b| !b.is_empty())
+                && !matches!(func.kind, ast::FunctionKind::Modifier)
         }
     }
 }
