@@ -107,6 +107,7 @@ struct SlotStateDiff {
     /// Current storage value.
     new_value: B256,
     /// Decoded Slot Values
+    #[serde(skip_serializing_if = "Option::is_none")]
     decoded: Option<DecodedSlotValues>,
     /// Slot Info
     #[serde(skip_serializing_if = "Option::is_none", flatten)]
