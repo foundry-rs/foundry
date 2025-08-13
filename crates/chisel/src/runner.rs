@@ -146,6 +146,7 @@ impl ChiselRunner {
             let mut highest_gas_limit = gas_used * 3;
             let mut lowest_gas_limit = gas_used;
             let mut last_highest_gas_limit = highest_gas_limit;
+            let mut updated_gas_used = false;
             while (highest_gas_limit - lowest_gas_limit) > 1 {
                 let mid_gas_limit = (highest_gas_limit + lowest_gas_limit) / 2;
                 self.executor.env_mut().tx.gas_limit = mid_gas_limit;
@@ -167,11 +168,16 @@ impl ChiselRunner {
                         {
                             // update the gas
                             gas_used = highest_gas_limit;
+                            updated_gas_used = true;
                             break;
                         }
                         last_highest_gas_limit = highest_gas_limit;
                     }
                 }
+            }
+            // if we did not early break, use the final highest_gas_limit as estimate
+            if !updated_gas_used {
+                gas_used = highest_gas_limit;
             }
             // reset gas limit in the executor environment to its original value
             self.executor.env_mut().tx.gas_limit = init_gas_limit;
@@ -201,13 +207,13 @@ impl ChiselRunner {
             logs,
             traces: traces
                 .map(|traces| {
-                    // Manually adjust gas for the trace to add back the stipend/real used gas
+                    // Wrap the execution trace; no manual gas adjustment is performed here
 
                     vec![(TraceKind::Execution, traces)]
                 })
                 .unwrap_or_default(),
             labeled_addresses: labels,
-            address: None,
+            address: Some(to),
             state: chisel_state,
         })
     }
