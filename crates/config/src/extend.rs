@@ -3,12 +3,13 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 /// Strategy for extending configuration from a base file.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ExtendStrategy {
     /// Uses `admerge` figment strategy.
     /// Arrays are concatenated (base elements + local elements).
     /// Other values are replaced (local values override base values).
+    #[default]
     ExtendArrays,
 
     /// Uses `merge` figment strategy.
@@ -18,12 +19,6 @@ pub enum ExtendStrategy {
 
     /// Throws an error if any of the keys in the inherited toml file are also in `foundry.toml`.
     NoCollision,
-}
-
-impl Default for ExtendStrategy {
-    fn default() -> Self {
-        Self::ExtendArrays
-    }
 }
 
 /// Configuration for extending from a base file.
