@@ -94,11 +94,16 @@ pub(super) fn decode(trace: &CallTrace, _chain_id: u64) -> Option<DecodedCallTra
         _ => return None,
     };
 
+    let return_data = if trace.address == IDENTITY {
+        Some(hex::encode_prefixed(&trace.output))
+    } else {
+        None
+    };
+
     Some(DecodedCallTrace {
         label: Some("PRECOMPILES".to_string()),
         call_data: Some(DecodedCallData { signature: signature.to_string(), args }),
-        // TODO: Decode return data too.
-        return_data: None,
+        return_data,
     })
 }
 
