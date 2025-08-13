@@ -349,7 +349,7 @@ impl From<InvalidTransaction> for InvalidTransactionError {
                 Self::GasTooHigh(ErrDetail { detail: String::from("CallGasCostMoreThanGasLimit") })
             }
             InvalidTransaction::GasFloorMoreThanGasLimit { .. } => {
-                Self::GasTooHigh(ErrDetail { detail: String::from("CallGasCostMoreThanGasLimit") })
+                Self::GasTooHigh(ErrDetail { detail: String::from("GasFloorMoreThanGasLimit") })
             }
             InvalidTransaction::RejectCallerWithCode => Self::SenderNoEOA,
             InvalidTransaction::LackOfFundForMaxFee { .. } => Self::InsufficientFunds,
