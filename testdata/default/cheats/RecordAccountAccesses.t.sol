@@ -349,7 +349,10 @@ contract RecordAccountAccessesTest is DSTest {
         expectedStateDiff = string.concat(expectedStateDiff, callerAddress);
         expectedStateDiff =
             string.concat(expectedStateDiff, "\ncontract: default/cheats/RecordAccountAccesses.t.sol:SelfCaller");
-        expectedStateDiff = string.concat(expectedStateDiff, "\n- balance diff: 0 \xE2\x86\x92 2000000000000000000\n- nonce diff: 0 \xE2\x86\x92 1\n\n");
+        expectedStateDiff = string.concat(
+            expectedStateDiff,
+            "\n- balance diff: 0 \xE2\x86\x92 2000000000000000000\n- nonce diff: 0 \xE2\x86\x92 1\n\n"
+        );
         assertEq(expectedStateDiff, cheats.getStateDiff());
 
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
