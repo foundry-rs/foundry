@@ -1,6 +1,7 @@
 use super::state::EvmFuzzState;
 use crate::strategies::mutators::{
-    BitFlipMutator, IncrementDecrementMutator, InterestingWordMutator,
+    BitFlipMutator, IncrementDecrementMutator, InterestingWordMutator, flip_random_bit_in_slice,
+    mutate_interesting_byte_slice, mutate_interesting_dword_slice, mutate_interesting_word_slice,
 };
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{Address, B256, I256, U256};
@@ -245,7 +246,7 @@ pub fn mutate_param_value(
     match value {
         // flip boolean value
         DynSolValue::Bool(val) => {
-            trace!(target: "abi_mutation", "Bool flip {val}");
+            trace!(target: "mutator", "Bool flip {val}");
             Some(DynSolValue::Bool(!val))
         }
         // Uint: increment / decrement, flip random bit, mutate with interesting words or generate
@@ -276,12 +277,22 @@ pub fn mutate_param_value(
                 _ => unreachable!(),
             }
         }
-        // Address: flip random bit or generate new value from state.
-        DynSolValue::Address(val) => match test_runner.rng().random_range(0..=1) {
-            0 => Address::flip_random_bit(val, None, test_runner).map(DynSolValue::Address),
-            1 => None,
-            _ => unreachable!(),
-        },
+        DynSolValue::Address(val) => {
+            let wrap = |a| {
+                let mutated = DynSolValue::Address(Address::from(a));
+                trace!(target: "mutator", "DynSolValue::Address {:?} -> {:?}", val, mutated);
+                mutated
+            };
+            let mut bytes: [u8; 20] = val.0.into();
+            match test_runner.rng().random_range(0..=4) {
+                0 => flip_random_bit_in_slice(&mut bytes, test_runner).map(|_| wrap(bytes)),
+                1 => mutate_interesting_byte_slice(&mut bytes, test_runner).map(|_| wrap(bytes)),
+                2 => mutate_interesting_word_slice(&mut bytes, test_runner).map(|_| wrap(bytes)),
+                3 => mutate_interesting_dword_slice(&mut bytes, test_runner).map(|_| wrap(bytes)),
+                4 => None,
+                _ => unreachable!(),
+            }
+        }
         DynSolValue::Array(mut values) => {
             if let DynSolType::Array(param_type) = param
                 && !values.is_empty()
@@ -310,6 +321,22 @@ pub fn mutate_param_value(
                 Some(DynSolValue::FixedArray(values))
             } else {
                 None
+            }
+        }
+        DynSolValue::FixedBytes(word, size) => {
+            let wrap = |w| {
+                trace!(target: "mutator", "DynSolValue::FixedBytes {word} -> {w}");
+                DynSolValue::FixedBytes(w, size)
+            };
+            let mut bytes = word;
+            let slice = &mut bytes[..size];
+            match test_runner.rng().random_range(0..=4) {
+                0 => flip_random_bit_in_slice(slice, test_runner).map(|_| wrap(bytes)),
+                1 => mutate_interesting_byte_slice(slice, test_runner).map(|_| wrap(bytes)),
+                2 => mutate_interesting_word_slice(slice, test_runner).map(|_| wrap(bytes)),
+                3 => mutate_interesting_dword_slice(slice, test_runner).map(|_| wrap(bytes)),
+                4 => None,
+                _ => unreachable!(),
             }
         }
         DynSolValue::CustomStruct { name, prop_names, tuple: mut values } => {

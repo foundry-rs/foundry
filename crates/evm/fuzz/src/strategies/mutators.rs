@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, I256, Sign, U256};
+use alloy_primitives::{I256, Sign, U256};
 use proptest::{prelude::*, test_runner::TestRunner};
 use rand::seq::IndexedRandom;
 use std::fmt::Debug;
@@ -111,17 +111,11 @@ impl BitFlipMutator for I256 {
     }
 }
 
-impl BitFlipMutator for Address {
-    #[instrument(name = "mutator::flip_random_bit", skip(_size, test_runner), ret)]
-    fn flip_random_bit(self, _size: Option<usize>, test_runner: &mut TestRunner) -> Option<Self> {
-        let mut bytes: [u8; 20] = self.0.into();
-        flip_random_bit_in_slice(&mut bytes, test_runner)?;
-        Some(Self::from(bytes))
-    }
-}
-
 /// Flips a random bit in the given mutable byte slice.
-fn flip_random_bit_in_slice(bytes: &mut [u8], test_runner: &mut TestRunner) -> Option<()> {
+pub(crate) fn flip_random_bit_in_slice(
+    bytes: &mut [u8],
+    test_runner: &mut TestRunner,
+) -> Option<()> {
     if bytes.is_empty() {
         return None;
     }
@@ -192,7 +186,10 @@ impl InterestingWordMutator for I256 {
 
 /// Mutates a random byte in the given byte slice by replacing it with a randomly chosen
 /// interesting 8-bit value.
-fn mutate_interesting_byte_slice(bytes: &mut [u8], test_runner: &mut TestRunner) -> Option<()> {
+pub(crate) fn mutate_interesting_byte_slice(
+    bytes: &mut [u8],
+    test_runner: &mut TestRunner,
+) -> Option<()> {
     let index = test_runner.rng().random_range(0..bytes.len());
     let val = *INTERESTING_8.choose(&mut test_runner.rng())? as u8;
     bytes[index] = val;
@@ -201,7 +198,10 @@ fn mutate_interesting_byte_slice(bytes: &mut [u8], test_runner: &mut TestRunner)
 
 /// Mutates a random 2-byte (16-bit) region in the byte slice with a randomly chosen interesting
 /// 16-bit value.
-fn mutate_interesting_word_slice(bytes: &mut [u8], test_runner: &mut TestRunner) -> Option<()> {
+pub(crate) fn mutate_interesting_word_slice(
+    bytes: &mut [u8],
+    test_runner: &mut TestRunner,
+) -> Option<()> {
     if bytes.len() < 2 {
         return None;
     }
@@ -213,7 +213,10 @@ fn mutate_interesting_word_slice(bytes: &mut [u8], test_runner: &mut TestRunner)
 
 /// Mutates a random 4-byte (32-bit) region in the byte slice with a randomly chosen interesting
 /// 32-bit value.
-fn mutate_interesting_dword_slice(bytes: &mut [u8], test_runner: &mut TestRunner) -> Option<()> {
+pub(crate) fn mutate_interesting_dword_slice(
+    bytes: &mut [u8],
+    test_runner: &mut TestRunner,
+) -> Option<()> {
     if bytes.len() < 4 {
         return None;
     }
@@ -256,6 +259,7 @@ fn validate_int_mutation(original: I256, mutated: I256, size: usize) -> Option<I
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::Address;
     use proptest::test_runner::Config;
 
     #[test]
@@ -356,18 +360,6 @@ mod tests {
     }
 
     #[test]
-    fn test_bit_flip_address() {
-        let mut runner = TestRunner::new(Config::default());
-        let value = Address::ZERO;
-
-        for _ in 0..100 {
-            let flipped = Address::flip_random_bit(value, None, &mut runner);
-            assert!(flipped.is_some());
-            assert_ne!(flipped.unwrap(), value);
-        }
-    }
-
-    #[test]
     fn test_mutate_interesting_byte_u256() {
         let mut runner = TestRunner::new(Config::default());
         let value = U256::from(0);
@@ -463,6 +455,27 @@ mod tests {
                     || mutated.is_some_and(|mutated| mutated != value
                         && mutated.abs().unsigned_abs() < (U256::from(1) << (size - 1)))
             )
+        }
+    }
+
+    #[test]
+    fn test_mutate_address() {
+        let mut runner = TestRunner::new(Config::default());
+        let value = Address::random();
+        let mut bytes: [u8; 20] = value.0.into();
+
+        for _ in 0..100 {
+            flip_random_bit_in_slice(&mut bytes, &mut runner).unwrap();
+            assert_ne!(value, Address::from(bytes));
+
+            mutate_interesting_byte_slice(&mut bytes, &mut runner).unwrap();
+            assert_ne!(value, Address::from(bytes));
+
+            mutate_interesting_word_slice(&mut bytes, &mut runner).unwrap();
+            assert_ne!(value, Address::from(bytes));
+
+            mutate_interesting_dword_slice(&mut bytes, &mut runner).unwrap();
+            assert_ne!(value, Address::from(bytes));
         }
     }
 
