@@ -61,7 +61,7 @@ contract TestContract {
 
     function test3() public {
         // forgefmt: disable-next-line
-        assembly { sstore(   1,    1)
+        assembly{ sstore(   1,    1)
             sstore(2, 2)
             sstore(3,    3) // forgefmt: disable-line
             sstore(4, 4)
