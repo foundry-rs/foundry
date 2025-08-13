@@ -51,7 +51,6 @@ strum = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros"] }
 tracing-subscriber = { workspace = true, features = ["registry", "env-filter"] }
 tracing.workspace = true
-tracy-client = { workspace = true, optional = true, features = ["demangle"] }
 yansi.workspace = true
 rustls = { workspace = true, features = ["ring"] }
 dunce.workspace = true

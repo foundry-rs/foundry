@@ -103,8 +103,6 @@ impl BuildArgs {
             .ignore_eip_3860(self.ignore_eip_3860)
             .bail(!format_json);
 
-        // Runs the SolidityLinter before compilation.
-        self.lint(&project, &config)?;
         let output = compiler.compile(&project)?;
 
         // Cache project selectors.

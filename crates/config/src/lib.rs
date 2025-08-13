@@ -8,7 +8,7 @@
 #[macro_use]
 extern crate tracing;
 
-use crate::{cache::StorageCachingConfig, vyper::normalize_evm_version_vyper};
+use crate::cache::StorageCachingConfig;
 use alloy_primitives::{Address, B256, FixedBytes, U256, address, map::AddressHashMap};
 use eyre::{ContextCompat, WrapErr};
 use figment::{
@@ -1585,7 +1585,7 @@ impl Config {
     /// - evm version
     pub fn vyper_settings(&self) -> Result<VyperSettings, SolcError> {
         Ok(VyperSettings {
-            evm_version: Some(normalize_evm_version_vyper(self.evm_version)),
+            evm_version: Some(self.evm_version),
             optimize: self.vyper.optimize,
             bytecode_metadata: None,
             // TODO: We don't yet have a way to deserialize other outputs correctly, so request only
