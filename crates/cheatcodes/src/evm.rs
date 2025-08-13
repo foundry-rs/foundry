@@ -1513,7 +1513,6 @@ fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo
     None
 }
 
-/// Returns "[0]" for 1D arrays, "[0][0]" for 2D arrays, etc.
 fn get_array_base_indices(dyn_type: &DynSolType) -> String {
     match dyn_type {
         DynSolType::FixedArray(inner, _) => {
