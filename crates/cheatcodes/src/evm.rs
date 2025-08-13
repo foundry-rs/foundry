@@ -161,6 +161,16 @@ struct BalanceDiff {
     new_value: U256,
 }
 
+/// Nonce diff info.
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct NonceDiff {
+    /// Initial nonce value.
+    previous_value: u64,
+    /// Current nonce value.
+    new_value: u64,
+}
+
 /// Account state diff info.
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -171,6 +181,8 @@ struct AccountStateDiffs {
     contract: Option<String>,
     /// Account balance changes.
     balance_diff: Option<BalanceDiff>,
+    /// Account nonce changes.
+    nonce_diff: Option<NonceDiff>,
     /// State changes, per slot.
     state_diff: BTreeMap<B256, SlotStateDiff>,
 }
@@ -193,6 +205,12 @@ impl Display for AccountStateDiffs {
                 "- balance diff: {} → {}",
                 balance_diff.previous_value, balance_diff.new_value
             )?;
+        }
+        // Print nonce diff if changed.
+        if let Some(nonce_diff) = &self.nonce_diff
+            && nonce_diff.previous_value != nonce_diff.new_value
+        {
+            writeln!(f, "- nonce diff: {} → {}", nonce_diff.previous_value, nonce_diff.new_value)?;
         }
         // Print state diff if any.
         if !&self.state_diff.is_empty() {
@@ -1324,6 +1342,7 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
             .filter(|account_access| {
                 !account_access.storageAccesses.is_empty()
                     || account_access.oldBalance != account_access.newBalance
+                    || account_access.oldNonce != account_access.newNonce
             })
             .for_each(|account_access| {
                 // Record account balance diffs.
@@ -1343,6 +1362,26 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                         account_diff.balance_diff = Some(BalanceDiff {
                             previous_value: account_access.oldBalance,
                             new_value: account_access.newBalance,
+                        });
+                    }
+                }
+
+                // Record account nonce diffs.
+                if account_access.oldNonce != account_access.newNonce {
+                    let account_diff =
+                        state_diffs.entry(account_access.account).or_insert_with(|| {
+                            AccountStateDiffs {
+                                label: ccx.state.labels.get(&account_access.account).cloned(),
+                                ..Default::default()
+                            }
+                        });
+                    // Update nonce diff. Do not overwrite the initial nonce if already set.
+                    if let Some(diff) = &mut account_diff.nonce_diff {
+                        diff.new_value = account_access.newNonce;
+                    } else {
+                        account_diff.nonce_diff = Some(NonceDiff {
+                            previous_value: account_access.oldNonce,
+                            new_value: account_access.newNonce,
                         });
                     }
                 }
