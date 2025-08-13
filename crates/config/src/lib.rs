@@ -127,6 +127,9 @@ use bind_json::BindJsonConfig;
 mod compilation;
 pub use compilation::{CompilationRestrictions, SettingsOverrides};
 
+pub mod extend;
+use extend::Extends;
+
 /// Foundry configuration
 ///
 /// # Defaults
@@ -180,6 +183,13 @@ pub struct Config {
     // override it.
     #[serde(default = "root_default", skip_serializing)]
     pub root: PathBuf,
+
+    /// Configuration for extending from another foundry.toml (base) file.
+    ///
+    /// Can be either a string path or an object with path and strategy.
+    /// Base files cannot extend (inherit) other files.
+    #[serde(default, skip_serializing)]
+    pub extends: Option<Extends>,
 
     /// path of the source contracts dir, like `src` or `contracts`
     pub src: PathBuf,
@@ -2350,6 +2360,7 @@ impl Default for Config {
             fs_permissions: FsPermissions::new([PathPermission::read("out")]),
             isolate: cfg!(feature = "isolate-by-default"),
             root: root_default(),
+            extends: None,
             src: "src".into(),
             test: "test".into(),
             script: "script".into(),
@@ -5198,6 +5209,1092 @@ mod tests {
             for (k, v) in &expected_mainnet.vars {
                 assert_eq!(v, mainnet.vars.get(k).unwrap());
             }
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_can_inherit_a_base_toml() {
+        figment::Jail::expect_with(|jail| {
+            // Create base config file with optimizer_runs = 800
+            jail.create_file(
+                "base-config.toml",
+                r#"
+                    [profile.default]
+                    optimizer_runs = 800
+
+                    [invariant]
+                    runs = 1000
+
+                    [rpc_endpoints]
+                    mainnet = "https://example.com"
+                    optimism = "https://example-2.com/"
+                    "#,
+            )?;
+
+            // Create local config that inherits from base-config.toml
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base-config.toml"
+
+                    [invariant]
+                    runs = 333
+                    depth = 15
+
+                    [rpc_endpoints]
+                    mainnet = "https://reth-ethereum.ithaca.xyz/rpc"
+                    "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.extends, Some(Extends::Path("base-config.toml".to_string())));
+
+            // optimizer_runs should be inherited from base-config.toml
+            assert_eq!(config.optimizer_runs, Some(800));
+
+            // invariant settings should be overridden by local config
+            assert_eq!(config.invariant.runs, 333);
+            assert_eq!(config.invariant.depth, 15);
+
+            // rpc_endpoints.mainnet should be overridden by local config
+            // optimism should be inherited from base config
+            let endpoints = config.rpc_endpoints.resolved();
+            assert!(
+                endpoints
+                    .get("mainnet")
+                    .unwrap()
+                    .url()
+                    .unwrap()
+                    .contains("reth-ethereum.ithaca.xyz")
+            );
+            assert!(endpoints.get("optimism").unwrap().url().unwrap().contains("example-2.com"));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_inheritance_validation() {
+        figment::Jail::expect_with(|jail| {
+            // Test 1: Base file with 'extends' should fail
+            jail.create_file(
+                "base-with-inherit.toml",
+                r#"
+                    [profile.default]
+                    extends = "another.toml"
+                    optimizer_runs = 800
+                    "#,
+            )?;
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base-with-inherit.toml"
+                    "#,
+            )?;
+
+            // Should fail because base file has 'extends'
+            let result = Config::load();
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("Nested inheritance is not allowed"));
+
+            // Test 2: Circular reference should fail
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "foundry.toml"
+                    "#,
+            )?;
+
+            let result = Config::load();
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("cannot inherit from itself"));
+
+            // Test 3: Non-existent base file should fail
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "non-existent.toml"
+                    "#,
+            )?;
+
+            let result = Config::load();
+            assert!(result.is_err());
+            let err_msg = result.unwrap_err().to_string();
+            assert!(
+                err_msg.contains("does not exist")
+                    || err_msg.contains("Failed to resolve inherited config path"),
+                "Error message: {err_msg}"
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_complex_inheritance_merging() {
+        figment::Jail::expect_with(|jail| {
+            // Create a comprehensive base config
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default]
+                    optimizer = true
+                    optimizer_runs = 1000
+                    via_ir = false
+                    solc = "0.8.19"
+
+                    [invariant]
+                    runs = 500
+                    depth = 100
+
+                    [fuzz]
+                    runs = 256
+                    seed = "0x123"
+
+                    [rpc_endpoints]
+                    mainnet = "https://base-mainnet.com"
+                    optimism = "https://base-optimism.com"
+                    arbitrum = "https://base-arbitrum.com"
+                    "#,
+            )?;
+
+            // Create local config that overrides some values
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+                    optimizer_runs = 200  # Override
+                    via_ir = true        # Override
+                    # optimizer and solc are inherited
+
+                    [invariant]
+                    runs = 333  # Override
+                    # depth is inherited
+
+                    # fuzz section is fully inherited
+
+                    [rpc_endpoints]
+                    mainnet = "https://local-mainnet.com"  # Override
+                    # optimism and arbitrum are inherited
+                    polygon = "https://local-polygon.com"  # New
+                    "#,
+            )?;
+
+            let config = Config::load().unwrap();
+
+            // Check profile.default values
+            assert_eq!(config.optimizer, Some(true));
+            assert_eq!(config.optimizer_runs, Some(200));
+            assert_eq!(config.via_ir, true);
+            assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, 19))));
+
+            // Check invariant section
+            assert_eq!(config.invariant.runs, 333);
+            assert_eq!(config.invariant.depth, 100);
+
+            // Check fuzz section (fully inherited)
+            assert_eq!(config.fuzz.runs, 256);
+            assert_eq!(config.fuzz.seed, Some(U256::from(0x123)));
+
+            // Check rpc_endpoints
+            let endpoints = config.rpc_endpoints.resolved();
+            assert!(endpoints.get("mainnet").unwrap().url().unwrap().contains("local-mainnet"));
+            assert!(endpoints.get("optimism").unwrap().url().unwrap().contains("base-optimism"));
+            assert!(endpoints.get("arbitrum").unwrap().url().unwrap().contains("base-arbitrum"));
+            assert!(endpoints.get("polygon").unwrap().url().unwrap().contains("local-polygon"));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_inheritance_with_different_profiles() {
+        figment::Jail::expect_with(|jail| {
+            // Create base config with multiple profiles
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default]
+                    optimizer = true
+                    optimizer_runs = 200
+
+                    [profile.ci]
+                    optimizer = true
+                    optimizer_runs = 10000
+                    via_ir = true
+
+                    [profile.dev]
+                    optimizer = false
+                    "#,
+            )?;
+
+            // Local config inherits from base - only for default profile
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+                    verbosity = 3
+
+                    [profile.ci]
+                    optimizer_runs = 5000  # This doesn't inherit from base.toml's ci profile
+                    "#,
+            )?;
+
+            // Test default profile
+            let config = Config::load().unwrap();
+            assert_eq!(config.optimizer, Some(true));
+            assert_eq!(config.optimizer_runs, Some(200));
+            assert_eq!(config.verbosity, 3);
+
+            // Test CI profile (NO 'extends', so doesn't inherit from base)
+            jail.set_env("FOUNDRY_PROFILE", "ci");
+            let config = Config::load().unwrap();
+            assert_eq!(config.optimizer_runs, Some(5000));
+            assert_eq!(config.optimizer, Some(true));
+            // via_ir is not set in local ci profile and there's no 'extends', so default
+            assert_eq!(config.via_ir, false);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_inheritance_with_env_vars() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default]
+                    optimizer_runs = 500
+                    sender = "0x0000000000000000000000000000000000000001"
+                    verbosity = 1
+                    "#,
+            )?;
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+                    verbosity = 2
+                    "#,
+            )?;
+
+            // Environment variables should override both base and local values
+            jail.set_env("FOUNDRY_OPTIMIZER_RUNS", "999");
+            jail.set_env("FOUNDRY_VERBOSITY", "4");
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.optimizer_runs, Some(999));
+            assert_eq!(config.verbosity, 4);
+            assert_eq!(
+                config.sender,
+                "0x0000000000000000000000000000000000000001"
+                    .parse::<alloy_primitives::Address>()
+                    .unwrap()
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_inheritance_with_subdirectories() {
+        figment::Jail::expect_with(|jail| {
+            // Create base config in a subdirectory
+            jail.create_dir("configs")?;
+            jail.create_file(
+                "configs/base.toml",
+                r#"
+                    [profile.default]
+                    optimizer_runs = 800
+                    src = "contracts"
+                    "#,
+            )?;
+
+            // Reference it with relative path
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "configs/base.toml"
+                    test = "tests"
+                    "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.optimizer_runs, Some(800));
+            assert_eq!(config.src, PathBuf::from("contracts"));
+            assert_eq!(config.test, PathBuf::from("tests"));
+
+            // Test with parent directory reference
+            jail.create_dir("project")?;
+            jail.create_file(
+                "shared-base.toml",
+                r#"
+                    [profile.default]
+                    optimizer_runs = 1500
+                    "#,
+            )?;
+
+            jail.create_file(
+                "project/foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "../shared-base.toml"
+                    "#,
+            )?;
+
+            std::env::set_current_dir(jail.directory().join("project")).unwrap();
+            let config = Config::load().unwrap();
+            assert_eq!(config.optimizer_runs, Some(1500));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_inheritance_with_empty_files() {
+        figment::Jail::expect_with(|jail| {
+            // Empty base file
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default]
+                    "#,
+            )?;
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+                    optimizer_runs = 300
+                    "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.optimizer_runs, Some(300));
+
+            // Empty local file (only 'extends')
+            jail.create_file(
+                "base2.toml",
+                r#"
+                    [profile.default]
+                    optimizer_runs = 400
+                    via_ir = true
+                    "#,
+            )?;
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base2.toml"
+                    "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.optimizer_runs, Some(400));
+            assert!(config.via_ir);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_inheritance_array_and_table_merging() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default]
+                    libs = ["lib", "node_modules"]
+                    ignored_error_codes = [5667, 1878]
+                    extra_output = ["metadata", "ir"]
+
+                    [profile.default.model_checker]
+                    engine = "chc"
+                    timeout = 10000
+                    targets = ["assert"]
+
+                    [profile.default.optimizer_details]
+                    peephole = true
+                    inliner = true
+                    "#,
+            )?;
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+                    libs = ["custom-lib"]  # Concatenates with base array
+                    ignored_error_codes = [2018]  # Concatenates with base array
+
+                    [profile.default.model_checker]
+                    timeout = 5000  # Overrides base value
+                    # engine and targets are inherited
+
+                    [profile.default.optimizer_details]
+                    jumpdest_remover = true  # Adds new field
+                    # peephole and inliner are inherited
+                    "#,
+            )?;
+
+            let config = Config::load().unwrap();
+
+            // Arrays are now concatenated with admerge (base + local)
+            assert_eq!(
+                config.libs,
+                vec![
+                    PathBuf::from("lib"),
+                    PathBuf::from("node_modules"),
+                    PathBuf::from("custom-lib")
+                ]
+            );
+            assert_eq!(
+                config.ignored_error_codes,
+                vec![
+                    SolidityErrorCode::UnusedFunctionParameter, // 5667 from base.toml
+                    SolidityErrorCode::SpdxLicenseNotProvided,  // 1878 from base.toml
+                    SolidityErrorCode::FunctionStateMutabilityCanBeRestricted  // 2018 from local
+                ]
+            );
+
+            // Tables are deep-merged
+            assert_eq!(config.model_checker.as_ref().unwrap().timeout, Some(5000));
+            assert_eq!(
+                config.model_checker.as_ref().unwrap().engine,
+                Some(ModelCheckerEngine::CHC)
+            );
+            assert_eq!(
+                config.model_checker.as_ref().unwrap().targets,
+                Some(vec![ModelCheckerTarget::Assert])
+            );
+
+            // optimizer_details table is actually merged, not replaced
+            assert_eq!(config.optimizer_details.as_ref().unwrap().peephole, Some(true));
+            assert_eq!(config.optimizer_details.as_ref().unwrap().inliner, Some(true));
+            assert_eq!(config.optimizer_details.as_ref().unwrap().jumpdest_remover, None);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_inheritance_with_special_sections() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default]
+                    # Base file should not have 'extends' to avoid nested inheritance
+
+                    [labels]
+                    "0x0000000000000000000000000000000000000001" = "Alice"
+                    "0x0000000000000000000000000000000000000002" = "Bob"
+
+                    [[profile.default.fs_permissions]]
+                    access = "read"
+                    path = "./src"
+
+                    [[profile.default.fs_permissions]]
+                    access = "read-write"
+                    path = "./cache"
+                    "#,
+            )?;
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+
+                    [labels]
+                    "0x0000000000000000000000000000000000000002" = "Bob Updated"
+                    "0x0000000000000000000000000000000000000003" = "Charlie"
+
+                    [[profile.default.fs_permissions]]
+                    access = "read"
+                    path = "./test"
+                    "#,
+            )?;
+
+            let config = Config::load().unwrap();
+
+            // Labels should be merged
+            assert_eq!(
+                config.labels.get(
+                    &"0x0000000000000000000000000000000000000001"
+                        .parse::<alloy_primitives::Address>()
+                        .unwrap()
+                ),
+                Some(&"Alice".to_string())
+            );
+            assert_eq!(
+                config.labels.get(
+                    &"0x0000000000000000000000000000000000000002"
+                        .parse::<alloy_primitives::Address>()
+                        .unwrap()
+                ),
+                Some(&"Bob Updated".to_string())
+            );
+            assert_eq!(
+                config.labels.get(
+                    &"0x0000000000000000000000000000000000000003"
+                        .parse::<alloy_primitives::Address>()
+                        .unwrap()
+                ),
+                Some(&"Charlie".to_string())
+            );
+
+            // fs_permissions array is now concatenated with addmerge (base + local)
+            assert_eq!(config.fs_permissions.permissions.len(), 3); // 2 from base + 1 from local
+            // Check that all permissions are present
+            assert!(
+                config
+                    .fs_permissions
+                    .permissions
+                    .iter()
+                    .any(|p| p.path.to_str().unwrap() == "./src")
+            );
+            assert!(
+                config
+                    .fs_permissions
+                    .permissions
+                    .iter()
+                    .any(|p| p.path.to_str().unwrap() == "./cache")
+            );
+            assert!(
+                config
+                    .fs_permissions
+                    .permissions
+                    .iter()
+                    .any(|p| p.path.to_str().unwrap() == "./test")
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_inheritance_with_compilation_settings() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default]
+                    solc = "0.8.19"
+                    evm_version = "paris"
+                    via_ir = false
+                    optimizer = true
+                    optimizer_runs = 200
+
+                    [profile.default.optimizer_details]
+                    peephole = true
+                    inliner = false
+                    jumpdest_remover = true
+                    order_literals = false
+                    deduplicate = true
+                    cse = true
+                    constant_optimizer = true
+                    yul = true
+
+                    [profile.default.optimizer_details.yul_details]
+                    stack_allocation = true
+                    optimizer_steps = "dhfoDgvulfnTUtnIf"
+                    "#,
+            )?;
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+                    evm_version = "shanghai"  # Override
+                    optimizer_runs = 1000  # Override
+
+                    [profile.default.optimizer_details]
+                    inliner = true  # Override
+                    # Rest inherited
+                    "#,
+            )?;
+
+            let config = Config::load().unwrap();
+
+            // Check compilation settings
+            assert_eq!(config.solc, Some(SolcReq::Version(Version::new(0, 8, 19))));
+            assert_eq!(config.evm_version, EvmVersion::Shanghai);
+            assert_eq!(config.via_ir, false);
+            assert_eq!(config.optimizer, Some(true));
+            assert_eq!(config.optimizer_runs, Some(1000));
+
+            // Check optimizer details - the table is actually merged
+            let details = config.optimizer_details.as_ref().unwrap();
+            assert_eq!(details.peephole, Some(true));
+            assert_eq!(details.inliner, Some(true));
+            assert_eq!(details.jumpdest_remover, None);
+            assert_eq!(details.order_literals, None);
+            assert_eq!(details.deduplicate, Some(true));
+            assert_eq!(details.cse, Some(true));
+            assert_eq!(details.constant_optimizer, None);
+            assert_eq!(details.yul, Some(true));
+
+            // Check yul details - inherited from base
+            if let Some(yul_details) = details.yul_details.as_ref() {
+                assert_eq!(yul_details.stack_allocation, Some(true));
+                assert_eq!(yul_details.optimizer_steps, Some("dhfoDgvulfnTUtnIf".to_string()));
+            }
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_inheritance_with_remappings() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default]
+                    remappings = [
+                        "forge-std/=lib/forge-std/src/",
+                        "@openzeppelin/=lib/openzeppelin-contracts/",
+                        "ds-test/=lib/ds-test/src/"
+                    ]
+                    auto_detect_remappings = false
+                    "#,
+            )?;
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+                    remappings = [
+                        "@custom/=lib/custom/",
+                        "ds-test/=lib/forge-std/lib/ds-test/src/"  # Note: This will be added alongside base remappings
+                    ]
+                    "#,
+            )?;
+
+            let config = Config::load().unwrap();
+
+            // Remappings array is now concatenated with admerge (base + local)
+            assert!(config.remappings.iter().any(|r| r.to_string().contains("@custom/")));
+            assert!(config.remappings.iter().any(|r| r.to_string().contains("ds-test/")));
+            assert!(config.remappings.iter().any(|r| r.to_string().contains("forge-std/")));
+            assert!(config.remappings.iter().any(|r| r.to_string().contains("@openzeppelin/")));
+
+            // auto_detect_remappings should be inherited
+            assert!(!config.auto_detect_remappings);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_inheritance_with_multiple_profiles_and_single_file() {
+        figment::Jail::expect_with(|jail| {
+            // Create base config with prod and test profiles
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.prod]
+                    optimizer = true
+                    optimizer_runs = 10000
+                    via_ir = true
+
+                    [profile.test]
+                    optimizer = false
+
+                    [profile.test.fuzz]
+                    runs = 100
+                    "#,
+            )?;
+
+            // Local config inherits from base for prod profile
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.prod]
+                    extends = "base.toml"
+                    evm_version = "shanghai"  # Additional setting
+
+                    [profile.test]
+                    extends = "base.toml"
+
+                    [profile.test.fuzz]
+                    runs = 500  # Override
+                    "#,
+            )?;
+
+            // Test prod profile
+            jail.set_env("FOUNDRY_PROFILE", "prod");
+            let config = Config::load().unwrap();
+            assert_eq!(config.optimizer, Some(true));
+            assert_eq!(config.optimizer_runs, Some(10000));
+            assert_eq!(config.via_ir, true);
+            assert_eq!(config.evm_version, EvmVersion::Shanghai);
+
+            // Test test profile
+            jail.set_env("FOUNDRY_PROFILE", "test");
+            let config = Config::load().unwrap();
+            assert_eq!(config.optimizer, Some(false));
+            assert_eq!(config.fuzz.runs, 500);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_inheritance_with_multiple_profiles_and_files() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "prod.toml",
+                r#"
+                    [profile.prod]
+                    optimizer = true
+                    optimizer_runs = 20000
+                    gas_limit = 50000000
+                    "#,
+            )?;
+            jail.create_file(
+                "dev.toml",
+                r#"
+                    [profile.dev]
+                    optimizer = true
+                    optimizer_runs = 333
+                    gas_limit = 555555
+                    "#,
+            )?;
+
+            // Local config with only both profiles
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.dev]
+                    extends = "dev.toml"
+                    sender = "0x0000000000000000000000000000000000000001"
+
+                    [profile.prod]
+                    extends = "prod.toml"
+                    sender = "0x0000000000000000000000000000000000000002"
+                    "#,
+            )?;
+
+            // Test that prod profile correctly inherits even without a default profile
+            jail.set_env("FOUNDRY_PROFILE", "dev");
+            let config = Config::load().unwrap();
+            assert_eq!(config.optimizer, Some(true));
+            assert_eq!(config.optimizer_runs, Some(333));
+            assert_eq!(config.gas_limit, 555555.into());
+            assert_eq!(
+                config.sender,
+                "0x0000000000000000000000000000000000000001"
+                    .parse::<alloy_primitives::Address>()
+                    .unwrap()
+            );
+
+            // Test that prod profile correctly inherits even without a default profile
+            jail.set_env("FOUNDRY_PROFILE", "prod");
+            let config = Config::load().unwrap();
+            assert_eq!(config.optimizer, Some(true));
+            assert_eq!(config.optimizer_runs, Some(20000));
+            assert_eq!(config.gas_limit, 50000000.into());
+            assert_eq!(
+                config.sender,
+                "0x0000000000000000000000000000000000000002"
+                    .parse::<alloy_primitives::Address>()
+                    .unwrap()
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_extends_strategy_extend_arrays() {
+        figment::Jail::expect_with(|jail| {
+            // Create base config with arrays
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default]
+                    libs = ["lib", "node_modules"]
+                    ignored_error_codes = [5667, 1878]
+                    optimizer_runs = 200
+                    "#,
+            )?;
+
+            // Local config extends with extend-arrays strategy (concatenates arrays)
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+                    libs = ["mylib", "customlib"]
+                    ignored_error_codes = [1234]
+                    optimizer_runs = 500
+                    "#,
+            )?;
+
+            let config = Config::load().unwrap();
+
+            // Arrays should be concatenated (base + local)
+            assert_eq!(config.libs.len(), 4);
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("lib")));
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("node_modules")));
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("mylib")));
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("customlib")));
+
+            assert_eq!(config.ignored_error_codes.len(), 3);
+            assert!(
+                config.ignored_error_codes.contains(&SolidityErrorCode::UnusedFunctionParameter)
+            ); // 5667
+            assert!(
+                config.ignored_error_codes.contains(&SolidityErrorCode::SpdxLicenseNotProvided)
+            ); // 1878
+            assert!(config.ignored_error_codes.contains(&SolidityErrorCode::from(1234u64))); // 1234 - generic
+
+            // Non-array values should be replaced
+            assert_eq!(config.optimizer_runs, Some(500));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_extends_strategy_replace_arrays() {
+        figment::Jail::expect_with(|jail| {
+            // Create base config with arrays
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default]
+                    libs = ["lib", "node_modules"]
+                    ignored_error_codes = [5667, 1878]
+                    optimizer_runs = 200
+                    "#,
+            )?;
+
+            // Local config extends with replace-arrays strategy (replaces arrays entirely)
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = { path = "base.toml", strategy = "replace-arrays" }
+                    libs = ["mylib", "customlib"]
+                    ignored_error_codes = [1234]
+                    optimizer_runs = 500
+                    "#,
+            )?;
+
+            let config = Config::load().unwrap();
+
+            // Arrays should be replaced entirely (only local values)
+            assert_eq!(config.libs.len(), 2);
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("mylib")));
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("customlib")));
+            assert!(!config.libs.iter().any(|l| l.to_str() == Some("lib")));
+            assert!(!config.libs.iter().any(|l| l.to_str() == Some("node_modules")));
+
+            assert_eq!(config.ignored_error_codes.len(), 1);
+            assert!(config.ignored_error_codes.contains(&SolidityErrorCode::from(1234u64))); // 1234
+            assert!(
+                !config.ignored_error_codes.contains(&SolidityErrorCode::UnusedFunctionParameter)
+            ); // 5667
+
+            // Non-array values should be replaced
+            assert_eq!(config.optimizer_runs, Some(500));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_extends_strategy_no_collision_success() {
+        figment::Jail::expect_with(|jail| {
+            // Create base config
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default]
+                    optimizer = true
+                    optimizer_runs = 200
+                    src = "src"
+                    "#,
+            )?;
+
+            // Local config extends with no-collision strategy and no conflicts
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = { path = "base.toml", strategy = "no-collision" }
+                    test = "tests"
+                    libs = ["lib"]
+                    "#,
+            )?;
+
+            let config = Config::load().unwrap();
+
+            // Values from base should be present
+            assert_eq!(config.optimizer, Some(true));
+            assert_eq!(config.optimizer_runs, Some(200));
+            assert_eq!(config.src, PathBuf::from("src"));
+
+            // Values from local should be present
+            assert_eq!(config.test, PathBuf::from("tests"));
+            assert_eq!(config.libs.len(), 1);
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("lib")));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_extends_strategy_no_collision_error() {
+        figment::Jail::expect_with(|jail| {
+            // Create base config
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default]
+                    optimizer = true
+                    optimizer_runs = 200
+                    libs = ["lib", "node_modules"]
+                    "#,
+            )?;
+
+            // Local config extends with no-collision strategy but has conflicts
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = { path = "base.toml", strategy = "no-collision" }
+                    optimizer_runs = 500
+                    libs = ["mylib"]
+                    "#,
+            )?;
+
+            // Loading should fail due to key collision
+            let result = Config::load();
+
+            if let Ok(config) = result {
+                panic!(
+                    "Expected error but got config with optimizer_runs: {:?}, libs: {:?}",
+                    config.optimizer_runs, config.libs
+                );
+            }
+
+            let err = result.unwrap_err();
+            let err_str = err.to_string();
+            assert!(
+                err_str.contains("Key collision detected") || err_str.contains("collision"),
+                "Error message doesn't mention collision: {err_str}"
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_extends_both_syntaxes() {
+        figment::Jail::expect_with(|jail| {
+            // Create base config
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default]
+                    libs = ["lib"]
+                    optimizer = true
+                    "#,
+            )?;
+
+            // Test 1: Simple string syntax (should use default extend-arrays)
+            jail.create_file(
+                "foundry_string.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+                    libs = ["custom"]
+                    "#,
+            )?;
+
+            // Test 2: Object syntax with explicit strategy
+            jail.create_file(
+                "foundry_object.toml",
+                r#"
+                    [profile.default]
+                    extends = { path = "base.toml", strategy = "replace-arrays" }
+                    libs = ["custom"]
+                    "#,
+            )?;
+
+            // Test string syntax (default extend-arrays)
+            jail.set_env("FOUNDRY_CONFIG", "foundry_string.toml");
+            let config = Config::load().unwrap();
+            assert_eq!(config.libs.len(), 2); // Should concatenate
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("lib")));
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("custom")));
+
+            // Test object syntax (replace-arrays)
+            jail.set_env("FOUNDRY_CONFIG", "foundry_object.toml");
+            let config = Config::load().unwrap();
+            assert_eq!(config.libs.len(), 1); // Should replace
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("custom")));
+            assert!(!config.libs.iter().any(|l| l.to_str() == Some("lib")));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_extends_strategy_default_is_extend_arrays() {
+        figment::Jail::expect_with(|jail| {
+            // Create base config
+            jail.create_file(
+                "base.toml",
+                r#"
+                    [profile.default]
+                    libs = ["lib", "node_modules"]
+                    optimizer = true
+                    "#,
+            )?;
+
+            // Local config extends without specifying strategy (should default to extend-arrays)
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                    [profile.default]
+                    extends = "base.toml"
+                    libs = ["custom"]
+                    optimizer = false
+                    "#,
+            )?;
+
+            // Should work with default extend-arrays strategy
+            let config = Config::load().unwrap();
+
+            // Arrays should be concatenated by default
+            assert_eq!(config.libs.len(), 3);
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("lib")));
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("node_modules")));
+            assert!(config.libs.iter().any(|l| l.to_str() == Some("custom")));
+
+            // Non-array values should be replaced
+            assert_eq!(config.optimizer, Some(false));
+
             Ok(())
         });
     }

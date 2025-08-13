@@ -91,10 +91,11 @@ pub fn subscriber() {
 
 fn env_filter() -> tracing_subscriber::EnvFilter {
     const DEFAULT_DIRECTIVES: &[&str] = &[
-        // Hyper
+        // Low level networking
         "hyper=off",
         "hyper_util=off",
         "h2=off",
+        "rustls=off",
         // Tokio
         "mio=off",
     ];
