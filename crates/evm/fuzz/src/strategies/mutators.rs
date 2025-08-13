@@ -47,7 +47,7 @@ pub(crate) trait IncrementDecrementMutator: Sized + Copy {
 }
 
 macro_rules! impl_increment_decrement {
-    ($($t:ty => $validate_fn:path),*) => {
+    ($($t:ty),*) => {
         $(
             impl IncrementDecrementMutator for $t {
                 fn increment_decrement(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
@@ -63,10 +63,7 @@ macro_rules! impl_increment_decrement {
     };
 }
 
-impl_increment_decrement!(
-    U256 => validate_uint_mutation,
-    I256 => validate_int_mutation
-);
+impl_increment_decrement!(U256, I256);
 
 /// Mutator that flips random bit of uint, int or address.
 pub(crate) trait BitFlipMutator: Sized + Copy {
@@ -222,35 +219,34 @@ impl InterestingByteMutator for I256 {}
 impl InterestingWordMutator for I256 {}
 impl InterestingDWordMutator for I256 {}
 
-/// Returns mutated uint value if different than the original value and if it fits in the given
+/// Returns mutated uint value if different from the original value and if it fits in the given
 /// size, otherwise None.
-fn validate_uint_mutation(original_value: U256, mutated_value: U256, size: usize) -> Option<U256> {
-    let max_value = if size < 256 { (U256::from(1) << size) - U256::from(1) } else { U256::MAX };
-    if original_value != mutated_value && mutated_value < max_value {
-        Some(mutated_value)
-    } else {
-        None
+fn validate_uint_mutation(original: U256, mutated: U256, size: usize) -> Option<U256> {
+    // Early return if mutated value is the same as original value.
+    if mutated == original {
+        return None;
     }
+
+    // Check if mutated value fits the given size.
+    let max = if size < 256 { (U256::from(1) << size) - U256::from(1) } else { U256::MAX };
+    (mutated < max).then_some(mutated)
 }
 
-/// Returns mutated int value if different than the original value and if it fits in the given size,
+/// Returns mutated int value if different from the original value and if it fits in the given size,
 /// otherwise None.
-fn validate_int_mutation(original_value: I256, mutated_value: I256, size: usize) -> Option<I256> {
-    let umax: U256 = (U256::from(1) << (size - 1)) - U256::from(1);
-    if original_value != mutated_value
-        && match mutated_value.sign() {
-            Sign::Positive => {
-                mutated_value < I256::overflowing_from_sign_and_abs(Sign::Positive, umax).0
-            }
-            Sign::Negative => {
-                mutated_value > I256::overflowing_from_sign_and_abs(Sign::Negative, umax).0
-            }
-        }
-    {
-        Some(mutated_value)
-    } else {
-        None
+fn validate_int_mutation(original: I256, mutated: I256, size: usize) -> Option<I256> {
+    // Early return if mutated value is the same as original value.
+    if mutated == original {
+        return None;
     }
+
+    // Check if mutated value fits the given size.
+    let max_abs = (U256::from(1) << (size - 1)) - U256::from(1);
+    match mutated.sign() {
+        Sign::Positive => mutated < I256::overflowing_from_sign_and_abs(Sign::Positive, max_abs).0,
+        Sign::Negative => mutated > I256::overflowing_from_sign_and_abs(Sign::Negative, max_abs).0,
+    }
+    .then_some(mutated)
 }
 
 #[cfg(test)]
