@@ -178,6 +178,7 @@ impl CallArgs {
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::from_provider(figment)?.sanitized();
         let state_overrides = self.get_state_overrides()?;
+        let strategy = utils::get_executor_strategy(&config);
 
         let Self {
             to,
@@ -254,6 +255,7 @@ impl CallArgs {
                 })
                 .with_state_changes(shell::verbosity() > 4);
             let mut executor = TracingExecutor::new(
+                strategy,
                 env,
                 fork,
                 evm_version,

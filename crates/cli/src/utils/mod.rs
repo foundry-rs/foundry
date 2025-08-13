@@ -7,6 +7,7 @@ use foundry_common::{
     shell,
 };
 use foundry_config::{Chain, Config};
+use foundry_evm::executors::ExecutorStrategy;
 use serde::de::DeserializeOwned;
 use std::{
     ffi::OsStr,
@@ -113,6 +114,12 @@ pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
     }
 
     Ok(builder)
+}
+
+/// Return an [ExecutorStrategy] via the config.
+pub fn get_executor_strategy(_config: &Config) -> ExecutorStrategy {
+    info!("using evm strategy");
+    ExecutorStrategy::new_evm()
 }
 
 pub async fn get_chain<P>(chain: Option<Chain>, provider: P) -> Result<Chain>

@@ -53,6 +53,11 @@ pub use invariant::InvariantExecutor;
 mod trace;
 pub use trace::TracingExecutor;
 
+mod strategy;
+pub use strategy::{
+    EvmExecutorStrategyRunner, ExecutorStrategy, ExecutorStrategyContext, ExecutorStrategyRunner,
+};
+
 sol! {
     interface ITest {
         function setUp() external;
@@ -90,6 +95,8 @@ pub struct Executor {
     gas_limit: u64,
     /// Whether `failed()` should be called on the test contract to determine if the test failed.
     legacy_assertions: bool,
+    /// Executor behavior strategy.
+    pub strategy: ExecutorStrategy,
 }
 
 impl Executor {
@@ -102,6 +109,7 @@ impl Executor {
     /// Creates a new `Executor` with the given arguments.
     #[inline]
     pub fn new(
+        strategy: ExecutorStrategy,
         mut backend: Backend,
         env: EnvWithHandlerCfg,
         inspector: InspectorStack,
@@ -121,12 +129,19 @@ impl Executor {
             },
         );
 
-        Self { backend, env, inspector, gas_limit, legacy_assertions }
+        Self { strategy, backend, env, inspector, gas_limit, legacy_assertions }
     }
 
     fn clone_with_backend(&self, backend: Backend) -> Self {
         let env = EnvWithHandlerCfg::new_with_spec_id(Box::new(self.env().clone()), self.spec_id());
-        Self::new(backend, env, self.inspector().clone(), self.gas_limit, self.legacy_assertions)
+        Self::new(
+            self.strategy.clone(),
+            backend,
+            env,
+            self.inspector().clone(),
+            self.gas_limit,
+            self.legacy_assertions,
+        )
     }
 
     /// Returns a reference to the EVM backend.
@@ -222,28 +237,22 @@ impl Executor {
     /// Set the balance of an account.
     pub fn set_balance(&mut self, address: Address, amount: U256) -> BackendResult<()> {
         trace!(?address, ?amount, "setting account balance");
-        let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
-        account.balance = amount;
-        self.backend_mut().insert_account_info(address, account);
-        Ok(())
+        self.strategy.runner.set_balance(self, address, amount)
     }
 
     /// Gets the balance of an account
     pub fn get_balance(&self, address: Address) -> BackendResult<U256> {
-        Ok(self.backend().basic_ref(address)?.map(|acc| acc.balance).unwrap_or_default())
+        self.strategy.runner.get_balance(self, address)
     }
 
     /// Set the nonce of an account.
     pub fn set_nonce(&mut self, address: Address, nonce: u64) -> BackendResult<()> {
-        let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
-        account.nonce = nonce;
-        self.backend_mut().insert_account_info(address, account);
-        Ok(())
+        self.strategy.runner.set_nonce(self, address, nonce)
     }
 
     /// Returns the nonce of an account.
     pub fn get_nonce(&self, address: Address) -> BackendResult<u64> {
-        Ok(self.backend().basic_ref(address)?.map(|acc| acc.nonce).unwrap_or_default())
+        self.strategy.runner.get_nonce(self, address)
     }
 
     /// Returns `true` if the account has no code.
@@ -448,7 +457,13 @@ impl Executor {
     pub fn call_with_env(&self, mut env: EnvWithHandlerCfg) -> eyre::Result<RawCallResult> {
         let mut inspector = self.inspector().clone();
         let mut backend = CowBackend::new_borrowed(self.backend());
-        let result = backend.inspect(&mut env, &mut inspector)?;
+        let result = self.strategy.runner.call(
+            self.strategy.context.as_ref(),
+            &mut backend,
+            &mut env,
+            &self.env,
+            &mut inspector,
+        )?;
         convert_executed_result(env, inspector, result, backend.has_state_snapshot_failure())
     }
 
@@ -456,8 +471,14 @@ impl Executor {
     #[instrument(name = "transact", level = "debug", skip_all)]
     pub fn transact_with_env(&mut self, mut env: EnvWithHandlerCfg) -> eyre::Result<RawCallResult> {
         let mut inspector = self.inspector().clone();
-        let backend = self.backend_mut();
-        let result = backend.inspect(&mut env, &mut inspector)?;
+        let backend = &mut self.backend;
+        let result = self.strategy.runner.transact(
+            self.strategy.context.as_mut(),
+            backend,
+            &mut env,
+            &self.env,
+            &mut inspector,
+        )?;
         let mut result =
             convert_executed_result(env, inspector, result, backend.has_state_snapshot_failure())?;
         self.commit(&mut result);

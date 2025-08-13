@@ -17,7 +17,7 @@ use foundry_config::{Config, InlineConfig};
 use foundry_evm::{
     backend::Backend,
     decode::RevertDecoder,
-    executors::{Executor, ExecutorBuilder},
+    executors::{Executor, ExecutorBuilder, ExecutorStrategy},
     fork::CreateFork,
     inspectors::CheatsConfig,
     opts::EvmOpts,
@@ -64,6 +64,9 @@ pub struct MultiContractRunner {
 
     /// The base configuration for the test runner.
     pub tcfg: TestRunnerConfig,
+
+    /// Execution behavior.
+    pub strategy: ExecutorStrategy,
 }
 
 impl std::ops::Deref for MultiContractRunner {
@@ -173,7 +176,10 @@ impl MultiContractRunner {
         trace!("running all tests");
 
         // The DB backend that serves all the data.
-        let db = Backend::spawn(self.fork.take())?;
+        let db = Backend::spawn(
+            self.strategy.runner.new_backend_strategy(self.strategy.context.as_ref()),
+            self.fork.take(),
+        )?;
 
         let find_timer = Instant::now();
         let contracts = self.matching_contracts(filter).collect::<Vec<_>>();
@@ -252,7 +258,12 @@ impl MultiContractRunner {
         let runner = ContractRunner::new(
             &identifier,
             contract,
-            self.tcfg.executor(self.known_contracts.clone(), artifact_id, db.clone()),
+            self.tcfg.executor(
+                self.strategy.clone(),
+                self.known_contracts.clone(),
+                artifact_id,
+                db.clone(),
+            ),
             progress,
             tokio_handle,
             span,
@@ -343,11 +354,13 @@ impl TestRunnerConfig {
     /// Creates a new executor with this configuration.
     pub fn executor(
         &self,
+        strategy: ExecutorStrategy,
         known_contracts: ContractsByArtifact,
         artifact_id: &ArtifactId,
         db: Backend,
     ) -> Executor {
         let cheats_config = Arc::new(CheatsConfig::new(
+            strategy.runner.new_cheatcodes_strategy(strategy.context.as_ref()),
             &self.config,
             self.evm_opts.clone(),
             Some(known_contracts),
@@ -366,7 +379,7 @@ impl TestRunnerConfig {
             .spec_id(self.spec_id)
             .gas_limit(self.evm_opts.gas_limit())
             .legacy_assertions(self.config.legacy_assertions)
-            .build(self.env.clone(), db)
+            .build(strategy, self.env.clone(), db)
     }
 
     fn trace_mode(&self) -> TraceMode {
@@ -470,6 +483,7 @@ impl MultiContractRunnerBuilder {
     /// against that evm
     pub fn build<C: Compiler<CompilerContract = Contract>>(
         self,
+        strategy: ExecutorStrategy,
         root: &Path,
         output: &ProjectCompileOutput,
         env: revm::primitives::Env,
@@ -544,6 +558,7 @@ impl MultiContractRunnerBuilder {
 
                 config: self.config,
             },
+            strategy,
         })
     }
 }

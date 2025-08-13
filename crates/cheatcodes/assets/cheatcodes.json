@@ -8138,6 +8138,26 @@
     },
     {
       "func": {
+        "id": "pvm",
+        "description": "Enables or disables PVM (PolkaVM) mode for contract execution.\nWhen enabled, only PVM-specific calls are intercepted; all other operations run on EVM.\nExample usage:\nvm.pvm(true);  // Enable PVM mode\nvm.pvm(false); // Disable PVM mode (use EVM)",
+        "declaration": "function pvm(bool enabled) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "pvm(bool)",
+        "selector": "0x82bd3ca3",
+        "selectorBytes": [
+          130,
+          189,
+          60,
+          163
+        ]
+      },
+      "group": "utilities",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "randomAddress",
         "description": "Returns a random `address`.",
         "declaration": "function randomAddress() external returns (address);",

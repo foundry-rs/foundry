@@ -2,7 +2,10 @@
 
 use alloy_chains::NamedChain;
 use alloy_primitives::U256;
-use forge::{revm::primitives::SpecId, MultiContractRunner, MultiContractRunnerBuilder};
+use forge::{
+    executors::ExecutorStrategy, revm::primitives::SpecId, MultiContractRunner,
+    MultiContractRunnerBuilder,
+};
 use foundry_cli::utils::install_crypto_provider;
 use foundry_compilers::{
     artifacts::{EvmVersion, Libraries, Settings},
@@ -222,7 +225,13 @@ impl ForgeTestData {
         builder
             .enable_isolation(opts.isolate)
             .sender(config.sender)
-            .build::<MultiCompiler>(root, &self.output, opts.local_evm_env(), opts)
+            .build::<MultiCompiler>(
+                ExecutorStrategy::new_evm(),
+                root,
+                &self.output,
+                opts.local_evm_env(),
+                opts,
+            )
             .unwrap()
     }
 
@@ -231,7 +240,13 @@ impl ForgeTestData {
         let mut opts = config_evm_opts(&self.config);
         opts.verbosity = 5;
         self.base_runner()
-            .build::<MultiCompiler>(self.project.root(), &self.output, opts.local_evm_env(), opts)
+            .build::<MultiCompiler>(
+                ExecutorStrategy::new_evm(),
+                self.project.root(),
+                &self.output,
+                opts.local_evm_env(),
+                opts,
+            )
             .unwrap()
     }
 
@@ -247,7 +262,13 @@ impl ForgeTestData {
 
         self.base_runner()
             .with_fork(fork)
-            .build::<MultiCompiler>(self.project.root(), &self.output, env, opts)
+            .build::<MultiCompiler>(
+                ExecutorStrategy::new_evm(),
+                self.project.root(),
+                &self.output,
+                env,
+                opts,
+            )
             .unwrap()
     }
 }

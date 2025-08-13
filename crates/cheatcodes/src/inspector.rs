@@ -7,8 +7,8 @@ use crate::{
         prank::Prank,
         DealRecord, GasRecord, RecordAccess,
     },
-    inspector::utils::CommonCreateInput,
     script::{Broadcast, Wallets},
+    strategy::CheatcodeInspectorStrategy,
     test::{
         assume::AssumeNoRevert,
         expect::{
@@ -22,16 +22,12 @@ use crate::{
     Vm::{self, AccountAccess},
 };
 use alloy_consensus::BlobTransactionSidecar;
-use alloy_network::TransactionBuilder4844;
 use alloy_primitives::{
     hex,
     map::{AddressHashMap, HashMap, HashSet},
     Address, Bytes, Log, TxKind, B256, U256,
 };
-use alloy_rpc_types::{
-    request::{TransactionInput, TransactionRequest},
-    AccessList,
-};
+use alloy_rpc_types::AccessList;
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use foundry_common::{evm::Breakpoints, TransactionMaybeSigned, SELECTOR_LEN};
 use foundry_evm_core::{
@@ -70,6 +66,7 @@ use std::{
 };
 
 mod utils;
+pub use utils::CommonCreateInput;
 
 pub type Ecx<'a, 'b, 'c> = &'a mut EvmContext<&'b mut (dyn DatabaseExt + 'c)>;
 pub type InnerEcx<'a, 'b, 'c> = &'a mut InnerEvmContext<&'b mut (dyn DatabaseExt + 'c)>;
@@ -514,6 +511,9 @@ pub struct Cheatcodes {
     pub deprecated: HashMap<&'static str, Option<&'static str>>,
     /// Unlocked wallets used in scripts and testing of scripts.
     pub wallets: Option<Wallets>,
+
+    /// Cheatcode inspector behavior.
+    pub strategy: CheatcodeInspectorStrategy,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -529,6 +529,7 @@ impl Cheatcodes {
     /// Creates a new `Cheatcodes` with the given settings.
     pub fn new(config: Arc<CheatsConfig>) -> Self {
         Self {
+            strategy: config.strategy.clone(),
             fs_commit: true,
             labels: config.labels.clone(),
             config,
@@ -733,22 +734,15 @@ impl Cheatcodes {
 
                 if curr_depth == broadcast.depth {
                     input.set_caller(broadcast.new_origin);
-                    let is_fixed_gas_limit = check_if_fixed_gas_limit(ecx, input.gas_limit());
 
-                    let account = &ecx.journaled_state.state()[&broadcast.new_origin];
-                    self.broadcastable_transactions.push_back(BroadcastableTransaction {
-                        rpc: ecx.db.active_fork_url(),
-                        transaction: TransactionRequest {
-                            from: Some(broadcast.new_origin),
-                            to: None,
-                            value: Some(input.value()),
-                            input: TransactionInput::new(input.init_code()),
-                            nonce: Some(account.info.nonce),
-                            gas: if is_fixed_gas_limit { Some(input.gas_limit()) } else { None },
-                            ..Default::default()
-                        }
-                        .into(),
-                    });
+                    self.strategy.runner.record_broadcastable_create_transactions(
+                        self.strategy.context.as_mut(),
+                        self.config.clone(),
+                        &input,
+                        ecx,
+                        broadcast,
+                        &mut self.broadcastable_transactions,
+                    );
 
                     input.log_debug(self, &input.scheme().unwrap_or(CreateScheme::Create));
                 }
@@ -1121,56 +1115,31 @@ where {
                         });
                     }
 
-                    let is_fixed_gas_limit = check_if_fixed_gas_limit(ecx, call.gas_limit);
+                    // Check for delegation and blob compatibility
+                    if self.active_delegation.is_some() && self.active_blob_sidecar.is_some() {
+                        let msg = "both delegation and blob are active; `attachBlob` and `attachDelegation` are not compatible";
+                        return Some(CallOutcome {
+                            result: InterpreterResult {
+                                result: InstructionResult::Revert,
+                                output: Error::encode(msg),
+                                gas,
+                            },
+                            memory_offset: call.return_memory_offset.clone(),
+                        });
+                    }
+
+                    self.strategy.runner.record_broadcastable_call_transactions(
+                        self.strategy.context.as_mut(),
+                        self.config.clone(),
+                        call,
+                        ecx,
+                        broadcast,
+                        &mut self.broadcastable_transactions,
+                        &mut self.active_delegation,
+                    );
 
                     let account =
                         ecx.journaled_state.state().get_mut(&broadcast.new_origin).unwrap();
-
-                    let mut tx_req = TransactionRequest {
-                        from: Some(broadcast.new_origin),
-                        to: Some(TxKind::from(Some(call.target_address))),
-                        value: call.transfer_value(),
-                        input: TransactionInput::new(call.input.clone()),
-                        nonce: Some(account.info.nonce),
-                        chain_id: Some(ecx.env.cfg.chain_id),
-                        gas: if is_fixed_gas_limit { Some(call.gas_limit) } else { None },
-                        ..Default::default()
-                    };
-
-                    match (self.active_delegation.take(), self.active_blob_sidecar.take()) {
-                        (Some(_), Some(_)) => {
-                            let msg = "both delegation and blob are active; `attachBlob` and `attachDelegation` are not compatible";
-                            return Some(CallOutcome {
-                                result: InterpreterResult {
-                                    result: InstructionResult::Revert,
-                                    output: Error::encode(msg),
-                                    gas,
-                                },
-                                memory_offset: call.return_memory_offset.clone(),
-                            });
-                        }
-                        (Some(auth_list), None) => {
-                            tx_req.authorization_list = Some(vec![auth_list]);
-                            tx_req.sidecar = None;
-
-                            // Increment nonce to reflect the signed authorization.
-                            account.info.nonce += 1;
-                        }
-                        (None, Some(blob_sidecar)) => {
-                            tx_req.set_blob_sidecar(blob_sidecar);
-                            tx_req.authorization_list = None;
-                        }
-                        (None, None) => {
-                            tx_req.sidecar = None;
-                            tx_req.authorization_list = None;
-                        }
-                    }
-
-                    self.broadcastable_transactions.push_back(BroadcastableTransaction {
-                        rpc: ecx.db.active_fork_url(),
-                        transaction: tx_req.into(),
-                    });
-                    debug!(target: "cheatcodes", tx=?self.broadcastable_transactions.back().unwrap(), "broadcastable call");
 
                     // Explicitly increment nonce if calls are not isolated.
                     if !self.config.evm_opts.isolate {
@@ -1304,6 +1273,12 @@ where {
 impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
     #[inline]
     fn initialize_interp(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+        self.strategy.runner.pre_initialize_interp(
+            self.strategy.context.as_mut(),
+            interpreter,
+            ecx,
+        );
+
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.
         if let Some(block) = self.block.take() {
@@ -1322,10 +1297,20 @@ impl Inspector<&mut dyn DatabaseExt> for Cheatcodes {
         if let Some(expected) = &mut self.expected_revert {
             expected.max_depth = max(ecx.journaled_state.depth(), expected.max_depth);
         }
+
+        self.strategy.runner.post_initialize_interp(
+            self.strategy.context.as_mut(),
+            interpreter,
+            ecx,
+        );
     }
 
     #[inline]
     fn step(&mut self, interpreter: &mut Interpreter, ecx: Ecx) {
+        if self.strategy.runner.pre_step_end(self.strategy.context.as_mut(), interpreter, ecx) {
+            return;
+        }
+
         self.pc = interpreter.program_counter();
 
         // `pauseGasMetering`: pause / resume interpreter gas.
@@ -2314,7 +2299,7 @@ fn disallowed_mem_write(
 
 // Determines if the gas limit on a given call was manually set in the script and should therefore
 // not be overwritten by later estimations
-fn check_if_fixed_gas_limit(ecx: InnerEcx, call_gas_limit: u64) -> bool {
+pub fn check_if_fixed_gas_limit(ecx: InnerEcx, call_gas_limit: u64) -> bool {
     // If the gas limit was not set in the source code it is set to the estimated gas left at the
     // time of the call, which should be rather close to configured gas limit.
     // TODO: Find a way to reliably make this determination.
@@ -2399,7 +2384,7 @@ fn apply_dispatch(
     }
 
     // Apply the cheatcode.
-    let mut result = cheat.dyn_apply(ccx, executor);
+    let mut result = ccx.state.strategy.runner.apply_full(cheat, ccx, executor);
 
     // Format the error message to include the cheatcode name.
     if let Err(e) = &mut result {

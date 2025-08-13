@@ -1,6 +1,6 @@
 //! A wrapper around `Backend` that is clone-on-write used for fuzzing.
 
-use super::BackendError;
+use super::{strategy::BackendStrategy, BackendError};
 use crate::{
     backend::{
         diagnostic::RevertDiagnostic, Backend, DatabaseExt, LocalForkId, RevertStateSnapshotAction,
@@ -11,7 +11,6 @@ use crate::{
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::TransactionRequest;
-use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
 use revm::{
     db::DatabaseRef,
@@ -21,7 +20,7 @@ use revm::{
     },
     Database, DatabaseCommit, JournaledState,
 };
-use std::{borrow::Cow, collections::BTreeMap};
+use std::{any::Any, borrow::Cow, collections::BTreeMap};
 
 /// A wrapper around `Backend` that ensures only `revm::DatabaseRef` functions are called.
 ///
@@ -66,18 +65,13 @@ impl<'a> CowBackend<'a> {
         &mut self,
         env: &mut EnvWithHandlerCfg,
         inspector: &mut I,
+        inspect_ctx: Box<dyn Any>,
     ) -> eyre::Result<ResultAndState> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
         // already, we reset the initialized state
         self.is_initialized = false;
         self.spec_id = env.handler_cfg.spec_id;
-        let mut evm = crate::utils::new_evm_with_inspector(self, env.clone(), inspector);
-
-        let res = evm.transact().wrap_err("EVM error")?;
-
-        env.env = evm.context.evm.inner.env;
-
-        Ok(res)
+        self.backend.strategy.runner.inspect(self.backend.to_mut(), env, inspector, inspect_ctx)
     }
 
     /// Returns whether there was a state snapshot failure in the backend.
@@ -111,6 +105,10 @@ impl<'a> CowBackend<'a> {
 }
 
 impl DatabaseExt for CowBackend<'_> {
+    fn get_strategy(&mut self) -> &mut BackendStrategy {
+        &mut self.backend.to_mut().strategy
+    }
+
     fn snapshot_state(&mut self, journaled_state: &JournaledState, env: &Env) -> U256 {
         self.backend_mut(env).snapshot_state(journaled_state, env)
     }

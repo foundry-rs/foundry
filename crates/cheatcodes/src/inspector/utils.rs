@@ -4,7 +4,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use revm::interpreter::{CreateInputs, CreateScheme, EOFCreateInputs, EOFCreateKind};
 
 /// Common behaviour of legacy and EOF create inputs.
-pub(crate) trait CommonCreateInput {
+pub trait CommonCreateInput {
     fn caller(&self) -> Address;
     fn gas_limit(&self) -> u64;
     fn value(&self) -> U256;

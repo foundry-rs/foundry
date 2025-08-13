@@ -10,7 +10,7 @@ use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
-    utils::{handle_traces, init_progress, TraceResult},
+    utils::{get_executor_strategy, handle_traces, init_progress, TraceResult},
 };
 use foundry_common::{is_known_system_sender, shell, SYSTEM_TRANSACTION_TYPE};
 use foundry_compilers::artifacts::EvmVersion;
@@ -110,6 +110,7 @@ impl RunArgs {
         let figment = Into::<Figment>::into(&self.rpc).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
         let mut config = Config::from_provider(figment)?.sanitized();
+        let strategy = get_executor_strategy(&config);
 
         let compute_units_per_second =
             if self.no_rate_limit { Some(u64::MAX) } else { self.compute_units_per_second };
@@ -180,6 +181,7 @@ impl RunArgs {
             })
             .with_state_changes(shell::verbosity() > 4);
         let mut executor = TracingExecutor::new(
+            strategy,
             env.clone(),
             fork,
             evm_version,

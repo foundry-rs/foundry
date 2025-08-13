@@ -105,11 +105,12 @@ lint: ## Run all linters.
 ## Testing
 
 test-foundry:
-	cargo nextest run -E 'kind(test) & !test(/\b(issue|ext_integration)/)'
+	cargo nextest run -E 'kind(test) & !test(/\b(issue|ext_integration)/)' --no-fail-fast
 
 test-doc:
 	cargo test --doc --workspace
 
+.PHONY: test
 test: ## Run all tests.
 	make test-foundry && \
 	make test-doc

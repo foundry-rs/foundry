@@ -16,7 +16,9 @@ use foundry_common::{
 use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVersion};
 use foundry_config::Config;
 use foundry_evm::{
-    constants::DEFAULT_CREATE2_DEPLOYER, executors::TracingExecutor, opts::EvmOpts,
+    constants::DEFAULT_CREATE2_DEPLOYER,
+    executors::{ExecutorStrategy, TracingExecutor},
+    opts::EvmOpts,
     traces::TraceMode,
 };
 use reqwest::Url;
@@ -306,6 +308,7 @@ pub fn check_args_len(
 }
 
 pub async fn get_tracing_executor(
+    strategy: ExecutorStrategy,
     fork_config: &mut Config,
     fork_blk_num: u64,
     evm_version: EvmVersion,
@@ -319,6 +322,7 @@ pub async fn get_tracing_executor(
         TracingExecutor::get_fork_material(fork_config, evm_opts).await?;
 
     let executor = TracingExecutor::new(
+        strategy,
         env.clone(),
         fork,
         Some(fork_config.evm_version),

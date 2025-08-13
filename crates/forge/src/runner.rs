@@ -187,6 +187,11 @@ impl<'a> ContractRunner<'a> {
 
         self.executor.deploy_create2_deployer()?;
 
+        if let Some(cheatcodes) = &mut self.executor.inspector_mut().cheatcodes {
+            debug!("test contract deployed");
+            cheatcodes.strategy.runner.base_contract_deployed(cheatcodes.strategy.context.as_mut());
+        }
+
         // Optionally call the `setUp` function
         if call_setup {
             trace!("calling setUp");

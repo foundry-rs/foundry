@@ -7,6 +7,8 @@ use foundry_evm_traces::TraceMode;
 use revm::primitives::{Env, SpecId};
 use std::ops::{Deref, DerefMut};
 
+use super::ExecutorStrategy;
+
 /// A default executor with tracing enabled
 pub struct TracingExecutor {
     executor: Executor,
@@ -14,6 +16,7 @@ pub struct TracingExecutor {
 
 impl TracingExecutor {
     pub fn new(
+        strategy: ExecutorStrategy,
         env: revm::primitives::Env,
         fork: Option<CreateFork>,
         version: Option<EvmVersion>,
@@ -21,7 +24,8 @@ impl TracingExecutor {
         odyssey: bool,
         create2_deployer: Address,
     ) -> eyre::Result<Self> {
-        let db = Backend::spawn(fork)?;
+        let db =
+            Backend::spawn(strategy.runner.new_backend_strategy(strategy.context.as_ref()), fork)?;
         Ok(Self {
             // configures a bare version of the evm executor: no cheatcode inspector is enabled,
             // tracing will be enabled only for the targeted transaction
@@ -30,7 +34,7 @@ impl TracingExecutor {
                     stack.trace_mode(trace_mode).odyssey(odyssey).create2_deployer(create2_deployer)
                 })
                 .spec_id(evm_spec_id(version.unwrap_or_default(), odyssey))
-                .build(env, db),
+                .build(strategy, env, db),
         })
     }
 
