@@ -178,30 +178,7 @@ where
 
 impl From<WalletError> for BlockchainError {
     fn from(value: WalletError) -> Self {
-        match value {
-            WalletError::ValueNotZero => Self::Message(
-                "Transaction value must be zero for delegated transactions".to_string(),
-            ),
-            WalletError::FromSet => Self::Message(
-                "Transaction 'from' field should not be set for delegated transactions".to_string(),
-            ),
-            WalletError::NonceSet => Self::Message(
-                "Transaction nonce should not be set for delegated transactions".to_string(),
-            ),
-            WalletError::InvalidAuthorization => Self::Message(
-                "Invalid authorization address: contract is not whitelisted for delegation"
-                    .to_string(),
-            ),
-            WalletError::IllegalDestination => Self::Message(
-                "Transaction destination is not a valid delegated account".to_string(),
-            ),
-            WalletError::InternalError => {
-                Self::Message("Internal server error occurred".to_string())
-            }
-            WalletError::InvalidTransactionRequest => {
-                Self::Message("Invalid transaction request format".to_string())
-            }
-        }
+        Self::Message(value.to_string())
     }
 }
 
