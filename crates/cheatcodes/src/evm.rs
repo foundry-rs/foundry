@@ -1288,7 +1288,7 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                     let account_diff =
                         state_diffs.entry(account_access.account).or_insert_with(|| {
                             AccountStateDiffs {
-                                label: state.labels.get(&account_access.account).cloned(),
+                                label: ccx.state.labels.get(&account_access.account).cloned(),
                                 ..Default::default()
                             }
                         });
