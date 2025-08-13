@@ -252,11 +252,10 @@ pub fn mutate_param_value(
         // Uint: increment / decrement, flip random bit, mutate with interesting words or generate
         // new value from state.
         DynSolValue::Uint(val, size) => match test_runner.rng().random_range(0..=5) {
-            0 => {
-                let mutated_val = U256::increment_decrement(val, test_runner);
+            0 => U256::increment_decrement(val, size, test_runner).map(|mutated_val| {
                 trace!(target: "abi_mutation", "U256 increment/decrement {val} -> {mutated_val}");
-                Some(DynSolValue::Uint(mutated_val, size))
-            }
+                DynSolValue::Uint(mutated_val, size)
+            }),
             1 => U256::flip_random_bit(val, Some(size), test_runner).map(|mutated_val| {
                 trace!(target: "abi_mutation", "U256 flip random bit: {val} -> {mutated_val}");
                 DynSolValue::Uint(mutated_val, size)
@@ -279,11 +278,10 @@ pub fn mutate_param_value(
         // Int: increment / decrement, flip random bit, mutate with interesting words or generate
         // new value from state.
         DynSolValue::Int(val, size) => match test_runner.rng().random_range(0..=5) {
-            0 => {
-                let mutated_val = I256::increment_decrement(val, test_runner);
+            0 => I256::increment_decrement(val, size, test_runner).map(|mutated_val| {
                 trace!(target: "abi_mutation", "I256 increment/decrement {val} -> {mutated_val}");
-                Some(DynSolValue::Int(mutated_val, size))
-            }
+                DynSolValue::Int(mutated_val, size)
+            }),
             1 => I256::flip_random_bit(val, Some(size), test_runner).map(|mutated_val| {
                 trace!(target: "abi_mutation", "I256 flip random bit: {val} -> {mutated_val}");
                 DynSolValue::Int(mutated_val, size)

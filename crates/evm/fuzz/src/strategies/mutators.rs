@@ -43,26 +43,30 @@ static INTERESTING_32: [i32; 27] = [
 
 /// Mutator that randomly increments or decrements an uint or int.
 pub(crate) trait IncrementDecrementMutator: Sized + Copy {
-    fn increment_decrement(self, rng: &mut TestRunner) -> Self;
+    fn increment_decrement(self, size: usize, rng: &mut TestRunner) -> Option<Self>;
 }
 
 macro_rules! impl_increment_decrement {
-    ($($t:ty),*) => {
+    ($($t:ty => $validate_fn:path),*) => {
         $(
             impl IncrementDecrementMutator for $t {
-                fn increment_decrement(self, test_runner: &mut TestRunner) -> Self {
-                    if test_runner.rng().random::<bool>() {
+                fn increment_decrement(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+                    let mutated = if test_runner.rng().random::<bool>() {
                         self.wrapping_add(Self::ONE)
                     } else {
                         self.wrapping_sub(Self::ONE)
-                    }
+                    };
+                    Self::validate(self, mutated, size)
                 }
             }
         )*
     };
 }
 
-impl_increment_decrement!(U256, I256);
+impl_increment_decrement!(
+    U256 => validate_uint_mutation,
+    I256 => validate_int_mutation
+);
 
 /// Mutator that flips random bit of uint, int or address.
 pub(crate) trait BitFlipMutator: Sized + Copy {
@@ -125,8 +129,9 @@ pub(crate) trait InterestingByteMutator: InterestingMutator {
         size: usize,
         test_runner: &mut TestRunner,
     ) -> Option<Self> {
+        let byte_size = size / 8;
         let mut bytes = value.to_be_bytes();
-        let byte_index = test_runner.rng().random_range(0..32);
+        let byte_index = test_runner.rng().random_range(32 - byte_size..32);
         let interesting = *INTERESTING_8.choose(&mut test_runner.rng()).unwrap() as u8;
         bytes[byte_index] = interesting;
         let mutated = Self::from_be_bytes(bytes);
@@ -140,11 +145,17 @@ pub(crate) trait InterestingWordMutator: InterestingMutator {
         size: usize,
         test_runner: &mut TestRunner,
     ) -> Option<Self> {
+        let byte_size = size / 8;
+        if byte_size < 2 {
+            return None;
+        }
+
         let mut bytes = value.to_be_bytes();
-        let word_index = test_runner.rng().random_range(0..16);
+        let word_index = test_runner.rng().random_range(16 - byte_size / 2..16);
         let interesting = *INTERESTING_16.choose(&mut test_runner.rng()).unwrap() as u16;
+        let word_bytes = interesting.to_be_bytes();
         let start = word_index * 2;
-        bytes[start..start + 2].copy_from_slice(&interesting.to_be_bytes());
+        bytes[start..start + 2].copy_from_slice(&word_bytes);
         let mutated = Self::from_be_bytes(bytes);
         Self::validate(value, mutated, size)
     }
@@ -156,10 +167,15 @@ pub(crate) trait InterestingDWordMutator: InterestingMutator {
         size: usize,
         test_runner: &mut TestRunner,
     ) -> Option<Self> {
+        let byte_size = size / 16;
+        if byte_size < 4 {
+            return None;
+        }
+
         let mut bytes = value.to_be_bytes();
-        let word_index = test_runner.rng().random_range(0..8);
+        let dword_index = test_runner.rng().random_range(8 - byte_size / 4..8);
         let interesting = *INTERESTING_32.choose(&mut test_runner.rng()).unwrap() as u32;
-        let start = word_index * 4;
+        let start = dword_index * 4;
         bytes[start..start + 4].copy_from_slice(&interesting.to_be_bytes());
         let mutated = Self::from_be_bytes(bytes);
         Self::validate(value, mutated, size)
@@ -227,12 +243,240 @@ fn validate_int_mutation(original_value: I256, mutated_value: I256, size: usize)
                 mutated_value < I256::overflowing_from_sign_and_abs(Sign::Positive, umax).0
             }
             Sign::Negative => {
-                mutated_value >= I256::overflowing_from_sign_and_abs(Sign::Negative, umax).0
+                mutated_value > I256::overflowing_from_sign_and_abs(Sign::Negative, umax).0
             }
         }
     {
         Some(mutated_value)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::test_runner::Config;
+
+    #[test]
+    fn test_increment_decrement_u256() {
+        let mut runner = TestRunner::new(Config::default());
+
+        let mut increment_decrement = |value: U256, expected: Vec<U256>| {
+            for _ in 0..100 {
+                let mutated = value.increment_decrement(8, &mut runner);
+                assert!(
+                    mutated.is_none() || mutated.is_some_and(|mutated| expected.contains(&mutated))
+                );
+            }
+        };
+
+        increment_decrement(U256::ZERO, vec![U256::ONE]);
+        increment_decrement(U256::from(255), vec![U256::from(254)]);
+        increment_decrement(U256::from(64), vec![U256::from(63), U256::from(65)]);
+    }
+
+    #[test]
+    fn test_increment_decrement_i256() {
+        let mut runner = TestRunner::new(Config::default());
+
+        let mut increment_decrement = |value: I256, expected: Vec<I256>| {
+            for _ in 0..100 {
+                let mutated = value.increment_decrement(8, &mut runner);
+                assert!(
+                    mutated.is_none() || mutated.is_some_and(|mutated| expected.contains(&mutated))
+                );
+            }
+        };
+
+        increment_decrement(
+            I256::from_dec_str("-128").unwrap(),
+            vec![I256::from_dec_str("-127").unwrap()],
+        );
+        increment_decrement(
+            I256::from_dec_str("127").unwrap(),
+            vec![I256::from_dec_str("126").unwrap()],
+        );
+        increment_decrement(
+            I256::from_dec_str("-47").unwrap(),
+            vec![I256::from_dec_str("-48").unwrap(), I256::from_dec_str("-46").unwrap()],
+        );
+        increment_decrement(
+            I256::from_dec_str("47").unwrap(),
+            vec![I256::from_dec_str("48").unwrap(), I256::from_dec_str("46").unwrap()],
+        );
+    }
+
+    #[test]
+    fn test_bit_flip_u256() {
+        let mut runner = TestRunner::new(Config::default());
+        let size = 8;
+
+        let mut test_bit_flip = |value: U256| {
+            for _ in 0..100 {
+                let flipped = U256::flip_random_bit(value, Some(size), &mut runner);
+                assert!(
+                    flipped.is_none()
+                        || flipped.is_some_and(
+                            |flipped| flipped != value && flipped < (U256::from(1) << size)
+                        )
+                );
+            }
+        };
+
+        test_bit_flip(U256::ZERO);
+        test_bit_flip(U256::ONE);
+        test_bit_flip(U256::MAX);
+        test_bit_flip(U256::from(255));
+    }
+
+    #[test]
+    fn test_bit_flip_i256() {
+        let mut runner = TestRunner::new(Config::default());
+        let size = 8;
+
+        let mut test_bit_flip = |value: I256| {
+            for _ in 0..100 {
+                let flipped = I256::flip_random_bit(value, Some(size), &mut runner);
+                assert!(
+                    flipped.is_none()
+                        || flipped.is_some_and(|flipped| {
+                            flipped != value
+                                && flipped.abs().unsigned_abs() < (U256::from(1) << (size - 1))
+                        })
+                );
+            }
+        };
+
+        test_bit_flip(I256::from_dec_str("-128").unwrap());
+        test_bit_flip(I256::from_dec_str("127").unwrap());
+        test_bit_flip(I256::MAX);
+        test_bit_flip(I256::MIN);
+        test_bit_flip(I256::MINUS_ONE);
+    }
+
+    #[test]
+    fn test_bit_flip_address() {
+        let mut runner = TestRunner::new(Config::default());
+        let value = Address::ZERO;
+
+        for _ in 0..100 {
+            let flipped = Address::flip_random_bit(value, None, &mut runner);
+            assert!(flipped.is_some());
+            assert_ne!(flipped.unwrap(), value);
+        }
+    }
+
+    #[test]
+    fn test_mutate_interesting_byte_u256() {
+        let mut runner = TestRunner::new(Config::default());
+        let value = U256::from(0);
+        let size = 8;
+
+        for _ in 0..100 {
+            let mutated = U256::mutate_interesting_byte(value, size, &mut runner);
+            assert!(
+                mutated.is_none()
+                    || mutated.is_some_and(
+                        |mutated| mutated != value && mutated < (U256::from(1) << size)
+                    )
+            );
+        }
+    }
+
+    #[test]
+    fn test_mutate_interesting_word_u256() {
+        let mut runner = TestRunner::new(Config::default());
+        let value = U256::from(0);
+        let size = 16;
+
+        for _ in 0..100 {
+            let mutated = U256::mutate_interesting_word(value, size, &mut runner);
+            assert!(
+                mutated.is_none()
+                    || mutated.is_some_and(
+                        |mutated| mutated != value && mutated < (U256::from(1) << size)
+                    )
+            );
+        }
+    }
+
+    #[test]
+    fn test_mutate_interesting_dword_u256() {
+        let mut runner = TestRunner::new(Config::default());
+        let value = U256::from(0);
+        let size = 32;
+
+        for _ in 0..100 {
+            let mutated = U256::mutate_interesting_dword(value, size, &mut runner);
+            assert!(
+                mutated.is_none()
+                    || mutated.is_some_and(
+                        |mutated| mutated != value && mutated < (U256::from(1) << size)
+                    )
+            );
+        }
+    }
+
+    #[test]
+    fn test_mutate_interesting_byte_i256() {
+        let mut runner = TestRunner::new(Config::default());
+        let value = I256::ZERO;
+        let size = 8;
+
+        for _ in 0..100 {
+            let mutated = I256::mutate_interesting_byte(value, size, &mut runner);
+            assert!(
+                mutated.is_none()
+                    || mutated.is_some_and(|mutated| mutated != value
+                        && mutated.abs().unsigned_abs() < (U256::from(1) << (size - 1)))
+            )
+        }
+    }
+
+    #[test]
+    fn test_mutate_interesting_word_i256() {
+        let mut runner = TestRunner::new(Config::default());
+        let value = I256::ZERO;
+        let size = 16;
+
+        for _ in 0..100 {
+            let mutated = I256::mutate_interesting_word(value, size, &mut runner);
+            assert!(
+                mutated.is_none()
+                    || mutated.is_some_and(|mutated| mutated != value
+                        && mutated.abs().unsigned_abs() < (U256::from(1) << (size - 1)))
+            )
+        }
+    }
+
+    #[test]
+    fn test_mutate_interesting_dword_i256() {
+        let mut runner = TestRunner::new(Config::default());
+        let value = I256::ZERO;
+        let size = 32;
+
+        for _ in 0..100 {
+            let mutated = I256::mutate_interesting_dword(value, size, &mut runner);
+            assert!(
+                mutated.is_none()
+                    || mutated.is_some_and(|mutated| mutated != value
+                        && mutated.abs().unsigned_abs() < (U256::from(1) << (size - 1)))
+            )
+        }
+    }
+
+    #[test]
+    fn test_mutate_interesting_word_too_small_returns_none() {
+        let mut runner = TestRunner::new(Config::default());
+        let value = U256::from(123);
+        assert!(U256::mutate_interesting_word(value, 8, &mut runner).is_none());
+    }
+
+    #[test]
+    fn test_mutate_interesting_dword_too_small_returns_none() {
+        let mut runner = TestRunner::new(Config::default());
+        let value = I256::from_dec_str("123").unwrap();
+        assert!(I256::mutate_interesting_dword(value, 16, &mut runner).is_none());
     }
 }
