@@ -1,7 +1,6 @@
 use super::state::EvmFuzzState;
 use crate::strategies::mutators::{
-    BitFlipMutator, IncrementDecrementMutator, InterestingByteMutator, InterestingDWordMutator,
-    InterestingWordMutator,
+    BitFlipMutator, IncrementDecrementMutator, InterestingWordMutator,
 };
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_primitives::{Address, B256, I256, U256};
@@ -251,56 +250,32 @@ pub fn mutate_param_value(
         }
         // Uint: increment / decrement, flip random bit, mutate with interesting words or generate
         // new value from state.
-        DynSolValue::Uint(val, size) => match test_runner.rng().random_range(0..=5) {
-            0 => U256::increment_decrement(val, size, test_runner).map(|mutated_val| {
-                trace!(target: "abi_mutation", "U256 increment/decrement {val} -> {mutated_val}");
-                DynSolValue::Uint(mutated_val, size)
-            }),
-            1 => U256::flip_random_bit(val, Some(size), test_runner).map(|mutated_val| {
-                trace!(target: "abi_mutation", "U256 flip random bit: {val} -> {mutated_val}");
-                DynSolValue::Uint(mutated_val, size)
-            }),
-            2 => U256::mutate_interesting_byte(val, size, test_runner).map(|mutated_val| {
-                trace!(target: "abi_mutation", "U256 interesting byte: {val} -> {mutated_val}");
-                DynSolValue::Uint(mutated_val, size)
-            }),
-            3 => U256::mutate_interesting_word(val, size, test_runner).map(|mutated_val| {
-                trace!(target: "abi_mutation", "U256 interesting word: {val} -> {mutated_val}");
-                DynSolValue::Uint(mutated_val, size)
-            }),
-            4 => U256::mutate_interesting_dword(val, size, test_runner).map(|mutated_val| {
-                trace!(target: "abi_mutation", "U256 interesting dword: {val} -> {mutated_val}");
-                DynSolValue::Uint(mutated_val, size)
-            }),
-            5 => None,
-            _ => unreachable!(),
-        },
+        DynSolValue::Uint(val, size) => {
+            let wrap = |v| DynSolValue::Uint(v, size);
+            match test_runner.rng().random_range(0..=5) {
+                0 => U256::increment_decrement(val, size, test_runner).map(wrap),
+                1 => U256::flip_random_bit(val, Some(size), test_runner).map(wrap),
+                2 => U256::mutate_interesting_byte(val, size, test_runner).map(wrap),
+                3 => U256::mutate_interesting_word(val, size, test_runner).map(wrap),
+                4 => U256::mutate_interesting_dword(val, size, test_runner).map(wrap),
+                5 => None,
+                _ => unreachable!(),
+            }
+        }
         // Int: increment / decrement, flip random bit, mutate with interesting words or generate
         // new value from state.
-        DynSolValue::Int(val, size) => match test_runner.rng().random_range(0..=5) {
-            0 => I256::increment_decrement(val, size, test_runner).map(|mutated_val| {
-                trace!(target: "abi_mutation", "I256 increment/decrement {val} -> {mutated_val}");
-                DynSolValue::Int(mutated_val, size)
-            }),
-            1 => I256::flip_random_bit(val, Some(size), test_runner).map(|mutated_val| {
-                trace!(target: "abi_mutation", "I256 flip random bit: {val} -> {mutated_val}");
-                DynSolValue::Int(mutated_val, size)
-            }),
-            2 => I256::mutate_interesting_byte(val, size, test_runner).map(|mutated_val| {
-                trace!(target: "abi_mutation", "I256 interesting byte: {val} -> {mutated_val}");
-                DynSolValue::Int(mutated_val, size)
-            }),
-            3 => I256::mutate_interesting_word(val, size, test_runner).map(|mutated_val| {
-                trace!(target: "abi_mutation", "I256 interesting word: {val} -> {mutated_val}");
-                DynSolValue::Int(mutated_val, size)
-            }),
-            4 => I256::mutate_interesting_dword(val, size, test_runner).map(|mutated_val| {
-                trace!(target: "abi_mutation", "I256 interesting dword: {val} -> {mutated_val}");
-                DynSolValue::Int(mutated_val, size)
-            }),
-            5 => None,
-            _ => unreachable!(),
-        },
+        DynSolValue::Int(val, size) => {
+            let wrap = |v| DynSolValue::Int(v, size);
+            match test_runner.rng().random_range(0..=5) {
+                0 => I256::increment_decrement(val, size, test_runner).map(wrap),
+                1 => I256::flip_random_bit(val, Some(size), test_runner).map(wrap),
+                2 => I256::mutate_interesting_byte(val, size, test_runner).map(wrap),
+                3 => I256::mutate_interesting_word(val, size, test_runner).map(wrap),
+                4 => I256::mutate_interesting_dword(val, size, test_runner).map(wrap),
+                5 => None,
+                _ => unreachable!(),
+            }
+        }
         // Address: flip random bit or generate new value from state.
         DynSolValue::Address(val) => match test_runner.rng().random_range(0..=1) {
             0 => Address::flip_random_bit(val, None, test_runner).map(DynSolValue::Address),
