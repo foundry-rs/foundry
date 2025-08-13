@@ -6,13 +6,13 @@ use crate::{
     inspector::{Ecx, RecordDebugStepInfo},
 };
 use alloy_consensus::TxEnvelope;
-use alloy_dyn_abi::DynSolType;
+use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{Address, B256, U256, map::HashMap};
+use alloy_primitives::{Address, B256, U256, hex, map::HashMap};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use foundry_common::fs::{read_json_file, write_json_file};
-use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
+use foundry_compilers::artifacts::StorageLayout;
 use foundry_evm_core::{
     ContextExt,
     backend::{DatabaseExt, RevertStateSnapshotAction},
@@ -106,18 +106,48 @@ struct SlotStateDiff {
     previous_value: B256,
     /// Current storage value.
     new_value: B256,
+    /// Decoded Slot Values
+    decoded: Option<DecodedSlotValues>,
     /// Slot Info
     #[serde(skip_serializing_if = "Option::is_none", flatten)]
     slot_info: Option<SlotInfo>,
 }
 
-#[derive(Serialize, Default, Debug)]
+#[derive(Serialize, Debug)]
 struct SlotInfo {
     label: String,
-    #[serde(rename = "type")]
-    storage_type: String,
+    #[serde(rename = "type", serialize_with = "serialize_dyn_sol_type")]
+    dyn_sol_type: DynSolType,
     offset: i64,
     slot: String,
+}
+
+fn serialize_dyn_sol_type<S>(dyn_type: &DynSolType, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&dyn_type.to_string())
+}
+
+#[derive(Debug)]
+struct DecodedSlotValues {
+    /// Initial decoded storage value
+    previous_value: DynSolValue,
+    /// Current decoded storage value
+    new_value: DynSolValue,
+}
+
+impl Serialize for DecodedSlotValues {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("DecodedSlotValues", 2)?;
+        state.serialize_field("previousValue", &format_dyn_sol_value_raw(&self.previous_value))?;
+        state.serialize_field("newValue", &format_dyn_sol_value_raw(&self.new_value))?;
+        state.end()
+    }
 }
 
 /// Balance diff info.
@@ -167,22 +197,39 @@ impl Display for AccountStateDiffs {
         if !&self.state_diff.is_empty() {
             writeln!(f, "- state diff:")?;
             for (slot, slot_changes) in &self.state_diff {
-                // If we have storage layout info, include it
-                if let Some(slot_info) = &slot_changes.slot_info {
-                    writeln!(
-                        f,
-                        "@ {slot} ({}, {}): {} → {}",
-                        slot_info.label,
-                        slot_info.storage_type,
-                        slot_changes.previous_value,
-                        slot_changes.new_value
-                    )?;
-                } else {
-                    writeln!(
-                        f,
-                        "@ {slot}: {} → {}",
-                        slot_changes.previous_value, slot_changes.new_value
-                    )?;
+                match (&slot_changes.slot_info, &slot_changes.decoded) {
+                    (Some(slot_info), Some(decoded)) => {
+                        // Have both slot info and decoded values
+                        writeln!(
+                            f,
+                            "@ {slot} ({}, {}): {} → {} [decoded: {} → {}]",
+                            slot_info.label,
+                            slot_info.dyn_sol_type,
+                            slot_changes.previous_value,
+                            slot_changes.new_value,
+                            format_dyn_sol_value_raw(&decoded.previous_value),
+                            format_dyn_sol_value_raw(&decoded.new_value)
+                        )?;
+                    }
+                    (Some(slot_info), None) => {
+                        // Have slot info but no decoded values
+                        writeln!(
+                            f,
+                            "@ {slot} ({}, {}): {} → {}",
+                            slot_info.label,
+                            slot_info.dyn_sol_type,
+                            slot_changes.previous_value,
+                            slot_changes.new_value
+                        )?;
+                    }
+                    _ => {
+                        // No slot info
+                        writeln!(
+                            f,
+                            "@ {slot}: {} → {}",
+                            slot_changes.previous_value, slot_changes.new_value
+                        )?;
+                    }
                 }
             }
         }
@@ -1312,26 +1359,44 @@ fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountSt
                         // Update state diff. Do not overwrite the initial value if already set.
                         match account_diff.state_diff.entry(storage_access.slot) {
                             Entry::Vacant(slot_state_diff) => {
-                                // Get storage layout info for this slot if available
+                                // Get storage layout info for this slot
                                 let slot_info = storage_layouts
                                     .get(&storage_access.account)
-                                    .and_then(|layout| {
-                                        tracing::debug!(
-                                            "Looking for slot {} in layout for account {}",
-                                            storage_access.slot,
-                                            storage_access.account
-                                        );
-                                        get_slot_info(layout, &storage_access.slot)
-                                    });
+                                    .and_then(|layout| get_slot_info(layout, &storage_access.slot));
+
+                                // Try to decode values if we have slot info
+                                let decoded = slot_info.as_ref().and_then(|info| {
+                                    let prev = decode_storage_value(
+                                        storage_access.previousValue,
+                                        &info.dyn_sol_type,
+                                    )?;
+                                    let new = decode_storage_value(
+                                        storage_access.newValue,
+                                        &info.dyn_sol_type,
+                                    )?;
+                                    Some(DecodedSlotValues { previous_value: prev, new_value: new })
+                                });
 
                                 slot_state_diff.insert(SlotStateDiff {
                                     previous_value: storage_access.previousValue,
                                     new_value: storage_access.newValue,
+                                    decoded,
                                     slot_info,
                                 });
                             }
                             Entry::Occupied(mut slot_state_diff) => {
-                                slot_state_diff.get_mut().new_value = storage_access.newValue;
+                                let entry = slot_state_diff.get_mut();
+                                entry.new_value = storage_access.newValue;
+
+                                if let Some(slot_info) = &entry.slot_info
+                                    && let Some(ref mut decoded) = entry.decoded
+                                    && let Some(new_value) = decode_storage_value(
+                                        storage_access.newValue,
+                                        &slot_info.dyn_sol_type,
+                                    )
+                                {
+                                    decoded.new_value = new_value;
+                                }
                             }
                         }
                     }
@@ -1396,106 +1461,52 @@ fn get_contract_data<'a>(
     artifacts.find_by_deployed_code(&code_bytes)
 }
 
-/// Helper function to check if a storage entry matches the given slot exactly.
-fn check_exact_slot_match(
-    storage: &Storage,
-    storage_layout: &StorageLayout,
-    slot_str: &str,
-) -> Option<SlotInfo> {
-    trace!(type_label = %storage.storage_type, "checking type");
-    if storage.slot == slot_str {
-        // Get the StorageType which contains the clean label
-        let storage_type = storage_layout.types.get(&storage.storage_type)?;
-        let type_label = storage_type.label.clone();
-
-        // Parse the type to check if it's an array
-        let label = if let Ok(dyn_type) = DynSolType::parse(&type_label) {
-            if let DynSolType::FixedArray(_, _) = &dyn_type {
-                // For arrays, label the base slot with indices
-                let indices = get_array_base_indices(&dyn_type);
-                format!("{}{}", storage.label, indices)
-            } else {
-                storage.label.clone()
-            }
-        } else {
-            storage.label.clone()
-        };
-
-        return Some(SlotInfo {
-            label,
-            storage_type: type_label,
-            offset: storage.offset,
-            slot: storage.slot.clone(),
-        });
-    }
-    None
-}
-
-/// Helper function to check if a slot is part of a static array.
-fn check_array_slot_match(
-    storage: &Storage,
-    type_info: &StorageType,
-    base_slot: U256,
-    slot: U256,
-) -> Option<SlotInfo> {
-    // StorageType.label already contains the clean type string without 't_' prefix
-    let type_label = type_info.label.clone();
-
-    // Parse the type using DynSolType
-    trace!(type_label = %type_label, "checking if type is a static_array");
-    let dyn_type = DynSolType::parse(&type_label).ok()?;
-
-    // Check if it's a static array
-    if !matches!(dyn_type, DynSolType::FixedArray(_, _)) {
-        return None;
-    }
-
-    // For arrays, calculate the number of slots based on the actual storage size
-    let Ok(total_bytes) = type_info.number_of_bytes.parse::<u64>() else {
-        return None;
-    };
-
-    // Each slot is 32 bytes
-    let total_slots = total_bytes.div_ceil(32);
-
-    // Check if slot is within array range
-    if slot <= base_slot || slot >= base_slot + U256::from(total_slots) {
-        return None;
-    }
-
-    let index = slot - base_slot;
-    let index_u64 = index.to::<u64>();
-
-    // Generate the label with the correct index
-    let label = format_array_element_label(&storage.label, &dyn_type, index_u64);
-
-    Some(SlotInfo { label, storage_type: type_label, offset: 0, slot: slot.to_string() })
-}
-
-/// Helper function to get storage layout info for a specific slot.
+/// Gets storage layout info for a specific slot.
 fn get_slot_info(storage_layout: &StorageLayout, slot: &B256) -> Option<SlotInfo> {
-    // Convert B256 slot to decimal string for comparison with storage layout
-    // Storage layout stores slots as decimal strings like "0", "1", "2"
     let slot = U256::from_be_bytes(slot.0);
     let slot_str = slot.to_string();
 
-    // Single loop to check both exact matches and array ranges
     for storage in &storage_layout.storage {
-        // Parse base slot as U256 to handle large slot numbers
-        let Ok(base_slot) = U256::from_str(&storage.slot) else {
-            continue;
-        };
+        let base_slot = U256::from_str(&storage.slot).ok()?;
+        let storage_type = storage_layout.types.get(&storage.storage_type)?;
+        let dyn_type = DynSolType::parse(&storage_type.label).ok()?;
 
-        // First check for exact match
-        if let Some(slot_info) = check_exact_slot_match(storage, storage_layout, &slot_str) {
-            return Some(slot_info);
+        // Check for exact slot match
+        if storage.slot == slot_str {
+            let label = match &dyn_type {
+                DynSolType::FixedArray(_, _) => {
+                    // For arrays, label the base slot with indices
+                    format!("{}{}", storage.label, get_array_base_indices(&dyn_type))
+                }
+                _ => storage.label.clone(),
+            };
+
+            return Some(SlotInfo {
+                label,
+                dyn_sol_type: dyn_type,
+                offset: storage.offset,
+                slot: storage.slot.clone(),
+            });
         }
 
-        // Check if this is a static array with inplace encoding (contiguous storage)
-        if let Some(type_info) = storage_layout.types.get(&storage.storage_type)
-            && let Some(slot_info) = check_array_slot_match(storage, type_info, base_slot, slot)
+        // Check if slot is part of a static array
+        if let DynSolType::FixedArray(_, _) = &dyn_type
+            && let Ok(total_bytes) = storage_type.number_of_bytes.parse::<u64>()
         {
-            return Some(slot_info);
+            let total_slots = total_bytes.div_ceil(32);
+
+            // Check if slot is within array range
+            if slot > base_slot && slot < base_slot + U256::from(total_slots) {
+                let index = (slot - base_slot).to::<u64>();
+                let label = format_array_element_label(&storage.label, &dyn_type, index);
+
+                return Some(SlotInfo {
+                    label,
+                    dyn_sol_type: dyn_type,
+                    offset: 0,
+                    slot: slot.to_string(),
+                });
+            }
         }
     }
 
@@ -1521,7 +1532,7 @@ fn get_array_base_indices(dyn_type: &DynSolType) -> String {
 /// Helper function to format an array element label given its index
 fn format_array_element_label(base_label: &str, dyn_type: &DynSolType, index: u64) -> String {
     match dyn_type {
-        DynSolType::FixedArray(inner, _size) => {
+        DynSolType::FixedArray(inner, _) => {
             if let DynSolType::FixedArray(_, inner_size) = inner.as_ref() {
                 // 2D array: calculate row and column
                 let row = index / (*inner_size as u64);
@@ -1533,6 +1544,46 @@ fn format_array_element_label(base_label: &str, dyn_type: &DynSolType, index: u6
             }
         }
         _ => base_label.to_string(),
+    }
+}
+
+/// Helper function to decode a single storage value using its DynSolType
+fn decode_storage_value(value: B256, dyn_type: &DynSolType) -> Option<DynSolValue> {
+    // Storage values are always 32 bytes, stored as a single word
+    // For arrays, we need to unwrap to the base element type
+    let mut actual_type = dyn_type;
+
+    // Unwrap nested arrays to get to the base element type
+    while let DynSolType::FixedArray(elem_type, _) = actual_type {
+        actual_type = elem_type.as_ref();
+    }
+
+    // Use abi_decode to decode the value
+    actual_type.abi_decode(&value.0).ok()
+}
+
+/// Helper function to format DynSolValue as raw string without type information
+fn format_dyn_sol_value_raw(value: &DynSolValue) -> String {
+    match value {
+        DynSolValue::Bool(b) => b.to_string(),
+        DynSolValue::Int(i, _) => i.to_string(),
+        DynSolValue::Uint(u, _) => u.to_string(),
+        DynSolValue::FixedBytes(bytes, size) => hex::encode_prefixed(&bytes.0[..*size]),
+        DynSolValue::Address(addr) => addr.to_string(),
+        DynSolValue::Function(func) => func.as_address_and_selector().1.to_string(),
+        DynSolValue::Bytes(bytes) => hex::encode_prefixed(bytes),
+        DynSolValue::String(s) => s.clone(),
+        DynSolValue::Array(values) | DynSolValue::FixedArray(values) => {
+            let formatted: Vec<String> = values.iter().map(format_dyn_sol_value_raw).collect();
+            format!("[{}]", formatted.join(", "))
+        }
+        DynSolValue::Tuple(values) => {
+            let formatted: Vec<String> = values.iter().map(format_dyn_sol_value_raw).collect();
+            format!("({})", formatted.join(", "))
+        }
+        DynSolValue::CustomStruct { name: _, prop_names: _, tuple } => {
+            format_dyn_sol_value_raw(&DynSolValue::Tuple(tuple.clone()))
+        }
     }
 }
 

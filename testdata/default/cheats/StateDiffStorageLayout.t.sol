@@ -114,9 +114,9 @@ contract StateDiffStorageLayoutTest is DSTest {
         vm.startStateDiffRecording();
 
         // Modify storage slots with known positions
-        simpleStorage.setValue(42); // Modifies slot 0
-        simpleStorage.setOwner(address(this)); // Modifies slot 1
-        simpleStorage.setValues(100, 200, 300); // Modifies slots 2, 3, 4
+        simpleStorage.setValue(42); // Modifies slot 0 (value)
+        simpleStorage.setOwner(address(this)); // Modifies slot 1 (owner)
+        simpleStorage.setValues(100, 200, 300); // Modifies slots 2, 3, 4 (values array)
 
         // Get the state diff as string
         string memory stateDiff = vm.getStateDiff();
@@ -135,6 +135,20 @@ contract StateDiffStorageLayoutTest is DSTest {
         assertContains(stateDiffJson, "\"type\":\"uint256\"", "Should contain uint256 type");
         assertContains(stateDiffJson, "\"type\":\"address\"", "Should contain address type");
         assertContains(stateDiffJson, "\"type\":\"uint256[3]\"", "Should contain uint256[3] type");
+
+        // Check for decoded values
+        assertContains(stateDiffJson, "\"decoded\":", "Should contain decoded values");
+
+        // Check specific decoded values within the decoded object
+        // The value 42 should be decoded in the first slot
+        assertContains(
+            stateDiffJson, "\"decoded\":{\"previousValue\":\"0\",\"newValue\":\"42\"}", "Should decode value 42"
+        );
+
+        // Check that array values are decoded properly (they will have separate decoded objects)
+        assertContains(stateDiffJson, "\"newValue\":\"100\"", "Should decode array value 100");
+        assertContains(stateDiffJson, "\"newValue\":\"200\"", "Should decode array value 200");
+        assertContains(stateDiffJson, "\"newValue\":\"300\"", "Should decode array value 300");
 
         // Stop recording and verify we get the expected account accesses
         Vm.AccountAccess[] memory accesses = vm.stopAndReturnStateDiff();
@@ -199,6 +213,16 @@ contract StateDiffStorageLayoutTest is DSTest {
         assertContains(stateDiffJson, "\"type\":\"bool[5]\"", "Should contain bool[5] type");
         assertContains(stateDiffJson, "\"type\":\"bytes32[2]\"", "Should contain bytes32[2] type");
 
+        // Check decoded values
+        assertContains(stateDiffJson, "\"decoded\":", "Should contain decoded values");
+        // Check addresses are decoded as raw hex strings
+        assertContains(
+            stateDiffJson, "\"newValue\":\"0x0000000000000000000000000000000000000001\"", "Should decode address 1"
+        );
+        assertContains(
+            stateDiffJson, "\"newValue\":\"0x0000000000000000000000000000000000000002\"", "Should decode address 2"
+        );
+
         // Stop recording and verify account accesses
         Vm.AccountAccess[] memory accesses = vm.stopAndReturnStateDiff();
         assertTrue(accesses.length > 0, "Should have account accesses");
@@ -249,6 +273,15 @@ contract StateDiffStorageLayoutTest is DSTest {
 
         // Check that we have the right type
         assertContains(stateDiffJson, "\"type\":\"uint256[3][2]\"", "Should contain 2D array type");
+
+        // Check decoded values for 2D arrays
+        assertContains(stateDiffJson, "\"decoded\":", "Should contain decoded values");
+        assertContains(stateDiffJson, "\"newValue\":\"100\"", "Should decode matrix[0][0] = 100");
+        assertContains(stateDiffJson, "\"newValue\":\"101\"", "Should decode matrix[0][1] = 101");
+        assertContains(stateDiffJson, "\"newValue\":\"102\"", "Should decode matrix[0][2] = 102");
+        assertContains(stateDiffJson, "\"newValue\":\"200\"", "Should decode matrix[1][0] = 200");
+        assertContains(stateDiffJson, "\"newValue\":\"201\"", "Should decode matrix[1][1] = 201");
+        assertContains(stateDiffJson, "\"newValue\":\"202\"", "Should decode matrix[1][2] = 202");
 
         vm.stopAndReturnStateDiff();
     }
