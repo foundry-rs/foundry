@@ -269,7 +269,7 @@ contract RecordAccountAccessesTest is DSTest {
         );
         string memory diffsJson = cheats.getStateDiffJson();
         assertEq(
-            "{\"0x5991a2df15a8f6a256d3ec51e99254cd3fb576a9\":{\"label\":null,\"contract\":\"default/cheats/RecordAccountAccesses.t.sol:StorageAccessor\",\"balanceDiff\":null,\"stateDiff\":{\"0x00000000000000000000000000000000000000000000000000000000000004d3\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x000000000000000000000000000000000000000000000000000000000000162e\"}}},\"0xc7183455a4c133ae270771860664b6b7ec320bb1\":{\"label\":null,\"contract\":\"default/cheats/RecordAccountAccesses.t.sol:StorageAccessor\",\"balanceDiff\":null,\"stateDiff\":{\"0x000000000000000000000000000000000000000000000000000000000000162e\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x00000000000000000000000000000000000000000000000000000000000004d2\"}}}}",
+            "{\"0x5991a2df15a8f6a256d3ec51e99254cd3fb576a9\":{\"label\":null,\"contract\":\"default/cheats/RecordAccountAccesses.t.sol:StorageAccessor\",\"balanceDiff\":null,\"nonceDiff\":null,\"stateDiff\":{\"0x00000000000000000000000000000000000000000000000000000000000004d3\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x000000000000000000000000000000000000000000000000000000000000162e\"}}},\"0xc7183455a4c133ae270771860664b6b7ec320bb1\":{\"label\":null,\"contract\":\"default/cheats/RecordAccountAccesses.t.sol:StorageAccessor\",\"balanceDiff\":null,\"nonceDiff\":null,\"stateDiff\":{\"0x000000000000000000000000000000000000000000000000000000000000162e\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x00000000000000000000000000000000000000000000000000000000000004d2\"}}}}",
             diffsJson
         );
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
@@ -349,7 +349,7 @@ contract RecordAccountAccessesTest is DSTest {
         expectedStateDiff = string.concat(expectedStateDiff, callerAddress);
         expectedStateDiff =
             string.concat(expectedStateDiff, "\ncontract: default/cheats/RecordAccountAccesses.t.sol:SelfCaller");
-        expectedStateDiff = string.concat(expectedStateDiff, "\n- balance diff: 0 \xE2\x86\x92 2000000000000000000\n\n");
+        expectedStateDiff = string.concat(expectedStateDiff, "\n- balance diff: 0 \xE2\x86\x92 2000000000000000000\n- nonce diff: 0 \xE2\x86\x92 1\n\n");
         assertEq(expectedStateDiff, cheats.getStateDiff());
 
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
@@ -364,6 +364,8 @@ contract RecordAccountAccessesTest is DSTest {
                 initialized: false,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: hex"",
                 value: 0,
                 data: "",
@@ -383,6 +385,8 @@ contract RecordAccountAccessesTest is DSTest {
                 initialized: false,
                 oldBalance: 0,
                 newBalance: 1 ether,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: hex"",
                 value: 1 ether,
                 data: "",
@@ -401,6 +405,8 @@ contract RecordAccountAccessesTest is DSTest {
                 initialized: false,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: hex"",
                 value: 0,
                 data: "hello world",
@@ -419,6 +425,8 @@ contract RecordAccountAccessesTest is DSTest {
                 initialized: true,
                 oldBalance: 1 ether,
                 newBalance: 1 ether,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: hex"",
                 value: 0,
                 data: "",
@@ -437,6 +445,8 @@ contract RecordAccountAccessesTest is DSTest {
                 initialized: true,
                 oldBalance: 0,
                 newBalance: 2 ether,
+                oldNonce: 0,
+                newNonce: 1,
                 deployedCode: address(caller).code,
                 value: 2 ether,
                 data: abi.encodePacked(type(SelfCaller).creationCode, abi.encode("hello2 world2")),
@@ -455,6 +465,8 @@ contract RecordAccountAccessesTest is DSTest {
                 initialized: true,
                 oldBalance: 2 ether,
                 newBalance: 2 ether,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: hex"",
                 value: 0.2 ether,
                 data: "",
@@ -476,7 +488,7 @@ contract RecordAccountAccessesTest is DSTest {
             cheats.getStateDiff()
         );
         assertEq(
-            "{\"0x00000000000000000000000000000000000004d2\":{\"label\":null,\"contract\":null,\"balanceDiff\":{\"previousValue\":\"0x0\",\"newValue\":\"0x16345785d8a0000\"},\"stateDiff\":{}}}",
+            "{\"0x00000000000000000000000000000000000004d2\":{\"label\":null,\"contract\":null,\"balanceDiff\":{\"previousValue\":\"0x0\",\"newValue\":\"0x16345785d8a0000\"},\"nonceDiff\":null,\"stateDiff\":{}}}",
             cheats.getStateDiffJson()
         );
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
@@ -491,6 +503,8 @@ contract RecordAccountAccessesTest is DSTest {
                 initialized: true,
                 oldBalance: initBalance,
                 newBalance: initBalance,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: hex"",
                 value: 1 ether,
                 data: abi.encodeCall(this.revertingCall, (address(1234), "")),
@@ -509,6 +523,8 @@ contract RecordAccountAccessesTest is DSTest {
                 initialized: false,
                 oldBalance: 0,
                 newBalance: 0.1 ether,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: hex"",
                 value: 0.1 ether,
                 data: "",
@@ -550,6 +566,8 @@ contract RecordAccountAccessesTest is DSTest {
                     kind: Vm.AccountAccessKind.Call,
                     oldBalance: 0,
                     newBalance: 0,
+                    oldNonce: 0,
+                    newNonce: 0,
                     deployedCode: "",
                     initialized: false,
                     value: 0,
@@ -583,6 +601,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Call,
                 oldBalance: 0,
                 newBalance: shouldRevert ? 0 : 0.9 ether,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 1 ether,
@@ -616,6 +636,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Call,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 0.1 ether,
@@ -649,6 +671,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Call,
                 oldBalance: 0,
                 newBalance: 0.01 ether,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 0.01 ether,
@@ -682,6 +706,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Call,
                 oldBalance: 0.01 ether,
                 newBalance: 0.01 ether,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 0.001 ether,
@@ -715,6 +741,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Call,
                 oldBalance: 0,
                 newBalance: 0.09 ether,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 0.1 ether,
@@ -748,6 +776,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Call,
                 oldBalance: 0,
                 newBalance: 0.01 ether,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 0.01 ether,
@@ -781,6 +811,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Call,
                 oldBalance: 0.01 ether,
                 newBalance: 0.01 ether,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 0.001 ether,
@@ -802,7 +834,7 @@ contract RecordAccountAccessesTest is DSTest {
             cheats.getStateDiff()
         );
         assertEq(
-            "{\"0x2e234dae75c793f67a35089c9d99245e1c58470b\":{\"label\":\"NestedStorer\",\"contract\":\"default/cheats/RecordAccountAccesses.t.sol:NestedStorer\",\"balanceDiff\":null,\"stateDiff\":{\"0x4566fa0cd03218c55bba914d793f5e6b9113172c1f684bb5f464c08c867e8977\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x0000000000000000000000000000000000000000000000000000000000000001\"},\"0xbf57896b60daefa2c41de2feffecfc11debd98ea8c913a5170f60e53959ac00a\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x0000000000000000000000000000000000000000000000000000000000000001\"},\"0xc664893a982d78bbeab379feef216ff517b7ea73626b280723be1ace370364cd\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x0000000000000000000000000000000000000000000000000000000000000001\"},\"0xdc5330afa9872081253545dca3f448752688ff1b098b38c1abe4c4cdff4b0b0e\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x0000000000000000000000000000000000000000000000000000000000000001\"}}}}",
+            "{\"0x2e234dae75c793f67a35089c9d99245e1c58470b\":{\"label\":\"NestedStorer\",\"contract\":\"default/cheats/RecordAccountAccesses.t.sol:NestedStorer\",\"balanceDiff\":null,\"nonceDiff\":null,\"stateDiff\":{\"0x4566fa0cd03218c55bba914d793f5e6b9113172c1f684bb5f464c08c867e8977\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x0000000000000000000000000000000000000000000000000000000000000001\"},\"0xbf57896b60daefa2c41de2feffecfc11debd98ea8c913a5170f60e53959ac00a\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x0000000000000000000000000000000000000000000000000000000000000001\"},\"0xc664893a982d78bbeab379feef216ff517b7ea73626b280723be1ace370364cd\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x0000000000000000000000000000000000000000000000000000000000000001\"},\"0xdc5330afa9872081253545dca3f448752688ff1b098b38c1abe4c4cdff4b0b0e\":{\"previousValue\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"newValue\":\"0x0000000000000000000000000000000000000000000000000000000000000001\"}}}}",
             cheats.getStateDiffJson()
         );
         Vm.AccountAccess[] memory called = filterExtcodesizeForLegacyTests(cheats.stopAndReturnStateDiff());
@@ -830,6 +862,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Call,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 0,
@@ -875,6 +909,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Call,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 0,
@@ -908,6 +944,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Resume,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 0,
@@ -954,6 +992,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Create,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 1,
                 deployedCode: storer.code,
                 initialized: true,
                 value: 0,
@@ -974,6 +1014,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Call,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 0,
@@ -1006,6 +1048,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Create,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 1,
                 deployedCode: address(hypotheticalStorer).code,
                 initialized: true,
                 value: 0,
@@ -1052,6 +1096,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Create,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 1,
                 deployedCode: address(hypotheticalAddress).code,
                 initialized: true,
                 value: 0,
@@ -1070,6 +1116,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Call,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: hex"",
                 initialized: true,
                 value: 0,
@@ -1100,6 +1148,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Create,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 1,
                 deployedCode: "",
                 initialized: true,
                 value: 1 ether,
@@ -1118,6 +1168,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.SelfDestruct,
                 oldBalance: startingBalance - 1 ether,
                 newBalance: startingBalance,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: true,
                 value: 1 ether,
@@ -1136,6 +1188,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Create,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 1,
                 deployedCode: "",
                 initialized: true,
                 value: 1 ether,
@@ -1154,6 +1208,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.SelfDestruct,
                 oldBalance: 0,
                 newBalance: 1 ether,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: hex"",
                 initialized: false,
                 value: 1 ether,
@@ -1250,6 +1306,8 @@ contract RecordAccountAccessesTest is DSTest {
                 kind: Vm.AccountAccessKind.Resume,
                 oldBalance: 0,
                 newBalance: 0,
+                oldNonce: 0,
+                newNonce: 0,
                 deployedCode: "",
                 initialized: expected.initialized,
                 value: 0,
