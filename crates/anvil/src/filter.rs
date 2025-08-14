@@ -168,7 +168,7 @@ impl LogsFilter {
             let b = self.storage.block(block.hash);
             let receipts = self.storage.receipts(block.hash);
             if let (Some(receipts), Some(block)) = (receipts, b) {
-                logs.extend(filter_logs(block, receipts, &self.filter))
+                logs.extend(filter_logs(block, receipts, &self.filter, false))
             }
         }
         logs
