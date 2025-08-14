@@ -26,12 +26,20 @@ impl fmt::Debug for Comments {
 }
 
 impl Comments {
-    pub fn new(sf: &SourceFile, sm: &SourceMap, normalize_cmnts: bool, group_cmnts: bool) -> Self {
+    pub fn new(
+        sf: &SourceFile,
+        sm: &SourceMap,
+        normalize_cmnts: bool,
+        group_cmnts: bool,
+        tab_width: Option<usize>,
+    ) -> Self {
+        let gatherer = CommentGatherer::new(sf, sm, normalize_cmnts, tab_width).gather();
+
         Self {
             comments: if group_cmnts {
-                CommentGatherer::new(sf, sm, normalize_cmnts).gather().group().into_iter()
+                gatherer.group().into_iter()
             } else {
-                CommentGatherer::new(sf, sm, normalize_cmnts).gather().comments.into_iter()
+                gatherer.comments.into_iter()
             },
         }
     }
@@ -97,10 +105,16 @@ struct CommentGatherer<'ast> {
     comments: Vec<Comment>,
     code_to_the_left: bool,
     disabled_block_depth: usize,
+    tab_width: Option<usize>,
 }
 
 impl<'ast> CommentGatherer<'ast> {
-    fn new(sf: &'ast SourceFile, sm: &'ast SourceMap, normalize_cmnts: bool) -> Self {
+    fn new(
+        sf: &'ast SourceFile,
+        sm: &'ast SourceMap,
+        normalize_cmnts: bool,
+        tab_width: Option<usize>,
+    ) -> Self {
         Self {
             sf,
             sm,
@@ -110,6 +124,7 @@ impl<'ast> CommentGatherer<'ast> {
             comments: Vec::new(),
             code_to_the_left: false,
             disabled_block_depth: if normalize_cmnts { 0 } else { 1 },
+            tab_width,
         }
     }
 
@@ -262,11 +277,11 @@ impl<'ast> CommentGatherer<'ast> {
                     // Ensure last line of a doc comment only has the `*/` decorator
                     if let Some((first, _)) = line.split_once("*/") {
                         if !first.trim().is_empty() {
-                            res.push(format_doc_block_comment(first.trim_end()));
+                            res.push(format_doc_block_comment(first.trim_end(), self.tab_width));
                         }
                         res.push(" */".to_string());
                     } else {
-                        res.push(format_doc_block_comment(line.trim_end()));
+                        res.push(format_doc_block_comment(line.trim_end(), self.tab_width));
                     }
                 }
             } else {
@@ -281,11 +296,11 @@ impl<'ast> CommentGatherer<'ast> {
                 continue;
             }
             if !pos.is_last {
-                res.push(format_doc_block_comment(&line));
+                res.push(format_doc_block_comment(&line, self.tab_width));
             } else {
                 if let Some((first, _)) = line.split_once("*/") {
                     if !first.trim().is_empty() {
-                        res.push(format_doc_block_comment(first));
+                        res.push(format_doc_block_comment(first, self.tab_width));
                     }
                 }
                 res.push(" */".to_string());
@@ -337,16 +352,80 @@ fn normalize_block_comment_ws(s: &str, col: CharPos) -> &str {
 }
 
 /// Formats a doc block comment line so that they have the ` *` decorator.
-fn format_doc_block_comment(line: &str) -> String {
+fn format_doc_block_comment(line: &str, tab_width: Option<usize>) -> String {
     if line.is_empty() {
         return (" *").to_string();
     }
 
-    if let Some((_, second)) = line.split_once("*") {
-        if second.is_empty() { (" *").to_string() } else { format!(" *{second}") }
+    if let Some((_, rest_of_line)) = line.split_once("*") {
+        if rest_of_line.is_empty() {
+            (" *").to_string()
+        } else if let Some(tab_width) = tab_width {
+            let mut normalized = String::from(" *");
+            line_with_tabs(
+                &mut normalized,
+                rest_of_line,
+                tab_width,
+                Some(Consolidation::MinOneTab),
+            );
+            normalized
+        } else {
+            format!(" *{rest_of_line}",)
+        }
+    } else if let Some(tab_width) = tab_width {
+        let mut normalized = String::from(" *\t");
+        line_with_tabs(&mut normalized, line, tab_width, Some(Consolidation::WithoutSpaces));
+        normalized
     } else {
         format!(" * {}", line)
     }
+}
+
+pub enum Consolidation {
+    MinOneTab,
+    WithoutSpaces,
+}
+
+/// Normalizes the leading whitespace of a string slice according to a given tab width.
+///
+/// It aggregates and converts leading whitespace (spaces and tabs) into a representation that
+/// maximizes the amount of tabs.
+pub fn line_with_tabs(
+    output: &mut String,
+    line: &str,
+    tab_width: usize,
+    strategy: Option<Consolidation>,
+) {
+    // Find the end of the leading whitespace (any sequence of spaces and tabs)
+    let first_non_ws = line.find(|c| c != ' ' && c != '\t').unwrap_or(line.len());
+    let (leading_ws, rest_of_line) = line.split_at(first_non_ws);
+
+    // Compute its equivalent length and derive the required amount of tabs and spaces
+    let total_width =
+        leading_ws.chars().fold(0, |width, c| width + if c == ' ' { 1 } else { tab_width });
+    let (mut num_tabs, mut num_spaces) = (total_width / tab_width, total_width % tab_width);
+
+    // Adjust based on the desired config
+    match strategy {
+        Some(Consolidation::MinOneTab) => {
+            if num_tabs == 0 && num_spaces != 0 {
+                (num_tabs, num_spaces) = (1, 0);
+            } else if num_spaces != 0 {
+                (num_tabs, num_spaces) = (num_tabs + 1, 0);
+            }
+        }
+        Some(Consolidation::WithoutSpaces) => {
+            if num_spaces != 0 {
+                (num_tabs, num_spaces) = (num_tabs + 1, 0);
+            }
+        }
+        None => (),
+    };
+
+    // Append the normalized indentation and the rest of the line to the output
+    output.extend(std::iter::repeat('\t').take(num_tabs));
+    output.extend(std::iter::repeat(' ').take(num_spaces));
+    output.push_str(rest_of_line);
 }
 
 /// Returns the `BytePos` of the beginning of the current line.

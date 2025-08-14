@@ -3,10 +3,10 @@ use crate::{
     pp::{self, BreakToken, SIZE_INFINITY, Token},
 };
 use foundry_common::{
-    comments::{Comment, CommentStyle, Comments},
+    comments::{Comment, CommentStyle, Comments, line_with_tabs},
     iter::IterDelimited,
 };
-use foundry_config::fmt as config;
+use foundry_config::fmt::{self as config, IndentStyle};
 use itertools::{Either, Itertools};
 use solar_parse::{
     Cursor,
@@ -78,7 +78,11 @@ impl<'sess> State<'sess, '_> {
         comments: Comments,
     ) -> Self {
         Self {
-            s: pp::Printer::new(config.line_length),
+            s: pp::Printer::new(
+                config.line_length,
+                matches!(config.style, IndentStyle::Tab),
+                config.tab_width,
+            ),
             ind: config.tab_width as isize,
             sm,
             comments,
@@ -759,7 +763,11 @@ impl State<'_, '_> {
 
     fn print_span(&mut self, span: Span, skip_ind: bool) {
         match self.sm.span_to_snippet(span) {
-            Ok(s) => self.word(s),
+            Ok(s) => self.s.word(if matches!(self.config.style, IndentStyle::Tab) {
+                snippet_with_tabs(s, self.config.tab_width)
+            } else {
+                s
+            }),
             Err(e) => panic!("failed to print {span:?}: {e:#?}"),
         }
         // Drop comments that are included in the span.
@@ -3751,4 +3759,21 @@ impl Separator {
         }
         cursor.advance(1);
     }
+}
+
+fn snippet_with_tabs(s: String, tab_width: usize) -> String {
+    // proces leading breaks
+    let trimmed = s.trim_start_matches(|c| c == '\n');
+    let num_breaks = s.len() - trimmed.len();
+    let mut formatted = std::iter::repeat_n('\n', num_breaks).collect::<String>();
+
+    // process lines
+    for (pos, line) in trimmed.lines().into_iter().delimited() {
+        line_with_tabs(&mut formatted, line, tab_width, None);
+        if !pos.is_last {
+            formatted.push('\n');
+        }
+    }
+
+    formatted
 }

@@ -102,6 +102,8 @@ pub struct Printer {
 
     /// Target line width.
     margin: isize,
+    /// Indentation configuration (with_tab, width)
+    indent_config: (bool, usize),
 }
 
 #[derive(Debug)]
@@ -111,7 +113,7 @@ pub struct BufEntry {
 }
 
 impl Printer {
-    pub fn new(margin: usize) -> Self {
+    pub fn new(margin: usize, indent_with_tab: bool, indent_width: usize) -> Self {
         let margin = (margin as isize).clamp(MIN_SPACE, SIZE_INFINITY - 1);
         Self {
             out: String::new(),
@@ -126,6 +128,7 @@ impl Printer {
             last_printed: None,
 
             margin,
+            indent_config: (indent_with_tab, indent_width),
         }
     }
 
@@ -441,7 +444,17 @@ impl Printer {
 
     fn print_indent(&mut self) {
         self.out.reserve(self.pending_indentation);
-        self.out.extend(iter::repeat_n(' ', self.pending_indentation));
+        if self.indent_config.0 {
+            let num_tabs = self.pending_indentation / self.indent_config.1;
+            let remainder = self.pending_indentation % self.indent_config.1;
+            if num_tabs == 0 {
+                self.out.extend(iter::repeat_n(' ', remainder));
+            } else {
+                self.out.extend(iter::repeat_n('\t', num_tabs));
+            }
+        } else {
+            self.out.extend(iter::repeat_n(' ', self.pending_indentation));
+        }
         self.pending_indentation = 0;
     }
 

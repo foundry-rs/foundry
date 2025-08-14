@@ -12,9 +12,7 @@ function one() external {
 	this.other({
 		data: abi.encodeCall(
 			this.other,
-			(
-				"bla bla bla bla bla bla bla bla bla bla bla bla bla bla bla bla bla bla bla"
-			)
+			("bla bla bla bla bla bla bla bla bla bla bla bla bla bla bla bla bla bla bla")
 		)
 	});
 }
@@ -45,40 +43,40 @@ contract TestContract {
 	function test(uint256 a) public {
 		if (a > 1) {
 			a = 2;
-	       } // forgefmt: disable-line
+		} // forgefmt: disable-line
 	}
 
 	function test1() public {
-		assembly{ sstore(   1,    1) /* inline comment*/ // forgefmt: disable-line
+		assembly { sstore(   1,    1) /* inline comment*/ // forgefmt: disable-line
 			sstore(2, 2)
 		}
 	}
 
 	function test2() public {
-		assembly{ sstore(   1,    1) // forgefmt: disable-line
+		assembly { sstore(   1,    1) // forgefmt: disable-line
 			sstore(2, 2)
-	           sstore(3,    3)// forgefmt: disable-line
+			sstore(3,    3) // forgefmt: disable-line
 			sstore(4, 4)
 		}
 	}
 
 	function test3() public {
 		// forgefmt: disable-next-line
-	       assembly{ sstore(   1,    1)
+		assembly{ sstore(   1,    1)
 			sstore(2, 2)
-	           sstore(3,    3)// forgefmt: disable-line
+			sstore(3,    3) // forgefmt: disable-line
 			sstore(4, 4)
-	       }// forgefmt: disable-line
+		} // forgefmt: disable-line
 	}
 
 	function test4() public {
 		// forgefmt: disable-next-line
-	                 assembly{
+				  assembly {
 			sstore(1, 1)
 			sstore(2, 2)
-	           sstore(3,    3)// forgefmt: disable-line
+			sstore(3,    3) // forgefmt: disable-line
 			sstore(4, 4)
-	       }// forgefmt: disable-line
+		} // forgefmt: disable-line
 		if (condition) execute(); // comment7
 	}
 
@@ -89,7 +87,7 @@ contract TestContract {
 	function test6() returns (bool) { // forgefmt: disable-line
 		if (  true  ) {  // forgefmt: disable-line
 		}
-        return true ;  }  // forgefmt: disable-line
+		return true ;  }  // forgefmt: disable-line
 
 	function test7() returns (bool) { // forgefmt: disable-line
 		if (true) {  // forgefmt: disable-line
@@ -99,7 +97,7 @@ contract TestContract {
 	}
 
 	function test8() returns (bool) { // forgefmt: disable-line
-		if (  true  ) {    // forgefmt: disable-line
+		if (  true  ) {	// forgefmt: disable-line
 			uint256 a = 1;
 		} else {
 			uint256 b     =     1; // forgefmt: disable-line
@@ -113,10 +111,10 @@ library MyLib {
 	bytes32 private constant TYPE_HASH = keccak256(
 		// forgefmt: disable-start
 		"MyStruct("
-		          "uint8 myEnum,"
-		              "address myAddress"
-		                  ")"
-		      // forgefmt: disable-end
+			"uint8 myEnum,"
+				"address myAddress"
+					")"
+		// forgefmt: disable-end
 	);
 
 	bytes32 private constant TYPE_HASH_1 = keccak256(
@@ -124,13 +122,13 @@ library MyLib {
 	);
 
 	// forgefmt: disable-start
-    bytes32 private constant TYPE_HASH_2 = keccak256(
-        "MyStruct("
-            "uint8 myEnum,"
-            "address myAddress"
-        ")"
-    );
-    // forgefmt: disable-end
+	bytes32 private constant TYPE_HASH_2 = keccak256(
+		"MyStruct("
+			"uint8 myEnum,"
+			"address myAddress"
+		")"
+	);
+	// forgefmt: disable-end
 }
 
 contract IfElseTest {

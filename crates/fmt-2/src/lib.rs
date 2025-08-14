@@ -121,9 +121,9 @@ fn format_inner(
     let first_result = format_once(config.clone(), mk_file);
 
     // If first pass was not successful, return the result
-    if first_result.is_err() {
-        return first_result;
-    }
+    // if first_result.is_err() {
+    return first_result;
+    // }
     let Some(first_formatted) = first_result.ok_ref() else { return first_result };
 
     // Second pass formatting
@@ -179,7 +179,13 @@ fn format_once(
         let file = mk_file(&sess)?;
         let arena = solar_parse::ast::Arena::new();
         let mut parser = solar_parse::Parser::from_source_file(&sess, &arena, &file);
-        let comments = Comments::new(&file, sess.source_map(), true, config.wrap_comments);
+        let comments = Comments::new(
+            &file,
+            sess.source_map(),
+            true,
+            config.wrap_comments,
+            if matches!(config.style, IndentStyle::Tab) { Some(config.tab_width) } else { None },
+        );
         let ast = parser.parse_file().map_err(|e| e.emit())?;
         let inline_config = parse_inline_config(&sess, &comments, &ast);
 
