@@ -287,7 +287,7 @@ pub fn mutate_param_value(
                     // Increase array size.
                     1 => values.push(new_value(param_type, test_runner)),
                     // Mutate random array element.
-                    2 => mutate_array(&mut values, param_type, test_runner, state),
+                    2 => mutate_random_array_value(&mut values, param_type, test_runner, state),
                     _ => unreachable!(),
                 }
                 Some(DynSolValue::Array(values))
@@ -299,7 +299,7 @@ pub fn mutate_param_value(
             if let DynSolType::FixedArray(param_type, _size) = param
                 && !values.is_empty()
             {
-                mutate_array(&mut values, param_type, test_runner, state);
+                mutate_random_array_value(&mut values, param_type, test_runner, state);
                 Some(DynSolValue::FixedArray(values))
             } else {
                 None
@@ -320,7 +320,7 @@ pub fn mutate_param_value(
                 && !values.is_empty()
             {
                 // Mutate random struct element.
-                mutate_tuple(&mut values, tuple_types, test_runner, state);
+                mutate_random_tuple_value(&mut values, tuple_types, test_runner, state);
                 Some(DynSolValue::CustomStruct { name, prop_names, tuple: values })
             } else {
                 None
@@ -331,7 +331,7 @@ pub fn mutate_param_value(
                 && !values.is_empty()
             {
                 // Mutate random tuple element.
-                mutate_tuple(&mut values, tuple_types, test_runner, state);
+                mutate_random_tuple_value(&mut values, tuple_types, test_runner, state);
                 Some(DynSolValue::Tuple(values))
             } else {
                 None
@@ -343,21 +343,21 @@ pub fn mutate_param_value(
 }
 
 /// Mutates random value from given tuples.
-fn mutate_tuple(
-    tuples: &mut [DynSolValue],
+fn mutate_random_tuple_value(
+    tuple_values: &mut [DynSolValue],
     tuple_types: &[DynSolType],
     test_runner: &mut TestRunner,
     state: &EvmFuzzState,
 ) {
-    let id = test_runner.rng().random_range(0..tuples.len());
+    let id = test_runner.rng().random_range(0..tuple_values.len());
     let param_type = &tuple_types[id];
-    let old_val = replace(&mut tuples[id], DynSolValue::Bool(false));
+    let old_val = replace(&mut tuple_values[id], DynSolValue::Bool(false));
     let new_val = mutate_param_value(param_type, old_val, test_runner, state);
-    tuples[id] = new_val;
+    tuple_values[id] = new_val;
 }
 
 /// Mutates random value from given array.
-fn mutate_array(
+fn mutate_random_array_value(
     array_values: &mut [DynSolValue],
     element_type: &DynSolType,
     test_runner: &mut TestRunner,
