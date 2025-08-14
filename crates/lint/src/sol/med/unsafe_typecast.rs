@@ -55,13 +55,7 @@ fn is_unsafe_typecast_hir(
         return false;
     };
 
-    for source_ty in source_types {
-        if is_unsafe_elementary_typecast(&source_ty, target_type) {
-            return true;
-        }
-    }
-
-    false
+    source_types.iter().any(|source_ty| is_unsafe_elementary_typecast(source_ty, target_type))
 }
 
 /// Infers the elementary source type(s) of an expression.
