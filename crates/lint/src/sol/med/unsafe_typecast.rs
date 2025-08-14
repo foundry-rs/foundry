@@ -42,46 +42,60 @@ impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
     }
 }
 
+/// Determines if a typecast is potentially unsafe (could lose data or precision).
 fn is_unsafe_typecast_hir(
     hir: &hir::Hir<'_>,
     source_expr: &hir::Expr<'_>,
     target_type: &hir::ElementaryType,
 ) -> bool {
-    let Some(source_elem_type) = infer_source_type(hir, source_expr) else {
+    let mut source_types = Vec::<ElementaryType>::new();
+    infer_source_types(Some(&mut source_types), hir, source_expr);
+
+    if source_types.is_empty() {
         return false;
     };
 
-    if let ElementaryType::Int(tgt_size) = target_type {
-        if let ExprKind::Call(call_expr, args, _) = &source_expr.kind {
-            if let ExprKind::Type(hir::Type {
-                kind: TypeKind::Elementary(ElementaryType::UInt(_src_bits)),
-                ..
-            }) = &call_expr.kind
-            {
-                if let Some(inner) = args.exprs().next() {
-                    if let Some(ElementaryType::UInt(orig_bits)) = infer_source_type(hir, inner) {
-                        if orig_bits.bits() < tgt_size.bits() {
-                            return false;
-                        }
-                    }
-                }
-            }
+    for source_ty in source_types {
+        if is_unsafe_elementary_typecast(&source_ty, target_type) {
+            return true;
         }
     }
 
-    is_unsafe_elementary_typecast(&source_elem_type, target_type)
+    false
 }
 
-/// Infers the elementary type of a source expression.
-/// For cast chains, returns the ultimate source type, not intermediate cast results.
-fn infer_source_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<ElementaryType> {
+/// Infers the elementary source type(s) of an expression.
+///
+/// This function traverses an expression tree to find the original "source" types.
+/// For cast chains, it returns the ultimate source type, not intermediate cast results.
+/// For binary operations, it collects types from both sides into the `output` vector.
+///
+/// # Returns
+/// An `Option<ElementaryType>` containing the inferred type of the expression if it can be
+/// resolved to a single source (like variables, literals, or unary expressions).
+/// Returns `None` for expressions complex expressions (like binary operations).
+fn infer_source_types(
+    mut output: Option<&mut Vec<ElementaryType>>,
+    hir: &hir::Hir<'_>,
+    expr: &hir::Expr<'_>,
+) -> Option<ElementaryType> {
+    let mut track = |ty: ElementaryType| -> Option<ElementaryType> {
+        if let Some(output) = output.as_mut() {
+            output.push(ty);
+        }
+        Some(ty)
+    };
+
     match &expr.kind {
-        // A type cast call: Type(val)
-        ExprKind::Call(call_expr, _args, _) => {
-            if let ExprKind::Type(hir::Type { kind: TypeKind::Elementary(elem_type), .. }) =
+        // A type cast call: `Type(val)`
+        ExprKind::Call(call_expr, args, ..) => {
+            // Check if the called expression is a type, which indicates a cast.
+            if let ExprKind::Type(hir::Type { kind: TypeKind::Elementary(..), .. }) =
                 &call_expr.kind
+                && let Some(inner) = args.exprs().next()
             {
-                return Some(*elem_type);
+                // Recurse to find the original (inner-most) source type.
+                return infer_source_types(output, hir, inner);
             }
             None
         }
@@ -91,40 +105,37 @@ fn infer_source_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<Element
             if let Some(Res::Item(ItemId::Variable(var_id))) = resolutions.first() {
                 let variable = hir.variable(*var_id);
                 if let TypeKind::Elementary(elem_type) = &variable.ty.kind {
-                    return Some(*elem_type);
+                    return track(*elem_type);
                 }
             }
             None
         }
 
-        // Handle literal strings/hex
+        // Handle literal values
         ExprKind::Lit(hir::Lit { kind, .. }) => match kind {
-            LitKind::Str(StrKind::Hex, ..) => Some(ElementaryType::Bytes),
-            LitKind::Str(..) => Some(ElementaryType::String),
-            LitKind::Address(_) => Some(ElementaryType::Address(false)),
-            LitKind::Bool(_) => Some(ElementaryType::Bool),
-
-            // Unnecessary to check numbers as assigning literal values which cannot fit into a type
+            LitKind::Str(StrKind::Hex, ..) => track(ElementaryType::Bytes),
+            LitKind::Str(..) => track(ElementaryType::String),
+            LitKind::Address(_) => track(ElementaryType::Address(false)),
+            LitKind::Bool(_) => track(ElementaryType::Bool),
+            // Unnecessary to check numbers as assigning literal values that cannot fit into a type
             // throws a compiler error. Reference: <https://solang.readthedocs.io/en/latest/language/types.html>
             _ => None,
         },
 
-        // Unary operations
-        ExprKind::Unary(op, inner_expr) => match op.kind {
-            solar_ast::UnOpKind::Neg => match infer_source_type(hir, inner_expr) {
-                Some(ElementaryType::UInt(size)) => Some(ElementaryType::Int(size)),
-                Some(signed_type @ ElementaryType::Int(_)) => Some(signed_type),
-                _ => Some(ElementaryType::Int(solar_ast::TypeSize::ZERO)),
-            },
-            _ => infer_source_type(hir, inner_expr),
-        },
+        // Unary operations: Recurse to find the source type of the inner expression.
+        ExprKind::Unary(_, inner_expr) => infer_source_types(output, hir, inner_expr),
 
+        // Binary operations
         ExprKind::Binary(lhs, _, rhs) => {
-            if let Some(ty) = infer_source_type(hir, lhs) {
-                return Some(ty);
+            if let Some(mut output) = output {
+                // Recurse on both sides to find and collect all source types.
+                infer_source_types(Some(&mut output), hir, lhs);
+                infer_source_types(Some(&mut output), hir, rhs);
             }
-            infer_source_type(hir, rhs)
+            None
         }
+
+        // Complex expressions are not evaluated
         _ => None,
     }
 }
