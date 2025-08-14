@@ -1,4 +1,5 @@
-use alloy_primitives::{I256, Sign, U256};
+use alloy_dyn_abi::Word;
+use alloy_primitives::{Address, I256, Sign, U256};
 use proptest::{prelude::*, test_runner::TestRunner};
 use rand::seq::IndexedRandom;
 use std::fmt::Debug;
@@ -84,38 +85,142 @@ macro_rules! impl_increment_decrement_mutator {
 impl_increment_decrement_mutator!(U256, validate_uint_mutation);
 impl_increment_decrement_mutator!(I256, validate_int_mutation);
 
-/// Mutator that flips random bit.
-pub(crate) trait BitFlipMutator: Sized + Copy + Debug {
-    fn flip_random_bit(self, size: Option<usize>, test_runner: &mut TestRunner) -> Option<Self>;
+/// ABI mutator that changes current value by flipping a random bit and randomly injecting
+/// interesting words - see <https://github.com/AFLplusplus/LibAFL/blob/90cb9a2919faf386e0678870e52784070cdac4b6/crates/libafl/src/mutators/mutations.rs#L88-L123>.
+/// Implemented for uint, int, address and fixed bytes.
+pub(crate) trait AbiMutator: Sized + Copy + Debug {
+    fn flip_random_bit(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
+    fn mutate_interesting_byte(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
+    fn mutate_interesting_word(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
+    fn mutate_interesting_dword(self, size: usize, test_runner: &mut TestRunner) -> Option<Self>;
 }
 
-impl BitFlipMutator for U256 {
-    #[instrument(name = "mutator::flip_random_bit", skip(size, test_runner), ret)]
-    fn flip_random_bit(self, size: Option<usize>, test_runner: &mut TestRunner) -> Option<Self> {
-        let size = size?;
+impl AbiMutator for U256 {
+    #[instrument(name = "U256::flip_random_bit", skip(size, test_runner), ret)]
+    fn flip_random_bit(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut bytes: [u8; 32] = self.to_be_bytes();
         flip_random_bit_in_slice(&mut bytes[32 - size / 8..], test_runner)?;
-        let mutated = Self::from_be_bytes(bytes);
-        validate_uint_mutation(self, mutated, size)
+        validate_uint_mutation(self, Self::from_be_bytes(bytes), size)
+    }
+
+    #[instrument(name = "U256::mutate_interesting_byte", skip(size, test_runner), ret)]
+    fn mutate_interesting_byte(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mut bytes: [u8; 32] = self.to_be_bytes();
+        mutate_interesting_byte_slice(&mut bytes[32 - size / 8..], test_runner)?;
+        validate_uint_mutation(self, Self::from_be_bytes(bytes), size)
+    }
+
+    #[instrument(name = "U256::mutate_interesting_word", skip(size, test_runner), ret)]
+    fn mutate_interesting_word(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mut bytes: [u8; 32] = self.to_be_bytes();
+        mutate_interesting_word_slice(&mut bytes[32 - size / 8..], test_runner)?;
+        validate_uint_mutation(self, Self::from_be_bytes(bytes), size)
+    }
+
+    #[instrument(name = "U256::mutate_interesting_dword", skip(size, test_runner), ret)]
+    fn mutate_interesting_dword(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mut bytes: [u8; 32] = self.to_be_bytes();
+        mutate_interesting_dword_slice(&mut bytes[32 - size / 8..], test_runner)?;
+        validate_uint_mutation(self, Self::from_be_bytes(bytes), size)
     }
 }
 
-impl BitFlipMutator for I256 {
-    #[instrument(name = "mutator::flip_random_bit", skip(size, test_runner), ret)]
-    fn flip_random_bit(self, size: Option<usize>, test_runner: &mut TestRunner) -> Option<Self> {
-        let size = size?;
+impl AbiMutator for I256 {
+    #[instrument(name = "I256::flip_random_bit", skip(size, test_runner), ret)]
+    fn flip_random_bit(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
         let mut bytes: [u8; 32] = self.to_be_bytes();
         flip_random_bit_in_slice(&mut bytes[32 - size / 8..], test_runner)?;
-        let mutated = Self::from_be_bytes(bytes);
-        validate_int_mutation(self, mutated, size)
+        validate_int_mutation(self, Self::from_be_bytes(bytes), size)
+    }
+
+    #[instrument(name = "I256::mutate_interesting_byte", skip(size, test_runner), ret)]
+    fn mutate_interesting_byte(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mut bytes: [u8; 32] = self.to_be_bytes();
+        mutate_interesting_byte_slice(&mut bytes[32 - size / 8..], test_runner)?;
+        validate_int_mutation(self, Self::from_be_bytes(bytes), size)
+    }
+
+    #[instrument(name = "I256::mutate_interesting_word", skip(size, test_runner), ret)]
+    fn mutate_interesting_word(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mut bytes: [u8; 32] = self.to_be_bytes();
+        mutate_interesting_word_slice(&mut bytes[32 - size / 8..], test_runner)?;
+        validate_int_mutation(self, Self::from_be_bytes(bytes), size)
+    }
+
+    #[instrument(name = "I256::mutate_interesting_dword", skip(size, test_runner), ret)]
+    fn mutate_interesting_dword(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mut bytes: [u8; 32] = self.to_be_bytes();
+        mutate_interesting_dword_slice(&mut bytes[32 - size / 8..], test_runner)?;
+        validate_int_mutation(self, Self::from_be_bytes(bytes), size)
+    }
+}
+
+impl AbiMutator for Address {
+    #[instrument(name = "Address::flip_random_bit", skip(_size, test_runner), ret)]
+    fn flip_random_bit(self, _size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mut bytes: [u8; 20] = self.0.into();
+        flip_random_bit_in_slice(&mut bytes, test_runner)?;
+        Some(Self::from(bytes))
+    }
+
+    #[instrument(name = "Address::mutate_interesting_byte", skip(_size, test_runner), ret)]
+    fn mutate_interesting_byte(self, _size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mut bytes: [u8; 20] = self.0.into();
+        mutate_interesting_byte_slice(&mut bytes, test_runner)?;
+        Some(Self::from(bytes))
+    }
+
+    #[instrument(name = "Address::mutate_interesting_word", skip(_size, test_runner), ret)]
+    fn mutate_interesting_word(self, _size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mut bytes: [u8; 20] = self.0.into();
+        mutate_interesting_word_slice(&mut bytes, test_runner)?;
+        Some(Self::from(bytes))
+    }
+
+    #[instrument(name = "Address::mutate_interesting_dword", skip(_size, test_runner), ret)]
+    fn mutate_interesting_dword(self, _size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mut bytes: [u8; 20] = self.0.into();
+        mutate_interesting_dword_slice(&mut bytes, test_runner)?;
+        Some(Self::from(bytes))
+    }
+}
+
+impl AbiMutator for Word {
+    #[instrument(name = "Word::flip_random_bit", skip(size, test_runner), ret)]
+    fn flip_random_bit(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mut bytes = self;
+        let slice = &mut bytes[..size];
+        flip_random_bit_in_slice(slice, test_runner)?;
+        Some(bytes)
+    }
+
+    #[instrument(name = "Word::mutate_interesting_byte", skip(size, test_runner), ret)]
+    fn mutate_interesting_byte(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mut bytes = self;
+        let slice = &mut bytes[..size];
+        mutate_interesting_byte_slice(slice, test_runner)?;
+        Some(bytes)
+    }
+
+    #[instrument(name = "Word::mutate_interesting_word", skip(size, test_runner), ret)]
+    fn mutate_interesting_word(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mut bytes = self;
+        let slice = &mut bytes[..size];
+        mutate_interesting_word_slice(slice, test_runner)?;
+        Some(bytes)
+    }
+
+    #[instrument(name = "Word::mutate_interesting_dword", skip(size, test_runner), ret)]
+    fn mutate_interesting_dword(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mut bytes = self;
+        let slice = &mut bytes[..size];
+        mutate_interesting_dword_slice(slice, test_runner)?;
+        Some(bytes)
     }
 }
 
 /// Flips a random bit in the given mutable byte slice.
-pub(crate) fn flip_random_bit_in_slice(
-    bytes: &mut [u8],
-    test_runner: &mut TestRunner,
-) -> Option<()> {
+fn flip_random_bit_in_slice(bytes: &mut [u8], test_runner: &mut TestRunner) -> Option<()> {
     if bytes.is_empty() {
         return None;
     }
@@ -124,72 +229,9 @@ pub(crate) fn flip_random_bit_in_slice(
     Some(())
 }
 
-/// Mutator that randomly inserts interesting words.
-/// See <https://github.com/AFLplusplus/LibAFL/blob/90cb9a2919faf386e0678870e52784070cdac4b6/crates/libafl/src/mutators/mutations.rs#L88-L123>.
-pub(crate) trait InterestingWordMutator: Sized + Copy + Debug {
-    fn to_be_bytes(&self) -> [u8; 32];
-    fn from_be_bytes(bytes: [u8; 32]) -> Self;
-    fn validate(old: Self, new: Self, size: usize) -> Option<Self>;
-
-    #[instrument(name = "mutator::mutate_interesting_byte", skip(size, test_runner), ret)]
-    fn mutate_interesting_byte(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
-        let mut bytes = self.to_be_bytes();
-        mutate_interesting_byte_slice(&mut bytes[32 - size / 8..], test_runner)?;
-        let mutated = Self::from_be_bytes(bytes);
-        Self::validate(self, mutated, size)
-    }
-
-    #[instrument(name = "mutator::mutate_interesting_word", skip(size, test_runner), ret)]
-    fn mutate_interesting_word(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
-        let mut bytes = self.to_be_bytes();
-        mutate_interesting_word_slice(&mut bytes[32 - size / 8..], test_runner)?;
-        let mutated = Self::from_be_bytes(bytes);
-        Self::validate(self, mutated, size)
-    }
-
-    #[instrument(name = "mutator::mutate_interesting_dword", skip(size, test_runner), ret)]
-    fn mutate_interesting_dword(self, size: usize, test_runner: &mut TestRunner) -> Option<Self> {
-        let mut bytes = self.to_be_bytes();
-        mutate_interesting_dword_slice(&mut bytes[32 - size / 8..], test_runner)?;
-        let mutated = Self::from_be_bytes(bytes);
-        Self::validate(self, mutated, size)
-    }
-}
-
-impl InterestingWordMutator for U256 {
-    fn to_be_bytes(&self) -> [u8; 32] {
-        Self::to_be_bytes(self)
-    }
-
-    fn from_be_bytes(bytes: [u8; 32]) -> Self {
-        Self::from_be_bytes(bytes)
-    }
-
-    fn validate(old: Self, new: Self, size: usize) -> Option<Self> {
-        validate_uint_mutation(old, new, size)
-    }
-}
-
-impl InterestingWordMutator for I256 {
-    fn to_be_bytes(&self) -> [u8; 32] {
-        Self::to_be_bytes(self)
-    }
-
-    fn from_be_bytes(bytes: [u8; 32]) -> Self {
-        Self::from_be_bytes(bytes)
-    }
-
-    fn validate(old: Self, new: Self, size: usize) -> Option<Self> {
-        validate_int_mutation(old, new, size)
-    }
-}
-
 /// Mutates a random byte in the given byte slice by replacing it with a randomly chosen
 /// interesting 8-bit value.
-pub(crate) fn mutate_interesting_byte_slice(
-    bytes: &mut [u8],
-    test_runner: &mut TestRunner,
-) -> Option<()> {
+fn mutate_interesting_byte_slice(bytes: &mut [u8], test_runner: &mut TestRunner) -> Option<()> {
     let index = test_runner.rng().random_range(0..bytes.len());
     let val = *INTERESTING_8.choose(&mut test_runner.rng())? as u8;
     bytes[index] = val;
@@ -198,10 +240,7 @@ pub(crate) fn mutate_interesting_byte_slice(
 
 /// Mutates a random 2-byte (16-bit) region in the byte slice with a randomly chosen interesting
 /// 16-bit value.
-pub(crate) fn mutate_interesting_word_slice(
-    bytes: &mut [u8],
-    test_runner: &mut TestRunner,
-) -> Option<()> {
+fn mutate_interesting_word_slice(bytes: &mut [u8], test_runner: &mut TestRunner) -> Option<()> {
     if bytes.len() < 2 {
         return None;
     }
@@ -213,10 +252,7 @@ pub(crate) fn mutate_interesting_word_slice(
 
 /// Mutates a random 4-byte (32-bit) region in the byte slice with a randomly chosen interesting
 /// 32-bit value.
-pub(crate) fn mutate_interesting_dword_slice(
-    bytes: &mut [u8],
-    test_runner: &mut TestRunner,
-) -> Option<()> {
+fn mutate_interesting_dword_slice(bytes: &mut [u8], test_runner: &mut TestRunner) -> Option<()> {
     if bytes.len() < 4 {
         return None;
     }
@@ -259,7 +295,6 @@ fn validate_int_mutation(original: I256, mutated: I256, size: usize) -> Option<I
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Address;
     use proptest::test_runner::Config;
 
     #[test]
@@ -318,7 +353,7 @@ mod tests {
 
         let mut test_bit_flip = |value: U256| {
             for _ in 0..100 {
-                let flipped = U256::flip_random_bit(value, Some(size), &mut runner);
+                let flipped = U256::flip_random_bit(value, size, &mut runner);
                 assert!(
                     flipped.is_none()
                         || flipped.is_some_and(
@@ -341,7 +376,7 @@ mod tests {
 
         let mut test_bit_flip = |value: I256| {
             for _ in 0..100 {
-                let flipped = I256::flip_random_bit(value, Some(size), &mut runner);
+                let flipped = I256::flip_random_bit(value, size, &mut runner);
                 assert!(
                     flipped.is_none()
                         || flipped.is_some_and(|flipped| {
@@ -462,20 +497,11 @@ mod tests {
     fn test_mutate_address() {
         let mut runner = TestRunner::new(Config::default());
         let value = Address::random();
-        let mut bytes: [u8; 20] = value.0.into();
-
         for _ in 0..100 {
-            flip_random_bit_in_slice(&mut bytes, &mut runner).unwrap();
-            assert_ne!(value, Address::from(bytes));
-
-            mutate_interesting_byte_slice(&mut bytes, &mut runner).unwrap();
-            assert_ne!(value, Address::from(bytes));
-
-            mutate_interesting_word_slice(&mut bytes, &mut runner).unwrap();
-            assert_ne!(value, Address::from(bytes));
-
-            mutate_interesting_dword_slice(&mut bytes, &mut runner).unwrap();
-            assert_ne!(value, Address::from(bytes));
+            assert_ne!(value, Address::flip_random_bit(value, 20, &mut runner).unwrap());
+            assert_ne!(value, Address::mutate_interesting_byte(value, 20, &mut runner).unwrap());
+            assert_ne!(value, Address::mutate_interesting_word(value, 20, &mut runner).unwrap());
+            assert_ne!(value, Address::mutate_interesting_dword(value, 20, &mut runner).unwrap());
         }
     }
 
