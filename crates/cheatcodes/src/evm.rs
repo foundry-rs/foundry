@@ -27,7 +27,7 @@ use revm::{
     state::Account,
 };
 use std::{
-    collections::{BTreeMap, btree_map::Entry},
+    collections::{BTreeMap, HashSet, btree_map::Entry},
     fmt::Display,
     path::Path,
 };
@@ -131,6 +131,8 @@ struct NonceDiff {
 struct AccountStateDiffs {
     /// Address label, if any set.
     label: Option<String>,
+    /// Contract identifier from artifact. e.g "src/Counter.sol:Counter"
+    contract: Option<String>,
     /// Account balance changes.
     balance_diff: Option<BalanceDiff>,
     /// Account nonce changes.
@@ -144,6 +146,9 @@ impl Display for AccountStateDiffs {
         // Print changed account.
         if let Some(label) = &self.label {
             writeln!(f, "label: {label}")?;
+        }
+        if let Some(contract) = &self.contract {
+            writeln!(f, "contract: {contract}")?;
         }
         // Print balance diff if changed.
         if let Some(balance_diff) = &self.balance_diff
@@ -832,9 +837,9 @@ impl Cheatcode for stopAndReturnStateDiffCall {
 }
 
 impl Cheatcode for getStateDiffCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
         let mut diffs = String::new();
-        let state_diffs = get_recorded_state_diffs(state);
+        let state_diffs = get_recorded_state_diffs(ccx);
         for (address, state_diffs) in state_diffs {
             diffs.push_str(&format!("{address}\n"));
             diffs.push_str(&format!("{state_diffs}\n"));
@@ -844,8 +849,8 @@ impl Cheatcode for getStateDiffCall {
 }
 
 impl Cheatcode for getStateDiffJsonCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
-        let state_diffs = get_recorded_state_diffs(state);
+    fn apply_stateful(&self, ccx: &mut CheatsCtxt) -> Result {
+        let state_diffs = get_recorded_state_diffs(ccx);
         Ok(serde_json::to_string(&state_diffs)?.abi_encode())
     }
 }
@@ -1218,9 +1223,36 @@ fn genesis_account(account: &Account) -> GenesisAccount {
 }
 
 /// Helper function to returns state diffs recorded for each changed account.
-fn get_recorded_state_diffs(state: &mut Cheatcodes) -> BTreeMap<Address, AccountStateDiffs> {
+fn get_recorded_state_diffs(ccx: &mut CheatsCtxt) -> BTreeMap<Address, AccountStateDiffs> {
     let mut state_diffs: BTreeMap<Address, AccountStateDiffs> = BTreeMap::default();
-    if let Some(records) = &state.recorded_account_diffs_stack {
+
+    // First, collect all unique addresses we need to look up
+    let mut addresses_to_lookup = HashSet::new();
+    if let Some(records) = &ccx.state.recorded_account_diffs_stack {
+        for account_access in records.iter().flatten() {
+            if !account_access.storageAccesses.is_empty()
+                || account_access.oldBalance != account_access.newBalance
+            {
+                addresses_to_lookup.insert(account_access.account);
+                for storage_access in &account_access.storageAccesses {
+                    if storage_access.isWrite && !storage_access.reverted {
+                        addresses_to_lookup.insert(storage_access.account);
+                    }
+                }
+            }
+        }
+    }
+
+    // Look up contract names for all addresses
+    let mut contract_names = HashMap::new();
+    for address in addresses_to_lookup {
+        if let Some(name) = get_contract_name(ccx, address) {
+            contract_names.insert(address, name);
+        }
+    }
+
+    // Now process the records
+    if let Some(records) = &ccx.state.recorded_account_diffs_stack {
         records
             .iter()
             .flatten()
@@ -1235,7 +1267,8 @@ fn get_recorded_state_diffs(state: &mut Cheatcodes) -> BTreeMap<Address, Account
                     let account_diff =
                         state_diffs.entry(account_access.account).or_insert_with(|| {
                             AccountStateDiffs {
-                                label: state.labels.get(&account_access.account).cloned(),
+                                label: ccx.state.labels.get(&account_access.account).cloned(),
+                                contract: contract_names.get(&account_access.account).cloned(),
                                 ..Default::default()
                             }
                         });
@@ -1255,7 +1288,8 @@ fn get_recorded_state_diffs(state: &mut Cheatcodes) -> BTreeMap<Address, Account
                     let account_diff =
                         state_diffs.entry(account_access.account).or_insert_with(|| {
                             AccountStateDiffs {
-                                label: state.labels.get(&account_access.account).cloned(),
+                                label: ccx.state.labels.get(&account_access.account).cloned(),
+                                contract: contract_names.get(&account_access.account).cloned(),
                                 ..Default::default()
                             }
                         });
@@ -1276,7 +1310,8 @@ fn get_recorded_state_diffs(state: &mut Cheatcodes) -> BTreeMap<Address, Account
                         let account_diff = state_diffs
                             .entry(storage_access.account)
                             .or_insert_with(|| AccountStateDiffs {
-                                label: state.labels.get(&storage_access.account).cloned(),
+                                label: ccx.state.labels.get(&storage_access.account).cloned(),
+                                contract: contract_names.get(&storage_access.account).cloned(),
                                 ..Default::default()
                             });
                         // Update state diff. Do not overwrite the initial value if already set.
@@ -1296,6 +1331,34 @@ fn get_recorded_state_diffs(state: &mut Cheatcodes) -> BTreeMap<Address, Account
             });
     }
     state_diffs
+}
+
+/// Helper function to get the contract name from the deployed code.
+fn get_contract_name(ccx: &mut CheatsCtxt, address: Address) -> Option<String> {
+    // Check if we have available artifacts to match against
+    let artifacts = ccx.state.config.available_artifacts.as_ref()?;
+
+    // Try to load the account and get its code
+    let account = ccx.ecx.journaled_state.load_account(address).ok()?;
+    let code = account.info.code.as_ref()?;
+
+    // Skip if code is empty
+    if code.is_empty() {
+        return None;
+    }
+
+    // Try to find the artifact by deployed code
+    let code_bytes = code.original_bytes();
+    if let Some((artifact_id, _)) = artifacts.find_by_deployed_code_exact(&code_bytes) {
+        return Some(artifact_id.identifier());
+    }
+
+    // Fallback to fuzzy matching if exact match fails
+    if let Some((artifact_id, _)) = artifacts.find_by_deployed_code(&code_bytes) {
+        return Some(artifact_id.identifier());
+    }
+
+    None
 }
 
 /// Helper function to set / unset cold storage slot of the target address.
