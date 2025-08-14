@@ -157,31 +157,39 @@ impl AbiMutator for I256 {
 
 impl AbiMutator for Address {
     #[instrument(name = "Address::flip_random_bit", skip(_size, test_runner), ret)]
-    fn flip_random_bit(self, _size: usize, test_runner: &mut TestRunner) -> Option<Self> {
-        let mut bytes: [u8; 20] = self.0.into();
-        flip_random_bit_in_slice(&mut bytes, test_runner)?;
-        Some(Self::from(bytes))
+    fn flip_random_bit(mut self, _size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        flip_random_bit_in_slice(self.as_mut_slice(), test_runner)?;
+        Some(self)
     }
 
     #[instrument(name = "Address::mutate_interesting_byte", skip(_size, test_runner), ret)]
-    fn mutate_interesting_byte(self, _size: usize, test_runner: &mut TestRunner) -> Option<Self> {
-        let mut bytes: [u8; 20] = self.0.into();
-        mutate_interesting_byte_slice(&mut bytes, test_runner)?;
-        Some(Self::from(bytes))
+    fn mutate_interesting_byte(
+        mut self,
+        _size: usize,
+        test_runner: &mut TestRunner,
+    ) -> Option<Self> {
+        mutate_interesting_byte_slice(self.as_mut_slice(), test_runner)?;
+        Some(self)
     }
 
     #[instrument(name = "Address::mutate_interesting_word", skip(_size, test_runner), ret)]
-    fn mutate_interesting_word(self, _size: usize, test_runner: &mut TestRunner) -> Option<Self> {
-        let mut bytes: [u8; 20] = self.0.into();
-        mutate_interesting_word_slice(&mut bytes, test_runner)?;
-        Some(Self::from(bytes))
+    fn mutate_interesting_word(
+        mut self,
+        _size: usize,
+        test_runner: &mut TestRunner,
+    ) -> Option<Self> {
+        mutate_interesting_word_slice(self.as_mut_slice(), test_runner)?;
+        Some(self)
     }
 
     #[instrument(name = "Address::mutate_interesting_dword", skip(_size, test_runner), ret)]
-    fn mutate_interesting_dword(self, _size: usize, test_runner: &mut TestRunner) -> Option<Self> {
-        let mut bytes: [u8; 20] = self.0.into();
-        mutate_interesting_dword_slice(&mut bytes, test_runner)?;
-        Some(Self::from(bytes))
+    fn mutate_interesting_dword(
+        mut self,
+        _size: usize,
+        test_runner: &mut TestRunner,
+    ) -> Option<Self> {
+        mutate_interesting_dword_slice(self.as_mut_slice(), test_runner)?;
+        Some(self)
     }
 }
 
