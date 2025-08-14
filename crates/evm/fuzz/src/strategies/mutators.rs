@@ -496,12 +496,30 @@ mod tests {
     #[test]
     fn test_mutate_address() {
         let mut runner = TestRunner::new(Config::default());
-        let value = Address::random();
         for _ in 0..100 {
+            let value = Address::random();
             assert_ne!(value, Address::flip_random_bit(value, 20, &mut runner).unwrap());
-            assert_ne!(value, Address::mutate_interesting_byte(value, 20, &mut runner).unwrap());
-            assert_ne!(value, Address::mutate_interesting_word(value, 20, &mut runner).unwrap());
-            assert_ne!(value, Address::mutate_interesting_dword(value, 20, &mut runner).unwrap());
+            let value1 = Address::random();
+            assert_ne!(value1, Address::mutate_interesting_byte(value1, 20, &mut runner).unwrap());
+            let value2 = Address::random();
+            assert_ne!(value2, Address::mutate_interesting_word(value2, 20, &mut runner).unwrap());
+            let value3 = Address::random();
+            assert_ne!(value3, Address::mutate_interesting_dword(value3, 20, &mut runner).unwrap());
+        }
+    }
+
+    #[test]
+    fn test_mutate_word() {
+        let mut runner = TestRunner::new(Config::default());
+        for _ in 0..100 {
+            let value = Word::random();
+            assert_ne!(value, Word::flip_random_bit(value, 32, &mut runner).unwrap());
+            let value1 = Word::random();
+            assert_ne!(value1, Word::mutate_interesting_byte(value1, 32, &mut runner).unwrap());
+            let value2 = Word::random();
+            assert_ne!(value2, Word::mutate_interesting_word(value2, 32, &mut runner).unwrap());
+            let value3 = Word::random();
+            assert_ne!(value3, Word::mutate_interesting_dword(value3, 32, &mut runner).unwrap());
         }
     }
 
