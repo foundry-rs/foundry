@@ -359,7 +359,7 @@ fn mutate_tuple(
 /// Mutates random value from given array.
 fn mutate_array(
     array_values: &mut [DynSolValue],
-    array_type: &DynSolType,
+    element_type: &DynSolType,
     test_runner: &mut TestRunner,
     state: &EvmFuzzState,
 ) {
