@@ -365,7 +365,7 @@ fn mutate_array(
 ) {
     let elem = array_values.choose_mut(&mut test_runner.rng()).unwrap();
     let old_val = replace(elem, DynSolValue::Bool(false));
-    let new_val = mutate_param_value(array_type, old_val, test_runner, state);
+    let new_val = mutate_param_value(element_type, old_val, test_runner, state);
     *elem = new_val;
 }
 
