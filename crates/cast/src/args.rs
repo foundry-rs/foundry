@@ -165,6 +165,10 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let value = stdin::unwrap_line(bytes)?;
             sh_println!("{}", SimpleCast::to_bytes32(&value)?)?
         }
+        CastSubcommand::Pad { data, right, left: _, len } => {
+            let value = stdin::unwrap_line(data)?;
+            sh_println!("{}", SimpleCast::pad(&value, right, len)?)?
+        }
         CastSubcommand::FormatBytes32String { string } => {
             let value = stdin::unwrap_line(string)?;
             sh_println!("{}", SimpleCast::format_bytes32_string(&value)?)?
@@ -190,8 +194,15 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 sh_println!("{}", SimpleCast::abi_encode_packed(&sig, &args)?)?
             }
         }
-        CastSubcommand::DecodeCalldata { sig, calldata } => {
-            let tokens = SimpleCast::calldata_decode(&sig, &calldata, true)?;
+        CastSubcommand::DecodeCalldata { sig, calldata, file } => {
+            let raw_hex = if let Some(file_path) = file {
+                let contents = fs::read_to_string(&file_path)?;
+                contents.trim().to_string()
+            } else {
+                calldata.unwrap()
+            };
+
+            let tokens = SimpleCast::calldata_decode(&sig, &raw_hex, true)?;
             print_tokens(&tokens);
         }
         CastSubcommand::CalldataEncode { sig, args, file } => {

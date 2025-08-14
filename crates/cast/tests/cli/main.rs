@@ -3741,3 +3741,119 @@ Transaction successfully executed.
 
 "#]]);
 });
+
+// Tests for negative number argument parsing
+// Ensures that negative numbers in function arguments are properly parsed
+// instead of being treated as command flags
+
+// Test that cast call accepts negative numbers as function arguments
+casttest!(cast_call_negative_numbers, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Sepolia);
+    // Test with negative int parameter - should not treat -456789 as a flag
+    cmd.args([
+        "call",
+        "0xAbCdEf1234567890aBcDeF1234567890aBcDeF12",
+        "processValue(int128)",
+        "-456789",
+        "--rpc-url",
+        rpc.as_str(),
+    ])
+    .assert_success();
+});
+
+// Test negative numbers with multiple parameters
+casttest!(cast_call_multiple_negative_numbers, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Sepolia);
+    cmd.args([
+        "call",
+        "--rpc-url",
+        rpc.as_str(),
+        "0xDeaDBeeFcAfEbAbEfAcEfEeDcBaDbEeFcAfEbAbE",
+        "calculateDelta(int64,int32,uint16)",
+        "-987654321",
+        "-42",
+        "65535",
+    ])
+    .assert_success();
+});
+
+// Test negative numbers mixed with flags
+casttest!(cast_call_negative_with_flags, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Sepolia);
+    cmd.args([
+        "call",
+        "--trace", // flag before
+        "0x9876543210FeDcBa9876543210FeDcBa98765432",
+        "updateBalance(int256)",
+        "-777888",
+        "--rpc-url",
+        rpc.as_str(), // flag after
+    ])
+    .assert_success();
+});
+
+// Test that actual invalid flags are still caught
+casttest!(cast_call_invalid_flag_still_caught, |_prj, cmd| {
+    cmd.args([
+        "call",
+        "--invalid-flag", // This should be caught as invalid
+        "0x5555555555555555555555555555555555555555",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+error: unexpected argument '--invalid-flag' found
+
+  tip: to pass '--invalid-flag' as a value, use '-- --invalid-flag'
+
+Usage: cast[..] call [OPTIONS] [TO] [SIG] [ARGS]... [COMMAND]
+
+For more information, try '--help'.
+
+"#]]);
+});
+
+// Test cast estimate with negative numbers
+casttest!(cast_estimate_negative_numbers, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Sepolia);
+    cmd.args([
+        "estimate",
+        "0xBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBb",
+        "rebalance(int64)",
+        "-8888",
+        "--rpc-url",
+        rpc.as_str(),
+    ])
+    .assert_success();
+});
+
+// Test cast mktx with negative numbers
+casttest!(cast_mktx_negative_numbers, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Sepolia);
+    cmd.args([
+        "mktx",
+        "0x1111111111111111111111111111111111111111",
+        "settleDebt(int256)",
+        "-15000",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80", // anvil wallet #0
+        "--rpc-url",
+        rpc.as_str(),
+        "--gas-limit",
+        "100000",
+    ])
+    .assert_success();
+});
+
+// Test cast access-list with negative numbers
+casttest!(cast_access_list_negative_numbers, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Sepolia);
+    cmd.args([
+        "access-list",
+        "0x9999999999999999999999999999999999999999",
+        "adjustPosition(int128)",
+        "-33333",
+        "--rpc-url",
+        rpc.as_str(),
+    ])
+    .assert_success();
+});

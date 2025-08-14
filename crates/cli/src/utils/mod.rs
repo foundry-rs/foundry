@@ -83,11 +83,27 @@ impl<T: AsRef<Path>> FoundryPathExt for T {
 
 /// Initializes a tracing Subscriber for logging
 pub fn subscriber() {
-    let registry = tracing_subscriber::Registry::default()
-        .with(tracing_subscriber::EnvFilter::from_default_env());
+    let registry = tracing_subscriber::Registry::default().with(env_filter());
     #[cfg(feature = "tracy")]
     let registry = registry.with(tracing_tracy::TracyLayer::default());
     registry.with(tracing_subscriber::fmt::layer()).init()
+}
+
+fn env_filter() -> tracing_subscriber::EnvFilter {
+    const DEFAULT_DIRECTIVES: &[&str] = &[
+        // Low level networking
+        "hyper=off",
+        "hyper_util=off",
+        "h2=off",
+        "rustls=off",
+        // Tokio
+        "mio=off",
+    ];
+    let mut filter = tracing_subscriber::EnvFilter::from_default_env();
+    for &directive in DEFAULT_DIRECTIVES {
+        filter = filter.add_directive(directive.parse().unwrap());
+    }
+    filter
 }
 
 pub fn abi_to_solidity(abi: &JsonAbi, name: &str) -> Result<String> {
@@ -472,6 +488,10 @@ impl<'a> Git<'a> {
 
     pub fn is_in_repo(self) -> std::io::Result<bool> {
         self.cmd().args(["rev-parse", "--is-inside-work-tree"]).status().map(|s| s.success())
+    }
+
+    pub fn is_repo_root(self) -> Result<bool> {
+        self.cmd().args(["rev-parse", "--show-cdup"]).exec().map(|out| out.stdout.is_empty())
     }
 
     pub fn is_clean(self) -> Result<bool> {

@@ -53,7 +53,11 @@ pub enum EtherscanConfigError {
     #[error(transparent)]
     Unresolved(#[from] UnresolvedEnvVarError),
 
-    #[error("No known Etherscan API URL for config{0} with chain `{1}`. Please specify a `url`")]
+    #[error(
+        "No known Etherscan API URL for chain `{1}`. To fix this, please:\n\
+        1. Specify a `url` {0}\n\
+        2. Verify the chain `{1}` is correct"
+    )]
     UnknownChain(String, Chain),
 
     #[error("At least one of `url` or `chain` must be present{0}")]
@@ -233,7 +237,7 @@ impl EtherscanConfig {
             }),
             (Some(chain), None) => ResolvedEtherscanConfig::create(key, chain, api_version)
                 .ok_or_else(|| {
-                    let msg = alias.map(|a| format!(" `{a}`")).unwrap_or_default();
+                    let msg = alias.map(|a| format!("for `{a}`")).unwrap_or_default();
                     EtherscanConfigError::UnknownChain(msg, chain)
                 }),
             (None, Some(api_url)) => Ok(ResolvedEtherscanConfig {

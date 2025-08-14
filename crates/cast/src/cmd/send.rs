@@ -30,6 +30,7 @@ pub struct SendTxArgs {
     sig: Option<String>,
 
     /// The arguments of the function to call.
+    #[arg(allow_negative_numbers = true)]
     args: Vec<String>,
 
     /// Only print the transaction hash and exit immediately.
@@ -80,6 +81,7 @@ pub enum SendTxSubcommands {
         sig: Option<String>,
 
         /// The arguments of the function to call.
+        #[arg(allow_negative_numbers = true)]
         args: Vec<String>,
     },
 }

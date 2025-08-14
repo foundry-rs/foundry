@@ -1401,8 +1401,6 @@ Traces:
     ├─ [..] Counter::number() [staticcall]
     │   └─ ← [Return] 1
     ├─ [..] StdAssertions::assertEq(1, 1)
-    │   ├─ [0] VM::assertEq(1, 1) [staticcall]
-    │   │   └─ ← [Return]
     │   └─ ← 
     └─ ← [Stop]
 

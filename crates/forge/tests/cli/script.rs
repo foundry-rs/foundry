@@ -5,6 +5,7 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_primitives::{Address, Bytes, address, hex};
 use anvil::{NodeConfig, spawn};
 use forge_script_sequence::ScriptSequence;
+use foundry_config::{ForkConfig, RpcEndpoint, RpcEndpointUrl, RpcEndpoints};
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
     rpc::{self, next_http_archive_rpc_url},
@@ -408,6 +409,41 @@ contract Demo {
         .arg("2")
         .assert_success()
         .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+== Logs ==
+  script ran
+  1
+  2
+
+"#]]);
+});
+
+// Tests that the run command can run functions with arguments without specifying the signature
+// <https://github.com/foundry-rs/foundry/issues/11240>
+forgetest!(can_execute_script_command_with_args_no_sig, |prj, cmd| {
+    let script = prj
+        .add_source(
+            "Foo",
+            r#"
+contract Demo {
+    event log_string(string);
+    event log_uint(uint);
+    function run(uint256 a, uint256 b) external {
+        emit log_string("script ran");
+        emit log_uint(a);
+        emit log_uint(b);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("script").arg(script).arg("1").arg("2").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
@@ -3008,4 +3044,461 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
         .unwrap();
     assert_eq!(receiver2.nonce, 0);
     assert_eq!(receiver2.balance.to_string(), "101000000000000000000");
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11159>
+forgetest_async!(check_broadcast_log_with_additional_contracts, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() public {
+        number++;
+    }
+}
+   "#,
+    )
+    .unwrap();
+    prj.add_source(
+        "Factory.sol",
+        r#"
+import {Counter} from "./Counter.sol";
+
+contract Factory {
+    function deployCounter() public returns (Counter) {
+        return new Counter();
+    }
+}
+   "#,
+    )
+    .unwrap();
+    let deploy_script = prj
+        .add_script(
+            "Factory.s.sol",
+            r#"
+import "forge-std/Script.sol";
+import {Factory} from "../src/Factory.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract FactoryScript is Script {
+    Factory public factory;
+    Counter public counter;
+
+    function setUp() public {}
+
+    function run() public {
+        vm.startBroadcast();
+
+        factory = new Factory();
+        counter = factory.deployCounter();
+
+        vm.stopBroadcast();
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    let deploy_contract = deploy_script.display().to_string() + ":FactoryScript";
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.args([
+        "script",
+        &deploy_contract,
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--slow",
+        "--broadcast",
+        "--private-key",
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_success();
+
+    let broadcast_log = prj.root().join("broadcast/Factory.s.sol/31337/run-latest.json");
+    let script_sequence: ScriptSequence = serde_json::from_reader(
+        fs::File::open(prj.artifacts().join(broadcast_log)).expect("no broadcast log"),
+    )
+    .expect("no script sequence");
+
+    let counter_contract = script_sequence
+        .transactions
+        .get(1)
+        .expect("no tx")
+        .additional_contracts
+        .first()
+        .expect("no Counter contract");
+    assert_eq!(counter_contract.contract_name, Some("Counter".to_string()));
+});
+
+// <https://github.com/foundry-rs/foundry/issues/11213>
+forgetest_async!(call_to_non_contract_address_does_not_panic, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+
+    let endpoint = rpc::next_http_archive_rpc_url();
+
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+    function increment() public {
+        number++;
+    }
+}
+   "#,
+    )
+    .unwrap();
+
+    let deploy_script = prj
+        .add_script(
+            "Counter.s.sol",
+            &r#"
+import "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+contract CounterScript is Script {
+    Counter public counter;
+    function setUp() public {}
+    function run() public {
+        vm.createSelectFork("<url>");
+        vm.startBroadcast();
+        counter = new Counter();
+        vm.stopBroadcast();
+        vm.createSelectFork("<url>");
+        vm.startBroadcast();
+        counter.increment();
+        vm.stopBroadcast();
+    }
+}
+   "#
+            .replace("<url>", &endpoint),
+        )
+        .unwrap();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.args([
+        "script",
+        &deploy_script.display().to_string(),
+        "--root",
+        prj.root().to_str().unwrap(),
+        "--fork-url",
+        &handle.http_endpoint(),
+        "--slow",
+        "--broadcast",
+        "--private-key",
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_failure()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Traces:
+  [..] → new CounterScript@[..]
+    └─ ← [Return] 2200 bytes of code
+
+  [..] CounterScript::setUp()
+    └─ ← [Stop]
+
+  [..] CounterScript::run()
+    ├─ [..] VM::createSelectFork("<rpc url>")
+    │   └─ ← [Return] 1
+    ├─ [..] VM::startBroadcast()
+    │   └─ ← [Return]
+    ├─ [..] → new Counter@[..]
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [..] VM::stopBroadcast()
+    │   └─ ← [Return]
+    ├─ [..] VM::createSelectFork("<rpc url>")
+    │   └─ ← [Return] 2
+    ├─ [..] VM::startBroadcast()
+    │   └─ ← [Return]
+    └─ ← [Revert] call to non-contract address [..]
+
+
+
+"#]])
+    .stderr_eq(str![[r#"
+Error: script failed: call to non-contract address [..]
+"#]]);
+});
+
+// Tests that can access the fork config for each chain from `foundry.toml`
+forgetest_init!(can_access_fork_config_chain_ids, |prj, cmd| {
+    prj.insert_vm();
+    prj.insert_console();
+    prj.insert_ds_test();
+
+    prj.update_config(|config| {
+        config.forks = vec![
+            (
+                "mainnet".to_string(),
+                ForkConfig {
+                    rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
+                        "mainnet-rpc".to_string(),
+                    ))),
+                    vars: vec![
+                        ("i256".into(), "-1234".into()),
+                        ("u256".into(), 1234.into()),
+                        ("bool".into(), true.into()),
+                        (
+                            "b256".into(),
+                            "0xdeadbeaf00000000000000000000000000000000000000000000000000000000"
+                                .into(),
+                        ),
+                        ("addr".into(), "0xdeadbeef00000000000000000000000000000000".into()),
+                        ("bytes".into(), "0x00000000000f00".into()),
+                        ("str".into(), "bar".into()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+            ),
+            (
+                "optimism".to_string(),
+                ForkConfig {
+                    rpc_endpoint: None,
+                    vars: vec![
+                        ("i256".into(), "-4321".into()),
+                        ("u256".into(), 4321.into()),
+                        ("bool".into(), "false".into()),
+                        (
+                            "b256".into(),
+                            "0x000000000000000000000000000000000000000000000000000000deadc0ffee"
+                                .into(),
+                        ),
+                        ("addr".into(), "0x00000000000000000000000000000000deadbeef".into()),
+                        ("bytes".into(), "0x00f00000000000".into()),
+                        ("str".into(), "bazz".into()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+            ),
+        ]
+        .into_iter()
+        .collect();
+
+        config.rpc_endpoints = RpcEndpoints::new(vec![(
+            "optimism",
+            RpcEndpoint::new(RpcEndpointUrl::Url("optimism-rpc".to_string())),
+        )]);
+    });
+
+    prj.add_source(
+            "ForkScript.s.sol",
+            r#"
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+import {console} from "./console.sol";
+
+contract ForkScript is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+
+    function run() public view {
+        (uint256[2] memory chainIds,  string[2] memory chains) = ([uint256(1), uint256(10)], ["mainnet", "optimism"]);
+        (uint256[] memory cheatChainIds, string[] memory cheatChains) = (vm.forkChainIds(), vm.forkChains());
+
+        for (uint256 i = 0; i < chains.length; i++) {
+            assert(chainIds[i] == cheatChainIds[0] || chainIds[i] == cheatChainIds[1]);
+            assert(eqString(chains[i], cheatChains[0]) || eqString(chains[i], cheatChains[1]));
+            console.log("chain:", chains[i]);
+            console.log("id:", chainIds[i]);
+
+            string memory rpc = vm.forkChainRpcUrl(chainIds[i]);
+            int256 i256 = vm.forkChainInt(chainIds[i], "i256");
+            uint256 u256 = vm.forkChainUint(chainIds[i], "u256");
+            bool boolean = vm.forkChainBool(chainIds[i], "bool");
+            address addr = vm.forkChainAddress(chainIds[i], "addr");
+            bytes32 b256 = vm.forkChainBytes32(chainIds[i], "b256");
+            bytes memory byytes = vm.forkChainBytes(chainIds[i], "bytes");
+            string memory str = vm.forkChainString(chainIds[i], "str");
+
+            console.log(" > rpc:", rpc);
+            console.log(" > vars:");
+            console.log("   > i256:", i256);
+            console.log("   > u256:", u256);
+            console.log("   > bool:", boolean);
+            console.log("   > addr:", addr);
+            console.log("   > string:", str);
+
+            assert(
+                b256 == 0xdeadbeaf00000000000000000000000000000000000000000000000000000000
+                    || b256 == 0x000000000000000000000000000000000000000000000000000000deadc0ffee
+            );
+        }
+    }
+
+    function eqString(string memory s1, string memory s2) public pure returns(bool) {
+        return keccak256(bytes(s1)) == keccak256(bytes(s2));
+    }
+}
+        "#,
+        )
+        .unwrap();
+
+    cmd.arg("script").arg("ForkScript").assert_success().stdout_eq(str![[r#"
+...
+  chain: mainnet
+  id: 1
+   > rpc: mainnet-rpc
+   > vars:
+     > i256: -1234
+     > u256: 1234
+     > bool: true
+     > addr: 0xdEADBEeF00000000000000000000000000000000
+     > string: bar
+  chain: optimism
+  id: 10
+   > rpc: optimism-rpc
+   > vars:
+     > i256: -4321
+     > u256: 4321
+     > bool: false
+     > addr: 0x00000000000000000000000000000000DeaDBeef
+     > string: bazz
+
+"#]]);
+});
+
+// Tests that can derive chain id of the active fork + get the config from `foundry.toml`
+forgetest_init!(can_derive_chain_id_access_fork_config, |prj, cmd| {
+    prj.insert_vm();
+    prj.insert_console();
+    prj.insert_ds_test();
+    let mainnet_endpoint = rpc::next_http_rpc_endpoint();
+
+    prj.update_config(|config| {
+        config.forks = vec![
+            (
+                "mainnet".to_string(),
+                ForkConfig {
+                    rpc_endpoint: Some(RpcEndpoint::new(RpcEndpointUrl::Url(
+                        mainnet_endpoint.clone(),
+                    ))),
+                    vars: vec![
+                        ("i256".into(), "-1234".into()),
+                        ("u256".into(), 1234.into()),
+                        ("bool".into(), true.into()),
+                        (
+                            "b256".into(),
+                            "0xdeadbeaf00000000000000000000000000000000000000000000000000000000"
+                                .into(),
+                        ),
+                        ("addr".into(), "0xdeadbeef00000000000000000000000000000000".into()),
+                        ("bytes".into(), "0x00000000000f00".into()),
+                        ("str".into(), "bar".into()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+            ),
+            (
+                "optimism".to_string(),
+                ForkConfig {
+                    rpc_endpoint: None,
+                    vars: vec![
+                        ("i256".into(), "-4321".into()),
+                        ("u256".into(), 4321.into()),
+                        ("bool".into(), "false".into()),
+                        (
+                            "b256".into(),
+                            "0x000000000000000000000000000000000000000000000000000000deadc0ffee"
+                                .into(),
+                        ),
+                        ("addr".into(), "0x00000000000000000000000000000000deadbeef".into()),
+                        ("bytes".into(), "0x00f00000000000".into()),
+                        ("str".into(), "bazz".into()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+            ),
+        ]
+        .into_iter()
+        .collect();
+
+        config.rpc_endpoints = RpcEndpoints::new(vec![(
+            "optimism",
+            RpcEndpoint::new(RpcEndpointUrl::Url("optimism-rpc".to_string())),
+        )]);
+    });
+
+    prj.add_source(
+        "ForkTest.t.sol",
+        &r#"
+import {Vm} from "./Vm.sol";
+import {DSTest} from "./test.sol";
+import {console} from "./console.sol";
+
+contract ForkTest is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+
+    function test_panicsWhithoutSelectedFork() public {
+        vm.forkChain();
+    }
+
+    function test_forkVars() public {
+        vm.createSelectFork("<url>");
+
+        console.log("chain:", vm.forkChain());
+        console.log("id:", vm.forkChainId());
+        assert(eqString(vm.forkRpcUrl(), "<url>"));
+
+        int256 i256 = vm.forkInt("i256");
+        uint256 u256 = vm.forkUint("u256");
+        bool boolean = vm.forkBool("bool");
+        address addr = vm.forkAddress("addr");
+        bytes32 b256 = vm.forkBytes32("b256");
+        bytes memory byytes = vm.forkBytes("bytes");
+        string memory str = vm.forkString("str");
+
+        console.log(" > vars:");
+        console.log("   > i256:", i256);
+        console.log("   > u256:", u256);
+        console.log("   > bool:", boolean);
+        console.log("   > addr:", addr);
+        console.log("   > string:", str);
+
+        assert(
+            b256 == 0xdeadbeaf00000000000000000000000000000000000000000000000000000000
+            || b256 == 0x000000000000000000000000000000000000000000000000000000deadc0ffee
+        );
+    }
+
+    function eqString(string memory s1, string memory s2) public pure returns(bool) {
+        return keccak256(bytes(s1)) == keccak256(bytes(s2));
+    }
+}
+       "#
+        .replace("<url>", &mainnet_endpoint),
+    )
+    .unwrap();
+
+    cmd.args(["test", "-vvv", "ForkTest"]).assert_failure().stdout_eq(str![[r#"
+...
+[PASS] test_forkVars() ([GAS])
+Logs:
+  chain: mainnet
+  id: 1
+   > vars:
+     > i256: -1234
+     > u256: 1234
+     > bool: true
+     > addr: 0xdEADBEeF00000000000000000000000000000000
+     > string: bar
+
+[FAIL: vm.forkChain: a fork must be selected] test_panicsWhithoutSelectedFork() ([GAS])
+...
+"#]]);
 });
