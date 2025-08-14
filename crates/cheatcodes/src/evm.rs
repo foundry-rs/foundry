@@ -131,7 +131,7 @@ struct NonceDiff {
 struct AccountStateDiffs {
     /// Address label, if any set.
     label: Option<String>,
-    /// Contract name from artifact, if found.
+    /// Contract identifier from artifact. e.g "src/Counter.sol:Counter"
     contract: Option<String>,
     /// Account balance changes.
     balance_diff: Option<BalanceDiff>,
