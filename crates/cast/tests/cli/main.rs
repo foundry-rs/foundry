@@ -4011,6 +4011,50 @@ casttest!(cast_call_can_override_several_state_diff, |_prj, cmd| {
 ...
   [..] 0x5EA1d9A6dDC3A0329378a327746D71A2019eC332::isOwner(0x2066901073a33ba2500274704aB04763875cF210)
 ...
+// Test cast abi-encode-event with indexed parameters
+casttest!(abi_encode_event_indexed, |_prj, cmd| {
+    cmd.args([
+        "abi-encode-event",
+        "Transfer(address indexed from, address indexed to, uint256 value)",
+        "0x1234567890123456789012345678901234567890",
+        "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+        "1000"
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[topic0]: 0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef
+[topic1]: 0x0000000000000000000000001234567890123456789012345678901234567890
+[topic2]: 0x000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd
+[data]: 0x00000000000000000000000000000000000000000000000000000000000003e8
+
+"#]]);
+});
+
+// Test cast abi-encode-event with no indexed parameters
+casttest!(abi_encode_event_no_indexed, |_prj, cmd| {
+    cmd.args([
+        "abi-encode-event",
+        "Approval(address owner, address spender, uint256 value)",
+        "0x1234567890123456789012345678901234567890",
+        "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+        "2000"
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[topic0]: 0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925
+[data]: 0x0000000000000000000000001234567890123456789012345678901234567890000000000000000000000000abcdefabcdefabcdefabcdefabcdefabcdefabcd00000000000000000000000000000000000000000000000000000000000007d0
+
+"#]]);
+});
+
+// Test cast abi-encode-event with dynamic indexed parameter (string)
+casttest!(abi_encode_event_dynamic_indexed, |_prj, cmd| {
+    cmd.args(["abi-encode-event", "Log(string indexed message, uint256 data)", "hello", "42"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[topic0]: 0xdd970dd9b5bfe707922155b058a407655cb18288b807e2216442bca8ad83d6b5
+[topic1]: 0x984002fcc0ca639f96622add24c2edd2fe72c65e71ca3faa243e091e0bc7cdab
+[data]: 0x000000000000000000000000000000000000000000000000000000000000002a
 
 "#]]);
 });
