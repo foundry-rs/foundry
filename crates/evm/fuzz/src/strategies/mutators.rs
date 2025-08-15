@@ -157,39 +157,31 @@ impl AbiMutator for I256 {
 
 impl AbiMutator for Address {
     #[instrument(name = "Address::flip_random_bit", skip(_size, test_runner), ret)]
-    fn flip_random_bit(mut self, _size: usize, test_runner: &mut TestRunner) -> Option<Self> {
-        flip_random_bit_in_slice(self.as_mut_slice(), test_runner)?;
-        Some(self)
+    fn flip_random_bit(self, _size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mut bytes: [u8; 20] = self.0.into();
+        flip_random_bit_in_slice(&mut bytes, test_runner)?;
+        validate_address_mutation(self, bytes)
     }
 
     #[instrument(name = "Address::mutate_interesting_byte", skip(_size, test_runner), ret)]
-    fn mutate_interesting_byte(
-        mut self,
-        _size: usize,
-        test_runner: &mut TestRunner,
-    ) -> Option<Self> {
-        mutate_interesting_byte_slice(self.as_mut_slice(), test_runner)?;
-        Some(self)
+    fn mutate_interesting_byte(self, _size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mut bytes: [u8; 20] = self.0.into();
+        mutate_interesting_byte_slice(&mut bytes, test_runner)?;
+        validate_address_mutation(self, bytes)
     }
 
     #[instrument(name = "Address::mutate_interesting_word", skip(_size, test_runner), ret)]
-    fn mutate_interesting_word(
-        mut self,
-        _size: usize,
-        test_runner: &mut TestRunner,
-    ) -> Option<Self> {
-        mutate_interesting_word_slice(self.as_mut_slice(), test_runner)?;
-        Some(self)
+    fn mutate_interesting_word(self, _size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mut bytes: [u8; 20] = self.0.into();
+        mutate_interesting_word_slice(&mut bytes, test_runner)?;
+        validate_address_mutation(self, bytes)
     }
 
     #[instrument(name = "Address::mutate_interesting_dword", skip(_size, test_runner), ret)]
-    fn mutate_interesting_dword(
-        mut self,
-        _size: usize,
-        test_runner: &mut TestRunner,
-    ) -> Option<Self> {
-        mutate_interesting_dword_slice(self.as_mut_slice(), test_runner)?;
-        Some(self)
+    fn mutate_interesting_dword(self, _size: usize, test_runner: &mut TestRunner) -> Option<Self> {
+        let mut bytes: [u8; 20] = self.0.into();
+        mutate_interesting_dword_slice(&mut bytes, test_runner)?;
+        validate_address_mutation(self, bytes)
     }
 }
 
@@ -199,7 +191,7 @@ impl AbiMutator for Word {
         let mut bytes = self;
         let slice = &mut bytes[..size];
         flip_random_bit_in_slice(slice, test_runner)?;
-        Some(bytes)
+        (self != bytes).then_some(bytes)
     }
 
     #[instrument(name = "Word::mutate_interesting_byte", skip(size, test_runner), ret)]
@@ -207,7 +199,7 @@ impl AbiMutator for Word {
         let mut bytes = self;
         let slice = &mut bytes[..size];
         mutate_interesting_byte_slice(slice, test_runner)?;
-        Some(bytes)
+        (self != bytes).then_some(bytes)
     }
 
     #[instrument(name = "Word::mutate_interesting_word", skip(size, test_runner), ret)]
@@ -215,7 +207,7 @@ impl AbiMutator for Word {
         let mut bytes = self;
         let slice = &mut bytes[..size];
         mutate_interesting_word_slice(slice, test_runner)?;
-        Some(bytes)
+        (self != bytes).then_some(bytes)
     }
 
     #[instrument(name = "Word::mutate_interesting_dword", skip(size, test_runner), ret)]
@@ -223,7 +215,7 @@ impl AbiMutator for Word {
         let mut bytes = self;
         let slice = &mut bytes[..size];
         mutate_interesting_dword_slice(slice, test_runner)?;
-        Some(bytes)
+        (self != bytes).then_some(bytes)
     }
 }
 
@@ -298,6 +290,12 @@ fn validate_int_mutation(original: I256, mutated: I256, size: usize) -> Option<I
         Sign::Negative => mutated > I256::overflowing_from_sign_and_abs(Sign::Negative, max_abs).0,
     }
     .then_some(mutated)
+}
+
+/// Returns mutated address value if different from the original value, otherwise None.
+fn validate_address_mutation(original: Address, bytes: [u8; 20]) -> Option<Address> {
+    let mutated = Address::from(bytes);
+    (original != mutated).then_some(mutated)
 }
 
 #[cfg(test)]
@@ -504,30 +502,32 @@ mod tests {
     #[test]
     fn test_mutate_address() {
         let mut runner = TestRunner::new(Config::default());
+        let value = Address::random();
+        let validate_mutation = |mutated: Option<Address>| {
+            assert!(mutated.is_none() || mutated.is_some_and(|mutated| mutated != value));
+        };
+
         for _ in 0..100 {
-            let value = Address::random();
-            assert_ne!(value, Address::flip_random_bit(value, 20, &mut runner).unwrap());
-            let value1 = Address::random();
-            assert_ne!(value1, Address::mutate_interesting_byte(value1, 20, &mut runner).unwrap());
-            let value2 = Address::random();
-            assert_ne!(value2, Address::mutate_interesting_word(value2, 20, &mut runner).unwrap());
-            let value3 = Address::random();
-            assert_ne!(value3, Address::mutate_interesting_dword(value3, 20, &mut runner).unwrap());
+            validate_mutation(Address::flip_random_bit(value, 20, &mut runner));
+            validate_mutation(Address::mutate_interesting_byte(value, 20, &mut runner));
+            validate_mutation(Address::mutate_interesting_word(value, 20, &mut runner));
+            validate_mutation(Address::mutate_interesting_dword(value, 20, &mut runner));
         }
     }
 
     #[test]
     fn test_mutate_word() {
         let mut runner = TestRunner::new(Config::default());
+        let value = Word::random();
+        let validate_mutation = |mutated: Option<Word>| {
+            assert!(mutated.is_none() || mutated.is_some_and(|mutated| mutated != value));
+        };
+
         for _ in 0..100 {
-            let value = Word::random();
-            assert_ne!(value, Word::flip_random_bit(value, 32, &mut runner).unwrap());
-            let value1 = Word::random();
-            assert_ne!(value1, Word::mutate_interesting_byte(value1, 32, &mut runner).unwrap());
-            let value2 = Word::random();
-            assert_ne!(value2, Word::mutate_interesting_word(value2, 32, &mut runner).unwrap());
-            let value3 = Word::random();
-            assert_ne!(value3, Word::mutate_interesting_dword(value3, 32, &mut runner).unwrap());
+            validate_mutation(Word::flip_random_bit(value, 32, &mut runner));
+            validate_mutation(Word::mutate_interesting_byte(value, 32, &mut runner));
+            validate_mutation(Word::mutate_interesting_word(value, 32, &mut runner));
+            validate_mutation(Word::mutate_interesting_dword(value, 32, &mut runner));
         }
     }
 
