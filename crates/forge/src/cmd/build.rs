@@ -124,7 +124,7 @@ impl BuildArgs {
         Ok(output)
     }
 
-    fn lint(&self, project: &Project, config: &Config, files: &Option<Vec<PathBuf>>) -> Result<()> {
+    fn lint(&self, project: &Project, config: &Config, files: Option<&[PathBuf]>) -> Result<()> {
         let format_json = shell::is_json();
         if project.compiler.solc.is_some() && !shell::is_quiet() {
             let linter = SolidityLinter::new(config.project_paths())
