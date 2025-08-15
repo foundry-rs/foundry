@@ -184,6 +184,7 @@ impl_get_value_cheatcode!(forkStringCall, &DynSolType::String, stateful);
 impl_get_array_cheatcode!(forkChainStringArrayCall, &DynSolType::String);
 impl_get_array_cheatcode!(forkStringArrayCall, &DynSolType::String, stateful);
 
+/// Generic helper to get any value from the TOML config.
 fn get_toml_value<'a>(
     name: &'a str,
     key: &'a str,
@@ -201,7 +202,6 @@ fn get_toml_value<'a>(
 }
 
 /// Generic helper to get any single value from the TOML config.
-/// This replaces get_bool, get_int256, get_uint256, and get_type_from_str_input.
 fn get_value(chain: u64, key: &str, ty: &DynSolType, state: &crate::Cheatcodes) -> Result {
     let name = get_chain_name(chain)?;
     let value = get_toml_value(name, key, state)?;
@@ -231,8 +231,8 @@ fn get_array(chain: u64, key: &str, element_ty: &DynSolType, state: &crate::Chea
 }
 
 /// Parses a single TOML value into a specific Solidity type.
-fn parse_toml_element<'a>(
-    elem: &'a toml::Value,
+fn parse_toml_element(
+    elem: &toml::Value,
     element_ty: &DynSolType,
     context: &str,
     fork_name: &str,
